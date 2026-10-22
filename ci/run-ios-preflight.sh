@@ -45,9 +45,9 @@ fi
 cmake --version
 ninja --version
 
-# Native targets do not need the upstream WebAssembly build-std nightly.
-# 1.99.1 supplies the runtime's Atomic::try_update API and fixes 1.99.0 bugs.
-export RUSTUP_TOOLCHAIN=1.99.1
+# Use the upstream pinned toolchain: the complete runtime also relies on newer
+# std implementations (Once: Default), beyond the four original library crates.
+export RUSTUP_TOOLCHAIN=nightly-2026-10-11
 export CARGO_TARGET_DIR="$work/rust-target"
 export IPHONEOS_DEPLOYMENT_TARGET=26.0
 if ! command -v rustup >/dev/null 2>&1; then
