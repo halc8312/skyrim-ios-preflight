@@ -37,6 +37,8 @@ workflows:
       - out/gpu-framework/*.txt
       - out/gpu-framework/*.json
       - out/gpu-framework/*.log
+      - out/gpu-framework/*-export-policy/*.json
+      - out/gpu-framework/*-export-policy/*.txt
       - out/gpu-framework/device/WgpuNative.framework
       - out/gpu-framework/simulator/WgpuNative.framework
       - out/gpu-framework/device/CoexistenceLinkProbe

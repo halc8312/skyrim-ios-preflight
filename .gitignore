@@ -18,6 +18,8 @@
 !/ci/gpu-framework/build_frameworks.sh
 !/ci/gpu-framework/validate_framework.py
 !/ci/gpu-framework/test_validate_framework.py
+!/ci/gpu-framework/restrict_link_exports.py
+!/ci/gpu-framework/test_restrict_link_exports.py
 !/ci/gpu-framework/coexistence.c
 !/ci/gpu-framework/coexistence-host/
 !/ci/gpu-framework/coexistence-host/Cargo.toml

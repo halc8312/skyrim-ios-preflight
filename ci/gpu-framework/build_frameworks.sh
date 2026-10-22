@@ -63,7 +63,7 @@ rustc --version --verbose > "$output/rust-toolchain.txt"
 xcodebuild -version > "$output/xcode-version.txt"
 git -C "$source_dir" rev-parse HEAD > "$output/source-commit.txt"
 git -C "$source_dir/ffi/webgpu-headers" rev-parse HEAD > "$output/headers-commit.txt"
-python3 -m unittest discover -s "$kit" -p test_validate_framework.py -v
+python3 -m unittest discover -s "$kit" -p 'test_*.py' -v
 
 for variant in device simulator; do
     if [[ "$variant" == device ]]; then
@@ -86,6 +86,18 @@ for variant in device simulator; do
     export LIBCLANG_PATH="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib"
     [[ -e "$LIBCLANG_PATH/libclang.dylib" ]] || { echo 'Official Xcode libclang not found' >&2; exit 2; }
     clang="$(xcrun --sdk "$sdk_name" --find clang)"
+    # objc2's four private class-bookkeeping statics are emitted as exported
+    # names for same-link duplicate detection, not consumed as dynamic C API.
+    # Restrict Rust's own export list rather than combining contradictory
+    # exported/unexported lists or weakening the final metadata validator.
+    chmod +x "$kit/restrict_link_exports.py"
+    export WGPU_REAL_LINKER="$clang"
+    export WGPU_LINK_POLICY_DIR="$output/$variant-export-policy"
+    if [[ "$variant" == device ]]; then
+        export CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$kit/restrict_link_exports.py"
+    else
+        export CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER="$kit/restrict_link_exports.py"
+    fi
     cargo rustc --manifest-path "$source_dir/Cargo.toml" --locked --release --lib \
         --target "$target" --crate-type cdylib --no-default-features --features metal,wgsl \
         -- -C link-arg=-Wl,-headerpad_max_install_names 2>&1 | tee "$output/$variant-wgpu-build.log"
