@@ -69,6 +69,11 @@ if ! command -v rustup >/dev/null 2>&1; then
 fi
 rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 rustup target add --toolchain "$RUSTUP_TOOLCHAIN" aarch64-apple-ios
+# Use the same LLVM producer/reader for archives containing Rust bitcode.
+rustup component add --toolchain "$RUSTUP_TOOLCHAIN" llvm-tools-preview
+rust_host="$(rustc -vV | sed -n 's/^host: //p')"
+rust_nm="$(rustc --print sysroot)/lib/rustlib/$rust_host/bin/llvm-nm"
+test -x "$rust_nm"
 native_output="$harness_root/out/native-tests"
 mkdir -p "$native_output"
 # Reproduce the existing Darwin decommit contract before applying the repair.
@@ -162,7 +167,7 @@ package_dir="$work/package"
 probe_output="$harness_root/out/ios-probe"
 mkdir -p "$package_dir/Payload" "$probe_output"
 cp "$probe_dir/Libraries/libxenos_probe_bridge.a" "$probe_output/"
-xcrun nm -gU "$probe_output/libxenos_probe_bridge.a" > "$probe_output/runtime-exports.txt"
+"$rust_nm" --extern-only --defined-only --no-demangle "$probe_output/libxenos_probe_bridge.a" > "$probe_output/runtime-exports.txt"
 shasum -a 256 "$probe_output/libxenos_probe_bridge.a"
 cp -R "$app" "$package_dir/Payload/"
 (
