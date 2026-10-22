@@ -188,6 +188,7 @@ tools/ios-owned-game-host/sdk-test/tests/OwnedHostFullChainTests.swift
 tools/ios-owned-game-host/src/bin/public_fixture_resources.rs
 tools/ios-owned-game-host/src/binding.rs
 tools/ios-owned-game-host/src/darwin.rs
+tools/ios-owned-game-host/src/guest_fatal.rs
 tools/ios-owned-game-host/src/lib.rs
 tools/ios-owned-game-host/src/lifecycle.rs
 tools/ios-owned-game-host/src/mapping.rs

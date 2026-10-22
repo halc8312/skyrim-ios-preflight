@@ -6,6 +6,7 @@ use crate::{
     abi::*,
     binding::{self, TrustedBinding},
     darwin::{self, Api, Library},
+    guest_fatal::{self, GuestFatal},
     lifecycle::{self, Lifecycle, Status},
     paths::{self, PinnedFile},
 };
@@ -41,6 +42,8 @@ static PREPARE_STAGE: AtomicU32 = AtomicU32::new(0);
 static IMPORTS: OnceLock<import_policy::ImportPreflight> = OnceLock::new();
 static FUNCTION_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static STOPPING: AtomicBool = AtomicBool::new(false);
+// Written only by the STOPPING first winner, before its first-failure snapshot.
+static GUEST_FATAL: OnceLock<GuestFatal> = OnceLock::new();
 const TOKEN: u64 = 1;
 struct Resident {
     owner: Library,
@@ -341,8 +344,18 @@ unsafe extern "C-unwind" fn call_guest(address: u32, ctx: *mut PPCContext, base:
 unsafe extern "C" fn timebase(_: *mut c_void) -> u64 {
     runtime_core::timebase::timebase()
 }
-unsafe extern "C" fn fatal(_: *mut c_void, category: u32, _: u64) {
-    fatal_stop(22, 0, category);
+unsafe extern "C" fn fatal(_: *mut c_void, category: u32, detail: u64) {
+    let r = resident();
+    let evidence = GuestFatal::from_callback(
+        category,
+        detail,
+        r.binding.ppc_config[2],
+        r.binding.ppc_config[3],
+        &r.functions,
+    );
+    // A guest fatal category is not a kernel module/ordinal. Preserve its own
+    // typed evidence without reinterpreting arbitrary detail as an address.
+    fatal_stop_with_guest(22, 0, 0, Some(evidence));
 }
 unsafe extern "C-unwind" fn kernel_call(
     user: *mut c_void,
@@ -394,8 +407,17 @@ fn numeric_status() -> Status {
 fn snapshot(name: &str) -> Check<()> {
     let content = CONTENT.get().ok_or("diagnostic content absent")?;
     let s = numeric_status();
+    // A final-record worker can overlap a fatal callback. Do not attach a later
+    // callback to a status snapshot that predates failure 22.
+    let g = if s.failure == 22 {
+        GUEST_FATAL.get().copied().unwrap_or_default()
+    } else {
+        GuestFatal::default()
+    };
     let data = serde_json::json!({"version":s.version,"state":s.state,"failure":s.failure,"module":s.missing_module,"ordinal":s.missing_ordinal,
-        "exit_code":s.exit_code,"elapsed_ms":s.elapsed_ms,"ready_to_play":false,"signature_authenticated":false,"iphone_game_verified":false});
+        "exit_code":s.exit_code,"elapsed_ms":s.elapsed_ms,"diagnostic_schema":guest_fatal::DIAGNOSTIC_SCHEMA,
+        "guest_fatal_category":g.category,"guest_target":g.target,"guest_target_flags":g.flags,
+        "ready_to_play":false,"signature_authenticated":false,"iphone_game_verified":false});
     paths::publish_json_new(
         content,
         name,
@@ -403,7 +425,13 @@ fn snapshot(name: &str) -> Check<()> {
     )
 }
 fn fatal_stop(category: u32, module: u32, ordinal: u32) -> ! {
+    fatal_stop_with_guest(category, module, ordinal, None)
+}
+fn fatal_stop_with_guest(category: u32, module: u32, ordinal: u32, guest: Option<GuestFatal>) -> ! {
     if !STOPPING.swap(true, Ordering::SeqCst) {
+        if let Some(evidence) = guest {
+            let _ = GUEST_FATAL.set(evidence);
+        }
         MISSING_MODULE.store(module, Ordering::Release);
         MISSING_ORDINAL.store(ordinal, Ordering::Release);
         FAILURE.store(category, Ordering::Release);

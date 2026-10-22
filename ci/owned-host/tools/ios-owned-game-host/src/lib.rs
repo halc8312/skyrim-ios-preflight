@@ -3,6 +3,7 @@
 //! HLE completeness, game compatibility or permission to execute on iOS.
 pub type Check<T> = Result<T, &'static str>;
 pub mod binding;
+pub mod guest_fatal;
 pub mod lifecycle;
 pub mod mapping;
 pub mod paths;

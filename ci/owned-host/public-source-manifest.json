@@ -1,5 +1,5 @@
 {
-  "file_count": 224,
+  "file_count": 225,
   "game_data_included": false,
   "game_executed": false,
   "physical_iphone_verified": false,
@@ -698,8 +698,8 @@
       "sha256": "289d6915142ab5a0204ca64d3587b1cc50dc2f3afb2f9e07813096364b37054c"
     },
     "source-allowlist.txt": {
-      "bytes": 11428,
-      "sha256": "242a40af5e058e7eab68740afc3314513b0dcd69d8d5ac92a32948751e220ca0"
+      "bytes": 11473,
+      "sha256": "a654948164b46c63d2440e70b93ce288a2c4ff4bbb4d27719c64da6d701988fa"
     },
     "tools/ios-owned-game-host/Cargo.lock": {
       "bytes": 9317,
@@ -743,7 +743,7 @@
     },
     "tools/ios-owned-game-host/project.yml": {
       "bytes": 3374,
-      "sha256": "d0e24f123c727b252d574de32aea7f32f73b9d878bd04651e37b56270379b82a"
+      "sha256": "054d20dd102e0f734efc1f8930b0309c47f570be6c8e7c1e9d9949b2dcd9dd61"
     },
     "tools/ios-owned-game-host/sdk-test/run_sdk_tests.py": {
       "bytes": 10351,
@@ -769,9 +769,13 @@
       "bytes": 10710,
       "sha256": "bcbd729d99095e46336f002184a77d25a816ce566081532917cf75bf907abd15"
     },
+    "tools/ios-owned-game-host/src/guest_fatal.rs": {
+      "bytes": 4399,
+      "sha256": "33c5eb97ffe82b8b6e9f46b5b98704c10ad9a3f7e7487cff6917a50022094bc9"
+    },
     "tools/ios-owned-game-host/src/lib.rs": {
-      "bytes": 1131,
-      "sha256": "ff6a81388e9e1b14ac2171a56542e7fdfc6bc720844a4453965cedb2926c136c"
+      "bytes": 1152,
+      "sha256": "e82fe12fa5b7b2acaadd49a0904c0327dab937be14fb46fde5f5645eefb33d0b"
     },
     "tools/ios-owned-game-host/src/lifecycle.rs": {
       "bytes": 3638,
@@ -798,8 +802,8 @@
       "sha256": "ff4e83d10fa29f1bae7ceaa7a0fb4838f71da9bb152e0a30b595997e101ea940"
     },
     "tools/ios-owned-game-host/src/runtime.rs": {
-      "bytes": 20370,
-      "sha256": "01c9c4a0be6839e1b1c62557542b93406db23c3630c2f058573b118a86ae29d9"
+      "bytes": 21625,
+      "sha256": "572367963b3221207b6dcce0fec311276d16f09f53294da037ea15df15e99fb3"
     },
     "tools/ios-owned-game-host/src/xex_envelope.rs": {
       "bytes": 4122,

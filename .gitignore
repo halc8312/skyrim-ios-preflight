@@ -451,6 +451,7 @@
 !/ci/owned-host/tools/ios-owned-game-host/src/bin/public_fixture_resources.rs
 !/ci/owned-host/tools/ios-owned-game-host/src/binding.rs
 !/ci/owned-host/tools/ios-owned-game-host/src/darwin.rs
+!/ci/owned-host/tools/ios-owned-game-host/src/guest_fatal.rs
 !/ci/owned-host/tools/ios-owned-game-host/src/lib.rs
 !/ci/owned-host/tools/ios-owned-game-host/src/lifecycle.rs
 !/ci/owned-host/tools/ios-owned-game-host/src/mapping.rs
