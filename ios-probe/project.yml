@@ -49,6 +49,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.halc8312.skyrimprobe.tests
+        # Importing the app's Swift module also scans its C bridging header.
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/bridge/include"
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SkyrimProbe.app/SkyrimProbe"
         BUNDLE_LOADER: "$(TEST_HOST)"
