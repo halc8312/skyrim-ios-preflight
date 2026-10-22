@@ -15,12 +15,14 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Build open-source libraries and synthetic iOS guest stubs
+      - name: Build source-only iOS libraries and diagnostic app
         run: bash ci/run-ios-preflight.sh
-      - name: Retain the synthetic library
+      - name: Retain unsigned diagnostic artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ios-synthetic-arm64-library
-          path: out/ios-synthetic/libskyrim_guest.a
+          name: ios-source-only-diagnostic
+          path: |
+            out/ios-synthetic/libskyrim_guest.a
+            out/ios-probe/SkyrimProbe-0.1.0-unsigned.ipa
           if-no-files-found: error
           retention-days: 3

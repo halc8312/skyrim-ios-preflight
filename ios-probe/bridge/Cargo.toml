@@ -1,0 +1,21 @@
+[package]
+name = "xenos-probe-bridge"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "xenos_probe_bridge"
+crate-type = ["staticlib"]
+
+[dependencies]
+# CI places the pinned public source checkout beside this bridge.
+xenos-texture = { path = "../source/crates/xenos-texture" }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

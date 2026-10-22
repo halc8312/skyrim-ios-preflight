@@ -9,7 +9,8 @@ workflows:
       xcode: latest
     # No triggering events: this workflow is manual only.
     scripts:
-      - name: Build open-source libraries and synthetic iOS guest stubs
+      - name: Build source-only iOS libraries and diagnostic app
         script: bash ci/run-ios-preflight.sh
     artifacts:
       - out/ios-synthetic/libskyrim_guest.a
+      - out/ios-probe/SkyrimProbe-0.1.0-unsigned.ipa
