@@ -1,0 +1,15 @@
+# Run manually from a personal Codemagic account with free M2 minutes remaining.
+# No code-signing credentials, game data, or generated game code are inputs.
+workflows:
+  ios-source-only-preflight:
+    name: iOS source-only preflight
+    instance_type: mac_mini_m2
+    max_build_duration: 20
+    environment:
+      xcode: latest
+    # No triggering events: this workflow is manual only.
+    scripts:
+      - name: Build open-source libraries and synthetic iOS guest stubs
+        script: bash ci/run-ios-preflight.sh
+    artifacts:
+      - out/ios-synthetic/libskyrim_guest.a

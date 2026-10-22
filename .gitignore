@@ -1,0 +1,9 @@
+*
+!/.gitignore
+!/codemagic.yaml
+!/.github/
+!/.github/workflows/
+!/.github/workflows/ios-preflight.yml
+!/ci/
+!/ci/run-ios-preflight.sh
+!/ci/native-arm64.patch
