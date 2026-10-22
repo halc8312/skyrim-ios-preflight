@@ -49,6 +49,12 @@ git -C "$source_dir" submodule update --init --depth 1 ffi/webgpu-headers
 [[ "$(git -C "$source_dir/ffi/webgpu-headers" rev-parse HEAD)" == "$header_pin" ]] || exit 2
 [[ -z "$(git -C "$source_dir" status --porcelain --untracked-files=normal)" ]] || { echo 'Cached public source is modified' >&2; exit 2; }
 
+export PATH="$HOME/.cargo/bin:$PATH"
+if ! command -v rustup >/dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+        https://sh.rustup.rs -o "$work/rustup-init.sh"
+    sh "$work/rustup-init.sh" -y --profile minimal --default-toolchain none --no-modify-path
+fi
 if ! rustup run "$toolchain" rustc --version >/dev/null 2>&1; then
     rustup toolchain install "$toolchain" --profile minimal
 fi
