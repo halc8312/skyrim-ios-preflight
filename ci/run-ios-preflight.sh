@@ -200,4 +200,6 @@ cp -R "$app" "$package_dir/Payload/"
 )
 shasum -a 256 "$probe_output/SkyrimProbe-0.2.0-unsigned.ipa"
 bash "$harness_root/ci/run-ios-simulator-tests.sh" "$work" "$source_dir" "$fixture_dir" "$simde_dir"
+bash "$harness_root/ci/test-signing-binding.sh" \
+  "$probe_dir/Frameworks/SyntheticGuest.framework" "$harness_root/out/signing-binding"
 printf '%s\n' 'Source-only diagnostic IPA and Simulator tests finished. Skyrim execution, a complete iOS host, IPA signing and physical iPhone behavior were not tested.'

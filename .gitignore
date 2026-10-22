@@ -15,6 +15,11 @@
 !/ci/ios-metal-surface.patch
 !/ci/prepare-cpu-support.sh
 !/ci/build-owned-abi-framework.sh
+!/ci/test-signing-binding.sh
+!/ci/signing-binding/
+!/ci/signing-binding/signing_binding.py
+!/ci/signing-binding/test_signing_binding.py
+!/ci/signing-binding/README.md
 !/ci/gpu-framework/
 !/ci/gpu-framework/build_frameworks.sh
 !/ci/gpu-framework/validate_framework.py

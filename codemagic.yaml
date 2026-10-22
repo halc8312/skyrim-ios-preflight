@@ -20,6 +20,10 @@ workflows:
       - out/ios-simulator/*.log
       - out/ios-simulator/*.png
       - out/ios-simulator/*.xcresult
+      - out/signing-binding/*.json
+      - out/signing-binding/*.log
+      - out/signing-binding/*.txt
+      - out/signing-binding/*.bin
   ios-gpu-framework-preflight:
     name: iOS public GPU framework preflight
     instance_type: mac_mini_m2
