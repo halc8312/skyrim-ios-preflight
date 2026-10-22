@@ -51,6 +51,34 @@ workflows:
       - out/resident-sdk/xctest/*.log
       - out/resident-sdk/xctest/*.json
       - out/resident-sdk/xctest/*.xcresult
+  ios-owned-host-preflight:
+    name: iOS public owned-host integration
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: latest
+    # Manual only. No title data, generated guest code, signing account or key.
+    scripts:
+      - name: Build and test the public owned host with Metal
+        script: bash ci/run-ios-owned-host-preflight.sh
+    artifacts:
+      - out/owned-host/*.ipa
+      - out/owned-host/*.json
+      - out/owned-host/*.log
+      - out/owned-host/*.txt
+      - out/owned-host/*.ll
+      - out/owned-host/*.bin
+      - out/owned-host/gpu-framework/*.txt
+      - out/owned-host/gpu-framework/*.json
+      - out/owned-host/gpu-framework/*.log
+      - out/owned-host/gpu-framework/*-export-policy/*.json
+      - out/owned-host/gpu-framework/*-export-policy/*.txt
+      - out/owned-host/gpu-framework/device/WgpuNative.framework
+      - out/owned-host/gpu-framework/simulator/WgpuNative.framework
+      - out/owned-host/xctest/*.log
+      - out/owned-host/xctest/*.txt
+      - out/owned-host/xctest/*.json
+      - out/owned-host/xctest/*.xcresult
   ios-gpu-framework-preflight:
     name: iOS public GPU framework preflight
     instance_type: mac_mini_m2

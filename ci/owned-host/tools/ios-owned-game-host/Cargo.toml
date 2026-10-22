@@ -1,0 +1,42 @@
+[package]
+name = "ios-owned-game-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+default = []
+apple-host = ["dep:runtime-core", "dep:kernel-hle", "dep:vfs", "dep:xex"]
+fixture-tools = ["dep:runtime-core", "dep:xex"]
+metal-renderer = ["apple-host", "dep:xenos-render", "dep:gpu-webgpu", "dep:d3d-hle", "dep:log"]
+
+[dependencies]
+ios-signed-image-policy = { path = "../ios-signed-image-policy" }
+ios-resident-apple-backend = { path = "../ios-resident-guest-probe/apple-backend" }
+sha2 = "=0.11.1"
+serde_core = "=1.0.229"
+serde_json = "=1.0.154"
+libc = "=0.2.190"
+runtime-core = { path = "../../skyrim-recomp-web/crates/runtime-core", optional = true }
+kernel-hle = { path = "../../skyrim-recomp-web/crates/kernel-hle", optional = true }
+vfs = { path = "../../skyrim-recomp-web/crates/vfs", optional = true }
+xex = { path = "../../skyrim-recomp-web/crates/xex", optional = true }
+xenos-render = { path = "../../skyrim-recomp-web/crates/xenos-render", optional = true }
+gpu-webgpu = { path = "../../skyrim-recomp-web/crates/gpu-webgpu", optional = true }
+d3d-hle = { path = "../../skyrim-recomp-web/crates/d3d-hle", optional = true }
+log = { version = "=0.4.34", optional = true }
+
+[profile.dev]
+opt-level = 1
+panic = "unwind"
+
+[profile.release]
+opt-level = 2
+panic = "unwind"
+lto = false
+codegen-units = 8

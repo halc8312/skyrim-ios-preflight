@@ -11,7 +11,7 @@ def main(arguments):
         return 2
     try:
         seconds = int(arguments[0])
-        if not 1 <= seconds <= 900:
+        if not 1 <= seconds <= 1500:
             raise ValueError
     except ValueError:
         print("bounded_command_limit", file=sys.stderr)

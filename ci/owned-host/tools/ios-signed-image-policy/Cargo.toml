@@ -1,0 +1,18 @@
+[package]
+name = "ios-signed-image-policy"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+sha2 = "=0.11.1"
+serde_core = "=1.0.229"
+serde_json = "=1.0.154"
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+lto = false
