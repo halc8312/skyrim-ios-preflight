@@ -182,8 +182,11 @@ tools/ios-owned-game-host/native/OwnedHostNative.h
 tools/ios-owned-game-host/native/OwnedHostNative.mm
 tools/ios-owned-game-host/native/PublicOwnedFixture.cpp
 tools/ios-owned-game-host/project.yml
+tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.cpp
+tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.h
 tools/ios-owned-game-host/sdk-test/run_sdk_tests.py
 tools/ios-owned-game-host/sdk-test/test_run_sdk_tests.py
+tools/ios-owned-game-host/sdk-test/tests/NativeTraceSDKProbeTests.swift
 tools/ios-owned-game-host/sdk-test/tests/OwnedHostFullChainTests.swift
 tools/ios-owned-game-host/src/bin/public_fixture_resources.rs
 tools/ios-owned-game-host/src/binding.rs
@@ -192,6 +195,7 @@ tools/ios-owned-game-host/src/guest_fatal.rs
 tools/ios-owned-game-host/src/lib.rs
 tools/ios-owned-game-host/src/lifecycle.rs
 tools/ios-owned-game-host/src/mapping.rs
+tools/ios-owned-game-host/src/native_trace.rs
 tools/ios-owned-game-host/src/paths.rs
 tools/ios-owned-game-host/src/public_fixture.rs
 tools/ios-owned-game-host/src/renderer.rs

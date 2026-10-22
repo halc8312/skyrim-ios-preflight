@@ -404,8 +404,7 @@ fn numeric_status() -> Status {
     }
     s
 }
-fn snapshot(name: &str) -> Check<()> {
-    let content = CONTENT.get().ok_or("diagnostic content absent")?;
+fn diagnostic_value() -> serde_json::Value {
     let s = numeric_status();
     // A final-record worker can overlap a fatal callback. Do not attach a later
     // callback to a status snapshot that predates failure 22.
@@ -414,10 +413,14 @@ fn snapshot(name: &str) -> Check<()> {
     } else {
         GuestFatal::default()
     };
-    let data = serde_json::json!({"version":s.version,"state":s.state,"failure":s.failure,"module":s.missing_module,"ordinal":s.missing_ordinal,
+    serde_json::json!({"version":s.version,"state":s.state,"failure":s.failure,"module":s.missing_module,"ordinal":s.missing_ordinal,
         "exit_code":s.exit_code,"elapsed_ms":s.elapsed_ms,"diagnostic_schema":guest_fatal::DIAGNOSTIC_SCHEMA,
         "guest_fatal_category":g.category,"guest_target":g.target,"guest_target_flags":g.flags,
-        "ready_to_play":false,"signature_authenticated":false,"iphone_game_verified":false});
+        "ready_to_play":false,"signature_authenticated":false,"iphone_game_verified":false})
+}
+fn snapshot(name: &str) -> Check<()> {
+    let content = CONTENT.get().ok_or("diagnostic content absent")?;
+    let data = diagnostic_value();
     paths::publish_json_new(
         content,
         name,
@@ -448,6 +451,18 @@ fn fatal_stop_with_guest(category: u32, module: u32, ordinal: u32, guest: Option
             unsafe { libc::_exit(70) }
         }
         let _ = snapshot("first-failure.json");
+        if guest.is_some_and(|g| g.category == guest_fatal::MISSING_FUNCTION) {
+            // Keep the schema2 failure evidence first. A stalled unwinder or
+            // failed extra write cannot keep this process alive beyond 1 sec.
+            if let (Some(r), Some(content)) = (RESIDENT.get(), CONTENT.get()) {
+                let trace = r.owner.native_trace();
+                let mut data = diagnostic_value();
+                trace.append_numeric_fields(&mut data);
+                if let Ok(bytes) = serde_json::to_vec(&data) {
+                    let _ = paths::publish_json_new(content, "guest-native-trace.json", &bytes);
+                }
+            }
+        }
         unsafe { libc::_exit(70) }
     }
     loop {

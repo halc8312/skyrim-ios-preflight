@@ -268,6 +268,17 @@ impl Library {
     pub fn header(&self) -> *const c_void {
         self.header as *const c_void
     }
+    pub fn native_trace(&self) -> crate::native_trace::NativeTrace {
+        // Fixed storage; no symbolization or raw-PC logging. libc's unwinder
+        // itself has no strict time guarantee, so callers must first arm the
+        // independent fatal ceiling and publish their original failure record.
+        let mut raw = [std::ptr::null_mut(); crate::native_trace::MAX_CAPTURE];
+        let returned = unsafe { libc::backtrace(raw.as_mut_ptr(), raw.len() as i32) };
+        let raw = raw.map(|pc| pc as usize);
+        crate::native_trace::NativeTrace::filter(&raw, returned, self.header, |pc| {
+            self.image.contains_loaded(self.header, pc, 1, true, false)
+        })
+    }
     pub fn release_bytes(&mut self) {
         self.pinned.release_bytes();
     }

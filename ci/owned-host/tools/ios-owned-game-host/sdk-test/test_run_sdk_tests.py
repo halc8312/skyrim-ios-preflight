@@ -25,26 +25,62 @@ class PublicDriverTests(unittest.TestCase):
                       game_frame_rendered=False, mapped_inode_attested=False, **hashes)
         return hashes, report
 
-    def console(self, report):
-        return (f"Test Case '{driver.CASE}' started.\n" + driver.PREFIX + json.dumps(report) + "\n"
-                f"Test Case '{driver.CASE}' passed (0.1 seconds).\n"
-                "Executed 1 test, with 0 failures (0 unexpected) in 0.1 seconds\n"
+    def trace_report(self):
+        return dict(abi_version=1, struct_size=32, captured_count=7,
+                    expected_parent_count=2, matched_parent_count=2, rx_parent_count=2,
+                    flags=15, reserved=0, passed=True, public_cpp_only=True,
+                    private_guest_fatal_path_verified=False)
+
+    def console(self, report, trace=None, reverse=False):
+        if trace is None:
+            trace = self.trace_report()
+        cases = [(driver.CASE, driver.PREFIX, report),
+                 (driver.TRACE_CASE, driver.TRACE_PREFIX, trace)]
+        if reverse:
+            cases.reverse()
+        text = ""
+        for case, prefix, value in cases:
+            text += (f"Test Case '{case}' started.\n" + prefix + json.dumps(value) + "\n"
+                     f"Test Case '{case}' passed (0.1 seconds).\n"
+                     "Executed 1 test, with 0 failures (0 unexpected) in 0.1 seconds\n")
+        return (text + "Executed 2 tests, with 0 failures (0 unexpected) in 0.2 seconds\n"
                 "** TEST EXECUTE SUCCEEDED **\n")
 
-    def test_one_exact_case_and_fixed_report(self):
+    def test_two_exact_serial_cases_and_fixed_reports_in_either_order(self):
+        hashes, report = self.report()
+        for reverse in (False, True):
+            valid = self.console(report, reverse=reverse)
+            self.assertEqual(driver.validate_result(valid, hashes), report)
+            self.assertEqual(driver.validate_native_trace_result(valid), self.trace_report())
+
+    def test_missing_duplicate_failed_skipped_extra_or_partial_cases_refuse(self):
         hashes, report = self.report()
         valid = self.console(report)
-        self.assertEqual(driver.validate_result(valid, hashes), report)
         for bad in [valid + valid,
                     valid.replace("started.", "skipped."),
-                    valid.replace("Executed 1 test", "Executed 2 tests"),
+                    valid.replace("passed (0.1", "failed (0.1", 1),
+                    valid.replace(f"Test Case '{driver.TRACE_CASE}' started.\n", ""),
+                    valid.replace(f"Test Case '{driver.TRACE_CASE}' passed (0.1 seconds).\n", ""),
+                    valid.replace("Executed 2 tests", "Executed 1 test"),
+                    valid.replace("Executed 2 tests", "Executed 3 tests"),
                     valid.replace("0 failures", "1 failure"),
                     valid.replace("** TEST EXECUTE SUCCEEDED **", "** TEST SUCCEEDED **"),
                     valid.replace("** TEST EXECUTE SUCCEEDED **", "** TEST EXECUTE FAILED **"),
                     valid + "** TEST EXECUTE FAILED **\n",
                     valid + f"Test Case 'other' skipped.\n"]:
-            with self.assertRaises(ValueError):
-                driver.validate_result(bad, hashes)
+            for validate in (lambda text: driver.validate_result(text, hashes),
+                             driver.validate_native_trace_result):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    validate(bad)
+        # Parallel/interleaved execution is not a serial two-case proof.
+        bad = (f"Test Case '{driver.CASE}' started.\n"
+               f"Test Case '{driver.TRACE_CASE}' started.\n"
+               f"Test Case '{driver.CASE}' passed (0.1 seconds).\n"
+               f"Test Case '{driver.TRACE_CASE}' passed (0.1 seconds).\n"
+               "Executed 2 tests, with 0 failures (0 unexpected) in 0.2 seconds\n"
+               "** TEST EXECUTE SUCCEEDED **\n")
+        with self.assertRaises(ValueError):
+            driver.validate_console(bad)
 
     def test_changed_outcomes_hashes_and_json_duplicates_refuse(self):
         hashes, report = self.report()
@@ -59,8 +95,43 @@ class PublicDriverTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 driver.strict_json(raw)
 
-    def test_sdk_summary_requires_one_pass_and_no_skip_failure(self):
-        summary = dict(totalTestCount=1, passedTests=1, failedTests=0,
+    def test_native_trace_report_requires_exact_typed_public_outcome(self):
+        _, report = self.report()
+        trace = self.trace_report()
+        for count in (3, 32):
+            changed = dict(trace, captured_count=count)
+            self.assertEqual(driver.validate_native_trace_result(self.console(report, changed)), changed)
+        for key, value in [("abi_version", True), ("struct_size", 31),
+                           ("captured_count", True), ("captured_count", 2),
+                           ("captured_count", 33), ("captured_count", 7.0),
+                           ("expected_parent_count", 1), ("matched_parent_count", 1),
+                           ("rx_parent_count", 1), ("flags", 7), ("reserved", 1),
+                           ("passed", 1), ("public_cpp_only", False),
+                           ("private_guest_fatal_path_verified", True), ("unknown", False)]:
+            changed = dict(trace, **{key: value})
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                driver.validate_native_trace_result(self.console(report, changed))
+        for key in trace:
+            changed = trace.copy()
+            del changed[key]
+            with self.subTest(missing=key), self.assertRaises(ValueError):
+                driver.validate_native_trace_result(self.console(report, changed))
+
+    def test_missing_duplicate_malformed_or_nonobject_reports_refuse(self):
+        hashes, report = self.report()
+        valid = self.console(report)
+        for prefix, validate in [(driver.PREFIX, lambda text: driver.validate_result(text, hashes)),
+                                 (driver.TRACE_PREFIX, driver.validate_native_trace_result)]:
+            line = next(line for line in valid.splitlines() if line.startswith(prefix)) + "\n"
+            for bad in [valid.replace(line, ""), valid + line,
+                        valid + prefix + "not JSON\n",
+                        valid.replace(line, prefix + '{"passed":true,"passed":true}\n'),
+                        valid.replace(line, prefix + "[]\n")]:
+                with self.subTest(prefix=prefix, bad=bad), self.assertRaises(ValueError):
+                    validate(bad)
+
+    def test_sdk_summary_requires_two_passes_and_no_skip_failure(self):
+        summary = dict(totalTestCount=2, passedTests=2, failedTests=0,
                        skippedTests=0, expectedFailures=0)
         driver.validate_summary(summary)
         for key in summary:
@@ -73,6 +144,11 @@ class PublicDriverTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 driver.validate_summary(changed)
         for key in ["failedTests", "skippedTests", "expectedFailures"]:
+            changed = summary.copy()
+            changed[key] = 1
+            with self.assertRaises(ValueError):
+                driver.validate_summary(changed)
+        for key in ["totalTestCount", "passedTests"]:
             changed = summary.copy()
             changed[key] = 1
             with self.assertRaises(ValueError):
@@ -106,6 +182,11 @@ class PublicDriverTests(unittest.TestCase):
         command = driver.make_test_command(["xcodebuild"], ["CODE_SIGNING_ALLOWED=NO"], Path("public.xcresult"))
         self.assertEqual(command[-1], "test-without-building")
         self.assertIn("-only-testing:OwnedGameHostTests/OwnedHostFullChainTests/" + driver.TEST, command)
+        self.assertEqual({word for word in command if word.startswith("-only-testing:")}, {
+            "-only-testing:OwnedGameHostTests/OwnedHostFullChainTests/" + driver.TEST,
+            "-only-testing:OwnedGameHostTests/NativeTraceSDKProbeTests/" + driver.TRACE_TEST,
+        })
+        self.assertEqual(sum(word.startswith("-only-testing:") for word in command), 2)
         self.assertEqual(command[command.index("-parallel-testing-enabled") + 1], "NO")
         self.assertFalse(any("iteration" in word or "retry" in word for word in command))
 

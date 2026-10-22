@@ -6,6 +6,7 @@ pub mod binding;
 pub mod guest_fatal;
 pub mod lifecycle;
 pub mod mapping;
+pub mod native_trace;
 pub mod paths;
 pub mod renderer_policy;
 pub mod xex_envelope;

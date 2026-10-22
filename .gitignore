@@ -504,3 +504,8 @@
 !/ci/test_prepare_owned_host_kit.py
 !/ci/test_validate_owned_host_fixture.py
 !/ci/validate-owned-host-fixture.py
+!/ci/owned-host/tools/ios-owned-game-host/sdk-test/native/
+!/ci/owned-host/tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.cpp
+!/ci/owned-host/tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.h
+!/ci/owned-host/tools/ios-owned-game-host/sdk-test/tests/NativeTraceSDKProbeTests.swift
+!/ci/owned-host/tools/ios-owned-game-host/src/native_trace.rs

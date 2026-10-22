@@ -1,4 +1,4 @@
-"""Build/test one fresh public-only owned-host app; never accepts a game input."""
+"""Build/test one fresh public-only app with two cases; accepts no game input."""
 from __future__ import annotations
 
 import argparse
@@ -15,6 +15,9 @@ import time
 TEST = "testPublicOwnedHostFullChain"
 CASE = "-[OwnedGameHostTests.OwnedHostFullChainTests " + TEST + "]"
 PREFIX = "OWNED_HOST_PUBLIC_RESULT "
+TRACE_TEST = "testDarwinUnwindAcrossPublicCppFrames"
+TRACE_CASE = "-[OwnedGameHostTests.NativeTraceSDKProbeTests " + TRACE_TEST + "]"
+TRACE_PREFIX = "OWNED_HOST_NATIVE_TRACE_RESULT "
 
 
 def run_bounded(command, cwd: Path, prefix: Path, timeout: float) -> int:
@@ -52,21 +55,37 @@ def strict_json(data):
                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
 
 
-def validate_result(text: str, hashes: dict[str, str]) -> dict:
+def validate_console(text: str) -> None:
     events = re.findall(r"(?m)^Test Case '([^'\r\n]+)' (started|passed|failed|skipped)\b", text)
-    if events != [(CASE, "started"), (CASE, "passed")]:
-        raise ValueError("exactly one expected case start/pass was not proven")
+    fullchain = [(CASE, "started"), (CASE, "passed")]
+    trace = [(TRACE_CASE, "started"), (TRACE_CASE, "passed")]
+    if events not in (fullchain + trace, trace + fullchain):
+        raise ValueError("exactly two expected serial case start/pass pairs were not proven")
     terminals = [line.strip() for line in text.splitlines()
                  if line.strip().startswith("** TEST ") and line.strip().endswith(" **")]
     if terminals != ["** TEST EXECUTE SUCCEEDED **"]:
         raise ValueError("single test-without-building success marker missing")
     totals = re.findall(r"Executed (\d+) tests?, with (\d+) failures? \((\d+) unexpected\)", text)
-    if not totals or any(row != ("1", "0", "0") for row in totals):
-        raise ValueError("console totals differ from one case without failures")
-    records = re.findall(re.escape(PREFIX) + r"(\{[^\r\n]*\})", text)
+    # Each test class can have its own one-case suite summary. The enclosing
+    # suites must finish with the two-case aggregate, with no failure anywhere.
+    if (not totals or totals[-1] != ("2", "0", "0")
+            or any(row not in (("1", "0", "0"), ("2", "0", "0")) for row in totals)):
+        raise ValueError("console totals differ from two cases without failures")
+
+
+def one_report(text: str, prefix: str) -> dict:
+    records = re.findall(re.escape(prefix) + r"([^\r\n]*)", text)
     if len(records) != 1:
         raise ValueError("one public structured outcome was not proven")
     result = strict_json(records[0])
+    if type(result) is not dict:
+        raise ValueError("public structured outcome is not an object")
+    return result
+
+
+def validate_result(text: str, hashes: dict[str, str]) -> dict:
+    validate_console(text)
+    result = one_report(text, PREFIX)
     expected = dict(kind="public_owned_host_fullchain_xctest", passed=True, state=5,
                     policy=0, exit_code=0, function_imports=2, registered_functions=2,
                     function_count=3, renderer_initialized=1, gpu_errors=0, decoded_frames=0,
@@ -80,10 +99,26 @@ def validate_result(text: str, hashes: dict[str, str]) -> dict:
     return result
 
 
+def validate_native_trace_result(text: str) -> dict:
+    validate_console(text)
+    result = one_report(text, TRACE_PREFIX)
+    expected = dict(abi_version=1, struct_size=32, expected_parent_count=2,
+                    matched_parent_count=2, rx_parent_count=2, flags=15,
+                    reserved=0, passed=True, public_cpp_only=True,
+                    private_guest_fatal_path_verified=False)
+    if (set(result) != set(expected) | {"captured_count"}
+            or any(type(result[k]) is not type(v) or result[k] != v
+                   for k, v in expected.items())
+            or type(result["captured_count"]) is not int
+            or not 3 <= result["captured_count"] <= 32):
+        raise ValueError("public native trace outcome differs from fixed contract")
+    return result
+
+
 def validate_summary(summary: dict) -> None:
     # Apple's installed xcresulttool supplies these counts independently of
     # console parsing. Unknown/missing output schemas fail closed and are saved.
-    for key, value in dict(totalTestCount=1, passedTests=1, failedTests=0,
+    for key, value in dict(totalTestCount=2, passedTests=2, failedTests=0,
                            skippedTests=0, expectedFailures=0).items():
         if type(summary.get(key)) is not int or summary[key] != value:
             raise ValueError("xcresult summary count differs: " + key)
@@ -109,6 +144,7 @@ def make_test_command(common, signing, result):
                      "-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", "40",
                      "-maximum-test-execution-time-allowance", "40",
                      "-only-testing:OwnedGameHostTests/OwnedHostFullChainTests/" + TEST,
+                     "-only-testing:OwnedGameHostTests/NativeTraceSDKProbeTests/" + TRACE_TEST,
                      *signing, "test-without-building"]
 
 
@@ -174,10 +210,16 @@ def main() -> int:
         parsed = strict_json(raw)
         if command == "summary":
             validate_summary(parsed)
-    report = validate_result((output / "xcodebuild.stdout.log").read_text(), hashes)
+    console = (output / "xcodebuild.stdout.log").read_text()
+    report = validate_result(console, hashes)
+    native_trace_report = validate_native_trace_result(console)
     with (output / "public-fullchain-result.json").open("x") as stream:
         json.dump(dict(report, xcodebuild_exit_code=0, external_build_test_deadline_seconds=300), stream, indent=2)
+    with (output / "native-trace-result.json").open("x") as stream:
+        json.dump(dict(native_trace_report, xcodebuild_exit_code=0,
+                       external_build_test_deadline_seconds=300), stream, indent=2)
     print(json.dumps(dict(public_owned_host_fullchain_passed=1, game_executed=False,
+                          public_cpp_native_trace_passed=1,
                           physical_iphone_verified=False, private_guest_framework_verified=False)))
     return 0
 
