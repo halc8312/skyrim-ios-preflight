@@ -1,0 +1,25 @@
+diff --git a/cpp/ppc_context.h b/cpp/ppc_context.h
+index 2dd8c0f..01acda9 100644
+--- a/cpp/ppc_context.h
++++ b/cpp/ppc_context.h
+@@ -397,7 +397,11 @@ struct PPCFPSCRRegister
+ {
+     uint32_t csr;
+ 
++#if defined(__aarch64__) || defined(_M_ARM64)
++    static constexpr size_t HostToGuest[] = { PPC_ROUND_NEAREST, PPC_ROUND_UP, PPC_ROUND_DOWN, PPC_ROUND_TOWARD_ZERO };
++#else
+     static constexpr size_t HostToGuest[] = { PPC_ROUND_NEAREST, PPC_ROUND_DOWN, PPC_ROUND_UP, PPC_ROUND_TOWARD_ZERO };
++#endif
+ 
+     // simde does not handle denormal flags, so we need to implement per-arch.
+ #if defined(__x86_64__) || defined(_M_X64)
+@@ -433,7 +437,7 @@ struct PPCFPSCRRegister
+ 
+     inline void setcsr(uint32_t csr) noexcept
+     {
+-        __asm__ __volatile__("msr fpcr, %0" : : "r"(csr));
++        __asm__ __volatile__("msr fpcr, %0" : : "r"(static_cast<uint64_t>(csr)));
+     }
+ #elif defined(__wasm__)
+     // Same field encoding as x86 MXCSR so HostToGuest stays valid.

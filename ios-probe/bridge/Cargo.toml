@@ -13,9 +13,16 @@ crate-type = ["staticlib"]
 [dependencies]
 # CI places the pinned public source checkout beside this bridge.
 xenos-texture = { path = "../source/crates/xenos-texture" }
+runtime-core = { path = "../source/crates/runtime-core" }
+kernel-hle = { path = "../source/crates/kernel-hle" }
+vfs = { path = "../source/crates/vfs" }
+xex = { path = "../source/crates/xex" }
+d3d-hle = { path = "../source/crates/d3d-hle" }
+xma-decoder = { path = "../source/crates/xma-decoder" }
 
 [profile.release]
 opt-level = 2
-lto = "thin"
-codegen-units = 1
+lto = false
+codegen-units = 8
+panic = "unwind"
 strip = "debuginfo"

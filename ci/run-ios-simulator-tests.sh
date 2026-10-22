@@ -2,10 +2,11 @@
 # No physical iPhone, Apple account, game files, JIT, or signing certificates.
 set -euo pipefail
 test "$(uname -s)" = Darwin
-test "$#" -eq 3
+test "$#" -eq 4
 work="$1"
 source_dir="$2"
 fixture_dir="$3"
+simde_dir="$4"
 harness_root="$(cd "$(dirname "$0")/.." && pwd)"
 test -f "$source_dir/crates/xenos-texture/Cargo.toml"
 test -f "$fixture_dir/ppc_recomp.0.cpp"
@@ -56,6 +57,7 @@ mkdir -p "$probe/Libraries" "$probe/bridge/include"
 cp "$harness_root/ios-probe/project.yml" "$probe/"
 cp -R "$harness_root/ios-probe/app" "$probe/app"
 cp -R "$harness_root/ios-probe/tests" "$probe/tests"
+bash "$harness_root/ci/prepare-cpu-support.sh" "$source_dir" "$simde_dir" "$probe"
 cp "$work/bridge/include/XenosProbeBridge.h" "$probe/bridge/include/"
 cp "$CARGO_TARGET_DIR/aarch64-apple-ios-sim/release/libxenos_probe_bridge.a" "$probe/Libraries/"
 cp "$work/simulator-guest/libskyrim_guest.a" "$probe/Libraries/"

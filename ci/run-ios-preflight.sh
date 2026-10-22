@@ -27,6 +27,17 @@ git -C "$source_dir" checkout -q --detach FETCH_HEAD
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$source_commit"
 git -C "$source_dir" apply --check "$harness_root/ci/native-arm64.patch"
 git -C "$source_dir" apply "$harness_root/ci/native-arm64.patch"
+git -C "$source_dir" apply --check "$harness_root/ci/arm-fpcr-mapping.patch"
+git -C "$source_dir" apply "$harness_root/ci/arm-fpcr-mapping.patch"
+
+# Only pinned public SIMDe headers enter the C++ CPU fixture.
+simde_commit=a532a12ca9bbdc5e6547eb602e6256b71a5377d4
+simde_dir="$work/simde"
+git init -q "$simde_dir"
+git -C "$simde_dir" remote add origin https://github.com/simd-everywhere/simde-no-tests.git
+git -C "$simde_dir" fetch --depth 1 origin "$simde_commit"
+git -C "$simde_dir" checkout -q --detach FETCH_HEAD
+test "$(git -C "$simde_dir" rev-parse HEAD)" = "$simde_commit"
 
 xcodebuild -version
 # The diagnostic app uses Metal's normal makeLibrary(source:options:) API.
@@ -116,10 +127,10 @@ cmake --build "$work/ios-guest" --parallel 2
 xcrun lipo "$work/ios-guest/libskyrim_guest.a" -verify_arch arm64
 cp "$work/ios-guest/libskyrim_guest.a" "$output_dir/libskyrim_guest.a"
 
-# The Rust C bridge depends only on the pinned checkout's texture crate.
+# One Rust staticlib contains the texture probe and public CPU/runtime libraries.
 # Only these explicit source directories enter the diagnostic app workspace.
 cp -R "$harness_root/ios-probe/bridge" "$work/bridge"
-cargo test --locked --manifest-path "$work/bridge/Cargo.toml"
+cargo test --locked --manifest-path "$work/bridge/Cargo.toml" -- --test-threads=1
 cargo build --locked --release --lib --target aarch64-apple-ios \
   --manifest-path "$work/bridge/Cargo.toml"
 probe_dir="$work/ios-probe"
@@ -127,6 +138,7 @@ mkdir -p "$probe_dir/Libraries" "$probe_dir/bridge/include"
 cp "$harness_root/ios-probe/project.yml" "$probe_dir/project.yml"
 cp -R "$harness_root/ios-probe/app" "$probe_dir/app"
 cp -R "$harness_root/ios-probe/tests" "$probe_dir/tests"
+bash "$harness_root/ci/prepare-cpu-support.sh" "$source_dir" "$simde_dir" "$probe_dir"
 cp "$work/bridge/include/XenosProbeBridge.h" "$probe_dir/bridge/include/"
 cp "$CARGO_TARGET_DIR/aarch64-apple-ios/release/libxenos_probe_bridge.a" "$probe_dir/Libraries/"
 cp "$output_dir/libskyrim_guest.a" "$probe_dir/Libraries/"
@@ -149,11 +161,14 @@ test ! -d "$app/_CodeSignature"
 package_dir="$work/package"
 probe_output="$harness_root/out/ios-probe"
 mkdir -p "$package_dir/Payload" "$probe_output"
+cp "$probe_dir/Libraries/libxenos_probe_bridge.a" "$probe_output/"
+xcrun nm -gU "$probe_output/libxenos_probe_bridge.a" > "$probe_output/runtime-exports.txt"
+shasum -a 256 "$probe_output/libxenos_probe_bridge.a"
 cp -R "$app" "$package_dir/Payload/"
 (
   cd "$package_dir"
-  zip -q -r "$probe_output/SkyrimProbe-0.1.0-unsigned.ipa" Payload
+  zip -q -r "$probe_output/SkyrimProbe-0.2.0-unsigned.ipa" Payload
 )
-shasum -a 256 "$probe_output/SkyrimProbe-0.1.0-unsigned.ipa"
-bash "$harness_root/ci/run-ios-simulator-tests.sh" "$work" "$source_dir" "$fixture_dir"
+shasum -a 256 "$probe_output/SkyrimProbe-0.2.0-unsigned.ipa"
+bash "$harness_root/ci/run-ios-simulator-tests.sh" "$work" "$source_dir" "$fixture_dir" "$simde_dir"
 printf '%s\n' 'Source-only diagnostic IPA and Simulator tests finished. Skyrim execution, a complete iOS host, IPA signing and physical iPhone behavior were not tested.'
