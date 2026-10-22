@@ -9,6 +9,8 @@
 *.h text eol=lf
 *.toml text eol=lf
 Cargo.lock text eol=lf
+# Exact public lock fixture bytes are verified before the overlay build.
+/ci/gpu-framework/testdata/wgpu-native-6aed509.Cargo.lock text eol=lf
 # Preserve the frozen allowlisted public text bytes for the source SHA gate.
 /ci/resident/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 /ci/owned-host/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

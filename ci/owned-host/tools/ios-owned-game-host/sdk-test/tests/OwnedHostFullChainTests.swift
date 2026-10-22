@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Metal
 import QuartzCore
 import UIKit
 import XCTest
@@ -18,6 +19,71 @@ private func onWorker<T>(_ operation: @escaping () -> T) async -> T {
             continuation.resume(returning: operation())
         }
     }
+}
+
+// The public SDK fixture records the actual Objective-C layer setters invoked
+// by WgpuNative. It observes worker startup without changing production classes.
+private final class MetalLayerThreadAudit {
+    private let lock = NSLock()
+    private var setters: UInt32 = 0
+    private var offMain: UInt32 = 0
+    private var configurations: UInt32 = 0
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        setters = 0; offMain = 0; configurations = 0
+    }
+    func record(_ bit: UInt32) {
+        let main = Thread.isMainThread
+        lock.lock(); defer { lock.unlock() }
+        setters |= bit
+        if !main { offMain += 1 }
+        if bit == 64 { configurations += 1 }
+    }
+    func snapshot() -> (setters: UInt32, offMain: UInt32, configurations: UInt32) {
+        lock.lock(); defer { lock.unlock() }
+        return (setters, offMain, configurations)
+    }
+}
+
+private final class ThreadCheckedMetalLayer: CAMetalLayer {
+    static let audit = MetalLayerThreadAudit()
+    override var device: (any MTLDevice)? {
+        get { super.device }
+        set { Self.audit.record(1); super.device = newValue }
+    }
+    override var pixelFormat: MTLPixelFormat {
+        get { super.pixelFormat }
+        set { Self.audit.record(2); super.pixelFormat = newValue }
+    }
+    override var framebufferOnly: Bool {
+        get { super.framebufferOnly }
+        set { Self.audit.record(4); super.framebufferOnly = newValue }
+    }
+    override var isOpaque: Bool {
+        get { super.isOpaque }
+        set { Self.audit.record(8); super.isOpaque = newValue }
+    }
+    override var maximumDrawableCount: Int {
+        get { super.maximumDrawableCount }
+        set { Self.audit.record(16); super.maximumDrawableCount = newValue }
+    }
+    override var drawableSize: CGSize {
+        get { super.drawableSize }
+        set { Self.audit.record(32); super.drawableSize = newValue }
+    }
+    override var allowsNextDrawableTimeout: Bool {
+        get { super.allowsNextDrawableTimeout }
+        set { Self.audit.record(64); super.allowsNextDrawableTimeout = newValue }
+    }
+    override var wantsExtendedDynamicRangeContent: Bool {
+        get { super.wantsExtendedDynamicRangeContent }
+        set { Self.audit.record(128); super.wantsExtendedDynamicRangeContent = newValue }
+    }
+}
+
+@MainActor
+private final class ThreadCheckedMetalView: UIView {
+    override class var layerClass: AnyClass { ThreadCheckedMetalLayer.self }
 }
 
 final class OwnedHostFullChainTests: XCTestCase {
@@ -87,24 +153,36 @@ final class OwnedHostFullChainTests: XCTestCase {
         guard premature != 0, status.state == 2 else { return }
 
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        var captured: CAMetalLayer?
-        let viewport = OwnedMetalView { captured = $0 }
-        viewport.frame = CGRect(x: 0, y: 0, width: 320, height: 180)
+        let viewport = ThreadCheckedMetalView(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
+        viewport.isOpaque = true
+        viewport.backgroundColor = .black
+        viewport.contentScaleFactor = 1
         let controller = UIViewController()
         controller.view = viewport
         let window = UIWindow(windowScene: scene)
         window.frame = viewport.frame
         window.rootViewController = controller
         window.makeKeyAndVisible()
-        let layer = try XCTUnwrap(captured)
+        let layer = try XCTUnwrap(viewport.layer as? ThreadCheckedMetalLayer)
         SurfaceOwner.window = window
         SurfaceOwner.layer = layer
         let address = UInt(bitPattern: Unmanaged.passUnretained(layer).toOpaque())
+        // Refusal must happen before the one-shot state changes. A subsequent
+        // worker attachment must still succeed with the main queue available.
+        let mainRefused = OHAttachMetalLayerV1(token, UnsafeMutableRawPointer(bitPattern: address), 1280, 720)
+        XCTAssertEqual(mainRefused, -9)
+        guard mainRefused == -9 else { return }
+        ThreadCheckedMetalLayer.audit.reset()
         let attached = await onWorker {
             OHAttachMetalLayerV1(token, UnsafeMutableRawPointer(bitPattern: address), 1280, 720)
         }
         XCTAssertEqual(attached, 0)
         guard attached == 0 else { return }
+        let layerAudit = ThreadCheckedMetalLayer.audit.snapshot()
+        let requiredSettersObserved = layerAudit.setters & 127 == 127 && layerAudit.configurations >= 1
+        XCTAssertTrue(requiredSettersObserved)
+        XCTAssertEqual(layerAudit.offMain, 0)
+        guard requiredSettersObserved, layerAudit.offMain == 0 else { return }
         var renderer = OHRendererStatusV1()
         XCTAssertEqual(OHReadRendererStatusV1(token, &renderer, MemoryLayout<OHRendererStatusV1>.size), 0)
         XCTAssertEqual(renderer.attachment, 2)
@@ -159,6 +237,9 @@ final class OwnedHostFullChainTests: XCTestCase {
             "game_executed": false, "physical_iphone_verified": false, "ready_to_play": false,
             "signature_authority_authenticated": false, "private_guest_framework_verified": false,
             "game_frame_rendered": false, "mapped_inode_attested": false,
+            "main_thread_attach_rejected": mainRefused == -9,
+            "metal_layer_required_setters_on_main": requiredSettersObserved,
+            "metal_layer_off_main_calls": layerAudit.offMain,
         ]
         let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
         print("OWNED_HOST_PUBLIC_RESULT " + String(decoding: data, as: UTF8.self))

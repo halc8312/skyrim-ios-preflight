@@ -34,6 +34,13 @@ pub fn is_ready(token: u64) -> bool {
 }
 
 fn attach(token: u64, layer: *mut c_void, width: u32, height: u32) -> Result<(), i32> {
+    // Startup waits for the renderer, whose iOS layer configuration dispatches
+    // synchronously to main. Refuse main-thread entry before claiming attachment
+    // state; callers must use a worker while the UIKit main queue stays available.
+    #[cfg(target_os = "ios")]
+    if unsafe { libc::pthread_main_np() } != 0 {
+        return Err(-9);
+    }
     if layer.is_null() || !size_allowed(width, height) {
         return Err(-1);
     }
@@ -99,6 +106,8 @@ fn attach(token: u64, layer: *mut c_void, width: u32, height: u32) -> Result<(),
 /// `layer` is a real main-thread-created CAMetalLayer retained by UIKit's
 /// process-global owner until process exit, never rebound or released. The
 /// caller does not mutate its device/drawableSize concurrently with rendering.
+/// Call on a worker with the main queue available; main-thread calls return -9
+/// before changing the one-shot attachment state.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn OHAttachMetalLayerV1(
     token: u64,

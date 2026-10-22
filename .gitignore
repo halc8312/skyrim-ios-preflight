@@ -22,6 +22,11 @@
 !/ci/signing-binding/README.md
 !/ci/gpu-framework/
 !/ci/gpu-framework/build_frameworks.sh
+!/ci/gpu-framework/prepare_ios_mainqueue.py
+!/ci/gpu-framework/wgpu-hal-ios-mainqueue.patch
+!/ci/gpu-framework/test_prepare_ios_mainqueue.py
+!/ci/gpu-framework/testdata/
+!/ci/gpu-framework/testdata/wgpu-native-6aed509.Cargo.lock
 !/ci/gpu-framework/validate_framework.py
 !/ci/gpu-framework/test_validate_framework.py
 !/ci/gpu-framework/restrict_link_exports.py

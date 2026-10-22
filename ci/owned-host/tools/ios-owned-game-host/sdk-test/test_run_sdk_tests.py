@@ -25,7 +25,9 @@ class PublicDriverTests(unittest.TestCase):
                       separate_fresh_process=True, public_fixture_only=True,
                       game_executed=False, physical_iphone_verified=False, ready_to_play=False,
                       signature_authority_authenticated=False, private_guest_framework_verified=False,
-                      game_frame_rendered=False, mapped_inode_attested=False, **hashes)
+                      game_frame_rendered=False, mapped_inode_attested=False,
+                      main_thread_attach_rejected=True, metal_layer_required_setters_on_main=True,
+                      metal_layer_off_main_calls=0, **hashes)
         return hashes, report
 
     def trace_report(self):
@@ -85,10 +87,21 @@ class PublicDriverTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             driver.validate_console(bad)
 
+    def test_uikit_layer_thread_violation_rejects_otherwise_passing_run(self):
+        hashes, report = self.report()
+        for apostrophe in ("'", "’"):
+            bad = self.console(report) + f"Modifying properties of a view{apostrophe}s layer off the main thread is not allowed\n"
+            with self.assertRaises(ValueError):
+                driver.validate_result(bad, hashes)
+
     def test_changed_outcomes_hashes_and_json_duplicates_refuse(self):
         hashes, report = self.report()
         for key, value in [("state", 4), ("gpu_errors", 1), ("function_imports", True),
                            ("decoded_frames", 1), ("game_executed", True),
+                           ("main_thread_attach_rejected", False),
+                           ("metal_layer_required_setters_on_main", False),
+                           ("metal_layer_off_main_calls", 1),
+                           ("metal_layer_off_main_calls", False),
                            ("unsigned_fixture_sha256", "d" * 64), ("unexpected", False)]:
             changed = copy.deepcopy(report)
             changed[key] = value

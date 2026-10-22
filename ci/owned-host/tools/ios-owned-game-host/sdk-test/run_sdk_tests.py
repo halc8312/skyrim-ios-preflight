@@ -103,6 +103,8 @@ def strict_json(data):
 
 
 def validate_console(text: str) -> None:
+    if re.search(r"Modifying properties of a view[’']s layer off the main thread", text):
+        raise ValueError("UIKit reported layer mutation off the main thread")
     events = re.findall(r"(?m)^Test Case '([^'\r\n]+)' (started|passed|failed|skipped)\b", text)
     fullchain = [(CASE, "started"), (CASE, "passed")]
     trace = [(TRACE_CASE, "started"), (TRACE_CASE, "passed")]
@@ -139,7 +141,9 @@ def validate_result(text: str, hashes: dict[str, str]) -> dict:
                     separate_fresh_process=True, public_fixture_only=True,
                     game_executed=False, physical_iphone_verified=False, ready_to_play=False,
                     signature_authority_authenticated=False, private_guest_framework_verified=False,
-                    game_frame_rendered=False, mapped_inode_attested=False, **hashes)
+                    game_frame_rendered=False, mapped_inode_attested=False,
+                    main_thread_attach_rejected=True, metal_layer_required_setters_on_main=True,
+                    metal_layer_off_main_calls=0, **hashes)
     if set(result) != set(expected) or any(type(result[k]) is not type(v) or result[k] != v
                                            for k, v in expected.items()):
         raise ValueError("public fullchain outcome differs from fixed contract")

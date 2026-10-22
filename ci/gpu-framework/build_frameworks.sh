@@ -65,6 +65,14 @@ git -C "$source_dir" rev-parse HEAD > "$output/source-commit.txt"
 git -C "$source_dir/ffi/webgpu-headers" rev-parse HEAD > "$output/headers-commit.txt"
 python3 -m unittest discover -s "$kit" -p 'test_*.py' -v
 
+# Preserve the pristine upstream checkout and Cargo registry. The helper verifies
+# the exact published HAL crate, applies two pinned file changes in a fresh local
+# overlay, and audits the sole lockfile dependency change before --locked builds.
+python3 -B "$kit/prepare_ios_mainqueue.py" --source "$source_dir" \
+    --output "$work/ios-mainqueue" > "$output/ios-mainqueue-prepare.log"
+cp "$work/ios-mainqueue/ios-mainqueue-patch.json" "$output/"
+build_source="$work/ios-mainqueue/source"
+
 for variant in device simulator; do
     if [[ "$variant" == device ]]; then
         target=aarch64-apple-ios
@@ -98,7 +106,7 @@ for variant in device simulator; do
     else
         export CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER="$kit/restrict_link_exports.py"
     fi
-    cargo rustc --manifest-path "$source_dir/Cargo.toml" --locked --release --lib \
+    cargo rustc --manifest-path "$build_source/Cargo.toml" --locked --release --lib \
         --target "$target" --crate-type cdylib --no-default-features --features metal,wgsl \
         -- -C link-arg=-Wl,-headerpad_max_install_names 2>&1 | tee "$output/$variant-wgpu-build.log"
     framework="$output/$variant/WgpuNative.framework"
@@ -107,9 +115,10 @@ for variant in device simulator; do
     xcrun install_name_tool -id '@rpath/WgpuNative.framework/WgpuNative' "$framework/WgpuNative"
     cp "$source_dir/ffi/wgpu.h" "$source_dir/ffi/webgpu-headers/webgpu.h" "$framework/Headers/"
     printf 'framework module WgpuNative {\n  umbrella header "wgpu.h"\n  export *\n}\n' > "$framework/Modules/module.modulemap"
-    python3 - "$source_dir" "$framework" "$minimum" "$bundle_platform" <<'PY'
+    python3 - "$source_dir" "$framework" "$minimum" "$bundle_platform" "$output/ios-mainqueue-patch.json" <<'PY'
 from pathlib import Path
 import plistlib
+import json
 import shutil
 import sys
 source, framework = map(Path, sys.argv[1:3])
@@ -119,6 +128,8 @@ info = {
     "CFBundleVersion": "29.0.1", "CFBundleShortVersionString": "29.0.1",
     "MinimumOSVersion": sys.argv[3], "CFBundleSupportedPlatforms": [sys.argv[4]],
     "WgpuNativeSourceTag": "v29.0.1.1",
+    "WgpuHALSourceVersion": "29.0.3",
+    "WgpuHALLayerThreadPatchSHA256": json.loads(Path(sys.argv[5]).read_text())["patch_sha256"],
 }
 with (framework / "Info.plist").open("xb") as output:
     plistlib.dump(info, output)
