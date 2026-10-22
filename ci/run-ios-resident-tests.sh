@@ -11,6 +11,10 @@ kit="$work/resident-public-kit"
 output="$harness/out/resident-sdk"
 test ! -e "$output"
 mkdir "$output"
+xcodebuild -version > "$output/apple-tools.txt"
+xcrun --sdk iphoneos --show-sdk-version >> "$output/apple-tools.txt"
+xcrun --sdk iphonesimulator --show-sdk-version >> "$output/apple-tools.txt"
+rustc --version >> "$output/apple-tools.txt"
 python3 "$harness/ci/prepare-resident-kit.py" "$harness/ci/resident" "$kit" \
   | tee "$output/public-stage.log"
 cp "$harness/ci/resident/public-source-manifest.json" "$output/"
@@ -31,6 +35,8 @@ for variant in device simulator; do
     "$work/resident-$variant" "$variant" 2>&1 | tee "$output/build-$variant.log"
   xcrun vtool -show-build "$work/resident-$variant/ResidentAppleFixture.framework/ResidentAppleFixture" \
     > "$output/platform-$variant.txt"
+  cp "$work/resident-$variant/ResidentAppleFixture.framework/ResidentAppleFixture" \
+    "$output/ResidentAppleFixture-$variant-unsigned.bin"
   for record in fixture.ll actual-exports.txt undefined.txt symbols.txt disassembly.txt; do
     cp "$work/resident-$variant/$record" "$output/$variant-$record"
   done
@@ -49,6 +55,7 @@ cp -R "$work/resident-simulator/ResidentAppleFixture.framework" "$stage/Framewor
 framework="$stage/Frameworks/ResidentAppleFixture.framework"
 /usr/bin/codesign --force --sign - --timestamp=none "$framework" > "$output/codesign.log" 2>&1
 /usr/bin/codesign --verify --strict --verbose=2 "$framework" > "$output/codesign-verify.log" 2>&1
+cp "$framework/ResidentAppleFixture" "$output/ResidentAppleFixture-simulator-signed.bin"
 # This trusted input is independently captured after signing and before app
 # packaging. Runtime must never derive its expected hash from the candidate.
 python3 - "$framework/ResidentAppleFixture" "$stage/Resources/ResidentAppleFixture.signed-sha256.txt" <<'PY'

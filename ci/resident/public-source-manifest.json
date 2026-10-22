@@ -382,12 +382,12 @@
       "sha256": "2037996cd21627541b159a218b95fcd3a21b5a24351e6ad3ced36582f109d090"
     },
     "tools/ios-resident-guest-probe/apple-backend/sdk-test/run_sdk_tests.py": {
-      "bytes": 7750,
-      "sha256": "3caaa4bd55944220371391293874a07497c87a5940d76b615fd2c801556df1cd"
+      "bytes": 8182,
+      "sha256": "2bcebf32e707b675ebff4d138a17b65b966ec105e6072eda7be321d351be7c52"
     },
     "tools/ios-resident-guest-probe/apple-backend/sdk-test/test_run_sdk_tests.py": {
-      "bytes": 4104,
-      "sha256": "5379c47f00e7d8b16e3e1b536481d73c9ef6ac0b7166b5fd464bf2e3c8263e09"
+      "bytes": 6009,
+      "sha256": "099375468772240cbf9f6ad2a0e79e80dad63dac936f5922f7a65170fee80ea4"
     },
     "tools/ios-resident-guest-probe/apple-backend/sdk-test/tests/ResidentAppleProbeTests.swift": {
       "bytes": 5396,

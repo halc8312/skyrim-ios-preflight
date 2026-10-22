@@ -9,7 +9,7 @@ import tomllib
 
 MANIFEST = "tools/ios-resident-guest-probe/apple-backend/source-allowlist.txt"
 ALLOWLIST_SHA256 = "9a7562959affc7e9f0f5da2923f2dd12b05ace9725ed83a2f3dab8db5aefdeba"
-SOURCE_MANIFEST_SHA256 = "6b9e615a792e8c9a366fda69bee5a686c5c7a3fe7e82414ebe9ff62040807e44"
+SOURCE_MANIFEST_SHA256 = "f7d73061c116f8ab211428bd1ca4a8827e4e6e104f6c6f34357d42e884680b6f"
 MEMBERS = ["crates/" + name for name in
            ("runtime-core", "kernel-hle", "vfs", "xex", "d3d-hle", "xma-decoder")]
 

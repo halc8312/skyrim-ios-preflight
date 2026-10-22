@@ -9,6 +9,25 @@ import run_sdk_tests as runner
 
 
 class PublicDriverTests(unittest.TestCase):
+    def test_xcode_default_single_run_has_no_iteration_or_retry_mode(self):
+        common = ["xcodebuild", "-scheme", "ResidentAppleSDKProbe"]
+        signing = ["CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO"]
+        command = runner.make_test_command(common, signing, Path("public result.xcresult"))
+        self.assertEqual(command[:len(common)], common)
+        self.assertEqual(command[-3:], [*signing, "test-without-building"])
+        self.assertEqual(command.count("test-without-building"), 1)
+        self.assertEqual([item for item in command if item.startswith("-only-testing:")],
+                         ["-only-testing:ResidentAppleSDKProbeTests/ResidentAppleProbeTests/" + runner.TEST])
+        self.assertEqual(command[command.index("-parallel-testing-enabled") + 1], "NO")
+        self.assertEqual(command[command.index("-resultBundlePath") + 1], "public result.xcresult")
+        self.assertEqual(command[command.index("-test-timeouts-enabled") + 1], "YES")
+        for option in ["-default-test-execution-time-allowance", "-maximum-test-execution-time-allowance"]:
+            self.assertEqual(command[command.index(option) + 1], "20")
+        self.assertFalse(any("iteration" in item or "retry" in item or "relaunch" in item
+                             for item in command))
+        self.assertEqual(common, ["xcodebuild", "-scheme", "ResidentAppleSDKProbe"])
+        self.assertEqual(signing, ["CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO"])
+
     def test_normal_command_and_exclusive_logs(self):
         with tempfile.TemporaryDirectory(prefix="public-resident-driver-") as temporary:
             root = Path(temporary)
@@ -41,9 +60,15 @@ class PublicDriverTests(unittest.TestCase):
                       independent_post_sign_sha256="a" * 64)
         case = ("Test Case '-[ResidentAppleSDKProbeTests.ResidentAppleProbeTests "
                 + runner.TEST + "]' passed (0.1 seconds).\n")
-        valid = case + runner.PREFIX + json.dumps(report) + "\n** TEST SUCCEEDED **\n"
+        started = ("Test Case '-[ResidentAppleSDKProbeTests.ResidentAppleProbeTests "
+                   + runner.TEST + "]' started.\n")
+        failed = ("Test Case '-[ResidentAppleSDKProbeTests.ResidentAppleProbeTests "
+                  + runner.TEST + "]' failed (0.1 seconds).\n")
+        valid = started + case + runner.PREFIX + json.dumps(report) + "\n** TEST SUCCEEDED **\n"
         self.assertEqual(runner.validate_result(valid), report)
-        for bad in ["** TEST SUCCEEDED **", case + valid, valid + runner.PREFIX + json.dumps(report)]:
+        for bad in ["** TEST SUCCEEDED **", case + valid, valid + runner.PREFIX + json.dumps(report),
+                    valid.replace(started, ""), started + failed + valid, failed + valid,
+                    started + valid]:
             with self.assertRaises(ValueError):
                 runner.validate_result(bad)
         for key, value in [("cleanup_count", 0), ("game_executed", True), ("frequency", True)]:

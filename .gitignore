@@ -214,3 +214,4 @@
 !/ci/resident/tools/windows-ios-guest-probe/owned-guest-abi/owned_abi.cpp
 !/ci/run-bounded-command.py
 !/ci/run-ios-resident-tests.sh
+!/ci/run-ios-resident-preflight.sh

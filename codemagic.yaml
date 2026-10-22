@@ -28,6 +28,26 @@ workflows:
       - out/resident-sdk/*.txt
       - out/resident-sdk/*.ll
       - out/resident-sdk/*.json
+      - out/resident-sdk/*.bin
+      - out/resident-sdk/xctest/*.log
+      - out/resident-sdk/xctest/*.json
+      - out/resident-sdk/xctest/*.xcresult
+  ios-resident-kernel-preflight:
+    name: iOS public resident Kernel preflight
+    instance_type: mac_mini_m2
+    max_build_duration: 20
+    environment:
+      xcode: latest
+    # Manual only. Reuse earlier full-run evidence, never claim it ran here.
+    scripts:
+      - name: Build and test the isolated public resident Kernel app
+        script: bash ci/run-ios-resident-preflight.sh
+    artifacts:
+      - out/resident-sdk/*.log
+      - out/resident-sdk/*.txt
+      - out/resident-sdk/*.ll
+      - out/resident-sdk/*.json
+      - out/resident-sdk/*.bin
       - out/resident-sdk/xctest/*.log
       - out/resident-sdk/xctest/*.json
       - out/resident-sdk/xctest/*.xcresult

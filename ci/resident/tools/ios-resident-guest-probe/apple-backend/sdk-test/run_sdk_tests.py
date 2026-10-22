@@ -41,9 +41,11 @@ def run_bounded(command, cwd: Path, prefix: Path, timeout: float) -> int:
 
 
 def validate_result(text: str) -> dict:
-    cases = re.findall(r"Test Case '-\[ResidentAppleSDKProbeTests\.ResidentAppleProbeTests "
-                       + TEST + r"\]' passed", text)
-    if len(cases) != 1 or "** TEST SUCCEEDED **" not in text:
+    case = r"Test Case '-\[ResidentAppleSDKProbeTests\.ResidentAppleProbeTests " + TEST + r"\]' "
+    cases = re.findall(case + "passed", text)
+    starts = re.findall(case + "started", text)
+    failures = re.findall(case + "failed", text)
+    if len(cases) != 1 or len(starts) != 1 or failures or "** TEST SUCCEEDED **" not in text:
         raise ValueError("exactly one expected XCTest pass was not proven")
     reports = re.findall(re.escape(PREFIX) + r"(\{[^\r\n]*\})", text)
     if len(reports) != 1:
@@ -84,6 +86,17 @@ def verify_package(app: Path, trusted: bytes, dependencies: str) -> None:
         raise ValueError("fixture was linked for early loading rather than embedded only")
 
 
+def make_test_command(common: list[str], signing: list[str], result: Path) -> list[str]:
+    # Xcode's normal test action runs once. Its explicit iteration option is
+    # reserved for counts above one; no retry/iteration mode is enabled here.
+    return common + ["-resultBundlePath", str(result),
+                     "-parallel-testing-enabled", "NO",
+                     "-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", "20",
+                     "-maximum-test-execution-time-allowance", "20", "-only-testing:" +
+                     "ResidentAppleSDKProbeTests/ResidentAppleProbeTests/" + TEST,
+                     *signing, "test-without-building"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", required=True, type=Path)
@@ -120,12 +133,7 @@ def main() -> int:
     inspect = subprocess.run(["xcrun", "otool", "-L", str(executable)], capture_output=True,
                              check=True, text=True, timeout=max(0.01, min(15, deadline - time.monotonic())))
     verify_package(app, trusted, inspect.stdout)
-    command = common + ["-resultBundlePath", str(result),
-               "-parallel-testing-enabled", "NO", "-test-iterations", "1",
-               "-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", "20",
-               "-maximum-test-execution-time-allowance", "20", "-only-testing:" +
-               "ResidentAppleSDKProbeTests/ResidentAppleProbeTests/" + TEST,
-               *signing, "test-without-building"]
+    command = make_test_command(common, signing, result)
     status = run_bounded(command, stage, output / "xcodebuild", max(0.01, deadline - time.monotonic()))
     if status != 0 or not result.is_dir():
         raise RuntimeError("isolated XCTest failed or result bundle missing")
