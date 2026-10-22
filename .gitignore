@@ -225,6 +225,7 @@
 !/ci/owned-host/
 !/ci/owned-host/public-source-manifest.json
 !/ci/owned-host/skyrim-recomp-web/
+!/ci/owned-host/skyrim-recomp-web/Cargo.lock
 !/ci/owned-host/skyrim-recomp-web/Cargo.toml
 !/ci/owned-host/skyrim-recomp-web/cpp/
 !/ci/owned-host/skyrim-recomp-web/cpp/ppc_context.h
@@ -305,6 +306,7 @@
 !/ci/owned-host/skyrim-recomp-web/crates/kernel-hle/src/xboxkrnl/xma.rs
 !/ci/owned-host/skyrim-recomp-web/crates/kernel-hle/src/xconfig.rs
 !/ci/owned-host/skyrim-recomp-web/crates/kernel-hle/src/xma.rs
+!/ci/owned-host/skyrim-recomp-web/crates/kernel-hle/src/xma_init_tests.rs
 !/ci/owned-host/skyrim-recomp-web/crates/kernel-hle/src/zlib.rs
 !/ci/owned-host/skyrim-recomp-web/crates/runtime-core/
 !/ci/owned-host/skyrim-recomp-web/crates/runtime-core/Cargo.toml

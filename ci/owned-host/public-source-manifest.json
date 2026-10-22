@@ -1,5 +1,5 @@
 {
-  "file_count": 231,
+  "file_count": 233,
   "game_data_included": false,
   "game_executed": false,
   "physical_iphone_verified": false,
@@ -9,6 +9,10 @@
   "sdk_compile_verified_at_freeze": false,
   "sdk_files_included": false,
   "source_files": {
+    "skyrim-recomp-web/Cargo.lock": {
+      "bytes": 11047,
+      "sha256": "b9abcc06c707cbf691dffd7a43aa65fac90b1de792ede91a1ba93c7f9a25b4c3"
+    },
     "skyrim-recomp-web/Cargo.toml": {
       "bytes": 1990,
       "sha256": "cabf8f821cc06655e60ff06b56fca85f362fe28f15ab7771102a07a769355614"
@@ -154,8 +158,8 @@
       "sha256": "772f0da3b7d29e99f72861054c05971e6b4e80785a02da2e78149d55d874db0d"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/lib.rs": {
-      "bytes": 11066,
-      "sha256": "3ce689a2259a0cf37f27f64c493600856c0cceac772fd34dc026fde41fa84fed"
+      "bytes": 11144,
+      "sha256": "6af510339a0002aefd72bf031666af865301595567fdac2b8a6b73eaaae9d8f2"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/logging.rs": {
       "bytes": 3348,
@@ -286,8 +290,12 @@
       "sha256": "bf0e6f26b018f575c875ac43aa9cdc1a2eafe3d761bf9c4ee6d4d33ff49499f9"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/xma.rs": {
-      "bytes": 8291,
-      "sha256": "6671ca40e21900fca0fd0c3c06d0672ad755105bb71178718c9a93de77b5d337"
+      "bytes": 8420,
+      "sha256": "4240ba0320ff0399279f7189f9b512b4291d365d84da146c98c78e291dfee610"
+    },
+    "skyrim-recomp-web/crates/kernel-hle/src/xma_init_tests.rs": {
+      "bytes": 7234,
+      "sha256": "d56e3b2481cf52d9834d4dee990fc995f15a7aa331e8cab6cc0508b6649c3eca"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/zlib.rs": {
       "bytes": 17914,
@@ -702,8 +710,8 @@
       "sha256": "289d6915142ab5a0204ca64d3587b1cc50dc2f3afb2f9e07813096364b37054c"
     },
     "source-allowlist.txt": {
-      "bytes": 11828,
-      "sha256": "efebb7c02bfd51b8226a49e909f5807a895a499365d728223bf3d15e164fe7b1"
+      "bytes": 11915,
+      "sha256": "b6046229fc0e07f06b0f7a5efe40b428c04cc87082fa5cfb6343a7f661fab785"
     },
     "tools/ios-owned-game-host/Cargo.lock": {
       "bytes": 9317,
@@ -751,7 +759,7 @@
     },
     "tools/ios-owned-game-host/project.yml": {
       "bytes": 3541,
-      "sha256": "c616fadaffa77747017c095234bdd18332f0ca8187f96a73d517aa10e6d144b3"
+      "sha256": "f8f825c9f9f2f5f397e5f69d036c9a625993d3af826a6287dfee97b22f46479d"
     },
     "tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.cpp": {
       "bytes": 10292,
@@ -771,7 +779,7 @@
     },
     "tools/ios-owned-game-host/sdk-test/tests/NativeTraceSDKProbeTests.swift": {
       "bytes": 2885,
-      "sha256": "55fbe0352ffc2239b3685a5854243733c8920be2cef2b1ef903ed17ff30c06b2"
+      "sha256": "dada3bf1859697be4935825165fa0295a579aeb42a0b71c82586b4b8316cf760"
     },
     "tools/ios-owned-game-host/sdk-test/tests/OwnedHostFullChainTests.swift": {
       "bytes": 12634,

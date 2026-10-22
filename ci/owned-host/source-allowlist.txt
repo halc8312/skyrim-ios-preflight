@@ -1,3 +1,4 @@
+skyrim-recomp-web/Cargo.lock
 skyrim-recomp-web/Cargo.toml
 skyrim-recomp-web/cpp/ppc_context.h
 skyrim-recomp-web/crates/d3d-hle/Cargo.toml
@@ -68,6 +69,7 @@ skyrim-recomp-web/crates/kernel-hle/src/xboxkrnl/video.rs
 skyrim-recomp-web/crates/kernel-hle/src/xboxkrnl/xma.rs
 skyrim-recomp-web/crates/kernel-hle/src/xconfig.rs
 skyrim-recomp-web/crates/kernel-hle/src/xma.rs
+skyrim-recomp-web/crates/kernel-hle/src/xma_init_tests.rs
 skyrim-recomp-web/crates/kernel-hle/src/zlib.rs
 skyrim-recomp-web/crates/runtime-core/Cargo.toml
 skyrim-recomp-web/crates/runtime-core/src/address_space.rs

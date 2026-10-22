@@ -22,6 +22,11 @@ generic="$kit/tools/windows-ios-guest-probe/owned-guest-abi"
 export CARGO_TARGET_DIR="$work/owned-host-cargo-target"
 cargo +nightly-2026-10-11 test --locked --no-default-features --features fixture-tools --lib \
   --manifest-path "$host/Cargo.toml" -- --test-threads=1 2>&1 | tee "$output/public-host-tests.log"
+# The narrowed public workspace has its own frozen lock for dependency tests.
+cargo +nightly-2026-10-11 test --locked \
+  --manifest-path "$kit/skyrim-recomp-web/Cargo.toml" -p kernel-hle --lib \
+  xma::init_tests::eager_context_base_and_exported_slot_lifetime -- --exact --test-threads=1 \
+  2>&1 | tee "$output/public-xma-init-tests.log"
 cargo +nightly-2026-10-11 test --locked --lib \
   --manifest-path "$kit/tools/ios-signed-image-policy/Cargo.toml" -- --test-threads=1 \
   2>&1 | tee "$output/public-signed-policy-tests.log"

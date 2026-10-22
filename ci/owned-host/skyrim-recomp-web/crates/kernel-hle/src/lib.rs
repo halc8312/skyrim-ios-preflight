@@ -131,6 +131,7 @@ impl Kernel {
 
         let tls_count = rt.threads.tls_template().slot_count;
         let tls_count = if tls_count != 0 { tls_count } else { runtime_core::thread::DEFAULT_TLS_SLOTS };
+        let xma = xma::XmaDecoder::new(&rt.space).map_err(|e| format!("initializing XMA decoder: {e}"))?;
 
         let kernel: &'static Kernel = Box::leak(Box::new(Kernel {
             vfs,
@@ -138,7 +139,7 @@ impl Kernel {
             xconfig: XConfig::new(),
             gpu: gpu::Gpu::new(),
             audio: audio::AudioSystem::default(),
-            xma: xma::XmaDecoder::default(),
+            xma,
             input: input::InputSystem::new(),
             users: xam::user::Users::default(),
             content: xam::content::ContentManager::default(),

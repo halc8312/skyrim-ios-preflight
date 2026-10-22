@@ -9,13 +9,15 @@
 
 use std::sync::Mutex;
 
-use runtime_core::address_space::PAGE_4K;
+use runtime_core::AddressSpace;
+use runtime_core::address_space::{AllocError, AllocResult, PAGE_4K};
 use runtime_core::heap::protect;
 
 use crate::Kernel;
 
 pub const CONTEXT_COUNT: u32 = 320;
 pub const CONTEXT_SIZE: u32 = 64;
+const CONTEXT_ARRAY_ADDRESS: u32 = 0x7FEA_1800;
 
 /// A bit field of XMA_CONTEXT_DATA: (dword, first bit, width), bits counted
 /// from the least significant bit of the big-endian dword.
@@ -83,14 +85,27 @@ struct Slot {
 }
 
 pub struct XmaDecoder {
-    /// Guest address of the 320-entry context array (0 until first use).
-    array: Mutex<u32>,
+    /// Guest address of the context array, fixed before guest execution.
+    array: u32,
     slots: Mutex<Vec<Slot>>,
 }
 
-impl Default for XmaDecoder {
-    fn default() -> Self {
-        XmaDecoder { array: Mutex::new(0), slots: Mutex::new((0..CONTEXT_COUNT).map(|_| Slot::default()).collect()) }
+impl XmaDecoder {
+    pub(crate) fn new(space: &AddressSpace) -> AllocResult<Self> {
+        let array = space.alloc_physical(
+            CONTEXT_COUNT * CONTEXT_SIZE,
+            PAGE_4K,
+            0,
+            u32::MAX,
+            256,
+            protect::READWRITE,
+        )?;
+        let physical = space.physical_address(array).ok_or(AllocError::WrongRegion(array))?;
+        // The SDK caches this register before its first XMACreateContext and uses
+        // (context physical address - array physical base) >> 6 as the context ID.
+        // XMA registers are little-endian; guest context data remains big-endian.
+        space.mem.write_bytes(CONTEXT_ARRAY_ADDRESS, &physical.to_le_bytes());
+        Ok(XmaDecoder { array, slots: Mutex::new((0..CONTEXT_COUNT).map(|_| Slot::default()).collect()) })
     }
 }
 
@@ -126,31 +141,9 @@ impl xma_decoder::XmaMemory for PhysicalMemory<'_> {
 }
 
 impl Kernel {
-    fn xma_array(&self) -> Option<u32> {
-        let mut array = self.xma.array.lock().unwrap();
-        if *array == 0 {
-            match self.rt.space.alloc_physical(
-                CONTEXT_COUNT * CONTEXT_SIZE,
-                PAGE_4K,
-                0,
-                u32::MAX,
-                256,
-                protect::READWRITE,
-            ) {
-                Ok(a) => *array = a,
-                Err(e) => {
-                    log::error!("XMA: allocating the context array: {e}");
-                    return None;
-                }
-            }
-        }
-        Some(*array)
-    }
-
     fn xma_index(&self, ptr: u32) -> Option<usize> {
-        let base = *self.xma.array.lock().unwrap();
-        (base != 0
-            && ptr >= base
+        let base = self.xma.array;
+        (ptr >= base
             && ptr < base + CONTEXT_COUNT * CONTEXT_SIZE
             && (ptr - base).is_multiple_of(CONTEXT_SIZE))
         .then(|| ((ptr - base) / CONTEXT_SIZE) as usize)
@@ -158,7 +151,7 @@ impl Kernel {
 
     /// XMACreateContext: a zeroed context, or 0 when all are in use.
     pub fn xma_allocate(&self) -> u32 {
-        let Some(base) = self.xma_array() else { return 0 };
+        let base = self.xma.array;
         let mut slots = self.xma.slots.lock().unwrap();
         match slots.iter().position(|s| !s.allocated) {
             Some(i) => {
@@ -203,6 +196,10 @@ impl Kernel {
         d.store(self, ptr);
     }
 }
+
+#[cfg(test)]
+#[path = "xma_init_tests.rs"]
+mod init_tests;
 
 #[cfg(test)]
 mod tests {
