@@ -1,0 +1,4 @@
+#ifndef RESIDENT_APPLE_TEST_BRIDGING_HEADER_H
+#define RESIDENT_APPLE_TEST_BRIDGING_HEADER_H
+#include "ResidentAppleProbe.h"
+#endif

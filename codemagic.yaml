@@ -24,6 +24,13 @@ workflows:
       - out/signing-binding/*.log
       - out/signing-binding/*.txt
       - out/signing-binding/*.bin
+      - out/resident-sdk/*.log
+      - out/resident-sdk/*.txt
+      - out/resident-sdk/*.ll
+      - out/resident-sdk/*.json
+      - out/resident-sdk/xctest/*.log
+      - out/resident-sdk/xctest/*.json
+      - out/resident-sdk/xctest/*.xcresult
   ios-gpu-framework-preflight:
     name: iOS public GPU framework preflight
     instance_type: mac_mini_m2

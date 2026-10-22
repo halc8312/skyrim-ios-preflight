@@ -6,11 +6,15 @@ original**. It reconstructs original bytes in memory, hashes the entire result,
 and never writes a reconstructed executable. It is not a loader, signature
 authenticator, certificate check, entitlement policy or attestation system.
 
-Only hand-authored public synthetic fixtures have been tested. No private
-framework, game content, Apple signer, AltServer output or iOS execution was
-used. **Do not integrate this into the real loader before a separate public
-SDK-built synthetic `codesign` experiment validates the supported mutation
-shape.** A later AltServer experiment is still necessary for that tool's output.
+The hand-authored public fixture suite has 23 tests. A separate source-only
+Xcode 26.6 / iPhoneOS SDK 26.5 experiment signed the public `SyntheticGuest`
+framework with `codesign -s -` and passed `codesign --verify --strict`. That
+first CI run (`f58e52b`) refused its larger reserved signature allocation.
+The narrow reservation rule below now passes local read-only replay of that
+downloaded SDK output; a fresh CI run with this revision remains pending.
+No private framework, game content, AltServer output or physical iPhone was
+used. **Do not integrate this prototype into the real loader yet.** A later
+AltServer experiment remains necessary for that tool's output.
 
 The manifest must be created before signing and its original full SHA-256 must
 be supplied independently from a trusted local binding. Taking an expected hash
@@ -47,6 +51,12 @@ section, original `__LINKEDIT` offset/sizes and the fixed 16 KiB VM policy.
   nonoverlapping child ranges, and only zero gaps/tail is recognized. Child
   bodies, CodeDirectory hashes and CMS are **not authenticated or fully parsed**.
   An accepted byte binding can therefore accompany an invalid OS signature.
+  Allocation is exactly the SuperBlob length rounded to 16 bytes, or that size
+  plus exactly 18,000 bytes when an empty eight-byte CMS wrapper is present.
+  The latter narrowly supports Apple's default ad-hoc CMS estimate; every extra
+  byte must be zero. Arbitrary reservations and nonempty-CMS reserved forms
+  remain unsupported. The observed SDK allocation was 18,400 bytes for a
+  396-byte SuperBlob, with 18,004 zero bytes after its logical end.
 
 After restoring just those four original header/segment fields, zeroing the new
 command slot, and truncating the append, every original byte participates in
@@ -78,8 +88,16 @@ provide the structural magics. Apple's
 [TN3126](https://developer.apple.com/documentation/technotes/tn3126-inside-code-signing-hashes)
 describes embedded Mach-O signatures through `LC_CODE_SIGNATURE`.
 
+Apple's [CodeSigner default CMS estimate](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_codesigning/lib/CodeSigner.cpp#L308-L312)
+is 18,000 bytes. Its [signer passes an estimate before building the final blob](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_codesigning/lib/signer.cpp#L648-L678),
+and [MachOEditor aligns the allocation and permits a shorter actual blob](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_codesigning/lib/signerutils.cpp#L175-L228).
+These sources plus the observed public SDK output support the exact empty-CMS
+reservation rule, rather than a general trailing-zero allowance.
+
 Those sources motivate a conservative supported subset; they do not establish
 that every current Apple or third-party signer uses this subset. Synthetic
-success proves the reconstruction algorithm only. OS signature validation,
-bundle resources/provisioning, real signing behavior, loaded-image identity,
+success proves the reconstruction algorithm only. The verifier's fixed false
+`apple_signer_tested` flag means that it does not execute or authenticate a
+signer; the separate CI report records actual signing commands. OS signature
+validation, bundle resources/provisioning, other real signing behavior, loaded-image identity,
 file-to-load races and all iOS runtime behavior remain separate gates.

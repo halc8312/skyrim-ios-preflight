@@ -218,9 +218,14 @@ def signature_shape(blob: bytes) -> None:
     # policy, certificate trust or OS acceptance are authenticated by this tool.
     require(16 <= len(blob) <= MAX_SIGNATURE and len(blob) % 16 == 0, "signature_blob_size")
     magic, length, count = struct.unpack_from(">III", blob)
+    # Apple's default CMS estimate reserves 18000 bytes even for ad-hoc signing,
+    # whose actual CMS wrapper is empty. Recognize exactly that allocation delta
+    # or the tightly aligned form, never arbitrary trailing zero allocations.
+    padded_adhoc = len(blob) == align(length, 16) + 18000
     require(magic == 0xFADE0CC0 and 1 <= count <= 32 and 12 + 8 * count <= length <= len(blob)
-            and align(length, 16) == len(blob) and not any(blob[length:]), "signature_superblob")
-    intervals, slots = [], set()
+            and (align(length, 16) == len(blob) or padded_adhoc)
+            and not any(blob[length:]), "signature_superblob")
+    intervals, slots, empty_cms = [], set(), False
     known = {0: 0xFADE0C02, 2: 0xFADE0C01, 5: 0xFADE7171,
              7: 0xFADE7172, 0x10000: 0xFADE0B01}
     for number in range(count):
@@ -231,9 +236,12 @@ def signature_shape(blob: bytes) -> None:
                 "signature_index")
         child_magic, child_length = struct.unpack_from(">II", blob, offset)
         require(child_magic == expected_magic and 8 <= child_length <= length - offset, "signature_child")
+        if slot == 0x10000:
+            empty_cms = child_length == 8
         slots.add(slot)
         intervals.append((offset, offset + child_length))
     require(0 in slots, "signature_primary_code_directory")
+    require(not padded_adhoc or empty_cms, "signature_adhoc_reservation")
     intervals.sort()
     cursor = 12 + 8 * count
     for start, end in intervals:

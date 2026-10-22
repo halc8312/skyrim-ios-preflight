@@ -1,0 +1,32 @@
+[package]
+name = "ios-resident-apple-backend"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+default = []
+apple-runtime = ["dep:runtime-core", "dep:kernel-hle", "dep:vfs", "dep:xex"]
+
+[dependencies]
+sha2 = "=0.11.1"
+runtime-core = { path = "../../../skyrim-recomp-web/crates/runtime-core", optional = true }
+kernel-hle = { path = "../../../skyrim-recomp-web/crates/kernel-hle", optional = true }
+vfs = { path = "../../../skyrim-recomp-web/crates/vfs", optional = true }
+xex = { path = "../../../skyrim-recomp-web/crates/xex", optional = true }
+libc = "=0.2.190"
+
+[profile.dev]
+opt-level = 1
+panic = "unwind"
+
+[profile.release]
+opt-level = 2
+panic = "unwind"
+lto = false
+codegen-units = 8

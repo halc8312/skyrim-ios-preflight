@@ -61,9 +61,9 @@ def synthetic_signature(extra=0):
     return blob + bytes(binding.align(len(blob), 16) - len(blob))
 
 
-def sign_shape(unsigned, extra=0):
+def sign_shape(unsigned, extra=0, signature=None):
     manifest = binding.make_manifest(unsigned)
-    blob = synthetic_signature(extra)
+    blob = synthetic_signature(extra) if signature is None else signature
     offset = binding.align(len(unsigned), 16)
     data = bytearray(unsigned + bytes(offset - len(unsigned)) + blob)
     struct.pack_into("<II", data, 16, manifest["ncmds"] + 1, manifest["sizeofcmds"] + 16)
@@ -119,6 +119,44 @@ class SigningBindingTests(unittest.TestCase):
             for key in ("os_signature_authenticated", "attestation", "apple_signer_tested", "loader_integration_allowed"):
                 self.assertFalse(result[key])
             self.assertEqual((original, signed, manifest), before)
+
+    def test_apple_default_empty_cms_reservation_is_exact_and_zero_only(self):
+        # Hand-authored equivalent of the SDK signer's allocation shape, without
+        # copying its actual CodeDirectory or any executable bytes.
+        cd = struct.pack(">II", 0xFADE0C02, 44) + bytes(36)
+        cms = struct.pack(">II", 0xFADE0B01, 8)
+        length = 28 + len(cd) + len(cms)
+        raw = struct.pack(">7I", 0xFADE0CC0, length, 2, 0, 28, 0x10000, 28 + len(cd)) + cd + cms
+        reserved = raw + bytes(binding.align(length, 16) + 18000 - length)
+        original = unsigned_fixture()
+        signed, manifest = sign_shape(original, signature=reserved)
+        self.assertTrue(self.verify(signed, manifest)["unsigned_full_sha256_matches"])
+        for delta in (-16, 16):
+            changed = reserved[:delta] if delta < 0 else reserved + bytes(delta)
+            self.rejected(*sign_shape(original, signature=changed))
+        for index in (length, len(reserved) - 1):
+            changed = bytearray(reserved)
+            changed[index] = 1
+            self.rejected(*sign_shape(original, signature=bytes(changed)))
+        # Additional reservation must not be granted to an absent/nonempty CMS.
+        self.rejected(*sign_shape(original, signature=synthetic_signature() + bytes(18000)))
+        changed = bytearray(raw)
+        struct.pack_into(">I", changed, 4, length + 1)
+        struct.pack_into(">I", changed, 28 + len(cd) + 4, 9)
+        changed += b"X"
+        changed += bytes(binding.align(len(changed), 16) + 18000 - len(changed))
+        self.rejected(*sign_shape(original, signature=bytes(changed)))
+
+    def test_adhoc_reservation_keeps_original_text_linkedit_and_trusted_hash_bound(self):
+        cd = struct.pack(">II", 0xFADE0C02, 44) + bytes(36)
+        raw = struct.pack(">7I", 0xFADE0CC0, 80, 2, 0, 28, 0x10000, 72) + cd + struct.pack(">II", 0xFADE0B01, 8)
+        signed, manifest = sign_shape(unsigned_fixture(), signature=raw + bytes(18000))
+        self.verify(signed, manifest)
+        for position in (manifest["first_data"], manifest["linkedit_fileoff"]):
+            changed = bytearray(signed)
+            changed[position] ^= 1
+            self.rejected(changed, manifest)
+        self.rejected(signed, manifest, "0" * 64)
 
     def test_linkedit_vm_growth_and_non_page_aligned_original_retention(self):
         signed, manifest = sign_shape(unsigned_fixture(), 0x8000)

@@ -1,0 +1,256 @@
+//! Apple-only loader. No /proc/ELF assumptions. SDK NativeHost owns the public
+//! NSBundle/dladdr/dyld queries. Complete selected-file bytes and mapped header
+//! are compared; mapped inode attestation is intentionally not claimed.
+use crate::{
+    Check,
+    abi::*,
+    macho::{self, Image},
+    policy::PinnedFile,
+};
+use std::{
+    ffi::{CStr, CString, c_char, c_void},
+    path::{Path, PathBuf},
+};
+pub struct Api {
+    pub requirements: RequirementsFn,
+    pub bind: BindFn,
+    pub publish: PublishFn,
+    pub init: InitFn,
+    pub call: CallFn,
+    pub config: ConfigFn,
+    pub functions: FunctionsFn,
+}
+unsafe extern "C" {
+    pub fn RAAppleHostLayoutV1(out: *mut u64, capacity: usize) -> i32;
+    pub fn RAApplePlatformV1() -> u32;
+    pub fn RAAppleOSVersionV1() -> u32;
+    fn RAAppleBundlePathV1(out: *mut c_char, capacity: usize) -> i32;
+    fn RAAppleOpenFixtureV1(canonical_path: *const c_char) -> *mut c_void;
+    fn RAAppleLocateImageV1(
+        symbol: *const c_void,
+        header: *mut usize,
+        slide: *mut i64,
+        path: *mut c_char,
+        capacity: usize,
+    ) -> i32;
+    pub fn RAApplePrepareHostV1(
+        host: *mut PGHostCallbacksV1,
+        bytes: u32,
+        fixture_header: *const c_void,
+    ) -> i32;
+}
+pub struct Library {
+    handle: *mut c_void,
+    pinned: PinnedFile,
+    image: Image,
+    header: usize,
+    slide: i64,
+}
+// A successful owner is never unloaded. It holds no mutable guest state: all
+// adapter concurrency is the validated public API's admission/atomic contract.
+unsafe impl Send for Library {}
+unsafe impl Sync for Library {}
+impl Drop for Library {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe { libc::dlclose(self.handle) };
+        }
+    }
+}
+fn sdk_string(call: impl FnOnce(*mut c_char, usize) -> i32) -> Check<PathBuf> {
+    let mut bytes = vec![0u8; 4096];
+    let size = call(bytes.as_mut_ptr().cast(), bytes.len());
+    if size < 1 || size as usize >= bytes.len() || bytes[size as usize] != 0 {
+        return Err("SDK bundle path query failed".into());
+    }
+    let text = CStr::from_bytes_with_nul(&bytes[..=size as usize])
+        .map_err(|_| "SDK path is not terminated")?;
+    use std::os::unix::ffi::OsStrExt;
+    Ok(Path::new(std::ffi::OsStr::from_bytes(text.to_bytes())).to_path_buf())
+}
+fn locate(symbol: *mut c_void) -> Check<(usize, i64, PathBuf)> {
+    let (mut header, mut slide) = (0usize, 0i64);
+    let mut bytes = vec![0u8; 4096];
+    if unsafe {
+        RAAppleLocateImageV1(
+            symbol,
+            &mut header,
+            &mut slide,
+            bytes.as_mut_ptr().cast(),
+            bytes.len(),
+        )
+    } != 0
+        || header == 0
+    {
+        return Err("SDK dyld image lookup rejected symbol".into());
+    }
+    let text =
+        CStr::from_bytes_until_nul(&bytes).map_err(|_| "dyld image path is not terminated")?;
+    use std::os::unix::ffi::OsStrExt;
+    let path = Path::new(std::ffi::OsStr::from_bytes(text.to_bytes()))
+        .canonicalize()
+        .map_err(|_| "dyld image path unavailable")?;
+    Ok((header, slide, path))
+}
+impl Library {
+    pub fn open(expected_full_hash: &str) -> Check<Self> {
+        let bundle = sdk_string(|out, cap| unsafe { RAAppleBundlePathV1(out, cap) })?;
+        let pinned = PinnedFile::open(&bundle, expected_full_hash)?;
+        let platform = unsafe { RAApplePlatformV1() };
+        if !matches!(platform, 2 | 7) {
+            return Err("SDK host is not plain ARM64 iOS/device or Simulator".into());
+        }
+        let image = macho::parse(&pinned.bytes, platform)?;
+        if image.min_os > unsafe { RAAppleOSVersionV1() } {
+            return Err("fixture deployment target exceeds running OS".into());
+        }
+        use std::os::unix::ffi::OsStrExt;
+        let path = CString::new(pinned.path.as_os_str().as_bytes())
+            .map_err(|_| "bundle fixture path contains NUL")?;
+        let handle = unsafe { RAAppleOpenFixtureV1(path.as_ptr()) };
+        if handle.is_null() {
+            return Err("dyld refused the pinned public fixture".into());
+        }
+        // Construct owner before any following fallible check, so dlclose is
+        // guaranteed on failure. dlsym alone does not establish image ownership.
+        let mut owner = Self {
+            handle,
+            pinned,
+            image,
+            header: 0,
+            slide: 0,
+        };
+        let first = owner.raw(c"PG_GetRequirementsV1")?;
+        let (header, slide, path) = locate(first)?;
+        if path != owner.pinned.path
+            || i128::from(owner.image.header_vmaddr) + i128::from(slide) != header as i128
+        {
+            return Err("loaded dyld image differs from selected bundle fixture".into());
+        }
+        owner.header = header;
+        owner.slide = slide;
+        let count = owner.image.header_and_commands_size;
+        if !owner
+            .image
+            .contains_loaded(header, header, count, false, false)
+        {
+            return Err("loaded header is outside expected readable segment".into());
+        }
+        // The trusted SDK dyld header plus bounded file layout justify reading
+        // this header; this is not an arbitrary caller-supplied pointer.
+        let actual = unsafe { std::slice::from_raw_parts(header as *const u8, count) };
+        if actual != &owner.pinned.bytes[..count] {
+            return Err("loaded Mach-O header/commands differ from retained file".into());
+        }
+        // No text relocations are permitted in this fixture. Comparing all RX
+        // file-backed bytes also rejects a stale already-loaded image whose
+        // UUID/header survived an on-disk code replacement. Writable/fixup data
+        // is not compared as if it were immutable. No mapped-inode claim follows.
+        for segment in &owner.image.segments {
+            if segment.initprot != 5 || segment.filesize == 0 {
+                continue;
+            }
+            let start = i128::from(segment.vmaddr) + i128::from(slide);
+            let length = usize::try_from(segment.filesize).map_err(|_| "RX bytecount overflow")?;
+            if start < 0
+                || start > usize::MAX as i128
+                || !owner
+                    .image
+                    .contains_loaded(header, start as usize, length, false, false)
+            {
+                return Err("loaded RX segment extent rejected".into());
+            }
+            let offset = usize::try_from(segment.fileoff).map_err(|_| "RX file offset overflow")?;
+            let end = offset
+                .checked_add(length)
+                .ok_or("RX file extent overflow")?;
+            let expected = owner
+                .pinned
+                .bytes
+                .get(offset..end)
+                .ok_or("RX file range unavailable")?;
+            let actual = unsafe { std::slice::from_raw_parts(start as *const u8, length) };
+            if actual != expected {
+                return Err("loaded RX bytes differ from complete pinned file".into());
+            }
+        }
+        owner.pinned.recheck()?;
+        Ok(owner)
+    }
+    fn raw(&self, name: &CStr) -> Check<*mut c_void> {
+        let ptr = unsafe { libc::dlsym(self.handle, name.as_ptr()) };
+        if ptr.is_null() {
+            Err("fixture-owned API symbol unavailable".into())
+        } else {
+            Ok(ptr)
+        }
+    }
+    fn symbol(&self, name: &CStr) -> Check<*mut c_void> {
+        let ptr = self.raw(name)?;
+        let (header, slide, path) = locate(ptr)?;
+        if header != self.header
+            || slide != self.slide
+            || path != self.pinned.path
+            || ptr as usize % 4 != 0
+            || !self
+                .image
+                .contains_loaded(self.header, ptr as usize, 4, true, false)
+        {
+            return Err("API symbol is not RX code in the selected dyld image".into());
+        }
+        Ok(ptr)
+    }
+    pub fn api(&self) -> Check<Api> {
+        // Concrete function types are bound only after ownership/RX checks.
+        Ok(Api {
+            requirements: unsafe {
+                std::mem::transmute::<*mut c_void, RequirementsFn>(
+                    self.symbol(c"PG_GetRequirementsV1")?,
+                )
+            },
+            bind: unsafe {
+                std::mem::transmute::<*mut c_void, BindFn>(self.symbol(c"PG_BindHostV1")?)
+            },
+            publish: unsafe {
+                std::mem::transmute::<*mut c_void, PublishFn>(self.symbol(c"PG_PublishMemoryV1")?)
+            },
+            init: unsafe {
+                std::mem::transmute::<*mut c_void, InitFn>(self.symbol(c"PG_InitContextV1")?)
+            },
+            call: unsafe {
+                std::mem::transmute::<*mut c_void, CallFn>(self.symbol(c"PG_CallGuestV1")?)
+            },
+            config: unsafe {
+                std::mem::transmute::<*mut c_void, ConfigFn>(self.symbol(c"skyrt_ppc_config")?)
+            },
+            functions: unsafe {
+                std::mem::transmute::<*mut c_void, FunctionsFn>(self.symbol(c"skyrt_func_addrs")?)
+            },
+        })
+    }
+    pub fn readonly_table(&self, ptr: *const u32, count: usize) -> Check<Box<[u32]>> {
+        if count != FUNCTIONS.len()
+            || ptr.is_null()
+            || ptr as usize % std::mem::align_of::<u32>() != 0
+            || !self.image.contains_loaded(
+                self.header,
+                ptr as usize,
+                count.checked_mul(4).ok_or("table bytecount overflow")?,
+                false,
+                true,
+            )
+        {
+            return Err("function table is not a bounded read-only range of selected image".into());
+        }
+        // Copy, never extend a borrowed dylib slice to 'static.
+        Ok(unsafe { std::slice::from_raw_parts(ptr, count) }
+            .to_vec()
+            .into_boxed_slice())
+    }
+    pub fn header(&self) -> *const c_void {
+        self.header as *const c_void
+    }
+    pub fn recheck(&mut self) -> Check<()> {
+        self.pinned.recheck()
+    }
+}
