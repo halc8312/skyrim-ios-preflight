@@ -29,6 +29,12 @@ git -C "$source_dir" apply --check "$harness_root/ci/native-arm64.patch"
 git -C "$source_dir" apply "$harness_root/ci/native-arm64.patch"
 
 xcodebuild -version
+# Xcode 26 distributes the offline Metal compiler as a separate component.
+# A fresh hosted machine may include the SDK but not this compiler.
+if ! xcrun --sdk iphoneos metal --version >/dev/null 2>&1; then
+  xcodebuild -downloadComponent MetalToolchain
+fi
+xcrun --sdk iphoneos metal --version
 sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
 compiler="$(xcrun --sdk iphoneos --find clang++)"
 missing_tools=()
