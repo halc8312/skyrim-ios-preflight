@@ -1,5 +1,6 @@
 *
 !/.gitignore
+!/.gitattributes
 !/codemagic.yaml
 !/.github/
 !/.github/workflows/
