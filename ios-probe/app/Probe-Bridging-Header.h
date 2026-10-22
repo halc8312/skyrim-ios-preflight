@@ -1,4 +1,5 @@
 #include "XenosProbeBridge.h"
+#include "ProbeWebGPU.h"
 
 // Hand-written synthetic C++ functions, never translated game instructions.
 uint64_t guest_probe(uint64_t value);

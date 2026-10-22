@@ -102,6 +102,30 @@ uint32_t probe_runtime_callback_mix(uint32_t left, uint32_t right);
  * bitmask 31 on success, 0 on panic. Not Kernel boot/GPU/audio execution. */
 uint32_t probe_runtime_component_checks(void);
 
+/* Atomic element ABI probe (not general table registration). Layout words are
+ * [1,sizeof(AtomicI32),alignof(AtomicI32),sizeof(AtomicU8),alignof(AtomicU8)].
+ * Returns 5, or -1 null/-2 short word capacity/-4 unaligned without writes. */
+int32_t probe_runtime_atomic_layout(uint32_t *out, size_t word_capacity);
+
+/* Runs one bounded native C++ worker on a Rust-created thread. The pointers are
+ * actual runtime EA/dirty table elements; use only full-width Clang __atomic
+ * operations, never ordinary/volatile accesses, retain neither pointer, never
+ * unwind, recurse or call Swift, and return within 5 seconds. Rust serializes
+ * other runtime probes and restores both original values before returning.
+ * Must NOT overlap a real guest or other direct users of these global tables.
+ * Phase protocol: Rust publishes EA=-0x1234567,dirty=1; worker acquire-loads,
+ * CASes EA to 0x23456789 and release-stores dirty=2; Rust CASes to -0x3456789
+ * and publishes 3; worker exchanges EA to 0x456789ab and publishes 4.
+ * Worker returns flags 0xf; dirty=255 means abort. Result bits 0..8 cover
+ * layout, alignment, publication, both transitions/CAS, worker flags, restore.
+ * Result is 32 aligned writable non-aliased bytes, capacity in bytes.
+ * Returns 0 only for passed=0x1ff/failed=0; -7 writes failed checks;
+ * -1 null/-2 short/-4 unaligned/-5 null callback/-3 panic write nothing.
+ * This verifies element interoperability, not arbitrary lock-free guest races. */
+typedef uint32_t (*ProbeAtomicElementCall)(int32_t *ea, uint8_t *dirty);
+int32_t probe_runtime_atomic_roundtrip(ProbeAtomicElementCall call,
+                                     ProbeRuntimeResult *out, size_t byte_capacity);
+
 /* Dedicated Rust-panic -> C++ RAII destructor -> Rust catch probe, isolated
  * from the ordinary CPU callback above. The call starts in Rust and must not
  * insert a Swift/noexcept/non-unwind C frame. counter is aligned, exclusively

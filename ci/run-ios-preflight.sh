@@ -29,6 +29,8 @@ git -C "$source_dir" apply --check "$harness_root/ci/native-arm64.patch"
 git -C "$source_dir" apply "$harness_root/ci/native-arm64.patch"
 git -C "$source_dir" apply --check "$harness_root/ci/arm-fpcr-mapping.patch"
 git -C "$source_dir" apply "$harness_root/ci/arm-fpcr-mapping.patch"
+git -C "$source_dir" apply --check "$harness_root/ci/ios-metal-surface.patch"
+git -C "$source_dir" apply "$harness_root/ci/ios-metal-surface.patch"
 
 # Only pinned public SIMDe headers enter the C++ CPU fixture.
 simde_commit=a532a12ca9bbdc5e6547eb602e6256b71a5377d4
@@ -107,6 +109,25 @@ packages=(-p xex -p xenos-texture -p xenos-shader -p xenos-state
   cargo build --locked --lib --target aarch64-apple-ios "${packages[@]}"
 ) 2>&1 | tee "$native_output/native-tests.log"
 
+# A separate public cdylib avoids merging a second Rust std into the host
+# static archive. Build both actual Apple platforms, then compile the real
+# renderer crate against each matching framework. This is not renderer execution.
+WGPU_PREFLIGHT_WORK_DIR="$work/wgpu-public" \
+WGPU_PREFLIGHT_OUTPUT_DIR="$harness_root/out/gpu-framework" \
+  bash "$harness_root/ci/gpu-framework/build_frameworks.sh"
+for variant in device simulator; do
+  if [[ "$variant" == device ]]; then
+    renderer_target=aarch64-apple-ios
+  else
+    renderer_target=aarch64-apple-ios-sim
+  fi
+  (
+    cd "$source_dir"
+    WGPU_NATIVE_FRAMEWORK_DIR="$harness_root/out/gpu-framework/$variant" \
+      cargo build --locked --lib --target "$renderer_target" -p xenos-render
+  ) 2>&1 | tee "$native_output/xenos-render-$variant.log"
+done
+
 cat > "$fixture_dir/ppc_recomp.0.cpp" <<'CPP'
 extern "C" unsigned long long guest_probe(unsigned long long x) {
     return (x << 7) ^ 0x1234ULL;
@@ -146,6 +167,7 @@ cp -R "$harness_root/ios-probe/app" "$probe_dir/app"
 cp -R "$harness_root/ios-probe/tests" "$probe_dir/tests"
 bash "$harness_root/ci/prepare-cpu-support.sh" "$source_dir" "$simde_dir" "$probe_dir"
 bash "$harness_root/ci/build-owned-abi-framework.sh" "$probe_dir" iphoneos
+cp -R "$harness_root/out/gpu-framework/device/WgpuNative.framework" "$probe_dir/Frameworks/"
 cp "$work/bridge/include/XenosProbeBridge.h" "$probe_dir/bridge/include/"
 cp "$CARGO_TARGET_DIR/aarch64-apple-ios/release/libxenos_probe_bridge.a" "$probe_dir/Libraries/"
 cp "$output_dir/libskyrim_guest.a" "$probe_dir/Libraries/"

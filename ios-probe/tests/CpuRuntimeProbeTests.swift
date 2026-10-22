@@ -104,4 +104,32 @@ final class CpuRuntimeProbeTests: XCTestCase {
         XCTAssertEqual(probe_cpp_unwind_selftest(&counter), 0)
         XCTAssertEqual(counter, 1)
     }
+
+    func testRealRustTableElementsExchangeWithClangAtomicsOnAnotherThread() {
+        var layout = [UInt32](repeating: 0xA5, count: 7)
+        let layoutStatus = layout.withUnsafeMutableBufferPointer {
+            probe_runtime_atomic_layout($0.baseAddress!.advanced(by: 1), 5)
+        }
+        XCTAssertEqual(layoutStatus, 5)
+        XCTAssertEqual(layout, [0xA5, 1, 4, 4, 1, 1, 0xA5])
+        XCTAssertEqual(probe_runtime_atomic_layout(nil, 5), -1)
+        let shortStatus = layout.withUnsafeMutableBufferPointer {
+            probe_runtime_atomic_layout($0.baseAddress!.advanced(by: 1), 4)
+        }
+        XCTAssertEqual(shortStatus, -2)
+        XCTAssertEqual(layout, [0xA5, 1, 4, 4, 1, 1, 0xA5])
+
+        var result = ProbeRuntimeResult()
+        result.passed = 0xA5_A5A5
+        let capacity = MemoryLayout<ProbeRuntimeResult>.size
+        XCTAssertEqual(probe_cpp_atomic_selftest(nil, capacity), -1)
+        XCTAssertEqual(probe_cpp_atomic_selftest(&result, capacity - 1), -2)
+        XCTAssertEqual(result.passed, 0xA5_A5A5)
+        XCTAssertEqual(probe_cpp_atomic_selftest(&result, capacity), 0)
+        XCTAssertEqual(result.abi_version, 1)
+        XCTAssertEqual(result.struct_size, UInt32(capacity))
+        XCTAssertEqual(result.passed, 0x1FF)
+        XCTAssertEqual(result.failed, 0)
+        XCTAssertEqual(result.callback_result, 0xF)
+    }
 }

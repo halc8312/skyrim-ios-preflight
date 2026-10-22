@@ -5,6 +5,8 @@ use std::mem::{align_of, offset_of, size_of};
 use std::ptr;
 use std::sync::Mutex;
 
+mod atomic_probe;
+
 use runtime_core::context::PPCContext;
 use runtime_core::guest::{CallFunc, GuestModule};
 use runtime_core::memory::{self, GuestMemory, MemoryError, PAGE_SIZE, map};

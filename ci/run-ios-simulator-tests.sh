@@ -60,6 +60,18 @@ cp -R "$harness_root/ios-probe/app" "$probe/app"
 cp -R "$harness_root/ios-probe/tests" "$probe/tests"
 bash "$harness_root/ci/prepare-cpu-support.sh" "$source_dir" "$simde_dir" "$probe"
 bash "$harness_root/ci/build-owned-abi-framework.sh" "$probe" iphonesimulator
+cp -R "$harness_root/out/gpu-framework/simulator/WgpuNative.framework" "$probe/Frameworks/"
+# A changed install_name can invalidate the Rust linker's Simulator ad-hoc
+# signature. Sign only these copied Simulator frameworks, using no Apple account
+# or certificate. The separate iPhoneOS IPA remains unsigned.
+cmp "$harness_root/out/gpu-framework/simulator/WgpuNative.framework/WgpuNative" \
+  "$probe/Frameworks/WgpuNative.framework/WgpuNative"
+for framework_name in SyntheticGuest WgpuNative; do
+  shasum -a 256 "$probe/Frameworks/$framework_name.framework/$framework_name"
+  /usr/bin/codesign --force --sign - --timestamp=none "$probe/Frameworks/$framework_name.framework"
+  /usr/bin/codesign --verify --strict "$probe/Frameworks/$framework_name.framework"
+  shasum -a 256 "$probe/Frameworks/$framework_name.framework/$framework_name"
+done
 cp "$work/bridge/include/XenosProbeBridge.h" "$probe/bridge/include/"
 cp "$CARGO_TARGET_DIR/aarch64-apple-ios-sim/release/libxenos_probe_bridge.a" "$probe/Libraries/"
 cp "$work/simulator-guest/libskyrim_guest.a" "$probe/Libraries/"
@@ -79,6 +91,8 @@ xcodebuild -project "$probe/SkyrimProbe.xcodeproj" -scheme SkyrimProbe \
   -configuration Debug -destination "platform=iOS Simulator,id=$device_id" \
   -derivedDataPath "$work/SimDerivedData" -resultBundlePath "$output/SkyrimProbe.xcresult" \
   -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 30 \
+  -maximum-test-execution-time-allowance 60 \
   2>&1 | tee "$output/simulator-tests.log"
 xcrun simctl launch --terminate-running-process "$device_id" com.halc8312.skyrimprobe
 # A bounded UI capture after launch; the downloaded image is inspected by us.

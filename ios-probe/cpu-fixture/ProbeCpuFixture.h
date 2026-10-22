@@ -25,6 +25,10 @@ void probe_cpp_unwind_cleanup(uint32_t *counter);
 // after the dedicated Rust caller has caught its own synthetic payload.
 int32_t probe_cpp_unwind_selftest(uint32_t *counter);
 
+// Rust owns the real table elements and worker lifetime. This wrapper supplies
+// the Clang atomic worker entirely from C++; no Swift callback frame is used.
+int32_t probe_cpp_atomic_selftest(ProbeRuntimeResult *out, size_t byte_capacity);
+
 typedef struct ProbeJumpReport {
     uint32_t abi_version;
     uint32_t struct_size;

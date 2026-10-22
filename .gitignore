@@ -12,6 +12,7 @@
 !/ci/vfs-host-casing.patch
 !/ci/run-ios-simulator-tests.sh
 !/ci/arm-fpcr-mapping.patch
+!/ci/ios-metal-surface.patch
 !/ci/prepare-cpu-support.sh
 !/ci/build-owned-abi-framework.sh
 !/ci/gpu-framework/
@@ -33,6 +34,7 @@
 !/ios-probe/tests/CpuRuntimeProbeTests.swift
 !/ios-probe/tests/CpuProbe-Bridging-Header.h
 !/ios-probe/tests/OwnedAbiProbeTests.swift
+!/ios-probe/tests/WebGPUProbeTests.swift
 !/ios-probe/cpu-fixture/
 !/ios-probe/cpu-fixture/ProbeCpuFixture.h
 !/ios-probe/cpu-fixture/ProbeCpuFixture.cpp
@@ -41,12 +43,16 @@
 !/ios-probe/cpu-fixture/ProbeCpuTail.S
 !/ios-probe/cpu-fixture/OwnedAbiFixture.h
 !/ios-probe/cpu-fixture/OwnedAbiFixture.cpp
+!/ios-probe/cpu-fixture/AtomicInteropFixture.cpp
+!/ios-probe/cpu-fixture/ProbeWebGPU.h
+!/ios-probe/cpu-fixture/ProbeWebGPU.cpp
 !/ios-probe/owned-abi/
 !/ios-probe/owned-abi/PrivateGuestABI.h
 !/ios-probe/owned-abi/owned_abi.cpp
 !/ios-probe/owned-abi/jump_tail.S
 !/ios-probe/owned-abi/SyntheticLayout.cpp
 !/ios-probe/owned-abi/SyntheticGuestContext.h
+!/ios-probe/owned-abi/system-load-metadata.tbd
 !/ios-probe/app/
 !/ios-probe/app/ProbeApp.swift
 !/ios-probe/app/TextureView.swift
@@ -57,5 +63,6 @@
 !/ios-probe/bridge/Cargo.lock
 !/ios-probe/bridge/src/
 !/ios-probe/bridge/src/lib.rs
+!/ios-probe/bridge/src/atomic_probe.rs
 !/ios-probe/bridge/include/
 !/ios-probe/bridge/include/XenosProbeBridge.h
