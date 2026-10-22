@@ -8,8 +8,8 @@ import sys
 import tomllib
 
 MANIFEST = "tools/ios-resident-guest-probe/apple-backend/source-allowlist.txt"
-ALLOWLIST_SHA256 = "b0a0c046b02020c240bed722450fc628518c8f3fcbab4514c1bec837c57d7b7d"
-SOURCE_MANIFEST_SHA256 = "fdb272beabab5007f03ab29b49a78a632db5c7e61d8c6cfb2ecedeeebb4b5533"
+ALLOWLIST_SHA256 = "9a7562959affc7e9f0f5da2923f2dd12b05ace9725ed83a2f3dab8db5aefdeba"
+SOURCE_MANIFEST_SHA256 = "6b9e615a792e8c9a366fda69bee5a686c5c7a3fe7e82414ebe9ff62040807e44"
 MEMBERS = ["crates/" + name for name in
            ("runtime-core", "kernel-hle", "vfs", "xex", "d3d-hle", "xma-decoder")]
 

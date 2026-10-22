@@ -3,7 +3,7 @@
   "apple_native_sdk_compiled_at_freeze": false,
   "apple_runtime_executed_at_freeze": false,
   "existing_linux_proof_changed": false,
-  "file_count": 107,
+  "file_count": 108,
   "guest_sys_included": false,
   "private_layout_included": false,
   "schema": 1,
@@ -362,8 +362,8 @@
       "sha256": "4f18036b8249f108184dffdfabd7e9cc6b5a1daab53fffaba96ba63d6e535a6b"
     },
     "tools/ios-resident-guest-probe/apple-backend/prepare_fixture.py": {
-      "bytes": 3539,
-      "sha256": "ad6d223e687b9c271fe18a2c8db874ad85b246199ecd3556a8e0855d732a78ab"
+      "bytes": 3718,
+      "sha256": "3de176a98b93f5142768a1f147b2650df2d8f9b19db366337d23ba8ecc37ed81"
     },
     "tools/ios-resident-guest-probe/apple-backend/sdk-test/README.md": {
       "bytes": 3520,
@@ -394,8 +394,8 @@
       "sha256": "c52bed9d923e6d1283eeca35bff00e13804b171352c8fe29828f0f7e64f55ce2"
     },
     "tools/ios-resident-guest-probe/apple-backend/source-allowlist.txt": {
-      "bytes": 5772,
-      "sha256": "b0a0c046b02020c240bed722450fc628518c8f3fcbab4514c1bec837c57d7b7d"
+      "bytes": 5841,
+      "sha256": "9a7562959affc7e9f0f5da2923f2dd12b05ace9725ed83a2f3dab8db5aefdeba"
     },
     "tools/ios-resident-guest-probe/apple-backend/src/abi.rs": {
       "bytes": 4977,
@@ -420,6 +420,10 @@
     "tools/ios-resident-guest-probe/apple-backend/src/runtime.rs": {
       "bytes": 13131,
       "sha256": "1b46fbb92aca189981122f579183a84666abd6ba3d48b733be506e8b4dfbb5b3"
+    },
+    "tools/ios-resident-guest-probe/apple-backend/test_prepare_fixture.py": {
+      "bytes": 3065,
+      "sha256": "9ff8cd3bc70966da3edfe949ff6ce36b3a49ef26b5eb4f0f3bed253ca4cf1d56"
     },
     "tools/ios-resident-guest-probe/src/synthetic.rs": {
       "bytes": 2686,

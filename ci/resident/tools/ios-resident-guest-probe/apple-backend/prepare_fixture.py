@@ -29,7 +29,9 @@ def prepare(source: Path, generic: Path, output: Path) -> None:
     if output.exists() or output.resolve().is_relative_to(source) or output.resolve().is_relative_to(generic):
         raise ValueError('output must be fresh and outside public input trees')
     original=(source/'cpp/ppc_context.h').read_bytes()
-    text=overlay(original.decode('utf-8'))
+    # Keep original bytes for the provenance hash/after-read check. Normalize
+    # only the generated text so exact multi-line anchors work for LF and CRLF.
+    text=overlay(original.decode('utf-8').replace('\r\n','\n'))
     output.mkdir(parents=False,exist_ok=False)
     (output/'ppc_context.h').write_text(text,encoding='utf-8',newline='\n')
     (output/'ppc_config.h').write_text('#pragma once\n#define PPC_CONFIG_H_INCLUDED\n#define PPC_IMAGE_BASE 0x82000000u\n#define PPC_IMAGE_SIZE 0x2000u\n#define PPC_CODE_BASE 0x82001000u\n#define PPC_CODE_SIZE 0x10u\n',encoding='utf-8',newline='\n')

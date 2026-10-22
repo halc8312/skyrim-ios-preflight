@@ -101,6 +101,7 @@ tools/ios-resident-guest-probe/apple-backend/src/lib.rs
 tools/ios-resident-guest-probe/apple-backend/src/macho.rs
 tools/ios-resident-guest-probe/apple-backend/src/policy.rs
 tools/ios-resident-guest-probe/apple-backend/src/runtime.rs
+tools/ios-resident-guest-probe/apple-backend/test_prepare_fixture.py
 tools/ios-resident-guest-probe/src/synthetic.rs
 tools/windows-ios-guest-probe/owned-guest-abi/PrivateGuestABI.h
 tools/windows-ios-guest-probe/owned-guest-abi/jump_tail.S

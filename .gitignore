@@ -201,6 +201,7 @@
 !/ci/resident/tools/ios-resident-guest-probe/apple-backend/sdk-test/test_run_sdk_tests.py
 !/ci/resident/tools/ios-resident-guest-probe/apple-backend/sdk-test/tests/ResidentAppleProbeTests.swift
 !/ci/resident/tools/ios-resident-guest-probe/apple-backend/source-allowlist.txt
+!/ci/resident/tools/ios-resident-guest-probe/apple-backend/test_prepare_fixture.py
 !/ci/resident/tools/ios-resident-guest-probe/apple-backend/src/abi.rs
 !/ci/resident/tools/ios-resident-guest-probe/apple-backend/src/darwin.rs
 !/ci/resident/tools/ios-resident-guest-probe/apple-backend/src/lib.rs

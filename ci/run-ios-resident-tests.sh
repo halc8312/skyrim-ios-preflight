@@ -17,6 +17,8 @@ cp "$harness/ci/resident/public-source-manifest.json" "$output/"
 backend="$kit/tools/ios-resident-guest-probe/apple-backend"
 generic="$kit/tools/windows-ios-guest-probe/owned-guest-abi"
 source="$kit/skyrim-recomp-web"
+python3 -m unittest discover -s "$backend" -p 'test_prepare_fixture.py' -v \
+  2>&1 | tee "$output/public-header-cli-tests.log"
 rustup target add --toolchain "$RUSTUP_TOOLCHAIN" aarch64-apple-ios aarch64-apple-ios-sim
 CARGO_TARGET_DIR="$work/resident-pure-target" \
   cargo +nightly-2026-10-11 test --locked --no-default-features \
