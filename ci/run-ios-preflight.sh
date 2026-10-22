@@ -82,6 +82,6 @@ cmake -S "$source_dir/cpp" -B "$work/ios-guest" -G Ninja \
   -DSKYRT_SHIM="$fixture_dir/imports.cpp" \
   -DSKYRT_DISPATCH="$fixture_dir/dispatch.cpp"
 cmake --build "$work/ios-guest" --parallel 2
-xcrun lipo -verify_arch arm64 "$work/ios-guest/libskyrim_guest.a"
+xcrun lipo "$work/ios-guest/libskyrim_guest.a" -verify_arch arm64
 cp "$work/ios-guest/libskyrim_guest.a" "$output_dir/libskyrim_guest.a"
 printf '%s\n' 'Source-only preflight passed. Skyrim execution, a complete iOS host, IPA signing and device behavior were not tested.'
