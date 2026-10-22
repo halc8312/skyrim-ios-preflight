@@ -20,3 +20,24 @@ workflows:
       - out/ios-simulator/*.log
       - out/ios-simulator/*.png
       - out/ios-simulator/*.xcresult
+  ios-gpu-framework-preflight:
+    name: iOS public GPU framework preflight
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: latest
+    # Public source only; no app install, game input, or paid plan.
+    scripts:
+      - name: Build public Metal WebGPU frameworks
+        script: |
+          export WGPU_PREFLIGHT_WORK_DIR="$CM_BUILD_DIR/.wgpu-source-preflight"
+          export WGPU_PREFLIGHT_OUTPUT_DIR="$CM_BUILD_DIR/out/gpu-framework"
+          bash ci/gpu-framework/build_frameworks.sh
+    artifacts:
+      - out/gpu-framework/*.txt
+      - out/gpu-framework/*.json
+      - out/gpu-framework/*.log
+      - out/gpu-framework/device/WgpuNative.framework
+      - out/gpu-framework/simulator/WgpuNative.framework
+      - out/gpu-framework/device/CoexistenceLinkProbe
+      - out/gpu-framework/simulator/CoexistenceLinkProbe
