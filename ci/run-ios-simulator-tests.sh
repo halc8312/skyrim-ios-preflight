@@ -37,7 +37,8 @@ PY
 runtime_id="$(printf '%s\n' "$sim_selection" | sed -n '1p')"
 device_type="$(printf '%s\n' "$sim_selection" | sed -n '2p')"
 runtime_version="$(printf '%s\n' "$sim_selection" | sed -n '3p')"
-printf 'Simulator: iPhone 17 Pro Max, iOS %s (not a physical device)\n' "$runtime_version"
+printf 'Simulator: iPhone 17 Pro Max, iOS %s (not a physical device)\n' "$runtime_version" \
+  | tee "$output/simulator-selection.log"
 
 rustup target add --toolchain "$RUSTUP_TOOLCHAIN" aarch64-apple-ios-sim
 cargo build --locked --release --lib --target aarch64-apple-ios-sim \
@@ -58,6 +59,7 @@ cp "$harness_root/ios-probe/project.yml" "$probe/"
 cp -R "$harness_root/ios-probe/app" "$probe/app"
 cp -R "$harness_root/ios-probe/tests" "$probe/tests"
 bash "$harness_root/ci/prepare-cpu-support.sh" "$source_dir" "$simde_dir" "$probe"
+bash "$harness_root/ci/build-owned-abi-framework.sh" "$probe" iphonesimulator
 cp "$work/bridge/include/XenosProbeBridge.h" "$probe/bridge/include/"
 cp "$CARGO_TARGET_DIR/aarch64-apple-ios-sim/release/libxenos_probe_bridge.a" "$probe/Libraries/"
 cp "$work/simulator-guest/libskyrim_guest.a" "$probe/Libraries/"

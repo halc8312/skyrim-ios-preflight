@@ -19,6 +19,10 @@ targets:
     sources:
       - path: app
       - path: cpu-fixture
+    dependencies:
+      - framework: Frameworks/SyntheticGuest.framework
+        embed: true
+        codeSign: false
     info:
       path: Generated-Info.plist
       properties:
@@ -45,6 +49,7 @@ targets:
         LD_EXPORT_DYNAMIC: YES
         OTHER_CPLUSPLUSFLAGS: "$(inherited) -O2 -fexceptions -funwind-tables -ffp-model=strict"
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Libraries"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
         OTHER_LDFLAGS: "$(inherited) -lxenos_probe_bridge -lskyrim_guest -liconv -lc++ -Wl,-u,_probe_runtime_context_layout -Wl,-u,_probe_runtime_cpu_roundtrip -Wl,-u,_probe_runtime_memory_selftest -Wl,-u,_probe_runtime_component_checks -Wl,-u,_probe_runtime_catch_cpp_unwind"
         ENABLE_USER_SCRIPT_SANDBOXING: YES
   SkyrimProbeTests:

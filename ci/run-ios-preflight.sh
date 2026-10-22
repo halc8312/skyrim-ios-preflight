@@ -135,7 +135,8 @@ cp "$work/ios-guest/libskyrim_guest.a" "$output_dir/libskyrim_guest.a"
 # One Rust staticlib contains the texture probe and public CPU/runtime libraries.
 # Only these explicit source directories enter the diagnostic app workspace.
 cp -R "$harness_root/ios-probe/bridge" "$work/bridge"
-cargo test --locked --manifest-path "$work/bridge/Cargo.toml" -- --test-threads=1
+cargo test --locked --manifest-path "$work/bridge/Cargo.toml" -- --test-threads=1 \
+  2>&1 | tee "$native_output/bridge-tests.log"
 cargo build --locked --release --lib --target aarch64-apple-ios \
   --manifest-path "$work/bridge/Cargo.toml"
 probe_dir="$work/ios-probe"
@@ -144,6 +145,7 @@ cp "$harness_root/ios-probe/project.yml" "$probe_dir/project.yml"
 cp -R "$harness_root/ios-probe/app" "$probe_dir/app"
 cp -R "$harness_root/ios-probe/tests" "$probe_dir/tests"
 bash "$harness_root/ci/prepare-cpu-support.sh" "$source_dir" "$simde_dir" "$probe_dir"
+bash "$harness_root/ci/build-owned-abi-framework.sh" "$probe_dir" iphoneos
 cp "$work/bridge/include/XenosProbeBridge.h" "$probe_dir/bridge/include/"
 cp "$CARGO_TARGET_DIR/aarch64-apple-ios/release/libxenos_probe_bridge.a" "$probe_dir/Libraries/"
 cp "$output_dir/libskyrim_guest.a" "$probe_dir/Libraries/"
