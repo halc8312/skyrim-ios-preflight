@@ -14,3 +14,7 @@ workflows:
     artifacts:
       - out/ios-synthetic/libskyrim_guest.a
       - out/ios-probe/SkyrimProbe-0.1.0-unsigned.ipa
+      - out/native-tests/*.log
+      - out/ios-simulator/*.log
+      - out/ios-simulator/*.png
+      - out/ios-simulator/*.xcresult

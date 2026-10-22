@@ -45,25 +45,49 @@ fi
 cmake --version
 ninja --version
 
-# Override the upstream WebAssembly nightly: these four source-only crates
-# already passed their Windows tests with Rust 1.88.0.
-export RUSTUP_TOOLCHAIN=1.88.0
+# Native targets do not need the upstream WebAssembly build-std nightly.
+# 1.99.1 supplies the runtime's Atomic::try_update API and fixes 1.99.0 bugs.
+export RUSTUP_TOOLCHAIN=1.99.1
 export CARGO_TARGET_DIR="$work/rust-target"
 export IPHONEOS_DEPLOYMENT_TARGET=26.0
 if ! command -v rustup >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
     https://sh.rustup.rs -o "$work/rustup-init.sh"
-  sh "$work/rustup-init.sh" -y --profile minimal --default-toolchain 1.88.0 --no-modify-path
+  sh "$work/rustup-init.sh" -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN" --no-modify-path
   export PATH="$HOME/.cargo/bin:$PATH"
 fi
-rustup toolchain install 1.88.0 --profile minimal
-rustup target add --toolchain 1.88.0 aarch64-apple-ios
-packages=(-p xex -p xenos-texture -p xenos-shader -p xenos-state)
+rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+rustup target add --toolchain "$RUSTUP_TOOLCHAIN" aarch64-apple-ios
+native_output="$harness_root/out/native-tests"
+mkdir -p "$native_output"
+# Reproduce the existing Darwin decommit contract before applying the repair.
+# A build error is not accepted as evidence of the memory bug.
+set +e
 (
   cd "$source_dir"
-  cargo test --locked "${packages[@]}"
+  cargo test --locked -p runtime-core --test guest_memory decommit_zeroes_contents -- --exact
+) 2>&1 | tee "$native_output/darwin-baseline.log"
+baseline_status=${PIPESTATUS[0]}
+set -e
+if [[ "$baseline_status" -eq 0 ]]; then
+  printf '%s\n' 'Baseline decommit test passed on this host; no failing baseline is claimed.'
+elif [[ "$baseline_status" -eq 101 ]] && grep -q 'test decommit_zeroes_contents .*FAILED' "$native_output/darwin-baseline.log"; then
+  printf '%s\n' 'Reproduced the Darwin memory zeroing failure in the upstream baseline.'
+else
+  printf '%s\n' 'Baseline could not be evaluated; stopping rather than treating a build error as a reproduced bug.' >&2
+  exit 1
+fi
+git -C "$source_dir" apply --check "$harness_root/ci/apple-memory.patch"
+git -C "$source_dir" apply "$harness_root/ci/apple-memory.patch"
+packages=(-p xex -p xenos-texture -p xenos-shader -p xenos-state
+          -p runtime-core -p vfs -p kernel-hle -p d3d-hle -p xma-decoder)
+(
+  cd "$source_dir"
+  # This optional export-table test requires another checkout and otherwise
+  # silently returns success, so keep it explicitly filtered out.
+  cargo test --locked "${packages[@]}" -- --test-threads=1 --skip export_ordinals_match_export_tables
   cargo build --locked --lib --target aarch64-apple-ios "${packages[@]}"
-)
+) 2>&1 | tee "$native_output/native-tests.log"
 
 cat > "$fixture_dir/ppc_recomp.0.cpp" <<'CPP'
 extern "C" unsigned long long guest_probe(unsigned long long x) {
@@ -100,6 +124,7 @@ probe_dir="$work/ios-probe"
 mkdir -p "$probe_dir/Libraries" "$probe_dir/bridge/include"
 cp "$harness_root/ios-probe/project.yml" "$probe_dir/project.yml"
 cp -R "$harness_root/ios-probe/app" "$probe_dir/app"
+cp -R "$harness_root/ios-probe/tests" "$probe_dir/tests"
 cp "$work/bridge/include/XenosProbeBridge.h" "$probe_dir/bridge/include/"
 cp "$CARGO_TARGET_DIR/aarch64-apple-ios/release/libxenos_probe_bridge.a" "$probe_dir/Libraries/"
 cp "$output_dir/libskyrim_guest.a" "$probe_dir/Libraries/"
@@ -128,4 +153,5 @@ cp -R "$app" "$package_dir/Payload/"
   zip -q -r "$probe_output/SkyrimProbe-0.1.0-unsigned.ipa" Payload
 )
 shasum -a 256 "$probe_output/SkyrimProbe-0.1.0-unsigned.ipa"
-printf '%s\n' 'Source-only diagnostic IPA built. Skyrim execution, a complete iOS host, IPA signing and device behavior were not tested.'
+bash "$harness_root/ci/run-ios-simulator-tests.sh" "$work" "$source_dir" "$fixture_dir"
+printf '%s\n' 'Source-only diagnostic IPA and Simulator tests finished. Skyrim execution, a complete iOS host, IPA signing and physical iPhone behavior were not tested.'

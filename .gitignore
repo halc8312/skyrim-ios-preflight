@@ -8,8 +8,12 @@
 !/ci/
 !/ci/run-ios-preflight.sh
 !/ci/native-arm64.patch
+!/ci/apple-memory.patch
+!/ci/run-ios-simulator-tests.sh
 !/ios-probe/
 !/ios-probe/project.yml
+!/ios-probe/tests/
+!/ios-probe/tests/MetalProbeTests.swift
 !/ios-probe/app/
 !/ios-probe/app/ProbeApp.swift
 !/ios-probe/app/TextureView.swift
