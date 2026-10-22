@@ -1,5 +1,5 @@
 {
-  "file_count": 229,
+  "file_count": 231,
   "game_data_included": false,
   "game_executed": false,
   "physical_iphone_verified": false,
@@ -298,8 +298,12 @@
       "sha256": "361f230bc678fdd19d40414031bcafa7ddaea42f837184ffa490c25be62a3a95"
     },
     "skyrim-recomp-web/crates/runtime-core/src/address_space.rs": {
-      "bytes": 19947,
-      "sha256": "f4e50029e485d36a0ea657f62f430b50efbc68e638730f412568c4382967a9a2"
+      "bytes": 20679,
+      "sha256": "89f4669d169c96ccf8474f2a55261a6ebcffc8b374b97abebe40eeacc704972d"
+    },
+    "skyrim-recomp-web/crates/runtime-core/src/address_space_order_tests.rs": {
+      "bytes": 5860,
+      "sha256": "327b8331885ec9a7ab40e32fa8322a90dea17bb319b41871c83926f377f0dad9"
     },
     "skyrim-recomp-web/crates/runtime-core/src/context.rs": {
       "bytes": 5055,
@@ -698,8 +702,8 @@
       "sha256": "289d6915142ab5a0204ca64d3587b1cc50dc2f3afb2f9e07813096364b37054c"
     },
     "source-allowlist.txt": {
-      "bytes": 11721,
-      "sha256": "e1cf3f8248787cbb311c79e7602e0429981e5c8573e81903ef3bc54e9e8b0149"
+      "bytes": 11828,
+      "sha256": "efebb7c02bfd51b8226a49e909f5807a895a499365d728223bf3d15e164fe7b1"
     },
     "tools/ios-owned-game-host/Cargo.lock": {
       "bytes": 9317,
@@ -708,6 +712,10 @@
     "tools/ios-owned-game-host/Cargo.toml": {
       "bytes": 1379,
       "sha256": "f83b629d243947e5301f639fdd4c7c1e521055a3b477e2c1f262e596cb0421a6"
+    },
+    "tools/ios-owned-game-host/README.md": {
+      "bytes": 9522,
+      "sha256": "6a778cc12747c7e1f26c90fbdf0298648022fc09f2e3b3e7076bde39cc77b8b4"
     },
     "tools/ios-owned-game-host/app/MetalViewport.swift": {
       "bytes": 1528,
@@ -743,7 +751,7 @@
     },
     "tools/ios-owned-game-host/project.yml": {
       "bytes": 3541,
-      "sha256": "12761e642d22e47ecb07c79bb8175ac14c51876b2ece14e571f50a175a8dcb42"
+      "sha256": "080c2fa49087d5c53542da0e537476e0d49acbbf11af4ee60c00b7f05a9040a1"
     },
     "tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.cpp": {
       "bytes": 10292,
@@ -810,8 +818,8 @@
       "sha256": "5408a9d254b750e66b8189e3ba4c82008c63d89e2c5dee68557672198c82e559"
     },
     "tools/ios-owned-game-host/src/renderer.rs": {
-      "bytes": 5251,
-      "sha256": "a1375a9204187f82332065fd596eb87ebb31f4aaefd43033153264d49b4ee6a3"
+      "bytes": 5527,
+      "sha256": "e4b1ae3985b76fbb0fd5910221e90dd1212e77f27475c66d3deb406935d16010"
     },
     "tools/ios-owned-game-host/src/renderer_policy.rs": {
       "bytes": 2515,

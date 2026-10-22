@@ -199,6 +199,8 @@ impl AddressSpace {
     }
 
     fn decommit_ranges(&self, offset: u32, ranges: &[(u32, u32)]) -> AllocResult<()> {
+        #[cfg(test)]
+        ordering_tests::before_cleanup(self);
         for &(addr, len) in ranges {
             self.mem.decommit(offset + addr, len)?;
         }
@@ -208,6 +210,8 @@ impl AddressSpace {
     /// Frees the committed ranges of a released allocation (they stay
     /// accessible; see [`GuestMemory::release`]).
     fn release_ranges(&self, offset: u32, ranges: &[(u32, u32)]) -> AllocResult<()> {
+        #[cfg(test)]
+        ordering_tests::before_cleanup(self);
         for &(addr, len) in ranges {
             self.mem.release(offset + addr, len)?;
         }
@@ -259,15 +263,22 @@ impl AddressSpace {
     }
 
     pub fn decommit_virtual(&self, addr: u32, size: u32) -> AllocResult<()> {
-        let ranges = self.with_page_heap(addr, |h| h.decommit(addr, size))??;
-        self.decommit_ranges(0, &ranges)
+        // Do not expose Reserved pages to a recommit until their old contents
+        // have been discarded. Cleanup never takes a PageHeap lock.
+        self.with_page_heap(addr, |heap| {
+            let ranges = heap.decommit(addr, size)?;
+            self.decommit_ranges(0, &ranges)
+        })?
     }
 
     /// Releases the allocation based at `addr`; returns its size.
     pub fn release_virtual(&self, addr: u32) -> AllocResult<u32> {
-        let (size, ranges) = self.with_page_heap(addr, |h| h.release(addr))??;
-        self.release_ranges(0, &ranges)?;
-        Ok(size)
+        // Keep newly free pages unavailable for reuse until cleanup finishes.
+        self.with_page_heap(addr, |heap| -> AllocResult<u32> {
+            let (size, ranges) = heap.release(addr)?;
+            self.release_ranges(0, &ranges)?;
+            Ok(size)
+        })?
     }
 
     fn virtual_heap_at(&self, addr: u32) -> &Mutex<PageHeap> {
@@ -327,8 +338,10 @@ impl AddressSpace {
             return Err(AllocError::WrongRegion(addr));
         }
         let phys = self.physical_address(addr).ok_or(AllocError::WrongRegion(addr))?;
-        let (size, ranges) = self.physical.lock().unwrap().release(phys)?;
+        let mut heap = self.physical.lock().unwrap();
+        let (size, ranges) = heap.release(phys)?;
         self.release_ranges(map::PHYSICAL_BASE, &ranges)?;
+        drop(heap); // publish the free range only after its backing cleanup
         Ok(size)
     }
 
@@ -379,8 +392,11 @@ impl AddressSpace {
     }
 
     pub fn free_stack(&self, alloc_base: u32) -> AllocResult<()> {
-        let (_, ranges) = self.stack_heap.lock().unwrap().release(alloc_base)?;
-        self.decommit_ranges(0, &ranges)
+        let mut heap = self.stack_heap.lock().unwrap();
+        let (_, ranges) = heap.release(alloc_base)?;
+        let result = self.decommit_ranges(0, &ranges);
+        drop(heap);
+        result
     }
 
     // --- XEX region ---------------------------------------------------------------------
@@ -492,3 +508,7 @@ impl AddressSpace {
         (self.virtual_heap.lock().unwrap().usage().0 + self.virtual_4k_heap.lock().unwrap().usage().0) * PAGE_SIZE
     }
 }
+
+#[cfg(test)]
+#[path = "address_space_order_tests.rs"]
+mod ordering_tests;

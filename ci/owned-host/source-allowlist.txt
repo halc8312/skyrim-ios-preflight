@@ -71,6 +71,7 @@ skyrim-recomp-web/crates/kernel-hle/src/xma.rs
 skyrim-recomp-web/crates/kernel-hle/src/zlib.rs
 skyrim-recomp-web/crates/runtime-core/Cargo.toml
 skyrim-recomp-web/crates/runtime-core/src/address_space.rs
+skyrim-recomp-web/crates/runtime-core/src/address_space_order_tests.rs
 skyrim-recomp-web/crates/runtime-core/src/context.rs
 skyrim-recomp-web/crates/runtime-core/src/dirty.rs
 skyrim-recomp-web/crates/runtime-core/src/guest.rs
@@ -173,6 +174,7 @@ skyrim-recomp-web/hosts/common/gpu.rs
 source-allowlist.txt
 tools/ios-owned-game-host/Cargo.lock
 tools/ios-owned-game-host/Cargo.toml
+tools/ios-owned-game-host/README.md
 tools/ios-owned-game-host/app/MetalViewport.swift
 tools/ios-owned-game-host/app/OwnedHost-Bridging-Header.h
 tools/ios-owned-game-host/app/OwnedHostApp.swift

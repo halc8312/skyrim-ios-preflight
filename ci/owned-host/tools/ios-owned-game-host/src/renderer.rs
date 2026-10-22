@@ -45,6 +45,10 @@ fn attach(token: u64, layer: *mut c_void, width: u32, height: u32) -> Result<(),
     let handle = unsafe { MetalLayerHandle::from_raw(layer) }.ok_or(-1)?;
     let size = Arc::new(AtomicU64::new(Window::pack_size(width, height)));
     xenos_render::set_d3d_mode(false);
+    // Match the upstream handheld fence policy before any guest commands run.
+    // This orders CPU-visible GPU effects after renderer completion; it is
+    // not evidence that the separate native iOS loading crash is resolved.
+    kernel_hle::gpu::set_sync_default(true);
     let renderer = xenos_render::native::start_checked(
         Arc::new(common_gpu::GuestPhysical(kernel)),
         NativeOptions {
