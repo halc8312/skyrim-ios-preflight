@@ -54,6 +54,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.halc8312.ownedgamehost
+        # Keep the checked implementation/dependency graph in the app executable.
+        ENABLE_DEBUG_DYLIB: NO
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_OBJC_BRIDGING_HEADER: app/OwnedHost-Bridging-Header.h
         HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/native $(SRCROOT)/app $(SRCROOT)/include"

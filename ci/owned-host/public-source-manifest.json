@@ -742,16 +742,16 @@
       "sha256": "b49345a80cd363e04b1e24dd707059a385618d9354056f33be12455cdec9babf"
     },
     "tools/ios-owned-game-host/project.yml": {
-      "bytes": 3261,
-      "sha256": "6e586d19d6f3634558239a0f7d24a57025de06c24a92fe1fbdde01dfd5c4eb86"
+      "bytes": 3374,
+      "sha256": "d0e24f123c727b252d574de32aea7f32f73b9d878bd04651e37b56270379b82a"
     },
     "tools/ios-owned-game-host/sdk-test/run_sdk_tests.py": {
       "bytes": 10351,
       "sha256": "aefa0b0af53d8bee6136bb16e20455ebf7ec905803f60b0715eab2fb202c15ba"
     },
     "tools/ios-owned-game-host/sdk-test/test_run_sdk_tests.py": {
-      "bytes": 4548,
-      "sha256": "699a608036d8c672ec6fbfb0634815701dab0f350c00933ccf7d6c9f0ec024c5"
+      "bytes": 6106,
+      "sha256": "b67d59294a71b058832220fe6925d8b1a71a5502729e9ebcfa749d5933a0f744"
     },
     "tools/ios-owned-game-host/sdk-test/tests/OwnedHostFullChainTests.swift": {
       "bytes": 9144,

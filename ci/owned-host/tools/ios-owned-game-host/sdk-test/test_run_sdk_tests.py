@@ -2,6 +2,8 @@
 import copy
 import importlib.util
 import json
+import hashlib
+import tempfile
 from pathlib import Path
 import unittest
 
@@ -75,6 +77,30 @@ class PublicDriverTests(unittest.TestCase):
             changed[key] = 1
             with self.assertRaises(ValueError):
                 driver.validate_summary(changed)
+
+    def test_package_dependency_guard_refuses_debug_stub_and_private_eager_load(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "OwnedGameHost.app"
+            app.mkdir()
+            binding, xex = b"public binding", b"self-authored XEX"
+            (app / "OwnedGuestBinding.json").write_bytes(binding)
+            (app / "PublicFixture").mkdir()
+            (app / "PublicFixture/default.xex").write_bytes(xex)
+            hashes = []
+            for name in ["PrivateGuest", "WgpuNative"]:
+                binary = app / f"Frameworks/{name}.framework/{name}"
+                binary.parent.mkdir(parents=True)
+                data = ("self-authored " + name).encode()
+                binary.write_bytes(data)
+                hashes.append(hashlib.sha256(data).hexdigest())
+            wgpu = "\t@rpath/WgpuNative.framework/WgpuNative (compatibility version 1.0.0)\n"
+            system = "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n"
+            driver.verify_package(app, binding, xex, *hashes, wgpu + system)
+            debug_stub = "\t@rpath/OwnedGameHost.debug.dylib (compatibility version 0.0.0)\n"
+            private_load = "\t@rpath/PrivateGuest.framework/PrivateGuest (compatibility version 1.0.0)\n"
+            for dependencies in [debug_stub + system, wgpu + private_load + system, wgpu + wgpu + system]:
+                with self.assertRaises(ValueError):
+                    driver.verify_package(app, binding, xex, *hashes, dependencies)
 
     def test_single_run_command_has_no_iteration_or_retry_mode(self):
         command = driver.make_test_command(["xcodebuild"], ["CODE_SIGNING_ALLOWED=NO"], Path("public.xcresult"))
