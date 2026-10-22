@@ -1,11 +1,14 @@
 """Pure public proof-parser regressions; no SDK or game input is opened."""
 import copy
+import contextlib
+import io
 import importlib.util
 import json
 import hashlib
 import tempfile
 from pathlib import Path
 import unittest
+import unittest.mock
 
 spec = importlib.util.spec_from_file_location("owned_sdk_driver", Path(__file__).with_name("run_sdk_tests.py"))
 driver = importlib.util.module_from_spec(spec)
@@ -177,6 +180,60 @@ class PublicDriverTests(unittest.TestCase):
             for dependencies in [debug_stub + system, wgpu + private_load + system, wgpu + wgpu + system]:
                 with self.assertRaises(ValueError):
                     driver.verify_package(app, binding, xex, *hashes, dependencies)
+
+    def test_failure_tails_are_bounded_and_read_only_own_regular_logs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix = root / "public-build"
+            logs = [prefix.with_suffix(".stdout.log"), prefix.with_suffix(".stderr.log")]
+            logs[0].write_bytes(b"OMITTED_HEAD" + b"a" * (driver.LOG_TAIL_BYTES * 2) + b"OWN_STDOUT_END")
+            logs[1].write_bytes(b"b" * (driver.LOG_TAIL_BYTES * 2) + b"OWN_STDERR_END")
+            unrelated = root / "unrelated.txt"
+            unrelated.write_bytes(b"UNRELATED_DO_NOT_READ")
+            actual_open = driver.os.open
+            opened = []
+            def record_open(path, *args, **kwargs):
+                opened.append(Path(path))
+                return actual_open(path, *args, **kwargs)
+            with unittest.mock.patch.object(driver.os, "open", side_effect=record_open):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    driver.print_command_log_tails(prefix)
+            text = output.getvalue()
+            self.assertEqual(opened, logs)
+            self.assertNotIn("OMITTED_HEAD", text)
+            self.assertNotIn("UNRELATED_DO_NOT_READ", text)
+            self.assertIn("OWN_STDOUT_END", text)
+            self.assertIn("OWN_STDERR_END", text)
+            headers = [json.loads(line.split(" ", 1)[1]) for line in text.splitlines()
+                       if line.startswith("PUBLIC_SDK_COMMAND_LOG_TAIL ")]
+            self.assertEqual(len(headers), 2)
+            self.assertTrue(all(row["available"] and row["truncated"]
+                                and row["utf8_bytes"] <= driver.LOG_TAIL_BYTES for row in headers))
+            self.assertLess(len(text.encode("utf-8")), 2 * (driver.LOG_TAIL_BYTES + 512))
+            self.assertEqual(unrelated.read_bytes(), b"UNRELATED_DO_NOT_READ")
+
+    def test_nonzero_or_missing_result_still_fails_and_success_prints_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix = root / "public-test"
+            prefix.with_suffix(".stdout.log").write_bytes(b"PUBLIC_TEST_FAILURE\n")
+            prefix.with_suffix(".stderr.log").write_bytes(b"\xff" * (driver.LOG_TAIL_BYTES * 2))
+            existing = root / "public.xcresult"
+            existing.mkdir()
+            for code, result in [(7, None), (7, existing), (0, root / "missing.xcresult")]:
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), self.assertRaisesRegex(RuntimeError, "unchanged failure"):
+                    driver.require_sdk_command_success(code, prefix, "unchanged failure", result)
+                self.assertIn("PUBLIC_TEST_FAILURE", output.getvalue())
+                self.assertLess(len(output.getvalue().encode("utf-8")), 2 * (driver.LOG_TAIL_BYTES + 512))
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                driver.require_sdk_command_success(0, prefix, "unchanged failure", existing)
+            self.assertEqual(output.getvalue(), "")
+            # Missing logs cannot hide/replace the original SDK failure.
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, "original failure"):
+                driver.require_sdk_command_success(1, root / "missing-logs", "original failure")
 
     def test_single_run_command_has_no_iteration_or_retry_mode(self):
         command = driver.make_test_command(["xcodebuild"], ["CODE_SIGNING_ALLOWED=NO"], Path("public.xcresult"))

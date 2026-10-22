@@ -12,9 +12,54 @@
 #include <mach/vm_prot.h>
 #include <limits.h>
 
+// Apple cctools include/mach-o/ldsyms.h declares this linker-defined symbol
+// with this 64-bit type. An explicit declaration avoids requiring that extra
+// header in the public cross-compile headers; no implementation is supplied.
+extern "C" const struct mach_header_64 _mh_execute_header;
+
 static_assert(sizeof(OHNativeTraceSDKResult) == 32);
 namespace {
 constexpr uint32_t kMaximumFrames = 32;
+constexpr uint32_t kMaximumImages = 4096;
+struct SelectedImage { uint32_t index = 0; int64_t slide = 0; };
+
+// The same selector is used by dyld lookup and these compile-time inventory
+// regressions. Image index 0 is not assumed to identify the executable.
+template<class HeaderAt, class SlideAt>
+constexpr bool select_unique_image(uint32_t count, const void *owner,
+                                   HeaderAt header_at, SlideAt slide_at,
+                                   SelectedImage *out) {
+    if (!owner || !out || count == 0 || count > kMaximumImages) return false;
+    uint32_t matches = 0;
+    SelectedImage selected{};
+    for (uint32_t index = 0; index < count; ++index) {
+        if (header_at(index) != owner) continue;
+        if (++matches != 1) return false;
+        selected = {index, slide_at(index)};
+    }
+    if (matches != 1) return false;
+    *out = selected;
+    return true;
+}
+constexpr bool selection_regressions() {
+    const int images[3] = {1, 2, 3};
+    const int absent = 4;
+    SelectedImage selected{};
+    const auto headers = [&](uint32_t index) -> const void * { return &images[index]; };
+    const auto slides = [](uint32_t index) { return int64_t(index) - 7; };
+    if (!select_unique_image(3, &images[2], headers, slides, &selected)
+        || selected.index != 2 || selected.slide != -5) return false;
+    if (!select_unique_image(3, &images[0], headers, slides, &selected)
+        || selected.index != 0 || selected.slide != -7) return false;
+    if (select_unique_image(3, &absent, headers, slides, &selected)) return false;
+    if (select_unique_image(2, &images[2], [&](uint32_t) -> const void * { return &images[2]; },
+                            slides, &selected)) return false;
+    if (select_unique_image(0, &images[2], headers, slides, &selected)) return false;
+    if (select_unique_image(kMaximumImages + 1, &images[2], headers, slides, &selected)) return false;
+    if (select_unique_image(3, nullptr, headers, slides, &selected)) return false;
+    return true;
+}
+static_assert(selection_regressions());
 struct Capture {
     void *frames[kMaximumFrames]{};
     uintptr_t parents[2]{};
@@ -86,6 +131,42 @@ bool main_app_rx(const mach_header_64 *header, int64_t slide, uintptr_t pc) {
     }
     return cursor == header->sizeofcmds && found;
 }
+
+// Use a private, internal-linkage body as the dladdr anchor. An external API
+// address can resolve through an interposed/stub symbol. The executable's
+// linker-defined header independently supplies the required main-image identity.
+// Return only numeric stage codes; no path, symbol or process PC is emitted.
+int32_t locate_main_probe_image(const mach_header_64 **out_header, int64_t *out_slide) {
+    Dl_info owner{};
+    if (!dladdr(reinterpret_cast<const void *>(&outer), &owner) || !owner.dli_fbase) return -3;
+    const auto *header = reinterpret_cast<const mach_header_64 *>(&_mh_execute_header);
+    if (owner.dli_fbase != header) return -4;
+    if (header->magic != MH_MAGIC_64 || header->filetype != MH_EXECUTE
+        || header->cputype != CPU_TYPE_ARM64 || header->cpusubtype != 0) return -5;
+    const uint32_t count = _dyld_image_count();
+    if (count == 0 || count > kMaximumImages) return -6;
+    SelectedImage selected{};
+    if (!select_unique_image(count, header,
+            [](uint32_t index) -> const void * { return _dyld_get_image_header(index); },
+            [](uint32_t index) { return static_cast<int64_t>(_dyld_get_image_vmaddr_slide(index)); },
+            &selected)) return -7;
+    // Enumeration is not an atomic dyld snapshot. Reject a changing inventory
+    // or a mismatched header/slide pair rather than accepting a guessed owner.
+    if (_dyld_image_count() != count
+        || static_cast<const void *>(_dyld_get_image_header(selected.index)) != static_cast<const void *>(header)
+        || static_cast<int64_t>(_dyld_get_image_vmaddr_slide(selected.index)) != selected.slide)
+        return -8;
+    if (!main_app_rx(header, selected.slide, reinterpret_cast<uintptr_t>(&outer))) return -9;
+    *out_header = header;
+    *out_slide = selected.slide;
+    return 0;
+}
+
+bool parent_in_main_image(const mach_header_64 *header, int64_t slide, uintptr_t pc) {
+    Dl_info owner{};
+    return dladdr(reinterpret_cast<const void *>(pc), &owner)
+        && owner.dli_fbase == header && main_app_rx(header, slide, pc);
+}
 }
 
 extern "C" int32_t OHTestNativeTraceSDKV1(OHNativeTraceSDKResult *out, size_t capacity) {
@@ -94,11 +175,10 @@ extern "C" int32_t OHTestNativeTraceSDKV1(OHNativeTraceSDKResult *out, size_t ca
     OHNativeTraceSDKResult result{1, sizeof(result), 0, 2, 0, 0, 0, 0};
 #if defined(__APPLE__) && defined(__aarch64__) && !defined(__arm64e__) && TARGET_OS_IOS && !TARGET_OS_MACCATALYST
     result.flags |= 1;
-    const auto *header = reinterpret_cast<const mach_header_64 *>(_dyld_get_image_header(0));
-    const int64_t slide = _dyld_get_image_vmaddr_slide(0);
-    Dl_info owner{};
-    if (header && dladdr(reinterpret_cast<const void *>(&OHTestNativeTraceSDKV1), &owner)
-        && owner.dli_fbase == header) result.flags |= 2;
+    const mach_header_64 *header = nullptr;
+    int64_t slide = 0;
+    const int32_t owner_status = locate_main_probe_image(&header, &slide);
+    if (owner_status == 0) result.flags |= 2;
     Capture state;
     const int count = outer(&state);
     if (count > 0 && count <= static_cast<int>(kMaximumFrames)) {
@@ -106,7 +186,7 @@ extern "C" int32_t OHTestNativeTraceSDKV1(OHNativeTraceSDKResult *out, size_t ca
         if (state.parents[0] && state.parents[1] && state.parents[0] != state.parents[1]
             && state.after_call == 10) {
             for (uintptr_t expected : state.parents) {
-                if ((result.flags & 2) && main_app_rx(header, slide, expected)) ++result.rx_parent_count;
+                if ((result.flags & 2) && parent_in_main_image(header, slide, expected)) ++result.rx_parent_count;
                 for (int i = 0; i < count; ++i) {
                     const uintptr_t actual = reinterpret_cast<uintptr_t>(
                         __builtin_extract_return_addr(state.frames[i]));
@@ -117,6 +197,7 @@ extern "C" int32_t OHTestNativeTraceSDKV1(OHNativeTraceSDKResult *out, size_t ca
     }
     if (result.rx_parent_count == 2) result.flags |= 4;
     if (result.matched_parent_count == 2) result.flags |= 8;
+    if (owner_status != 0) { *out = result; return owner_status; }
 #endif
     *out = result;
     return result.flags == 15 && result.captured_count >= 3 ? 0 : -2;

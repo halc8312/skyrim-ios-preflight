@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -41,6 +42,52 @@ def run_bounded(command, cwd: Path, prefix: Path, timeout: float) -> int:
                         pass
                     process.wait(timeout=3)
                 raise RuntimeError("public owned-host SDK command deadline exceeded") from None
+
+
+
+LOG_TAIL_BYTES = 8192
+
+
+def print_command_log_tails(prefix: Path) -> None:
+    """Read only the two logs this SDK command created, never scan a directory."""
+    for stream_name in ("stdout", "stderr"):
+        path = prefix.with_suffix("." + stream_name + ".log")
+        text = None
+        truncated = False
+        try:
+            before = path.lstat()
+            if not stat.S_ISREG(before.st_mode):
+                raise OSError("not an owned regular command log")
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            with os.fdopen(os.open(path, flags), "rb") as stream:
+                actual = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(actual.st_mode)
+                        or (actual.st_dev, actual.st_ino) != (before.st_dev, before.st_ino)):
+                    raise OSError("command log changed before read")
+                truncated = actual.st_size > LOG_TAIL_BYTES
+                stream.seek(max(0, actual.st_size - LOG_TAIL_BYTES))
+                raw = stream.read(LOG_TAIL_BYTES)
+            rendered = raw.decode("utf-8", "replace").encode("utf-8")
+            truncated = truncated or len(rendered) > LOG_TAIL_BYTES
+            text = rendered[-LOG_TAIL_BYTES:].decode("utf-8", "ignore")
+            # Keep line breaks but prevent terminal control sequences from logs.
+            text = "".join(c if c in "\n\r\t" or (ord(c) >= 32 and ord(c) != 127)
+                           else "?" for c in text)
+        except OSError:
+            pass
+        print("PUBLIC_SDK_COMMAND_LOG_TAIL " + json.dumps(dict(
+            stream=stream_name, available=text is not None, truncated=truncated,
+            utf8_bytes=len(text.encode("utf-8")) if text is not None else 0)))
+        if text is not None:
+            print(text)
+        print("PUBLIC_SDK_COMMAND_LOG_TAIL_END " + stream_name)
+
+
+def require_sdk_command_success(code: int, prefix: Path, message: str,
+                                result: Path | None = None) -> None:
+    if code or (result is not None and not result.is_dir()):
+        print_command_log_tails(prefix)
+        raise RuntimeError(message)
 
 
 def strict_json(data):
@@ -182,9 +229,10 @@ def main() -> int:
               "-configuration", "Debug", "-destination", args.destination,
               "-derivedDataPath", str(output / "DerivedData")]
     signing = ["CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO"]
-    if run_bounded(common + signing + ["build-for-testing"], stage,
-                   output / "build-for-testing", max(.01, deadline - time.monotonic())):
-        raise RuntimeError("public app build-for-testing failed")
+    build_code = run_bounded(common + signing + ["build-for-testing"], stage,
+                             output / "build-for-testing", max(.01, deadline - time.monotonic()))
+    require_sdk_command_success(build_code, output / "build-for-testing",
+                                "public app build-for-testing failed")
     app = output / "DerivedData/Build/Products/Debug-iphonesimulator/OwnedGameHost.app"
     dependencies = subprocess.check_output(["xcrun", "otool", "-L", str(app / "OwnedGameHost")],
                                            text=True, timeout=15)
@@ -193,8 +241,8 @@ def main() -> int:
     result = output / "OwnedGameHost.xcresult"
     code = run_bounded(make_test_command(common, signing, result), stage,
                        output / "xcodebuild", max(.01, deadline - time.monotonic()))
-    if code or not result.is_dir():
-        raise RuntimeError("public fullchain XCTest failed or result bundle missing")
+    require_sdk_command_success(code, output / "xcodebuild",
+                                "public fullchain XCTest failed or result bundle missing", result)
     # Apple documents these commands and their SDK-owned help/output formats:
     # developer.apple.com/documentation/xcode-release-notes/xcode-16_3-release-notes
     for command in ("summary", "tests"):

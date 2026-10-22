@@ -746,20 +746,20 @@
       "sha256": "12761e642d22e47ecb07c79bb8175ac14c51876b2ece14e571f50a175a8dcb42"
     },
     "tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.cpp": {
-      "bytes": 5941,
-      "sha256": "f6c517907949d7a5e557ef0b30191b2b011bc7be8d70929e2eded28fe8fd6883"
+      "bytes": 10292,
+      "sha256": "6c653f7575df14d9a9c38325967e433133d5bc400631a0fbd97520aab9bf2ae6"
     },
     "tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.h": {
       "bytes": 652,
       "sha256": "5e5976a5d41950aaf1dac5d89c9d7f0d54539e5293dccf30ca94bfab50fbfc51"
     },
     "tools/ios-owned-game-host/sdk-test/run_sdk_tests.py": {
-      "bytes": 12428,
-      "sha256": "f897633da71606a9be68978da1fcc1a81ee77db2ca4b33a577106981bc3932c3"
+      "bytes": 14741,
+      "sha256": "290124ddb6114c406b482a528261ca83611781e8a3aeab3fc21c2ba62e48ef90"
     },
     "tools/ios-owned-game-host/sdk-test/test_run_sdk_tests.py": {
-      "bytes": 10997,
-      "sha256": "04a87b459adb583704d9b3c0983e151516813424ca2244625305635721c6bd79"
+      "bytes": 14472,
+      "sha256": "106fa4fc389908190e786eb9a38c32ce83240c46a978b333c537cae83abc7e60"
     },
     "tools/ios-owned-game-host/sdk-test/tests/NativeTraceSDKProbeTests.swift": {
       "bytes": 2885,
