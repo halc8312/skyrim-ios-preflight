@@ -52,11 +52,14 @@ final class TextureRenderer: NSObject, MTKViewDelegate {
 
     init(view: MTKView, pixels: [UInt8], report: @escaping (Bool, String) -> Void) throws {
         guard pixels.count == 64, let device = view.device,
-              let queue = device.makeCommandQueue(),
-              let library = device.makeDefaultLibrary(),
-              let vertex = library.makeFunction(name: "probe_vertex"),
+              let queue = device.makeCommandQueue() else {
+            throw RenderError.message("GPUを準備できません")
+        }
+        // Metal's supported GPU shader compiler; this requires no CPU JIT.
+        let library = try device.makeLibrary(source: ProbeShaderSource.msl, options: nil)
+        guard let vertex = library.makeFunction(name: "probe_vertex"),
               let fragment = library.makeFunction(name: "probe_fragment") else {
-            throw RenderError.message("GPUまたはシェーダーを準備できません")
+            throw RenderError.message("シェーダー関数を準備できません")
         }
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = vertex

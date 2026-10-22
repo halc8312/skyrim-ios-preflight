@@ -13,7 +13,7 @@
 !/ios-probe/app/
 !/ios-probe/app/ProbeApp.swift
 !/ios-probe/app/TextureView.swift
-!/ios-probe/app/ProbeShaders.metal
+!/ios-probe/app/ProbeShaderSource.swift
 !/ios-probe/app/Probe-Bridging-Header.h
 !/ios-probe/bridge/
 !/ios-probe/bridge/Cargo.toml
