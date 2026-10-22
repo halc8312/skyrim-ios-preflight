@@ -79,13 +79,15 @@ else
 fi
 git -C "$source_dir" apply --check "$harness_root/ci/apple-memory.patch"
 git -C "$source_dir" apply "$harness_root/ci/apple-memory.patch"
+git -C "$source_dir" apply --check "$harness_root/ci/vfs-host-casing.patch"
+git -C "$source_dir" apply "$harness_root/ci/vfs-host-casing.patch"
 packages=(-p xex -p xenos-texture -p xenos-shader -p xenos-state
           -p runtime-core -p vfs -p kernel-hle -p d3d-hle -p xma-decoder)
 (
   cd "$source_dir"
   # This optional export-table test requires another checkout and otherwise
   # silently returns success, so keep it explicitly filtered out.
-  cargo test --locked "${packages[@]}" -- --test-threads=1 --skip export_ordinals_match_export_tables
+  cargo test --locked --no-fail-fast "${packages[@]}" -- --test-threads=1 --skip export_ordinals_match_export_tables
   cargo build --locked --lib --target aarch64-apple-ios "${packages[@]}"
 ) 2>&1 | tee "$native_output/native-tests.log"
 

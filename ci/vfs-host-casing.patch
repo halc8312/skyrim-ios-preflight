@@ -1,0 +1,44 @@
+diff --git a/crates/vfs/src/lib.rs b/crates/vfs/src/lib.rs
+index 689348e..663d8fc 100644
+--- a/crates/vfs/src/lib.rs
++++ b/crates/vfs/src/lib.rs
+@@ -720,22 +720,29 @@ fn missing_kind(host_path: &Path) -> VfsError {
+     if host_path.parent().is_some_and(|p| p.is_dir()) { VfsError::NotFound } else { VfsError::PathNotFound }
+ }
+
+-/// Maps guest components onto host entries, matching case-insensitively when
+-/// the exact name doesn't exist. Components that don't exist are appended as-is.
++/// Maps guest components onto the names returned by the host directory. Prefer
++/// an exact spelling, otherwise match case-insensitively. Components that don't
++/// exist are appended as-is; the mount root and symlink spelling are preserved.
+ fn resolve_case_insensitive(root: &Path, components: &[&str]) -> PathBuf {
+     let mut path = root.to_path_buf();
+     let mut exists = true;
+     for c in components {
+         if exists {
+-            let exact = path.join(c);
+-            if fs::symlink_metadata(&exact).is_ok() {
+-                path = exact;
+-                continue;
+-            }
+             let found = fs::read_dir(&path).ok().and_then(|rd| {
+-                rd.filter_map(|e| e.ok())
+-                    .find(|e| e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(c)))
+-                    .map(|e| e.file_name())
++                // A successful lookup doesn't prove an exact spelling on a
++                // case-insensitive volume (the usual macOS/iOS filesystem).
++                // Use entry names, without canonicalizing the mount/symlinks.
++                let mut fallback = None;
++                for entry in rd.filter_map(|e| e.ok()) {
++                    let name = entry.file_name();
++                    if name.to_str() == Some(*c) {
++                        return Some(name);
++                    }
++                    if fallback.is_none() && name.to_str().is_some_and(|n| n.eq_ignore_ascii_case(c)) {
++                        fallback = Some(name);
++                    }
++                }
++                fallback
+             });
+             match found {
+                 Some(name) => {

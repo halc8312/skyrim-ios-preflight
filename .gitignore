@@ -9,6 +9,7 @@
 !/ci/run-ios-preflight.sh
 !/ci/native-arm64.patch
 !/ci/apple-memory.patch
+!/ci/vfs-host-casing.patch
 !/ci/run-ios-simulator-tests.sh
 !/ios-probe/
 !/ios-probe/project.yml
