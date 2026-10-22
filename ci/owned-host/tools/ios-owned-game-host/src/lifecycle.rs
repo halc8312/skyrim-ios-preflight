@@ -9,7 +9,7 @@ pub const RENDERER_ATTACHED: u32 = 3;
 pub const RUNNING: u32 = 4;
 pub const EXITED: u32 = 5;
 pub const FAILED: u32 = 6;
-pub const MAX_DIAGNOSTIC_SECONDS: u32 = 120;
+pub const MAX_DIAGNOSTIC_SECONDS: u32 = 600;
 pub struct Lifecycle(AtomicU32);
 impl Default for Lifecycle {
     fn default() -> Self {
@@ -53,7 +53,7 @@ pub fn validate_duration(seconds: u32) -> Check<()> {
     if (1..=MAX_DIAGNOSTIC_SECONDS).contains(&seconds) {
         Ok(())
     } else {
-        Err("diagnostic guest duration must be within 1..120 seconds")
+        Err("diagnostic guest duration must be within 1..600 seconds")
     }
 }
 #[repr(C)]
@@ -96,17 +96,17 @@ mod tests {
         s.renderer_attached().unwrap();
         assert!(s.start(0).is_err());
         assert_eq!(s.state(), RENDERER_ATTACHED);
-        s.start(120).unwrap();
+        s.start(600).unwrap();
         assert!(s.start(5).is_err());
         s.exited().unwrap();
         assert!(s.begin_prepare().is_err());
     }
     #[test]
     fn failed_is_terminal_and_duration_is_bounded() {
-        for n in [0, 121, u32::MAX] {
+        for n in [0, 601, u32::MAX] {
             assert!(validate_duration(n).is_err());
         }
-        for n in [1, 5, 120] {
+        for n in [1, 5, 120, 600] {
             validate_duration(n).unwrap();
         }
         let s = Lifecycle::default();

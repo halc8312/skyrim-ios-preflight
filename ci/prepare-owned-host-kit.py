@@ -8,8 +8,8 @@ import sys
 import tomllib
 
 MANIFEST = "source-allowlist.txt"
-ALLOWLIST_SHA256 = "b6046229fc0e07f06b0f7a5efe40b428c04cc87082fa5cfb6343a7f661fab785"
-SOURCE_MANIFEST_SHA256 = "3b9dbc23b11ba04a06f581eb3f68f589d326f8e69751cc033758a32225be94de"
+ALLOWLIST_SHA256 = "1a3214fd59974d46f95f3674b4e4f0d684fd6de3db40ed8c1d16ffd1bcfaaceb"
+SOURCE_MANIFEST_SHA256 = "d70e068f2e0a8c4679afae038631d44c862d90da661b72643b41acd37b1534c5"
 MEMBERS = ["crates/" + name for name in
            ("d3d-hle", "gpu-webgpu", "kernel-hle", "runtime-core", "vfs",
             "xenos-edram", "xenos-render", "xenos-shader", "xenos-state",

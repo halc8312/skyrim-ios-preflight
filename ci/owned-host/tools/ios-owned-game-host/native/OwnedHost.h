@@ -25,7 +25,7 @@ typedef struct OHStatusV1 {
 int32_t OHPrepareV1(const uint8_t *game,size_t game_bytes,
                     const uint8_t *content,size_t content_bytes,
                     uint32_t policy,uint64_t *token);
-/* Renderer must be attached first. 1..120 seconds; deadline ends the process
+/* Renderer must be attached first. 1..600 seconds; deadline ends the process
  * via _exit. This is a bounded startup diagnosis, never an unrestricted play
  * session. No guest call executes on the Swift calling thread. */
 int32_t OHStartV1(uint64_t token,uint32_t max_seconds);

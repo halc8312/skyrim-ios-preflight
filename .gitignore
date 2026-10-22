@@ -518,3 +518,4 @@
 !/ci/owned-host/tools/ios-owned-game-host/src/native_trace.rs
 !/ci/owned-host/skyrim-recomp-web/crates/runtime-core/src/address_space_order_tests.rs
 !/ci/owned-host/tools/ios-owned-game-host/README.md
+!/ci/owned-host/tools/ios-owned-game-host/src/progress_diagnostics.rs

@@ -87,7 +87,7 @@ record and terminates the process, without a successful zero stub. It does not
 make the real game's currently missing imports supported. UI-facing readiness,
 signature authentication and iPhone game verification remain false.
 
-Diagnosis lasts 1 through 120 seconds. An independent worker enforces process
+Diagnosis lasts 1 through 600 seconds. An independent worker enforces process
 `_exit` at that ceiling, including after main-thread exit since secondary guest
 threads may survive. Another worker attempts a complete numeric JSON record one
 second earlier. File sync then exclusive hard-link publication prevents a killed

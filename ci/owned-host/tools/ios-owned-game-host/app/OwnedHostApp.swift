@@ -34,10 +34,10 @@ struct OwnedHostApp: App {
                             Text("起動診断")
                                 .font(.title2.bold())
                             Text("PCで準備したGameフォルダを、このアプリの書類へコピーしてください。")
-                            Text("最大120秒でアプリが終了します。本編の動作と互換性は検証中です。")
+                            Text("最大10分でアプリが終了します。本編の動作と互換性は検証中です。")
                                 .font(.footnote)
                             HStack {
-                                Button("120秒の起動診断を実行", action: session.beginDiagnostic)
+                                Button("10分間の動作確認を開始", action: session.beginDiagnostic)
                                     .buttonStyle(.borderedProminent)
                                     .disabled(!session.canBegin)
                                 Button("ファイルを再確認", action: session.checkFiles)
@@ -100,6 +100,7 @@ private struct PadButton: View {
 @MainActor
 final class OwnedSession: ObservableObject {
     static let shared = OwnedSession()
+    static let diagnosticSeconds: UInt32 = 600
     @Published private(set) var status = "ファイルを確認しています"
     @Published private(set) var attempted = false
     @Published private(set) var running = false
@@ -160,6 +161,7 @@ final class OwnedSession: ObservableObject {
         attempted = true; canBegin = false; status = "ファイルとモジュールを照合しています"
         let gameBytes = Array(game.path.utf8)
         let layerAddress = UInt(bitPattern: Unmanaged.passUnretained(layer).toOpaque())
+        let maxSeconds = Self.diagnosticSeconds
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -185,7 +187,7 @@ final class OwnedSession: ObservableObject {
                 guard attached == 0 else {
                     Task { @MainActor in self?.stop("描画の初期化に失敗しました（\(attached)）") }; return
                 }
-                let started = OHStartV1(preparedToken, 120)
+                let started = OHStartV1(preparedToken, maxSeconds)
                 guard started == 0 else {
                     Task { @MainActor in self?.stop("起動診断を開始できませんでした（\(started)）") }; return
                 }
@@ -211,8 +213,17 @@ final class OwnedSession: ObservableObject {
         switch value.state {
         case 1: status = "ファイルとモジュールを照合しています"
         case 2, 3: status = "Metal描画と起動を準備しています"
-        case 4: running = true; status = "起動診断中 · \(value.elapsed_ms / 1000) / 120秒"
-        case 5: running = false; status = "診断の実行が終了しました"
+        case 4: running = true; status = "動作確認中 · \(value.elapsed_ms / 1000) / \(Self.diagnosticSeconds)秒"
+        case 5:
+            // A kernel exit notification does not establish
+            // that its other guest workers or renderer have stopped. Keep
+            // input available during this bounded diagnostic when code is 0.
+            if value.exit_code == 0 {
+                running = true
+                status = "動作確認中 · \(value.elapsed_ms / 1000) / \(Self.diagnosticSeconds)秒"
+            } else {
+                stop("ゲームの終了コード \(value.exit_code) を検出しました")
+            }
         case 6: stop("診断を停止しました（コード \(value.failure)）")
         default: break
         }

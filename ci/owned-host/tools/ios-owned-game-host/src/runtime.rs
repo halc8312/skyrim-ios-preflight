@@ -9,6 +9,7 @@ use crate::{
     guest_fatal::{self, GuestFatal},
     lifecycle::{self, Lifecycle, Status},
     paths::{self, PinnedFile},
+    progress_diagnostics,
 };
 use kernel_hle::{
     Kernel,
@@ -427,6 +428,34 @@ fn snapshot(name: &str) -> Check<()> {
         &serde_json::to_vec(&data).map_err(|_| "diagnostic serialization failed")?,
     )
 }
+fn progress_snapshot(t: u64, point: progress_diagnostics::Snapshot) -> Check<()> {
+    let content = CONTENT.get().ok_or("diagnostic content absent")?;
+    #[cfg(feature = "metal-renderer")]
+    let renderer = {
+        let mut status = crate::renderer_policy::OHRendererStatusV1::default();
+        // SAFETY: one aligned local result with exactly the existing ABI size.
+        let result = unsafe {
+            crate::renderer::OHReadRendererStatusV1(
+                t,
+                &mut status,
+                size_of::<crate::renderer_policy::OHRendererStatusV1>(),
+            )
+        };
+        (result == 0).then_some(status)
+    };
+    #[cfg(not(feature = "metal-renderer"))]
+    let renderer = {
+        let _ = t;
+        None
+    };
+    let mut data = diagnostic_value();
+    point.append_numeric_fields(&mut data, renderer.as_ref())?;
+    paths::publish_json_new(
+        content,
+        point.name,
+        &serde_json::to_vec(&data).map_err(|_| "diagnostic serialization failed")?,
+    )
+}
 fn fatal_stop(category: u32, module: u32, ordinal: u32) -> ! {
     fatal_stop_with_guest(category, module, ordinal, None)
 }
@@ -472,6 +501,7 @@ fn fatal_stop_with_guest(category: u32, module: u32, ordinal: u32, guest: Option
 fn start(t: u64, seconds: u32) -> Check<()> {
     token(t)?;
     lifecycle::validate_duration(seconds)?;
+    let snapshots = progress_diagnostics::schedule(seconds)?;
     #[cfg(feature = "metal-renderer")]
     if !crate::renderer::is_ready(t) {
         return Err("Metal renderer not ready");
@@ -493,16 +523,26 @@ fn start(t: u64, seconds: u32) -> Check<()> {
             }
         })
         .map_err(|_| "hard deadline worker unavailable")?;
-    std::thread::Builder::new()
-        .name("owned-final-record".into())
-        .spawn(move || {
-            std::thread::sleep(
-                Duration::from_secs(u64::from(seconds.saturating_sub(1)))
-                    .saturating_sub(now.elapsed()),
-            );
-            let _ = snapshot("diagnostic-final.json");
-        })
-        .map_err(|_| "diagnostic final worker unavailable")?;
+    // At most four independent writers. A stalled earlier checkpoint cannot
+    // hold back the final writer or the unchanged hard process deadline.
+    for point in snapshots {
+        std::thread::Builder::new()
+            .name(
+                if point.name == progress_diagnostics::FINAL_NAME {
+                    "owned-final-record"
+                } else {
+                    "owned-checkpoint"
+                }
+                .into(),
+            )
+            .spawn(move || {
+                std::thread::sleep(
+                    Duration::from_secs(u64::from(point.seconds)).saturating_sub(now.elapsed()),
+                );
+                let _ = progress_snapshot(t, point);
+            })
+            .map_err(|_| "diagnostic record worker unavailable")?;
+    }
     let k = *KERNEL.get().ok_or("Kernel missing")?;
     // start_main_thread creates a native guest worker. No guest unwind can
     // cross this C API/Swift call; ThreadExit is caught by Kernel run_thread.

@@ -201,6 +201,7 @@ tools/ios-owned-game-host/src/lifecycle.rs
 tools/ios-owned-game-host/src/mapping.rs
 tools/ios-owned-game-host/src/native_trace.rs
 tools/ios-owned-game-host/src/paths.rs
+tools/ios-owned-game-host/src/progress_diagnostics.rs
 tools/ios-owned-game-host/src/public_fixture.rs
 tools/ios-owned-game-host/src/renderer.rs
 tools/ios-owned-game-host/src/renderer_policy.rs
