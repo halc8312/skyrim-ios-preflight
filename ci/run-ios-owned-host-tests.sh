@@ -163,8 +163,37 @@ python3 "$host/sdk-test/run_mobile_controls_tests.py" --stage "$work/owned-app-s
   --built-output "$output/xctest" --output "$output/xctest-mobile" \
   --destination "platform=iOS Simulator,id=$device_id" \
   2>&1 | tee "$output/mobile-controls-sdk-driver.log"
-python3 "$host/sdk-test/run_device_features_tests.py" --stage "$work/owned-app-simulator" \
+if python3 "$host/sdk-test/run_device_features_tests.py" --stage "$work/owned-app-simulator" \
   --built-output "$output/xctest" --output "$output/xctest-device-features" \
   --destination "platform=iOS Simulator,id=$device_id" \
-  2>&1 | tee "$output/device-features-sdk-driver.log"
+  2>&1 | tee "$output/device-features-sdk-driver.log"; then
+  :
+else
+  # The normal runner retains complete logs but only prints their tail. Keep
+  # the FIRST failure and numeric native phases visible when download is not
+  # available; every failed SDK gate still exits nonzero.
+  python3 - "$output/xctest-device-features/audio" <<'PY'
+from pathlib import Path
+import json, re, stat, sys
+root = Path(sys.argv[1])
+for stream in ('stdout', 'stderr'):
+    path = root / ('xcodebuild.' + stream + '.log')
+    try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise OSError('not_regular')
+        with path.open('rb') as source:
+            raw = source.read(8 * 1024 * 1024 + 1)
+    except OSError:
+        print('PUBLIC_AUDIO_FAILURE_DETAIL ' + json.dumps(dict(stream=stream, available=False)))
+        continue
+    text = raw[:8 * 1024 * 1024].decode('utf-8', 'replace')
+    phases = re.findall(r'PUBLIC_AUDIO_PHASE (\d+) (\d+)', text)
+    assertions = [line[:1200] for line in text.splitlines() if 'error: -[OwnedGameHostTests.OwnedHostAudioTests' in line]
+    rpc = [line[:1200] for line in text.splitlines() if 'Apparently deadlocked' in line or 'No factory registered' in line]
+    print('PUBLIC_AUDIO_FAILURE_DETAIL ' + json.dumps(dict(stream=stream, available=True,
+        input_truncated=len(raw) > 8 * 1024 * 1024, numeric_phases=phases[:128],
+        first_assertions=assertions[:8], rpc_lines=rpc[:8])))
+PY
+  exit 1
+fi
 printf '%s\n' 'Public owned-host fullchain passed; game, private framework and physical iPhone remain untested.'
