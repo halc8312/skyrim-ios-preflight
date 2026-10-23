@@ -164,25 +164,37 @@ extern "C" void OHNativeAudioEnvironmentGraph(State *s) {
         }
     }
 }
-@interface PublicAudioAppDelegate : UIResponder <UIApplicationDelegate>
+@interface PublicAudioSceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic, strong) UIWindow *window;
 @end
-@implementation PublicAudioAppDelegate
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
-    (void)application; (void)options;
-    self.window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 100, 100)];
+@implementation PublicAudioSceneDelegate
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options {
+    (void)session; (void)options;
+    if (![scene isKindOfClass:UIWindowScene.class]) return;
+    self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     UIViewController *controller = [[UIViewController alloc] init];
     controller.view.backgroundColor = UIColor.systemBlueColor;
     self.window.rootViewController = controller;
     [self.window makeKeyAndVisible];
-    return YES;
 }
-- (void)applicationDidBecomeActive:(UIApplication *)application {
-    (void)application;
+- (void)sceneDidBecomeActive:(UIScene *)scene {
+    if (![scene isKindOfClass:UIWindowScene.class] || self.window.windowScene != scene) return;
     if (state->activated.exchange(true)) return;
     state->begin = now(); phase(state, 1);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 25LL * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ finish(state); });
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ OHNativeAudioEnvironmentGraph(state); });
+}
+@end
+@interface PublicAudioAppDelegate : UIResponder <UIApplicationDelegate>
+@end
+@implementation PublicAudioAppDelegate
+- (UISceneConfiguration *)application:(UIApplication *)application
+        configurationForConnectingSceneSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options {
+    (void)application; (void)options;
+    UISceneConfiguration *configuration = [[UISceneConfiguration alloc] initWithName:@"PublicAudioScene" sessionRole:session.role];
+    configuration.sceneClass = UIWindowScene.class;
+    configuration.delegateClass = PublicAudioSceneDelegate.class;
+    return configuration;
 }
 @end
 int main(int argc, char **argv) {
@@ -511,7 +523,11 @@ def probe(udid, output):
             plist = dict(CFBundleExecutable="OwnedGameHost", CFBundleIdentifier=BUNDLE, CFBundleName="OwnedGameHost",
                          CFBundlePackageType="APPL", CFBundleVersion="1", CFBundleShortVersionString="1.0",
                          MinimumOSVersion="26.5", LSRequiresIPhoneOS=True, UIDeviceFamily=[1, 2],
-                         CFBundleSupportedPlatforms=["iPhoneSimulator"], UILaunchScreen={})
+                         CFBundleSupportedPlatforms=["iPhoneSimulator"], UILaunchScreen={},
+                         UIApplicationSceneManifest=dict(UIApplicationSupportsMultipleScenes=False,
+                             UISceneConfigurations={"UIWindowSceneSessionRoleApplication": [dict(
+                                 UISceneConfigurationName="PublicAudioScene", UISceneClassName="UIWindowScene",
+                                 UISceneDelegateClassName="PublicAudioSceneDelegate")]}))
             (app / "Info.plist").write_bytes(plistlib.dumps(plist))
             sdk = checked(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"], 2, "sdk-path").decode().strip()
             if not sdk.startswith("/") or "\n" in sdk or "\x00" in sdk: raise ValueError("SDK path")

@@ -6,6 +6,8 @@ import io
 import json
 import os
 from pathlib import Path
+import plistlib
+import re
 import signal
 import subprocess
 import sys
@@ -160,7 +162,7 @@ class ParserTests(unittest.TestCase):
             self.assertFalse(json.loads(out.getvalue().split(" ", 1)[1])["sdk_tests_passed_claimed"])
 
     def test_compile_and_two_mode_orchestration_keep_target_env_signing_contract(self):
-        commands = []
+        commands, compiled_metadata = [], []
         helps = {"launch": b"launch --console device bundle", "install": b"install device path",
                  "list": b"list devices --json search", "terminate": b"terminate device bundle",
                  "get_app_container": b"get_app_container device bundle app"}
@@ -170,6 +172,11 @@ class ParserTests(unittest.TestCase):
             elif command[:4] == ["xcrun", "simctl", "list", "devices"]: raw = json.dumps(device()).encode()
             elif "--show-sdk-path" in command: raw = b"/authored/Simulator.sdk\n"
             elif "get_app_container" in command: raw = EXE.rsplit("/", 1)[0].encode() + b"\n"
+            elif "clang++" in command:
+                app = Path(command[command.index("-o") + 1]).parent
+                source = Path(next(part for part in command if part.endswith(".mm"))).read_text()
+                compiled_metadata.append((plistlib.loads((app / "Info.plist").read_bytes()), source))
+                raw = b""
             else: raw = b""
             return m.Result(0, "completed", raw)
         modes = []
@@ -187,6 +194,23 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(compile_call[1], 15)
         self.assertNotIn("SDKROOT", compile_call[2]["env"]); self.assertNotIn("IPHONEOS_DEPLOYMENT_TARGET", compile_call[2]["env"])
         self.assertIn("arm64-apple-ios26.5-simulator", compile_call[0])
+        self.assertIn("-Werror", compile_call[0])
+        self.assertEqual(len(compiled_metadata), 1)
+        plist, source = compiled_metadata[0]
+        manifest = plist["UIApplicationSceneManifest"]
+        self.assertIs(manifest["UIApplicationSupportsMultipleScenes"], False)
+        self.assertEqual(set(manifest["UISceneConfigurations"]), {"UIWindowSceneSessionRoleApplication"})
+        configurations = manifest["UISceneConfigurations"]["UIWindowSceneSessionRoleApplication"]
+        self.assertEqual(len(configurations), 1)
+        configuration = configurations[0]
+        # Inspect the actual generated files at the compilation boundary: the
+        # plist-selected classes/name must exist in the native configuration.
+        delegate = re.search(r"@interface (\w+) : UIResponder <UIWindowSceneDelegate>", source).group(1)
+        self.assertEqual(configuration["UISceneDelegateClassName"], delegate)
+        self.assertIn("configuration.delegateClass = " + delegate + ".class;", source)
+        self.assertEqual(configuration["UISceneConfigurationName"], re.search(r'initWithName:@"([^"]+)"', source).group(1))
+        self.assertEqual(configuration["UISceneClassName"], "UIWindowScene")
+        self.assertIn("configuration.sceneClass = " + configuration["UISceneClassName"] + ".class;", source)
         sign = next(call[0] for call in commands if call[0][0] == "/usr/bin/codesign")
         self.assertEqual(sign[1:5], ["--force", "--sign", "-", "--timestamp=none"])
         self.assertFalse(any("entitlement" in part for part in sign))
