@@ -914,8 +914,8 @@
       "sha256": "e2e9fd8c76ee81923e56f7e4b8df0a9a25899723a094ed83e51e250e2b489c72"
     },
     "tools/ios-owned-game-host/sdk-test/tests/NativeTraceSDKProbeTests.swift": {
-      "bytes": 2885,
-      "sha256": "495c13b676d81a152bba8829e3b7724591f76a3dcfe3b127a9dd0cb9b80f71d6"
+      "bytes": 2886,
+      "sha256": "3f57011cc2aac31156a6ba59a5c41dc873e04d1c7a64f047df03007cb165703e"
     },
     "tools/ios-owned-game-host/sdk-test/tests/OwnedHostAudioTests.swift": {
       "bytes": 14713,
