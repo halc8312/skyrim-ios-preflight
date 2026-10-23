@@ -8,6 +8,7 @@ import UIKit
 struct OwnedHostApp: App {
     @StateObject private var session = OwnedSession.shared
     @StateObject private var controls = MobileControlsPreferences()
+    @StateObject private var device = DevicePreferences()
     @Environment(\.scenePhase) private var scenePhase
     @State private var settingsShown = false
     @State private var inputCancellation: UInt64 = 0
@@ -34,7 +35,7 @@ struct OwnedHostApp: App {
                         }
                         Spacer()
                         if session.running {
-                            Text("\(session.frames) frames · GPU \(session.gpuErrors)")
+                            Text("\(session.decodedFPSLabel) · GPU \(session.gpuErrors)")
                                 .font(.caption.monospacedDigit())
                         }
                     }
@@ -51,6 +52,8 @@ struct OwnedHostApp: App {
                                     .buttonStyle(.borderedProminent)
                                     .disabled(!session.canBegin)
                                 Button("ファイルを再確認", action: session.checkFiles)
+                                    .buttonStyle(.bordered)
+                                Button { settingsShown = true } label: { Label("設定", systemImage: "slider.horizontal.3") }
                                     .buttonStyle(.bordered)
                             }
                         }
@@ -78,7 +81,7 @@ struct OwnedHostApp: App {
                                 }
                             } else {
                                 Button { neutralizeInput(); settingsShown = true } label: {
-                                    Label("操作設定", systemImage: "slider.horizontal.3")
+                                    Label("設定", systemImage: "slider.horizontal.3")
                                 }
                             }
                         }
@@ -92,16 +95,22 @@ struct OwnedHostApp: App {
                 }
             }
             .preferredColorScheme(.dark)
-            .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+            .onAppear {
+                UIApplication.shared.isIdleTimerDisabled = true
+                session.updateDeviceSettings(device.settings)
+                session.sceneChanged(scenePhase)
+            }
+            .onChange(of: device.settings) { session.updateDeviceSettings($0) }
             .onChange(of: session.running) { running in
                 if !running { neutralizeInput() }
             }
             .onChange(of: scenePhase) { phase in
                 if phase != .active { neutralizeInput(); controls.save() }
+                session.sceneChanged(phase)
             }
-            .onDisappear { neutralizeInput(); controls.save() }
+            .onDisappear { neutralizeInput(); controls.save(); device.save(); session.suspendAudio() }
             .sheet(isPresented: $settingsShown, onDismiss: { neutralizeInput() }) {
-                MobileControlsSettingsView(preferences: controls) {
+                DeviceSettingsHub(preferences: device, controls: controls, session: session) {
                     neutralizeInput(); controls.editingLayout = true
                 }
             }
@@ -124,6 +133,23 @@ final class OwnedSession: ObservableObject {
     @Published private(set) var canBegin = false
     @Published private(set) var frames: UInt64 = 0
     @Published private(set) var gpuErrors: UInt64 = 0
+    @Published private(set) var decodedFPSLabel = "— FPS"
+    @Published private(set) var presentedFPSLabel = "— FPS"
+    @Published private(set) var sourceSizeLabel = "未測定"
+    @Published private(set) var outputSizeLabel = "未測定"
+    @Published private(set) var graphicsApplyLabel = "起動待ち"
+    @Published private(set) var powerLabel = "—"
+    @Published private(set) var audioStateLabel = "未起動"
+    @Published private(set) var audioRouteLabel = "—"
+    @Published private(set) var audioHardwareLabel = "—"
+    @Published private(set) var audioFramesLabel = "未受信"
+    @Published private(set) var audioSignalLabel = "未検出"
+    @Published private(set) var settingsError: String?
+    private var deviceSettings = DeviceSettings()
+    private var rendererReady = false
+    private var appActive = false
+    private var pendingInitialAudioStart = false
+    private var fpsSample: (time: Double, decoded: UInt64, presented: UInt64)?
     private var surface: CAMetalLayer?
     private var token: UInt64 = 0
     private var pad = MobilePadSnapshot.neutral
@@ -198,6 +224,7 @@ final class OwnedSession: ObservableObject {
         let gameBytes = Array(game.path.utf8)
         let layerAddress = UInt(bitPattern: Unmanaged.passUnretained(layer).toOpaque())
         let maxSeconds = Self.diagnosticSeconds
+        let selectedSettings = deviceSettings.normalized()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -218,16 +245,35 @@ final class OwnedSession: ObservableObject {
                 }
                 let preparedToken = generatedToken
                 Task { @MainActor in self?.token = preparedToken; self?.status = "Metal描画を準備しています" }
+                var boot = selectedSettings.graphics.boot
+                let configured = OHConfigureBootGraphicsV1(preparedToken, &boot, MemoryLayout<OHBootGraphicsV1>.size)
+                guard configured == 0 else {
+                    Task { @MainActor in self?.stop("起動時の画質設定を適用できませんでした（\(configured)）") }; return
+                }
                 let attached = OHAttachMetalLayerV1(preparedToken,
                     UnsafeMutableRawPointer(bitPattern: layerAddress), 1280, 720)
                 guard attached == 0 else {
                     Task { @MainActor in self?.stop("描画の初期化に失敗しました（\(attached)）") }; return
                 }
+                var presentation = selectedSettings.graphics.presentation
+                let applied = OHSetPresentationSettingsV1(preparedToken, &presentation, MemoryLayout<OHPresentationSettingsV1>.size)
+                guard applied == 0 else {
+                    Task { @MainActor in self?.stop("出力設定を適用できませんでした（\(applied)）") }; return
+                }
                 let started = OHStartV1(preparedToken, maxSeconds)
                 guard started == 0 else {
+                    _ = OHNativeAudioStopV1()
                     Task { @MainActor in self?.stop("起動診断を開始できませんでした（\(started)）") }; return
                 }
-                Task { @MainActor in self?.status = "起動診断中"; self?.running = true }
+                Task { @MainActor in
+                    guard let self, self.localFailure == nil, !self.failed else { return }
+                    self.rendererReady = true; self.status = "起動診断中"; self.running = true
+                    // Apply edits made while preparation was running. Boot layout
+                    // stays frozen to the captured tuple for this process.
+                    self.updateDeviceSettings(self.deviceSettings)
+                    self.pendingInitialAudioStart = true
+                    self.startInitialAudioIfActive()
+                }
             } catch {
                 Task { @MainActor in self?.stop("診断用の保存先を準備できませんでした") }
             }
@@ -236,11 +282,14 @@ final class OwnedSession: ObservableObject {
 
     private func stop(_ message: String) {
         localFailure = message; status = message; failed = true; running = false
+        pendingInitialAudioStart = false
+        _ = OHNativeAudioStopV1()
         releaseButtons()
     }
 
     private func poll() {
-        guard attempted, localFailure == nil else { return }
+        updateDeviceStatus()
+        guard attempted, token != 0, localFailure == nil else { return }
         var value = OHStatusV1()
         let code = OHReadStatusV1(token, &value, MemoryLayout<OHStatusV1>.size)
         guard code == 0, value.version == 0x0001_0000, value.bytes == 96 else {
@@ -269,6 +318,85 @@ final class OwnedSession: ObservableObject {
                 frames = render.decoded_frames; gpuErrors = render.gpu_errors
                 if render.failed != 0 { stop("描画エラーを検出しました。時間上限でアプリが終了します") }
             }
+        }
+    }
+
+    func updateDeviceSettings(_ value: DeviceSettings) {
+        deviceSettings = value.normalized()
+        guard rendererReady, token != 0 else { return }
+        var live = deviceSettings.graphics.presentation
+        let code = OHSetPresentationSettingsV1(token, &live, MemoryLayout<OHPresentationSettingsV1>.size)
+        let audio = deviceSettings.audio
+        let audioCode = OHNativeAudioSetControlsV1(Float(audio.gain), audio.muted ? 1 : 0, audio.profile.rawValue)
+        settingsError = code != 0 ? "出力設定を反映できませんでした（\(code)）" :
+            (audioCode != 0 ? "音声設定を反映できませんでした（\(audioCode)）" : nil)
+    }
+    func resumeAudio() {
+        guard running, appActive else { return }
+        let code = OHNativeAudioStartV1()
+        if code != 0 { settingsError = "音声の再開に失敗しました（\(code)）" }
+    }
+    func sceneChanged(_ phase: ScenePhase) {
+        appActive = phase == .active
+        if phase == .background { suspendAudio() }
+        if appActive { startInitialAudioIfActive() }
+    }
+    private func startInitialAudioIfActive() {
+        guard appActive, running, pendingInitialAudioStart else { return }
+        pendingInitialAudioStart = false
+        resumeAudio()
+    }
+    func suspendAudio() {
+        appActive = false
+        if rendererReady { _ = OHNativeAudioStopV1() }
+    }
+    private func updateDeviceStatus() {
+        let process = ProcessInfo.processInfo
+        let thermal: String
+        switch process.thermalState {
+        case .nominal: thermal = "温度は正常"; case .fair: thermal = "温かい"
+        case .serious: thermal = "高温"; case .critical: thermal = "非常に高温"
+        @unknown default: thermal = "温度不明"
+        }
+        powerLabel = thermal + (process.isLowPowerModeEnabled ? " · 低電力モード" : "")
+        if rendererReady, token != 0 {
+            var status = OHGraphicsStatusV1()
+            if OHReadGraphicsStatusV1(token, &status, MemoryLayout<OHGraphicsStatusV1>.size) == 0,
+               status.version == 0x0001_0000, status.struct_bytes == 120 {
+                let now = CACurrentMediaTime()
+                if let previous = fpsSample, now > previous.time,
+                   status.decoded_frames >= previous.decoded, status.presented_frames >= previous.presented {
+                    let elapsed = now - previous.time
+                    decodedFPSLabel = String(format: "%.1f FPS", Double(status.decoded_frames - previous.decoded) / elapsed)
+                    presentedFPSLabel = String(format: "%.1f FPS", Double(status.presented_frames - previous.presented) / elapsed)
+                }
+                fpsSample = (now, status.decoded_frames, status.presented_frames)
+                sourceSizeLabel = status.source_width == 0 ? "未測定" : "\(status.source_width) × \(status.source_height)"
+                outputSizeLabel = status.output_width == 0 ? "未測定" : "\(status.output_width) × \(status.output_height)"
+                graphicsApplyLabel = status.requested_generation == status.applied_generation ? "描画側で受信済み" : "次のフレームを待機中"
+            }
+        }
+        var audio = OHNativeAudioStatusV1()
+        if OHNativeAudioReadStatusV1(&audio, UInt32(MemoryLayout<OHNativeAudioStatusV1>.size)) == 0,
+           audio.version == 1, audio.struct_size == 256 {
+            if audio.resume_required != 0 { audioStateLabel = "再開操作を待機中" }
+            else {
+                switch audio.state {
+                case 0: audioStateLabel = "未起動"; case 1: audioStateLabel = "停止中"
+                case 2: audioStateLabel = "準備中"; case 3: audioStateLabel = "出力中"
+                case 4: audioStateLabel = "割り込み中"; case 5: audioStateLabel = "接続先の変更で停止"
+                case 6: audioStateLabel = "音声サービスの再起動を検出"
+                default: audioStateLabel = "出力エラー（\(audio.last_error)）"
+                }
+            }
+            switch audio.route_kind {
+            case 1: audioRouteLabel = "iPhone・iPadのスピーカー"; case 2: audioRouteLabel = "有線イヤホン・外部出力"
+            case 3: audioRouteLabel = "Bluetooth"; case 4: audioRouteLabel = "AirPlay"
+            case 5: audioRouteLabel = "その他"; default: audioRouteLabel = "—"
+            }
+            audioHardwareLabel = audio.actual_sample_rate_hz == 0 ? "未測定" : "\(audio.actual_sample_rate_hz) Hz · \(audio.output_channels) ch · \(audio.io_buffer_duration_us / 1000) ms"
+            audioFramesLabel = audio.transport.submitted_frames == 0 ? "未受信（復号は未確認）" : "\(audio.transport.submitted_frames) サンプルフレーム受信"
+            audioSignalLabel = audio.transport.non_silent_frames == 0 ? "非ゼロの信号は未検出" : "\(audio.transport.non_silent_frames) サンプルフレームに信号あり"
         }
     }
 

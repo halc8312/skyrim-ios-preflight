@@ -16,12 +16,15 @@ pub mod edram;
 pub mod executor;
 mod extent;
 mod present;
+#[cfg(not(target_os = "emscripten"))]
+mod presentation_probe;
 mod queue;
 pub mod registers;
 mod renderer;
 mod ring;
 mod shaders;
 mod shared_memory;
+pub mod settings;
 pub mod targets;
 
 #[cfg(not(target_os = "emscripten"))]

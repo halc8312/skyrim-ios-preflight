@@ -1,5 +1,5 @@
 {
-  "file_count": 241,
+  "file_count": 263,
   "game_data_included": false,
   "game_executed": false,
   "physical_iphone_verified": false,
@@ -126,8 +126,8 @@
       "sha256": "7c9d10c0d9f019e6757596198cb6951746ceeb183dcb40c293b8cc127363c11d"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/audio.rs": {
-      "bytes": 6606,
-      "sha256": "d380854bdb36f2ad926d834066cea64605b897a92154e39538fe82f8bdddf4c2"
+      "bytes": 13018,
+      "sha256": "14940ca04bba45cb4c5e398819bcecdf079d6749cfbec31f7280668bcfd94532"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/d3d.rs": {
       "bytes": 21470,
@@ -430,32 +430,40 @@
       "sha256": "2b0ebd6f4f8217e598246d05f3e0d0fecfc2070d783e94df9508ff7213f00a0d"
     },
     "skyrim-recomp-web/crates/xenos-render/src/executor.rs": {
-      "bytes": 103487,
-      "sha256": "c7393e9800b2143b13b6cf39a1e2fc9adcc5a3d9fb0bcc509534fbdaad41adb3"
+      "bytes": 102873,
+      "sha256": "db3f0ffda7083dac9d97a95b128cf12d503863a4c12bf3fd48fd993ef65c89f8"
     },
     "skyrim-recomp-web/crates/xenos-render/src/extent.rs": {
       "bytes": 12458,
       "sha256": "1280fff01e7cca9747a9ccc0647f8576bf814cecf25382fad719a31375b1cf7a"
     },
     "skyrim-recomp-web/crates/xenos-render/src/lib.rs": {
-      "bytes": 4983,
-      "sha256": "449b89549ccc223c175722e2d7c48a86da42c764345aeb11a0387d203a059b93"
+      "bytes": 5066,
+      "sha256": "39c747c8a7eced4296d951d92ea2407270610f6e84a5120755a4c30870a31acf"
     },
     "skyrim-recomp-web/crates/xenos-render/src/native.rs": {
-      "bytes": 31017,
-      "sha256": "3e55d31bbec3beebbd3cc05e777b5ad2d1c9398021fe9dc0d969e50b161fc016"
+      "bytes": 36787,
+      "sha256": "d723f2bddf7f38320f2ab1beef9f06bffb58876b9741d5d896f42b028ee66291"
     },
     "skyrim-recomp-web/crates/xenos-render/src/present.rs": {
-      "bytes": 10543,
-      "sha256": "4198abd49ec5d17e9ceb9d1922606b396d6704711d9e25c6c5e4e7a488e19851"
+      "bytes": 15701,
+      "sha256": "f00d23deaba1ac9a6f1b74df277ab167cc9feaf01e8f55e8f8087cd1d8613eca"
+    },
+    "skyrim-recomp-web/crates/xenos-render/src/presentation_probe.rs": {
+      "bytes": 6119,
+      "sha256": "a7306587a25f7f70d7a61e30a6dcb48664620bdc47fecf0bc9cdcc6a9887a922"
     },
     "skyrim-recomp-web/crates/xenos-render/src/queue.rs": {
       "bytes": 7714,
       "sha256": "b8dc394acb5ff5e36742da0d94ae4c63ed85a549e16db874480feb8bfa14fbb7"
     },
     "skyrim-recomp-web/crates/xenos-render/src/registers.rs": {
-      "bytes": 7300,
-      "sha256": "5b03ca4cd95077fbef054732b609538e0ed2c7fc1251650d66ae8b192917c324"
+      "bytes": 9699,
+      "sha256": "c7ef7a300de71a9ee167f9a489da963fd31316fcb2772d028d131d92b3572030"
+    },
+    "skyrim-recomp-web/crates/xenos-render/src/registers_delta_tests.rs": {
+      "bytes": 13460,
+      "sha256": "a084b50995ebef8c755d854ab800b8c2920d0e252b619fbc54d13f655d3567e4"
     },
     "skyrim-recomp-web/crates/xenos-render/src/renderer.rs": {
       "bytes": 19014,
@@ -464,6 +472,10 @@
     "skyrim-recomp-web/crates/xenos-render/src/ring.rs": {
       "bytes": 2981,
       "sha256": "eb352d9a404e95bcb3cae88e7f2106ddec4a5d9abaeed6554ca8446c7731f35d"
+    },
+    "skyrim-recomp-web/crates/xenos-render/src/settings.rs": {
+      "bytes": 13852,
+      "sha256": "43b4795b0e2d06fde535605dccac8f82e26617a4a7646512620a872cb200b8f0"
     },
     "skyrim-recomp-web/crates/xenos-render/src/shaders.rs": {
       "bytes": 3726,
@@ -480,6 +492,10 @@
     "skyrim-recomp-web/crates/xenos-render/src/web.rs": {
       "bytes": 14145,
       "sha256": "a7d21782e4666fab255d3b868739418603c6f129aa738e61fd1f6e8ba6fb3484"
+    },
+    "skyrim-recomp-web/crates/xenos-render/tests/draw_native.rs": {
+      "bytes": 15994,
+      "sha256": "cca373b965d4b499ec178f8826d9b12b39b3d28c5340dbb9e371298911706abe"
     },
     "skyrim-recomp-web/crates/xenos-shader/Cargo.toml": {
       "bytes": 359,
@@ -710,8 +726,12 @@
       "sha256": "289d6915142ab5a0204ca64d3587b1cc50dc2f3afb2f9e07813096364b37054c"
     },
     "source-allowlist.txt": {
-      "bytes": 12378,
-      "sha256": "4fd517c9060c2652983422ce89cd0d1037a10bb78c2f5e1e63c3fdb7c26da0a0"
+      "bytes": 13630,
+      "sha256": "a3de5ea73aa75e21d24e7442f48d1974e15a60f30555cfcc339b7afe2e5e831b"
+    },
+    "tools/ios-owned-game-host/AUDIO.md": {
+      "bytes": 6515,
+      "sha256": "b4e4b0129e32e99cab9cc890130a4b8370d1d863c6179b21902e8a2a55d28717"
     },
     "tools/ios-owned-game-host/Cargo.lock": {
       "bytes": 9317,
@@ -722,8 +742,16 @@
       "sha256": "f83b629d243947e5301f639fdd4c7c1e521055a3b477e2c1f262e596cb0421a6"
     },
     "tools/ios-owned-game-host/README.md": {
-      "bytes": 9843,
-      "sha256": "e165c4b67d2d41a4bc0fe2453df5204b6ee42d3b08daa32f785811bbb653bfe1"
+      "bytes": 11512,
+      "sha256": "88e6f14fb74fff9838fabcc376ba2a5aff22c82f36f8aee48fecb6e253ca25bb"
+    },
+    "tools/ios-owned-game-host/app/DeviceSettings.swift": {
+      "bytes": 6423,
+      "sha256": "47bf4e063c8716258f69b9f91404df2be34bd3435a4436119d63e7078b19a861"
+    },
+    "tools/ios-owned-game-host/app/DeviceSettingsView.swift": {
+      "bytes": 9809,
+      "sha256": "5dae48968765518c2cbfbbeff4534e44ec0d14bba563c3f13b672042554dcb22"
     },
     "tools/ios-owned-game-host/app/MetalViewport.swift": {
       "bytes": 1528,
@@ -742,20 +770,40 @@
       "sha256": "f0bf983a5e01e0e0a8785735df7c8e5838ce20183434966009f3957063152ca7"
     },
     "tools/ios-owned-game-host/app/OwnedHost-Bridging-Header.h": {
-      "bytes": 103,
-      "sha256": "fe1ef9935b20c49fdff2a577355500da728f3fff393e6ebcea2b10a565cd5e0d"
+      "bytes": 198,
+      "sha256": "ff54392c40f854e4f988d852d6a45dc65a4ac0d8c31f80a74c1808efde2da579"
     },
     "tools/ios-owned-game-host/app/OwnedHostApp.swift": {
-      "bytes": 14573,
-      "sha256": "a99ffb6f3f3a45914b99ce1c1635e230e06d926598b5abed68e9dbb9aa0d6772"
+      "bytes": 22590,
+      "sha256": "77aae5cb23d2b10da75877393943fc5dc13bc55295b968b9b85b6f8496c41e67"
     },
     "tools/ios-owned-game-host/app/RendererBridge.h": {
       "bytes": 1124,
       "sha256": "70fc7a1f6b9f107c28ec04afdeb12970c9419ffc94a6006c75948a89022ad70d"
     },
+    "tools/ios-owned-game-host/native/DeviceGraphics.h": {
+      "bytes": 1791,
+      "sha256": "628d82f92391093c370ff7f542578bed9457528616acf99b37c954b30e4f1f7b"
+    },
+    "tools/ios-owned-game-host/native/GraphicsPresentationProbe.h": {
+      "bytes": 902,
+      "sha256": "1624358de8cbb8b2b6987221de76906a604b867537a200b59e11b82c3f5a5e27"
+    },
     "tools/ios-owned-game-host/native/OwnedHost.h": {
       "bytes": 2284,
       "sha256": "8186c4515899ff9e761a72c97b41719eb3d825a061f4bbefc2fc36de65f280de"
+    },
+    "tools/ios-owned-game-host/native/OwnedHostAudio.h": {
+      "bytes": 3695,
+      "sha256": "8bcfa23199ba2edc491c7533db828dba8947c3f2816704749222e40fd2ac5683"
+    },
+    "tools/ios-owned-game-host/native/OwnedHostAudio.mm": {
+      "bytes": 17583,
+      "sha256": "96f60e6a2c09b964f81acbf93ae21c0d989f796632b28bc879a7ce341783bdf1"
+    },
+    "tools/ios-owned-game-host/native/OwnedHostAudioRenderGate.h": {
+      "bytes": 2413,
+      "sha256": "d4209fab83a7d6ea7996b6eb766326465b7f734e686b8b9c0442cb754dd3c21b"
     },
     "tools/ios-owned-game-host/native/OwnedHostNative.h": {
       "bytes": 1678,
@@ -770,8 +818,12 @@
       "sha256": "b49345a80cd363e04b1e24dd707059a385618d9354056f33be12455cdec9babf"
     },
     "tools/ios-owned-game-host/project.yml": {
-      "bytes": 3541,
-      "sha256": "bed579b7a2d6ca400bd8edd1f5a9c47921dcb369e6bd3ce4db1af7664ca35b1e"
+      "bytes": 3651,
+      "sha256": "86f0cf2b4f91ec5f5d20195914e87dcfa14de00b0cb80316c32e2178006c895c"
+    },
+    "tools/ios-owned-game-host/sdk-test/audio_render_gate_test.cpp": {
+      "bytes": 3616,
+      "sha256": "e3664c9f0ee68df6f33e7adcc1bc450697a29200bd3b3025d33b589eac4bd905"
     },
     "tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.cpp": {
       "bytes": 10292,
@@ -781,6 +833,10 @@
       "bytes": 652,
       "sha256": "5e5976a5d41950aaf1dac5d89c9d7f0d54539e5293dccf30ca94bfab50fbfc51"
     },
+    "tools/ios-owned-game-host/sdk-test/run_device_features_tests.py": {
+      "bytes": 10225,
+      "sha256": "3ae6fb4a5777c2b9ffade87441288b2a294c5e5f308424a01de9a84c113f82d4"
+    },
     "tools/ios-owned-game-host/sdk-test/run_mobile_controls_tests.py": {
       "bytes": 12691,
       "sha256": "c33dd044ab63d444053b4634a0074599d25add4a266d35e85675762075631d34"
@@ -788,6 +844,10 @@
     "tools/ios-owned-game-host/sdk-test/run_sdk_tests.py": {
       "bytes": 15058,
       "sha256": "a0be403dc52cc61f93b27a2d1d419de98bb6494313f619789c127f67aa597ed0"
+    },
+    "tools/ios-owned-game-host/sdk-test/test_run_device_features_tests.py": {
+      "bytes": 11684,
+      "sha256": "b5993f880f7aaab8f7e6dfe17ebc5472c43cec81a45523a7cd0c87110d8b3960"
     },
     "tools/ios-owned-game-host/sdk-test/test_run_mobile_controls_tests.py": {
       "bytes": 16755,
@@ -797,17 +857,33 @@
       "bytes": 15284,
       "sha256": "a71f96f948aa7fb13d7cc8a0c05b952eedc3dd083b11bbeca4fce7884bb15f66"
     },
+    "tools/ios-owned-game-host/sdk-test/tests/DeviceSettingsTests.swift": {
+      "bytes": 6086,
+      "sha256": "f08119e97813c6ee1a5bb1256f6a43a1b4ced7102fc93b1277357a84fae1cb01"
+    },
+    "tools/ios-owned-game-host/sdk-test/tests/GraphicsPresentationTests.swift": {
+      "bytes": 2291,
+      "sha256": "7b7e4fa87e99748f506b7dc937d7e93364d80d1e336c99fc933bcd94ff6914ca"
+    },
     "tools/ios-owned-game-host/sdk-test/tests/MobileControlsTests.swift": {
       "bytes": 12956,
       "sha256": "52febcb0cb44fdb0fe0feb1ac2bb6b4c6372859edc21a694d043cecddee12b04"
     },
     "tools/ios-owned-game-host/sdk-test/tests/NativeTraceSDKProbeTests.swift": {
       "bytes": 2885,
-      "sha256": "d19143be38965488d878c83cf30eaf18acf516a202f47e0a19052e128b31212e"
+      "sha256": "495c13b676d81a152bba8829e3b7724591f76a3dcfe3b127a9dd0cb9b80f71d6"
+    },
+    "tools/ios-owned-game-host/sdk-test/tests/OwnedHostAudioTests.swift": {
+      "bytes": 9723,
+      "sha256": "8fc7e1fc3ad194a8903ea12b14da19b58a555f8ed08769c039c7f35b6a358c4e"
     },
     "tools/ios-owned-game-host/sdk-test/tests/OwnedHostFullChainTests.swift": {
       "bytes": 13300,
       "sha256": "4d570c008b6a235d1dbab2f19260236b01073b6aad4e5945c683bc3a65cfbc75"
+    },
+    "tools/ios-owned-game-host/src/audio_output.rs": {
+      "bytes": 37729,
+      "sha256": "5e3f279c0a96ff1aea467866e6dc67e291e9df7cf520d6271e1e6539f711578e"
     },
     "tools/ios-owned-game-host/src/bin/public_fixture_resources.rs": {
       "bytes": 2283,
@@ -817,17 +893,29 @@
       "bytes": 25008,
       "sha256": "fca856daaa7561def1762b3278f5237b9a065abc1119c7f035e94406443f6911"
     },
+    "tools/ios-owned-game-host/src/config_overlay.rs": {
+      "bytes": 4774,
+      "sha256": "63e218f3c32cc0cbe8527af8b094beeb4e8efd54199801a99e2678cc37bec3f1"
+    },
     "tools/ios-owned-game-host/src/darwin.rs": {
       "bytes": 11401,
       "sha256": "bfe16231d3d732cfde2cf0d9834022c2b54f934e5d4fb5bb819d0cc921add186"
+    },
+    "tools/ios-owned-game-host/src/device_settings.rs": {
+      "bytes": 7220,
+      "sha256": "039d009476d801d6e723178d01ef6916c5aac8fea634b002ba524e8381fd26c6"
+    },
+    "tools/ios-owned-game-host/src/graphics_fixture.rs": {
+      "bytes": 1760,
+      "sha256": "b095d8df79477a3a8ef43fb3aa3fb0ddf806630f53f39940aa0fb681c5e48898"
     },
     "tools/ios-owned-game-host/src/guest_fatal.rs": {
       "bytes": 4399,
       "sha256": "33c5eb97ffe82b8b6e9f46b5b98704c10ad9a3f7e7487cff6917a50022094bc9"
     },
     "tools/ios-owned-game-host/src/lib.rs": {
-      "bytes": 1224,
-      "sha256": "2b5256649d89e7e54d20ed5495e067eb83531d83091045ebbf53160e4d9c7142"
+      "bytes": 1428,
+      "sha256": "1652b27ce5d477686684208c4c438302d923d17a9aa82b4d0259dce38d77f021"
     },
     "tools/ios-owned-game-host/src/lifecycle.rs": {
       "bytes": 3643,
@@ -854,16 +942,16 @@
       "sha256": "5408a9d254b750e66b8189e3ba4c82008c63d89e2c5dee68557672198c82e559"
     },
     "tools/ios-owned-game-host/src/renderer.rs": {
-      "bytes": 6013,
-      "sha256": "8525e4330b0366b1bb0048b4fa9d1c571b2a3053eac1a9792b8b83c938fe5fb3"
+      "bytes": 10131,
+      "sha256": "09564f7d8f11967bc2b82a510402a1d3aa43ff6024c8feea18e58263dc8a9086"
     },
     "tools/ios-owned-game-host/src/renderer_policy.rs": {
       "bytes": 2515,
       "sha256": "ff4e83d10fa29f1bae7ceaa7a0fb4838f71da9bb152e0a30b595997e101ea940"
     },
     "tools/ios-owned-game-host/src/runtime.rs": {
-      "bytes": 24999,
-      "sha256": "b61e49c429d57c69bd07171729f25e56c035e38f9e54a1bce041b2dcf6316698"
+      "bytes": 25833,
+      "sha256": "4a4f4386ddceae76fc0b426bcd33b423ca14f833e93e3407deafe40e1259502e"
     },
     "tools/ios-owned-game-host/src/save_store.rs": {
       "bytes": 67065,

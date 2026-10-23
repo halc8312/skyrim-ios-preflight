@@ -23,6 +23,7 @@ targets:
     sources:
       - path: app
       - path: native/OwnedHostNative.mm
+      - path: native/OwnedHostAudio.mm
       - path: sdk-test/native/NativeTraceSDKProbe.cpp
       - path: Resources/OwnedGuestBinding.json
         buildPhase: resources
@@ -44,7 +45,8 @@ targets:
       properties:
         CFBundleDisplayName: Skyrim Lab
         CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "8"
+        CFBundleVersion: "9"
+        CADisableMinimumFrameDurationOnPhone: true
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
@@ -69,7 +71,7 @@ targets:
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
         DEAD_CODE_STRIPPING: NO
         LD_EXPORT_DYNAMIC: YES
-        OTHER_LDFLAGS: "$(inherited) -lios_owned_game_host -lc++ -lresolv -liconv -framework Foundation -framework UIKit -framework QuartzCore -framework Metal -Wl,-undefined,error -Wl,-u,_OHPrepareV1 -Wl,-u,_OHAttachMetalLayerV1"
+        OTHER_LDFLAGS: "$(inherited) -lios_owned_game_host -lc++ -lresolv -liconv -framework Foundation -framework UIKit -framework QuartzCore -framework Metal -framework AVFAudio -Wl,-undefined,error -Wl,-u,_OHPrepareV1 -Wl,-u,_OHAttachMetalLayerV1"
       configs:
         Debug:
           GCC_PREPROCESSOR_DEFINITIONS: "$(inherited) OWNED_HOST_SDK_TRACE_TEST=1"

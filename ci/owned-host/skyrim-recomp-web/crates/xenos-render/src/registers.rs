@@ -15,7 +15,7 @@ pub const FETCH_CONSTANTS: usize = 0x4800;
 /// First bool constant register (SHADER_CONSTANT_BOOL_000_031); 8 bool + 32 loop dwords follow.
 pub const BOOL_LOOP_CONSTANTS: usize = 0x4900;
 
-/// [`RegisterFile::take_dirty`] bits: constant ranges written since the last call.
+/// [`RegisterFile::take_dirty`] bits: constant ranges changed since the last call.
 pub mod dirty {
     /// Float constants c0..c255 (the vertex shader's).
     pub const FLOAT_VS: u8 = 1;
@@ -31,7 +31,7 @@ const PIXEL_FLOAT_CONSTANTS: usize = FLOAT_CONSTANTS + 256 * 4;
 pub struct RegisterFile {
     values: Box<[u32]>,
     dirty: u8,
-    /// Per float constant vec4 (512): written since the renderer last compared it with what it
+    /// Per float constant vec4 (512): changed since the renderer last compared it with what it
     /// uploaded (see [`RegisterFile::float_written`]).
     float_written: [u64; 8],
 }
@@ -46,6 +46,11 @@ impl RegisterFile {
     pub fn write(&mut self, index: u32, value: u32) {
         let i = index as usize;
         if let Some(r) = self.values.get_mut(i) {
+            // This is the renderer's state copy, not a command/MMIO register handler. Identical
+            // bits cannot change a constant block; keep any earlier dirty/forced bits intact.
+            if *r == value {
+                return;
+            }
             *r = value;
             if (FLOAT_CONSTANTS..FETCH_CONSTANTS).contains(&i) {
                 let v = (i - FLOAT_CONSTANTS) / 4;
@@ -74,7 +79,7 @@ impl RegisterFile {
         }
     }
 
-    /// Bits of the 256 float constant vec4s of stage `stage` (0 vertex, 1 pixel) written since
+    /// Bits of the 256 float constant vec4s of stage `stage` (0 vertex, 1 pixel) changed since
     /// [`RegisterFile::clear_float_written`] cleared them.
     pub fn float_written(&self, stage: usize) -> [u64; 4] {
         self.float_written[stage * 4..stage * 4 + 4].try_into().expect("4 words")
@@ -100,6 +105,48 @@ impl RegisterFile {
             out[k * 4..k * 4 + 4].copy_from_slice(&w.to_le_bytes());
         }
         out
+    }
+
+    /// The patch from `previous` to the first `count` float vec4s of a stage. Visits only
+    /// potentially changed vec4s and the suffix absent from the previous block. Values stay in
+    /// increasing vec4 order, as required by the GPU patch decoder. Dirty bits are not cleared.
+    pub(crate) fn float_delta(&self, stage: usize, count: usize, previous: &[u8], values: &mut Vec<u8>) -> [u32; 8] {
+        debug_assert!(stage < 2 && count <= 256 && previous.len().is_multiple_of(16));
+        let have = previous.len() / 16;
+        let mut mask = [0u32; 8];
+        values.clear();
+        for (word, written) in self.float_written(stage).into_iter().enumerate() {
+            let first = word * 64;
+            if first >= count {
+                break;
+            }
+            let valid = (count - first).min(64);
+            let keep = if valid == 64 { u64::MAX } else { (1u64 << valid) - 1 };
+            let retained = have.saturating_sub(first).min(64);
+            let missing = if retained == 64 { 0 } else { u64::MAX << retained };
+            let mut candidates = (written | missing) & keep;
+            let mut compare = |i: usize| {
+                let value = self.float_vec4(stage * 256 + i);
+                if i >= have || value != previous[i * 16..i * 16 + 16] {
+                    mask[i / 32] |= 1 << (i % 32);
+                    values.extend_from_slice(&value);
+                }
+            };
+            if candidates == keep {
+                // A fully rewritten/missing range is cheaper to walk contiguously than to
+                // extract each bit. Sparse ranges and unchanged ranges keep the fast skip.
+                for i in first..first + valid {
+                    compare(i);
+                }
+            } else {
+                while candidates != 0 {
+                    let i = first + candidates.trailing_zeros() as usize;
+                    candidates &= candidates - 1;
+                    compare(i);
+                }
+            }
+        }
+        mask
     }
 
     pub fn as_slice(&self) -> &[u32] {
@@ -164,6 +211,10 @@ impl ActiveShaders {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "registers_delta_tests.rs"]
+mod delta_tests;
 
 #[cfg(test)]
 mod tests {

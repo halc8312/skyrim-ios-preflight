@@ -1652,23 +1652,7 @@ impl Executor {
             // Vec4s the block doesn't have, and the written ones that differ from it: only those
             // are compared and sent (see constant_patch); the title rewrites constants before every
             // draw, but only ~5% of them change.
-            let have = block.data.len() / 16;
-            let written = self.regs.float_written(stage);
-            let mut mask = [0u32; 8];
-            values.clear();
-            for i in 0..count {
-                let changed = if i >= have {
-                    true
-                } else if written[i / 64] >> (i % 64) & 1 != 0 {
-                    self.regs.float_vec4(base + i) != block.data[i * 16..i * 16 + 16]
-                } else {
-                    false
-                };
-                if changed {
-                    mask[i / 32] |= 1 << (i % 32);
-                    values.extend_from_slice(&self.regs.float_vec4(base + i));
-                }
-            }
+            let mask = self.regs.float_delta(stage, count, &block.data, &mut values);
             if values.is_empty() {
                 // The block has these values (beyond `count` it keeps its own, still compared
                 // when a draw reads them).

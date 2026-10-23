@@ -3,6 +3,7 @@
 //! survive to process exit. The UI never hosts a guest/unwind stack frame.
 use crate::{
     Check,
+    audio_output,
     abi::*,
     binding::{self, TrustedBinding},
     darwin::{self, Api, Library},
@@ -301,6 +302,12 @@ fn prepare(game: &Path, content: &Path, p: u32) -> Check<u64> {
         import_policy,
     )
     .map_err(|_| "strict Kernel preparation failed")?;
+    audio_output::initialize()?;
+    if !k.audio.set_observer(std::sync::Arc::new(|event| match event {
+        kernel_hle::audio::AudioEvent::Activated { client, generation } => audio_output::activate_client(client, generation),
+        kernel_hle::audio::AudioEvent::Frame { client, generation, samples } => audio_output::submit_frame(client, generation, samples),
+        kernel_hle::audio::AudioEvent::Deactivated { client, generation } => audio_output::deactivate_client(client, generation),
+    })) { return Err("audio observer must be installed before guest clients"); }
     let expected = &resident().binding;
     let save_identity = save_store::SaveIdentity {
         title_id: expected.xex_title_id,
@@ -337,6 +344,13 @@ pub fn prepared_kernel(t: u64) -> Check<&'static Kernel> {
         return Err("Kernel not prepared");
     }
     Ok(*KERNEL.get().ok_or("Kernel missing")?)
+}
+pub(crate) fn renderer_configuration_allowed(t: u64) -> Check<()> {
+    token(t)?;
+    if STATE.state() != lifecycle::PREPARED {
+        return Err("startup graphics require prepared state before renderer attachment");
+    }
+    Ok(())
 }
 pub fn mark_renderer_attached(t: u64) -> Check<()> {
     token(t)?;

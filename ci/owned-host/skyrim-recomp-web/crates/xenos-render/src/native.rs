@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use gpu_webgpu::*;
 
+pub use crate::presentation_probe::{PresentationProbe, PresentationProbeError, run_public_presentation_probe};
 use crate::renderer::{Renderer, TargetsFactory, wanted_features};
+use crate::settings::{PresentAdmission, PresentationSettings, SettingsControl, SettingsSnapshot};
 use crate::{PhysicalMemory, RendererHandle};
 
 #[derive(Debug, Clone, Default)]
@@ -89,12 +91,14 @@ struct Presentation {
     format: TextureFormat,
     present_mode: PresentMode,
     configured: (u32, u32),
+    max_dimension: u32,
 }
 
 impl Presentation {
-    fn configure(&mut self, device: &Device) {
+    fn configure(&mut self, device: &Device, settings: PresentationSettings) {
         let (width, height) = self.window.size();
-        self.configured = (width.max(1), height.max(1));
+        let size = settings.output_size(width, height, self.max_dimension);
+        self.configured = (size.0.max(1), size.1.max(1));
         self.surface.configure(
             device,
             &SurfaceConfiguration {
@@ -110,24 +114,30 @@ impl Presentation {
     }
 
     /// Shows the presenter's current frame, reconfiguring first if the window was resized.
-    fn present(&mut self, device: &Device, presenter: &crate::present::Presenter) {
-        let size = self.window.size();
+    fn present(
+        &mut self,
+        device: &Device,
+        presenter: &crate::present::Presenter,
+        settings: PresentationSettings,
+    ) -> bool {
+        let (width, height) = self.window.size();
+        let size = settings.output_size(width, height, self.max_dimension);
         if size.0 == 0 || size.1 == 0 {
-            return; // Minimized.
+            return false; // Minimized.
         }
         if size != self.configured {
-            self.configure(device);
+            self.configure(device, settings);
         }
         let frame = match self.surface.current_frame() {
             Ok(frame) => frame,
             Err(Error::SurfaceStatus(_)) => {
                 // Outdated or lost (e.g. mid-resize): reconfigure and show the next frame.
-                self.configure(device);
-                return;
+                self.configure(device, settings);
+                return false;
             }
             Err(e) => {
                 log::warn!("renderer: no window frame: {e}");
-                return;
+                return false;
             }
         };
         let view = frame.texture.create_view(None);
@@ -135,6 +145,7 @@ impl Presentation {
         presenter.encode(&mut encoder, &view, self.configured.0, self.configured.1);
         device.queue().submit([encoder.finish("present")]);
         frame.present();
+        true
     }
 }
 
@@ -155,6 +166,12 @@ pub struct NativeDiagnostics(Arc<NativeProgress>);
 
 #[derive(Default)]
 struct NativeProgress {
+    settings: SettingsControl,
+    applied_settings: SettingsControl,
+    presented_frames: AtomicU64,
+    skipped_frames: AtomicU64,
+    presentation_size: AtomicU64,
+    source_size: AtomicU64,
     initialized: AtomicBool,
     stopped: AtomicBool,
     failed: AtomicBool,
@@ -185,6 +202,29 @@ pub struct NativeSnapshot {
 }
 
 impl NativeDiagnostics {
+    /// Atomically publish a complete validated tuple; applied on a later valid
+    /// swap. Does not change guest simulation, draws, resolves, or sampler policy.
+    pub fn set_presentation_settings(&self, settings: PresentationSettings) -> u32 {
+        self.0.settings.set(settings)
+    }
+    pub fn presentation_status(&self) -> PresentationStatus {
+        let size = self.0.presentation_size.load(Ordering::Acquire);
+        let source = self.0.source_size.load(Ordering::Acquire);
+        // Applied is published only after reading requested. Read it first so
+        // the following requested load cannot precede that causal publication.
+        let applied = self.0.applied_settings.snapshot();
+        let requested = self.0.settings.snapshot();
+        PresentationStatus {
+            requested,
+            applied,
+            presented_frames: self.0.presented_frames.load(Ordering::Acquire),
+            skipped_frames: self.0.skipped_frames.load(Ordering::Acquire),
+            output_width: (size >> 32) as u32,
+            output_height: size as u32,
+            source_width: (source >> 32) as u32,
+            source_height: source as u32,
+        }
+    }
     pub fn snapshot(&self) -> NativeSnapshot {
         let p = &self.0;
         NativeSnapshot {
@@ -201,6 +241,25 @@ impl NativeDiagnostics {
             first_png_swap: p.first_png_swap.load(Ordering::Acquire),
         }
     }
+}
+
+/// Counts surface present submissions, not display scanout or guest-draw FPS.
+/// Counter/extent observations are diagnostic snapshots, not a joint transaction.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PresentationStatus {
+    pub requested: SettingsSnapshot,
+    /// Renderer consumed the tuple at a valid swap. A capped/minimized/lost
+    /// surface may not have submitted it yet; actual extent and submission
+    /// counters below are separate evidence, never display-scanout proof.
+    pub applied: SettingsSnapshot,
+    pub presented_frames: u64,
+    pub skipped_frames: u64,
+    pub output_width: u32,
+    pub output_height: u32,
+    /// Actual decoded front-buffer descriptor (reused frames retain its size),
+    /// before output scaling and unrelated to supersampled EDRAM attachments.
+    pub source_width: u32,
+    pub source_height: u32,
 }
 
 pub struct StartedRenderer {
@@ -387,8 +446,15 @@ fn run(
                 PresentMode::Fifo
             };
             log::info!("renderer: presenting in a window as {format:?}, {present_mode:?}");
-            let mut p = Presentation { window: window.clone(), surface, format, present_mode, configured: (0, 0) };
-            p.configure(&device);
+            let mut p = Presentation {
+                window: window.clone(),
+                surface,
+                format,
+                present_mode,
+                configured: (0, 0),
+                max_dimension: device.limits().maxTextureDimension2D,
+            };
+            p.configure(&device, PresentationSettings::default());
             Some(p)
         }
         _ => None,
@@ -436,6 +502,8 @@ fn run(
     let mut report_times = renderer.executor.times();
     let mut report_draws = renderer.executor.stats.draws;
     let mut last_decoded_frame = 0;
+    let presentation_clock = std::time::Instant::now();
+    let mut presentation_admission = PresentAdmission::default();
 
     loop {
         if diagnostics.0.cancelled.load(Ordering::Acquire) {
@@ -450,6 +518,7 @@ fn run(
                 diagnostics.0.unrendered_swaps.fetch_add(1, Ordering::Release);
                 return;
             };
+            diagnostics.0.source_size.store(Window::pack_size(w, h), Ordering::Release);
             if r.presenter.frames != last_decoded_frame {
                 diagnostics.0.decoded_frames.fetch_add(1, Ordering::Release);
                 last_decoded_frame = r.presenter.frames;
@@ -459,7 +528,24 @@ fn run(
                 diagnostics.0.reused_frames.fetch_add(1, Ordering::Release);
             }
             if let Some(p) = presentation.as_mut() {
-                p.present(&r.device, &r.presenter);
+                let requested = diagnostics.0.settings.snapshot();
+                r.presenter.set_output_options(&r.device, requested.settings, format);
+                diagnostics.0.applied_settings.applied(requested);
+                if presentation_admission.admit(presentation_clock.elapsed(), requested.settings.frame_limit()) {
+                    if p.present(&r.device, &r.presenter, requested.settings) {
+                        diagnostics.0.presented_frames.fetch_add(1, Ordering::Release);
+                        diagnostics
+                            .0
+                            .presentation_size
+                            .store(Window::pack_size(p.configured.0, p.configured.1), Ordering::Release);
+                    }
+                } else {
+                    diagnostics.0.skipped_frames.fetch_add(1, Ordering::Release);
+                }
+            } else {
+                let requested = diagnostics.0.settings.snapshot();
+                r.presenter.set_output_options(&r.device, requested.settings, format);
+                diagnostics.0.applied_settings.applied(requested);
             }
             presents.push(std::time::Instant::now());
             let Some(dir) = &options.dump_dir else { return };
@@ -478,9 +564,8 @@ fn run(
             match dump(&r.device, &r.presenter, &target, &path, checked) {
                 Ok(()) => {
                     diagnostics.0.png_written.fetch_add(1, Ordering::Release);
-                    let _ = diagnostics.0.first_png_swap.compare_exchange(
-                        0, swap, Ordering::Release, Ordering::Relaxed,
-                    );
+                    let _ =
+                        diagnostics.0.first_png_swap.compare_exchange(0, swap, Ordering::Release, Ordering::Relaxed);
                     log::info!("renderer: wrote {}", path.display());
                 }
                 Err(e) => {
@@ -500,7 +585,9 @@ fn run(
         for e in errors {
             log::error!("renderer: GPU error: {e:?}");
         }
-        if checked && (had_errors || device.lost_reason().is_some() || diagnostics.0.png_failures.load(Ordering::Acquire) != 0) {
+        if checked
+            && (had_errors || device.lost_reason().is_some() || diagnostics.0.png_failures.load(Ordering::Acquire) != 0)
+        {
             return Err(Error::Invalid("checked renderer encountered a GPU, device-loss or PNG error".into()));
         }
         // Time spent executing commands (not waiting for the title to submit some).
@@ -513,7 +600,7 @@ fn run(
             let fps = frames as f64 / window.as_secs_f64();
             let draws = renderer.executor.stats.draws;
             log::info!(
-                "perf: {fps:.1} fps, {} draws/frame; renderer busy {:.0}%; {}",
+                "perf: {fps:.1} guest swaps/s, {} draws/frame; renderer busy {:.0}%; {}",
                 (draws - report_draws) / frames.max(1),
                 100.0 * busy.as_secs_f64() / window.as_secs_f64(),
                 crate::renderer::pacing(&mut presents, &mut renderer.swap_timings)
@@ -541,7 +628,13 @@ fn run(
 }
 
 /// Renders the current front buffer into `target`, reads it back and writes a PNG.
-fn dump(device: &Device, presenter: &crate::present::Presenter, target: &Offscreen, path: &Path, exclusive: bool) -> Result<()> {
+fn dump(
+    device: &Device,
+    presenter: &crate::present::Presenter,
+    target: &Offscreen,
+    path: &Path,
+    exclusive: bool,
+) -> Result<()> {
     let mut encoder = device.create_command_encoder("dump");
     presenter.encode(&mut encoder, &target.view, target.width, target.height);
     encoder.copy_texture_to_buffer(
@@ -595,6 +688,30 @@ mod checked_start_tests {
     use super::*;
 
     #[test]
+    fn presentation_status_distinguishes_requested_applied_and_actual_extents() {
+        let diagnostics = NativeDiagnostics::default();
+        let initial = diagnostics.presentation_status();
+        assert_eq!(initial.requested, SettingsSnapshot::default());
+        assert_eq!(initial.applied, SettingsSnapshot::default());
+        assert_eq!(
+            (initial.source_width, initial.source_height, initial.output_width, initial.output_height),
+            (0, 0, 0, 0)
+        );
+        let settings = PresentationSettings::from_words([30, 50, 1, 25]).unwrap();
+        assert_eq!(diagnostics.set_presentation_settings(settings), 1);
+        assert_eq!(diagnostics.presentation_status().applied.generation, 0, "request is not proof of application");
+        let requested = diagnostics.0.settings.snapshot();
+        diagnostics.0.applied_settings.applied(requested);
+        diagnostics.0.source_size.store(Window::pack_size(1280, 720), Ordering::Release);
+        diagnostics.0.presentation_size.store(Window::pack_size(640, 360), Ordering::Release);
+        let status = diagnostics.presentation_status();
+        assert_eq!(status.applied, status.requested);
+        assert_eq!((status.source_width, status.source_height), (1280, 720));
+        assert_eq!((status.output_width, status.output_height), (640, 360));
+        assert_eq!((status.presented_frames, status.skipped_frames), (0, 0));
+    }
+
+    #[test]
     fn initialization_requires_an_explicit_success_message() {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         tx.send(Ok(7u32)).unwrap();
@@ -641,14 +758,18 @@ mod checked_start_tests {
     fn checked_renderer_initializes_and_stops_without_game_data() {
         struct EmptyMemory;
         impl PhysicalMemory for EmptyMemory {
-            fn read(&self, _: u32, out: &mut [u8]) { out.fill(0); }
+            fn read(&self, _: u32, out: &mut [u8]) {
+                out.fill(0);
+            }
             fn write(&self, _: u32, _: &[u8]) {}
         }
         let started = start_checked(
-            Arc::new(EmptyMemory), NativeOptions::default(),
+            Arc::new(EmptyMemory),
+            NativeOptions::default(),
             Box::new(|device| Box::new(crate::edram::EdramTargets::new(device))),
             Duration::from_secs(15),
-        ).unwrap_or_else(|e| panic!("public checked renderer startup failed: {e}"));
+        )
+        .unwrap_or_else(|e| panic!("public checked renderer startup failed: {e}"));
         assert_eq!(started.adapter.backend, gpu_webgpu::ffi::WGPUBackendType::Vulkan);
         let before = started.diagnostics.snapshot();
         assert!(before.initialized && !before.failed);

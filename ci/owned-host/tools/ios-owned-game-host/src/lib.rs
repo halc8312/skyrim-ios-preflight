@@ -2,7 +2,12 @@
 //! an Apple image. A matching hash is content binding, not signature authority,
 //! HLE completeness, game compatibility or permission to execute on iOS.
 pub type Check<T> = Result<T, &'static str>;
+pub mod audio_output;
 pub mod binding;
+pub mod config_overlay;
+pub mod device_settings;
+#[cfg(all(feature = "fixture-tools", feature = "metal-renderer", target_os = "ios", target_arch = "aarch64"))]
+mod graphics_fixture;
 pub mod guest_fatal;
 pub mod lifecycle;
 pub mod mapping;

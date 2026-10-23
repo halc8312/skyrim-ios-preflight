@@ -27,11 +27,17 @@ cargo +nightly-2026-10-11 test --locked \
   --manifest-path "$kit/skyrim-recomp-web/Cargo.toml" -p kernel-hle --lib \
   xma::init_tests::eager_context_base_and_exported_slot_lifetime -- --exact --test-threads=1 \
   2>&1 | tee "$output/public-xma-init-tests.log"
+cargo +nightly-2026-10-11 test --locked \
+  --manifest-path "$kit/skyrim-recomp-web/Cargo.toml" -p kernel-hle --lib \
+  audio::tests -- --test-threads=1 2>&1 | tee "$output/public-audio-observer-tests.log"
 cargo +nightly-2026-10-11 test --locked --lib \
   --manifest-path "$kit/tools/ios-signed-image-policy/Cargo.toml" -- --test-threads=1 \
   2>&1 | tee "$output/public-signed-policy-tests.log"
 python3 -B -m unittest discover -s "$host/sdk-test" -p 'test_*.py' -v \
   2>&1 | tee "$output/public-driver-tests.log"
+clang++ -std=c++17 -O2 -pthread -Wall -Wextra -Werror \
+  "$host/sdk-test/audio_render_gate_test.cpp" -o "$work/audio-render-gate-test"
+"$work/audio-render-gate-test" 2>&1 | tee "$output/public-audio-render-gate-tests.log"
 python3 -B -m unittest discover -s "$backend/sdk-test" -p 'test_*.py' -v \
   2>&1 | tee "$output/resident-marker-tests.log"
 python3 -B -m unittest discover -s "$backend" -p 'test_prepare_fixture.py' -v \
@@ -52,6 +58,8 @@ export RUSTFLAGS='-C lto=off -C embed-bitcode=no -C panic=unwind'
 unset CARGO_ENCODED_RUSTFLAGS || true
 
 for variant in device simulator; do
+  host_features=metal-renderer
+  if [[ "$variant" == simulator ]]; then host_features=metal-renderer,fixture-tools; fi
   if [[ "$variant" == device ]]; then rust_target=aarch64-apple-ios; else rust_target=aarch64-apple-ios-sim; fi
   built="$work/owned-fixture-$variant"
   bash "$harness/ci/build-owned-host-fixture.sh" "$kit" "$simde" "$built" "$variant" \
@@ -69,7 +77,7 @@ for variant in device simulator; do
     cp "$built/$record" "$output/$variant-$record"
   done
   WGPU_NATIVE_FRAMEWORK_DIR="$output/gpu-framework/$variant" \
-    cargo +nightly-2026-10-11 rustc --locked --release --lib --features metal-renderer \
+    cargo +nightly-2026-10-11 rustc --locked --release --lib --features "$host_features" \
       --target "$rust_target" --manifest-path "$host/Cargo.toml" -- --print=native-static-libs \
       2>&1 | tee "$output/host-$variant-build.log"
   stage="$work/owned-app-$variant"
@@ -79,6 +87,9 @@ for variant in device simulator; do
   mkdir "$stage/native" "$stage/include" "$stage/Libraries" "$stage/Frameworks" "$stage/Resources"
   mkdir "$stage/Resources/PublicFixture"
   cp "$host/native/OwnedHostNative.h" "$host/native/OwnedHostNative.mm" "$host/native/OwnedHost.h" "$stage/native/"
+  cp "$host/native/DeviceGraphics.h" "$host/native/OwnedHostAudio.h" \
+    "$host/native/OwnedHostAudio.mm" "$host/native/OwnedHostAudioRenderGate.h" \
+    "$host/native/GraphicsPresentationProbe.h" "$stage/native/"
   cp "$generic/PrivateGuestABI.h" "$stage/include/"
   cp "$CARGO_TARGET_DIR/$rust_target/release/libios_owned_game_host.a" "$stage/Libraries/"
   cp -R "$built/PrivateGuest.framework" "$output/gpu-framework/$variant/WgpuNative.framework" "$stage/Frameworks/"
@@ -146,4 +157,8 @@ python3 "$host/sdk-test/run_mobile_controls_tests.py" --stage "$work/owned-app-s
   --built-output "$output/xctest" --output "$output/xctest-mobile" \
   --destination "platform=iOS Simulator,id=$device_id" \
   2>&1 | tee "$output/mobile-controls-sdk-driver.log"
+python3 "$host/sdk-test/run_device_features_tests.py" --stage "$work/owned-app-simulator" \
+  --built-output "$output/xctest" --output "$output/xctest-device-features" \
+  --destination "platform=iOS Simulator,id=$device_id" \
+  2>&1 | tee "$output/device-features-sdk-driver.log"
 printf '%s\n' 'Public owned-host fullchain passed; game, private framework and physical iPhone remain untested.'

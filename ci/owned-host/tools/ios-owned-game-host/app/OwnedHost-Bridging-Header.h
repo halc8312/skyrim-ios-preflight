@@ -1,3 +1,6 @@
 #include "OwnedHost.h"
 #include "RendererBridge.h"
+#include "DeviceGraphics.h"
+#include "OwnedHostAudio.h"
+#include "GraphicsPresentationProbe.h"
 #include "../sdk-test/native/NativeTraceSDKProbe.h"

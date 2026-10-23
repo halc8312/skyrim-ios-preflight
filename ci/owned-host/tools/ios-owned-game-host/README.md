@@ -1,5 +1,28 @@
 # Experimental owned guest host
 
+Build9 adds local graphics/audio preferences, seven presets and a settings hub
+available before guest startup as well as while running. Original settings are
+the default. Console video-mode requests (360p/540p/720p/1080p), integer EDRAM
+supersampling (1/2/3, bounded to3840x2160), mirror/cache budgets freeze at renderer
+attachment. Only observed source sizes establish whether a game honored its
+video mode; a requested mode is not a verified internal render resolution.
+Presentation-only scaling/filter/sharpening/FPS limits are atomic live tuples.
+Admission preserves average selected cadence at guest swaps, including noninteger
+rate ratios, and discards missed slots after a stall without catch-up bursts.
+It does not enforce an absolute minimum interval or synchronize to screen scanout.
+These controls do not skip scene draws or unlock guest simulation rates. Display transfer
+and newly decoded frame rates are measured separately from actual screen scanout.
+
+An optional host audio observer feeds bounded per-client48kHz stereo queues.
+The native AVAudioSourceNode/AVAudioEngine adapts these to the active output;
+there is no microphone or background-audio entitlement. Route disconnection and
+media reset require explicit resume. Background suspension also stops output.
+Gain/mute/profile controls are live; reported reservoir depth is not guaranteed
+end-to-end latency. Starting this output transport does not prove that the
+separate XMA decoder/MMIO path delivered game audio. Numeric receive counters
+keep that limitation visible. Public fixtures and simulator tests never start
+an owned title or establish physical-iPhone performance/audio compatibility.
+
 This independent host foundation contains no game code, game assets, keys,
 `guest-sys` dependency or generated private layout. It does not modify the
 frozen resident fixture, its cloud workflow, or the upstream workspace.

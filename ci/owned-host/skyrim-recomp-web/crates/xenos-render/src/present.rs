@@ -2,6 +2,7 @@
 //! letterboxed to keep its aspect. The front buffer comes from the texture cache, which loads it
 //! from the GPU copy of guest memory when a resolve stored it there.
 
+use crate::settings::PresentationSettings;
 use gpu_webgpu::*;
 use xenos_texture::{SwizzleSource, TextureFetchConstant};
 
@@ -80,6 +81,44 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
 
 const BACKGROUND: Color = Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
 
+/// The default pipeline continues to use BLIT above, unchanged. This extra
+/// pipeline is compiled lazily only when the user opts into a different filter
+/// or sharpening. It is not a game render-resolution or texture-quality setting.
+fn filtered_shader() -> String {
+    let helpers = BLIT.split_once("@fragment\n").expect("one original fragment entry").0;
+    format!(
+        "{helpers}{}",
+        r#"
+@group(0) @binding(3) var<uniform> options: vec4<u32>;
+@fragment
+fn fs(in: VsOut) -> @location(0) vec4<f32> {
+    let dimensions = textureDimensions(frame);
+    let size = vec2<f32>(dimensions);
+    let scale = fwidth(in.uv) * size;
+    var t: vec4<f32>;
+    if (options.x == 2u) {
+        let p = clamp(vec2<i32>(floor(in.uv * size)), vec2<i32>(0), vec2<i32>(dimensions) - 1);
+        t = textureLoad(frame, p, 0);
+    } else if (options.x == 3u || (options.x == 0u && max(scale.x, scale.y) < 0.99)) {
+        t = catmull_rom(in.uv);
+    } else {
+        t = textureSampleLevel(frame, frame_sampler, in.uv, 0.0);
+    }
+    if (options.y > 0u) {
+        let step = 1.0 / size;
+        let neighbors = textureSampleLevel(frame, frame_sampler, in.uv + vec2<f32>(step.x, 0.0), 0.0)
+            + textureSampleLevel(frame, frame_sampler, in.uv - vec2<f32>(step.x, 0.0), 0.0)
+            + textureSampleLevel(frame, frame_sampler, in.uv + vec2<f32>(0.0, step.y), 0.0)
+            + textureSampleLevel(frame, frame_sampler, in.uv - vec2<f32>(0.0, step.y), 0.0);
+        let amount = f32(options.y) * 0.005;
+        t = clamp(t + (4.0 * t - neighbors) * amount, vec4<f32>(0.0), vec4<f32>(1.0));
+    }
+    return vec4<f32>(pick(t, swizzle.x), pick(t, swizzle.y), pick(t, swizzle.z), 1.0);
+}
+"#
+    )
+}
+
 /// A front buffer ready to show: the texture cache's view of it and how its channels map.
 pub(crate) struct FrontBuffer {
     pub view: TextureView,
@@ -125,10 +164,13 @@ struct Shown {
 
 pub(crate) struct Presenter {
     pipeline: RenderPipeline,
+    filtered_pipeline: Option<RenderPipeline>,
     layout: BindGroupLayout,
     sampler: Sampler,
     /// The front buffer's channel mapping (rewritten per swap: buffers are costly to create).
     swizzle: Buffer,
+    options: Buffer,
+    options_words: [u32; 4],
     shown: Option<Shown>,
     /// Swaps shown so far.
     pub frames: u64,
@@ -172,6 +214,15 @@ impl Presenter {
                         min_binding_size: 16,
                     },
                 },
+                BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: ShaderStage::Fragment,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: 16,
+                    },
+                },
             ],
         );
         let pipeline_layout = device.create_pipeline_layout("present", &[&layout]);
@@ -200,7 +251,55 @@ impl Presenter {
             usage: BufferUsage::Uniform | BufferUsage::CopyDst,
             mapped_at_creation: false,
         });
-        Presenter { pipeline, layout, sampler, swizzle, shown: None, frames: 0 }
+        let options = device.create_buffer(&BufferDescriptor {
+            label: "present options",
+            size: 16,
+            usage: BufferUsage::Uniform | BufferUsage::CopyDst,
+            mapped_at_creation: false,
+        });
+        Presenter {
+            pipeline,
+            filtered_pipeline: None,
+            layout,
+            sampler,
+            swizzle,
+            options,
+            options_words: [0; 4],
+            shown: None,
+            frames: 0,
+        }
+    }
+
+    pub(crate) fn set_output_options(
+        &mut self,
+        device: &Device,
+        settings: PresentationSettings,
+        format: TextureFormat,
+    ) {
+        let words = settings.shader_words();
+        if words == self.options_words {
+            return;
+        }
+        if words != [0; 4] && self.filtered_pipeline.is_none() {
+            let module = device.create_shader_module_wgsl("present filtered", &filtered_shader());
+            let layout = device.create_pipeline_layout("present filtered", &[&self.layout]);
+            self.filtered_pipeline = Some(device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: "present filtered",
+                layout: Some(&layout),
+                vertex: ProgrammableStage::new(&module, "vs"),
+                vertex_buffers: &[],
+                primitive: PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+                fragment: Some(FragmentState {
+                    stage: ProgrammableStage::new(&module, "fs"),
+                    targets: &[ColorTargetState::new(format)],
+                }),
+            }));
+        }
+        let bytes: Vec<_> = words.iter().flat_map(|v| v.to_le_bytes()).collect();
+        device.queue().write_buffer(&self.options, 0, &bytes);
+        self.options_words = words;
     }
 
     /// Shows `front` from now on (or keeps the previous frame if there is none).
@@ -225,6 +324,10 @@ impl Presenter {
                     binding: 2,
                     resource: BindingResource::Buffer { buffer: swizzle, offset: 0, size: None },
                 },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Buffer { buffer: &self.options, offset: 0, size: None },
+                },
             ],
         );
         self.shown = Some(Shown { width: front.width, height: front.height, group });
@@ -238,7 +341,12 @@ impl Presenter {
             encoder.begin_render_pass("present", &[Some(RenderPassColorAttachment::clear(target, BACKGROUND))], None);
         if let Some(shown) = &self.shown {
             let (x, y, w, h) = letterbox((shown.width, shown.height), (width, height));
-            pass.set_pipeline(&self.pipeline);
+            let pipeline = if self.options_words == [0; 4] {
+                &self.pipeline
+            } else {
+                self.filtered_pipeline.as_ref().expect("filtered options compile their pipeline")
+            };
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &shown.group, &[]);
             pass.set_viewport(x, y, w, h, 0.0, 1.0);
             pass.draw(3, 1, 0, 0);
@@ -257,5 +365,25 @@ mod tests {
         let (x, y, w, h) = letterbox((640, 480), (1280, 720));
         assert_eq!((w, h), (960.0, 720.0));
         assert_eq!((x, y), (160.0, 0.0));
+    }
+    #[test]
+    fn optional_filtered_shader_validates_and_original_entry_stays_separate() {
+        for source in [super::BLIT.to_owned(), super::filtered_shader()] {
+            let module = naga::front::wgsl::parse_str(&source).expect("authored presentation WGSL");
+            naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+                .validate(&module)
+                .expect("valid presentation WGSL");
+        }
+        assert!(!super::BLIT.contains("options"));
+        assert!(super::filtered_shader().contains("textureLoad(frame"));
+    }
+
+    #[cfg(not(target_os = "emscripten"))]
+    #[test]
+    fn authored_filters_and_sharpen_execute_with_original_default_pixels() {
+        let result = crate::native::run_public_presentation_probe().expect("public authored GPU presentation");
+        eprintln!("public presentation backend: {}", result.backend);
+        assert_eq!(result.checks, 255);
+        assert_eq!(result.rendered_cases, 6);
     }
 }
