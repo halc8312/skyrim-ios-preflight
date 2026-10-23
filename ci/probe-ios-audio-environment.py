@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import errno
 import importlib.util
 import json
 import os
@@ -231,6 +232,27 @@ class Result:
     output: bytes
 
 
+def reap_owned_group(child):
+    if child.returncode is not None:
+        return child.returncode  # Already reaped: its old PID is no longer ours.
+    try:
+        # Do not poll/reap first: an exited leader can still have descendants
+        # holding its pipe, and its unreaped PID still reserves our PGID.
+        os.killpg(child.pid, signal.SIGKILL)
+    except PermissionError as denied:
+        if denied.errno != errno.EPERM:
+            raise
+        # Darwin may return EPERM for the empty group of an exited leader.
+        # Accept only that proven exit; never hide denial for a live child.
+        try:
+            return child.wait(timeout=0)
+        except subprocess.TimeoutExpired:
+            raise denied from None
+    except ProcessLookupError:
+        pass
+    return child.wait(timeout=0.5)
+
+
 def run(command, deadline, seconds, *, env=None, file_limit=2 * 1024 * 1024, allow_cancel=False):
     """Retain bounded progress on failure; signal only this unreaped child PGID."""
     end = min(deadline, time.monotonic() + seconds)
@@ -265,13 +287,11 @@ def run(command, deadline, seconds, *, env=None, file_limit=2 * 1024 * 1024, all
                 if reason != "completed":
                     break
     finally:
-        if not completed:
-            try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            code = child.wait(timeout=0.5)
-        child.stdout.close()
+        try:
+            if not completed:
+                code = reap_owned_group(child)
+        finally:
+            child.stdout.close()
     return Result(code, reason, bytes(output))
 
 
@@ -436,13 +456,14 @@ def run_mode(helper, udid, executable, mode, output, deadline, sampling):
                     break
                 time.sleep(0.05)
     finally:
-        if child is not None and child.returncode is None:
-            try: os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError: pass
-            child.wait(timeout=0.5)
-        # This command can affect only our isolated bundle on the supplied UDID.
-        stopped = run(["xcrun", "simctl", "terminate", udid, BUNDLE], end, 2, allow_cancel=True)
-        result["terminate_exit_code"] = stopped.code
+        try:
+            if child is not None:
+                reap_owned_group(child)
+        finally:
+            # Still clean up the exact app if console cleanup refuses. An
+            # unexpected live-child permission failure continues to propagate.
+            stopped = run(["xcrun", "simctl", "terminate", udid, BUNDLE], end, 2, allow_cancel=True)
+            result["terminate_exit_code"] = stopped.code
     if not STOP and helper.find_target(udid, end) is not None:
         raise ValueError("prior app process still present")
     (output / "result.json").write_text(json.dumps(result, sort_keys=True) + "\n", encoding="ascii")

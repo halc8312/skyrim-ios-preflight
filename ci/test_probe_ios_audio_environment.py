@@ -1,5 +1,6 @@
 """Authored portable control/parser tests; never runs Apple or real audio."""
 import contextlib
+import errno
 import importlib.util
 import io
 import json
@@ -208,6 +209,64 @@ class SupervisionTests(unittest.TestCase):
         self.assertEqual(result.output, b"authored progress\n")
         self.assertEqual(children[0].returncode, -signal.SIGKILL)
         self.assertLess(time.monotonic() - started, 1.5)
+
+    def test_exited_group_eperm_requires_zero_wait_proof_and_never_resignals_reaped_pid(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        try:
+            # Observe the authored child as a zombie without reaping it. ps
+            # queries this one owned PID; no target/system process is touched.
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                state = subprocess.check_output(["/bin/ps", "-p", str(child.pid), "-o", "stat="], timeout=0.25)
+                if state.strip().startswith(b"Z"):
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("authored child did not exit within the fixture deadline")
+            self.assertIsNone(child.returncode)
+            real_wait = child.wait
+            with mock.patch.object(m.os, "killpg", side_effect=PermissionError(errno.EPERM, "authored empty group")) as kill, \
+                 mock.patch.object(child, "wait", wraps=real_wait) as wait:
+                self.assertEqual(m.reap_owned_group(child), 0)
+                kill.assert_called_once_with(child.pid, signal.SIGKILL)
+                wait.assert_called_once_with(timeout=0)
+                self.assertEqual(m.reap_owned_group(child), 0)
+                self.assertEqual(kill.call_count, 1)
+                self.assertEqual(wait.call_count, 1)
+            self.assertEqual(child.returncode, 0)
+        finally:
+            if child.returncode is None:
+                m.reap_owned_group(child)
+
+    def test_running_group_eperm_propagates_and_fixture_cleanup_remains_bounded(self):
+        unexpected = PermissionError(errno.EACCES, "authored different denial")
+        fake_child = mock.Mock(returncode=None, pid=123)
+        with mock.patch.object(m.os, "killpg", side_effect=unexpected):
+            with self.assertRaises(PermissionError) as raised:
+                m.reap_owned_group(fake_child)
+            self.assertIs(raised.exception, unexpected)
+            fake_child.wait.assert_not_called()
+        original, children = subprocess.Popen, []
+        denied = PermissionError(errno.EPERM, "authored live group denial")
+        def launch(*args, **kwargs):
+            child = original(*args, **kwargs); children.append(child); return child
+        started = time.monotonic()
+        try:
+            with mock.patch.object(m.subprocess, "Popen", side_effect=launch), \
+                 mock.patch.object(m.os, "killpg", side_effect=denied) as kill:
+                with self.assertRaises(PermissionError) as raised:
+                    m.run([sys.executable, "-c", "import time; time.sleep(2)"], started + 2, .15)
+                self.assertIs(raised.exception, denied)
+                self.assertEqual(len(children), 1)
+                kill.assert_called_once_with(children[0].pid, signal.SIGKILL)
+                self.assertIsNone(children[0].returncode)
+                self.assertTrue(children[0].stdout.closed)
+            self.assertLess(time.monotonic() - started, 1.5)
+        finally:
+            for child in children:
+                m.reap_owned_group(child)
+        self.assertEqual(children[0].returncode, -signal.SIGKILL)
 
     def test_output_limit_preserves_bounded_prefix(self):
         result = m.run([sys.executable, "-c", "import os,time; os.write(1,b'x'*100000); time.sleep(2)"], time.monotonic() + 2, 1)
