@@ -216,6 +216,54 @@ class ParserTests(unittest.TestCase):
         self.assertFalse(any("entitlement" in part for part in sign))
         self.assertFalse(result["available"]); self.assertEqual(result["reason"], "completed")
 
+    def test_install_refusal_preserves_bounded_sanitized_failure_without_launching_modes(self):
+        helps = {"launch": b"launch --console device bundle", "install": b"install device path",
+                 "list": b"list devices --json search", "terminate": b"terminate device bundle",
+                 "get_app_container": b"get_app_container device bundle app"}
+        for code, reason in ((-9, "cancelled_or_deadline"), (70, "completed"), (0, "tool_output_limit")):
+            with self.subTest(code=code, reason=reason), tempfile.TemporaryDirectory() as root:
+                output = Path(root).resolve(strict=True) / "out"
+                commands, progress = [], []
+                started = time.monotonic()
+                def fake_run(command, deadline, seconds, **kwargs):
+                    commands.append(command)
+                    if command[:3] == ["xcrun", "simctl", "help"]: raw = helps[command[3]]
+                    elif command[:4] == ["xcrun", "simctl", "list", "devices"]: raw = json.dumps(device()).encode()
+                    elif "--show-sdk-path" in command: raw = b"/authored/Simulator.sdk\n"
+                    elif command[:3] == ["xcrun", "simctl", "install"]:
+                        self.assertEqual(seconds, 20)
+                        self.assertLessEqual(deadline, started + 120)
+                        raw = (b"Install refused " + command[-1].encode() +
+                               b" /Users/authored-private/input [0xfeed]\n\x1b\x00") * 100
+                        progress.append(raw)
+                        return m.Result(code, reason, raw)
+                    else: raw = b""
+                    return m.Result(0, "completed", raw)
+                with mock.patch.object(m.sys, "platform", "darwin"), \
+                     mock.patch.object(m.os, "getuid", return_value=501), mock.patch.object(m.os, "geteuid", return_value=501), \
+                     mock.patch.object(m, "run", side_effect=fake_run), mock.patch.object(m, "run_mode") as mode, \
+                     mock.patch.object(m.signal, "signal"), contextlib.redirect_stdout(io.StringIO()) as console:
+                    self.assertEqual(m.main(["--udid", UDID, "--output", str(output)]), 2)
+                mode.assert_not_called()
+                result = json.loads(console.getvalue().split(" ", 1)[1])
+                self.assertEqual(result["stage"], "install")
+                self.assertEqual(result["reason"], "diagnostic_tool_or_validation_failure")
+                self.assertEqual(result["modes"], [])
+                for flag in ("available", "simulator_output_stream_verified", "physical_iphone_verified",
+                             "audible_output_verified", "sdk_tests_passed_claimed"):
+                    self.assertIs(result[flag], False)
+                failure = result["tool_failure"]
+                self.assertEqual(set(failure), {"stage", "reason", "exit_code", "progress"})
+                self.assertEqual((failure["stage"], failure["reason"], failure["exit_code"]), ("install", reason, code))
+                self.assertIs(type(failure["exit_code"]), int)
+                self.assertIn("Install refused", failure["progress"])
+                self.assertLessEqual(len(json.dumps(failure["progress"], ensure_ascii=True).encode("ascii")), 3500)
+                self.assertLessEqual(len(json.dumps(failure, ensure_ascii=True).encode("ascii")), 4096)
+                for private in (commands[-1][-1], "/Users", "authored-private", "0xfeed", "\x1b", "\x00"):
+                    self.assertNotIn(private, console.getvalue())
+                self.assertEqual(commands[-1][:3], ["xcrun", "simctl", "install"])
+                self.assertEqual((output / "install.log").read_bytes(), progress[0])
+
 
 @unittest.skipUnless(os.name == "posix", "POSIX owned-process fixture")
 class SupervisionTests(unittest.TestCase):

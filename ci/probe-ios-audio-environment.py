@@ -496,6 +496,9 @@ def probe(udid, output):
     def checked(command, seconds, name, **kwargs):
         report["stage"] = name
         outcome = run(command, deadline, seconds, **kwargs)
+        if outcome.reason != "completed" or outcome.code:
+            report["tool_failure"] = dict(stage=name, reason=outcome.reason, exit_code=outcome.code,
+                                          progress=sanitized_progress(outcome.output, output))
         (output / (name + ".log")).write_bytes(outcome.output)
         if outcome.reason != "completed" or outcome.code: raise ValueError(name + " failed")
         return outcome.output
@@ -543,7 +546,7 @@ def probe(udid, output):
             if compiled.reason != "completed" or compiled.code:
                 report.update(reason="compile_failed", compiler_progress=sanitized_progress(compiled.output, work)); return report
             checked(["/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", str(app)], 4, "adhoc-sign")
-            checked(["xcrun", "simctl", "install", udid, str(app)], 5, "install")
+            checked(["xcrun", "simctl", "install", udid, str(app)], 20, "install")
             container = checked(["xcrun", "simctl", "get_app_container", udid, BUNDLE, "app"], 3, "installed-container").decode().strip()
             executable = container + "/OwnedGameHost"
             authored_ps = f"1 {os.getuid()} {os.getuid()} Fri Oct 23 12:34:56 2026 {executable}\n".encode()
