@@ -53,6 +53,8 @@ python3 -B -m unittest discover -s "$harness/ci" -p 'test_package_owned_host_ipa
   2>&1 | tee "$output/public-unsigned-package-tests.log"
 python3 -B -m unittest discover -s "$harness/ci" -p 'test_prepare_owned_host_kit.py' -v \
   2>&1 | tee "$output/public-source-refusal-tests.log"
+python3 -B -m unittest discover -s "$harness/ci" -p 'test_watch_public_audio_hang.py' -v \
+  2>&1 | tee "$output/public-audio-hang-helper-tests.log"
 
 # The already reviewed pinned public source builder retains its 228-export,
 # Metal/WGSL, matching-platform and strict synthetic coexistence gates.
@@ -149,7 +151,22 @@ device_type="$(printf '%s\n' "$selection" | sed -n '2p')"
 printf '%s\n' 'Separate public owned-host Simulator: iPhone 17 Pro Max, iOS 26.5' \
   | tee "$output/simulator-selection.log"
 device_id="$(xcrun simctl create 'Owned Host Public SDK Probe' "$device_type" "$runtime_id")"
+audio_watch_pid=
+finish_audio_watch() {
+  if [[ -n "$audio_watch_pid" ]]; then
+    # Only our optional Python observer receives this signal. Its owned sample
+    # child is bounded/reaped by the helper; the tested app is never signalled.
+    # Bash may already have reaped a finished watcher. Check the live job list
+    # immediately before TERM rather than signalling a long-stale saved PID.
+    if jobs -pr | grep -Fx -- "$audio_watch_pid" >/dev/null; then
+      kill -TERM "$audio_watch_pid" >/dev/null 2>&1 || true
+    fi
+    wait "$audio_watch_pid" || true
+    audio_watch_pid=
+  fi
+}
 cleanup() {
+  finish_audio_watch
   xcrun simctl shutdown "$device_id" >/dev/null 2>&1 || true
   xcrun simctl delete "$device_id" >/dev/null 2>&1 || true
 }
@@ -194,12 +211,39 @@ python3 "$host/sdk-test/run_mobile_controls_tests.py" --stage "$work/owned-app-s
   --built-output "$output/xctest" --output "$output/xctest-mobile" \
   --destination "platform=iOS Simulator,id=$device_id" \
   2>&1 | tee "$output/mobile-controls-sdk-driver.log"
+# Optional, public-process-only evidence for the unresolved lazy output-node
+# initialization. This does not replace or change any mandatory SDK assertion.
+python3 "$harness/ci/watch-public-audio-hang.py" \
+  --audio-dir "$output/xctest-device-features/audio" \
+  --output "$output/audio-hang" --udid "$device_id" \
+  > "$output/audio-hang-driver.log" 2>&1 &
+audio_watch_pid=$!
+python3 - "$output/audio-hang/watch-ready.json" <<'PY'
+from pathlib import Path
+import json, time, sys
+ready = Path(sys.argv[1])
+deadline = time.monotonic() + 4
+available = False
+while time.monotonic() < deadline:
+    try:
+        available = ready.is_file() and ready.read_bytes() == b'{"schema":1,"ready":1}\n'
+    except OSError:
+        available = False
+    if available:
+        break
+    time.sleep(0.05)
+print('PUBLIC_AUDIO_WATCH_READY ' + json.dumps(dict(schema=1, ready=available,
+    sdk_assertions_unchanged=True)))
+PY
 if python3 "$host/sdk-test/run_device_features_tests.py" --stage "$work/owned-app-simulator" \
   --built-output "$output/xctest" --output "$output/xctest-device-features" \
   --destination "platform=iOS Simulator,id=$device_id" \
   2>&1 | tee "$output/device-features-sdk-driver.log"; then
-  :
+  finish_audio_watch
+  head -c 65536 "$output/audio-hang-driver.log"
 else
+  finish_audio_watch
+  head -c 65536 "$output/audio-hang-driver.log"
   # The normal runner retains complete logs but only prints their tail. Keep
   # the FIRST failure and numeric native phases visible when download is not
   # available; every failed SDK gate still exits nonzero.

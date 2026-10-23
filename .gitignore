@@ -554,3 +554,5 @@
 !/ci/owned-host/tools/ios-owned-game-host/sdk-test/audio_control_gate_test.cpp
 !/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/present_cache_tests.rs
 !/ci/probe-host-audio.py
+!/ci/watch-public-audio-hang.py
+!/ci/test_watch_public_audio_hang.py
