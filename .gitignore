@@ -557,3 +557,6 @@
 !/ci/watch-public-audio-hang.py
 !/ci/test_watch_public_audio_hang.py
 !/ci/probe-macos-output.py
+!/ci/run-ios-audio-environment.sh
+!/ci/probe-ios-audio-environment.py
+!/ci/test_probe_ios_audio_environment.py
