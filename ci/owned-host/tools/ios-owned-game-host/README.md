@@ -28,9 +28,13 @@ The future signed app supplies the following separately prepared expectations:
 - A user-selected directory within the app sandbox containing the expected
   plaintext `default.xex` and original game files. The same owned XEX buffer is
   hashed before parsing. No decryption or game download occurs here.
-- A new, disjoint content directory within that sandbox. Game VFS mounts are
-  read-only; diagnostic evidence and title content/profile saves may be written
-  to the new content directory. Existing content directories are refused.
+- A new, disjoint diagnostic directory within that sandbox. Existing diagnostic
+  directories are refused. Game VFS mounts remain read-only.
+- `Documents/OwnedSaves`, a real sandbox directory excluded from backup by the
+  app before preparation. The verified game identity and XEX SHA select a save
+  namespace. A new exclusive session receives a validated copy of the preceding
+  session's title content; prior sessions are preserved. The process retains its
+  store lock for the entire guest lifetime. Diagnostics are never seeded as saves.
 
 The signed-image candidate verifier reconstructs exactly the permitted 40
 original byte positions, truncates the appended signature, checks the external
@@ -96,7 +100,7 @@ Unknown/fatal paths have their own one-second forced-exit ceiling so evidence I/
 cannot hold the failed process alive. There is no reset or second start.
 
 `native/OwnedHost.h` is the UI C ABI. Status is 96 bytes. State values are
-0 fresh, 1 preparing, 2 prepared, 3 renderer attached, 4 running, 5 main exited,
+0 fresh, 1 preparing, 2 prepared, 3 renderer attached, 4 running, 5 kernel exit notified,
 6 failed. Preparation failure categories are 101 paths, 102 binding, 103 XEX,
 104 imports, 105 SDK layout, 106 image loading, 107 descriptor, 108 Runtime,
 109 Kernel, 110 host binding. Category 24 is first missing import; 20–23 are

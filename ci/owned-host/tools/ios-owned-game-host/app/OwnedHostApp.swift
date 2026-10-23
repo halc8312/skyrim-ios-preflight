@@ -7,6 +7,10 @@ import UIKit
 @MainActor
 struct OwnedHostApp: App {
     @StateObject private var session = OwnedSession.shared
+    @StateObject private var controls = MobileControlsPreferences()
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var settingsShown = false
+    @State private var inputCancellation: UInt64 = 0
     var body: some Scene {
         WindowGroup {
             ZStack {
@@ -16,6 +20,12 @@ struct OwnedHostApp: App {
                 MetalViewport(onLayer: session.retainSurface)
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if session.running {
+                    MobileControlsView(settings: controls.settings, editing: controls.editingLayout,
+                        suspended: settingsShown || scenePhase != .active, cancellation: inputCancellation,
+                        onPad: session.updatePad, onLayout: controls.move)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
@@ -46,13 +56,6 @@ struct OwnedHostApp: App {
                         }
                         .padding(16)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-                    } else if session.running {
-                        HStack(spacing: 14) {
-                            PadButton(label: "Start", mask: 0x0010, session: session)
-                            Spacer()
-                            PadButton(label: "B", mask: 0x2000, session: session)
-                            PadButton(label: "A", mask: 0x1000, session: session)
-                        }
                     } else if session.failed {
                         Text("アプリを終了し、開き直してから再実行してください。")
                             .font(.footnote)
@@ -62,38 +65,51 @@ struct OwnedHostApp: App {
                 }
                 .padding(20)
                 .foregroundStyle(.white)
+                .allowsHitTesting(!session.running)
+                if session.running {
+                    VStack {
+                        Spacer()
+                        HStack(spacing: 14) {
+                            if controls.editingLayout {
+                                Text("ボタンをドラッグ").font(.caption)
+                                Button("リセット") { neutralizeInput(); controls.resetLayout() }
+                                Button("完了") {
+                                    neutralizeInput(); controls.editingLayout = false; controls.save()
+                                }
+                            } else {
+                                Button { neutralizeInput(); settingsShown = true } label: {
+                                    Label("操作設定", systemImage: "slider.horizontal.3")
+                                }
+                            }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        .lineLimit(1).minimumScaleFactor(0.75)
+                        .padding(.horizontal, 14).frame(height: MobileControlsLayout.toolbarHeight)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.bottom, MobileControlsLayout.toolbarBottomPadding)
+                    }
+                }
             }
             .preferredColorScheme(.dark)
             .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
             .onChange(of: session.running) { running in
-                if !running { session.releaseButtons() }
+                if !running { neutralizeInput() }
+            }
+            .onChange(of: scenePhase) { phase in
+                if phase != .active { neutralizeInput(); controls.save() }
+            }
+            .onDisappear { neutralizeInput(); controls.save() }
+            .sheet(isPresented: $settingsShown, onDismiss: { neutralizeInput() }) {
+                MobileControlsSettingsView(preferences: controls) {
+                    neutralizeInput(); controls.editingLayout = true
+                }
             }
         }
     }
-}
-
-@MainActor
-private struct PadButton: View {
-    let label: String
-    let mask: UInt16
-    @ObservedObject var session: OwnedSession
-    @State private var held = false
-    var body: some View {
-        Text(label)
-            .font(.headline)
-            .frame(minWidth: 60, minHeight: 48)
-            .background(held ? Color.white.opacity(0.35) : Color.black.opacity(0.65),
-                        in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.6)))
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    if !held { held = true; session.setButton(mask, pressed: true) }
-                }
-                .onEnded { _ in held = false; session.setButton(mask, pressed: false) })
-            .onDisappear { held = false; session.setButton(mask, pressed: false) }
-            .accessibilityLabel(label)
-            .accessibilityAddTraits(.isButton)
+    private func neutralizeInput() {
+        inputCancellation &+= 1
+        session.releaseButtons()
     }
 }
 
@@ -110,7 +126,7 @@ final class OwnedSession: ObservableObject {
     @Published private(set) var gpuErrors: UInt64 = 0
     private var surface: CAMetalLayer?
     private var token: UInt64 = 0
-    private var buttons: UInt16 = 0
+    private var pad = MobilePadSnapshot.neutral
     private var localFailure: String?
     private var timer: Timer?
     private let game: URL
@@ -124,8 +140,28 @@ final class OwnedSession: ObservableObject {
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
             try privateGame.setResourceValues(values)
+            // Save content has a separate policy from small control preferences.
+            // Reject links/files before setting backup metadata; Rust revalidates
+            // the complete sandbox path before any content is read or written.
+            var saves = documents.appendingPathComponent("OwnedSaves", isDirectory: true)
+            let manager = FileManager.default
+            if manager.fileExists(atPath: saves.path) {
+                let attributes = try manager.attributesOfItem(atPath: saves.path)
+                guard attributes[.type] as? FileAttributeType == .typeDirectory else {
+                    throw CocoaError(.fileWriteInvalidFileName)
+                }
+            } else {
+                try manager.createDirectory(at: saves, withIntermediateDirectories: false)
+            }
+            let attributes = try manager.attributesOfItem(atPath: saves.path)
+            guard attributes[.type] as? FileAttributeType == .typeDirectory else {
+                throw CocoaError(.fileWriteInvalidFileName)
+            }
+            var saveValues = URLResourceValues()
+            saveValues.isExcludedFromBackup = true
+            try saves.setResourceValues(saveValues)
         } catch {
-            localFailure = "Gameフォルダを準備できませんでした"
+            localFailure = "端末内のGame・OwnedSavesフォルダを安全に準備できませんでした"
         }
         checkFiles()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -236,13 +272,14 @@ final class OwnedSession: ObservableObject {
         }
     }
 
-    func setButton(_ mask: UInt16, pressed: Bool) {
+    func updatePad(_ snapshot: MobilePadSnapshot) {
         guard running, token != 0 else { return }
-        buttons = pressed ? buttons | mask : buttons & ~mask
-        _ = OHUpdatePadV1(token, buttons, 0, 0, 0, 0, 0, 0)
+        pad = snapshot
+        let code = OHUpdatePadV1(token, pad.buttons, pad.leftTrigger, pad.rightTrigger, pad.lx, pad.ly, pad.rx, pad.ry)
+        if code != 0 { stop("操作入力を更新できませんでした（\(code)）") }
     }
     func releaseButtons() {
-        buttons = 0
+        pad = .neutral
         if token != 0 { _ = OHUpdatePadV1(token, 0, 0, 0, 0, 0, 0, 0) }
     }
 }

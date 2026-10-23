@@ -519,3 +519,10 @@
 !/ci/owned-host/skyrim-recomp-web/crates/runtime-core/src/address_space_order_tests.rs
 !/ci/owned-host/tools/ios-owned-game-host/README.md
 !/ci/owned-host/tools/ios-owned-game-host/src/progress_diagnostics.rs
+!/ci/owned-host/tools/ios-owned-game-host/src/save_store.rs
+!/ci/owned-host/tools/ios-owned-game-host/app/MobilePadState.swift
+!/ci/owned-host/tools/ios-owned-game-host/app/MobileControlsSettings.swift
+!/ci/owned-host/tools/ios-owned-game-host/app/MobileControlsView.swift
+!/ci/owned-host/tools/ios-owned-game-host/sdk-test/tests/MobileControlsTests.swift
+!/ci/owned-host/tools/ios-owned-game-host/sdk-test/run_mobile_controls_tests.py
+!/ci/owned-host/tools/ios-owned-game-host/sdk-test/test_run_mobile_controls_tests.py

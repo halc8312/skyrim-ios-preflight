@@ -178,6 +178,9 @@ tools/ios-owned-game-host/Cargo.lock
 tools/ios-owned-game-host/Cargo.toml
 tools/ios-owned-game-host/README.md
 tools/ios-owned-game-host/app/MetalViewport.swift
+tools/ios-owned-game-host/app/MobileControlsSettings.swift
+tools/ios-owned-game-host/app/MobileControlsView.swift
+tools/ios-owned-game-host/app/MobilePadState.swift
 tools/ios-owned-game-host/app/OwnedHost-Bridging-Header.h
 tools/ios-owned-game-host/app/OwnedHostApp.swift
 tools/ios-owned-game-host/app/RendererBridge.h
@@ -188,8 +191,11 @@ tools/ios-owned-game-host/native/PublicOwnedFixture.cpp
 tools/ios-owned-game-host/project.yml
 tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.cpp
 tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.h
+tools/ios-owned-game-host/sdk-test/run_mobile_controls_tests.py
 tools/ios-owned-game-host/sdk-test/run_sdk_tests.py
+tools/ios-owned-game-host/sdk-test/test_run_mobile_controls_tests.py
 tools/ios-owned-game-host/sdk-test/test_run_sdk_tests.py
+tools/ios-owned-game-host/sdk-test/tests/MobileControlsTests.swift
 tools/ios-owned-game-host/sdk-test/tests/NativeTraceSDKProbeTests.swift
 tools/ios-owned-game-host/sdk-test/tests/OwnedHostFullChainTests.swift
 tools/ios-owned-game-host/src/bin/public_fixture_resources.rs
@@ -206,6 +212,7 @@ tools/ios-owned-game-host/src/public_fixture.rs
 tools/ios-owned-game-host/src/renderer.rs
 tools/ios-owned-game-host/src/renderer_policy.rs
 tools/ios-owned-game-host/src/runtime.rs
+tools/ios-owned-game-host/src/save_store.rs
 tools/ios-owned-game-host/src/xex_envelope.rs
 tools/ios-resident-guest-probe/apple-backend/Cargo.lock
 tools/ios-resident-guest-probe/apple-backend/Cargo.toml

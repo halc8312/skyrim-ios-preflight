@@ -10,6 +10,7 @@ pub mod native_trace;
 pub mod paths;
 pub mod progress_diagnostics;
 pub mod renderer_policy;
+pub mod save_store;
 pub mod xex_envelope;
 pub use ios_resident_apple_backend::abi;
 #[cfg(feature = "fixture-tools")]

@@ -142,4 +142,8 @@ xcrun simctl bootstatus "$device_id" -b
 python3 "$host/sdk-test/run_sdk_tests.py" --stage "$work/owned-app-simulator" \
   --output "$output/xctest" --destination "platform=iOS Simulator,id=$device_id" \
   2>&1 | tee "$output/owned-host-sdk-driver.log"
+python3 "$host/sdk-test/run_mobile_controls_tests.py" --stage "$work/owned-app-simulator" \
+  --built-output "$output/xctest" --output "$output/xctest-mobile" \
+  --destination "platform=iOS Simulator,id=$device_id" \
+  2>&1 | tee "$output/mobile-controls-sdk-driver.log"
 printf '%s\n' 'Public owned-host fullchain passed; game, private framework and physical iPhone remain untested.'

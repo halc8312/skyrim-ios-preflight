@@ -79,6 +79,11 @@ workflows:
       - out/owned-host/xctest/*.txt
       - out/owned-host/xctest/*.json
       - out/owned-host/xctest/*.xcresult
+      - out/owned-host/xctest-mobile/*.log
+      - out/owned-host/xctest-mobile/*.txt
+      - out/owned-host/xctest-mobile/*.json
+      - out/owned-host/xctest-mobile/*.xcresult
+      - out/owned-host/xctest-mobile/screenshots/*
   ios-gpu-framework-preflight:
     name: iOS public GPU framework preflight
     instance_type: mac_mini_m2

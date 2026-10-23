@@ -74,6 +74,21 @@ pub fn sandbox_game(sandbox: &Path, game: &Path) -> Check<PathBuf> {
     Ok(game)
 }
 pub fn fresh_content(sandbox: &Path, game: &Path, requested: &Path) -> Check<PathBuf> {
+    fresh_content_inner(sandbox, game, requested, None)
+}
+/// Reject an additional canonical protected tree before creating any directory.
+pub fn fresh_content_excluding(
+    sandbox: &Path, game: &Path, requested: &Path, protected: &Path,
+) -> Check<PathBuf> {
+    let protected = protected.canonicalize().map_err(|_| "protected root unavailable")?;
+    if !protected.is_dir() {
+        return Err("protected root is not a directory");
+    }
+    fresh_content_inner(sandbox, game, requested, Some(&protected))
+}
+fn fresh_content_inner(
+    sandbox: &Path, game: &Path, requested: &Path, protected: Option<&Path>,
+) -> Check<PathBuf> {
     let original = sandbox;
     let sandbox = sandbox.canonicalize().map_err(|_| "sandbox unavailable")?;
     let name = requested
@@ -92,6 +107,9 @@ pub fn fresh_content(sandbox: &Path, game: &Path, requested: &Path) -> Check<Pat
     let path = parent.join(name);
     if path.starts_with(game) || game.starts_with(&path) || path == sandbox {
         return Err("content and read-only game roots overlap");
+    }
+    if protected.is_some_and(|root| path.starts_with(root) || root.starts_with(&path)) {
+        return Err("content and persistent save roots overlap");
     }
     std::fs::create_dir(&path).map_err(|_| "content must be a new exclusive directory")?;
     Ok(path)
@@ -262,6 +280,20 @@ mod tests {
         let content = root.join("content");
         fresh_content(&root, &game, &content).unwrap();
         assert!(fresh_content(&root, &game, &content).is_err());
+    }
+    #[test]
+    fn protected_store_overlap_is_refused_before_directory_creation() {
+        let root = temp();
+        let game = root.join("game");
+        let store = root.join("OwnedSaves");
+        std::fs::create_dir(&game).unwrap();
+        std::fs::create_dir(&store).unwrap();
+        let refused = store.join("unrelated-diagnostic");
+        assert!(fresh_content_excluding(&root, &game, &refused, &store).is_err());
+        assert!(!refused.exists());
+        assert_eq!(std::fs::read_dir(&store).unwrap().count(), 0);
+        let admitted = root.join("diagnostic");
+        assert_eq!(fresh_content_excluding(&root, &game, &admitted, &store).unwrap(), admitted);
     }
     #[cfg(unix)]
     #[test]

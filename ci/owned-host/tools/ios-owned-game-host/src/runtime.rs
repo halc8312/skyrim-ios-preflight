@@ -10,7 +10,9 @@ use crate::{
     lifecycle::{self, Lifecycle, Status},
     paths::{self, PinnedFile},
     progress_diagnostics,
+    save_store,
 };
+use sha2::Digest;
 use kernel_hle::{
     Kernel,
     dispatch::StubConfig,
@@ -32,6 +34,8 @@ static STATE: Lifecycle = Lifecycle::new();
 static RESIDENT: OnceLock<Resident> = OnceLock::new();
 static KERNEL: OnceLock<&'static Kernel> = OnceLock::new();
 static CONTENT: OnceLock<PathBuf> = OnceLock::new();
+// Retains the cooperative cross-process store lock until process termination.
+static SAVE_SESSION: OnceLock<save_store::SaveSession> = OnceLock::new();
 static STARTED: OnceLock<Instant> = OnceLock::new();
 static BASE: AtomicPtr<u8> = AtomicPtr::new(std::ptr::null_mut());
 static FAILURE: AtomicU32 = AtomicU32::new(0);
@@ -179,7 +183,8 @@ fn prepare(game: &Path, content: &Path, p: u32) -> Check<u64> {
     let sandbox =
         darwin::sdk_string(|out, cap| unsafe { darwin::OHNativeSandboxPathV1(out, cap) })?;
     let game = paths::sandbox_game(&sandbox, game)?;
-    let content = paths::fresh_content(&sandbox, &game, content)?;
+    let store_root = paths::checked_child(&sandbox, Path::new("Documents/OwnedSaves"))?;
+    let content = paths::fresh_content_excluding(&sandbox, &game, content, &store_root)?;
     CONTENT
         .set(content.clone())
         .map_err(|_| "content already registered")?;
@@ -296,7 +301,21 @@ fn prepare(game: &Path, content: &Path, p: u32) -> Check<u64> {
         import_policy,
     )
     .map_err(|_| "strict Kernel preparation failed")?;
-    k.content.set_root(content);
+    let expected = &resident().binding;
+    let save_identity = save_store::SaveIdentity {
+        title_id: expected.xex_title_id,
+        media_id: expected.xex_media_id,
+        version: expected.xex_version,
+        base_version: expected.xex_base_version,
+        xex_sha256: expected.xex_sha256.clone(),
+    };
+    // Fresh diagnostic paths provide session uniqueness, not authentication.
+    // A collision is refused by the store's exclusive session creation.
+    let digest = sha2::Sha256::digest(content.as_os_str().as_encoded_bytes());
+    let session_id: String = digest[..16].iter().map(|v| format!("{v:02x}")).collect();
+    let save_session = save_store::prepare_session(&store_root, &game, &save_identity, &session_id)?;
+    k.content.set_root(save_session.content.clone());
+    SAVE_SESSION.set(save_session).map_err(|_| "save session already retained")?;
     k.install_global();
     PREPARE_STAGE.store(10, Ordering::Release);
     resident().bind(k)?;

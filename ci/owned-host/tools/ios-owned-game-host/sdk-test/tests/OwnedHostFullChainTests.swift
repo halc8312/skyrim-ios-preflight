@@ -125,6 +125,16 @@ final class OwnedHostFullChainTests: XCTestCase {
               !FileManager.default.fileExists(atPath: content.path) else { return }
         try FileManager.default.createDirectory(at: game, withIntermediateDirectories: true)
         try xex.write(to: input, options: .withoutOverwriting)
+        var saves = documents.appendingPathComponent("OwnedSaves", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: saves.path) {
+            try FileManager.default.createDirectory(at: saves, withIntermediateDirectories: false)
+        }
+        let saveAttributes = try FileManager.default.attributesOfItem(atPath: saves.path)
+        XCTAssertEqual(saveAttributes[.type] as? FileAttributeType, .typeDirectory)
+        guard saveAttributes[.type] as? FileAttributeType == .typeDirectory else { return }
+        var saveValues = URLResourceValues()
+        saveValues.isExcludedFromBackup = true
+        try saves.setResourceValues(saveValues)
 
         let gameBytes = Array(game.path.utf8)
         let contentBytes = Array(content.path.utf8)
