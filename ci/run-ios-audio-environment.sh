@@ -14,7 +14,9 @@ python3 -B -m unittest discover -s "$harness/ci" -p 'test_probe_ios_audio_enviro
 selection="$(python3 - <<'PY'
 import json, subprocess
 def listing(kind):
-    return json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', kind, '-j'], timeout=10))[kind]
+    # This short workflow reaches CoreSimulator before Xcode has warmed it.
+    # Bound cold-service discovery separately from the app/audio deadlines.
+    return json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', kind, '-j'], timeout=30))[kind]
 runtime = next((r for r in listing('runtimes') if r.get('isAvailable') and r.get('version') == '26.5'
                 and r.get('identifier', '').startswith('com.apple.CoreSimulator.SimRuntime.iOS-')), None)
 device = next((d for d in listing('devicetypes') if d['name'] == 'iPhone 17 Pro Max'), None)
