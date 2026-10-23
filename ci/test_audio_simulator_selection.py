@@ -13,8 +13,9 @@ from audio_simulator_selection import select_simulator, runtime_identifier
 
 
 def runtime(version="26.4"):
+    suffix = "26-4" if version == "26.4.1" else version.replace(".", "-")
     return dict(version=version, isAvailable=True,
-                identifier="com.apple.CoreSimulator.SimRuntime.iOS-" + version.replace(".", "-"))
+                identifier="com.apple.CoreSimulator.SimRuntime.iOS-" + suffix)
 
 
 def device_type():
@@ -31,6 +32,22 @@ class SelectionTests(unittest.TestCase):
                     runtime_identifier=runtime(version)["identifier"], device_type_name="iPhone 17 Pro Max",
                     device_type_identifier="com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max"))
         self.assertEqual(select_simulator(rows, [device_type()])["runtime_version"], "26.5")
+
+    def test_observed_full_version_requires_exact_version_and_identifier_without_fallback(self):
+        row = runtime("26.4.1")
+        self.assertEqual(runtime_identifier("26.4.1"), "com.apple.CoreSimulator.SimRuntime.iOS-26-4")
+        selected = select_simulator([runtime("26.3"), row, runtime("26.5")], [device_type()], "26.4.1")
+        self.assertEqual(selected["runtime_version"], "26.4.1")
+        self.assertEqual((selected["ios_major"], selected["ios_minor"]), (26, 4))
+        self.assertEqual(selected["runtime_identifier"], "com.apple.CoreSimulator.SimRuntime.iOS-26-4")
+        wrong_identifier = copy.deepcopy(row)
+        wrong_identifier["identifier"] = "com.apple.CoreSimulator.SimRuntime.iOS-26-4-1"
+        wrong_version = copy.deepcopy(row); wrong_version["version"] = "26.4.2"
+        for requested, candidate in (("26.4.1", runtime()), ("26.4", row),
+                                     ("26.4.1", wrong_identifier), ("26.4.1", wrong_version)):
+            with self.subTest(requested=requested, candidate=candidate), self.assertRaises(ValueError):
+                select_simulator([candidate], [device_type()], requested)
+        with self.assertRaises(ValueError): select_simulator([row], [device_type()])
 
     def test_unavailable_requested_version_never_falls_back(self):
         for unavailable in (False, None, 1, "true"):
@@ -72,7 +89,7 @@ class SelectionTests(unittest.TestCase):
                 select_simulator(rows, devices, "26.4")
 
     def test_unknown_versions_and_coercions_refuse(self):
-        for version in ("26.2", "26.6", "latest", "26.4.0", " 26.4", "", 26.4, 26, True, None):
+        for version in ("26.2", "26.3.1", "26.6", "latest", "26.4.0", "26.4.2", " 26.4", "", 26.4, 26, True, None):
             with self.subTest(version=version):
                 with self.assertRaises(ValueError): runtime_identifier(version)
                 with self.assertRaises(ValueError): select_simulator([runtime()], [device_type()], version)
@@ -81,11 +98,12 @@ class SelectionTests(unittest.TestCase):
         here = Path(__file__).resolve().parent
         script = (here / "run-ios-audio-environment.sh").read_text()
         source = script.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
-        for version in ("26.4", "26.5", "26.6"):
+        for version in ("26.4", "26.4.1", "26.5", "26.4.2", "26.6"):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as root:
                 path = Path(root) / "selection.json"
                 inventory_path = Path(root) / "simulator-runtime-inventory.json"
-                listings = dict(runtimes=[runtime(v) for v in ("26.3", "26.4", "26.5")], devicetypes=[device_type()])
+                installed_versions = ("26.3", "26.4.1" if version == "26.4.1" else "26.4", "26.5")
+                listings = dict(runtimes=[runtime(v) for v in installed_versions], devicetypes=[device_type()])
                 for row in listings["runtimes"]:
                     row.update(buildversion="23Authored", name="omit this extra field", udid="authored-not-for-inventory")
                 other_platform = runtime(); other_platform["identifier"] = "com.apple.CoreSimulator.SimRuntime.tvOS-26-4"
@@ -96,7 +114,7 @@ class SelectionTests(unittest.TestCase):
                      mock.patch.object(sys, "path", sys.path.copy()), \
                      mock.patch("subprocess.check_output", side_effect=listing) as check, \
                      contextlib.redirect_stdout(io.StringIO()) as output:
-                    if version == "26.6":
+                    if version in ("26.4.2", "26.6"):
                         with self.assertRaises(ValueError): exec(compile(source, "<authored-driver-selection>", "exec"), {})
                         check.assert_not_called(); self.assertFalse(path.exists())
                         self.assertFalse(inventory_path.exists()); self.assertEqual(list(Path(root).iterdir()), [])
@@ -111,7 +129,7 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual(set(Path(root).iterdir()), {path, inventory_path})
                 self.assertEqual(inventory, dict(schema=1, requested_version=version, runtimes=[
                     dict(identifier=runtime(v)["identifier"], version=v, isAvailable=True, buildversion="23Authored")
-                    for v in ("26.3", "26.4", "26.5")]))
+                    for v in installed_versions]))
                 self.assertEqual(selected, select_simulator(listings["runtimes"], listings["devicetypes"], version))
                 self.assertEqual(output.getvalue().splitlines(), [selected["runtime_identifier"], selected["device_type_identifier"]])
 

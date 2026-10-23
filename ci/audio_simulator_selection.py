@@ -1,16 +1,23 @@
 """Pure selection of the public minimal-audio diagnostic's installed Simulator."""
 
 DEFAULT_VERSION = "26.5"
-SUPPORTED_VERSIONS = ("26.3", "26.4", "26.5")
 DEVICE_NAME = "iPhone 17 Pro Max"
 DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max"
 RUNTIME_PREFIX = "com.apple.CoreSimulator.SimRuntime.iOS-"
+RUNTIME_IDENTIFIERS = {
+    "26.3": RUNTIME_PREFIX + "26-3",
+    "26.4": RUNTIME_PREFIX + "26-4",
+    "26.5": RUNTIME_PREFIX + "26-5",
+    # The observed public Xcode 26.4.1 image reports this exact pair.
+    "26.4.1": RUNTIME_PREFIX + "26-4",
+}
+SUPPORTED_VERSIONS = tuple(RUNTIME_IDENTIFIERS)
 
 
 def runtime_identifier(version=DEFAULT_VERSION):
     if type(version) is not str or version not in SUPPORTED_VERSIONS:
         raise ValueError("unsupported public audio Simulator version")
-    return RUNTIME_PREFIX + version.replace(".", "-")
+    return RUNTIME_IDENTIFIERS[version]
 
 
 def select_simulator(runtimes, device_types, version=DEFAULT_VERSION):
@@ -26,7 +33,7 @@ def select_simulator(runtimes, device_types, version=DEFAULT_VERSION):
     devices = [row for row in device_types if row.get("name") == DEVICE_NAME]
     if len(devices) != 1 or devices[0].get("identifier") != DEVICE_TYPE:
         raise ValueError("required iPhone 17 Pro Max device type missing or ambiguous")
-    major, minor = map(int, version.split("."))
+    major, minor = map(int, version.split(".")[:2])
     return dict(schema=1, runtime_version=version, ios_major=major, ios_minor=minor,
                 runtime_identifier=expected_runtime, device_type_name=DEVICE_NAME,
                 device_type_identifier=DEVICE_TYPE)

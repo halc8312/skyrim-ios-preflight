@@ -38,7 +38,8 @@ def native(v=None, phases=None):
 
 
 def device(version="26.5"):
-    return {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-" + version.replace(".", "-"): [dict(
+    suffix = "26-4" if version == "26.4.1" else version.replace(".", "-")
+    return {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-" + suffix: [dict(
         udid=UDID, state="Booted", isAvailable=True,
         deviceTypeIdentifier="com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max")]}}
 
@@ -49,12 +50,13 @@ HELPS = {"launch": b"launch --console device bundle", "install": b"install devic
 
 class ParserTests(unittest.TestCase):
     def test_version_cli_default_explicit_and_unknown_fail_before_probe(self):
-        for arguments, expected in (([], "26.5"), (["--simulator-version", "26.4"], "26.4")):
+        for arguments, expected in (([], "26.5"), (["--simulator-version", "26.4"], "26.4"),
+                                    (["--simulator-version", "26.4.1"], "26.4.1")):
             with mock.patch.object(m, "probe", return_value=dict(available=False)) as probe, \
                  mock.patch.object(m.signal, "signal"), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(m.main(["--udid", UDID, "--output", "/authored/out", *arguments]), 2)
             self.assertEqual(probe.call_args.args[2], expected)
-        for version in ("26.2", "26.6", "latest", "26.4.0", ""):
+        for version in ("26.2", "26.6", "latest", "26.4.0", "26.4.2", ""):
             with mock.patch.object(m, "probe") as probe, contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as refused:
                     m.main(["--udid", UDID, "--output", "/authored/out", "--simulator-version", version])
@@ -64,7 +66,7 @@ class ParserTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_explicit_versions_reach_compile_with_matching_target_plist_and_unchanged_native_source(self):
-        for version in ("26.3", "26.4"):
+        for version in ("26.3", "26.4", "26.4.1"):
             captured = []
             def fake_run(command, deadline, seconds, **kwargs):
                 if command[:3] == ["xcrun", "simctl", "help"]: raw = HELPS[command[3]]

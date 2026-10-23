@@ -27,7 +27,8 @@ EXE = ("/Users/authored/Library/Developer/CoreSimulator/Devices/" + UDID
 
 
 def device(version="26.5"):
-    return {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-" + version.replace(".", "-"): [dict(
+    suffix = "26-4" if version == "26.4.1" else version.replace(".", "-")
+    return {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-" + suffix: [dict(
         udid=UDID, state="Booted", isAvailable=True,
         deviceTypeIdentifier="com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max")]}}
 
@@ -56,8 +57,9 @@ class ParserTests(unittest.TestCase):
 
     def test_selected_device_requires_exact_runtime_type_udid_booted_and_unique(self):
         m.validate_device(json.dumps(device()), UDID)
-        for version in ("26.3", "26.4", "26.5"):
+        for version in ("26.3", "26.4", "26.4.1", "26.5"):
             m.validate_device(json.dumps(device(version)), UDID, version)
+        with self.assertRaises(ValueError): m.validate_device(json.dumps(device("26.4.1")), UDID)
         for key, replacement in (("udid", "other"), ("state", "Shutdown"), ("isAvailable", 1),
                                  ("deviceTypeIdentifier", "other")):
             broken = device(); next(iter(broken["devices"].values()))[0][key] = replacement
@@ -68,12 +70,13 @@ class ParserTests(unittest.TestCase):
             m.validate_device(json.dumps(device()).replace("iOS-26-5", "iOS-26-4"), UDID)
 
     def test_version_cli_default_explicit_and_unknown_fail_before_probe(self):
-        for arguments, expected in (([], "26.5"), (["--simulator-version", "26.4"], "26.4")):
+        for arguments, expected in (([], "26.5"), (["--simulator-version", "26.4"], "26.4"),
+                                    (["--simulator-version", "26.4.1"], "26.4.1")):
             with mock.patch.object(m, "probe", return_value=dict(available=False)) as probe, \
                  mock.patch.object(m.signal, "signal"), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(m.main(["--udid", UDID, "--output", "/authored/out", *arguments]), 2)
             self.assertEqual(probe.call_args.args[2], expected)
-        for version in ("26.2", "26.6", "latest", "26.4.0", ""):
+        for version in ("26.2", "26.6", "latest", "26.4.0", "26.4.2", ""):
             with mock.patch.object(m, "probe") as probe, contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as refused:
                     m.main(["--udid", UDID, "--output", "/authored/out", "--simulator-version", version])
@@ -86,7 +89,7 @@ class ParserTests(unittest.TestCase):
         helps = {"launch": b"launch --console device bundle", "install": b"install device path",
                  "list": b"list devices --json search", "terminate": b"terminate device bundle",
                  "get_app_container": b"get_app_container device bundle app"}
-        for version in ("26.3", "26.4"):
+        for version in ("26.3", "26.4", "26.4.1"):
             captured = []
             def fake_run(command, deadline, seconds, **kwargs):
                 if command[:3] == ["xcrun", "simctl", "help"]: raw = helps[command[3]]

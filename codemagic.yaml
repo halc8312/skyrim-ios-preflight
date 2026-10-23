@@ -24,7 +24,7 @@ workflows:
     environment:
       xcode: "26.4"
       vars:
-        SKYRT_AUDIO_SIMULATOR_VERSION: "26.4"
+        SKYRT_AUDIO_SIMULATOR_VERSION: "26.4.1"
     # Manual public diagnostic only. Existing integration gates stay mandatory.
     scripts:
       - name: Compare minimal real audio output without the game or XCTest
