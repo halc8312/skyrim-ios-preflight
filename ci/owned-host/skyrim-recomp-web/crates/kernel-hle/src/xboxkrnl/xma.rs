@@ -1,4 +1,4 @@
-//! XMA* exports, backed by the decoder stand-in in [`crate::xma`].
+//! XMA* exports, sharing the device operations in [`crate::xma`].
 //! Behavior follows Xenia's xboxkrnl_audio_xma.cc.
 #![allow(non_snake_case)]
 
@@ -36,15 +36,12 @@ pub(super) const EXPORTS: &[Export] = &[
 const E_FALSE: u32 = 1;
 
 fn get(c: &Call, f: (usize, u32, u32)) -> u64 {
-    ContextData::load(c.kernel, c.arg(0)).get(f) as u64
+    c.kernel.xma_context(c.arg(0)).map_or(0, |d| d.get(f) as u64)
 }
 
 fn set(c: &Call, f: (usize, u32, u32), value: u32) -> u64 {
     let ptr = c.arg(0);
-    let mut d = ContextData::load(c.kernel, ptr);
-    d.set(f, value);
-    d.store(c.kernel, ptr);
-    0
+    if c.kernel.xma_update_context(ptr, |d| d.set(f, value)) { 0 } else { E_FALSE as u64 }
 }
 
 /// (XMA_CONTEXT_DATA** Out)
@@ -67,7 +64,9 @@ fn XMAInitializeContext(c: &mut Call) -> u64 {
     let (ptr, init) = (c.arg(0), c.arg(1));
     let mem = c.mem();
     let space = &c.kernel.rt.space;
-    let phys = |guest: u32| if guest == 0 { Some(0) } else { space.physical_address(guest) };
+    let phys = |guest: u32| {
+        if guest == 0 { Some(0) } else { space.physical_address(guest) }
+    };
     let (Some(in0), Some(in1), Some(out)) =
         (phys(mem.read_u32(init)), phys(mem.read_u32(init + 8)), phys(mem.read_u32(init + 0x14)))
     else {
@@ -92,23 +91,24 @@ fn XMAInitializeContext(c: &mut Call) -> u64 {
     d.set(field::LOOP_COUNT, mem.read_u8(init + 0x34) as u32);
     d.set(field::LOOP_SUBFRAME_END, mem.read_u8(init + 0x35) as u32);
     d.set(field::LOOP_SUBFRAME_SKIP, mem.read_u8(init + 0x36) as u32);
-    d.store(c.kernel, ptr);
-    c.kernel.xma_clear(ptr);
-    0
+    if c.kernel.xma_initialize(ptr, d) { 0 } else { E_FALSE as u64 }
 }
 
 /// (XMA_CONTEXT_DATA* Context, XMA_LOOP_DATA* Loop)
 fn XMASetLoopData(c: &mut Call) -> u64 {
     let (ptr, l) = (c.arg(0), c.arg(1));
     let mem = c.mem();
-    let mut d = ContextData::load(c.kernel, ptr);
-    d.set(field::LOOP_START, mem.read_u32(l));
-    d.set(field::LOOP_END, mem.read_u32(l + 4));
-    d.set(field::LOOP_COUNT, mem.read_u8(l + 8) as u32);
-    d.set(field::LOOP_SUBFRAME_END, mem.read_u8(l + 9) as u32);
-    d.set(field::LOOP_SUBFRAME_SKIP, mem.read_u8(l + 10) as u32);
-    d.store(c.kernel, ptr);
-    0
+    if c.kernel.xma_update_context(ptr, |d| {
+        d.set(field::LOOP_START, mem.read_u32(l));
+        d.set(field::LOOP_END, mem.read_u32(l + 4));
+        d.set(field::LOOP_COUNT, mem.read_u8(l + 8) as u32);
+        d.set(field::LOOP_SUBFRAME_END, mem.read_u8(l + 9) as u32);
+        d.set(field::LOOP_SUBFRAME_SKIP, mem.read_u8(l + 10) as u32);
+    }) {
+        0
+    } else {
+        E_FALSE as u64
+    }
 }
 
 fn set_input_buffer(c: &Call, ptr_field: (usize, u32, u32), count_field: (usize, u32, u32)) -> u64 {
@@ -118,11 +118,14 @@ fn set_input_buffer(c: &Call, ptr_field: (usize, u32, u32), count_field: (usize,
         return E_FALSE as u64;
     };
     let ptr = c.arg(0);
-    let mut d = ContextData::load(c.kernel, ptr);
-    d.set(ptr_field, phys);
-    d.set(count_field, packets);
-    d.store(c.kernel, ptr);
-    0
+    if c.kernel.xma_update_context(ptr, |d| {
+        d.set(ptr_field, phys);
+        d.set(count_field, packets);
+    }) {
+        0
+    } else {
+        E_FALSE as u64
+    }
 }
 
 /// (XMA_CONTEXT_DATA* Context, void* Buffer, u32 PacketCount)
@@ -182,27 +185,23 @@ fn XMAGetPacketMetadata(c: &mut Call) -> u64 {
     get(c, field::PACKET_METADATA)
 }
 
-/// Kicks the context; the stand-in decodes before returning.
+/// Schedules work through the same operation as a direct MMIO kick.
 fn XMAEnableContext(c: &mut Call) -> u64 {
-    c.kernel.xma_work(c.arg(0));
-    0
+    match c.kernel.xma_enable(c.arg(0)) {
+        Ok(()) => 0,
+        Err(e) => {
+            log::error!("XMAEnableContext: {e}");
+            E_FALSE as u64
+        }
+    }
 }
 
-/// (XMA_CONTEXT_DATA* Context, BOOL Wait): decoding never runs in the
-/// background, so the context is already idle.
-fn XMADisableContext(_c: &mut Call) -> u64 {
-    0
+/// (XMA_CONTEXT_DATA* Context, BOOL Wait).
+fn XMADisableContext(c: &mut Call) -> u64 {
+    if c.kernel.xma_disable(c.arg(0), c.arg(1) != 0) { 0 } else { E_FALSE as u64 }
 }
 
 /// Waits until the decoder no longer needs the context's buffers.
 fn XMABlockWhileInUse(c: &mut Call) -> u64 {
-    let ptr = c.arg(0);
-    loop {
-        let d = ContextData::load(c.kernel, ptr);
-        let in_use = d.get(field::INPUT_BUFFER_0_VALID) != 0 || d.get(field::INPUT_BUFFER_1_VALID) != 0;
-        if !in_use || d.get(field::WORK_BUFFER_PTR) == 0 {
-            return 0;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    if c.kernel.xma_block_while_in_use(c.arg(0)) { 0 } else { E_FALSE as u64 }
 }

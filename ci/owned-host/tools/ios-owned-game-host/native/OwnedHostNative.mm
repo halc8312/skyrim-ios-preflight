@@ -97,6 +97,44 @@ extern "C" int32_t OHNativeHostLayoutV1(uint64_t *out, size_t capacity) {
     return 49;
 }
 
+extern "C" int32_t OHNativeHostLayoutV2(uint64_t *out, size_t capacity) {
+    if (!aligned(out, alignof(uint64_t)) || capacity < 51) return -1;
+#define FIELD(T, M) static_cast<uint64_t>(offsetof(T, M))
+    const uint64_t values[] = {
+        sizeof(PGRequirementsV1), alignof(PGRequirementsV1),
+        FIELD(PGRequirementsV1, abi_version), FIELD(PGRequirementsV1, struct_size),
+        FIELD(PGRequirementsV1, pointer_bits), FIELD(PGRequirementsV1, little_endian),
+        FIELD(PGRequirementsV1, plain_arm64), FIELD(PGRequirementsV1, reserved),
+        FIELD(PGRequirementsV1, context_layout), FIELD(PGRequirementsV1, jump_buffer_size),
+        FIELD(PGRequirementsV1, jump_buffer_alignment), FIELD(PGRequirementsV1, ea_offset_count),
+        FIELD(PGRequirementsV1, written_count),
+        sizeof(PGMemoryV1), alignof(PGMemoryV1),
+        FIELD(PGMemoryV1, ea_offsets), FIELD(PGMemoryV1, ea_offset_count),
+        FIELD(PGMemoryV1, written), FIELD(PGMemoryV1, written_count),
+        FIELD(PGMemoryV1, guest_base), FIELD(PGMemoryV1, guest_bytes),
+        sizeof(PGHostCallbacksV2), alignof(PGHostCallbacksV2),
+        FIELD(PGHostCallbacksV2, abi_version), FIELD(PGHostCallbacksV2, struct_size),
+        FIELD(PGHostCallbacksV2, contracts), FIELD(PGHostCallbacksV2, jump_abi),
+        FIELD(PGHostCallbacksV2, context_layout), FIELD(PGHostCallbacksV2, jump_buffer_size),
+        FIELD(PGHostCallbacksV2, jump_buffer_alignment), FIELD(PGHostCallbacksV2, jump_pair_cookie),
+        FIELD(PGHostCallbacksV2, unwind_abi), FIELD(PGHostCallbacksV2, unwind_reserved),
+        FIELD(PGHostCallbacksV2, unwind_pair_cookie), FIELD(PGHostCallbacksV2, user),
+        FIELD(PGHostCallbacksV2, memory), FIELD(PGHostCallbacksV2, timebase),
+        FIELD(PGHostCallbacksV2, kernel_call), FIELD(PGHostCallbacksV2, fatal),
+        FIELD(PGHostCallbacksV2, copy_memory), FIELD(PGHostCallbacksV2, zero_memory),
+        FIELD(PGHostCallbacksV2, exp2_float), FIELD(PGHostCallbacksV2, log2_float),
+        FIELD(PGHostCallbacksV2, native_setjmp), FIELD(PGHostCallbacksV2, native_longjmp),
+        FIELD(PGHostCallbacksV2, native_personality), FIELD(PGHostCallbacksV2, native_unwind_resume),
+        FIELD(PGHostCallbacksV2, stack_guard_seed),
+        FIELD(PGHostCallbacksV2, xma_read_u32), FIELD(PGHostCallbacksV2, xma_write_u32),
+        FIELD(PGHostCallbacksV2, reserved)
+    };
+#undef FIELD
+    static_assert(sizeof(values) / sizeof(values[0]) == 51);
+    memcpy(out, values, sizeof(values));
+    return 51;
+}
+
 extern "C" uint32_t OHNativeOSVersionV1(void) {
     @autoreleasepool {
         const NSOperatingSystemVersion version = NSProcessInfo.processInfo.operatingSystemVersion;
@@ -157,6 +195,53 @@ extern "C" int32_t OHNativePrepareHostV1(PGHostCallbacksV1 *host, uint32_t bytes
         !image_for(reinterpret_cast<const void *>(&OHNativePrepareHostV1), &app, &slide, &path) ||
         guest == app) return -1;
     PGHostCallbacksV1 result = *host;
+    result.copy_memory = &::memcpy;
+    result.zero_memory = &::bzero;
+    result.exp2_float = &::exp2f;
+    result.log2_float = &::log2f;
+    result.native_setjmp = reinterpret_cast<PGSetjmpV1>(&::setjmp);
+    result.native_longjmp = reinterpret_cast<PGLongjmpV1>(&::longjmp);
+    result.native_personality = reinterpret_cast<PGPersonalityV1>(dlsym(RTLD_DEFAULT, "__gxx_personality_v0"));
+    result.native_unwind_resume = reinterpret_cast<PGUnwindResumeV1>(dlsym(RTLD_DEFAULT, "_Unwind_Resume"));
+    const void *providers[] = {
+        reinterpret_cast<const void *>(result.copy_memory), reinterpret_cast<const void *>(result.zero_memory),
+        reinterpret_cast<const void *>(result.exp2_float), reinterpret_cast<const void *>(result.log2_float),
+        reinterpret_cast<const void *>(result.native_setjmp), reinterpret_cast<const void *>(result.native_longjmp),
+        reinterpret_cast<const void *>(result.native_personality), reinterpret_cast<const void *>(result.native_unwind_resume)
+    };
+    const mach_header *images[8]{};
+    for (size_t i = 0; i < 8; ++i)
+        if (!foreign_provider(providers[i], guest, app, &images[i])) return -1;
+    if (images[4] != images[5]) return -1; // One native jump provider image.
+    result.jump_abi = PG_JUMP_APPLE_ARM64_SETJMP_1;
+    result.jump_buffer_size = sizeof(jmp_buf);
+    result.jump_buffer_alignment = alignof(jmp_buf);
+    result.jump_pair_cookie = reinterpret_cast<uintptr_t>(images[4]);
+    result.unwind_abi = PG_UNWIND_APPLE_ARM64_DWARF_1;
+    result.unwind_pair_cookie = reinterpret_cast<uintptr_t>(images[6]) ^
+        (reinterpret_cast<uintptr_t>(images[7]) >> 1);
+    if (!result.unwind_pair_cookie) return -1;
+    arc4random_buf(&result.stack_guard_seed, sizeof(result.stack_guard_seed));
+    if (!result.stack_guard_seed) return -1;
+    *host = result;
+    return 0;
+}
+
+/* Explicit V2 preparation; no V1/V2 pointer casts or ABI fallback. */
+extern "C" int32_t OHNativePrepareHostV2(PGHostCallbacksV2 *host, uint32_t bytes,
+                                       const void *guest_header) {
+    if (!OHNativePlatformV1() || !aligned(host, alignof(PGHostCallbacksV2)) ||
+        bytes != sizeof(*host) || host->abi_version != PG_ABI_VERSION_2 ||
+        host->struct_size != sizeof(*host) || host->contracts != PG_V2_REQUIRED_CONTRACTS ||
+        host->unwind_reserved || !host->xma_read_u32 || !host->xma_write_u32) return -1;
+    for (uint64_t value : host->reserved) if (value) return -1;
+    const mach_header *guest{}, *app{};
+    intptr_t slide{};
+    const char *path{};
+    if (!image_for(guest_header, &guest, &slide, &path) || guest != guest_header ||
+        !image_for(reinterpret_cast<const void *>(&OHNativePrepareHostV2), &app, &slide, &path) ||
+        guest == app) return -1;
+    PGHostCallbacksV2 result = *host;
     result.copy_memory = &::memcpy;
     result.zero_memory = &::bzero;
     result.exp2_float = &::exp2f;

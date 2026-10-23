@@ -4,7 +4,9 @@
 use crate::{
     Check,
     abi::*,
+    abi_v2,
     binding::{MAX_FUNCTIONS, TrustedBinding},
+    guest_abi::GuestAbi,
     mapping::{self, Image},
     paths::{FRAMEWORK_RELATIVE, PinnedFile},
 };
@@ -13,16 +15,23 @@ use std::{
     path::{Path, PathBuf},
 };
 pub struct Api {
+    // V2 requirements intentionally retain the exact V1 216-byte layout.
     pub requirements: RequirementsFn,
-    pub bind: BindFn,
+    pub bind: HostBind,
     pub publish: PublishFn,
     pub init: InitFn,
     pub call: CallFn,
     pub config: ConfigFn,
     pub functions: FunctionsFn,
 }
+#[derive(Clone, Copy)]
+pub enum HostBind {
+    V1(BindFn),
+    V2(abi_v2::BindFn),
+}
 unsafe extern "C" {
     pub fn OHNativeHostLayoutV1(out: *mut u64, capacity: usize) -> i32;
+    pub fn OHNativeHostLayoutV2(out: *mut u64, capacity: usize) -> i32;
     pub fn OHNativePlatformV1() -> u32;
     pub fn OHNativeOSVersionV1() -> u32;
     pub fn OHNativeBundlePathV1(out: *mut c_char, capacity: usize) -> i32;
@@ -40,6 +49,11 @@ unsafe extern "C" {
         bytes: u32,
         fixture_header: *const c_void,
     ) -> i32;
+    pub fn OHNativePrepareHostV2(
+        host: *mut abi_v2::PGHostCallbacksV2,
+        bytes: u32,
+        fixture_header: *const c_void,
+    ) -> i32;
 }
 pub struct Library {
     handle: *mut c_void,
@@ -47,6 +61,7 @@ pub struct Library {
     image: Image,
     header: usize,
     slide: i64,
+    abi: GuestAbi,
 }
 // A successful owner is never unloaded. It holds no mutable guest state: all
 // adapter concurrency is the validated public API's admission/atomic contract.
@@ -96,6 +111,7 @@ fn locate(symbol: *mut c_void) -> Check<(usize, i64, PathBuf)> {
 }
 impl Library {
     pub fn open(binding: &TrustedBinding) -> Check<Self> {
+        let abi = binding.guest_abi()?;
         let bundle = sdk_string(|out, cap| unsafe { OHNativeBundlePathV1(out, cap) })?;
         let pinned = PinnedFile::open(
             &bundle,
@@ -130,8 +146,9 @@ impl Library {
             image,
             header: 0,
             slide: 0,
+            abi,
         };
-        let first = owner.raw(c"PG_GetRequirementsV1")?;
+        let first = owner.raw(abi.requirements_symbol())?;
         let (header, slide, path) = locate(first)?;
         if path != owner.pinned.path
             || i128::from(owner.image.header_vmaddr) + i128::from(slide) != header as i128
@@ -213,15 +230,23 @@ impl Library {
     }
     pub fn api(&self) -> Check<Api> {
         // Concrete function types are bound only after ownership/RX checks.
+        // The metadata-selected pair is mandatory; no other version is probed.
+        let raw_bind = self.symbol(self.abi.bind_symbol())?;
+        let bind = match self.abi {
+            GuestAbi::V1 => {
+                HostBind::V1(unsafe { std::mem::transmute::<*mut c_void, BindFn>(raw_bind) })
+            }
+            GuestAbi::V2 => HostBind::V2(unsafe {
+                std::mem::transmute::<*mut c_void, abi_v2::BindFn>(raw_bind)
+            }),
+        };
         Ok(Api {
             requirements: unsafe {
                 std::mem::transmute::<*mut c_void, RequirementsFn>(
-                    self.symbol(c"PG_GetRequirementsV1")?,
+                    self.symbol(self.abi.requirements_symbol())?,
                 )
             },
-            bind: unsafe {
-                std::mem::transmute::<*mut c_void, BindFn>(self.symbol(c"PG_BindHostV1")?)
-            },
+            bind,
             publish: unsafe {
                 std::mem::transmute::<*mut c_void, PublishFn>(self.symbol(c"PG_PublishMemoryV1")?)
             },

@@ -1,17 +1,23 @@
 //! iOS-only integration. No guest-sys/static private image dependency. All
 //! expectations come from a separately packaged binding; all lifetime owners
 //! survive to process exit. The UI never hosts a guest/unwind stack frame.
+#[cfg(feature = "fixture-tools")]
+#[path = "public_v2_probe.rs"]
+mod public_v2_probe;
 use crate::{
     Check,
     audio_output,
     abi::*,
+    abi_v2,
     binding::{self, TrustedBinding},
-    darwin::{self, Api, Library},
+    darwin::{self, Api, HostBind, Library},
+    guest_abi::GuestAbi,
     guest_fatal::{self, GuestFatal},
     lifecycle::{self, Lifecycle, Status},
     paths::{self, PinnedFile},
     progress_diagnostics,
     save_store,
+    xma_callbacks,
 };
 use sha2::Digest;
 use kernel_hle::{
@@ -132,35 +138,73 @@ impl Resident {
         }
     }
     fn bind(&self, k: &'static Kernel) -> Check<()> {
-        let mut h = PGHostCallbacksV1 {
-            abi_version: VERSION,
-            struct_size: size_of::<PGHostCallbacksV1>() as u32,
-            contracts: CONTRACTS,
-            context_layout: context_layout(),
-            user: (k as *const Kernel).cast_mut().cast(),
-            memory: memory(k),
-            timebase: Some(timebase),
-            kernel_call: Some(kernel_call),
-            fatal: Some(fatal),
-            ..Default::default()
+        let status = match self.api.bind {
+            HostBind::V1(bind) => {
+                let mut h = PGHostCallbacksV1 {
+                    abi_version: VERSION,
+                    struct_size: size_of::<PGHostCallbacksV1>() as u32,
+                    contracts: CONTRACTS,
+                    context_layout: context_layout(),
+                    user: (k as *const Kernel).cast_mut().cast(),
+                    memory: memory(k),
+                    timebase: Some(timebase),
+                    kernel_call: Some(kernel_call),
+                    fatal: Some(fatal),
+                    ..Default::default()
+                };
+                if unsafe {
+                    darwin::OHNativePrepareHostV1(
+                        &mut h,
+                        size_of::<PGHostCallbacksV1>() as u32,
+                        self.owner.header(),
+                    )
+                } != 0
+                    || h.jump_abi != APPLE_JUMP
+                    || h.unwind_abi != APPLE_UNWIND
+                    || h.jump_pair_cookie == 0
+                    || h.unwind_pair_cookie == 0
+                    || h.jump_buffer_size != self.requirements.jump_buffer_size
+                    || h.jump_buffer_alignment != self.requirements.jump_buffer_alignment
+                {
+                    return Err("SDK native jump/unwind requirements mismatch");
+                }
+                unsafe { bind(&h, size_of::<PGHostCallbacksV1>() as u32) }
+            }
+            HostBind::V2(bind) => {
+                let mut h = abi_v2::PGHostCallbacksV2 {
+                    abi_version: abi_v2::VERSION,
+                    struct_size: size_of::<abi_v2::PGHostCallbacksV2>() as u32,
+                    contracts: abi_v2::CONTRACTS,
+                    context_layout: context_layout(),
+                    user: xma_callbacks::retained_kernel_user(k),
+                    memory: memory(k),
+                    timebase: Some(timebase),
+                    kernel_call: Some(kernel_call),
+                    fatal: Some(fatal),
+                    xma_read_u32: Some(xma_callbacks::xma_read_u32),
+                    xma_write_u32: Some(xma_callbacks::xma_write_u32),
+                    ..Default::default()
+                };
+                if unsafe {
+                    darwin::OHNativePrepareHostV2(
+                        &mut h,
+                        size_of::<abi_v2::PGHostCallbacksV2>() as u32,
+                        self.owner.header(),
+                    )
+                } != 0
+                    || h.jump_abi != APPLE_JUMP
+                    || h.unwind_abi != APPLE_UNWIND
+                    || h.jump_pair_cookie == 0
+                    || h.unwind_pair_cookie == 0
+                    || h.jump_buffer_size != self.requirements.jump_buffer_size
+                    || h.jump_buffer_alignment != self.requirements.jump_buffer_alignment
+                {
+                    return Err("SDK native jump/unwind requirements mismatch");
+                }
+                unsafe { bind(&h, size_of::<abi_v2::PGHostCallbacksV2>() as u32) }
+            }
         };
-        if unsafe {
-            darwin::OHNativePrepareHostV1(
-                &mut h,
-                size_of::<PGHostCallbacksV1>() as u32,
-                self.owner.header(),
-            )
-        } != 0
-            || h.jump_abi != APPLE_JUMP
-            || h.unwind_abi != APPLE_UNWIND
-            || h.jump_pair_cookie == 0
-            || h.unwind_pair_cookie == 0
-            || h.jump_buffer_size != self.requirements.jump_buffer_size
-            || h.jump_buffer_alignment != self.requirements.jump_buffer_alignment
-        {
-            return Err("SDK native jump/unwind requirements mismatch");
-        }
-        if unsafe { (self.api.bind)(&h, size_of::<PGHostCallbacksV1>() as u32) } != OK {
+        if status != OK {
             return Err("owned guest refused host binding");
         }
         // The same live tables are republished while no guest call is active.
@@ -235,32 +279,25 @@ fn prepare(game: &Path, content: &Path, p: u32) -> Check<u64> {
         import_policy::install_diagnostic_failure_handler(missing_import)?;
     }
     PREPARE_STAGE.store(5, Ordering::Release);
-    let mut sdk_layout = [0u64; 49];
-    if unsafe { darwin::OHNativeHostLayoutV1(sdk_layout.as_mut_ptr(), sdk_layout.len()) } != 49
-        || sdk_layout != layout49()
-    {
-        return Err("SDK/Rust C ABI layout differs");
-    }
+    let selected_abi = binding.guest_abi()?;
+    let mut sdk_layout = [0u64; 51];
+    let words = selected_abi.layout_words();
+    let returned = unsafe {
+        match selected_abi {
+            GuestAbi::V1 => darwin::OHNativeHostLayoutV1(sdk_layout.as_mut_ptr(), words),
+            GuestAbi::V2 => darwin::OHNativeHostLayoutV2(sdk_layout.as_mut_ptr(), words),
+        }
+    };
+    selected_abi.verify_native_layout(returned, &sdk_layout[..words])?;
     PREPARE_STAGE.store(6, Ordering::Release);
     let mut owner = Library::open(&binding)?;
     let api = owner.api()?;
     PREPARE_STAGE.store(7, Ordering::Release);
     let mut r = PGRequirementsV1::default();
-    if unsafe { (api.requirements)(&mut r, size_of::<PGRequirementsV1>() as u32) } != OK
-        || r.abi_version != VERSION
-        || r.struct_size as usize != size_of::<PGRequirementsV1>()
-        || r.pointer_bits != 64
-        || r.little_endian != 1
-        || r.plain_arm64 != 1
-        || r.reserved != 0
-        || r.context_layout != context_layout()
-        || r.ea_offset_count != 4096
-        || r.written_count != 1048576
-        || r.jump_buffer_size == 0
-        || !r.jump_buffer_alignment.is_power_of_two()
-    {
+    if unsafe { (api.requirements)(&mut r, size_of::<PGRequirementsV1>() as u32) } != OK {
         return Err("guest requirements differ from actual runtime");
     }
+    selected_abi.verify_requirements(&r, context_layout())?;
     let mut config = [0u64; 4];
     unsafe { (api.config)(config.as_mut_ptr()) };
     let mut c = [0u32; 4];

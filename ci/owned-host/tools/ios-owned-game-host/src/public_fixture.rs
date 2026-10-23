@@ -10,6 +10,8 @@ pub const VERSION: u32 = 7;
 pub const BASE_VERSION: u32 = 2;
 pub const FREQUENCY: u32 = CONFIG[0] + 0x1800;
 pub const CLEANUP: u32 = CONFIG[0] + 0x1804;
+pub const JUMP_RESULT: u32 = CONFIG[0] + 0x1808;
+pub const MMIO_RESULT: u32 = CONFIG[0] + 0x180c;
 pub fn xex_bytes() -> Vec<u8> {
     let mut data = vec![0u8; 16];
     data[..4].copy_from_slice(&0x83u32.to_be_bytes());
@@ -115,6 +117,12 @@ pub fn layout() -> [u64; 20] {
     .map(|n| n as u64)
 }
 pub fn expected_binding(unsigned_public_framework: &[u8]) -> Check<TrustedBinding> {
+    expected_binding_for_abi(unsigned_public_framework, crate::guest_abi::GuestAbi::V1)
+}
+pub fn expected_binding_for_abi(
+    unsigned_public_framework: &[u8],
+    abi: crate::guest_abi::GuestAbi,
+) -> Check<TrustedBinding> {
     if unsigned_public_framework.len() > 16 * 1024 * 1024 {
         return Err("public fixture framework exceeds 16 MiB limit");
     }
@@ -139,14 +147,61 @@ pub fn expected_binding(unsigned_public_framework: &[u8]) -> Check<TrustedBindin
         function_count: FUNCTIONS.len(),
         function_table_sha256: ios_signed_image_policy::sha(&function_bytes),
         context_layout: layout(),
-        abi_version: crate::abi::VERSION,
+        abi_version: abi.version(),
     };
     binding.validate()?;
     Ok(binding)
 }
+
+/// Fixed public fixture identity, checked before the SDK-only readback can
+/// inspect its four authored words. This never accepts a caller-chosen address.
+pub fn verify_v2_fixture(binding: &TrustedBinding) -> Check<()> {
+    binding.validate()?;
+    if binding.abi_version != crate::abi_v2::VERSION {
+        return Err("public V2 fixture ABI required");
+    }
+    binding.verify_xex_bytes(&xex_bytes())?;
+    binding.verify_xex_identity(TITLE, MEDIA, VERSION, BASE_VERSION)?;
+    binding.verify_module(CONFIG, &FUNCTIONS, layout(), crate::abi_v2::VERSION)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn v2_readback_refuses_nonfixture_identity_before_any_fixed_read() {
+        use ios_signed_image_policy::{Manifest, CANDIDATE_SCHEMA, PAGE, sha};
+        let bytes = xex_bytes();
+        let functions = FUNCTIONS.iter().flat_map(|n| n.to_le_bytes()).collect::<Vec<_>>();
+        // Authored metadata only, never claimed to describe a loaded framework.
+        let binding = TrustedBinding {
+            unsigned_framework_sha256: "a".repeat(64),
+            normalization: Manifest {
+                schema: CANDIDATE_SCHEMA.into(), unsigned_sha256: "a".repeat(64),
+                unsigned_length: 1024, ncmds: 4, sizeofcmds: 352, first_data: 512,
+                linkedit_command_offset: 232, linkedit_fileoff: 768,
+                linkedit_filesize: 256, linkedit_vmsize: 16384, vm_alignment: PAGE,
+            },
+            xex_relative_path: "default.xex".into(), xex_sha256: sha(&bytes),
+            xex_bytes: bytes.len() as u64, xex_title_id: TITLE, xex_media_id: MEDIA,
+            xex_version: VERSION, xex_base_version: BASE_VERSION, ppc_config: CONFIG,
+            function_count: 3, function_table_sha256: sha(&functions), context_layout: layout(),
+            abi_version: crate::abi_v2::VERSION,
+        };
+        verify_v2_fixture(&binding).unwrap();
+        let mutations: [fn(&mut TrustedBinding); 10] = [
+            |b| b.abi_version = crate::abi::VERSION,
+            |b| b.xex_sha256 = "b".repeat(64), |b| b.xex_bytes += 1,
+            |b| b.xex_title_id ^= 1, |b| b.xex_media_id ^= 1,
+            |b| b.xex_version ^= 1, |b| b.xex_base_version ^= 1,
+            |b| b.ppc_config[0] += 4, |b| b.function_table_sha256 = "c".repeat(64),
+            |b| b.context_layout[0] ^= 8,
+        ];
+        for change in mutations {
+            let mut changed = binding.clone();
+            change(&mut changed);
+            assert!(verify_v2_fixture(&changed).is_err());
+        }
+    }
     #[test]
     fn fixed_plaintext_image_and_expected_identity() {
         let bytes = xex_bytes();

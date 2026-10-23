@@ -12,6 +12,13 @@ SOURCE = Path(__file__).with_name("owned-host")
 
 
 class PublicKitRefusalTests(unittest.TestCase):
+    def test_public_audit_dependency_does_not_allow_private_tool_siblings(self):
+        self.assertTrue(preparer.allowed_source_root("tools/windows-ios-guest-probe/audit_private_guest_symbols.py"))
+        for name in ("tools/windows-ios-guest-probe/create_private_binding_sidecar.py",
+                     "tools/windows-ios-guest-probe/audit_private_guest_symbols.py.extra",
+                     "tools/windows-ios-guest-probe/private-index.json"):
+            self.assertFalse(preparer.allowed_source_root(name))
+
     def test_existing_output_is_preserved(self):
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / "keep"

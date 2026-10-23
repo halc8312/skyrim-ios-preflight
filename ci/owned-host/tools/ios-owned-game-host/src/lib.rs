@@ -2,6 +2,7 @@
 //! an Apple image. A matching hash is content binding, not signature authority,
 //! HLE completeness, game compatibility or permission to execute on iOS.
 pub type Check<T> = Result<T, &'static str>;
+pub mod abi_v2;
 pub mod audio_output;
 pub mod binding;
 pub mod config_overlay;
@@ -9,6 +10,7 @@ pub mod device_settings;
 #[cfg(all(feature = "fixture-tools", feature = "metal-renderer", target_os = "ios", target_arch = "aarch64"))]
 mod graphics_fixture;
 pub mod guest_fatal;
+pub mod guest_abi;
 pub mod lifecycle;
 pub mod mapping;
 pub mod native_trace;
@@ -25,6 +27,8 @@ pub mod public_fixture;
 mod darwin;
 #[cfg(all(feature = "apple-host", target_os = "ios", target_arch = "aarch64"))]
 mod runtime;
+#[cfg(all(feature = "apple-host", target_os = "ios", target_arch = "aarch64"))]
+mod xma_callbacks;
 #[cfg(all(feature = "apple-host", target_os = "ios", target_arch = "aarch64"))]
 pub use runtime::{mark_renderer_attached, prepared_kernel};
 #[cfg(all(feature = "metal-renderer", target_os = "ios", target_arch = "aarch64"))]

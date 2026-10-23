@@ -14,6 +14,10 @@ private func audioWorker<T>(_ operation: @escaping () -> T) async -> T {
 }
 
 final class OwnedHostAudioTests: XCTestCase {
+    // Own only the interruption pair this fixture posts; cleanup must not
+    // broadcast an Ended for a system interruption or an absent Began.
+    @MainActor private var fixtureInterruptionActive = false
+
     override func setUp() async throws {
         executionTimeAllowance = 30
         await succeeded { OHNativeAudioStopV1() }
@@ -49,6 +53,8 @@ final class OwnedHostAudioTests: XCTestCase {
     private func beginInterruption() async {
         // Model Apple's documented main-thread delivery of interruption notifications.
         await MainActor.run {
+            guard !self.fixtureInterruptionActive else { return }
+            self.fixtureInterruptionActive = true
             NotificationCenter.default.post(name: AVAudioSession.interruptionNotification,
                 object: AVAudioSession.sharedInstance(),
                 userInfo: [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue])
@@ -58,13 +64,15 @@ final class OwnedHostAudioTests: XCTestCase {
     private func endInterruption(resume: Bool) async {
         // Keep the same delivery model for the corresponding ended notification.
         await MainActor.run {
+            guard self.fixtureInterruptionActive else { return }
+            self.fixtureInterruptionActive = false
             NotificationCenter.default.post(name: AVAudioSession.interruptionNotification,
                 object: AVAudioSession.sharedInstance(), userInfo: [
                     AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.ended.rawValue,
                     AVAudioSessionInterruptionOptionKey: resume ? AVAudioSession.InterruptionOptions.shouldResume.rawValue : 0,
                 ])
         }
-        _ = await status() // Controller barrier after the posted notification.
+        _ = await status() // Preserve the controller barrier even when no pair is active.
     }
 
     func testAudioStatusLayoutAndValidatedControls() async throws {
@@ -220,7 +228,8 @@ final class OwnedHostAudioTests: XCTestCase {
         await succeeded { OHNativeAudioStartV1() }
         let before = await status()
         let beforeLoss = await MainActor.run { OHNativeAudioSetPlaybackIntentV1(1) }
-        await audioWorker {
+        // Apple delivers media-services lost/reset notifications on Main.
+        await MainActor.run {
             NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereLostNotification,
                 object: AVAudioSession.sharedInstance())
         }
@@ -230,7 +239,7 @@ final class OwnedHostAudioTests: XCTestCase {
         let refused = await audioWorker { OHNativeAudioStartV1() }
         XCTAssertNotEqual(refused, 0)
         let beforeReset = await MainActor.run { OHNativeAudioSetPlaybackIntentV1(1) }
-        await audioWorker {
+        await MainActor.run {
             NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification,
                 object: AVAudioSession.sharedInstance())
         }

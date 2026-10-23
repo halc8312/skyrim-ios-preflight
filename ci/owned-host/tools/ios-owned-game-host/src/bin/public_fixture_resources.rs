@@ -15,7 +15,21 @@ fn main() {
 #[cfg(feature = "fixture-tools")]
 fn run() -> ios_owned_game_host::Check<()> {
     use std::{fs::OpenOptions, io::Write, path::Path};
-    let a = std::env::args_os().skip(1).collect::<Vec<_>>();
+    let mut a = std::env::args_os().skip(1).collect::<Vec<_>>();
+    let abi = if a.first().is_some_and(|value| value == "--abi-version") {
+        if a.len() != 4 {
+            return Err("expected explicit ABI, public fixture and new output directory");
+        }
+        let selected = match a[1].to_str() {
+            Some("1") => ios_owned_game_host::guest_abi::GuestAbi::V1,
+            Some("2") => ios_owned_game_host::guest_abi::GuestAbi::V2,
+            _ => return Err("public fixture ABI must be exactly 1 or 2"),
+        };
+        a.drain(..2);
+        selected
+    } else {
+        ios_owned_game_host::guest_abi::GuestAbi::V1
+    };
     if a.len() != 2 {
         return Err("expected public unsigned fixture and new output directory");
     }
@@ -27,7 +41,7 @@ fn run() -> ios_owned_game_host::Check<()> {
     if original.len() as u64 != metadata.len() {
         return Err("public fixture changed during read");
     }
-    let binding = ios_owned_game_host::public_fixture::expected_binding(&original)?;
+    let binding = ios_owned_game_host::public_fixture::expected_binding_for_abi(&original, abi)?;
     let root = Path::new(&a[1]);
     std::fs::create_dir(root).map_err(|_| "output directory must be new")?;
     for (name, data) in [

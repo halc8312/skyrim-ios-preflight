@@ -8,12 +8,19 @@ import sys
 import tomllib
 
 MANIFEST = "source-allowlist.txt"
-ALLOWLIST_SHA256 = "ec4333d02d6bcb462db7a2cd674d2a5163eb5e8ae7d98f7397256e0594d68cf1"
-SOURCE_MANIFEST_SHA256 = "a2bd56442bc4893009c7875ecba423717099ddbd2f32efd4a93a23a5965cd44a"
+ALLOWLIST_SHA256 = "730d32e0c0243843f96975b760923e28bd35d663c6821b4c123417bae60d16cd"
+SOURCE_MANIFEST_SHA256 = "f112af5f01b59538065f6c31a239201f32df943656d695fe6abaff4ebc32d369"
 MEMBERS = ["crates/" + name for name in
            ("d3d-hle", "gpu-webgpu", "kernel-hle", "runtime-core", "vfs",
             "xenos-edram", "xenos-render", "xenos-shader", "xenos-state",
             "xenos-texture", "xenos-texture-cache", "xex", "xma-decoder")]
+
+
+def allowed_source_root(name):
+    return (name in (MANIFEST, "tools/windows-ios-guest-probe/audit_private_guest_symbols.py")
+            or name.startswith(("skyrim-recomp-web/", "tools/ios-resident-guest-probe/",
+                                "tools/ios-owned-game-host/", "tools/ios-signed-image-policy/",
+                                "tools/windows-ios-guest-probe/owned-guest-abi/")))
 
 
 def prepare(root, output):
@@ -39,9 +46,7 @@ def prepare(root, output):
         parts = PurePosixPath(name)
         if parts.is_absolute() or str(parts) != name or any(p in ("..", ".", "target", "build", "inputs", "diagnostics", "Frameworks", "Libraries", "Resources") for p in parts.parts) or "\\" in name or ":" in name:
             raise ValueError("owned_host_manifest_path")
-        if name != MANIFEST and not name.startswith(("skyrim-recomp-web/", "tools/ios-resident-guest-probe/",
-                                "tools/ios-owned-game-host/", "tools/ios-signed-image-policy/",
-                                "tools/windows-ios-guest-probe/owned-guest-abi/")):
+        if not allowed_source_root(name):
             raise ValueError("owned_host_manifest_root")
         source = root / name
         for parent in [source, *source.parents]:

@@ -3,6 +3,7 @@
 //! image, authenticates a signer, or grants permission to execute anything.
 //! Callers hash the same owned XEX buffer before parsing it; framework content
 //! reconstruction remains the explicit signed-image-policy candidate verifier.
+use crate::guest_abi::GuestAbi;
 use ios_signed_image_policy::{CANDIDATE_SCHEMA, MAX_IMAGE, Manifest, PAGE};
 use serde_core::de::{self, MapAccess, Visitor};
 use sha2::{Digest, Sha256};
@@ -98,8 +99,12 @@ fn layout_bounds(layout: [u64; 20]) -> Check<()> {
 }
 
 impl TrustedBinding {
+    pub fn guest_abi(&self) -> Check<GuestAbi> {
+        GuestAbi::from_version(self.abi_version)
+    }
+
     pub fn validate(&self) -> Check<()> {
-        need(self.abi_version == ABI_VERSION, "binding_abi_version")?;
+        self.guest_abi()?;
         need(
             self.xex_relative_path == "default.xex",
             "binding_xex_relative_path",
@@ -425,6 +430,111 @@ mod tests {
             .verify_module(expected.ppc_config, &FUNCTIONS, LAYOUT, ABI_VERSION)
             .unwrap();
         assert_eq!(json(&parsed), json(&expected));
+    }
+
+    #[test]
+    fn only_explicit_integer_v1_and_v2_metadata_versions_are_accepted() {
+        for (version, selected) in [
+            (ABI_VERSION, GuestAbi::V1),
+            (crate::abi_v2::VERSION, GuestAbi::V2),
+        ] {
+            let mut expected = example();
+            expected.abi_version = version;
+            let parsed = parse(&encoded(&json(&expected))).unwrap();
+            assert_eq!(parsed.guest_abi().unwrap(), selected);
+            assert_eq!(json(&parsed), json(&expected));
+            assert_eq!(json(&parsed)["schema"], SCHEMA);
+        }
+        let original = json(&example());
+        for bad in [
+            serde_json::json!(0),
+            serde_json::json!(1),
+            serde_json::json!(2),
+            serde_json::json!(0x10001),
+            serde_json::json!(0x20001),
+            serde_json::json!(0x30000),
+            serde_json::json!(true),
+            serde_json::json!(131072.0),
+            serde_json::json!("131072"),
+            serde_json::json!(null),
+            serde_json::json!(-1),
+            serde_json::json!(4294967296u64),
+        ] {
+            let mut changed = original.clone();
+            changed["abi_version"] = bad;
+            assert!(parse(&encoded(&changed)).is_err());
+        }
+    }
+
+    #[test]
+    fn v2_keeps_exact_content_identity_layout_and_function_bindings() {
+        let mut expected = example();
+        expected.abi_version = crate::abi_v2::VERSION;
+        let parsed = parse(&encoded(&json(&expected))).unwrap();
+        parsed
+            .verify_xex_bytes(b"self-authored expected byte buffer")
+            .unwrap();
+        parsed
+            .verify_xex_identity(0x12345678, 0x11223344, 7, 2)
+            .unwrap();
+        parsed
+            .verify_module(
+                expected.ppc_config,
+                &FUNCTIONS,
+                LAYOUT,
+                crate::abi_v2::VERSION,
+            )
+            .unwrap();
+        assert!(
+            parsed
+                .verify_xex_bytes(b"self-authored EXPECTED byte buffer")
+                .is_err()
+        );
+        assert!(
+            parsed
+                .verify_xex_identity(0x12345678, 0x11223344, 8, 2)
+                .is_err()
+        );
+        assert_eq!(
+            parsed.verify_module(expected.ppc_config, &FUNCTIONS, LAYOUT, ABI_VERSION),
+            Err("binding_module_abi_version")
+        );
+        let mut config = expected.ppc_config;
+        config[2] += 4;
+        assert!(
+            parsed
+                .verify_module(config, &FUNCTIONS, LAYOUT, crate::abi_v2::VERSION)
+                .is_err()
+        );
+        let mut layout = LAYOUT;
+        layout[17] += 16;
+        assert!(
+            parsed
+                .verify_module(
+                    expected.ppc_config,
+                    &FUNCTIONS,
+                    layout,
+                    crate::abi_v2::VERSION
+                )
+                .is_err()
+        );
+        assert!(
+            parsed
+                .verify_module(
+                    expected.ppc_config,
+                    &[0x1010, 0x1014, 0x1020],
+                    LAYOUT,
+                    crate::abi_v2::VERSION
+                )
+                .is_err()
+        );
+        let mut malformed = json(&expected);
+        malformed["normalization_linkedit_filesize"] = serde_json::json!(255);
+        assert!(parse(&encoded(&malformed)).is_err());
+        assert_eq!(
+            parsed.function_table_sha256,
+            example().function_table_sha256
+        );
     }
 
     #[test]

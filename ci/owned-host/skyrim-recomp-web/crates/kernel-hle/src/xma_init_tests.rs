@@ -41,7 +41,7 @@ fn eager_context_base_and_exported_slot_lifetime() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
 }
 
-fn synthetic_runtime() -> Runtime {
+pub(super) fn synthetic_runtime() -> Runtime {
     use xex::builder::{
         IMAGE_SCN_CNT_CODE, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, PeSection, XexBuilder, build_pe_image,
     };

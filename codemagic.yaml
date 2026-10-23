@@ -86,6 +86,7 @@ workflows:
       - out/owned-host/audio-hang/*.txt
       - out/owned-host/audio-hang/*.log
       - out/owned-host/audio-hang/*.json
+      - out/owned-host/audioqueue-environment
       - out/owned-host/gpu-framework/*.txt
       - out/owned-host/gpu-framework/*.json
       - out/owned-host/gpu-framework/*.log

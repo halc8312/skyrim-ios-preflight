@@ -27,6 +27,12 @@ cargo +nightly-2026-10-11 test --locked \
   --manifest-path "$kit/skyrim-recomp-web/Cargo.toml" -p kernel-hle --lib \
   xma::init_tests::eager_context_base_and_exported_slot_lifetime -- --exact --test-threads=1 \
   2>&1 | tee "$output/public-xma-init-tests.log"
+# The production worker/MMIO contract runs in its own bounded child process;
+# preserve the existing eager-publication gate above as a separate requirement.
+cargo +nightly-2026-10-11 test --locked \
+  --manifest-path "$kit/skyrim-recomp-web/Cargo.toml" -p kernel-hle --lib \
+  xma::device_tests::device_commands_and_lifetimes -- --exact --nocapture --test-threads=1 \
+  2>&1 | tee "$output/public-xma-device-tests.log"
 cargo +nightly-2026-10-11 test --locked \
   --manifest-path "$kit/skyrim-recomp-web/Cargo.toml" -p kernel-hle --lib \
   audio::tests -- --test-threads=1 2>&1 | tee "$output/public-audio-observer-tests.log"
@@ -98,7 +104,7 @@ for variant in device simulator; do
     "$host/native/OwnedHostAudio.mm" "$host/native/OwnedHostAudioRenderGate.h" \
     "$host/native/OwnedHostAudioControlGate.h" \
     "$host/native/GraphicsPresentationProbe.h" "$stage/native/"
-  cp "$generic/PrivateGuestABI.h" "$stage/include/"
+  cp "$generic/PrivateGuestABI.h" "$generic/PrivateGuestABIV2.h" "$stage/include/"
   cp "$CARGO_TARGET_DIR/$rust_target/release/libios_owned_game_host.a" "$stage/Libraries/"
   cp -R "$built/PrivateGuest.framework" "$output/gpu-framework/$variant/WgpuNative.framework" "$stage/Frameworks/"
   cp "$resources/OwnedGuestBinding.json" "$stage/Resources/"
@@ -135,6 +141,35 @@ for variant in device simulator; do
     cp "$stage/Frameworks/PrivateGuest.framework/PrivateGuest" "$output/simulator-public-signed-fixture.bin"
   fi
 done
+
+# The V2 image is independently compiled from public authored sources. Reuse
+# only the already built Simulator host/WGPU; V1 resources and stage stay intact.
+built_v2="$output/fixture-simulator-v2"
+python3 "$host/sdk-test/build_public_sdk_fixture.py" --kit "$kit" --simde "$simde" \
+  --output "$built_v2" --link-validator "$harness/ci/validate-owned-host-fixture.py" \
+  --platform simulator --abi-version 2 \
+  2>&1 | tee "$output/fixture-simulator-v2-build.log"
+resources_v2="$work/owned-resources-simulator-v2"
+cargo +nightly-2026-10-11 run --locked --offline --features fixture-tools \
+  --manifest-path "$host/Cargo.toml" --bin public_fixture_resources -- \
+  --abi-version 2 "$built_v2/PrivateGuest.framework/PrivateGuest" "$resources_v2" \
+  2>&1 | tee "$output/public-simulator-v2-resource-build.log"
+cp "$resources_v2/OwnedGuestBinding.json" "$output/simulator-v2-OwnedGuestBinding.json"
+cp "$built_v2/PrivateGuest.framework/PrivateGuest" "$output/simulator-v2-public-unsigned-fixture.bin"
+
+# Sign only a copy, after independent expectations bind the unsigned image.
+signed_v2="$work/owned-signed-fixture-simulator-v2"
+mkdir "$signed_v2"
+cp -R "$built_v2/PrivateGuest.framework" "$signed_v2/"
+/usr/bin/codesign --force --sign - --timestamp=none "$signed_v2/PrivateGuest.framework" \
+  > "$output/simulator-v2-PrivateGuest-codesign.log" 2>&1
+/usr/bin/codesign --verify --strict --verbose=2 "$signed_v2/PrivateGuest.framework" \
+  > "$output/simulator-v2-PrivateGuest-codesign-verify.log" 2>&1
+cp "$signed_v2/PrivateGuest.framework/PrivateGuest" "$output/simulator-v2-public-signed-fixture.bin"
+python3 "$host/sdk-test/prepare_v2_sdk_stage.py" --base-stage "$work/owned-app-simulator" \
+  --fixture "$signed_v2/PrivateGuest.framework" --resources "$resources_v2" \
+  --output "$work/owned-app-simulator-v2" \
+  2>&1 | tee "$output/public-simulator-v2-stage.log"
 
 selection="$(python3 - <<'PY'
 import json,subprocess
@@ -234,6 +269,22 @@ python3 "$host/sdk-test/run_mobile_controls_tests.py" --stage "$work/owned-app-s
   --built-output "$output/xctest" --output "$output/xctest-mobile" \
   --destination "platform=iOS Simulator,id=$device_id" \
   2>&1 | tee "$output/mobile-controls-sdk-driver.log"
+# A distinct bundle and DerivedData run the V2 process-once Kernel separately.
+# Any V2 refusal fails this pipeline. Existing V1/audio gates retain their
+# original stage, selectors, build products and assertions.
+python3 "$host/sdk-test/run_v2_sdk_tests.py" --stage "$work/owned-app-simulator-v2" \
+  --output "$output/xctest-v2" --destination "platform=iOS Simulator,id=$device_id" \
+  2>&1 | tee "$output/owned-host-v2-sdk-driver.log"
+# Compare an independent public audio API after the Simulator has installed
+# and run the SDK apps. This optional diagnostic never replaces the six
+# mandatory production-engine cases below, even when the queue works.
+if python3 "$harness/ci/probe-ios-audioqueue-environment.py" --udid "$device_id" \
+  --output "$output/audioqueue-environment" \
+  2>&1 | tee "$output/public-ios-audioqueue-environment.log"; then
+  :
+else
+  printf '%s\n' 'PUBLIC_AUDIOQUEUE_COMPARISON_UNAVAILABLE {"schema":1,"diagnostic_only":true,"sdk_assertions_unchanged":true}'
+fi
 # Optional, public-process-only evidence for the unresolved lazy output-node
 # initialization. This does not replace or change any mandatory SDK assertion.
 python3 "$harness/ci/watch-public-audio-hang.py" \
@@ -294,4 +345,4 @@ for stream in ('stdout', 'stderr'):
 PY
   exit 1
 fi
-printf '%s\n' 'Public owned-host fullchain passed; game, private framework and physical iPhone remain untested.'
+printf '%s\n' 'Public owned-host V1/V2 fullchains passed; game, private framework and physical iPhone remain untested.'
