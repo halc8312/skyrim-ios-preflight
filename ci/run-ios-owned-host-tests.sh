@@ -156,6 +156,37 @@ cleanup() {
 trap cleanup EXIT
 xcrun simctl boot "$device_id"
 xcrun simctl bootstatus "$device_id" -b
+python3 "$harness/ci/probe-host-audio.py" --phase pre_gui \
+  | tee "$output/host-audio-before-gui.log"
+# Controlled environment comparison: preserve the same source, runtime, UDID
+# and required hardware-output tests, but also run Apple's Simulator host app.
+python3 - "$device_id" <<'PY' | tee "$output/simulator-gui-launch.log"
+from pathlib import Path
+import json, subprocess, sys, time
+device = sys.argv[1]
+developer = subprocess.check_output(['xcode-select', '-p'], timeout=5).decode().strip()
+app = Path(developer) / 'Applications/Simulator.app'
+if not app.is_dir():
+    raise RuntimeError('configured_apple_simulator_app_missing')
+subprocess.run(['/usr/bin/open', '-a', str(app), '--args', '-CurrentDeviceUDID', device],
+               check=True, capture_output=True, timeout=10)
+deadline = time.monotonic() + 10
+running = False
+while time.monotonic() < deadline:
+    running = subprocess.run(['pgrep', '-x', 'Simulator'], capture_output=True, timeout=2).returncode == 0
+    if running:
+        break
+    time.sleep(0.2)
+devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', '-j'], timeout=10))['devices']
+same = any(value.get('udid') == device and value.get('state') == 'Booted'
+           for group in devices.values() for value in group)
+print('PUBLIC_SIMULATOR_GUI ' + json.dumps(dict(schema=1, apple_host_process_running=running,
+    same_selected_device_booted=same, hardware_audio_verified=False)))
+if not running or not same:
+    raise RuntimeError('apple_simulator_gui_environment_unconfirmed')
+PY
+python3 "$harness/ci/probe-host-audio.py" --phase post_gui \
+  | tee "$output/host-audio-after-gui.log"
 python3 "$host/sdk-test/run_sdk_tests.py" --stage "$work/owned-app-simulator" \
   --output "$output/xctest" --destination "platform=iOS Simulator,id=$device_id" \
   2>&1 | tee "$output/owned-host-sdk-driver.log"
