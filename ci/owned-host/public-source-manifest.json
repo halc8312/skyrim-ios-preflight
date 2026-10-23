@@ -806,8 +806,8 @@
       "sha256": "109bcf6d67471fe42ca8103ebbf78f883609e73d8fb364efe093bf14d26613f2"
     },
     "tools/ios-owned-game-host/native/OwnedHostAudio.mm": {
-      "bytes": 22405,
-      "sha256": "79b20cdd427485d65f72dd3286cf1baa539c5e7b059aeeb519406246a6fc46f5"
+      "bytes": 22934,
+      "sha256": "9a24cb9e776705d9d0c67d3c9791543154aa4fb35dbd7e1549a7a1bbb8fb6177"
     },
     "tools/ios-owned-game-host/native/OwnedHostAudioControlGate.h": {
       "bytes": 3677,

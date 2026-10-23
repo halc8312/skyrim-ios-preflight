@@ -253,6 +253,15 @@ static uint32_t RouteKind(AVAudioSession *session) {
         AudioPhase(_intentGeneration, 20);
         _engine = [[AVAudioEngine alloc] init];
         AudioPhase(_intentGeneration, 21);
+        // Ordering experiment: materialize the documented singleton output
+        // before mainMixerNode lazily connects it. Phase 25 distinguishes the
+        // output getter returning from the following mixer connection; both
+        // Debug and Release still use the real hardware-output graph.
+        AVAudioOutputNode *outputNode = _engine.outputNode;
+        AudioPhase(_intentGeneration, 25);
+        if (!outputNode) {
+            [self quiesce:YES]; _status.state = 7; _status.last_error = 3; return NO;
+        }
         AVAudioMixerNode *mixer = _engine.mainMixerNode;
         AudioPhase(_intentGeneration, 22);
         _source = [[AVAudioSourceNode alloc] initWithFormat:format renderBlock:
