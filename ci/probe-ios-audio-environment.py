@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Optional authored UIKit/AVAudioEngine Simulator control, without XCTest.
 
-Root supplies one fresh, owned, booted iOS26.5/iPhone17ProMax UDID. This script
+Root supplies one fresh, owned, booted iPhone17ProMax UDID on the explicit iOS
+version (default26.5; allowlist26.3/26.4/26.5). This script
 installs only its isolated ad-hoc-signed app and runs plain/playback in separate
 processes. No entitlements, microphone, system logs, guest code or SDK-test
 changes. Actual silent source callbacks prove a Simulator output stream, never
@@ -28,6 +29,8 @@ import subprocess
 import sys
 import tempfile
 import time
+
+from audio_simulator_selection import DEFAULT_VERSION, SUPPORTED_VERSIONS, runtime_identifier
 
 SOURCE = r'''
 #import <UIKit/UIKit.h>
@@ -318,13 +321,14 @@ def strict_json(raw):
                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonstandard number")))
 
 
-def validate_device(raw, udid):
+def validate_device(raw, udid, simulator_version=DEFAULT_VERSION):
+    expected_runtime = runtime_identifier(simulator_version)
     value = strict_json(raw)
     matches = [(runtime, item) for runtime, rows in value["devices"].items() for item in rows]
     if len(matches) != 1:
         raise ValueError("selected device listing")
     runtime, device = matches[0]
-    if (runtime != "com.apple.CoreSimulator.SimRuntime.iOS-26-5" or device.get("udid", "").upper() != udid.upper()
+    if (runtime != expected_runtime or device.get("udid", "").upper() != udid.upper()
             or device.get("state") != "Booted" or device.get("isAvailable") is not True
             or device.get("deviceTypeIdentifier") != "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max"):
         raise ValueError("wrong selected device")
@@ -482,7 +486,8 @@ def run_mode(helper, udid, executable, mode, output, deadline, sampling):
     return result
 
 
-def probe(udid, output):
+def probe(udid, output, simulator_version=DEFAULT_VERSION):
+    runtime_identifier(simulator_version)
     start, deadline = time.monotonic(), time.monotonic() + TOTAL_SECONDS - 1
     report = dict(schema=1, diagnostic_only=True, public_only=True, available=False,
                   simulator_output_stream_verified=False, physical_iphone_verified=False,
@@ -512,7 +517,7 @@ def probe(udid, output):
             raw = checked(["xcrun", "simctl", "help", kind], 2, "help-" + kind)
             if not help_valid(kind, raw): raise ValueError("installed simctl help unrecognized")
         raw = checked(["xcrun", "simctl", "list", "devices", udid, "--json"], 3, "selected-device")
-        validate_device(raw, udid)
+        validate_device(raw, udid, simulator_version)
         environment = dict(os.environ, LC_ALL="C", LANG="C", MANPAGER="/bin/cat", PAGER="/bin/cat",
                            MANPATH="/usr/share/man", MANWIDTH="100")
         manual = run(["/usr/bin/man", "-M", "/usr/share/man", "-P", "/bin/cat", "1", "sample"], deadline, 3, env=environment)
@@ -525,7 +530,7 @@ def probe(udid, output):
             source = work / "probe.mm"; source.write_text(SOURCE, encoding="ascii")
             plist = dict(CFBundleExecutable="OwnedGameHost", CFBundleIdentifier=BUNDLE, CFBundleName="OwnedGameHost",
                          CFBundlePackageType="APPL", CFBundleVersion="1", CFBundleShortVersionString="1.0",
-                         MinimumOSVersion="26.5", LSRequiresIPhoneOS=True, UIDeviceFamily=[1, 2],
+                         MinimumOSVersion=simulator_version, LSRequiresIPhoneOS=True, UIDeviceFamily=[1, 2],
                          CFBundleSupportedPlatforms=["iPhoneSimulator"], UILaunchScreen={},
                          UIApplicationSceneManifest=dict(UIApplicationSupportsMultipleScenes=False,
                              UISceneConfigurations={"UIWindowSceneSessionRoleApplication": [dict(
@@ -537,7 +542,7 @@ def probe(udid, output):
             compile_env = os.environ.copy()
             for name in ("SDKROOT", "IPHONEOS_DEPLOYMENT_TARGET"): compile_env.pop(name, None)
             command = ["xcrun", "--sdk", "iphonesimulator", "clang++", "-std=c++17", "-fobjc-arc", "-fblocks",
-                       "-Wall", "-Wextra", "-Werror", "-target", "arm64-apple-ios26.5-simulator", "-isysroot", sdk,
+                       "-Wall", "-Wextra", "-Werror", "-target", f"arm64-apple-ios{simulator_version}-simulator", "-isysroot", sdk,
                        str(source), "-framework", "UIKit", "-framework", "AVFAudio", "-framework", "Foundation",
                        "-o", str(app / "OwnedGameHost")]
             report["stage"] = "compile"
@@ -571,9 +576,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--udid", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--simulator-version", choices=SUPPORTED_VERSIONS, default=DEFAULT_VERSION)
     args = parser.parse_args(argv)
     signal.signal(signal.SIGTERM, on_signal); signal.signal(signal.SIGINT, on_signal)
-    try: report = probe(args.udid, Path(os.path.abspath(args.output)))
+    try: report = probe(args.udid, Path(os.path.abspath(args.output)), args.simulator_version)
     except Exception:
         report = dict(schema=1, diagnostic_only=True, public_only=True, available=False,
                       sdk_tests_passed_claimed=False, reason="diagnostic_setup_failure")

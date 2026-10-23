@@ -758,12 +758,12 @@
       "sha256": "7ab54620660713aca1c1e3a5b2a16a9056ff96ae83c8f1a0b8b0e70c3b15d516"
     },
     "tools/ios-owned-game-host/app/DeviceSettings.swift": {
-      "bytes": 6421,
-      "sha256": "a154dbadceff97366cf19474d5c4bc725e8199c17865ae69b2ed057232f92b6a"
+      "bytes": 6488,
+      "sha256": "5d323561bb05cdf9c4f46f1948f34598b6d4a0e96c9c0a6af8082b48bfb12f9c"
     },
     "tools/ios-owned-game-host/app/DeviceSettingsView.swift": {
-      "bytes": 9907,
-      "sha256": "20aa34fbd3c6d23d996b25cd8120dd6928c74d03a36889af5ff290a37d5cbed8"
+      "bytes": 10351,
+      "sha256": "22846a8e1cf8ba8e2f9d682f81424c394c25c4ffde74249f89e97edc3d74b2f6"
     },
     "tools/ios-owned-game-host/app/MetalViewport.swift": {
       "bytes": 1528,
@@ -902,8 +902,8 @@
       "sha256": "a4e2a6339d58b6e41d76bbb0ac76627841d1ec9f00ecc69c07415a0a7f44dbd5"
     },
     "tools/ios-owned-game-host/sdk-test/tests/DeviceSettingsTests.swift": {
-      "bytes": 11433,
-      "sha256": "d6c5802e063f1e364fb3d9a85f2bc784888e957916bf481526973a61ad930027"
+      "bytes": 13050,
+      "sha256": "4868a51d0733dfa7d470318ecf82e01c723c0dcf3019a29244ae52f5927ebc25"
     },
     "tools/ios-owned-game-host/sdk-test/tests/GraphicsPresentationTests.swift": {
       "bytes": 2291,

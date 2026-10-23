@@ -13,6 +13,7 @@ final class DeviceSettingsTests: XCTestCase {
             XCTAssertEqual(boot.version, 0x0001_0000); XCTAssertEqual(boot.struct_bytes, 32)
             XCTAssertLessThanOrEqual(boot.video_width * boot.internal_scale, 3840)
             XCTAssertLessThanOrEqual(boot.video_height * boot.internal_scale, 2160)
+            XCTAssertLessThanOrEqual(boot.mirror_mib, 128)
             XCTAssertEqual(boot.reserved, 0)
             XCTAssertTrue(DeviceGraphicsSettings.frameLimits.contains(live.frame_limit))
             XCTAssertTrue(DeviceGraphicsSettings.outputScales.contains(live.output_scale_percent))
@@ -21,7 +22,19 @@ final class DeviceSettingsTests: XCTestCase {
         let original = DevicePreset.original.graphics
         XCTAssertEqual(original.videoMode, .p720); XCTAssertEqual(original.internalScale, 1)
         XCTAssertEqual(original.frameLimit, 0); XCTAssertEqual(original.filter, .original)
+        XCTAssertEqual(original.outputScale, 100); XCTAssertEqual(original.sharpness, 0)
         XCTAssertFalse(original.mobileBudget); XCTAssertEqual(original.mirrorMiB, 0)
+        XCTAssertEqual(original.boot.mobile_texture_budget, 0); XCTAssertEqual(original.boot.mirror_mib, 0)
+        XCTAssertEqual(DeviceGraphicsSettings.mirrorBudgets, [0, 64, 128])
+        for preset in [DevicePreset.quality, .ultra, .ultimate] {
+            XCTAssertFalse(preset.graphics.mobileBudget, "\(preset.rawValue) must not defer textures through the mobile transfer limit")
+            XCTAssertEqual(preset.graphics.boot.mobile_texture_budget, 0)
+            XCTAssertEqual(preset.graphics.boot.mirror_mib, 128)
+        }
+        for preset in [DevicePreset.minimum, .performance, .balanced] {
+            XCTAssertTrue(preset.graphics.mobileBudget, "\(preset.rawValue) must retain its mobile budget")
+            XCTAssertEqual(preset.graphics.boot.mobile_texture_budget, 1)
+        }
         XCTAssertEqual(DevicePreset.minimum.graphics.frameLimit, 0, "Maximum performance must not impose a lower FPS ceiling")
         XCTAssertEqual(DevicePreset.performance.graphics.frameLimit, 0)
         XCTAssertEqual(DevicePreset.minimum.graphics.outputScale, 25)
@@ -35,6 +48,16 @@ final class DeviceSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.graphics.internalScale, 2); XCTAssertEqual(decoded.graphics.mirrorMiB, 0)
         XCTAssertEqual(decoded.graphics.frameLimit, 0); XCTAssertEqual(decoded.graphics.outputScale, 100)
         XCTAssertEqual(decoded.graphics.sharpness, 100)
+        for legacyBudget in [UInt32(192), UInt32(256)] {
+            for mobileBudget in [false, true] {
+                var saved = DeviceSettings()
+                saved.graphics.mirrorMiB = legacyBudget; saved.graphics.mobileBudget = mobileBudget
+                let migrated = try JSONDecoder().decode(DeviceSettings.self, from: JSONEncoder().encode(saved)).normalized()
+                XCTAssertEqual(migrated.graphics.mirrorMiB, 128, "Saved budgets must retain their former effective limit")
+                XCTAssertEqual(migrated.graphics.boot.mirror_mib, 128)
+                XCTAssertEqual(migrated.graphics.mobileBudget, mobileBudget)
+            }
+        }
         settings.audio.gain = .infinity; XCTAssertEqual(settings.normalized().audio.gain, 1)
         settings.audio.gain = -2; XCTAssertEqual(settings.normalized().audio.gain, 0)
         settings.version = 99; XCTAssertEqual(settings.normalized(), DeviceSettings())

@@ -67,9 +67,13 @@ struct DeviceGraphicsSettingsView: View {
                 }
                 Section("メモリ・次回の起動から") {
                     Toggle("モバイル向けテクスチャキャッシュ", isOn: Binding(get: { graphics.mobileBudget }, set: { value in preferences.graphics { $0.mobileBudget = value } }))
+                    Text("ONでは新規テクスチャの転送も制限するため、読み込み中にテクスチャが一時的に欠ける場合があります。")
+                        .font(.footnote).foregroundStyle(.secondary)
                     Picker("共有メモリキャッシュ", selection: Binding(get: { graphics.mirrorMiB }, set: { value in preferences.graphics { $0.mirrorMiB = value } })) {
-                        ForEach(DeviceGraphicsSettings.mirrorBudgets, id: \.self) { Text($0 == 0 ? "従来の設定" : "\($0) MiB").tag($0) }
+                        ForEach(DeviceGraphicsSettings.mirrorBudgets, id: \.self) { Text($0 == 0 ? "自動" : "\($0) MiB").tag($0) }
                     }
+                    Text("「自動」の上限は、モバイル向けキャッシュがONなら64 MiB、OFFなら従来の128 MiBです。")
+                        .font(.footnote).foregroundStyle(.secondary)
                     Text("キャッシュ量を抑えても画素の精度は下げません。小さすぎると再転送が増え、かえって遅くなる場合があります。アプリ全体のメモリ上限ではありません。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }

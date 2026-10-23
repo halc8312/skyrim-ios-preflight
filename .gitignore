@@ -558,6 +558,8 @@
 !/ci/test_watch_public_audio_hang.py
 !/ci/probe-macos-output.py
 !/ci/run-ios-audio-environment.sh
+!/ci/audio_simulator_selection.py
+!/ci/test_audio_simulator_selection.py
 !/ci/probe-ios-audio-environment.py
 !/ci/test_probe_ios_audio_environment.py
 !/ci/probe-ios-audioqueue-environment.py

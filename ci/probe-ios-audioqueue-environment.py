@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Optional public AudioQueue Simulator discriminator; never an engine/SDK pass.
 
-Uses the same fresh, owned iOS26.5/iPhone17ProMax supplied to the separate engine
+Uses the same fresh, owned iPhone17ProMax and explicit iOS version (default26.5;
+allowlist26.3/26.4/26.5) supplied to the separate engine
 control. Its distinct UIKit/UIScene app configures playback, queues authored zero
 48kHz stereo interleaved Float32, and requires valid advancing queue sample time
 across 200ms, callbacks, intact buffer guards, and successful stop/disposal.
@@ -445,7 +446,8 @@ def run_queue(udid, output, deadline):
     return result
 
 
-def probe(udid, output):
+def probe(udid, output, simulator_version=engine.DEFAULT_VERSION):
+    engine.runtime_identifier(simulator_version)
     start = time.monotonic(); deadline = start + TOTAL_SECONDS - 1
     report = dict(schema=1, backend="audioqueue", diagnostic_only=True, public_only=True, available=False,
                   queue_output_stream_verified=False, avaudioengine_verified=False, physical_iphone_verified=False,
@@ -470,14 +472,15 @@ def probe(udid, output):
         for kind in ("launch", "install", "list", "terminate"):
             if not engine.help_valid(kind, checked(["xcrun", "simctl", "help", kind], 2, "help-" + kind)):
                 raise ValueError("installed simctl help unrecognized")
-        engine.validate_device(checked(["xcrun", "simctl", "list", "devices", udid, "--json"], 3, "selected-device"), udid)
+        engine.validate_device(checked(["xcrun", "simctl", "list", "devices", udid, "--json"], 3, "selected-device"), udid,
+                               simulator_version)
         with tempfile.TemporaryDirectory(prefix="public-ios-audioqueue-") as temporary:
             work = Path(temporary).resolve(strict=True)
             app = work / (EXECUTABLE + ".app"); app.mkdir()
             source = work / "probe.mm"; source.write_text(SOURCE, encoding="ascii")
             plist = dict(CFBundleExecutable=EXECUTABLE, CFBundleIdentifier=BUNDLE, CFBundleName=EXECUTABLE,
                          CFBundlePackageType="APPL", CFBundleVersion="1", CFBundleShortVersionString="1.0",
-                         MinimumOSVersion="26.5", LSRequiresIPhoneOS=True, UIDeviceFamily=[1, 2],
+                         MinimumOSVersion=simulator_version, LSRequiresIPhoneOS=True, UIDeviceFamily=[1, 2],
                          CFBundleSupportedPlatforms=["iPhoneSimulator"], UILaunchScreen={},
                          UIApplicationSceneManifest=dict(UIApplicationSupportsMultipleScenes=False,
                              UISceneConfigurations={"UIWindowSceneSessionRoleApplication": [dict(
@@ -487,7 +490,7 @@ def probe(udid, output):
             sdk = checked(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"], 2, "sdk-path").decode().strip()
             if not sdk.startswith("/") or "\n" in sdk or "\x00" in sdk: raise ValueError("SDK path")
             command = ["xcrun", "--sdk", "iphonesimulator", "clang++", "-std=c++17", "-fobjc-arc", "-fblocks",
-                       "-Wall", "-Wextra", "-Werror", "-target", "arm64-apple-ios26.5-simulator", "-isysroot", sdk,
+                       "-Wall", "-Wextra", "-Werror", "-target", f"arm64-apple-ios{simulator_version}-simulator", "-isysroot", sdk,
                        str(source), "-framework", "UIKit", "-framework", "AVFAudio", "-framework", "AudioToolbox",
                        "-framework", "Foundation", "-o", str(app / EXECUTABLE)]
             report["stage"] = "compile"
@@ -512,10 +515,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--udid", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--simulator-version", choices=engine.SUPPORTED_VERSIONS, default=engine.DEFAULT_VERSION)
     args = parser.parse_args(argv)
     # The reused process API owns cancellation; call its explicit public handler.
     signal.signal(signal.SIGTERM, engine.on_signal); signal.signal(signal.SIGINT, engine.on_signal)
-    try: report = probe(args.udid, Path(os.path.abspath(args.output)))
+    try: report = probe(args.udid, Path(os.path.abspath(args.output)), args.simulator_version)
     except Exception:
         report = dict(schema=1, backend="audioqueue", diagnostic_only=True, public_only=True, available=False,
                       sdk_tests_passed_claimed=False, reason="diagnostic_setup_failure")

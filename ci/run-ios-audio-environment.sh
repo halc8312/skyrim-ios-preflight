@@ -11,25 +11,31 @@ test ! -e "$queue_output"
 mkdir -p "$driver"
 xcodebuild -version > "$driver/apple-tools.txt"
 xcrun --sdk iphonesimulator --show-sdk-version >> "$driver/apple-tools.txt"
+python3 -B -m unittest discover -s "$harness/ci" -p 'test_audio_simulator_selection.py' -v \
+  2>&1 | tee "$driver/public-simulator-selection-tests.log"
 python3 -B -m unittest discover -s "$harness/ci" -p 'test_probe_ios_audio_environment.py' -v \
   2>&1 | tee "$driver/public-supervisor-tests.log"
 python3 -B -m unittest discover -s "$harness/ci" -p 'test_probe_ios_audioqueue_environment.py' -v \
   2>&1 | tee "$driver/public-audioqueue-supervisor-tests.log"
-selection="$(python3 - <<'PY'
-import json, subprocess
+simulator_version="${SKYRT_AUDIO_SIMULATOR_VERSION-26.5}"
+selection="$(python3 - "$harness/ci" "$simulator_version" "$driver/simulator-selection.json" <<'PY'
+import json, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+from audio_simulator_selection import runtime_identifier, select_simulator
+
+version = sys.argv[2]
+runtime_identifier(version) # Reject an unknown explicit version before any listing.
 def listing(kind):
     # This short workflow reaches CoreSimulator before Xcode has warmed it.
     # A fresh CI service exceeded 30s before any app install. Keep this
     # environment-only cold start separate from every app/audio deadline.
     limit = 60 if kind == 'runtimes' else 10
     return json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', kind, '-j'], timeout=limit))[kind]
-runtime = next((r for r in listing('runtimes') if r.get('isAvailable') and r.get('version') == '26.5'
-                and r.get('identifier', '').startswith('com.apple.CoreSimulator.SimRuntime.iOS-')), None)
-device = next((d for d in listing('devicetypes') if d['name'] == 'iPhone 17 Pro Max'), None)
-if not runtime or not device:
-    raise SystemExit('Required installed iOS 26.5/iPhone 17 Pro Max Simulator unavailable.')
-print(runtime['identifier'])
-print(device['identifier'])
+selected = select_simulator(listing('runtimes'), listing('devicetypes'), version)
+with open(sys.argv[3], 'x', encoding='ascii', newline='\n') as output:
+    output.write(json.dumps(selected, sort_keys=True) + '\n')
+print(selected['runtime_identifier'])
+print(selected['device_type_identifier'])
 PY
 )"
 runtime_id="$(printf '%s\n' "$selection" | sed -n '1p')"
@@ -83,6 +89,7 @@ fi
 # It cannot replace any of the required owned-host integration assertions.
 engine_failed=0
 if python3 "$harness/ci/probe-ios-audio-environment.py" --udid "$device_id" --output "$output" \
+  --simulator-version "$simulator_version" \
   2>&1 | tee "$driver/public-ios-audio-environment.log"; then
   :
 else
@@ -92,6 +99,7 @@ fi
 # never replaces a failed engine result or any production integration gate.
 queue_failed=0
 if python3 "$harness/ci/probe-ios-audioqueue-environment.py" --udid "$device_id" --output "$queue_output" \
+  --simulator-version "$simulator_version" \
   2>&1 | tee "$driver/public-ios-audioqueue-environment.log"; then
   :
 else

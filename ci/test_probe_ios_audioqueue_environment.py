@@ -37,8 +37,8 @@ def native(v=None, phases=None):
             + "PUBLIC_IOS_AUDIOQUEUE_RESULT " + json.dumps(value() if v is None else v) + "\n").encode()
 
 
-def device():
-    return {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-26-5": [dict(
+def device(version="26.5"):
+    return {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-" + version.replace(".", "-"): [dict(
         udid=UDID, state="Booted", isAvailable=True,
         deviceTypeIdentifier="com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max")]}}
 
@@ -48,6 +48,48 @@ HELPS = {"launch": b"launch --console device bundle", "install": b"install devic
 
 
 class ParserTests(unittest.TestCase):
+    def test_version_cli_default_explicit_and_unknown_fail_before_probe(self):
+        for arguments, expected in (([], "26.5"), (["--simulator-version", "26.4"], "26.4")):
+            with mock.patch.object(m, "probe", return_value=dict(available=False)) as probe, \
+                 mock.patch.object(m.signal, "signal"), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(m.main(["--udid", UDID, "--output", "/authored/out", *arguments]), 2)
+            self.assertEqual(probe.call_args.args[2], expected)
+        for version in ("26.2", "26.6", "latest", "26.4.0", ""):
+            with mock.patch.object(m, "probe") as probe, contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as refused:
+                    m.main(["--udid", UDID, "--output", "/authored/out", "--simulator-version", version])
+            self.assertEqual(refused.exception.code, 2); probe.assert_not_called()
+            with mock.patch.object(m.engine, "run") as run:
+                with self.assertRaises(ValueError): m.probe(UDID, Path("/authored/out"), version)
+            run.assert_not_called()
+
+    def test_explicit_versions_reach_compile_with_matching_target_plist_and_unchanged_native_source(self):
+        for version in ("26.3", "26.4"):
+            captured = []
+            def fake_run(command, deadline, seconds, **kwargs):
+                if command[:3] == ["xcrun", "simctl", "help"]: raw = HELPS[command[3]]
+                elif command[:4] == ["xcrun", "simctl", "list", "devices"]: raw = json.dumps(device(version)).encode()
+                elif "--show-sdk-path" in command: raw = b"/authored/Simulator.sdk\n"
+                elif "clang++" in command:
+                    app = Path(command[command.index("-o") + 1]).parent
+                    source = Path(next(x for x in command if x.endswith(".mm"))).read_text()
+                    captured.append((command, seconds, plistlib.loads((app / "Info.plist").read_bytes()), source))
+                    return m.engine.Result(1, "completed", b"authored compiler refusal")
+                else: raw = b""
+                return m.engine.Result(0, "completed", raw)
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as root, \
+                 mock.patch.object(m.sys, "platform", "darwin"), mock.patch.object(m.os, "getuid", return_value=501), \
+                 mock.patch.object(m.os, "geteuid", return_value=501), mock.patch.object(m.engine, "run", side_effect=fake_run), \
+                 mock.patch.object(m, "run_queue") as queue:
+                result = m.probe(UDID, Path(root).resolve(strict=True) / "out", version)
+            self.assertEqual(len(captured), 1)
+            command, seconds, plist, source = captured[0]
+            self.assertIn("arm64-apple-ios" + version + "-simulator", command)
+            self.assertEqual(plist["MinimumOSVersion"], version)
+            self.assertEqual(source, m.SOURCE); self.assertEqual(seconds, 15)
+            self.assertFalse(result["available"]); self.assertEqual(result["reason"], "compile_failed")
+            queue.assert_not_called()
+
     def test_full_typed_positive_requires_advancing_time_and_complete_api_path(self):
         self.assertEqual(m.parse_native(native()), value())
         self.assertEqual(m.parse_native(b"authored prefix " + native()), value())
@@ -214,6 +256,8 @@ int main() {
         self.assertEqual(result["reason"], "completed"); self.assertFalse(result["available"])
         self.assertEqual(len(metadata), 1)
         plist, source = metadata[0]
+        self.assertEqual(plist["MinimumOSVersion"], "26.5")
+        self.assertEqual(source, m.SOURCE)
         self.assertEqual(plist["CFBundleIdentifier"], m.BUNDLE); self.assertNotEqual(m.BUNDLE, m.engine.BUNDLE)
         self.assertEqual(plist["CFBundleExecutable"], m.EXECUTABLE)
         scene = plist["UIApplicationSceneManifest"]["UISceneConfigurations"]["UIWindowSceneSessionRoleApplication"][0]

@@ -26,8 +26,8 @@ EXE = ("/Users/authored/Library/Developer/CoreSimulator/Devices/" + UDID
        + "/data/Containers/Bundle/Application/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/OwnedGameHost.app/OwnedGameHost")
 
 
-def device():
-    return {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-26-5": [dict(
+def device(version="26.5"):
+    return {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-" + version.replace(".", "-"): [dict(
         udid=UDID, state="Booted", isAvailable=True,
         deviceTypeIdentifier="com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max")]}}
 
@@ -56,6 +56,8 @@ class ParserTests(unittest.TestCase):
 
     def test_selected_device_requires_exact_runtime_type_udid_booted_and_unique(self):
         m.validate_device(json.dumps(device()), UDID)
+        for version in ("26.3", "26.4", "26.5"):
+            m.validate_device(json.dumps(device(version)), UDID, version)
         for key, replacement in (("udid", "other"), ("state", "Shutdown"), ("isAvailable", 1),
                                  ("deviceTypeIdentifier", "other")):
             broken = device(); next(iter(broken["devices"].values()))[0][key] = replacement
@@ -64,6 +66,51 @@ class ParserTests(unittest.TestCase):
         with self.assertRaises(ValueError): m.validate_device(json.dumps(broken), UDID)
         with self.assertRaises(ValueError):
             m.validate_device(json.dumps(device()).replace("iOS-26-5", "iOS-26-4"), UDID)
+
+    def test_version_cli_default_explicit_and_unknown_fail_before_probe(self):
+        for arguments, expected in (([], "26.5"), (["--simulator-version", "26.4"], "26.4")):
+            with mock.patch.object(m, "probe", return_value=dict(available=False)) as probe, \
+                 mock.patch.object(m.signal, "signal"), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(m.main(["--udid", UDID, "--output", "/authored/out", *arguments]), 2)
+            self.assertEqual(probe.call_args.args[2], expected)
+        for version in ("26.2", "26.6", "latest", "26.4.0", ""):
+            with mock.patch.object(m, "probe") as probe, contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as refused:
+                    m.main(["--udid", UDID, "--output", "/authored/out", "--simulator-version", version])
+            self.assertEqual(refused.exception.code, 2); probe.assert_not_called()
+            with mock.patch.object(m, "run") as run:
+                with self.assertRaises(ValueError): m.probe(UDID, Path("/authored/out"), version)
+            run.assert_not_called()
+
+    def test_explicit_versions_reach_compile_with_matching_target_plist_and_unchanged_native_source(self):
+        helps = {"launch": b"launch --console device bundle", "install": b"install device path",
+                 "list": b"list devices --json search", "terminate": b"terminate device bundle",
+                 "get_app_container": b"get_app_container device bundle app"}
+        for version in ("26.3", "26.4"):
+            captured = []
+            def fake_run(command, deadline, seconds, **kwargs):
+                if command[:3] == ["xcrun", "simctl", "help"]: raw = helps[command[3]]
+                elif command[:4] == ["xcrun", "simctl", "list", "devices"]: raw = json.dumps(device(version)).encode()
+                elif "--show-sdk-path" in command: raw = b"/authored/Simulator.sdk\n"
+                elif "clang++" in command:
+                    app = Path(command[command.index("-o") + 1]).parent
+                    source = Path(next(x for x in command if x.endswith(".mm"))).read_text()
+                    captured.append((command, seconds, plistlib.loads((app / "Info.plist").read_bytes()), source))
+                    return m.Result(1, "completed", b"authored compiler refusal")
+                else: raw = b""
+                return m.Result(0, "completed", raw)
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as root, \
+                 mock.patch.object(m.sys, "platform", "darwin"), mock.patch.object(m.os, "getuid", return_value=501), \
+                 mock.patch.object(m.os, "geteuid", return_value=501), mock.patch.object(m, "run", side_effect=fake_run), \
+                 mock.patch.object(m, "run_mode") as mode:
+                result = m.probe(UDID, Path(root).resolve(strict=True) / "out", version)
+            self.assertEqual(len(captured), 1)
+            command, seconds, plist, source = captured[0]
+            self.assertIn("arm64-apple-ios" + version + "-simulator", command)
+            self.assertEqual(plist["MinimumOSVersion"], version)
+            self.assertEqual(source, m.SOURCE); self.assertEqual(seconds, 15)
+            self.assertFalse(result["available"]); self.assertEqual(result["reason"], "compile_failed")
+            mode.assert_not_called()
 
     def test_help_requires_each_used_installed_option(self):
         cases = {"launch": "launch --console device bundle", "install": "install device path",
@@ -197,6 +244,8 @@ class ParserTests(unittest.TestCase):
         self.assertIn("-Werror", compile_call[0])
         self.assertEqual(len(compiled_metadata), 1)
         plist, source = compiled_metadata[0]
+        self.assertEqual(plist["MinimumOSVersion"], "26.5")
+        self.assertEqual(source, m.SOURCE)
         manifest = plist["UIApplicationSceneManifest"]
         self.assertIs(manifest["UIApplicationSupportsMultipleScenes"], False)
         self.assertEqual(set(manifest["UISceneConfigurations"]), {"UIWindowSceneSessionRoleApplication"})

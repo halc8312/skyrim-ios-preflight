@@ -40,12 +40,12 @@ enum DevicePreset: String, CaseIterable {
             mobileBudget: true, frameLimit: 0, outputScale: 75, filter: .bilinear, sharpness: 0)
         case .balanced: return .init(videoMode: .p720, internalScale: 1, mirrorMiB: 128,
             mobileBudget: true, frameLimit: 30, outputScale: 100, filter: .original, sharpness: 0)
-        case .quality: return .init(videoMode: .p720, internalScale: 1, mirrorMiB: 192,
-            mobileBudget: true, frameLimit: 30, outputScale: 100, filter: .bicubic, sharpness: 0)
-        case .ultra: return .init(videoMode: .p720, internalScale: 2, mirrorMiB: 256,
-            mobileBudget: true, frameLimit: 30, outputScale: 100, filter: .bicubic, sharpness: 0)
-        case .ultimate: return .init(videoMode: .p720, internalScale: 3, mirrorMiB: 256,
-            mobileBudget: true, frameLimit: 0, outputScale: 100, filter: .bicubic, sharpness: 0)
+        case .quality: return .init(videoMode: .p720, internalScale: 1, mirrorMiB: 128,
+            mobileBudget: false, frameLimit: 30, outputScale: 100, filter: .bicubic, sharpness: 0)
+        case .ultra: return .init(videoMode: .p720, internalScale: 2, mirrorMiB: 128,
+            mobileBudget: false, frameLimit: 30, outputScale: 100, filter: .bicubic, sharpness: 0)
+        case .ultimate: return .init(videoMode: .p720, internalScale: 3, mirrorMiB: 128,
+            mobileBudget: false, frameLimit: 0, outputScale: 100, filter: .bicubic, sharpness: 0)
         }
     }
 }
@@ -53,7 +53,7 @@ enum DevicePreset: String, CaseIterable {
 struct DeviceGraphicsSettings: Codable, Equatable {
     static let frameLimits: [UInt32] = [0, 15, 20, 24, 30, 40, 60, 90, 120]
     static let outputScales: [UInt32] = [25, 50, 75, 100, 125, 150, 200]
-    static let mirrorBudgets: [UInt32] = [0, 64, 128, 192, 256]
+    static let mirrorBudgets: [UInt32] = [0, 64, 128]
     var videoMode: DeviceVideoMode = .p720
     var internalScale: UInt32 = 1
     var mirrorMiB: UInt32 = 0
@@ -66,6 +66,7 @@ struct DeviceGraphicsSettings: Codable, Equatable {
         var v = self
         v.internalScale = min(max(v.internalScale, 1), 3)
         if v.videoMode == .p1080 { v.internalScale = min(v.internalScale, 2) }
+        if v.mirrorMiB == 192 || v.mirrorMiB == 256 { v.mirrorMiB = 128 }
         if !Self.mirrorBudgets.contains(v.mirrorMiB) { v.mirrorMiB = 0 }
         if !Self.frameLimits.contains(v.frameLimit) { v.frameLimit = 0 }
         if !Self.outputScales.contains(v.outputScale) { v.outputScale = 100 }
