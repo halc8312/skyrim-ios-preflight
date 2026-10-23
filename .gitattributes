@@ -9,6 +9,7 @@
 *.h text eol=lf
 *.toml text eol=lf
 Cargo.lock text eol=lf
+/ci/prepare-fix-build-route/reference-pins.json text eol=lf
 # Exact public lock fixture bytes are verified before the overlay build.
 /ci/gpu-framework/testdata/wgpu-native-6aed509.Cargo.lock text eol=lf
 # Preserve the frozen allowlisted public text bytes for the source SHA gate.
