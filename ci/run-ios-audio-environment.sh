@@ -31,7 +31,19 @@ def listing(kind):
     # environment-only cold start separate from every app/audio deadline.
     limit = 60 if kind == 'runtimes' else 10
     return json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', kind, '-j'], timeout=limit))[kind]
-selected = select_simulator(listing('runtimes'), listing('devicetypes'), version)
+runtimes = listing('runtimes')
+device_types = listing('devicetypes')
+# Runtime identifiers and OS versions are public environment metadata. Retain
+# them even when strict selection refuses; no device UDID or app data is read.
+inventory = dict(schema=1, requested_version=version, runtimes=[
+    {key: row.get(key) for key in ('identifier', 'version', 'isAvailable', 'buildversion')}
+    for row in runtimes if isinstance(row, dict)
+    and isinstance(row.get('identifier'), str)
+    and row['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')])
+with open(sys.argv[3].replace('simulator-selection.json', 'simulator-runtime-inventory.json'),
+          'x', encoding='ascii', newline='\n') as output:
+    output.write(json.dumps(inventory, sort_keys=True) + '\n')
+selected = select_simulator(runtimes, device_types, version)
 with open(sys.argv[3], 'x', encoding='ascii', newline='\n') as output:
     output.write(json.dumps(selected, sort_keys=True) + '\n')
 print(selected['runtime_identifier'])
