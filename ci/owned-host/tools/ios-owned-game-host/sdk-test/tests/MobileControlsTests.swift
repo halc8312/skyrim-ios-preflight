@@ -166,7 +166,15 @@ final class MobileControlsTests: XCTestCase {
     }
 
     @MainActor
-    func testRenderedOverlayDefaultAndLayoutEditing() throws {
+    func testRenderedOverlayDefaultAndLayoutEditing() async throws {
+        // A cold hosted test can start before UIKit connects its foreground scene.
+        // Yield MainActor so scene activation can complete; absence still fails below.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while clock.now < deadline && UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }) == nil {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
         let window = UIWindow(windowScene: scene)

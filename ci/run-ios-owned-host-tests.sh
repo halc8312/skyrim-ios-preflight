@@ -262,19 +262,34 @@ if python3 "$harness/ci/probe-macos-output.py" 2>&1 | tee "$output/public-macos-
 else
   printf '%s\n' 'PUBLIC_MACOS_OUTPUT_DRIVER_UNAVAILABLE {"schema":1,"diagnostic_only":true,"simulator_audio_verified":false}'
 fi
-python3 "$host/sdk-test/run_sdk_tests.py" --stage "$work/owned-app-simulator" \
+fullchain_failed=0
+if python3 "$host/sdk-test/run_sdk_tests.py" --stage "$work/owned-app-simulator" \
   --output "$output/xctest" --destination "platform=iOS Simulator,id=$device_id" \
-  2>&1 | tee "$output/owned-host-sdk-driver.log"
-python3 "$host/sdk-test/run_mobile_controls_tests.py" --stage "$work/owned-app-simulator" \
+  2>&1 | tee "$output/owned-host-sdk-driver.log"; then
+  :
+else
+  fullchain_failed=1
+fi
+mobile_failed=0
+if python3 "$host/sdk-test/run_mobile_controls_tests.py" --stage "$work/owned-app-simulator" \
   --built-output "$output/xctest" --output "$output/xctest-mobile" \
   --destination "platform=iOS Simulator,id=$device_id" \
-  2>&1 | tee "$output/mobile-controls-sdk-driver.log"
+  2>&1 | tee "$output/mobile-controls-sdk-driver.log"; then
+  :
+else
+  mobile_failed=1
+fi
 # A distinct bundle and DerivedData run the V2 process-once Kernel separately.
 # Any V2 refusal fails this pipeline. Existing V1/audio gates retain their
 # original stage, selectors, build products and assertions.
-python3 "$host/sdk-test/run_v2_sdk_tests.py" --stage "$work/owned-app-simulator-v2" \
+v2_failed=0
+if python3 "$host/sdk-test/run_v2_sdk_tests.py" --stage "$work/owned-app-simulator-v2" \
   --output "$output/xctest-v2" --destination "platform=iOS Simulator,id=$device_id" \
-  2>&1 | tee "$output/owned-host-v2-sdk-driver.log"
+  2>&1 | tee "$output/owned-host-v2-sdk-driver.log"; then
+  :
+else
+  v2_failed=1
+fi
 # Compare an independent public audio API after the Simulator has installed
 # and run the SDK apps. This optional diagnostic never replaces the six
 # mandatory production-engine cases below, even when the queue works.
@@ -309,6 +324,7 @@ while time.monotonic() < deadline:
 print('PUBLIC_AUDIO_WATCH_READY ' + json.dumps(dict(schema=1, ready=available,
     sdk_assertions_unchanged=True)))
 PY
+features_failed=0
 if python3 "$host/sdk-test/run_device_features_tests.py" --stage "$work/owned-app-simulator" \
   --built-output "$output/xctest" --output "$output/xctest-device-features" \
   --destination "platform=iOS Simulator,id=$device_id" \
@@ -343,6 +359,11 @@ for stream in ('stdout', 'stderr'):
         input_truncated=len(raw) > 8 * 1024 * 1024, numeric_phases=phases[:128],
         first_assertions=assertions[:8], rpc_lines=rpc[:8])))
 PY
+  features_failed=1
+fi
+printf 'PUBLIC_OWNED_HOST_SDK_GATES {"v1_failed":%s,"mobile_failed":%s,"v2_failed":%s,"features_failed":%s}\n' \
+  "$fullchain_failed" "$mobile_failed" "$v2_failed" "$features_failed"
+if [[ "$fullchain_failed" -ne 0 || "$mobile_failed" -ne 0 || "$v2_failed" -ne 0 || "$features_failed" -ne 0 ]]; then
   exit 1
 fi
 printf '%s\n' 'Public owned-host V1/V2 fullchains passed; game, private framework and physical iPhone remain untested.'

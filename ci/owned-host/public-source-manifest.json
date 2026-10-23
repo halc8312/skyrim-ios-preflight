@@ -910,8 +910,8 @@
       "sha256": "7b7e4fa87e99748f506b7dc937d7e93364d80d1e336c99fc933bcd94ff6914ca"
     },
     "tools/ios-owned-game-host/sdk-test/tests/MobileControlsTests.swift": {
-      "bytes": 12956,
-      "sha256": "52febcb0cb44fdb0fe0feb1ac2bb6b4c6372859edc21a694d043cecddee12b04"
+      "bytes": 13490,
+      "sha256": "e2e9fd8c76ee81923e56f7e4b8df0a9a25899723a094ed83e51e250e2b489c72"
     },
     "tools/ios-owned-game-host/sdk-test/tests/NativeTraceSDKProbeTests.swift": {
       "bytes": 2885,
