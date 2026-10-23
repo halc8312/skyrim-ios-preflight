@@ -581,3 +581,4 @@
 !/ci/owned-host/tools/windows-ios-guest-probe/owned-guest-abi/private_layout_v2.cpp
 !/ci/owned-host/tools/windows-ios-guest-probe/owned-guest-abi/mmio_overlay.py
 !/ci/owned-host/tools/windows-ios-guest-probe/audit_private_guest_symbols.py
+!/ci/owned-host/tools/ios-owned-game-host/src/root_tests.rs

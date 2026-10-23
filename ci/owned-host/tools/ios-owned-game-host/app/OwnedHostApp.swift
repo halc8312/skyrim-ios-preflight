@@ -283,7 +283,18 @@ final class OwnedSession: ObservableObject {
                     }
                 }
                 guard prepared == 0, generatedToken != 0 else {
-                    Task { @MainActor in self?.stop("準備に失敗しました（\(prepared)）") }; return
+                    // Token zero is explicitly supported for status reads.
+                    // Expose only the validated numeric preparation stage.
+                    var detail = OHStatusV1()
+                    let readable = OHReadStatusV1(0, &detail, MemoryLayout<OHStatusV1>.size)
+                    let message: String
+                    if readable == 0, detail.version == 0x0001_0000,
+                       detail.bytes == 96, detail.state == 6, (101...110).contains(detail.failure) {
+                        message = "準備の段階 \(detail.failure - 100) で失敗しました（コード \(detail.failure)・\(prepared)）"
+                    } else {
+                        message = "準備に失敗しました（\(prepared)）"
+                    }
+                    Task { @MainActor in self?.stop(message) }; return
                 }
                 let preparedToken = generatedToken
                 Task { @MainActor in self?.token = preparedToken; self?.status = "Metal描画を準備しています" }

@@ -685,6 +685,14 @@ pub unsafe extern "C" fn OHPrepareV1(
             Ordering::Release,
         );
         STATE.fail();
+        // Preparation can fail before a usable token exists. Retain its numeric
+        // stage in the already admitted fresh run directory without delaying
+        // the error returned to Swift. No guest execution is started here.
+        if CONTENT.get().is_some() {
+            let _ = std::thread::Builder::new()
+                .name("owned-prepare-evidence".into())
+                .spawn(|| { let _ = snapshot("first-failure.json"); });
+        }
     }
     code
 }

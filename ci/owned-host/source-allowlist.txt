@@ -248,6 +248,7 @@ tools/ios-owned-game-host/src/public_fixture.rs
 tools/ios-owned-game-host/src/public_v2_probe.rs
 tools/ios-owned-game-host/src/renderer.rs
 tools/ios-owned-game-host/src/renderer_policy.rs
+tools/ios-owned-game-host/src/root_tests.rs
 tools/ios-owned-game-host/src/runtime.rs
 tools/ios-owned-game-host/src/save_store.rs
 tools/ios-owned-game-host/src/xex_envelope.rs

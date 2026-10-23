@@ -155,6 +155,38 @@ mod imp {
     fn metadata(file: &File) -> SaveResult<Metadata> {
         file.metadata().map_err(|_| "save metadata unavailable")
     }
+    // Read-open only the requested root. Kernel pathname resolution still rejects
+    // symlinks in every component, including a swap after canonicalization.
+    // Ancestors need search permission, not directory-list/read permission.
+    #[cfg(any(target_os = "ios", target_os = "macos", target_os = "linux"))]
+    fn root_file_no_symlinks(path: &Path) -> SaveResult<File> {
+        let path = CString::new(path.to_str().ok_or("save path is not UTF-8")?)
+            .map_err(|_| "save path component refused")?;
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        let fd = unsafe {
+            libc::open(
+                path.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW_ANY,
+            )
+        };
+        #[cfg(target_os = "linux")]
+        let fd = unsafe {
+            let mut how: libc::open_how = std::mem::zeroed();
+            how.flags = (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
+            how.resolve = libc::RESOLVE_NO_SYMLINKS;
+            libc::syscall(
+                libc::SYS_openat2,
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                &how,
+                std::mem::size_of::<libc::open_how>(),
+            ) as libc::c_int
+        };
+        // Unsupported kernel flags/syscalls fail closed; never retry with a
+        // final-component-only O_NOFOLLOW open.
+        raw_file(fd)
+    }
+
     impl Dir {
         fn absolute(path: &Path) -> SaveResult<Self> {
             if !path.is_absolute()
@@ -165,21 +197,36 @@ mod imp {
             {
                 return Err("canonical absolute save root required");
             }
-            let mut dir = Self {
-                file: raw_file(unsafe {
-                    libc::open(
-                        c"/".as_ptr(),
-                        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
-                    )
-                })?,
-                path: PathBuf::from("/"),
-            };
-            for c in path.components() {
-                if let Component::Normal(c) = c {
-                    dir = dir.child(c.to_str().ok_or("save path is not UTF-8")?)?;
+            #[cfg(any(target_os = "ios", target_os = "macos", target_os = "linux"))]
+            {
+                for c in path.components() {
+                    if let Component::Normal(c) = c {
+                        component(c.to_str().ok_or("save path is not UTF-8")?)?;
+                    }
                 }
+                Ok(Self {
+                    file: root_file_no_symlinks(path)?,
+                    path: path.to_owned(),
+                })
             }
-            Ok(dir)
+            #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "linux")))]
+            {
+                let mut dir = Self {
+                    file: raw_file(unsafe {
+                        libc::open(
+                            c"/".as_ptr(),
+                            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                        )
+                    })?,
+                    path: PathBuf::from("/"),
+                };
+                for c in path.components() {
+                    if let Component::Normal(c) = c {
+                        dir = dir.child(c.to_str().ok_or("save path is not UTF-8")?)?;
+                    }
+                }
+                Ok(dir)
+            }
         }
         fn child(&self, name: &str) -> SaveResult<Self> {
             let n = component(name)?;
@@ -1125,6 +1172,9 @@ mod imp {
             _lease: lease,
         })
     }
+    #[cfg(all(test, any(target_os = "ios", target_os = "macos", target_os = "linux")))]
+    include!("root_tests.rs");
+
     #[cfg(test)]
     mod tests {
         use super::*;
