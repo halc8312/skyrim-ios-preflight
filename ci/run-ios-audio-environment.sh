@@ -15,8 +15,10 @@ selection="$(python3 - <<'PY'
 import json, subprocess
 def listing(kind):
     # This short workflow reaches CoreSimulator before Xcode has warmed it.
-    # Bound cold-service discovery separately from the app/audio deadlines.
-    return json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', kind, '-j'], timeout=30))[kind]
+    # A fresh CI service exceeded 30s before any app install. Keep this
+    # environment-only cold start separate from every app/audio deadline.
+    limit = 60 if kind == 'runtimes' else 10
+    return json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', kind, '-j'], timeout=limit))[kind]
 runtime = next((r for r in listing('runtimes') if r.get('isAvailable') and r.get('version') == '26.5'
                 and r.get('identifier', '').startswith('com.apple.CoreSimulator.SimRuntime.iOS-')), None)
 device = next((d for d in listing('devicetypes') if d['name'] == 'iPhone 17 Pro Max'), None)
