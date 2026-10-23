@@ -858,8 +858,8 @@
       "sha256": "5e5976a5d41950aaf1dac5d89c9d7f0d54539e5293dccf30ca94bfab50fbfc51"
     },
     "tools/ios-owned-game-host/sdk-test/native/PublicOwnedFixtureV2.cpp": {
-      "bytes": 3567,
-      "sha256": "bc029e9ce2fda584a232428fdbd2ff017a72d6e6b474df4d4606e62a434eded7"
+      "bytes": 3686,
+      "sha256": "260d96e9d5a289b8c5fab394f4591681e49ebe6cdab675c49533e66cb9715a08"
     },
     "tools/ios-owned-game-host/sdk-test/native/PublicV2SDKProbe.h": {
       "bytes": 721,
@@ -882,8 +882,8 @@
       "sha256": "a0be403dc52cc61f93b27a2d1d419de98bb6494313f619789c127f67aa597ed0"
     },
     "tools/ios-owned-game-host/sdk-test/run_v2_sdk_tests.py": {
-      "bytes": 9316,
-      "sha256": "7cb88ed600450224739b0a76b3dc2f18e3395544ceaff994670ee1ea620961da"
+      "bytes": 10694,
+      "sha256": "6ca8264f1a80fdb2135c0b8bb0168e5f678732fc46844e6b7e7c9062c83d8740"
     },
     "tools/ios-owned-game-host/sdk-test/test_run_device_features_tests.py": {
       "bytes": 12701,
@@ -898,8 +898,8 @@
       "sha256": "a71f96f948aa7fb13d7cc8a0c05b952eedc3dd083b11bbeca4fce7884bb15f66"
     },
     "tools/ios-owned-game-host/sdk-test/test_v2_sdk_fixture.py": {
-      "bytes": 16788,
-      "sha256": "b5dc6ab14eeb56500ab12d3eac5c0fa8a3e8a95ac883420e86ab6153feb81459"
+      "bytes": 23551,
+      "sha256": "a4e2a6339d58b6e41d76bbb0ac76627841d1ec9f00ecc69c07415a0a7f44dbd5"
     },
     "tools/ios-owned-game-host/sdk-test/tests/DeviceSettingsTests.swift": {
       "bytes": 11433,
@@ -926,8 +926,8 @@
       "sha256": "4d570c008b6a235d1dbab2f19260236b01073b6aad4e5945c683bc3a65cfbc75"
     },
     "tools/ios-owned-game-host/sdk-test/tests/OwnedHostV2FullChainTests.swift": {
-      "bytes": 15627,
-      "sha256": "1223eb4dd66a7a14296cd7f0c12a0c9b6a606b94c0ff2d5e03c614d0829fb33a"
+      "bytes": 16303,
+      "sha256": "5136ff37de9aa3624612dfdf1354ad3bcc6a752e58d484342609f7055c03a934"
     },
     "tools/ios-owned-game-host/src/abi_v2.rs": {
       "bytes": 4447,

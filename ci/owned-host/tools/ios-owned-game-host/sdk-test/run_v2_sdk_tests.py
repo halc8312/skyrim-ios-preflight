@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import stat
 import sys
 import time
 
@@ -78,6 +79,37 @@ def make_test_command(common, signing, result):
                      "-only-testing:OwnedGameHostTests/OwnedHostV2FullChainTests/" + TEST,
                      *signing, "test-without-building"]
 
+def export_xcresult_command(run, output, result, command):
+    run(["xcrun", "xcresulttool", "help", "get", "test-results", command], "xcresult-" + command + "-help", 15)
+    run(["xcrun", "xcresulttool", "get", "test-results", command, "--path", str(result)], "xcresult-" + command, 15)
+    raw = mobile.read_command_log(output / ("xcresult-" + command + ".stdout.log"), 2_000_000)
+    with (output / ("xcresult-" + command + ".json")).open("xb") as stream:
+        stream.write(raw)
+    return sdk.strict_json(raw)
+
+
+def collect_failed_xcresult(run, output, result, deadline):
+    """Diagnostics only. The caller always rethrows the original test failure."""
+    try:
+        real_bundle = stat.S_ISDIR(result.lstat().st_mode)
+    except OSError:
+        real_bundle = False
+    if not real_bundle:
+        print("PUBLIC_V2_XCRESULT_DIAGNOSTIC " + json.dumps(dict(reason="missing_real_bundle")))
+        return
+    for command in ("summary", "tests"):
+        if time.monotonic() >= deadline:
+            print("PUBLIC_V2_XCRESULT_DIAGNOSTIC " + json.dumps(dict(reason="deadline_exhausted")))
+            return
+        try:
+            export_xcresult_command(run, output, result, command)
+        except Exception as error:
+            print("PUBLIC_V2_XCRESULT_DIAGNOSTIC " + json.dumps(dict(
+                command=command, exported=False, error_type=type(error).__name__)))
+        else:
+            print("PUBLIC_V2_XCRESULT_DIAGNOSTIC " + json.dumps(dict(command=command, exported=True)))
+
+
 def validate_stage(stage):
     project = mobile.read_command_log(stage / "project.yml", 128_000).decode("utf-8").replace("\r\n", "\n")
     if (project.count("PRODUCT_BUNDLE_IDENTIFIER: " + BUNDLE + "\n") != 1
@@ -136,13 +168,16 @@ def main(argv=None):
     if plistlib.loads(mobile.read_command_log(app / "Info.plist", 128_000)).get("CFBundleIdentifier") != BUNDLE:
         raise ValueError("built app is not the separate V2 bundle")
     result = output / "OwnedGameHostV2.xcresult"
-    run(make_test_command(common, signing, result), "xcodebuild", result=result)
+    try:
+        run(make_test_command(common, signing, result), "xcodebuild", result=result)
+    except RuntimeError:
+        try:
+            collect_failed_xcresult(run, output, result, deadline)
+        except Exception:
+            pass  # A diagnostic error must never replace the original failure.
+        raise
     for command in ("summary", "tests"):
-        run(["xcrun", "xcresulttool", "help", "get", "test-results", command], "xcresult-" + command + "-help", 15)
-        run(["xcrun", "xcresulttool", "get", "test-results", command, "--path", str(result)], "xcresult-" + command, 15)
-        raw = mobile.read_command_log(output / ("xcresult-" + command + ".stdout.log"), 2_000_000)
-        (output / ("xcresult-" + command + ".json")).write_bytes(raw)
-        parsed = sdk.strict_json(raw)
+        parsed = export_xcresult_command(run, output, result, command)
         if command == "summary":
             validate_summary(parsed)
     report = validate_result(mobile.read_command_log(output / "xcodebuild.stdout.log", 32_000_000).decode(), hashes)

@@ -1,5 +1,6 @@
 #if PUBLIC_V2_SDK_FIXTURE
 import CryptoKit
+import Darwin
 import Foundation
 import Metal
 import QuartzCore
@@ -20,6 +21,12 @@ private func v2OnWorker<T>(_ operation: @escaping () -> T) async -> T {
             continuation.resume(returning: operation())
         }
     }
+}
+
+// Fixed phase boundaries only; they never substitute for the verified proof.
+private func v2Stage(_ stage: UInt32) {
+    print("OWNED_HOST_PUBLIC_V2_STAGE \(stage)")
+    fflush(stdout)
 }
 
 // The public SDK fixture records the actual Objective-C layer setters invoked
@@ -141,6 +148,7 @@ final class OwnedHostV2FullChainTests: XCTestCase {
 
         let gameBytes = Array(game.path.utf8)
         let contentBytes = Array(content.path.utf8)
+        v2Stage(10) // Preparation entered.
         let prepared = await v2OnWorker { () -> (Int32, UInt64) in
             var token: UInt64 = 0
             let status = gameBytes.withUnsafeBufferPointer { gamePointer in
@@ -151,6 +159,7 @@ final class OwnedHostV2FullChainTests: XCTestCase {
             }
             return (status, token)
         }
+        v2Stage(11) // Preparation returned.
         XCTAssertEqual(prepared.0, 0)
         XCTAssertNotEqual(prepared.1, 0)
         guard prepared.0 == 0, prepared.1 != 0 else { return }
@@ -186,9 +195,11 @@ final class OwnedHostV2FullChainTests: XCTestCase {
         XCTAssertEqual(mainRefused, -9)
         guard mainRefused == -9 else { return }
         V2ThreadCheckedMetalLayer.audit.reset()
+        v2Stage(20) // Renderer attachment entered.
         let attached = await v2OnWorker {
             OHAttachMetalLayerV1(token, UnsafeMutableRawPointer(bitPattern: address), 1280, 720)
         }
+        v2Stage(21) // Renderer attachment returned.
         XCTAssertEqual(attached, 0)
         guard attached == 0 else { return }
         let layerAudit = V2ThreadCheckedMetalLayer.audit.snapshot()
@@ -204,15 +215,19 @@ final class OwnedHostV2FullChainTests: XCTestCase {
         XCTAssertEqual(renderer.gpu_errors, 0)
         guard renderer.attachment == 2, renderer.initialized == 1,
               renderer.failed == 0, renderer.gpu_errors == 0 else { return }
+        v2Stage(30) // Guest entry requested.
         let started = await v2OnWorker { OHStartV1(token, 30) }
+        v2Stage(31) // Guest entry request returned.
         XCTAssertEqual(started, 0)
         guard started == 0 else { return }
+        v2Stage(40) // Exit wait entered.
         let deadline = ProcessInfo.processInfo.systemUptime + 3
         repeat {
             XCTAssertEqual(OHReadStatusV1(token, &status, MemoryLayout<OHStatusV1>.size), 0)
             if status.state == 5 || status.state == 6 { break }
             try await Task.sleep(nanoseconds: 20_000_000)
         } while ProcessInfo.processInfo.systemUptime < deadline
+        v2Stage(41) // Exit wait returned.
         XCTAssertEqual(status.state, 5)
         XCTAssertEqual(status.policy, 0)
         XCTAssertEqual(status.failure, 0)
@@ -238,6 +253,7 @@ final class OwnedHostV2FullChainTests: XCTestCase {
               status.function_count == 3, status.ready_to_play == 0,
               status.signature_authenticated == 0, status.iphone_game_verified == 0,
               renderer.initialized == 1, renderer.failed == 0, renderer.gpu_errors == 0 else { return }
+        v2Stage(50) // Fixed readback entered.
         XCTAssertEqual(MemoryLayout<OHPublicV2ProofV1>.size, 64)
         // Fixed readback refuses bad sizes/tokens before changing any output.
         var refused = OHPublicV2ProofV1()
@@ -251,6 +267,7 @@ final class OwnedHostV2FullChainTests: XCTestCase {
             let code = OHReadPublicV2ProofV1(token, &proof, 64)
             return (code, proof)
         }
+        v2Stage(51) // Fixed readback returned.
         XCTAssertEqual(checked.0, 0)
         let p = checked.1
         let observed: [String: UInt32] = [

@@ -55,8 +55,9 @@ extern "C" void skyrt_call_func(uint32_t address,PPCContext &context,uint8_t *ba
     // These are actual header callbacks. CURRENT changes the independent NEXT
     // register, which ordinary backing reads cannot reproduce. LOCK is read
     // back separately from the Kernel's command state by the Rust SDK probe.
-    if(__builtin_bswap32(PPC_LOAD_U32(CURRENT))!=0u ||
-       __builtin_bswap32(PPC_LOAD_U32(NEXT))!=1u)__builtin_trap();
+    const uint32_t next_before=__builtin_bswap32(PPC_LOAD_U32(NEXT));
+    if(next_before>=320u || __builtin_bswap32(PPC_LOAD_U32(CURRENT))!=next_before ||
+       __builtin_bswap32(PPC_LOAD_U32(NEXT))!=(next_before+1u)%320u)__builtin_trap();
     PPC_STORE_U32(LOCK,__builtin_bswap32(0x80000001u));
     if(__builtin_bswap32(PPC_LOAD_U32(LOCK))!=0x80000001u)__builtin_trap();
     PPC_STORE_U32(MMIO_RESULT,1u);

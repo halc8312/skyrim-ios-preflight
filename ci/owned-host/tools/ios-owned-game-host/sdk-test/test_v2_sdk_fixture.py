@@ -1,9 +1,13 @@
 """Authored parser/staging/refusal controls. No Apple tools or game inputs."""
 import copy
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
+import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -65,6 +69,20 @@ class V2FixtureTests(unittest.TestCase):
                     text.replace('"provider_refusals": 10', '"provider_refusals": 10, "provider_refusals": 10')):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 d.validate_result(bad, hashes)
+
+    def test_fixed_numeric_stage_diagnostics_never_replace_success_evidence(self):
+        hashes, report = self.report()
+        stages = (10, 11, 20, 21, 30, 31, 40, 41, 50, 51)
+        markers = "".join("OWNED_HOST_PUBLIC_V2_STAGE " + str(stage) + "\n" for stage in stages)
+        self.assertEqual(d.validate_result(markers + self.console(report), hashes), report)
+        for console in (markers, markers + self.console(report).replace("passed (", "failed ("),
+                        markers + self.console(report).replace(d.PREFIX, "MISSING ")):
+            with self.assertRaises(ValueError): d.validate_result(console, hashes)
+        swift = (HERE / "tests/OwnedHostV2FullChainTests.swift").read_text()
+        self.assertEqual([int(value) for value in re.findall(r"v2Stage\((\d+)\)", swift)], list(stages))
+        self.assertIn('print("OWNED_HOST_PUBLIC_V2_STAGE \\(stage)")\n    fflush(stdout)', swift)
+        self.assertIn("watchdog.schedule(deadline: .now() + 35)", swift)
+        self.assertIn("executionTimeAllowance = 40", swift)
 
     def test_independent_summary_has_one_pass_no_skips_and_strict_ints(self):
         summary = dict(totalTestCount=1, passedTests=1, failedTests=0, skippedTests=0, expectedFailures=0)
@@ -261,6 +279,89 @@ class V2FixtureTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertFalse(any("test-without-building" in c for c in calls))
             self.assertFalse((root / "evidence/public-v2-fullchain-result.json").exists())
+
+    def failed_test_run(self, bundle="directory", broken_summary=False, expired=False):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name).resolve(strict=True)
+        base, fixture, resources = self.stage_inputs(root)
+        stage = s.prepare(base, fixture, resources, root / "v2")
+        output = root / "evidence"
+        original = RuntimeError("authored xcodebuild failure remains authoritative")
+        calls = []
+        hashes, result = self.report()
+        failed_summary = dict(totalTestCount=1, passedTests=0, failedTests=1,
+                              skippedTests=0, expectedFailures=0)
+        exported_tests = {"testNodes": [{"nodeIdentifier": d.CASE, "result": "Failed"}]}
+
+        def command(command, cwd, prefix, deadline, message, **kwargs):
+            calls.append((command, deadline, kwargs))
+            if "build-for-testing" in command:
+                app = output / "DerivedData/Build/Products/Debug-iphonesimulator/OwnedGameHost.app"
+                (app / "PublicFixture").mkdir(parents=True)
+                shutil.copytree(stage / "Frameworks", app / "Frameworks")
+                shutil.copy2(stage / "Resources/OwnedGuestBinding.json", app / "OwnedGuestBinding.json")
+                shutil.copy2(stage / "Resources/PublicFixture/default.xex", app / "PublicFixture/default.xex")
+                (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": d.BUNDLE}))
+            if "otool" in command:
+                prefix.with_suffix(".stdout.log").write_text(
+                    "host:\n\t@rpath/WgpuNative.framework/WgpuNative (compatibility version 1.0.0)\n")
+            if "test-without-building" in command:
+                path = kwargs["result"]
+                if bundle == "directory": path.mkdir()
+                if bundle == "file": path.write_bytes(b"authored non-bundle marker")
+                # Even a complete success-looking console must not override a
+                # nonzero test command or synthesize an aggregate result.
+                prefix.with_suffix(".stdout.log").write_text(self.console(result))
+                raise original
+            if "xcresulttool" in command and "help" not in command:
+                if command[4] == "summary" and broken_summary:
+                    raise RuntimeError("authored diagnostic export failure")
+                value = failed_summary if command[4] == "summary" else exported_tests
+                prefix.with_suffix(".stdout.log").write_text(json.dumps(value))
+            return 0
+
+        console = io.StringIO()
+        clock = mock.patch.object(d.time, "monotonic", side_effect=[0, 301]) if expired else contextlib.nullcontext()
+        with mock.patch.object(d.sys, "platform", "darwin"), \
+             mock.patch.object(d.mobile, "run_command", side_effect=command), \
+             mock.patch.object(d, "validate_summary") as summary_gate, \
+             mock.patch.object(d, "validate_result") as result_gate, clock, contextlib.redirect_stdout(console):
+            with self.assertRaises(RuntimeError) as raised:
+                d.main(["--stage", str(stage), "--output", str(output), "--destination",
+                        "platform=iOS Simulator,id=12345678-1234-1234-1234-123456789abc"])
+            self.assertIs(raised.exception, original)
+            summary_gate.assert_not_called(); result_gate.assert_not_called()
+        self.assertFalse((output / "public-v2-fullchain-result.json").exists())
+        self.assertNotIn("public_owned_host_v2_fullchain_passed", console.getvalue())
+        self.assertEqual(len({deadline for _, deadline, _ in calls}), 1)
+        return output, calls, failed_summary, exported_tests
+
+    def test_failed_test_preserves_original_error_and_exports_actual_failed_bundle_data(self):
+        output, calls, summary, tests = self.failed_test_run()
+        self.assertEqual(json.loads((output / "xcresult-summary.json").read_bytes()), summary)
+        self.assertEqual(json.loads((output / "xcresult-tests.json").read_bytes()), tests)
+        exports = [(command, kwargs) for command, _, kwargs in calls if "xcresulttool" in command]
+        self.assertEqual([command[2:] for command, _ in exports], [
+            ["help", "get", "test-results", "summary"],
+            ["get", "test-results", "summary", "--path", str(output / "OwnedGameHostV2.xcresult")],
+            ["help", "get", "test-results", "tests"],
+            ["get", "test-results", "tests", "--path", str(output / "OwnedGameHostV2.xcresult")]])
+        self.assertTrue(all(kwargs["cap"] == 15 for _, kwargs in exports))
+
+    def test_failed_diagnostic_export_still_attempts_tests_and_preserves_original_error(self):
+        output, calls, _, tests = self.failed_test_run(broken_summary=True)
+        self.assertFalse((output / "xcresult-summary.json").exists())
+        self.assertEqual(json.loads((output / "xcresult-tests.json").read_bytes()), tests)
+        self.assertTrue(any(command[2:5] == ["get", "test-results", "tests"] for command, _, _ in calls))
+
+    def test_missing_nonbundle_or_expired_result_never_launches_diagnostic_commands(self):
+        for bundle, expired in (("missing", False), ("file", False), ("directory", True)):
+            with self.subTest(bundle=bundle, expired=expired):
+                output, calls, _, _ = self.failed_test_run(bundle=bundle, expired=expired)
+                self.assertFalse(any("xcresulttool" in command for command, _, _ in calls))
+                self.assertFalse((output / "xcresult-summary.json").exists())
+                self.assertFalse((output / "xcresult-tests.json").exists())
 
 if __name__ == "__main__":
     unittest.main()
