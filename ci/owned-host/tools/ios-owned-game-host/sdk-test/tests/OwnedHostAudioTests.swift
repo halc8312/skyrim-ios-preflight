@@ -47,7 +47,8 @@ final class OwnedHostAudioTests: XCTestCase {
     }
 
     private func beginInterruption() async {
-        await audioWorker {
+        // Model Apple's documented main-thread delivery of interruption notifications.
+        await MainActor.run {
             NotificationCenter.default.post(name: AVAudioSession.interruptionNotification,
                 object: AVAudioSession.sharedInstance(),
                 userInfo: [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue])
@@ -55,7 +56,8 @@ final class OwnedHostAudioTests: XCTestCase {
     }
 
     private func endInterruption(resume: Bool) async {
-        await audioWorker {
+        // Keep the same delivery model for the corresponding ended notification.
+        await MainActor.run {
             NotificationCenter.default.post(name: AVAudioSession.interruptionNotification,
                 object: AVAudioSession.sharedInstance(), userInfo: [
                     AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.ended.rawValue,

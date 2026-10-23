@@ -154,12 +154,28 @@ device_id="$(xcrun simctl create 'Owned Host Public SDK Probe' "$device_type" "$
 audio_watch_pid=
 finish_audio_watch() {
   if [[ -n "$audio_watch_pid" ]]; then
-    # Only our optional Python observer receives this signal. Its owned sample
-    # child is bounded/reaped by the helper; the tested app is never signalled.
-    # Bash may already have reaped a finished watcher. Check the live job list
-    # immediately before TERM rather than signalling a long-stale saved PID.
+    # Ask the optional observer to stop waiting for new work, but let an already
+    # admitted capture finish. The SDK's own assertions and 5s native timeout
+    # are unchanged. Only our Bash child is signalled; never the tested app.
+    # Recheck the live job list before every signal: Bash may have reaped it.
+    if jobs -pr | grep -Fx -- "$audio_watch_pid" >/dev/null; then
+      kill -USR1 "$audio_watch_pid" >/dev/null 2>&1 || true
+      local audio_watch_grace_end=$((SECONDS + 18))
+      while [[ "$SECONDS" -lt "$audio_watch_grace_end" ]] && \
+          jobs -pr | grep -Fx -- "$audio_watch_pid" >/dev/null; do
+        sleep 0.1
+      done
+    fi
     if jobs -pr | grep -Fx -- "$audio_watch_pid" >/dev/null; then
       kill -TERM "$audio_watch_pid" >/dev/null 2>&1 || true
+      local audio_watch_term_end=$((SECONDS + 2))
+      while [[ "$SECONDS" -lt "$audio_watch_term_end" ]] && \
+          jobs -pr | grep -Fx -- "$audio_watch_pid" >/dev/null; do
+        sleep 0.1
+      done
+    fi
+    if jobs -pr | grep -Fx -- "$audio_watch_pid" >/dev/null; then
+      kill -KILL "$audio_watch_pid" >/dev/null 2>&1 || true
     fi
     wait "$audio_watch_pid" || true
     audio_watch_pid=

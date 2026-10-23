@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -23,10 +24,26 @@ EXE = ("/Users/public/Library/Developer/CoreSimulator/Devices/" + UDID
        + "/data/Containers/Bundle/Application/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE/OwnedGameHost.app/OwnedGameHost")
 ROW = f" 1234 501 501 Fri Oct 23 12:34:56 2026 {EXE}\n".encode()
 # Authored syntax excerpt, deliberately not evidence of an installed Apple tool.
-MAN = b"sample(1) sample pid [duration [samplingInterval]] [-file filename]\nDuration in seconds; sampling rate in milliseconds."
+MAN = (b"sample(1) sample pid [duration [samplingInterval]] [-file filename] [-mayDie]\n"
+       b"Duration in seconds; sampling rate in milliseconds. -mayDie collects symbol information early.")
+
+
+def authored_report():
+    return (f"Process: OwnedGameHost [1234]\nPath: {EXE}\nUser ID: 501\nCall graph:\n"
+            "  99 Thread_123  DispatchQueue_1: authored.queue\n"
+            "  + 99 -[AVAudioEngine outputNode]  (in AVFAudio) + 42 [0x123abc]\n"
+            "  +   99 mach_msg_trap  (in libsystem_kernel.dylib) + 8 [0x123abc]\n"
+            "  +     99 __DISPATCH_WAIT_FOR_QUEUE__  (in libdispatch.dylib) + 1 [0x123abc]\n"
+            "Binary Images:\nAVAudioOutputNode\n").encode()
 
 
 class ParserTests(unittest.TestCase):
+    def setUp(self):
+        m.STOP = m.FINISH_REQUESTED = False
+
+    def tearDown(self):
+        m.STOP = m.FINISH_REQUESTED = False
+
     def test_exact_process_identity_accepts_only_selected_user_app_and_device(self):
         expected = m.Identity(1234, 501, "Fri Oct 23 12:34:56 2026", EXE)
         self.assertEqual(m.parse_identity(ROW, 1234, 501, UDID), expected)
@@ -57,7 +74,8 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(m.sample_manual_valid(MAN.replace(b"sample(1)", b"s\bsample(1)")))
         for old, new in ((b"seconds", b"ticks"), (b"milliseconds", b"ticks"),
                          (b"[duration [samplingInterval]]", b"[samplingInterval [duration]]"),
-                         (b"-file", b"-other"), (b"filename", b"unknown")):
+                         (b"-file", b"-other"), (b"filename", b"unknown"),
+                         (b"-mayDie", b"-mayDieLater"), (b"symbol", b"unknown")):
             self.assertFalse(m.sample_manual_valid(MAN.replace(old, new)))
 
     def test_phase_delay_advance_and_repeated_generation(self):
@@ -122,22 +140,134 @@ class ParserTests(unittest.TestCase):
     def test_sample_uses_one_exact_numeric_pid_and_fixed_duration(self):
         target = m.Identity(1234, 501, "date", EXE)
         self.assertEqual(m.sample_command(target, Path("/authored/sample.txt")),
-                         ["/usr/bin/sample", "1234", "1", "10", "-file", "/authored/sample.txt"])
+                         ["/usr/bin/sample", "1234", "1", "10", "-mayDie", "-file", "/authored/sample.txt"])
 
     def test_sample_report_identity_and_fixed_symbol_summary(self):
         target = m.Identity(1234, 501, "date", EXE)
-        raw = (f"Process: OwnedGameHost [1234]\nPath: {EXE}\nCall graph:\n"
-               "  -[AVAudioEngine outputNode]\n  mach_msg_trap\n  __DISPATCH_WAIT_FOR_QUEUE__\n"
-               "Binary Images:\nAVAudioOutputNode\n").encode()
+        raw = authored_report()
         summary = m.summarize_sample(raw, target)
         self.assertEqual(summary["output_node_stack_lines"], 1)
         self.assertEqual(summary["mach_message_wait_stack_lines"], 1)
         self.assertEqual(summary["dispatch_wait_stack_lines"], 1)
-        self.assertEqual(set(summary), {name + "_stack_lines" for name in m.SYMBOLS})
+        self.assertEqual(summary["selected_stack_line_count"], 3)
+        self.assertIn("thread=1 depth=4 samples=99 -[AVAudioEngine outputNode] (in AVFAudio)",
+                      summary["selected_stack_lines"])
+        excerpt = "\n".join(summary["selected_stack_lines"])
+        for forbidden in ("0x123abc", EXE, "Thread_123", "authored.queue", "+ 42"):
+            self.assertNotIn(forbidden, excerpt)
         for bad in (raw.replace(b"[1234]", b"[1235]"), raw.replace(UDID.encode(), b"other"),
-                    raw.replace(b"Call graph:", b"Other:"), b"x" * (m.SAMPLE_LIMIT + 1)):
+                    raw.replace(b"Call graph:", b"Other:"), b"x" * (m.SAMPLE_LIMIT + 1),
+                    raw + raw, raw.replace(b"Process:", b"Process: wrong\nProcess:"),
+                    raw.replace(b"Path:", b"Path: /wrong\nPath:"),
+                    raw.replace(b"User ID: 501", b"User ID: 502"),
+                    raw.replace(b"Call graph:\n", b"Call graph: injected\n")):
             with self.assertRaises(m.Refusal):
                 m.summarize_sample(bad, target)
+
+    def test_stack_excerpt_prioritizes_audio_and_strips_unapproved_frames(self):
+        main = b"  99 Thread_1\n" + b"  + 99 CFRunLoopRun (in CoreFoundation) + 4 [0xabc]\n" * 70
+        audio = (b"  50 Thread_2\n  + 50 -[AVAudioEngine outputNode] (in AVFAudio) + 8 [0xaaa]\n"
+                 b"  + 50 -[OHOwnedAudioController beginEngine] (in OwnedGameHost) + 1 (Private.swift:1)\n"
+                 b"  + 50 -[UnknownAudioController beginEngine] (in OwnedGameHost) + 1\n"
+                 b"  + 50 secretMethod (in OwnedGameHost) + 1\n"
+                 b"  + 50 /private/path (in AVFAudio)\n"
+                 b"  + 50 method0x1234 (in AVFAudio)\n"
+                 b"  + 50 unknown (in PrivateLibrary)\n")
+        lines = m.selected_stack_lines(main + audio)
+        self.assertEqual(len(lines), m.STACK_LINE_LIMIT)
+        self.assertTrue(lines[0].startswith("thread=2 "))
+        self.assertIn("OHOwnedAudioController beginEngine", lines[1])
+        excerpt = "\n".join(lines)
+        for forbidden in ("secretMethod", "Private", "/private", "0x", "unknown", "UnknownAudioController"):
+            self.assertNotIn(forbidden, excerpt)
+        self.assertLessEqual(sum(len(line) for line in lines), m.STACK_TEXT_LIMIT)
+
+    def test_signal_handlers_are_installed_before_watch(self):
+        with mock.patch.object(m.signal, "signal") as register, \
+             mock.patch.object(m, "watch") as watch, contextlib.redirect_stdout(io.StringIO()):
+            def observe(*_args):
+                installed = [call.args[0] for call in register.call_args_list]
+                self.assertEqual(installed, [signal.SIGTERM, signal.SIGINT, signal.SIGUSR1])
+                raise m.Refusal("authored_stop")
+            watch.side_effect = observe
+            self.assertEqual(m.main(["--audio-dir", "/authored/xctest-device-features/audio",
+                                     "--output", "/authored/out", "--udid", UDID]), 2)
+
+    def test_graceful_finish_stops_idle_watch_without_process_query(self):
+        with tempfile.TemporaryDirectory() as root, \
+             mock.patch.object(m.sys, "platform", "darwin"), \
+             mock.patch.object(m.os, "getuid", return_value=501), \
+             mock.patch.object(m.os, "geteuid", return_value=501), \
+             mock.patch.object(m, "owned_run") as run, mock.patch.object(m, "find_target") as target:
+            root = str(Path(root).resolve(strict=True))
+            def finish(*_args, **_kwargs):
+                m.on_signal(signal.SIGUSR1, None)
+                return 0, MAN
+            run.side_effect = finish
+            with self.assertRaisesRegex(m.Refusal, "finish_requested"):
+                m.watch(Path(root) / "xctest-device-features/audio", Path(root) / "out", UDID, 120, {})
+            target.assert_not_called()
+            self.assertFalse(m.STOP)
+
+    def test_capture_grace_keeps_mandatory_post_identity_and_absolute_budget(self):
+        target = m.Identity(1234, 501, "date", EXE)
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root).resolve(strict=True)
+            report = {}
+            def sample(command, deadline, allowance, **kwargs):
+                self.assertEqual(deadline, 116.0)
+                self.assertEqual(allowance, 15)
+                self.assertTrue(kwargs["finish_current"])
+                (output / "sample.txt").write_bytes(authored_report())
+                m.on_signal(signal.SIGUSR1, None)
+                return 0, b"authored tool output"
+            with mock.patch.object(m.time, "monotonic", return_value=100.0), \
+                 mock.patch.object(m, "owned_run", side_effect=sample), \
+                 mock.patch.object(m, "process_identity", return_value=target) as identity:
+                m.capture_sample(target, output, UDID, 200, report)
+            identity.assert_called_once_with(1234, 501, UDID, 116.0, finish_current=True)
+            self.assertEqual(report["sample_collected"], 1)
+            self.assertEqual(report["post_sample_identity_verified"], 1)
+            self.assertEqual(report["selected_stack_line_count"], 3)
+
+    def test_capture_refuses_new_admission_after_finish_and_hard_stop(self):
+        target = m.Identity(1234, 501, "date", EXE)
+        for signal_number in (signal.SIGUSR1, signal.SIGTERM, signal.SIGINT):
+            m.STOP = m.FINISH_REQUESTED = False
+            m.on_signal(signal_number, None)
+            with mock.patch.object(m, "owned_run") as run:
+                report = {}
+                with self.assertRaises(m.Refusal):
+                    m.capture_sample(target, Path("/authored"), UDID, time.monotonic() + 2, report)
+                run.assert_not_called()
+                self.assertNotIn("sample_attempted", report)
+
+    def test_exited_or_replaced_target_retains_raw_but_never_emits_excerpt(self):
+        target = m.Identity(1234, 501, "date", EXE)
+        for after in (None, m.Identity(1234, 501, "new launch", EXE)):
+            with self.subTest(after=after), tempfile.TemporaryDirectory() as root:
+                output = Path(root).resolve(strict=True)
+                (output / "sample.txt").write_bytes(authored_report())
+                with mock.patch.object(m, "owned_run", return_value=(0, b"")), \
+                     mock.patch.object(m, "process_identity", return_value=after):
+                    report = {}
+                    with self.assertRaisesRegex(m.Refusal, "target_changed_after_sample"):
+                        m.capture_sample(target, output, UDID, time.monotonic() + 2, report)
+                self.assertEqual((output / "sample.txt").read_bytes(), authored_report())
+                self.assertNotIn("selected_stack_lines", report)
+                self.assertNotIn("sample_collected", report)
+
+    def test_capture_deadline_is_clipped_to_remaining_watch_budget(self):
+        target = m.Identity(1234, 501, "date", EXE)
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root).resolve(strict=True)
+            (output / "sample.txt").write_bytes(authored_report())
+            with mock.patch.object(m.time, "monotonic", return_value=100.0), \
+                 mock.patch.object(m, "owned_run", return_value=(0, b"")) as run, \
+                 mock.patch.object(m, "process_identity", return_value=target) as identity:
+                m.capture_sample(target, output, UDID, 100.25, {})
+            self.assertEqual(run.call_args.args[1:3], (100.25, 15))
+            self.assertEqual(identity.call_args.args[-1], 100.25)
 
     def test_non_apple_execution_is_diagnostic_refusal_not_test_success(self):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(m.sys, "platform", "linux"):
@@ -173,7 +303,41 @@ class ParserTests(unittest.TestCase):
 @unittest.skipUnless(os.name == "posix", "POSIX owned-child bounds")
 class ChildBoundsTests(unittest.TestCase):
     def setUp(self):
-        m.STOP = False
+        m.STOP = m.FINISH_REQUESTED = False
+
+    def tearDown(self):
+        m.STOP = m.FINISH_REQUESTED = False
+
+    def test_admitted_child_finishes_after_graceful_signal(self):
+        timer = threading.Timer(0.03, m.on_signal, (signal.SIGUSR1, None))
+        timer.start()
+        try:
+            code, raw = m.owned_run([sys.executable, "-c", "import time; time.sleep(.1); print('finished')"],
+                                    time.monotonic() + 2, 1, finish_current=True)
+            self.assertEqual((code, raw), (0, b"finished\n"))
+            self.assertTrue(m.FINISH_REQUESTED)
+        finally:
+            timer.cancel(); timer.join()
+
+    def test_grace_does_not_extend_parent_deadline(self):
+        started = time.monotonic()
+        m.FINISH_REQUESTED = True
+        with self.assertRaisesRegex(m.Refusal, "deadline"):
+            m.owned_run([sys.executable, "-c", "import time; time.sleep(2)"],
+                        started + 0.15, 15, finish_current=True)
+        self.assertLess(time.monotonic() - started, 1.5)
+
+    def test_hard_stop_cancels_admitted_child_even_after_stdout_closed(self):
+        timer = threading.Timer(0.08, m.on_signal, (signal.SIGTERM, None))
+        timer.start()
+        started = time.monotonic()
+        try:
+            with self.assertRaisesRegex(m.Refusal, "cancelled"):
+                m.owned_run([sys.executable, "-c", "import os,time; os.close(1); os.close(2); time.sleep(2)"],
+                            started + 2, 15, finish_current=True)
+            self.assertLess(time.monotonic() - started, 1.5)
+        finally:
+            timer.cancel(); timer.join()
 
     def test_authored_child_timeout_reaps_only_owned_process(self):
         original = subprocess.Popen
