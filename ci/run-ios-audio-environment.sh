@@ -4,13 +4,17 @@ test "$(uname -s)" = Darwin
 harness="$(cd "$(dirname "$0")/.." && pwd)"
 driver="$harness/out/audio-environment-driver"
 output="$harness/out/audio-environment"
+queue_output="$harness/out/audioqueue-environment"
 test ! -e "$driver"
 test ! -e "$output"
+test ! -e "$queue_output"
 mkdir -p "$driver"
 xcodebuild -version > "$driver/apple-tools.txt"
 xcrun --sdk iphonesimulator --show-sdk-version >> "$driver/apple-tools.txt"
 python3 -B -m unittest discover -s "$harness/ci" -p 'test_probe_ios_audio_environment.py' -v \
   2>&1 | tee "$driver/public-supervisor-tests.log"
+python3 -B -m unittest discover -s "$harness/ci" -p 'test_probe_ios_audioqueue_environment.py' -v \
+  2>&1 | tee "$driver/public-audioqueue-supervisor-tests.log"
 selection="$(python3 - <<'PY'
 import json, subprocess
 def listing(kind):
@@ -77,5 +81,22 @@ else
 fi
 # This diagnostic has no game, Rust host, XCTest, device IPA or signing account.
 # It cannot replace any of the required owned-host integration assertions.
-python3 "$harness/ci/probe-ios-audio-environment.py" --udid "$device_id" --output "$output" \
-  2>&1 | tee "$driver/public-ios-audio-environment.log"
+engine_failed=0
+if python3 "$harness/ci/probe-ios-audio-environment.py" --udid "$device_id" --output "$output" \
+  2>&1 | tee "$driver/public-ios-audio-environment.log"; then
+  :
+else
+  engine_failed=1
+fi
+# Separate API comparison on the SAME selected Simulator. A passing queue
+# never replaces a failed engine result or any production integration gate.
+queue_failed=0
+if python3 "$harness/ci/probe-ios-audioqueue-environment.py" --udid "$device_id" --output "$queue_output" \
+  2>&1 | tee "$driver/public-ios-audioqueue-environment.log"; then
+  :
+else
+  queue_failed=1
+fi
+if [[ "$engine_failed" -ne 0 || "$queue_failed" -ne 0 ]]; then
+  exit 1
+fi

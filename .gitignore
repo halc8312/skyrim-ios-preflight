@@ -560,3 +560,5 @@
 !/ci/run-ios-audio-environment.sh
 !/ci/probe-ios-audio-environment.py
 !/ci/test_probe_ios_audio_environment.py
+!/ci/probe-ios-audioqueue-environment.py
+!/ci/test_probe_ios_audioqueue_environment.py

@@ -15,6 +15,7 @@ workflows:
       - out/audio-environment-driver/*.log
       - out/audio-environment-driver/*.txt
       - out/audio-environment
+      - out/audioqueue-environment
   ios-source-only-preflight:
     name: iOS source-only preflight
     instance_type: mac_mini_m2
@@ -96,6 +97,14 @@ workflows:
       - out/owned-host/xctest/*.txt
       - out/owned-host/xctest/*.json
       - out/owned-host/xctest/*.xcresult
+      - out/owned-host/fixture-simulator-v2/*.log
+      - out/owned-host/fixture-simulator-v2/*.txt
+      - out/owned-host/fixture-simulator-v2/*.ll
+      - out/owned-host/fixture-simulator-v2/*.json
+      - out/owned-host/xctest-v2/*.log
+      - out/owned-host/xctest-v2/*.txt
+      - out/owned-host/xctest-v2/*.json
+      - out/owned-host/xctest-v2/*.xcresult
       - out/owned-host/xctest-mobile/*.log
       - out/owned-host/xctest-mobile/*.txt
       - out/owned-host/xctest-mobile/*.json
