@@ -734,8 +734,8 @@
       "sha256": "ec4333d02d6bcb462db7a2cd674d2a5163eb5e8ae7d98f7397256e0594d68cf1"
     },
     "tools/ios-owned-game-host/AUDIO.md": {
-      "bytes": 9381,
-      "sha256": "b4a7ba2016edaec450866ce1c48e41d47afe127f78bfd2cb06ee5221dff5e703"
+      "bytes": 9670,
+      "sha256": "26259cc3d5d052690d1fcbba30464f6f304b1a0f3136256ed27ce36b501a91ce"
     },
     "tools/ios-owned-game-host/Cargo.lock": {
       "bytes": 9317,

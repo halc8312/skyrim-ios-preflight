@@ -204,6 +204,13 @@ if not running or not same:
 PY
 python3 "$harness/ci/probe-host-audio.py" --phase post_gui \
   | tee "$output/host-audio-after-gui.log"
+# Environment comparison only: exercise real native Mac output, which can also
+# warm host audio services. Simulator assertions below remain mandatory.
+if python3 "$harness/ci/probe-macos-output.py" 2>&1 | tee "$output/public-macos-output.log"; then
+  :
+else
+  printf '%s\n' 'PUBLIC_MACOS_OUTPUT_DRIVER_UNAVAILABLE {"schema":1,"diagnostic_only":true,"simulator_audio_verified":false}'
+fi
 python3 "$host/sdk-test/run_sdk_tests.py" --stage "$work/owned-app-simulator" \
   --output "$output/xctest" --destination "platform=iOS Simulator,id=$device_id" \
   2>&1 | tee "$output/owned-host-sdk-driver.log"

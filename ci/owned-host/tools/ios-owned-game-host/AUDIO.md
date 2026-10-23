@@ -80,10 +80,15 @@ resolution require a real SDK rerun; portable checks do not establish that.
 SDK Debug builds alone emit `PUBLIC_AUDIO_PHASE <token> <phase>` before Apple
 operations: 100/101 observer setup begin/end; 1 startup entry; 10 category,
 11 rate preference, 12 buffer preference, 13 activation, 14 hardware query;
-20 engine creation, 21 mixer getter, 22 source creation, 23 attach, 24 connect,
+20 engine creation, 21 output-node getter, 25 mixer getter, 22 source creation,
+23 attach, 24 connect,
 30 prepare, 31 start, 40 admission committed; 70/71 engine stop begin/end and
 72/73 session deactivation begin/end. These numeric breadcrumbs help locate a
 platform abort without changing the status ABI or success marker.
+The output singleton is acquired once before the main mixer. A final phase 21
+without phase 25 localizes a wait inside output-node acquisition, before the
+mixer or source callback exists; it does not establish the operating-system
+cause or physical-device behavior.
 
 Output disconnection pauses playback and requires explicit Start. Interruption
 end resumes only when Apple permits it and user playback intent remains set.

@@ -556,3 +556,4 @@
 !/ci/probe-host-audio.py
 !/ci/watch-public-audio-hang.py
 !/ci/test_watch_public_audio_hang.py
+!/ci/probe-macos-output.py

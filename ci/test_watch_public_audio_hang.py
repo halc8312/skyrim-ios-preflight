@@ -214,9 +214,10 @@ class ChildBoundsTests(unittest.TestCase):
             children.append(child)
             return child
         def kill(group, sig):
+            result = original_kill(group, sig)
             killed.append((group, sig))
-            return original_kill(group, sig)
-        script = "import os,time; child=os.fork(); time.sleep(30) if child==0 else os._exit(0)"
+            return result
+        script = "import os,time; child=os.fork(); time.sleep(2) if child==0 else os._exit(0)"
         try:
             with mock.patch.object(m.subprocess, "Popen", side_effect=launch), \
                  mock.patch.object(m.os, "killpg", side_effect=kill):
@@ -227,10 +228,15 @@ class ChildBoundsTests(unittest.TestCase):
             self.assertEqual(killed, [(children[0].pid, signal.SIGKILL)])
         finally:
             for child in children:
-                try:
-                    original_kill(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                # Do not poll/reap before this guard: only an unreaped leader
+                # reserves the PID, and a successful group kill needs no retry.
+                if child.returncode is None:
+                    if (child.pid, signal.SIGKILL) not in killed:
+                        try:
+                            original_kill(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    child.wait(timeout=2.5)
 
 
 if __name__ == "__main__":
