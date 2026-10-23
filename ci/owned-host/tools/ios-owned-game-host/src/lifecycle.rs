@@ -10,6 +10,24 @@ pub const RUNNING: u32 = 4;
 pub const EXITED: u32 = 5;
 pub const FAILED: u32 = 6;
 pub const MAX_DIAGNOSTIC_SECONDS: u32 = 600;
+/// Explicit execution choice. A normal session has no scheduled process exit;
+/// only the diagnostic constructor accepts a bounded duration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunMode {
+    deadline_seconds: Option<u32>,
+}
+impl RunMode {
+    pub const fn play() -> Self {
+        Self { deadline_seconds: None }
+    }
+    pub fn diagnostic(seconds: u32) -> Check<Self> {
+        validate_duration(seconds)?;
+        Ok(Self { deadline_seconds: Some(seconds) })
+    }
+    pub const fn deadline_seconds(self) -> Option<u32> {
+        self.deadline_seconds
+    }
+}
 pub struct Lifecycle(AtomicU32);
 impl Default for Lifecycle {
     fn default() -> Self {
@@ -33,7 +51,9 @@ impl Lifecycle {
         self.transition(PREPARED, RENDERER_ATTACHED)
     }
     pub fn start(&self, seconds: u32) -> Check<()> {
-        validate_duration(seconds)?;
+        self.start_mode(RunMode::diagnostic(seconds)?)
+    }
+    pub fn start_mode(&self, _mode: RunMode) -> Check<()> {
         self.transition(RENDERER_ATTACHED, RUNNING)
     }
     pub fn exited(&self) -> Check<()> {
@@ -113,6 +133,35 @@ mod tests {
         s.begin_prepare().unwrap();
         s.fail();
         assert!(s.prepared().is_err());
+        assert!(s.begin_prepare().is_err());
+    }
+    #[test]
+    fn normal_play_has_no_deadline_and_diagnostics_remain_bounded() {
+        assert_eq!(RunMode::play().deadline_seconds(), None);
+        for seconds in [1, 5, 120, 600] {
+            assert_eq!(RunMode::diagnostic(seconds).unwrap().deadline_seconds(), Some(seconds));
+        }
+        for seconds in [0, 601, u32::MAX] {
+            assert!(RunMode::diagnostic(seconds).is_err());
+        }
+    }
+    #[test]
+    fn normal_play_preserves_preparation_one_shot_and_terminal_failure() {
+        let s = Lifecycle::default();
+        let play = RunMode::play();
+        assert!(s.start_mode(play).is_err());
+        s.begin_prepare().unwrap();
+        s.prepared().unwrap();
+        assert!(s.start_mode(play).is_err());
+        assert_eq!(s.state(), PREPARED);
+        s.renderer_attached().unwrap();
+        s.start_mode(play).unwrap();
+        assert_eq!(s.state(), RUNNING);
+        assert!(s.start_mode(play).is_err());
+        assert!(s.start(30).is_err());
+        s.fail();
+        assert_eq!(s.state(), FAILED);
+        assert!(s.start_mode(play).is_err());
         assert!(s.begin_prepare().is_err());
     }
 }

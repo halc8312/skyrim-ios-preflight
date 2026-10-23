@@ -1,4 +1,4 @@
-"""One fresh public V2 fullchain process; does not replace any V1/audio gate."""
+"""One fresh public V2 diagnostic or normal-play process; replaces no other gate."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -21,6 +21,9 @@ mobile = load("public_v2_log_helpers", HERE / "run_mobile_controls_tests.py")
 TEST = "testPublicOwnedHostV2FullChain"
 CASE = "-[OwnedGameHostTests.OwnedHostV2FullChainTests " + TEST + "]"
 PREFIX = "OWNED_HOST_PUBLIC_V2_RESULT "
+NORMAL_TEST = "testPublicOwnedHostV2NormalPlay"
+NORMAL_CASE = "-[OwnedGameHostTests.OwnedHostV2FullChainTests " + NORMAL_TEST + "]"
+NORMAL_PREFIX = "OWNED_HOST_PUBLIC_V2_NORMAL_PLAY_RESULT "
 BUNDLE = "com.halc8312.ownedgamehost.v2fixture"
 PROOF = dict(version=0x10000, bytes=64, abi_version=0x20000, layout_words=51,
              host_bytes=416, requirements_bytes=216, provider_refusals=10,
@@ -35,11 +38,12 @@ def exact(actual, expected):
         return set(actual) == set(expected) and all(exact(actual[k], v) for k, v in expected.items())
     return actual == expected
 
-def validate_console(text):
+def validate_console(text, normal_play=False):
     if re.search(r"Modifying properties of a view[’']s layer off the main thread", text):
         raise ValueError("UIKit layer thread violation")
     events = re.findall(r"(?m)^Test Case '([^'\r\n]+)' (started|passed|failed|skipped)\b", text)
-    if events != [(CASE, "started"), (CASE, "passed")]:
+    case = NORMAL_CASE if normal_play else CASE
+    if events != [(case, "started"), (case, "passed")]:
         raise ValueError("exactly one V2 start/pass pair required")
     terminals = [line.strip() for line in text.splitlines()
                  if line.strip().startswith("** TEST ") and line.strip().endswith(" **")]
@@ -47,9 +51,13 @@ def validate_console(text):
     if terminals != ["** TEST EXECUTE SUCCEEDED **"] or not totals or any(t != ("1", "0", "0") for t in totals):
         raise ValueError("V2 test terminal/count mismatch")
 
-def validate_result(text, hashes):
-    validate_console(text)
-    report = sdk.one_report(text, PREFIX)
+def validate_result(text, hashes, normal_play=False):
+    validate_console(text, normal_play)
+    prefix = NORMAL_PREFIX if normal_play else PREFIX
+    other_prefix = PREFIX if normal_play else NORMAL_PREFIX
+    if other_prefix in text:
+        raise ValueError("another V2 mode result cannot accompany the selected mode")
+    report = sdk.one_report(text, prefix)
     expected = dict(kind="public_owned_host_v2_fullchain_xctest", passed=True, state=5,
                     policy=0, exit_code=0, function_imports=2, registered_functions=2,
                     function_count=3, renderer_initialized=1, gpu_errors=0, decoded_frames=0,
@@ -60,6 +68,8 @@ def validate_result(text, hashes):
                     main_thread_attach_rejected=True, metal_layer_required_setters_on_main=True,
                     metal_layer_off_main_calls=0, v2_proof=PROOF,
                     audio_output_verified=False, xma_pcm_verified=False, **hashes)
+    if normal_play:
+        expected.update(kind="public_owned_host_v2_normal_play_xctest", normal_play_api_invoked=True)
     if not exact(report, expected):
         raise ValueError("V2 public result differs from exact typed contract")
     return report
@@ -72,11 +82,12 @@ def validate_summary(summary):
         if type(summary.get(key)) is not int or summary[key] != value:
             raise ValueError("V2 xcresult count mismatch: " + key)
 
-def make_test_command(common, signing, result):
+def make_test_command(common, signing, result, normal_play=False):
+    test = NORMAL_TEST if normal_play else TEST
     return common + ["-resultBundlePath", str(result), "-parallel-testing-enabled", "NO",
                      "-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", "40",
                      "-maximum-test-execution-time-allowance", "40",
-                     "-only-testing:OwnedGameHostTests/OwnedHostV2FullChainTests/" + TEST,
+                     "-only-testing:OwnedGameHostTests/OwnedHostV2FullChainTests/" + test,
                      *signing, "test-without-building"]
 
 def export_xcresult_command(run, output, result, command):
@@ -135,6 +146,8 @@ def main(argv=None):
     parser.add_argument("--stage", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--destination", required=True)
+    parser.add_argument("--normal-play", action="store_true",
+                        help="select only the OHPlayV1 smoke case in a separate fresh process/output")
     args = parser.parse_args(argv)
     if sys.platform != "darwin":
         raise RuntimeError("V2 Apple SDK driver requires Darwin")
@@ -167,9 +180,9 @@ def main(argv=None):
     import plistlib
     if plistlib.loads(mobile.read_command_log(app / "Info.plist", 128_000)).get("CFBundleIdentifier") != BUNDLE:
         raise ValueError("built app is not the separate V2 bundle")
-    result = output / "OwnedGameHostV2.xcresult"
+    result = output / ("OwnedGameHostV2NormalPlay.xcresult" if args.normal_play else "OwnedGameHostV2.xcresult")
     try:
-        run(make_test_command(common, signing, result), "xcodebuild", result=result)
+        run(make_test_command(common, signing, result, args.normal_play), "xcodebuild", result=result)
     except RuntimeError:
         try:
             collect_failed_xcresult(run, output, result, deadline)
@@ -180,13 +193,15 @@ def main(argv=None):
         parsed = export_xcresult_command(run, output, result, command)
         if command == "summary":
             validate_summary(parsed)
-    report = validate_result(mobile.read_command_log(output / "xcodebuild.stdout.log", 32_000_000).decode(), hashes)
+    report = validate_result(mobile.read_command_log(output / "xcodebuild.stdout.log", 32_000_000).decode(),
+                             hashes, args.normal_play)
     report = dict(report, xcodebuild_exit_code=0, external_build_test_deadline_seconds=300)
-    with (output / "public-v2-fullchain-result.json").open("x") as stream:
+    result_name = "public-v2-normal-play-result.json" if args.normal_play else "public-v2-fullchain-result.json"
+    with (output / result_name).open("x") as stream:
         json.dump(report, stream, indent=2)
-    print(json.dumps(dict(public_owned_host_v2_fullchain_passed=1, game_executed=False,
-                          physical_iphone_verified=False, audio_output_verified=False,
-                          private_guest_framework_verified=False)))
+    passed_key = "public_owned_host_v2_normal_play_passed" if args.normal_play else "public_owned_host_v2_fullchain_passed"
+    print(json.dumps({passed_key: 1, "game_executed": False, "physical_iphone_verified": False,
+                      "audio_output_verified": False, "private_guest_framework_verified": False}))
     return 0
 
 if __name__ == "__main__":

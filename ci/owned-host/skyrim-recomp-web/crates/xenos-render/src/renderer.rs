@@ -337,6 +337,22 @@ impl Renderer {
     }
 }
 
+/// Consume a reporting window independently of lazy log evaluation. Disabled
+/// reporting discards samples without sorting or formatting them.
+pub(crate) fn finish_pacing_window(
+    presents: &mut Vec<std::time::Instant>,
+    swaps: &mut Vec<(std::time::Instant, Duration)>,
+    info_enabled: bool,
+) -> Option<String> {
+    if info_enabled {
+        Some(pacing(presents, swaps))
+    } else {
+        presents.clear();
+        swaps.clear();
+        None
+    }
+}
+
 /// Frame pacing since the last call, for the perf log: intervals between frames shown
 /// (`presents`, which is cleared), between the title's swaps, and how long swaps waited in the
 /// queue before the renderer executed them. Stutter shows as a high p95/max next to a normal
@@ -413,4 +429,47 @@ pub(crate) fn calls_per_frame(c: &gpu_webgpu::counters::Counters, frames: u64) -
         by_label.join(", "),
         uploads.join(", "),
     )
+}
+
+#[cfg(test)]
+mod pacing_window_tests {
+    use super::{finish_pacing_window, pacing};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn disabled_windows_clear_both_histories_before_reporting_resumes() {
+        let start = Instant::now();
+        let mut presents = Vec::new();
+        let mut swaps = Vec::new();
+        for window in 0..120 {
+            let at = start + Duration::from_secs(window * 5);
+            presents.extend([at, at + Duration::from_millis(250)]);
+            swaps.push((at, Duration::from_millis(200)));
+            assert_eq!(finish_pacing_window(&mut presents, &mut swaps, false), None);
+            assert!(presents.is_empty());
+            assert!(swaps.is_empty());
+        }
+        let at = start + Duration::from_secs(600);
+        presents.extend([at, at + Duration::from_millis(16), at + Duration::from_millis(33)]);
+        swaps.extend([(at, Duration::from_millis(2)), (at + Duration::from_millis(17), Duration::from_millis(4))]);
+        let reference = pacing(&mut presents.clone(), &mut swaps.clone());
+        assert_eq!(finish_pacing_window(&mut presents, &mut swaps, true), Some(reference));
+        assert!(presents.is_empty());
+        assert!(swaps.is_empty());
+    }
+
+    #[test]
+    fn enabled_windows_preserve_reference_statistics_and_empty_windows() {
+        let start = Instant::now();
+        let mut presents = vec![start, start + Duration::from_millis(16), start + Duration::from_millis(80)];
+        let mut swaps = vec![(start, Duration::from_millis(2)), (start + Duration::from_millis(33), Duration::from_millis(8))];
+        let expected = "frames shown: p50 64.0 ms, p95 64.0 ms, max 64.0 ms, 1 over 50 ms; title's swaps: p50 33.0 ms, p95 33.0 ms, max 33.0 ms, 0 over 50 ms; swap queue wait avg 5.0 ms, max 8.0 ms";
+        assert_eq!(finish_pacing_window(&mut presents, &mut swaps, true).as_deref(), Some(expected));
+        assert!(presents.is_empty());
+        assert!(swaps.is_empty());
+        assert_eq!(
+            finish_pacing_window(&mut presents, &mut swaps, true).as_deref(),
+            Some("frames shown: -; title's swaps: -; swap queue wait avg -0.0 ms, max 0.0 ms"),
+        );
+    }
 }

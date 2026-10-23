@@ -290,6 +290,42 @@ if python3 "$host/sdk-test/run_v2_sdk_tests.py" --stage "$work/owned-app-simulat
 else
   v2_failed=1
 fi
+# Exercise the new no-deadline entry point in another process. Its public
+# fixture leaves and report are separate from the unchanged diagnostic run.
+normal_play_failed=0
+if python3 "$host/sdk-test/run_v2_sdk_tests.py" --normal-play --stage "$work/owned-app-simulator-v2" \
+  --output "$output/xctest-public-v2-normal-play" --destination "platform=iOS Simulator,id=$device_id" \
+  2>&1 | tee "$output/owned-host-v2-normal-play-sdk-driver.log"; then
+  :
+else
+  normal_play_failed=1
+fi
+if [[ "$normal_play_failed" -eq 0 ]]; then
+  # Capture the actual public launch UI without starting a guest. This is a
+  # visual artifact only; no successful game/device assertion comes from it.
+  if python3 - "$device_id" "$output/normal-play-launch-screen.png" <<'PY' | tee "$output/normal-play-launch-screen.log"
+from pathlib import Path
+import json, subprocess, sys, time
+device, destination = sys.argv[1], Path(sys.argv[2])
+bundle = 'com.halc8312.ownedgamehost.v2fixture'
+try:
+    subprocess.run(['xcrun','simctl','launch',device,bundle], check=True, capture_output=True, timeout=10)
+    time.sleep(0.5)
+    subprocess.run(['xcrun','simctl','io',device,'screenshot','--type=png',str(destination)],
+                   check=True, capture_output=True, timeout=10)
+    if not destination.is_file() or not 100 <= destination.stat().st_size <= 16 * 1024 * 1024:
+        raise ValueError('public_launch_capture_missing_or_unbounded')
+    print('PUBLIC_NORMAL_PLAY_LAUNCH_CAPTURE ' + json.dumps(dict(captured=True,
+          public_app_only=True, guest_started=False, visual_review_performed=False, iphone_verified=False)))
+finally:
+    subprocess.run(['xcrun','simctl','terminate',device,bundle], capture_output=True, timeout=10)
+PY
+  then
+    :
+  else
+    printf '%s\n' 'PUBLIC_NORMAL_PLAY_LAUNCH_CAPTURE {"captured":false,"visual_review_performed":false,"iphone_verified":false}'
+  fi
+fi
 # Compare an independent public audio API after the Simulator has installed
 # and run the SDK apps. This optional diagnostic never replaces the six
 # mandatory production-engine cases below, even when the queue works.
@@ -361,9 +397,9 @@ for stream in ('stdout', 'stderr'):
 PY
   features_failed=1
 fi
-printf 'PUBLIC_OWNED_HOST_SDK_GATES {"v1_failed":%s,"mobile_failed":%s,"v2_failed":%s,"features_failed":%s}\n' \
-  "$fullchain_failed" "$mobile_failed" "$v2_failed" "$features_failed"
-if [[ "$fullchain_failed" -ne 0 || "$mobile_failed" -ne 0 || "$v2_failed" -ne 0 || "$features_failed" -ne 0 ]]; then
+printf 'PUBLIC_OWNED_HOST_SDK_GATES {"v1_failed":%s,"mobile_failed":%s,"v2_failed":%s,"normal_play_failed":%s,"features_failed":%s}\n' \
+  "$fullchain_failed" "$mobile_failed" "$v2_failed" "$normal_play_failed" "$features_failed"
+if [[ "$fullchain_failed" -ne 0 || "$mobile_failed" -ne 0 || "$v2_failed" -ne 0 || "$normal_play_failed" -ne 0 || "$features_failed" -ne 0 ]]; then
   exit 1
 fi
 printf '%s\n' 'Public owned-host V1/V2 fullchains passed; game, private framework and physical iPhone remain untested.'

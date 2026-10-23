@@ -3,6 +3,31 @@ import QuartzCore
 import SwiftUI
 import UIKit
 
+enum OwnedRunMode: Sendable {
+    case play
+    case diagnostic
+
+    static let diagnosticSeconds: UInt32 = 600
+
+    var maxSeconds: UInt32? {
+        switch self {
+        case .play: return nil
+        case .diagnostic: return Self.diagnosticSeconds
+        }
+    }
+
+    func start(token: UInt64) -> Int32 {
+        if let seconds = maxSeconds { return OHStartV1(token, seconds) }
+        return OHPlayV1(token)
+    }
+
+    func statusText(elapsedMilliseconds: UInt64) -> String {
+        let seconds = elapsedMilliseconds / 1000
+        if let limit = maxSeconds { return "動作確認中 · \(seconds) / \(limit)秒" }
+        return "プレイ中 · \(seconds)秒"
+    }
+}
+
 @main
 @MainActor
 struct OwnedHostApp: App {
@@ -42,14 +67,17 @@ struct OwnedHostApp: App {
                     Spacer()
                     if !session.attempted {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("起動診断")
+                            Text("ゲームをプレイ")
                                 .font(.title2.bold())
                             Text("PCで準備したGameフォルダを、このアプリの書類へコピーしてください。")
-                            Text("最大10分でアプリが終了します。本編の動作と互換性は検証中です。")
+                            Text("通常プレイに時間制限はありません。動作の安定性と互換性は検証中です。")
                                 .font(.footnote)
                             HStack {
-                                Button("10分間の動作確認を開始", action: session.beginDiagnostic)
+                                Button("ゲームを開始", action: session.beginPlay)
                                     .buttonStyle(.borderedProminent)
+                                    .disabled(!session.canBegin)
+                                Button("10分間の診断", action: session.beginDiagnostic)
+                                    .buttonStyle(.bordered)
                                     .disabled(!session.canBegin)
                                 Button("ファイルを再確認", action: session.checkFiles)
                                     .buttonStyle(.bordered)
@@ -125,7 +153,7 @@ struct OwnedHostApp: App {
 @MainActor
 final class OwnedSession: ObservableObject {
     static let shared = OwnedSession()
-    static let diagnosticSeconds: UInt32 = 600
+    static let diagnosticSeconds = OwnedRunMode.diagnosticSeconds
     @Published private(set) var status = "ファイルを確認しています"
     @Published private(set) var attempted = false
     @Published private(set) var running = false
@@ -161,6 +189,7 @@ final class OwnedSession: ObservableObject {
     private var fpsSample: (time: Double, decoded: UInt64, presented: UInt64)?
     private var surface: CAMetalLayer?
     private var token: UInt64 = 0
+    private var runMode: OwnedRunMode = .play
     private var pad = MobilePadSnapshot.neutral
     private var localFailure: String?
     private var timer: Timer?
@@ -223,16 +252,20 @@ final class OwnedSession: ObservableObject {
         guard FileManager.default.fileExists(atPath: game.appendingPathComponent("default.xex").path) else {
             status = "Game/default.xex が見つかりません"; canBegin = false; return
         }
-        status = surface == nil ? "描画画面を準備しています" : "起動診断を開始できます"
+        status = surface == nil ? "描画画面を準備しています" : "ゲームを開始できます"
         canBegin = surface != nil
     }
 
-    func beginDiagnostic() {
+    func beginPlay() { begin(.play) }
+
+    func beginDiagnostic() { begin(.diagnostic) }
+
+    private func begin(_ mode: OwnedRunMode) {
         guard canBegin, !attempted, let layer = surface else { return }
         attempted = true; canBegin = false; status = "ファイルとモジュールを照合しています"
+        runMode = mode
         let gameBytes = Array(game.path.utf8)
         let layerAddress = UInt(bitPattern: Unmanaged.passUnretained(layer).toOpaque())
-        let maxSeconds = Self.diagnosticSeconds
         let selectedSettings = deviceSettings.normalized()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
@@ -269,13 +302,13 @@ final class OwnedSession: ObservableObject {
                 guard applied == 0 else {
                     Task { @MainActor in self?.stop("出力設定を適用できませんでした（\(applied)）") }; return
                 }
-                let started = OHStartV1(preparedToken, maxSeconds)
+                let started = mode.start(token: preparedToken)
                 guard started == 0 else {
-                    Task { @MainActor in self?.stop("起動診断を開始できませんでした（\(started)）") }; return
+                    Task { @MainActor in self?.stop("実行を開始できませんでした（\(started)）") }; return
                 }
                 Task { @MainActor in
                     guard let self, self.localFailure == nil, !self.failed else { return }
-                    self.rendererReady = true; self.status = "起動診断中"; self.running = true
+                    self.rendererReady = true; self.status = mode.statusText(elapsedMilliseconds: 0); self.running = true
                     // Apply edits made while preparation was running. Boot layout
                     // stays frozen to the captured tuple for this process.
                     self.updateDeviceSettings(self.deviceSettings)
@@ -283,17 +316,19 @@ final class OwnedSession: ObservableObject {
                     self.startInitialAudioIfActive()
                 }
             } catch {
-                Task { @MainActor in self?.stop("診断用の保存先を準備できませんでした") }
+                Task { @MainActor in self?.stop("実行用の保存先を準備できませんでした") }
             }
         }
     }
 
     private func stop(_ message: String) {
+        guard localFailure == nil else { return }
         localFailure = message; status = message; failed = true; running = false
         pendingInitialAudioStart = false
         audioPlaybackWanted = false
         audioIntent = audioCommands.setPlaybackIntent(false)
         releaseButtons()
+        if token != 0 { _ = OHAbortFailedSessionV1(token) }
     }
 
     private func poll() {
@@ -307,25 +342,25 @@ final class OwnedSession: ObservableObject {
         switch value.state {
         case 1: status = "ファイルとモジュールを照合しています"
         case 2, 3: status = "Metal描画と起動を準備しています"
-        case 4: running = true; status = "動作確認中 · \(value.elapsed_ms / 1000) / \(Self.diagnosticSeconds)秒"
+        case 4: running = true; status = runMode.statusText(elapsedMilliseconds: value.elapsed_ms)
         case 5:
             // A kernel exit notification does not establish
             // that its other guest workers or renderer have stopped. Keep
-            // input available during this bounded diagnostic when code is 0.
+            // input available while other workers may remain active when code is 0.
             if value.exit_code == 0 {
                 running = true
-                status = "動作確認中 · \(value.elapsed_ms / 1000) / \(Self.diagnosticSeconds)秒"
+                status = runMode.statusText(elapsedMilliseconds: value.elapsed_ms)
             } else {
                 stop("ゲームの終了コード \(value.exit_code) を検出しました")
             }
-        case 6: stop("診断を停止しました（コード \(value.failure)）")
+        case 6: stop("実行エラーを検出しました（コード \(value.failure)）")
         default: break
         }
         if token != 0 {
             var render = OHRendererStatusV1()
             if OHReadRendererStatusV1(token, &render, MemoryLayout<OHRendererStatusV1>.size) == 0 {
                 frames = render.decoded_frames; gpuErrors = render.gpu_errors
-                if render.failed != 0 { stop("描画エラーを検出しました。時間上限でアプリが終了します") }
+                if render.failed != 0 { stop("描画エラーを検出しました。アプリを終了し、開き直してください") }
             }
         }
     }

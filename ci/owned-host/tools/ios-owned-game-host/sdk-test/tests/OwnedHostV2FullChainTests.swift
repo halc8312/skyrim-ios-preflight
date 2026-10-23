@@ -23,6 +23,19 @@ private func v2OnWorker<T>(_ operation: @escaping () -> T) async -> T {
     }
 }
 
+private enum V2LaunchMode {
+    case diagnostic, normalPlay
+
+    // The returned flag records the branch that actually invoked the C API.
+    // A successful normal result may never be synthesized from OHStartV1.
+    func start(_ token: UInt64) -> (code: Int32, normalPlayAPIInvoked: Bool) {
+        switch self {
+        case .diagnostic: return (OHStartV1(token, 30), false)
+        case .normalPlay: return (OHPlayV1(token), true)
+        }
+    }
+}
+
 // Fixed phase boundaries only; they never substitute for the verified proof.
 private func v2Stage(_ stage: UInt32) {
     print("OWNED_HOST_PUBLIC_V2_STAGE \(stage)")
@@ -97,6 +110,17 @@ private final class V2ThreadCheckedMetalView: UIView {
 final class OwnedHostV2FullChainTests: XCTestCase {
     @MainActor
     func testPublicOwnedHostV2FullChain() async throws {
+        try await runPublicFixture(mode: .diagnostic)
+    }
+
+    @MainActor
+    func testPublicOwnedHostV2NormalPlay() async throws {
+        try await runPublicFixture(mode: .normalPlay)
+    }
+
+    @MainActor
+    private func runPublicFixture(mode: V2LaunchMode) async throws {
+        let normalPlay = mode == .normalPlay
         executionTimeAllowance = 40
         // An FFI/SDK hang must terminate this isolated process, not leave a
         // partially initialized global Kernel available to a second attempt.
@@ -126,8 +150,10 @@ final class OwnedHostV2FullChainTests: XCTestCase {
         let xex = try Data(contentsOf: source)
         XCTAssertEqual(SHA256.hash(data: xex).map { String(format: "%02x", $0) }.joined(), xexSHA)
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let game = documents.appendingPathComponent("Game", isDirectory: true)
-        let content = documents.appendingPathComponent("PublicOwnedContent", isDirectory: true)
+        // Each selector runs in a new process. Distinct fixed leaves preserve
+        // the first mode's authored input/evidence when the bundle is reused.
+        let game = documents.appendingPathComponent(normalPlay ? "GameNormalPlay" : "Game", isDirectory: true)
+        let content = documents.appendingPathComponent(normalPlay ? "PublicOwnedContentNormalPlay" : "PublicOwnedContent", isDirectory: true)
         let input = game.appendingPathComponent("default.xex")
         XCTAssertFalse(FileManager.default.fileExists(atPath: input.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: content.path))
@@ -168,7 +194,7 @@ final class OwnedHostV2FullChainTests: XCTestCase {
         XCTAssertEqual(OHReadStatusV1(token, &status, MemoryLayout<OHStatusV1>.size), 0)
         XCTAssertEqual(status.state, 2)
         // Starting before a renderer is attached must preserve PREPARED.
-        let premature = await v2OnWorker { OHStartV1(token, 30) }
+        let premature = await v2OnWorker { mode.start(token).code }
         XCTAssertNotEqual(premature, 0)
         XCTAssertEqual(OHReadStatusV1(token, &status, MemoryLayout<OHStatusV1>.size), 0)
         XCTAssertEqual(status.state, 2)
@@ -216,10 +242,12 @@ final class OwnedHostV2FullChainTests: XCTestCase {
         guard renderer.attachment == 2, renderer.initialized == 1,
               renderer.failed == 0, renderer.gpu_errors == 0 else { return }
         v2Stage(30) // Guest entry requested.
-        let started = await v2OnWorker { OHStartV1(token, 30) }
+        let entry = await v2OnWorker { mode.start(token) }
+        let started = entry.code
         v2Stage(31) // Guest entry request returned.
         XCTAssertEqual(started, 0)
-        guard started == 0 else { return }
+        XCTAssertEqual(entry.normalPlayAPIInvoked, normalPlay)
+        guard started == 0, entry.normalPlayAPIInvoked == normalPlay else { return }
         v2Stage(40) // Exit wait entered.
         let deadline = ProcessInfo.processInfo.systemUptime + 3
         repeat {
@@ -253,6 +281,10 @@ final class OwnedHostV2FullChainTests: XCTestCase {
               status.function_count == 3, status.ready_to_play == 0,
               status.signature_authenticated == 0, status.iphone_game_verified == 0,
               renderer.initialized == 1, renderer.failed == 0, renderer.gpu_errors == 0 else { return }
+        // Both entry APIs remain one-shot after this fixture has exited.
+        let repeated = await v2OnWorker { mode.start(token).code }
+        XCTAssertNotEqual(repeated, 0)
+        guard repeated != 0 else { return }
         v2Stage(50) // Fixed readback entered.
         XCTAssertEqual(MemoryLayout<OHPublicV2ProofV1>.size, 64)
         // Fixed readback refuses bad sizes/tokens before changing any output.
@@ -289,8 +321,8 @@ final class OwnedHostV2FullChainTests: XCTestCase {
         ]
         XCTAssertEqual(observed, expected)
         guard checked.0 == 0, observed == expected else { return }
-        let report: [String: Any] = [
-            "kind": "public_owned_host_v2_fullchain_xctest", "passed": true,
+        var report: [String: Any] = [
+            "kind": normalPlay ? "public_owned_host_v2_normal_play_xctest" : "public_owned_host_v2_fullchain_xctest", "passed": true,
             "state": status.state, "policy": status.policy, "exit_code": status.exit_code,
             "function_imports": status.function_imports, "registered_functions": status.registered_functions,
             "function_count": status.function_count, "renderer_initialized": renderer.initialized,
@@ -306,8 +338,10 @@ final class OwnedHostV2FullChainTests: XCTestCase {
             "metal_layer_off_main_calls": layerAudit.offMain,
             "v2_proof": observed, "audio_output_verified": false, "xma_pcm_verified": false,
         ]
+        if normalPlay { report["normal_play_api_invoked"] = entry.normalPlayAPIInvoked }
         let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
-        print("OWNED_HOST_PUBLIC_V2_RESULT " + String(decoding: data, as: UTF8.self))
+        let prefix = normalPlay ? "OWNED_HOST_PUBLIC_V2_NORMAL_PLAY_RESULT " : "OWNED_HOST_PUBLIC_V2_RESULT "
+        print(prefix + String(decoding: data, as: UTF8.self))
     }
 }
 

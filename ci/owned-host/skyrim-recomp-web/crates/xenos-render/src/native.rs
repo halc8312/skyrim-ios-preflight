@@ -599,12 +599,20 @@ fn run(
             let frames = presents.len() as u64;
             let fps = frames as f64 / window.as_secs_f64();
             let draws = renderer.executor.stats.draws;
-            log::info!(
-                "perf: {fps:.1} guest swaps/s, {} draws/frame; renderer busy {:.0}%; {}",
-                (draws - report_draws) / frames.max(1),
-                100.0 * busy.as_secs_f64() / window.as_secs_f64(),
-                crate::renderer::pacing(&mut presents, &mut renderer.swap_timings)
+            // Log arguments are lazy: consume each window even when INFO is disabled.
+            let pacing = crate::renderer::finish_pacing_window(
+                &mut presents,
+                &mut renderer.swap_timings,
+                log::log_enabled!(log::Level::Info),
             );
+            if let Some(pacing) = pacing {
+                log::info!(
+                    "perf: {fps:.1} guest swaps/s, {} draws/frame; renderer busy {:.0}%; {}",
+                    (draws - report_draws) / frames.max(1),
+                    100.0 * busy.as_secs_f64() / window.as_secs_f64(),
+                    pacing
+                );
+            }
             let calls = gpu_webgpu::counters::snapshot();
             log::info!("perf: per frame: {}", crate::renderer::calls_per_frame(&calls.since(&report_calls), frames));
             let times = renderer.executor.times();

@@ -13,7 +13,7 @@ use crate::{
     darwin::{self, Api, HostBind, Library},
     guest_abi::GuestAbi,
     guest_fatal::{self, GuestFatal},
-    lifecycle::{self, Lifecycle, Status},
+    lifecycle::{self, Lifecycle, RunMode, Status},
     paths::{self, PinnedFile},
     progress_diagnostics,
     save_store,
@@ -54,6 +54,7 @@ static PREPARE_STAGE: AtomicU32 = AtomicU32::new(0);
 static IMPORTS: OnceLock<import_policy::ImportPreflight> = OnceLock::new();
 static FUNCTION_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static STOPPING: AtomicBool = AtomicBool::new(false);
+static UI_FAILURE_REQUESTED: AtomicBool = AtomicBool::new(false);
 // Written only by the STOPPING first winner, before its first-failure snapshot.
 static GUEST_FATAL: OnceLock<GuestFatal> = OnceLock::new();
 const TOKEN: u64 = 1;
@@ -568,31 +569,31 @@ fn fatal_stop_with_guest(category: u32, module: u32, ordinal: u32, guest: Option
         std::thread::park_timeout(Duration::from_millis(10));
     }
 }
-fn start(t: u64, seconds: u32) -> Check<()> {
+fn start_session(t: u64, mode: RunMode) -> Check<()> {
     token(t)?;
-    lifecycle::validate_duration(seconds)?;
-    let snapshots = progress_diagnostics::schedule(seconds)?;
+    let snapshots = match mode.deadline_seconds() {
+        Some(seconds) => progress_diagnostics::schedule(seconds)?,
+        None => Vec::new(),
+    };
     #[cfg(feature = "metal-renderer")]
     if !crate::renderer::is_ready(t) {
         return Err("Metal renderer not ready");
     }
     let now = Instant::now();
     STARTED.set(now).map_err(|_| "guest already started")?;
-    std::thread::Builder::new()
-        .name("owned-hard-deadline".into())
-        .spawn(move || {
-            std::thread::sleep(Duration::from_secs(seconds.into()).saturating_sub(now.elapsed()));
-            // Kernel exit notification does not prove that every secondary guest
-            // worker has stopped; the process ceiling applies even after main exit.
-            unsafe {
-                libc::_exit(if STATE.state() == lifecycle::EXITED {
-                    0
-                } else {
-                    72
-                })
-            }
-        })
-        .map_err(|_| "hard deadline worker unavailable")?;
+    if let Some(seconds) = mode.deadline_seconds() {
+        std::thread::Builder::new()
+            .name("owned-hard-deadline".into())
+            .spawn(move || {
+                std::thread::sleep(Duration::from_secs(seconds.into()).saturating_sub(now.elapsed()));
+                // Diagnostic ceilings apply even after main exit: secondary
+                // guest workers may survive. Normal play creates no such worker.
+                unsafe {
+                    libc::_exit(if STATE.state() == lifecycle::EXITED { 0 } else { 72 })
+                }
+            })
+            .map_err(|_| "hard deadline worker unavailable")?;
+    }
     // At most four independent writers. A stalled earlier checkpoint cannot
     // hold back the final writer or the unchanged hard process deadline.
     for point in snapshots {
@@ -621,7 +622,13 @@ fn start(t: u64, seconds: u32) -> Check<()> {
     std::thread::Builder::new()
         .name("owned-exit-monitor".into())
         .spawn(move || {
-            if let Some(code) = k.wait_for_exit_timeout(Duration::from_secs(seconds.into())) {
+            let exit_code = match mode.deadline_seconds() {
+                Some(seconds) => k.wait_for_exit_timeout(Duration::from_secs(seconds.into())),
+                // One sleeping condition-variable waiter, no periodic polling,
+                // busy loop, artificial duration or timeout-based process exit.
+                None => Some(k.wait_for_exit()),
+            };
+            if let Some(code) = exit_code {
                 EXIT_CODE.store(code, Ordering::Release);
                 let _ = STATE.exited();
                 let _ = snapshot("guest-exit.json");
@@ -683,16 +690,49 @@ pub unsafe extern "C" fn OHPrepareV1(
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn OHStartV1(t: u64, seconds: u32) -> i32 {
-    if token(t).is_err() || lifecycle::validate_duration(seconds).is_err() {
+    let Ok(mode) = RunMode::diagnostic(seconds) else { return -1; };
+    start_requested(t, mode)
+}
+/// Normal play is explicitly selected; zero remains invalid for OHStartV1.
+#[unsafe(no_mangle)]
+pub extern "C" fn OHPlayV1(t: u64) -> i32 {
+    start_requested(t, RunMode::play())
+}
+/// A terminal UI/renderer failure must not leave guest workers running after
+/// normal play has deliberately omitted the diagnostic process deadline.
+#[unsafe(no_mangle)]
+pub extern "C" fn OHAbortFailedSessionV1(t: u64) -> i32 {
+    if token(t).is_err() {
+        return -1;
+    }
+    if !matches!(STATE.state(), lifecycle::RUNNING | lifecycle::EXITED)
+        || STOPPING.load(Ordering::Acquire)
+        || UI_FAILURE_REQUESTED.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err()
+    {
+        return -2;
+    }
+    if std::thread::Builder::new()
+        .name("owned-ui-failure".into())
+        .spawn(|| fatal_stop(26, 0, 0))
+        .is_err()
+    {
+        // No functioning worker can complete error cleanup. Exit immediately;
+        // never leave a failed unlimited session consuming CPU in the background.
+        unsafe { libc::_exit(70) }
+    }
+    0
+}
+fn start_requested(t: u64, mode: RunMode) -> i32 {
+    if token(t).is_err() {
         return -1;
     }
     if STATE.state() != lifecycle::RENDERER_ATTACHED {
         return -2;
     }
-    if STATE.start(seconds).is_err() {
+    if STATE.start_mode(mode).is_err() {
         return -2;
     }
-    let code = ffi(|| start(t, seconds));
+    let code = ffi(|| start_session(t, mode));
     if code != 0 {
         fatal_stop(25, 0, 0);
     }

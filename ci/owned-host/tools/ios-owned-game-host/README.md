@@ -122,6 +122,15 @@ writer exposing partial final JSON; power-loss durability is not asserted.
 Unknown/fatal paths have their own one-second forced-exit ceiling so evidence I/O
 cannot hold the failed process alive. There is no reset or second start.
 
+Normal play uses the separate `OHPlayV1` entry point. It retains the same
+preparation, renderer, content binding, one-shot and fatal-error checks, but
+creates no process deadline or timed diagnostic writers. One condition-variable
+waiter records the kernel exit notification without polling. An exit notification
+does not stop surviving guest workers. Existing identity-bound `OwnedSaves`
+sessions remain retained for the process lifetime and are resumed on the next
+launch; removing the diagnostic timer does not establish game-save compatibility
+or long-session stability. iOS lifecycle and audio handling are unchanged.
+
 `native/OwnedHost.h` is the UI C ABI. Status is 96 bytes. State values are
 0 fresh, 1 preparing, 2 prepared, 3 renderer attached, 4 running, 5 kernel exit notified,
 6 failed. Preparation failure categories are 101 paths, 102 binding, 103 XEX,

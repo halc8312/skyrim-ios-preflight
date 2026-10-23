@@ -27,15 +27,19 @@ b = load("test_v2_builder", HERE / "build_public_sdk_fixture.py")
 old_tests = load("test_v2_old_public_data", HERE / "test_run_sdk_tests.py")
 
 class V2FixtureTests(unittest.TestCase):
-    def report(self):
+    def report(self, normal_play=False):
         hashes, result = old_tests.PublicDriverTests().report()
         result.update(kind="public_owned_host_v2_fullchain_xctest", v2_proof=copy.deepcopy(d.PROOF),
                       audio_output_verified=False, xma_pcm_verified=False)
+        if normal_play:
+            result.update(kind="public_owned_host_v2_normal_play_xctest", normal_play_api_invoked=True)
         return hashes, result
 
-    def console(self, result):
-        return (f"Test Case '{d.CASE}' started.\n" + d.PREFIX + json.dumps(result) + "\n"
-                f"Test Case '{d.CASE}' passed (0.1 seconds).\n"
+    def console(self, result, normal_play=False):
+        case = d.NORMAL_CASE if normal_play else d.CASE
+        prefix = d.NORMAL_PREFIX if normal_play else d.PREFIX
+        return (f"Test Case '{case}' started.\n" + prefix + json.dumps(result) + "\n"
+                f"Test Case '{case}' passed (0.1 seconds).\n"
                 "Executed 1 test, with 0 failures (0 unexpected) in 0.1 seconds\n"
                 "** TEST EXECUTE SUCCEEDED **\n")
 
@@ -107,6 +111,64 @@ class V2FixtureTests(unittest.TestCase):
         original = (HERE / "tests/OwnedHostV2FullChainTests.swift").read_text()
         self.assertIn("func " + d.TEST + "()", original)
         self.assertTrue(original.startswith("#if PUBLIC_V2_SDK_FIXTURE\n"))
+
+    def test_normal_play_requires_its_exact_typed_api_and_proof_contract(self):
+        hashes, report = self.report(normal_play=True)
+        self.assertEqual(d.validate_result(self.console(report, True), hashes, True), report)
+        for key in report:
+            bad = copy.deepcopy(report); del bad[key]
+            with self.subTest(missing=key), self.assertRaises(ValueError):
+                d.validate_result(self.console(bad, True), hashes, True)
+        for value in (False, 1, 0, "true", None):
+            bad = dict(report, normal_play_api_invoked=value)
+            with self.subTest(api=value), self.assertRaises(ValueError):
+                d.validate_result(self.console(bad, True), hashes, True)
+        for key in d.PROOF:
+            bad = copy.deepcopy(report); bad["v2_proof"][key] += 1
+            with self.subTest(proof=key), self.assertRaises(ValueError):
+                d.validate_result(self.console(bad, True), hashes, True)
+        for key in ("game_executed", "physical_iphone_verified", "audio_output_verified", "xma_pcm_verified"):
+            with self.subTest(claim=key), self.assertRaises(ValueError):
+                d.validate_result(self.console(dict(report, **{key: True}), True), hashes, True)
+        with self.assertRaises(ValueError):
+            d.validate_result(self.console(dict(report, unexpected=True), True), hashes, True)
+
+    def test_normal_play_rejects_diagnostic_fallback_extra_cases_and_missing_success(self):
+        hashes, report = self.report(True)
+        _, diagnostic = self.report()
+        text = self.console(report, True)
+        for bad in (self.console(diagnostic), self.console(diagnostic, True),
+                    text.replace(d.NORMAL_PREFIX, d.PREFIX), text.replace(d.NORMAL_CASE, d.CASE),
+                    text.replace("passed (", "failed ("), text.replace("started.", "skipped."),
+                    text.replace("Executed 1 test", "Executed 2 tests"),
+                    text.replace("0 failures", "1 failure"), text.replace("EXECUTE SUCCEEDED", "EXECUTE FAILED"),
+                    text + text, text + self.console(diagnostic),
+                    text + d.PREFIX + json.dumps(diagnostic) + "\n",
+                    text + d.NORMAL_PREFIX + json.dumps(report) + "\n"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                d.validate_result(bad, hashes, True)
+        # Normal evidence must not be relabeled as the original diagnostic gate.
+        for bad in (text, self.console(report),
+                    self.console(diagnostic) + d.NORMAL_PREFIX + json.dumps(report) + "\n"):
+            with self.assertRaises(ValueError): d.validate_result(bad, hashes)
+
+    def test_normal_selector_changes_only_selected_test_and_keeps_external_limits(self):
+        args = (["xcodebuild", "-destination", "exact"], ["CODE_SIGNING_ALLOWED=NO"], Path("new.xcresult"))
+        diagnostic = d.make_test_command(*args)
+        normal = d.make_test_command(*args, normal_play=True)
+        self.assertEqual(normal, [part.replace("/" + d.TEST, "/" + d.NORMAL_TEST) for part in diagnostic])
+        self.assertEqual([x for x in normal if x.startswith("-only-testing:")],
+                         ["-only-testing:OwnedGameHostTests/OwnedHostV2FullChainTests/" + d.NORMAL_TEST])
+        swift = (HERE / "tests/OwnedHostV2FullChainTests.swift").read_text()
+        self.assertRegex(swift, r"func " + d.TEST + r"\(\) async throws \{\s*try await runPublicFixture\(mode: \.diagnostic\)")
+        self.assertRegex(swift, r"func " + d.NORMAL_TEST + r"\(\) async throws \{\s*try await runPublicFixture\(mode: \.normalPlay\)")
+        self.assertIn("case .diagnostic: return (OHStartV1(token, 30), false)", swift)
+        self.assertIn("case .normalPlay: return (OHPlayV1(token), true)", swift)
+        self.assertIn('normalPlay ? "GameNormalPlay" : "Game"', swift)
+        self.assertIn('normalPlay ? "PublicOwnedContentNormalPlay" : "PublicOwnedContent"', swift)
+        self.assertIn('report["normal_play_api_invoked"] = entry.normalPlayAPIInvoked', swift)
+        self.assertIn("XCTAssertNotEqual(repeated, 0)", swift)
+        self.assertEqual(len(re.findall(r"func testPublicOwnedHostV2\w+\(\)", swift)), 2)
 
     def stage_inputs(self, root):
         base, framework, resources = root / "base", root / "fixture", root / "resources"
@@ -280,7 +342,97 @@ class V2FixtureTests(unittest.TestCase):
             self.assertFalse(any("test-without-building" in c for c in calls))
             self.assertFalse((root / "evidence/public-v2-fullchain-result.json").exists())
 
-    def failed_test_run(self, bundle="directory", broken_summary=False, expired=False):
+    def successful_command_run(self, normal_play, refusal=None):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name).resolve(strict=True)
+        base, fixture, resources = self.stage_inputs(root)
+        stage = s.prepare(base, fixture, resources, root / "v2")
+        output = root / "evidence"
+        hashes = d.validate_stage(stage)[2]
+        _, report = self.report(normal_play)
+        report.update(hashes)
+        summary = dict(totalTestCount=1, passedTests=1, failedTests=0, skippedTests=0, expectedFailures=0)
+        if refusal == "skipped": summary.update(passedTests=0, skippedTests=1)
+        if refusal == "wrong_api": report["normal_play_api_invoked"] = False
+        text = self.console(report, normal_play)
+        if refusal == "diagnostic_fallback":
+            _, diagnostic = self.report(); diagnostic.update(hashes)
+            text = self.console(diagnostic)
+        calls = []
+
+        def command(command, cwd, prefix, deadline, message, **kwargs):
+            calls.append((command, deadline, kwargs))
+            if "build-for-testing" in command:
+                app = output / "DerivedData/Build/Products/Debug-iphonesimulator/OwnedGameHost.app"
+                (app / "PublicFixture").mkdir(parents=True)
+                shutil.copytree(stage / "Frameworks", app / "Frameworks")
+                shutil.copy2(stage / "Resources/OwnedGuestBinding.json", app / "OwnedGuestBinding.json")
+                shutil.copy2(stage / "Resources/PublicFixture/default.xex", app / "PublicFixture/default.xex")
+                (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": d.BUNDLE}))
+            if "otool" in command:
+                prefix.with_suffix(".stdout.log").write_text(
+                    "host:\n\t@rpath/WgpuNative.framework/WgpuNative (compatibility version 1.0.0)\n")
+            if "test-without-building" in command:
+                kwargs["result"].mkdir()
+                prefix.with_suffix(".stdout.log").write_text(text)
+            if "xcresulttool" in command and "help" not in command:
+                value = summary if command[4] == "summary" else {"testNodes": [
+                    {"nodeIdentifier": d.NORMAL_TEST if normal_play else d.TEST, "result": "Passed"}]}
+                prefix.with_suffix(".stdout.log").write_text(json.dumps(value))
+            return 0
+
+        argv = ["--stage", str(stage), "--output", str(output), "--destination",
+                "platform=iOS Simulator,id=12345678-1234-1234-1234-123456789abc"]
+        if normal_play: argv.append("--normal-play")
+        console = io.StringIO()
+        with mock.patch.object(d.sys, "platform", "darwin"), \
+             mock.patch.object(d.mobile, "run_command", side_effect=command), \
+             mock.patch.object(d.time, "monotonic", return_value=1000), contextlib.redirect_stdout(console):
+            if refusal:
+                with self.assertRaises(ValueError): d.main(argv)
+            else:
+                self.assertEqual(d.main(argv), 0)
+                count = len(calls)
+                with self.assertRaises(FileExistsError): d.main(argv)
+                self.assertEqual(len(calls), count)  # Never reuse old evidence or launch again.
+        return output, calls, report, console.getvalue()
+
+    def test_cli_modes_have_separate_results_one_selector_and_same_deadline(self):
+        for normal in (False, True):
+            with self.subTest(normal_play=normal):
+                output, calls, report, console = self.successful_command_run(normal)
+                name = "public-v2-normal-play-result.json" if normal else "public-v2-fullchain-result.json"
+                other = "public-v2-fullchain-result.json" if normal else "public-v2-normal-play-result.json"
+                self.assertEqual(json.loads((output / name).read_bytes()), dict(
+                    report, xcodebuild_exit_code=0, external_build_test_deadline_seconds=300))
+                self.assertFalse((output / other).exists())
+                tests = [(command, kwargs) for command, _, kwargs in calls if "test-without-building" in command]
+                self.assertEqual(len(tests), 1)
+                command, kwargs = tests[0]
+                self.assertEqual([part for part in command if part.startswith("-only-testing:")],
+                                 ["-only-testing:OwnedGameHostTests/OwnedHostV2FullChainTests/" +
+                                  (d.NORMAL_TEST if normal else d.TEST)])
+                self.assertEqual(kwargs["result"].name, "OwnedGameHostV2NormalPlay.xcresult" if normal else "OwnedGameHostV2.xcresult")
+                self.assertEqual({deadline for _, deadline, _ in calls}, {1300})
+                exports = [kwargs for command, _, kwargs in calls if "xcresulttool" in command]
+                self.assertEqual(len(exports), 4)
+                self.assertTrue(all(kwargs["cap"] == 15 for kwargs in exports))
+                key = "public_owned_host_v2_normal_play_passed" if normal else "public_owned_host_v2_fullchain_passed"
+                self.assertEqual(json.loads(console), {key: 1, "game_executed": False,
+                    "physical_iphone_verified": False, "audio_output_verified": False,
+                    "private_guest_framework_verified": False})
+
+    def test_normal_successful_command_still_refuses_skip_wrong_api_or_diagnostic_fallback(self):
+        for refusal in ("skipped", "wrong_api", "diagnostic_fallback"):
+            with self.subTest(refusal=refusal):
+                output, calls, _, console = self.successful_command_run(True, refusal)
+                self.assertFalse((output / "public-v2-normal-play-result.json").exists())
+                self.assertFalse((output / "public-v2-fullchain-result.json").exists())
+                self.assertNotIn("public_owned_host_v2_normal_play_passed", console)
+                self.assertEqual(len([c for c, _, _ in calls if "test-without-building" in c]), 1)
+
+    def failed_test_run(self, bundle="directory", broken_summary=False, expired=False, normal_play=False):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name).resolve(strict=True)
@@ -289,10 +441,10 @@ class V2FixtureTests(unittest.TestCase):
         output = root / "evidence"
         original = RuntimeError("authored xcodebuild failure remains authoritative")
         calls = []
-        hashes, result = self.report()
+        hashes, result = self.report(normal_play)
         failed_summary = dict(totalTestCount=1, passedTests=0, failedTests=1,
                               skippedTests=0, expectedFailures=0)
-        exported_tests = {"testNodes": [{"nodeIdentifier": d.CASE, "result": "Failed"}]}
+        exported_tests = {"testNodes": [{"nodeIdentifier": d.NORMAL_CASE if normal_play else d.CASE, "result": "Failed"}]}
 
         def command(command, cwd, prefix, deadline, message, **kwargs):
             calls.append((command, deadline, kwargs))
@@ -312,7 +464,7 @@ class V2FixtureTests(unittest.TestCase):
                 if bundle == "file": path.write_bytes(b"authored non-bundle marker")
                 # Even a complete success-looking console must not override a
                 # nonzero test command or synthesize an aggregate result.
-                prefix.with_suffix(".stdout.log").write_text(self.console(result))
+                prefix.with_suffix(".stdout.log").write_text(self.console(result, normal_play))
                 raise original
             if "xcresulttool" in command and "help" not in command:
                 if command[4] == "summary" and broken_summary:
@@ -329,11 +481,14 @@ class V2FixtureTests(unittest.TestCase):
              mock.patch.object(d, "validate_result") as result_gate, clock, contextlib.redirect_stdout(console):
             with self.assertRaises(RuntimeError) as raised:
                 d.main(["--stage", str(stage), "--output", str(output), "--destination",
-                        "platform=iOS Simulator,id=12345678-1234-1234-1234-123456789abc"])
+                        "platform=iOS Simulator,id=12345678-1234-1234-1234-123456789abc"] +
+                       (["--normal-play"] if normal_play else []))
             self.assertIs(raised.exception, original)
             summary_gate.assert_not_called(); result_gate.assert_not_called()
         self.assertFalse((output / "public-v2-fullchain-result.json").exists())
+        self.assertFalse((output / "public-v2-normal-play-result.json").exists())
         self.assertNotIn("public_owned_host_v2_fullchain_passed", console.getvalue())
+        self.assertNotIn("public_owned_host_v2_normal_play_passed", console.getvalue())
         self.assertEqual(len({deadline for _, deadline, _ in calls}), 1)
         return output, calls, failed_summary, exported_tests
 
@@ -354,6 +509,19 @@ class V2FixtureTests(unittest.TestCase):
         self.assertFalse((output / "xcresult-summary.json").exists())
         self.assertEqual(json.loads((output / "xcresult-tests.json").read_bytes()), tests)
         self.assertTrue(any(command[2:5] == ["get", "test-results", "tests"] for command, _, _ in calls))
+
+    def test_normal_failed_test_cannot_publish_success_and_keeps_actual_failure_diagnostics(self):
+        output, calls, summary, tests = self.failed_test_run(normal_play=True)
+        self.assertEqual(json.loads((output / "xcresult-summary.json").read_bytes()), summary)
+        self.assertEqual(json.loads((output / "xcresult-tests.json").read_bytes()), tests)
+        selected = [command for command, _, _ in calls if "test-without-building" in command]
+        self.assertEqual(len(selected), 1)
+        self.assertIn("-only-testing:OwnedGameHostTests/OwnedHostV2FullChainTests/" + d.NORMAL_TEST, selected[0])
+        self.assertEqual(selected[0][selected[0].index("-resultBundlePath") + 1],
+                         str(output / "OwnedGameHostV2NormalPlay.xcresult"))
+        exports = [(command, kwargs) for command, _, kwargs in calls if "xcresulttool" in command and "help" not in command]
+        self.assertEqual([command[-1] for command, _ in exports], [str(output / "OwnedGameHostV2NormalPlay.xcresult")] * 2)
+        self.assertTrue(all(kwargs["cap"] == 15 for _, kwargs in exports))
 
     def test_missing_nonbundle_or_expired_result_never_launches_diagnostic_commands(self):
         for bundle, expired in (("missing", False), ("file", False), ("directory", True)):

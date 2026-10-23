@@ -63,6 +63,15 @@ final class DeviceSettingsTests: XCTestCase {
         settings.version = 99; XCTAssertEqual(settings.normalized(), DeviceSettings())
     }
     func testNativeStructLayoutsMatchCContracts() {
+        XCTAssertNil(OwnedRunMode.play.maxSeconds)
+        XCTAssertEqual(OwnedRunMode.diagnostic.maxSeconds, .some(600))
+        XCTAssertEqual(OwnedRunMode.diagnosticSeconds, 600)
+        XCTAssertEqual(OwnedRunMode.play.statusText(elapsedMilliseconds: 0), "プレイ中 · 0秒")
+        XCTAssertEqual(OwnedRunMode.play.statusText(elapsedMilliseconds: 601_000), "プレイ中 · 601秒")
+        XCTAssertEqual(OwnedRunMode.diagnostic.statusText(elapsedMilliseconds: 0), "動作確認中 · 0 / 600秒")
+        XCTAssertEqual(OwnedRunMode.diagnostic.statusText(elapsedMilliseconds: 12_345), "動作確認中 · 12 / 600秒")
+        XCTAssertNotEqual(OwnedRunMode.play.start(token: 0), 0, "OHPlayV1 must reject an invalid token without starting a guest")
+        XCTAssertEqual(OHAbortFailedSessionV1(0), -1)
         XCTAssertEqual(MemoryLayout<OHBootGraphicsV1>.size, 32)
         XCTAssertEqual(MemoryLayout<OHPresentationSettingsV1>.size, 32)
         XCTAssertEqual(MemoryLayout<OHGraphicsStatusV1>.size, 120)

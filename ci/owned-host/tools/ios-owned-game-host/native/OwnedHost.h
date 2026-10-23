@@ -5,7 +5,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Experimental diagnostics only. Version 0x10000, sizeof=96. All readiness /
+/* Experimental host. Version 0x10000, sizeof=96. All readiness /
  * authentication / iPhone verification flags remain zero. Numeric module and
  * ordinal describe the first failure; no guest pointers or arguments escape. */
 typedef struct OHStatusV1 {
@@ -29,6 +29,14 @@ int32_t OHPrepareV1(const uint8_t *game,size_t game_bytes,
  * via _exit. This is a bounded startup diagnosis, never an unrestricted play
  * session. No guest call executes on the Swift calling thread. */
 int32_t OHStartV1(uint64_t token,uint32_t max_seconds);
+/* Normal foreground play, with the same preparation/renderer/one-shot checks.
+ * No scheduled process deadline. Fatal errors still terminate after evidence;
+ * iOS may suspend or terminate the app. No guest call uses the Swift thread. */
+int32_t OHPlayV1(uint64_t token);
+/* Report an unrecoverable UI/renderer failure during an executing session.
+ * Starts the existing bounded fatal-evidence/exit path once; it never waits on
+ * evidence I/O on the caller. Invalid token/pre-start/repeated calls refuse. */
+int32_t OHAbortFailedSessionV1(uint64_t token);
 /* token=0 permits a numeric observation before prepare returned its token. */
 int32_t OHReadStatusV1(uint64_t token,OHStatusV1 *out,size_t bytes);
 /* Complete ordinary port0 snapshot. Invalid/repeated lifecycle is refused;
