@@ -149,6 +149,15 @@ final class OwnedSession: ObservableObject {
     private var rendererReady = false
     private var appActive = false
     private var pendingInitialAudioStart = false
+    private var audioIntent: UInt64 = 0
+    private var audioControlsRevision: UInt64 = 0
+    private var audioPlaybackWanted = false
+    private var graphicsSettingsError: String?
+    private var audioControlsError: String?
+    private var audioLifecycleError: String?
+    private lazy var audioCommands = DeviceAudioCommands { [weak self] update in
+        Task { @MainActor in self?.receiveAudio(update) }
+    }
     private var fpsSample: (time: Double, decoded: UInt64, presented: UInt64)?
     private var surface: CAMetalLayer?
     private var token: UInt64 = 0
@@ -262,7 +271,6 @@ final class OwnedSession: ObservableObject {
                 }
                 let started = OHStartV1(preparedToken, maxSeconds)
                 guard started == 0 else {
-                    _ = OHNativeAudioStopV1()
                     Task { @MainActor in self?.stop("起動診断を開始できませんでした（\(started)）") }; return
                 }
                 Task { @MainActor in
@@ -283,7 +291,8 @@ final class OwnedSession: ObservableObject {
     private func stop(_ message: String) {
         localFailure = message; status = message; failed = true; running = false
         pendingInitialAudioStart = false
-        _ = OHNativeAudioStopV1()
+        audioPlaybackWanted = false
+        audioIntent = audioCommands.setPlaybackIntent(false)
         releaseButtons()
     }
 
@@ -326,15 +335,17 @@ final class OwnedSession: ObservableObject {
         guard rendererReady, token != 0 else { return }
         var live = deviceSettings.graphics.presentation
         let code = OHSetPresentationSettingsV1(token, &live, MemoryLayout<OHPresentationSettingsV1>.size)
-        let audio = deviceSettings.audio
-        let audioCode = OHNativeAudioSetControlsV1(Float(audio.gain), audio.muted ? 1 : 0, audio.profile.rawValue)
-        settingsError = code != 0 ? "出力設定を反映できませんでした（\(code)）" :
-            (audioCode != 0 ? "音声設定を反映できませんでした（\(audioCode)）" : nil)
+        graphicsSettingsError = code != 0 ? "出力設定を反映できませんでした（\(code)）" : nil
+        audioControlsRevision = audioCommands.setControls(deviceSettings.audio)
+        settingsError = graphicsSettingsError ?? audioControlsError ?? audioLifecycleError
     }
     func resumeAudio() {
         guard running, appActive else { return }
-        let code = OHNativeAudioStartV1()
-        if code != 0 { settingsError = "音声の再開に失敗しました（\(code)）" }
+        audioPlaybackWanted = true
+        audioLifecycleError = nil
+        settingsError = graphicsSettingsError ?? audioControlsError
+        audioStateLabel = "準備中"
+        audioIntent = audioCommands.setPlaybackIntent(true)
     }
     func sceneChanged(_ phase: ScenePhase) {
         appActive = phase == .active
@@ -348,7 +359,10 @@ final class OwnedSession: ObservableObject {
     }
     func suspendAudio() {
         appActive = false
-        if rendererReady { _ = OHNativeAudioStopV1() }
+        if rendererReady {
+            audioPlaybackWanted = false
+            audioIntent = audioCommands.setPlaybackIntent(false)
+        }
     }
     private func updateDeviceStatus() {
         let process = ProcessInfo.processInfo
@@ -376,8 +390,22 @@ final class OwnedSession: ObservableObject {
                 graphicsApplyLabel = status.requested_generation == status.applied_generation ? "描画側で受信済み" : "次のフレームを待機中"
             }
         }
-        var audio = OHNativeAudioStatusV1()
-        if OHNativeAudioReadStatusV1(&audio, UInt32(MemoryLayout<OHNativeAudioStatusV1>.size)) == 0,
+        if rendererReady { audioCommands.requestStatus() }
+    }
+
+    private func receiveAudio(_ update: DeviceAudioUpdate) {
+        // The worker may finish after backgrounding, failure, a new resume, or
+        // a settings edit. It must never publish a stale success/error as current.
+        guard update.intent == audioIntent, update.controlsRevision == audioControlsRevision else { return }
+        if let code = update.controlsCode {
+            audioControlsError = code == 0 ? nil : "音声設定を反映できませんでした（\(code)）"
+        }
+        if let code = update.intentCode, code != 0, code != -4 {
+            audioLifecycleError = audioPlaybackWanted ? "音声の再開に失敗しました（\(code)）" :
+                "音声の停止処理を確認できませんでした（\(code)）"
+        }
+        settingsError = graphicsSettingsError ?? audioControlsError ?? audioLifecycleError
+        if update.statusCode == 0, let audio = update.status,
            audio.version == 1, audio.struct_size == 256 {
             if audio.resume_required != 0 { audioStateLabel = "再開操作を待機中" }
             else {
@@ -397,6 +425,8 @@ final class OwnedSession: ObservableObject {
             audioHardwareLabel = audio.actual_sample_rate_hz == 0 ? "未測定" : "\(audio.actual_sample_rate_hz) Hz · \(audio.output_channels) ch · \(audio.io_buffer_duration_us / 1000) ms"
             audioFramesLabel = audio.transport.submitted_frames == 0 ? "未受信（復号は未確認）" : "\(audio.transport.submitted_frames) サンプルフレーム受信"
             audioSignalLabel = audio.transport.non_silent_frames == 0 ? "非ゼロの信号は未検出" : "\(audio.transport.non_silent_frames) サンプルフレームに信号あり"
+        } else if update.statusCode != 0 {
+            audioStateLabel = "音声の状態を確認できませんでした（\(update.statusCode)）"
         }
     }
 

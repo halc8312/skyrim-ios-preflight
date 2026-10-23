@@ -30,7 +30,7 @@ typedef struct OHHostAudioTransportV1 {
  * last_error: 0 none, 1 transport init, 2 session setup/activation,
  * 3 engine format/start, 4 render did not quiesce, 6 invalid render format.
  * Native lifecycle/status calls serialize internally; never call them from
- * an audio render callback. Repeated Start/Stop are safe. */
+ * an audio render callback. */
 typedef struct OHNativeAudioStatusV1 {
     uint32_t version, struct_size, state, user_wants_playback;
     uint32_t engine_running, interrupted, resume_required, actual_sample_rate_hz;
@@ -40,6 +40,22 @@ typedef struct OHNativeAudioStatusV1 {
     OHHostAudioTransportV1 transport;
 } OHNativeAudioStatusV1;
 
+/* Main-safe intent publication, without Apple calls or waiting for the engine.
+ * wanted must be 0/1. Returns a new nonzero token, or 0 for invalid/exhausted
+ * input. Stop intent immediately closes render admission and invalidates the
+ * queued transport epoch; an already admitted render quantum may finish.
+ * Publish before enqueuing work, then apply that exact token off the main thread.
+ * A later intent supersedes all older queued/in-flight apply operations. */
+uint64_t OHNativeAudioSetPlaybackIntentV1(uint32_t wanted);
+int32_t OHNativeAudioApplyPlaybackIntentV1(uint64_t token);
+
+/* All calls below, and Apply above, refuse the main thread before controller
+ * initialization. Returns: 0 success, -1 invalid/engine failure, -2 main thread,
+ * -3 five-second caller wait expired, -4 superseded intent, -5 request busy.
+ * A timeout does not terminate an Apple RPC. Its heap-owned request remains
+ * outstanding until it finishes; later callers refuse busy instead of piling
+ * up requests. Mutating timeouts cancel only their still-current intent.
+ * Start/Stop are background-only convenience SetIntent+Apply wrappers. */
 int32_t OHNativeAudioStartV1(void);
 int32_t OHNativeAudioStopV1(void);
 int32_t OHNativeAudioSetControlsV1(float gain, uint32_t muted, uint32_t profile);

@@ -39,6 +39,10 @@ env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT xcrun --sdk macosx \
   clang++ -std=c++17 -O2 -pthread -Wall -Wextra -Werror \
   "$host/sdk-test/audio_render_gate_test.cpp" -o "$work/audio-render-gate-test"
 "$work/audio-render-gate-test" 2>&1 | tee "$output/public-audio-render-gate-tests.log"
+env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT xcrun --sdk macosx \
+  clang++ -std=c++17 -O2 -pthread -Wall -Wextra -Werror \
+  "$host/sdk-test/audio_control_gate_test.cpp" -o "$work/audio-control-gate-test"
+"$work/audio-control-gate-test" 2>&1 | tee "$output/public-audio-control-gate-tests.log"
 python3 -B -m unittest discover -s "$backend/sdk-test" -p 'test_*.py' -v \
   2>&1 | tee "$output/resident-marker-tests.log"
 python3 -B -m unittest discover -s "$backend" -p 'test_prepare_fixture.py' -v \
@@ -90,6 +94,7 @@ for variant in device simulator; do
   cp "$host/native/OwnedHostNative.h" "$host/native/OwnedHostNative.mm" "$host/native/OwnedHost.h" "$stage/native/"
   cp "$host/native/DeviceGraphics.h" "$host/native/OwnedHostAudio.h" \
     "$host/native/OwnedHostAudio.mm" "$host/native/OwnedHostAudioRenderGate.h" \
+    "$host/native/OwnedHostAudioControlGate.h" \
     "$host/native/GraphicsPresentationProbe.h" "$stage/native/"
   cp "$generic/PrivateGuestABI.h" "$stage/include/"
   cp "$CARGO_TARGET_DIR/$rust_target/release/libios_owned_game_host.a" "$stage/Libraries/"

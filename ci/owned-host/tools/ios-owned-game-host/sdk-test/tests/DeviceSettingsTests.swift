@@ -22,6 +22,10 @@ final class DeviceSettingsTests: XCTestCase {
         XCTAssertEqual(original.videoMode, .p720); XCTAssertEqual(original.internalScale, 1)
         XCTAssertEqual(original.frameLimit, 0); XCTAssertEqual(original.filter, .original)
         XCTAssertFalse(original.mobileBudget); XCTAssertEqual(original.mirrorMiB, 0)
+        XCTAssertEqual(DevicePreset.minimum.graphics.frameLimit, 0, "Maximum performance must not impose a lower FPS ceiling")
+        XCTAssertEqual(DevicePreset.performance.graphics.frameLimit, 0)
+        XCTAssertEqual(DevicePreset.minimum.graphics.outputScale, 25)
+        XCTAssertEqual(DevicePreset.ultimate.graphics.internalScale, 3)
     }
     func testInvalidPersistedValuesCannotRequestUnboundedAllocationOrRate() throws {
         var settings = DeviceSettings()
@@ -42,6 +46,63 @@ final class DeviceSettingsTests: XCTestCase {
         XCTAssertEqual(MemoryLayout<OHGraphicsStatusV1>.alignment, 8)
         XCTAssertEqual(MemoryLayout<OHHostAudioTransportV1>.size, 160)
         XCTAssertEqual(MemoryLayout<OHNativeAudioStatusV1>.size, 256)
+    }
+    @MainActor
+    func testAudioCommandWorkerCoalescesAndHonorsLatestIntent() async {
+        let fixture = AudioCommandFixture()
+        let queue = DispatchQueue(label: "public-audio-command-proof")
+        let firstStop = expectation(description: "coalesced stop delivered on Main")
+        let lastStop = expectation(description: "stop after in-flight start delivered on Main")
+        let mainResponsive = expectation(description: "Main remains responsive")
+        let started = expectation(description: "worker start entered")
+        fixture.didEnterBlockedStart = { started.fulfill() }
+        var updates: [UInt64] = []
+        var revisions: [UInt64] = []
+        let commands = DeviceAudioCommands(backend: fixture.backend, queue: queue) { value in
+            XCTAssertTrue(Thread.isMainThread)
+            updates.append(value.intent)
+            revisions.append(value.controlsRevision)
+            if value.intent == 2 { firstStop.fulfill() }
+            if value.intent == 4 { lastStop.fulfill() }
+        }
+        queue.suspend()
+        for index in 0..<1000 {
+            var controls = DeviceAudioSettings()
+            controls.gain = Double(index) / 999
+            _ = commands.setControls(controls)
+            commands.requestStatus()
+        }
+        XCTAssertEqual(commands.setPlaybackIntent(true), 1)
+        XCTAssertEqual(commands.setPlaybackIntent(false), 2)
+        DispatchQueue.main.async { mainResponsive.fulfill() }
+        queue.resume()
+        await fulfillment(of: [firstStop, mainResponsive], timeout: 3)
+        let first = fixture.snapshot()
+        XCTAssertEqual(first.applied, [2], "A cancelled queued start must not be submitted")
+        XCTAssertEqual(first.controls, [1], "One latest control tuple replaces 1000 queued edits")
+        XCTAssertEqual(first.statusReads, 1, "Status polling must remain coalesced")
+        XCTAssertFalse(first.blockingCallOnMain)
+
+        XCTAssertEqual(commands.setPlaybackIntent(true), 3)
+        await fulfillment(of: [started], timeout: 3)
+        var changedControls = DeviceAudioSettings()
+        changedControls.gain = 0.5
+        XCTAssertEqual(commands.setControls(changedControls), 1001)
+        XCTAssertEqual(commands.setPlaybackIntent(false), 4)
+        for _ in 0..<1000 { commands.requestStatus() }
+        // The intent setter has already invalidated token 3, without waiting for
+        // the simulated engine call. Native permit admission is proven in C++.
+        XCTAssertEqual(fixture.snapshot().currentIntent, 4)
+        fixture.releaseStart.signal()
+        await fulfillment(of: [lastStop], timeout: 3)
+        let last = fixture.snapshot()
+        XCTAssertEqual(last.applied, [2, 3, 4])
+        XCTAssertEqual(last.controls, [1, 0.5])
+        XCTAssertEqual(last.statusReads, 3)
+        XCTAssertFalse(last.blockingCallOnMain)
+        XCTAssertEqual(updates, [2, 3, 4])
+        XCTAssertEqual(revisions, [1000, 1000, 1001], "An in-flight result must retain its old revision for the Main consumer to refuse")
+        XCTAssertFalse(last.blockedStartTimedOut)
     }
     @MainActor
     func testLocalPreferencesRoundTripAndRefuseUnknownOrOversizedData() throws {
@@ -90,5 +151,51 @@ final class DeviceSettingsTests: XCTestCase {
             add(attachment); XCTAssertEqual(image.size.width, 956)
         }
         XCTAssertFalse(OwnedSession.shared.attempted)
+    }
+}
+
+private final class AudioCommandFixture: @unchecked Sendable {
+    struct Snapshot {
+        var applied: [UInt64] = []
+        var controls: [Float] = []
+        var statusReads = 0
+        var currentIntent: UInt64 = 0
+        var blockingCallOnMain = false
+        var blockedStartTimedOut = false
+    }
+    private let lock = NSLock()
+    private var state = Snapshot()
+    let releaseStart = DispatchSemaphore(value: 0)
+    var didEnterBlockedStart: (() -> Void)?
+    func snapshot() -> Snapshot { lock.lock(); defer { lock.unlock() }; return state }
+    var backend: DeviceAudioBackend {
+        DeviceAudioBackend(setIntent: { [self] _ in
+            XCTAssertTrue(Thread.isMainThread)
+            lock.lock(); defer { lock.unlock() }
+            state.currentIntent &+= 1
+            return state.currentIntent
+        }, applyIntent: { [self] token in
+            lock.lock(); state.blockingCallOnMain = state.blockingCallOnMain || Thread.isMainThread
+            state.applied.append(token); lock.unlock()
+            if token == 3 {
+                didEnterBlockedStart?()
+                if releaseStart.wait(timeout: .now() + 3) == .timedOut {
+                    lock.lock(); state.blockedStartTimedOut = true; lock.unlock()
+                }
+            }
+            return snapshot().currentIntent == token ? 0 : -4
+        }, controls: { [self] gain, _, _ in
+            lock.lock(); defer { lock.unlock() }
+            state.blockingCallOnMain = state.blockingCallOnMain || Thread.isMainThread
+            state.controls.append(gain)
+            return 0
+        }, status: { [self] in
+            lock.lock(); defer { lock.unlock() }
+            state.blockingCallOnMain = state.blockingCallOnMain || Thread.isMainThread
+            state.statusReads += 1
+            var value = OHNativeAudioStatusV1()
+            value.version = 1; value.struct_size = 256
+            return (0, value)
+        })
     }
 }

@@ -39,13 +39,28 @@ def summary(group):
 
 class DeviceFeatureDriverTests(unittest.TestCase):
     def test_three_fixed_groups_exact_cases_and_either_serial_order(self):
-        self.assertEqual({k: len(v[1]) for k,v in driver.GROUPS.items()}, dict(graphics=1,settings=5,audio=6))
+        self.assertEqual({k: len(v[1]) for k,v in driver.GROUPS.items()}, dict(graphics=1,settings=6,audio=6))
         for group, (_, tests, _) in driver.GROUPS.items():
             for order in (tests, tuple(reversed(tests))):
                 with self.subTest(group=group):
                     driver.validate_console(group, console(group,order))
                     driver.validate_summary(group, summary(group))
                     driver.validate_marker(group,console(group,order))
+
+    def test_fixed_selectors_match_public_swift_sources_and_prior_settings_set_refuses(self):
+        for group, (cls, names, _) in driver.GROUPS.items():
+            source = (Path(__file__).parent / "tests" / (cls + ".swift")).read_text(encoding="utf-8")
+            declared = driver.re.findall(r"\bfunc\s+(test\w+)\s*\(", source)
+            self.assertEqual(len(declared), len(names), group)
+            self.assertEqual(set(declared), set(names), group)
+        added = "testAudioCommandWorkerCoalescesAndHonorsLatestIntent"
+        self.assertIn(added, driver.SETTINGS_TESTS)
+        prior = tuple(name for name in driver.SETTINGS_TESTS if name != added)
+        old_console = console("settings", prior).replace("Executed 6 tests", "Executed 5 tests")
+        with self.assertRaises(ValueError):
+            driver.validate_console("settings", old_console)
+        with self.assertRaises(ValueError):
+            driver.validate_summary("settings", dict(summary("settings"), totalTestCount=5, passedTests=5))
 
     def test_missing_duplicate_unknown_failed_skipped_and_interleaved_cases_refuse(self):
         for group, (_, tests, _) in driver.GROUPS.items():
@@ -153,7 +168,7 @@ class DeviceFeatureDriverTests(unittest.TestCase):
             else:
                 self.assertEqual(driver.main(args),0)
                 report=json.loads((output/"public-device-features-result.json").read_text())
-                self.assertEqual(report["expected_cases"],12)
+                self.assertEqual(report["expected_cases"],13)
                 self.assertEqual(set(report["groups"]),set(driver.GROUPS))
                 for group in driver.GROUPS:
                     self.assertTrue((output/group/"xcresult-summary.json").is_file())

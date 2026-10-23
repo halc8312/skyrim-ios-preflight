@@ -55,6 +55,36 @@ overlapping callbacks are refused without waiting. A timeout retains the graph
 and refuses replacement. Render format failure is reported and quiesced by a
 later controller status call, not by the render callback.
 
+All blocking native lifecycle, controls and status calls refuse Main with `-2`
+before creating the controller. The app and six SDK tests await these calls on
+background serial workers; status is included because it may quiesce a failed
+graph. `SetPlaybackIntentV1` is Main-safe and has no Apple calls. Publish intent
+before queuing `ApplyPlaybackIntentV1(token)`. Stop intent immediately closes
+render admission and invalidates the transport epoch. A short non-render mutex
+orders cancellation with final admission after engine startup. Every automatic
+restart also requires the exact current intent; stale work returns `-4`.
+Disconnect, media-service loss/reset, interruption end without resume permission,
+and render-format failure retire tokens published before their serialized
+handling. Desired intent remains visible, but only a newly published action can
+clear the requirement to resume explicitly.
+
+Caller waits are bounded to five seconds (`-3`). Queued work and results are
+heap-owned, so late completion never touches caller stack/output storage. Only
+one caller request may be outstanding (`-5` for another); timeout does not free
+that slot until the queued work actually finishes or skips. An executing Apple
+RPC cannot be forcibly cancelled by this API. A mutating timeout cancels only
+its still-current intent. This bounds the caller wait and prevents late audio
+admission, but cannot prevent an operating-system RPC from aborting the process.
+The Simulator factory/RPC error is a separate observation whose cause and
+resolution require a real SDK rerun; portable checks do not establish that.
+SDK Debug builds alone emit `PUBLIC_AUDIO_PHASE <token> <phase>` before Apple
+operations: 100/101 observer setup begin/end; 1 startup entry; 10 category,
+11 rate preference, 12 buffer preference, 13 activation, 14 hardware query;
+20 engine creation, 21 mixer getter, 22 source creation, 23 attach, 24 connect,
+30 prepare, 31 start, 40 admission committed; 70/71 engine stop begin/end and
+72/73 session deactivation begin/end. These numeric breadcrumbs help locate a
+platform abort without changing the status ABI or success marker.
+
 Output disconnection pauses playback and requires explicit Start. Interruption
 end resumes only when Apple permits it and user playback intent remains set.
 Media-services loss/reset discards the graph and requires a new user Start.
@@ -69,6 +99,17 @@ events, stop/profile epochs, mute/ramp, cursor wrap, producer/consumer ordering,
 invalid inputs, C layout and zero allocation/deallocation while rendering.
 HLE tests cover optional observer delivery outside the mutex, generation tags,
 slot reuse during a copied frame and preserved legacy output behavior.
+
+`sdk-test/audio_control_gate_test.cpp` uses the exact production control helpers
+for seven deterministic cases: intent validation/staleness, cancellation during
+startup, cancellation racing admission, abandoned queued work, late owned
+completion, successful publication, and bounded outstanding-request admission.
+Compile with `clang++ -std=c++17 -O2 -pthread` and run with a 30-second process
+deadline. Its strict `OWNED_HOST_AUDIO_CONTROL_RESULT` marker explicitly keeps
+Apple-engine verification false. The six existing SDK selectors now await real
+engine calls, test Main refusal/stale intents, and require a responsive Main
+queue during startup. Their 30-second test limits and real-engine assertions
+remain in place.
 
 The exact native admission helper also has an authored C++ fixture:
 

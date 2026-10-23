@@ -549,3 +549,7 @@
 !/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/registers_delta_tests.rs
 !/ci/owned-host/skyrim-recomp-web/crates/xenos-render/tests/
 !/ci/owned-host/skyrim-recomp-web/crates/xenos-render/tests/draw_native.rs
+!/ci/owned-host/tools/ios-owned-game-host/app/DeviceAudioCommands.swift
+!/ci/owned-host/tools/ios-owned-game-host/native/OwnedHostAudioControlGate.h
+!/ci/owned-host/tools/ios-owned-game-host/sdk-test/audio_control_gate_test.cpp
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/present_cache_tests.rs

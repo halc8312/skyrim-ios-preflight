@@ -159,6 +159,9 @@ impl FrontBuffer {
 struct Shown {
     width: u32,
     height: u32,
+    // Keep the compared handle alive; a retired view cannot reuse its identity.
+    // This is only the current front buffer, never a history of old textures.
+    view: TextureView,
     group: BindGroup,
 }
 
@@ -313,24 +316,31 @@ impl Presenter {
         }
         let bytes: Vec<u8> = front.swizzle.iter().flat_map(|v| v.to_le_bytes()).collect();
         device.queue().write_buffer(&self.swizzle, 0, &bytes);
-        let swizzle = &self.swizzle;
-        let group = device.create_bind_group(
-            "present",
-            &self.layout,
-            &[
-                BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&front.view) },
-                BindGroupEntry { binding: 1, resource: BindingResource::Sampler(&self.sampler) },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: BindingResource::Buffer { buffer: swizzle, offset: 0, size: None },
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: BindingResource::Buffer { buffer: &self.options, offset: 0, size: None },
-                },
-            ],
-        );
-        self.shown = Some(Shown { width: front.width, height: front.height, group });
+        if let Some(shown) = self.shown.as_mut().filter(|shown| shown.view == front.view) {
+            // Layout, sampler and uniform-buffer objects are immutable for this
+            // presenter. Buffer contents and viewport dimensions still update.
+            shown.width = front.width;
+            shown.height = front.height;
+        } else {
+            let swizzle = &self.swizzle;
+            let group = device.create_bind_group(
+                "present",
+                &self.layout,
+                &[
+                    BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&front.view) },
+                    BindGroupEntry { binding: 1, resource: BindingResource::Sampler(&self.sampler) },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: BindingResource::Buffer { buffer: swizzle, offset: 0, size: None },
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: BindingResource::Buffer { buffer: &self.options, offset: 0, size: None },
+                    },
+                ],
+            );
+            self.shown = Some(Shown { width: front.width, height: front.height, view: front.view, group });
+        }
         self.frames += 1;
         Some((front.width, front.height))
     }
@@ -354,6 +364,10 @@ impl Presenter {
         pass.end();
     }
 }
+
+#[cfg(all(test, not(target_os = "emscripten")))]
+#[path = "present_cache_tests.rs"]
+mod cache_tests;
 
 #[cfg(test)]
 mod tests {

@@ -108,6 +108,7 @@ skyrim-recomp-web/crates/xenos-render/src/extent.rs
 skyrim-recomp-web/crates/xenos-render/src/lib.rs
 skyrim-recomp-web/crates/xenos-render/src/native.rs
 skyrim-recomp-web/crates/xenos-render/src/present.rs
+skyrim-recomp-web/crates/xenos-render/src/present_cache_tests.rs
 skyrim-recomp-web/crates/xenos-render/src/presentation_probe.rs
 skyrim-recomp-web/crates/xenos-render/src/queue.rs
 skyrim-recomp-web/crates/xenos-render/src/registers.rs
@@ -182,6 +183,7 @@ tools/ios-owned-game-host/AUDIO.md
 tools/ios-owned-game-host/Cargo.lock
 tools/ios-owned-game-host/Cargo.toml
 tools/ios-owned-game-host/README.md
+tools/ios-owned-game-host/app/DeviceAudioCommands.swift
 tools/ios-owned-game-host/app/DeviceSettings.swift
 tools/ios-owned-game-host/app/DeviceSettingsView.swift
 tools/ios-owned-game-host/app/MetalViewport.swift
@@ -196,11 +198,13 @@ tools/ios-owned-game-host/native/GraphicsPresentationProbe.h
 tools/ios-owned-game-host/native/OwnedHost.h
 tools/ios-owned-game-host/native/OwnedHostAudio.h
 tools/ios-owned-game-host/native/OwnedHostAudio.mm
+tools/ios-owned-game-host/native/OwnedHostAudioControlGate.h
 tools/ios-owned-game-host/native/OwnedHostAudioRenderGate.h
 tools/ios-owned-game-host/native/OwnedHostNative.h
 tools/ios-owned-game-host/native/OwnedHostNative.mm
 tools/ios-owned-game-host/native/PublicOwnedFixture.cpp
 tools/ios-owned-game-host/project.yml
+tools/ios-owned-game-host/sdk-test/audio_control_gate_test.cpp
 tools/ios-owned-game-host/sdk-test/audio_render_gate_test.cpp
 tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.cpp
 tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.h

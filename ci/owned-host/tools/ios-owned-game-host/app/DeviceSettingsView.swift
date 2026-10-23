@@ -121,6 +121,7 @@ struct DeviceAudioSettingsView: View {
                     LabeledContent("端末の形式", value: session.audioHardwareLabel)
                     LabeledContent("ゲームからの音声", value: session.audioFramesLabel)
                     LabeledContent("出力データの信号", value: session.audioSignalLabel)
+                    if let error = session.settingsError { Text(error).foregroundStyle(.orange) }
                     Text("出力エンジンの起動だけではゲーム音声の復号成功は確認できません。無音の場合もゲーム側の音声処理を調査できるよう、受信量を表示します。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }

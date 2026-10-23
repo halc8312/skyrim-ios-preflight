@@ -1,5 +1,6 @@
 #import "OwnedHostAudio.h"
 #include "OwnedHostAudioRenderGate.h"
+#include "OwnedHostAudioControlGate.h"
 #import <AVFAudio/AVFAudio.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <Foundation/Foundation.h>
@@ -7,16 +8,36 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <thread>
+#if defined(OWNED_HOST_SDK_TRACE_TEST)
+#include <cstdio>
+#endif
 
 // The source render block only uses these lock-free words and the Rust pull.
 // No Objective-C messages, allocation, locks, file access or guest calls occur
 // in that block. All engine/session work is confined to the controller queue.
 static OHAudioRenderGate renderGate;
+static OHAudioPlaybackIntent playbackIntent;
 static std::atomic<bool> renderFormatFailed{false};
-static char controllerQueueKey;
+static OHAudioRequestAdmission requestAdmission;
 static constexpr uint32_t sourceRate = 48000;
 static constexpr uint32_t maxPullFrames = 8192;
+
+static void AudioPhase(uint64_t token, uint32_t phase) {
+#if defined(OWNED_HOST_SDK_TRACE_TEST)
+    // Public SDK Debug only. No route/device/game names or per-frame output.
+    std::fprintf(stderr, "PUBLIC_AUDIO_PHASE %llu %u\n",
+                 static_cast<unsigned long long>(token), phase);
+#else
+    (void)token; (void)phase;
+#endif
+}
+
+static void ClosePlaybackAdmission() {
+    renderGate.close();
+    OHHostAudioSetRunningV1(0); // Cheap atomics; no initialization or Apple call.
+}
 
 static OSStatus RenderSource(uint64_t generation, BOOL *silence,
                              AVAudioFrameCount frames, AudioBufferList *output) {
@@ -84,10 +105,11 @@ static uint32_t RouteKind(AVAudioSession *session) {
     float _gain;
     uint32_t _muted;
     uint32_t _profile;
+    uint64_t _intentGeneration;
 }
-- (void)sync:(dispatch_block_t)block;
-- (int32_t)start;
-- (int32_t)stop;
+- (void)enqueue:(dispatch_block_t)block;
+- (void)ensureObservers;
+- (int32_t)applyIntent:(uint64_t)token;
 - (int32_t)controlsGain:(float)gain muted:(uint32_t)muted profile:(uint32_t)profile;
 - (OHNativeAudioStatusV1)status;
 - (void)readHardware;
@@ -104,9 +126,16 @@ static uint32_t RouteKind(AVAudioSession *session) {
     self = [super init];
     if (!self) return nil;
     _queue = dispatch_queue_create("owned-host.audio-lifecycle", DISPATCH_QUEUE_SERIAL);
-    dispatch_queue_set_specific(_queue, &controllerQueueKey, &controllerQueueKey, nullptr);
     _gain = 1.0f;
     _status.version = 1; _status.struct_size = sizeof(_status); _status.state = 1;
+    return self;
+}
+
+- (void)ensureObservers {
+    if (_sessionObservers) return;
+    // Controller creation has no Apple audio work. Even the first session
+    // access happens inside the background request's bounded caller wait.
+    AudioPhase(0, 100);
     AVAudioSession *session = AVAudioSession.sharedInstance;
     NSNotificationCenter *notifications = NSNotificationCenter.defaultCenter;
     __weak OHOwnedAudioController *weakSelf = self;
@@ -134,12 +163,11 @@ static uint32_t RouteKind(AVAudioSession *session) {
             if (controller) dispatch_async(controller->_queue, ^{ [controller servicesChanged:YES]; });
         }];
     _sessionObservers = @[interruption, route, reset, lost];
-    return self;
+    AudioPhase(0, 101);
 }
 
-- (void)sync:(dispatch_block_t)block {
-    if (dispatch_get_specific(&controllerQueueKey)) block();
-    else dispatch_sync(_queue, block);
+- (void)enqueue:(dispatch_block_t)block {
+    dispatch_async(_queue, block);
 }
 
 - (void)readHardware {
@@ -156,7 +184,9 @@ static uint32_t RouteKind(AVAudioSession *session) {
 - (BOOL)quiesce:(BOOL)deactivateSession {
     renderGate.close();
     OHHostAudioSetRunningV1(0);
+    AudioPhase(_intentGeneration, 70);
     [_engine stop];
+    AudioPhase(_intentGeneration, 71);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
     while (renderGate.active_count() != 0) {
         if (std::chrono::steady_clock::now() >= deadline) {
@@ -174,13 +204,17 @@ static uint32_t RouteKind(AVAudioSession *session) {
     _status.engine_running = 0;
     _status.actual_sample_rate_hz = 0; _status.io_buffer_duration_us = 0; _status.output_channels = 0;
     if (deactivateSession) {
+        AudioPhase(_intentGeneration, 72);
         [AVAudioSession.sharedInstance setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nullptr];
+        AudioPhase(_intentGeneration, 73);
     }
     return YES;
 }
 
 - (BOOL)beginEngine {
-    if (!_wanted || _interrupted || _requiresResume || _servicesLost) return NO;
+    AudioPhase(_intentGeneration, 1);
+    if (!_wanted || _interrupted || _requiresResume || _servicesLost ||
+        !playbackIntent.permits(_intentGeneration)) return NO;
     if (_engine.isRunning && renderGate.enabled()) return YES;
     if (![self quiesce:YES]) return NO;
     _status.state = 2; _status.last_error = 0;
@@ -191,15 +225,21 @@ static uint32_t RouteKind(AVAudioSession *session) {
     NSError *error = nil;
     // Preferences are requested while inactive. Their acceptance is not a
     // hardware-format guarantee; actual rate/duration are read after activation.
+    AudioPhase(_intentGeneration, 10);
     if (![session setCategory:AVAudioSessionCategoryPlayback mode:AVAudioSessionModeDefault options:0 error:&error]) {
         _status.state = 7; _status.last_error = 2; return NO;
     }
+    AudioPhase(_intentGeneration, 11);
     [session setPreferredSampleRate:sourceRate error:nullptr];
     const double requestedFrames = _profile == 1 ? 256.0 : (_profile == 2 ? 1024.0 : 512.0);
+    AudioPhase(_intentGeneration, 12);
     [session setPreferredIOBufferDuration:requestedFrames / sourceRate error:nullptr];
+    AudioPhase(_intentGeneration, 13);
     if (![session setActive:YES error:&error]) {
         _status.state = 7; _status.last_error = 2; return NO;
     }
+    if (!playbackIntent.permits(_intentGeneration)) { [self quiesce:YES]; return NO; }
+    AudioPhase(_intentGeneration, 14);
     [self readHardware];
     if (_status.actual_sample_rate_hz == 0 || _status.output_channels == 0) {
         [self quiesce:YES]; _status.state = 7; _status.last_error = 3; return NO;
@@ -210,15 +250,21 @@ static uint32_t RouteKind(AVAudioSession *session) {
         if (!format || format.isInterleaved || format.commonFormat != AVAudioPCMFormatFloat32) {
             [self quiesce:YES]; _status.state = 7; _status.last_error = 3; return NO;
         }
+        AudioPhase(_intentGeneration, 20);
         _engine = [[AVAudioEngine alloc] init];
+        AudioPhase(_intentGeneration, 21);
+        AVAudioMixerNode *mixer = _engine.mainMixerNode;
+        AudioPhase(_intentGeneration, 22);
         _source = [[AVAudioSourceNode alloc] initWithFormat:format renderBlock:
             ^OSStatus(BOOL *silence, const AudioTimeStamp *, AVAudioFrameCount frames, AudioBufferList *output) {
                 return RenderSource(generation, silence, frames, output);
             }];
+        AudioPhase(_intentGeneration, 23);
         [_engine attachNode:_source];
-        [_engine connect:_source to:_engine.mainMixerNode format:format];
+        AudioPhase(_intentGeneration, 24);
+        [_engine connect:_source to:mixer format:format];
         // The mixer converts the fixed 48 kHz source to the active output route.
-        _engine.mainMixerNode.outputVolume = 1.0f;
+        mixer.outputVolume = 1.0f;
         __weak OHOwnedAudioController *weakSelf = self;
         __weak AVAudioEngine *watchedEngine = _engine;
         _configurationObserver = [NSNotificationCenter.defaultCenter
@@ -228,31 +274,40 @@ static uint32_t RouteKind(AVAudioSession *session) {
                 AVAudioEngine *engine = watchedEngine;
                 if (controller && engine) dispatch_async(controller->_queue, ^{ [controller configurationChanged:engine]; });
             }];
+        AudioPhase(_intentGeneration, 30);
         [_engine prepare];
-        OHHostAudioSetRunningV1(1);
+        AudioPhase(_intentGeneration, 31);
         if (![_engine startAndReturnError:&error]) {
             [self quiesce:YES]; _status.state = 7; _status.last_error = 3; return NO;
         }
     } @catch (NSException *) {
         [self quiesce:YES]; _status.state = 7; _status.last_error = 3; return NO;
     }
-    renderFormatFailed.store(false, std::memory_order_relaxed);
-    renderGate.open();
+    // The short intent lock makes cancel and final admission mutually
+    // exclusive. Never hold it across an Apple call or render quiescence.
+    const bool committed = playbackIntent.commit(_intentGeneration, [] {
+        renderFormatFailed.store(false, std::memory_order_relaxed);
+        OHHostAudioSetRunningV1(1);
+        renderGate.open();
+    });
+    if (!committed) { [self quiesce:YES]; return NO; }
+    AudioPhase(_intentGeneration, 40);
     _status.engine_running = 1; _status.state = 3; _status.engine_restarts += 1;
     [self readHardware];
     return YES;
 }
 
-- (int32_t)start {
-    _wanted = YES; _requiresResume = NO;
-    return [self beginEngine] ? 0 : -1;
-}
-
-- (int32_t)stop {
-    _wanted = NO; _requiresResume = NO;
-    if (![self quiesce:YES]) return -1;
-    _status.state = 1; _status.last_error = 0;
-    return 0;
+- (int32_t)applyIntent:(uint64_t)token {
+    const auto intent = playbackIntent.snapshot();
+    if (token == 0 || intent.token != token) return -4;
+    _intentGeneration = token; _wanted = intent.wanted; _requiresResume = NO;
+    int32_t result;
+    if (_wanted) result = [self beginEngine] ? 0 : -1;
+    else {
+        result = [self quiesce:YES] ? 0 : -1;
+        if (result == 0) { _status.state = 1; _status.last_error = 0; }
+    }
+    return playbackIntent.current(token) ? result : -4;
 }
 
 - (int32_t)controlsGain:(float)gain muted:(uint32_t)muted profile:(uint32_t)profile {
@@ -263,7 +318,10 @@ static uint32_t RouteKind(AVAudioSession *session) {
     const BOOL changedProfile = _profile != profile;
     _gain = gain; _muted = muted; _profile = profile;
     if (changedProfile && _wanted && !_interrupted && !_requiresResume && !_servicesLost) {
-        if (![self quiesce:YES] || ![self beginEngine]) return -1;
+        if (![self quiesce:YES]) return -1;
+        // The app applies controls before a newly published Start. Retire the
+        // old graph now, but let that exact later Apply own its new admission.
+        if (playbackIntent.permits(_intentGeneration) && ![self beginEngine]) return -1;
     }
     return 0;
 }
@@ -277,7 +335,8 @@ static uint32_t RouteKind(AVAudioSession *session) {
         if ((options & AVAudioSessionInterruptionOptionShouldResume) && _wanted && !_requiresResume && !_servicesLost) {
             [self beginEngine];
         } else {
-            _requiresResume = _wanted;
+            _requiresResume = playbackIntent.snapshot().wanted;
+            if (_requiresResume) playbackIntent.invalidate(ClosePlaybackAdmission);
             _status.state = 1;
         }
     }
@@ -286,8 +345,9 @@ static uint32_t RouteKind(AVAudioSession *session) {
 - (void)routeChanged:(NSUInteger)reason {
     _status.route_changes += 1;
     _status.route_kind = RouteKind(AVAudioSession.sharedInstance);
-    if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable && _wanted) {
+    if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable && playbackIntent.snapshot().wanted) {
         _requiresResume = YES;
+        playbackIntent.invalidate(ClosePlaybackAdmission);
         if ([self quiesce:YES]) _status.state = 5;
         return;
     }
@@ -315,6 +375,7 @@ static uint32_t RouteKind(AVAudioSession *session) {
 
 - (void)servicesChanged:(BOOL)lost {
     _servicesLost = lost; _requiresResume = YES; _interrupted = NO;
+    playbackIntent.invalidate(ClosePlaybackAdmission);
     if (!lost) _status.media_resets += 1;
     if ([self quiesce:NO]) _status.state = 6;
     // Apple requires a new user action after media-services reset. Category,
@@ -325,10 +386,11 @@ static uint32_t RouteKind(AVAudioSession *session) {
     if (renderFormatFailed.load(std::memory_order_relaxed) && _status.state == 3) {
         // Lifecycle work is deferred to this controller call, never the render
         // block. A format failure must not continue to report healthy output.
+        playbackIntent.invalidate(ClosePlaybackAdmission);
         [self quiesce:YES]; _requiresResume = YES; _status.state = 7; _status.last_error = 6;
     }
     OHNativeAudioStatusV1 result = _status;
-    result.user_wants_playback = _wanted;
+    result.user_wants_playback = playbackIntent.snapshot().wanted;
     result.interrupted = _interrupted;
     result.resume_required = _requiresResume;
     result.profile = _profile;
@@ -347,22 +409,76 @@ static OHOwnedAudioController *Controller() {
     return controller;
 }
 
-extern "C" int32_t OHNativeAudioStartV1(void) {
+struct NativeResult {
+    int32_t code = -1;
+    OHNativeAudioStatusV1 status{};
+};
+
+static int32_t Perform(OHOwnedAudioController *controller, uint64_t cancelToken,
+                       NativeResult (^operation)(void), NativeResult &out) {
+    if (!requestAdmission.begin()) return -5;
+    auto completion = std::make_shared<OHAudioCompletion<NativeResult>>();
+    [controller enqueue:^{
+        if (!completion->begin()) { requestAdmission.finish(); return; }
+        NativeResult result;
+        @try {
+            [controller ensureObservers];
+            result = operation();
+        } @catch (NSException *) {
+            playbackIntent.cancel(cancelToken, ClosePlaybackAdmission);
+            result.code = -1;
+        }
+        requestAdmission.finish();
+        completion->finish(result);
+    }];
+    if (!completion->wait_for(std::chrono::seconds(5), out)) {
+        playbackIntent.cancel(cancelToken, ClosePlaybackAdmission);
+        return -3;
+    }
+    return out.code;
+}
+
+extern "C" uint64_t OHNativeAudioSetPlaybackIntentV1(uint32_t wanted) {
+    return playbackIntent.set(wanted, ClosePlaybackAdmission);
+}
+extern "C" int32_t OHNativeAudioApplyPlaybackIntentV1(uint64_t token) {
+    if (NSThread.isMainThread) return -2;
+    if (token == 0) return -1;
+    if (!playbackIntent.current(token)) return -4;
     OHOwnedAudioController *controller = Controller();
-    __block int32_t result = -1; [controller sync:^{ result = [controller start]; }]; return result;
+    NativeResult result;
+    return Perform(controller, token, ^NativeResult {
+        NativeResult value; value.code = [controller applyIntent:token]; return value;
+    }, result);
+}
+extern "C" int32_t OHNativeAudioStartV1(void) {
+    if (NSThread.isMainThread) return -2;
+    const auto token = OHNativeAudioSetPlaybackIntentV1(1);
+    return token ? OHNativeAudioApplyPlaybackIntentV1(token) : -1;
 }
 extern "C" int32_t OHNativeAudioStopV1(void) {
-    OHOwnedAudioController *controller = Controller();
-    __block int32_t result = -1; [controller sync:^{ result = [controller stop]; }]; return result;
+    if (NSThread.isMainThread) return -2;
+    const auto token = OHNativeAudioSetPlaybackIntentV1(0);
+    return token ? OHNativeAudioApplyPlaybackIntentV1(token) : -1;
 }
 extern "C" int32_t OHNativeAudioSetControlsV1(float gain, uint32_t muted, uint32_t profile) {
+    if (NSThread.isMainThread) return -2;
+    if (!std::isfinite(gain) || gain < 0 || gain > 1 || muted > 1 || profile > 2) return -1;
     OHOwnedAudioController *controller = Controller();
-    __block int32_t result = -1;
-    [controller sync:^{ result = [controller controlsGain:gain muted:muted profile:profile]; }]; return result;
+    NativeResult result;
+    return Perform(controller, playbackIntent.snapshot().token, ^NativeResult {
+        NativeResult value;
+        value.code = [controller controlsGain:gain muted:muted profile:profile]; return value;
+    }, result);
 }
 extern "C" int32_t OHNativeAudioReadStatusV1(OHNativeAudioStatusV1 *out, uint32_t bytes) {
+    if (NSThread.isMainThread) return -2;
     if (!out || reinterpret_cast<uintptr_t>(out) % alignof(OHNativeAudioStatusV1) != 0 || bytes != sizeof(*out)) return -1;
     OHOwnedAudioController *controller = Controller();
-    __block OHNativeAudioStatusV1 result{};
-    [controller sync:^{ result = [controller status]; }]; *out = result; return 0;
+    NativeResult result;
+    const int32_t code = Perform(controller, 0, ^NativeResult {
+        NativeResult value; value.status = [controller status]; value.code = 0; return value;
+    }, result);
+    if (code == 0) *out = result.status;
+    return code;
 }

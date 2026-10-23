@@ -20,6 +20,7 @@ SETTINGS_TESTS = (
     "testPresetsProduceBoundedNativeTuplesAndKeepOriginalDefault",
     "testInvalidPersistedValuesCannotRequestUnboundedAllocationOrRate",
     "testNativeStructLayoutsMatchCContracts",
+    "testAudioCommandWorkerCoalescesAndHonorsLatestIntent",
     "testLocalPreferencesRoundTripAndRefuseUnknownOrOversizedData",
     "testPublicSettingsScreensRenderWithoutStartingGuest",
 )

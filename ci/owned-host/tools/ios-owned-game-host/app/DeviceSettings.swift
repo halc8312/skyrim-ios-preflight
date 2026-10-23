@@ -35,9 +35,9 @@ enum DevicePreset: String, CaseIterable {
         switch self {
         case .original: return DeviceGraphicsSettings()
         case .minimum: return .init(videoMode: .p360, internalScale: 1, mirrorMiB: 128,
-            mobileBudget: true, frameLimit: 20, outputScale: 50, filter: .bilinear, sharpness: 0)
+            mobileBudget: true, frameLimit: 0, outputScale: 25, filter: .bilinear, sharpness: 0)
         case .performance: return .init(videoMode: .p540, internalScale: 1, mirrorMiB: 128,
-            mobileBudget: true, frameLimit: 30, outputScale: 75, filter: .bilinear, sharpness: 0)
+            mobileBudget: true, frameLimit: 0, outputScale: 75, filter: .bilinear, sharpness: 0)
         case .balanced: return .init(videoMode: .p720, internalScale: 1, mirrorMiB: 128,
             mobileBudget: true, frameLimit: 30, outputScale: 100, filter: .original, sharpness: 0)
         case .quality: return .init(videoMode: .p720, internalScale: 1, mirrorMiB: 192,
