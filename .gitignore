@@ -586,3 +586,6 @@
 !/ci/prepare-fix-build-route/prepare_route.py
 !/ci/prepare-fix-build-route/reference-pins.json
 !/ci/prepare-fix-build-route/test_prepare_route.py
+!/.circleci/
+!/.circleci/config.yml
+!/.circleci/check_manual_request.py
