@@ -35,7 +35,8 @@ cargo +nightly-2026-10-11 test --locked --lib \
   2>&1 | tee "$output/public-signed-policy-tests.log"
 python3 -B -m unittest discover -s "$host/sdk-test" -p 'test_*.py' -v \
   2>&1 | tee "$output/public-driver-tests.log"
-clang++ -std=c++17 -O2 -pthread -Wall -Wextra -Werror \
+env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT xcrun --sdk macosx \
+  clang++ -std=c++17 -O2 -pthread -Wall -Wextra -Werror \
   "$host/sdk-test/audio_render_gate_test.cpp" -o "$work/audio-render-gate-test"
 "$work/audio-render-gate-test" 2>&1 | tee "$output/public-audio-render-gate-tests.log"
 python3 -B -m unittest discover -s "$backend/sdk-test" -p 'test_*.py' -v \
