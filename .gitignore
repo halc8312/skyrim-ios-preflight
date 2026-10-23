@@ -582,3 +582,7 @@
 !/ci/owned-host/tools/windows-ios-guest-probe/owned-guest-abi/mmio_overlay.py
 !/ci/owned-host/tools/windows-ios-guest-probe/audit_private_guest_symbols.py
 !/ci/owned-host/tools/ios-owned-game-host/src/root_tests.rs
+!/ci/prepare-fix-build-route/
+!/ci/prepare-fix-build-route/prepare_route.py
+!/ci/prepare-fix-build-route/reference-pins.json
+!/ci/prepare-fix-build-route/test_prepare_route.py
