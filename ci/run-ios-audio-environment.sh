@@ -20,6 +20,7 @@ python3 -B -m unittest discover -s "$harness/ci" -p 'test_probe_ios_audioqueue_e
 simulator_version="${SKYRT_AUDIO_SIMULATOR_VERSION-26.5}"
 selection="$(python3 - "$harness/ci" "$simulator_version" "$driver/simulator-selection.json" <<'PY'
 import json, subprocess, sys
+from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from audio_simulator_selection import runtime_identifier, select_simulator
 
@@ -40,7 +41,7 @@ inventory = dict(schema=1, requested_version=version, runtimes=[
     for row in runtimes if isinstance(row, dict)
     and isinstance(row.get('identifier'), str)
     and row['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')])
-with open(sys.argv[3].replace('simulator-selection.json', 'simulator-runtime-inventory.json'),
+with Path(sys.argv[3]).with_name('simulator-runtime-inventory.json').open(
           'x', encoding='ascii', newline='\n') as output:
     output.write(json.dumps(inventory, sort_keys=True) + '\n')
 selected = select_simulator(runtimes, device_types, version)

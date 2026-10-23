@@ -84,7 +84,12 @@ class SelectionTests(unittest.TestCase):
         for version in ("26.4", "26.5", "26.6"):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as root:
                 path = Path(root) / "selection.json"
+                inventory_path = Path(root) / "simulator-runtime-inventory.json"
                 listings = dict(runtimes=[runtime(v) for v in ("26.3", "26.4", "26.5")], devicetypes=[device_type()])
+                for row in listings["runtimes"]:
+                    row.update(buildversion="23Authored", name="omit this extra field", udid="authored-not-for-inventory")
+                other_platform = runtime(); other_platform["identifier"] = "com.apple.CoreSimulator.SimRuntime.tvOS-26-4"
+                listings["runtimes"].append(other_platform)
                 def listing(command, timeout):
                     return json.dumps({command[3]: listings[command[3]]}).encode()
                 with mock.patch.object(sys, "argv", ["-", str(here), version, str(path)]), \
@@ -94,6 +99,7 @@ class SelectionTests(unittest.TestCase):
                     if version == "26.6":
                         with self.assertRaises(ValueError): exec(compile(source, "<authored-driver-selection>", "exec"), {})
                         check.assert_not_called(); self.assertFalse(path.exists())
+                        self.assertFalse(inventory_path.exists()); self.assertEqual(list(Path(root).iterdir()), [])
                         self.assertEqual(output.getvalue(), "")
                         continue
                     exec(compile(source, "<authored-driver-selection>", "exec"), {})
@@ -101,8 +107,44 @@ class SelectionTests(unittest.TestCase):
                     mock.call(["xcrun", "simctl", "list", "runtimes", "-j"], timeout=60),
                     mock.call(["xcrun", "simctl", "list", "devicetypes", "-j"], timeout=10)])
                 selected = json.loads(path.read_bytes())
+                inventory = json.loads(inventory_path.read_bytes())
+                self.assertEqual(set(Path(root).iterdir()), {path, inventory_path})
+                self.assertEqual(inventory, dict(schema=1, requested_version=version, runtimes=[
+                    dict(identifier=runtime(v)["identifier"], version=v, isAvailable=True, buildversion="23Authored")
+                    for v in ("26.3", "26.4", "26.5")]))
                 self.assertEqual(selected, select_simulator(listings["runtimes"], listings["devicetypes"], version))
                 self.assertEqual(output.getvalue().splitlines(), [selected["runtime_identifier"], selected["device_type_identifier"]])
+
+    def test_actual_driver_strict_selection_failure_keeps_inventory_without_selection_or_stdout(self):
+        here = Path(__file__).resolve().parent
+        script = (here / "run-ios-audio-environment.sh").read_text()
+        source = script.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        unavailable = runtime(); unavailable["isAvailable"] = False
+        for label, rows, devices in (
+                ("absent", [runtime("26.3"), runtime("26.5")], [device_type()]),
+                ("unavailable", [unavailable, runtime("26.5")], [device_type()]),
+                ("ambiguous runtime", [runtime(), runtime()], [device_type()]),
+                ("absent device", [runtime()], []),
+                ("ambiguous device", [runtime()], [device_type(), device_type()])):
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as root:
+                path = Path(root) / "selection.json"
+                inventory_path = Path(root) / "simulator-runtime-inventory.json"
+                listings = dict(runtimes=rows, devicetypes=devices)
+                def listing(command, timeout):
+                    return json.dumps({command[3]: listings[command[3]]}).encode()
+                with mock.patch.object(sys, "argv", ["-", str(here), "26.4", str(path)]), \
+                     mock.patch.object(sys, "path", sys.path.copy()), \
+                     mock.patch("subprocess.check_output", side_effect=listing) as check, \
+                     contextlib.redirect_stdout(io.StringIO()) as output:
+                    with self.assertRaises(ValueError): exec(compile(source, "<authored-driver-selection>", "exec"), {})
+                self.assertEqual(check.call_args_list, [
+                    mock.call(["xcrun", "simctl", "list", "runtimes", "-j"], timeout=60),
+                    mock.call(["xcrun", "simctl", "list", "devicetypes", "-j"], timeout=10)])
+                self.assertFalse(path.exists()); self.assertEqual(output.getvalue(), "")
+                self.assertEqual(set(Path(root).iterdir()), {inventory_path})
+                self.assertEqual(json.loads(inventory_path.read_bytes()), dict(schema=1, requested_version="26.4", runtimes=[
+                    dict(identifier=row["identifier"], version=row["version"], isAvailable=row["isAvailable"], buildversion=None)
+                    for row in rows]))
 
 
 if __name__ == "__main__":
