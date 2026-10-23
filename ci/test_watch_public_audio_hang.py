@@ -76,6 +76,7 @@ class ParserTests(unittest.TestCase):
 
     def test_complete_incremental_lines_only_and_truncation_refuses(self):
         with tempfile.TemporaryDirectory() as root:
+            root = str(Path(root).resolve(strict=True))
             path = Path(root) / "xcodebuild.stdout.log"
             cursor = m.Cursor()
             self.assertEqual(m.read_phases(path, cursor), [])
@@ -91,6 +92,7 @@ class ParserTests(unittest.TestCase):
 
     def test_symlink_and_tail_gap_refuse(self):
         with tempfile.TemporaryDirectory() as root:
+            root = str(Path(root).resolve(strict=True))
             path = Path(root) / "log"
             target = Path(root) / "target"
             target.write_bytes(b"PUBLIC_AUDIO_PHASE 2 21\n")
@@ -103,6 +105,7 @@ class ParserTests(unittest.TestCase):
 
     def test_bounded_ascii_prefix_and_malformed_markers(self):
         with tempfile.TemporaryDirectory() as root:
+            root = str(Path(root).resolve(strict=True))
             path = Path(root) / "log"
             for prefix in (b"", b"2026-10-23 12:34:56 OwnedGameHost[1234:5] ", b"x" * 512):
                 path.write_bytes(prefix + b"PUBLIC_AUDIO_PHASE 2 21\n")
@@ -138,6 +141,7 @@ class ParserTests(unittest.TestCase):
 
     def test_non_apple_execution_is_diagnostic_refusal_not_test_success(self):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(m.sys, "platform", "linux"):
+            root = str(Path(root).resolve(strict=True))
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 code = m.main(["--audio-dir", root + "/xctest-device-features/audio",
@@ -155,6 +159,7 @@ class ParserTests(unittest.TestCase):
              mock.patch.object(m.os, "geteuid", return_value=501), \
              mock.patch.object(m, "owned_run", return_value=(0, b"unrecognized")) as run, \
              mock.patch.object(m, "find_target") as target:
+            root = str(Path(root).resolve(strict=True))
             output = Path(root) / "diagnostic"
             with self.assertRaisesRegex(m.Refusal, "installed_sample_manual_unrecognized"):
                 m.watch(Path(root) / "xctest-device-features/audio", output, UDID, 120, {})
@@ -192,6 +197,7 @@ class ChildBoundsTests(unittest.TestCase):
             m.owned_run([sys.executable, "-c", "import os; os.write(1,b'x'*200000)"],
                         time.monotonic() + 2, 1)
         with tempfile.TemporaryDirectory() as root:
+            root = str(Path(root).resolve(strict=True))
             path = Path(root) / "authored.bin"
             code, _ = m.owned_run([sys.executable, "-c", "import sys; open(sys.argv[1],'wb').write(b'x'*3000000)", str(path)],
                                   time.monotonic() + 2, 1)
