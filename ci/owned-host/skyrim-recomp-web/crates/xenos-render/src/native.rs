@@ -8,6 +8,10 @@ use std::time::Duration;
 
 use gpu_webgpu::*;
 
+#[path = "native_performance.rs"]
+mod performance;
+pub use performance::NativePerformanceSnapshot;
+
 pub use crate::presentation_probe::{PresentationProbe, PresentationProbeError, run_public_presentation_probe};
 use crate::renderer::{Renderer, TargetsFactory, wanted_features};
 use crate::settings::{PresentAdmission, PresentationSettings, SettingsControl, SettingsSnapshot};
@@ -159,13 +163,15 @@ pub fn start(
     spawn_renderer(memory, options, targets, None, false).map(|(handle, _)| handle)
 }
 
-/// Lock-free diagnostic counters. A decoded swap or a written PNG does not prove
+/// Atomic diagnostic counters and a nonblocking coarse performance observation.
+/// A decoded swap or a written PNG does not prove
 /// that the title is playable, or that its draws produced the intended image.
 #[derive(Clone, Default)]
 pub struct NativeDiagnostics(Arc<NativeProgress>);
 
 #[derive(Default)]
 struct NativeProgress {
+    performance: performance::PerformanceStore,
     settings: SettingsControl,
     applied_settings: SettingsControl,
     presented_frames: AtomicU64,
@@ -202,6 +208,12 @@ pub struct NativeSnapshot {
 }
 
 impl NativeDiagnostics {
+    /// Latest completed five-second report, with explicit age/staleness. Missing,
+    /// contended or poisoned storage returns None; never waits for the renderer.
+    pub fn performance_snapshot(&self) -> Option<NativePerformanceSnapshot> {
+        self.0.performance.snapshot_at(std::time::Instant::now())
+    }
+
     /// Atomically publish a complete validated tuple; applied on a later valid
     /// swap. Does not change guest simulation, draws, resolves, or sampler policy.
     pub fn set_presentation_settings(&self, settings: PresentationSettings) -> u32 {
@@ -497,12 +509,12 @@ fn run(
     let every = options.dump_every.max(1);
     let mut presents = Vec::new();
     let mut busy = Duration::ZERO;
-    let mut report_at = std::time::Instant::now();
+    let presentation_clock = std::time::Instant::now();
+    let mut report_at = presentation_clock;
     let mut report_calls = gpu_webgpu::counters::snapshot();
     let mut report_times = renderer.executor.times();
     let mut report_draws = renderer.executor.stats.draws;
     let mut last_decoded_frame = 0;
-    let presentation_clock = std::time::Instant::now();
     let mut presentation_admission = PresentAdmission::default();
 
     loop {
@@ -616,6 +628,23 @@ fn run(
             let calls = gpu_webgpu::counters::snapshot();
             log::info!("perf: per frame: {}", crate::renderer::calls_per_frame(&calls.since(&report_calls), frames));
             let times = renderer.executor.times();
+            let observed_at = report_at + window;
+            diagnostics.0.performance.try_publish(observed_at, || {
+                NativePerformanceSnapshot::capture(
+                    performance::Window {
+                        end_elapsed: observed_at.duration_since(presentation_clock),
+                        span: window,
+                        busy,
+                        draws_before: report_draws,
+                        presentable_swaps: frames,
+                    },
+                    renderer.executor.stats,
+                    renderer.executor.texture_stats(),
+                    renderer.executor.mirror_stats(),
+                    times,
+                    report_times,
+                )
+            });
             let ms = |now: Duration, then: Duration| (now - then).as_secs_f64() * 1000.0;
             log::info!(
                 "perf: renderer time: {:.0} ms binding new texture sets, {:.0} ms creating pipelines, {:.0} ms on \
@@ -782,6 +811,27 @@ mod checked_start_tests {
         let before = started.diagnostics.snapshot();
         assert!(before.initialized && !before.failed);
         assert_eq!((before.swap_requests, before.decoded_frames, before.png_written), (0, 0, 0));
+        // Exercise the real five-second publication branch with INFO logging
+        // disabled and no guest commands, GPU query, or detailed profiler.
+        let report_deadline = std::time::Instant::now() + Duration::from_secs(7);
+        let performance = loop {
+            if let Some(sample) = started.diagnostics.performance_snapshot() {
+                break sample;
+            }
+            assert!(std::time::Instant::now() < report_deadline, "coarse report was not published");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(performance.window_ms >= 5000 && performance.sample_end_elapsed_ms >= performance.window_ms);
+        assert_eq!(
+            (
+                performance.draws_window,
+                performance.draws_total,
+                performance.skipped_draws_total,
+                performance.submissions_total,
+                performance.renderer_busy_window_ms
+            ),
+            (0, 0, 0, 0, 0)
+        );
         started.request_stop();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !started.diagnostics.snapshot().stopped && std::time::Instant::now() < deadline {

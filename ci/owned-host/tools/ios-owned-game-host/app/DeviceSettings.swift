@@ -1,5 +1,49 @@
 import Foundation
+import Darwin
 import SwiftUI
+import os
+
+struct DeviceMemoryUsage: Equatable {
+    let usedMiB: Int
+    let budgetMiB: Int
+
+    static func read() -> Self? {
+        #if targetEnvironment(simulator)
+        return nil
+        #else
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        let used = info.phys_footprint
+        let (budget, overflow) = used.addingReportingOverflow(UInt64(os_proc_available_memory()))
+        guard !overflow, budget / 1_048_576 <= UInt64(Int.max) else { return nil }
+        return Self(usedMiB: Int(used / 1_048_576), budgetMiB: Int(budget / 1_048_576))
+        #endif
+    }
+}
+
+struct DeviceRuntimeStatus {
+    let lowPowerMode: Bool
+    let thermalLabel: String
+
+    static func read() -> Self {
+        let process = ProcessInfo.processInfo
+        let thermal: String
+        switch process.thermalState {
+        case .nominal: thermal = "通常"
+        case .fair: thermal = "やや高温"
+        case .serious: thermal = "高温"
+        case .critical: thermal = "温度保護中"
+        @unknown default: thermal = "不明"
+        }
+        return Self(lowPowerMode: process.isLowPowerModeEnabled, thermalLabel: thermal)
+    }
+}
 
 enum DeviceVideoMode: String, Codable, CaseIterable {
     case p360, p540, p720, p1080

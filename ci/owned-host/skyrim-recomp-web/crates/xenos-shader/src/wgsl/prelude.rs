@@ -74,7 +74,42 @@ pub(crate) fn texture_format_table() -> String {
         .iter()
         .map(|(count, w)| format!("{}u", count | (w[0] << 3) | (w[1] << 9) | (w[2] << 15) | (w[3] << 21)))
         .collect();
-    format!("var<private> xe_texture_formats: array<u32, 64> = array<u32, 64>({});\n", entries.join(", "))
+    format!("const xe_texture_formats: array<u32, 64> = array<u32, 64>({});\n", entries.join(", "))
+}
+
+/// Xenos thresholds before color exponent bias. Guest2x uses host4x samples0/3,
+/// matching the EDRAM cache's sample mask and sample transfers.
+/// Reference: xenia-project/xenia, dxbc_shader_translator_om.cc,
+/// CompletePixelShader_AlphaToMask / CompletePixelShader_WriteToROV.
+pub(crate) fn alpha_to_mask() -> String {
+    use crate::bindings::flags;
+    format!(
+        r#"
+fn xe_alpha_to_mask(alpha: f32, position: vec2<f32>, flags: u32) -> u32 {{
+    if ((flags & {enabled}u) == 0u) {{ return 0xffffffffu; }}
+    let pixel = vec2<u32>(position);
+    let index = (pixel.x & 1u) * 2u + (pixel.y & 1u);
+    let offset = f32((flags >> ({offsets}u + 2u * index)) & 3u);
+    let samples = (flags >> {samples}u) & 3u;
+    var mask = 0u;
+    if (samples == 0u) {{
+        if (alpha >= 1.0 - offset * 0.25) {{ mask = 1u; }}
+    }} else if (samples == 1u) {{
+        if (alpha >= 0.5 - offset * 0.125) {{ mask |= 1u; }}
+        if (alpha >= 1.0 - offset * 0.125) {{ mask |= 8u; }}
+    }} else if (samples == 2u) {{
+        if (alpha >= 0.75 - offset * 0.0625) {{ mask |= 1u; }}
+        if (alpha >= 0.25 - offset * 0.0625) {{ mask |= 2u; }}
+        if (alpha >= 0.5 - offset * 0.0625) {{ mask |= 4u; }}
+        if (alpha >= 1.0 - offset * 0.0625) {{ mask |= 8u; }}
+    }}
+    return mask;
+}}
+"#,
+        enabled = flags::ALPHA_TO_MASK,
+        offsets = flags::ALPHA_TO_MASK_OFFSETS_SHIFT,
+        samples = flags::ALPHA_TO_MASK_SAMPLES_SHIFT
+    )
 }
 
 pub(crate) const PRELUDE: &str = r#"

@@ -12,7 +12,7 @@ crate-type = ["rlib", "staticlib"]
 [features]
 default = []
 apple-host = ["dep:runtime-core", "dep:kernel-hle", "dep:vfs", "dep:xex"]
-fixture-tools = ["dep:runtime-core", "dep:xex"]
+fixture-tools = ["dep:runtime-core", "dep:xex", "xenos-render?/public-probes"]
 metal-renderer = ["apple-host", "dep:xenos-render", "dep:gpu-webgpu", "dep:d3d-hle", "dep:log"]
 
 [dependencies]

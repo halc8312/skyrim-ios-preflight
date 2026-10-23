@@ -30,6 +30,8 @@ const INDICES: usize = 256;
 /// Kinds of blocks, each patched on its own previous block: vertex and pixel shader float
 /// constants (0 and 1), then the [`FETCH`], [`SYSTEM`] and [`BOOL_LOOP`] blocks.
 const STAGES: u32 = 5;
+// Count, followed by (first index word, record count, maximum block vec4s) per stage.
+const BIN_HEADER_WORDS: usize = 1 + STAGES as usize * 3;
 pub const FETCH: u32 = 2;
 pub const SYSTEM: u32 = 3;
 pub const BOOL_LOOP: u32 = 4;
@@ -68,6 +70,72 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
 }
 "#;
 
+// The record bytes and their original order are unchanged. Per-stage index lists
+// skip unrelated records, and lanes which never write a block need not replay.
+// There are no workgroup barriers or dependencies between stages or vec4 lanes.
+const BINNED_SHADER: &str = r#"
+@group(0) @binding(0) var<storage, read> records: array<u32>;
+@group(0) @binding(1) var<storage, read> values: array<vec4<u32>>;
+@group(0) @binding(2) var<storage, read_write> blocks: array<vec4<u32>>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) t: u32) {
+    let header = 1u + group.x * 3u;
+    if (t >= records[header + 2u]) {
+        return;
+    }
+    let end = records[header] + records[header + 1u];
+    let word_index = t / 32u;
+    let bit = 1u << (t % 32u);
+    var current = vec4<u32>(0u);
+    for (var index = records[header]; index < end; index++) {
+        let b = 16u + records[index] * 12u;
+        let mask = records[b + 4u + word_index];
+        if ((mask & bit) != 0u) {
+            var n = countOneBits(mask & (bit - 1u));
+            for (var w = 0u; w < word_index; w++) {
+                n += countOneBits(records[b + 4u + w]);
+            }
+            current = values[records[b + 3u] + n];
+        }
+        if (t < records[b + 2u]) {
+            blocks[records[b + 1u] + t] = current;
+        }
+    }
+}
+"#;
+
+/// Add only a header and ordered index lists; do not reorder or alter any record.
+fn bin_records(records: &[u32]) -> Vec<u32> {
+    let count = records[0] as usize;
+    assert!(count <= MAX_RECORDS && records.len() == 1 + count * RECORD_WORDS, "invalid constant records");
+    let index_base = BIN_HEADER_WORDS + count * RECORD_WORDS;
+    let mut result = vec![0u32; index_base + count];
+    result[0] = count as u32;
+    result[BIN_HEADER_WORDS..index_base].copy_from_slice(&records[1..]);
+    for record in records[1..].chunks_exact(RECORD_WORDS) {
+        let stage = record[0] as usize;
+        assert!(stage < STAGES as usize && record[2] as usize <= INDICES, "invalid constant stage or count");
+        let header = 1 + stage * 3;
+        result[header + 1] += 1;
+        result[header + 2] = result[header + 2].max(record[2]);
+    }
+    let mut next = [0usize; STAGES as usize];
+    let mut start = index_base;
+    for (stage, next) in next.iter_mut().enumerate() {
+        let header = 1 + stage * 3;
+        result[header] = start as u32;
+        *next = start;
+        start += result[header + 1] as usize;
+    }
+    for (index, record) in records[1..].chunks_exact(RECORD_WORDS).enumerate() {
+        let next = &mut next[record[0] as usize];
+        result[*next] = index as u32;
+        *next += 1;
+    }
+    result
+}
+
 pub struct ConstantPatcher {
     /// The blocks, bound to the draws' float constant bindings.
     pub buffer: Buffer,
@@ -80,10 +148,16 @@ pub struct ConstantPatcher {
     values_buffer: Buffer,
     pipeline: ComputePipeline,
     group: BindGroup,
+    binned: bool,
 }
 
 impl ConstantPatcher {
     pub fn new(device: &Device, alignment: u64) -> Self {
+        // Keep the original replay available through with_binning(false) for reference tests.
+        Self::with_binning(device, alignment, true)
+    }
+
+    fn with_binning(device: &Device, alignment: u64, binned: bool) -> Self {
         let buffer = |label, size, usage| {
             device.create_buffer(&BufferDescriptor { label, size, usage, mapped_at_creation: false })
         };
@@ -94,14 +168,12 @@ impl ConstantPatcher {
         );
         let records_buffer = buffer(
             "xenos constant patches",
-            ((1 + MAX_RECORDS * RECORD_WORDS) * 4) as u64,
+            (if binned { BIN_HEADER_WORDS + MAX_RECORDS * (RECORD_WORDS + 1) } else { 1 + MAX_RECORDS * RECORD_WORDS }
+                * 4) as u64,
             BufferUsage::Storage | BufferUsage::CopyDst,
         );
-        let values_buffer = buffer(
-            "xenos constant values",
-            (MAX_VALUES * 16) as u64,
-            BufferUsage::Storage | BufferUsage::CopyDst,
-        );
+        let values_buffer =
+            buffer("xenos constant values", (MAX_VALUES * 16) as u64, BufferUsage::Storage | BufferUsage::CopyDst);
         let entry = |binding, ty| BindGroupLayoutEntry {
             binding,
             visibility: ShaderStage::Compute,
@@ -115,7 +187,8 @@ impl ConstantPatcher {
                 entry(2, BufferBindingType::Storage),
             ],
         );
-        let module = device.create_shader_module_wgsl("xenos constant patches", SHADER);
+        let module =
+            device.create_shader_module_wgsl("xenos constant patches", if binned { BINNED_SHADER } else { SHADER });
         let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
             label: "xenos constant patches",
             layout: Some(&device.create_pipeline_layout("xenos constant patches", &[&layout])),
@@ -141,6 +214,7 @@ impl ConstantPatcher {
             values_buffer,
             pipeline,
             group,
+            binned,
         }
     }
 
@@ -208,7 +282,14 @@ impl ConstantPatcher {
         if self.records[0] == 0 {
             return None;
         }
-        let records: Vec<u8> = self.records.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let binned;
+        let words = if self.binned {
+            binned = bin_records(&self.records);
+            &binned
+        } else {
+            &self.records
+        };
+        let records: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
         device.queue().write_buffer(&self.records_buffer, 0, &records);
         if !self.values.is_empty() {
             device.queue().write_buffer(&self.values_buffer, 0, &self.values);
@@ -232,6 +313,10 @@ impl ConstantPatcher {
         self.values.clear();
     }
 }
+
+#[cfg(all(test, not(target_os = "emscripten")))]
+#[path = "constant_patch_bin_tests.rs"]
+mod bin_tests;
 
 #[cfg(all(test, not(target_os = "emscripten")))]
 mod tests {

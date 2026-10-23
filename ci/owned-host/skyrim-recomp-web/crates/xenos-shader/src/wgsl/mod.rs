@@ -729,6 +729,9 @@ impl<'a> Generator<'a> {
         m.push_str("diagnostic(off, derivative_uniformity);\n\n");
         m.push_str(&bindings::common_declarations(self.stage));
         m.push_str(prelude::PRELUDE);
+        if self.stage == ShaderStage::Pixel && self.info.writes_color_targets & 1 != 0 {
+            m.push_str(&prelude::alpha_to_mask());
+        }
         m.push_str(&prelude::texture_format_table());
         m.push('\n');
 
@@ -1013,6 +1016,9 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
         let has_output = colors != 0 || self.info.writes_depth;
         if has_output {
             m.push_str("struct XePixelOutput {\n");
+            if colors & 1 != 0 {
+                m.push_str("    @builtin(sample_mask) coverage: u32,\n");
+            }
             for i in 0..4 {
                 if colors & (1 << i) != 0 {
                     writeln!(m, "    @location({i}) color{i}: vec4<f32>,").unwrap();
@@ -1079,6 +1085,12 @@ fn xe_vs_main(@builtin(vertex_index) xe_host_vertex_index: u32) -> XeVertexOutpu
         }
         if has_output {
             m.push_str("    var out: XePixelOutput;\n");
+            if colors & 1 != 0 {
+                m.push_str(
+                    "    out.coverage = xe_alpha_to_mask(xe_out_color[0].w, input.frag_coord.xy, xe_system.flags);\n",
+                );
+                m.push_str("    if (out.coverage == 0u) { discard; }\n");
+            }
             for i in 0..4 {
                 if colors & (1 << i) != 0 {
                     writeln!(

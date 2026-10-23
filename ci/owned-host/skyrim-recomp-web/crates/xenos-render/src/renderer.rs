@@ -202,7 +202,8 @@ impl Renderer {
                 Command::D3d(_) => ("d3d", 0),
             };
             log::trace!("renderer: command {seq}: {what:?}");
-            let timed = matches!(cmd, Command::Swap { .. }) || seq.is_multiple_of(TIMED_COMMAND_INTERVAL);
+            let timed = (matches!(cmd, Command::Swap { .. }) || seq.is_multiple_of(TIMED_COMMAND_INTERVAL))
+                && log::log_enabled!(log::Level::Warn);
             let started = if timed { now_ms() } else { 0.0 };
             match cmd {
                 Command::Registers(writes) => self.executor.write_registers(&writes),
@@ -462,7 +463,8 @@ mod pacing_window_tests {
     fn enabled_windows_preserve_reference_statistics_and_empty_windows() {
         let start = Instant::now();
         let mut presents = vec![start, start + Duration::from_millis(16), start + Duration::from_millis(80)];
-        let mut swaps = vec![(start, Duration::from_millis(2)), (start + Duration::from_millis(33), Duration::from_millis(8))];
+        let mut swaps =
+            vec![(start, Duration::from_millis(2)), (start + Duration::from_millis(33), Duration::from_millis(8))];
         let expected = "frames shown: p50 64.0 ms, p95 64.0 ms, max 64.0 ms, 1 over 50 ms; title's swaps: p50 33.0 ms, p95 33.0 ms, max 33.0 ms, 0 over 50 ms; swap queue wait avg 5.0 ms, max 8.0 ms";
         assert_eq!(finish_pacing_window(&mut presents, &mut swaps, true).as_deref(), Some(expected));
         assert!(presents.is_empty());

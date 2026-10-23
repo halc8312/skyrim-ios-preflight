@@ -10,8 +10,12 @@
 //! [`PhysicalMemory`], at physical addresses as the GPU sees them.
 
 mod constant_patch;
+#[cfg(feature = "cpu-profile")]
+pub mod cpu_profile;
 mod d3d;
 pub mod debug;
+#[cfg(all(feature = "public-probes", not(target_os = "emscripten")))]
+pub mod debug_alpha_coverage;
 pub mod edram;
 pub mod executor;
 mod extent;
@@ -22,9 +26,10 @@ mod queue;
 pub mod registers;
 mod renderer;
 mod ring;
+pub mod settings;
 mod shaders;
 mod shared_memory;
-pub mod settings;
+mod vertex_range;
 pub mod targets;
 
 #[cfg(not(target_os = "emscripten"))]

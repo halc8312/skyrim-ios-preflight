@@ -525,7 +525,25 @@ fn progress_snapshot(t: u64, point: progress_diagnostics::Snapshot) -> Check<()>
         content,
         point.name,
         &serde_json::to_vec(&data).map_err(|_| "diagnostic serialization failed")?,
-    )
+    )?;
+    // The established progress schema stays unchanged. At most four separate
+    // numeric sidecars are attempted only by explicitly bounded diagnostics.
+    // A sidecar failure must not invalidate an already published progress file.
+    #[cfg(feature = "metal-renderer")]
+    let performance = crate::renderer::performance_snapshot(t);
+    #[cfg(not(feature = "metal-renderer"))]
+    let performance = None;
+    // File publication above may have blocked. Admit this separate observation
+    // against a fresh guest elapsed time, never the earlier progress timestamp.
+    let observed_ms = STARTED.get().and_then(|start| u64::try_from(start.elapsed().as_millis()).ok());
+    if let Some(elapsed) = observed_ms {
+        if let Ok((name, value)) = crate::performance_diagnostics::record(point, elapsed, performance) {
+            if let Ok(bytes) = serde_json::to_vec(&value) {
+                let _ = paths::publish_json_new(content, name, &bytes);
+            }
+        }
+    }
+    Ok(())
 }
 fn fatal_stop(category: u32, module: u32, ordinal: u32) -> ! {
     fatal_stop_with_guest(category, module, ordinal, None)

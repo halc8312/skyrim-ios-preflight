@@ -110,17 +110,20 @@ final class MobileControlsUIView: UIView {
             PadRect(x: Double(rect.minX), y: Double(rect.minY), width: Double(rect.width), height: Double(rect.height)))
     }
     private func size(_ control: MobilePadControl) -> PadPoint {
-        let diameter = max(44, min(54, viewport.height * 0.13))
-        return PadPoint(x: control == .start || control == .back ? 64 : diameter, y: diameter)
+        MobileControlsLayout.buttonSize(control, viewport: viewport, scale: settings.buttonScale)
     }
     private func frame(_ control: MobilePadControl) -> CGRect {
         let size = size(control)
         let p = MobilePadMath.center(position: settings.position(control), viewport: viewport, safe: safe, size: size)
         return CGRect(x: p.x - size.x / 2, y: p.y - size.y / 2, width: size.x, height: size.y)
     }
-    private func hit(_ point: CGPoint) -> MobilePadControl? {
-        // Last drawn wins if a user deliberately places buttons on top of one another.
-        MobilePadControl.allCases.reversed().first { frame($0).contains(point) }
+    private func hit(_ point: CGPoint, retaining held: MobilePadControl? = nil) -> MobilePadControl? {
+        return MobileControlsLayout.hit(at: PadPoint(x: Double(point.x), y: Double(point.y)),
+            frameFor: { control in
+                let rect = frame(control)
+                return PadRect(x: Double(rect.minX), y: Double(rect.minY),
+                               width: Double(rect.width), height: Double(rect.height))
+            }, retaining: held)
     }
     private func point(_ touch: UITouch) -> PadPoint {
         let p = touch.location(in: self)
@@ -154,7 +157,9 @@ final class MobileControlsUIView: UIView {
                 settings.positions[drag.control.rawValue] = p
                 onLayout(drag.control, p)
             } else {
-                input.move(id, to: point(touch), time: touch.timestamp, button: hit(touch.location(in: self)))
+                let button = hit(touch.location(in: self), retaining: input.button(for: id))
+                input.move(id, to: point(touch), time: touch.timestamp,
+                           button: button)
             }
         }
         publish(); setNeedsDisplay()
@@ -207,7 +212,8 @@ final class MobileControlsUIView: UIView {
             let frame = frame(control)
             let active = input.held(control) || drags.values.contains { $0.control == control }
             let path = UIBezierPath(roundedRect: frame, cornerRadius: control == .start || control == .back ? 12 : frame.height / 2)
-            UIColor(white: active ? 0.95 : 0.08, alpha: opaque ? 1 : (active ? 0.85 : 0.64)).setFill()
+            UIColor(white: active ? 0.95 : 0.08,
+                    alpha: opaque ? 1 : (active ? max(0.85, settings.buttonOpacity) : settings.buttonOpacity)).setFill()
             path.fill()
             UIColor.white.withAlphaComponent(editing || highContrast ? 1 : 0.65).setStroke()
             path.lineWidth = editing ? 2 : 1; path.stroke()

@@ -18,6 +18,8 @@ final class MobileControlsPreferences: ObservableObject {
     func setSensitivity(_ value: Double) { settings.sensitivity = value; settings = settings.normalized() }
     func setInvertY(_ value: Bool) { settings.invertY = value }
     func setCameraMode(_ value: MobileCameraMode) { settings.cameraMode = value }
+    func setButtonScale(_ value: Double) { settings.buttonScale = value; settings = settings.normalized() }
+    func setButtonOpacity(_ value: Double) { settings.buttonOpacity = value; settings = settings.normalized() }
     func move(_ control: MobilePadControl, to point: PadPoint) {
         settings.positions[control.rawValue] = point
         settings = settings.normalized()
@@ -55,14 +57,34 @@ struct MobileControlsSettingsView: View {
                                                        set: preferences.setInvertY))
                     Text("スワイプは指の移動で視点を動かします。スティックは最初に触れた位置を中心に、離すまで方向を入力します。")
                         .font(.footnote).foregroundStyle(.secondary)
+                    Text("動作が重いときはスティックがおすすめです。指を動かした方向へ倒したままにすると、入力が続きます。短いスワイプはゲームの入力更新に届かない場合があります。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("ボタン配置") {
+                    HStack {
+                        Text("ボタンの大きさ")
+                        Spacer()
+                        Text(String(format: "%.0f%%", preferences.settings.buttonScale * 100)).monospacedDigit()
+                    }
+                    Slider(value: Binding(get: { preferences.settings.buttonScale }, set: preferences.setButtonScale),
+                           in: 1...1.35, step: 0.05, onEditingChanged: { if !$0 { preferences.save() } })
+                        .accessibilityLabel("ボタンの大きさ")
+                    HStack {
+                        Text("ボタンの濃さ")
+                        Spacer()
+                        Text(String(format: "%.0f%%", preferences.settings.buttonOpacity * 100)).monospacedDigit()
+                    }
+                    Slider(value: Binding(get: { preferences.settings.buttonOpacity }, set: preferences.setButtonOpacity),
+                           in: 0.35...0.85, step: 0.05, onEditingChanged: { if !$0 { preferences.save() } })
+                        .accessibilityLabel("ボタンの濃さ")
                     Button("ボタンの位置を変更") {
                         preferences.save()
                         editLayout()
                         dismiss()
                     }
                     Text("配置編集中はゲームへ操作を送りません。ゲーム自体や動作確認の時間上限は停止しません。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Text("大きくしたボタンが重なるときは、位置を離してください。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {

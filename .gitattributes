@@ -10,6 +10,10 @@
 *.toml text eol=lf
 Cargo.lock text eol=lf
 /ci/prepare-fix-build-route/reference-pins.json text eol=lf
+/ci/prepare-mobile-build-route/prepare_ui_route.py text eol=lf
+/ci/prepare-mobile-build-route/run_ui_groups.py text eol=lf
+/ci/prepare-mobile-build-route/test_ui_route.py text eol=lf
+/ci/prepare-mobile-build-route/testdata/prior-circleci-config.yml text eol=lf
 # Exact public lock fixture bytes are verified before the overlay build.
 /ci/gpu-framework/testdata/wgpu-native-6aed509.Cargo.lock text eol=lf
 # Preserve the frozen allowlisted public text bytes for the source SHA gate.

@@ -45,6 +45,9 @@ use crate::shared_memory::SharedMemory;
 use crate::targets::{DrawTargets, RenderTargetCache, ResolveStatus, SharedMemoryTarget};
 use crate::{PhysicalMemory, TextureMemory};
 
+#[path = "texture_budget.rs"]
+mod texture_budget;
+
 /// Pixel shader textures start at this `@group(2)` binding (vertex shader ones at 0); a shader
 /// uses at most 32 fetch constants with 3 bindings each.
 const PIXEL_TEXTURE_BINDING_BASE: u32 = 96;
@@ -217,7 +220,33 @@ macro_rules! mark {
         if $executor.timing_sample {
             $executor.stage_marks[$i] = crate::renderer::now_ms();
         }
+        #[cfg(feature = "cpu-profile")]
+        $executor.cpu_profile.draw_stage($i + 1);
     };
+}
+
+// Compiles to the original expression without the optional diagnostic feature.
+macro_rules! profile_operation {
+    ($executor:ident, $operation:ident, $body:expr) => {{
+        #[cfg(feature = "cpu-profile")]
+        let started = $executor.cpu_profile.start();
+        let result = $body;
+        #[cfg(feature = "cpu-profile")]
+        $executor.cpu_profile.operation(crate::cpu_profile::Operation::$operation, started);
+        result
+    }};
+}
+
+macro_rules! profile_busy_result {
+    ($executor:ident, $started:ident, $body:expr) => {{
+        let result = $body;
+        #[cfg(feature = "cpu-profile")]
+        {
+            $executor.cpu_profile.operation(crate::cpu_profile::Operation::Busy, $started);
+            $executor.cpu_profile.busy_result(result);
+        }
+        result
+    }};
 }
 
 /// A draw's texture bindings: what `texture_set` remembers.
@@ -360,6 +389,8 @@ const DRAW_STAGES: [&str; 9] = [
 ];
 
 pub struct Executor {
+    #[cfg(feature = "cpu-profile")]
+    cpu_profile: crate::cpu_profile::CpuProfile,
     stage_marks: [f64; DRAW_STAGES.len() + 1],
     /// The draw being recorded updates `stage_marks`.
     timing_sample: bool,
@@ -414,6 +445,8 @@ pub struct Executor {
     encoder: Option<CommandEncoder>,
     /// Guest memory ranges a draw reads (kept to reuse the allocation).
     vertex_ranges: Vec<(u32, u32)>,
+    /// Per-instance control for conservative vertex fetch synchronization.
+    vertex_range_narrowing: bool,
     /// Time spent in operations that may be slow on some devices (see [`OpTimes`]).
     times: OpTimes,
     pass: Option<Pass>,
@@ -456,6 +489,15 @@ pub struct ExecutorStats {
     pub constant_blocks_reused: u64,
     pub index_upload_bytes: u64,
     pub memory_upload_bytes: u64,
+    /// Proven, unaliased vertex bindings of at least 16 pages evaluated for narrowing.
+    /// These count synchronization-stage attempts, not completed GPU draws.
+    pub vertex_range_eligible_bindings: u64,
+    /// Bindings whose proven read envelope omits at least 8 and half the declared pages.
+    pub vertex_range_narrowed_bindings: u64,
+    /// Declared pages omitted from these envelopes (per-binding, including repeated draws).
+    pub vertex_range_avoided_pages: u64,
+    /// Bindings synchronized in full, including disabled, unproven, small and dense cases.
+    pub vertex_range_fallback_bindings: u64,
     /// Times the renderer waited for the GPU to catch up with uploads (`upload_budget`).
     pub upload_waits: u64,
     /// Texture sets bound anew (not remembered, or their textures changed since).
@@ -637,6 +679,8 @@ impl Executor {
         );
         let shared_group = shared_memory_group(device, &shared_layout, &shared);
         Executor {
+            #[cfg(feature = "cpu-profile")]
+            cpu_profile: crate::cpu_profile::CpuProfile::default(),
             stage_marks: [0.0; DRAW_STAGES.len() + 1],
             timing_sample: false,
             texture_sets: FxHashMap::default(),
@@ -676,21 +720,10 @@ impl Executor {
                     gpu_conversion: !crate::debug::CPU_TEXTURES.load(std::sync::atomic::Ordering::Relaxed),
                     ..Default::default()
                 };
-                // Phones: a hard texture budget (least recently used ones go first) and short
-                // lifetimes, in time as well as frames (a phone loads a world at ~1 fps).
-                let config = if crate::HANDHELD.load(std::sync::atomic::Ordering::Relaxed) {
-                    xenos_texture_cache::CacheConfig {
-                        max_unused_frames: 120,
-                        max_unused_time: std::time::Duration::from_secs(4),
-                        max_host_bytes: 56 << 20,
-                        max_live_bytes: 80 << 20,
-                        pool_max_bytes: 16 << 20,
-                        max_load_bytes_per_second: HANDHELD_LOAD_RATE,
-                        ..config
-                    }
-                } else {
-                    config
-                };
+                let config = texture_budget::for_executor(
+                    config,
+                    crate::HANDHELD.load(std::sync::atomic::Ordering::Relaxed),
+                );
                 let config = match crate::debug::LOAD_CAP_MIB.load(std::sync::atomic::Ordering::Relaxed) {
                     u64::MAX => config,
                     0 => xenos_texture_cache::CacheConfig { max_load_bytes_per_second: u64::MAX, ..config },
@@ -703,6 +736,7 @@ impl Executor {
             encoder: None,
             times: OpTimes::default(),
             vertex_ranges: Vec::new(),
+            vertex_range_narrowing: false,
             pass: None,
             constant_cache: ConstantCache::default(),
             resolving: false,
@@ -778,6 +812,25 @@ impl Executor {
         OpTimes { shaders: self.shaders.translate_time + self.shaders.module_time, ..self.times }
     }
 
+    /// Select conservative vertex-range synchronization for this executor only.
+    /// Refused proofs retain the full-range path. Changing this never clears memory versions.
+    pub fn set_vertex_range_narrowing(&mut self, enabled: bool) {
+        self.vertex_range_narrowing = enabled;
+    }
+
+    /// Enable/reset local host elapsed-time diagnostics. No rendering state changes.
+    #[cfg(feature = "cpu-profile")]
+    pub fn set_cpu_profiling(&mut self, enabled: bool) {
+        self.cpu_profile.set_enabled(enabled);
+    }
+
+    /// Take/reset numeric totals, typically after `end_frame`. Nested operations
+    /// overlap the draw phases; none of these values measure GPU execution time.
+    #[cfg(feature = "cpu-profile")]
+    pub fn take_cpu_profile(&mut self) -> crate::cpu_profile::CpuProfileSnapshot {
+        self.cpu_profile.take()
+    }
+
     pub fn mirror_stats(&self) -> crate::shared_memory::MirrorStats {
         self.shared.stats()
     }
@@ -802,6 +855,8 @@ impl Executor {
 
     /// Whether a resolve is still in flight (polls it). Nothing else may run until it finishes.
     pub fn busy(&mut self) -> bool {
+        #[cfg(feature = "cpu-profile")]
+        let profile_started = self.cpu_profile.start();
         // Frames the GPU hasn't finished: past MAX_FRAMES_IN_FLIGHT, wait. Nothing else stops
         // the renderer running ahead of a slower GPU, and every queued frame keeps its uploads
         // and released resources alive until the GPU is done with it (out of memory follows).
@@ -811,35 +866,44 @@ impl Executor {
             }
         }
         if self.frames_in_flight.len() > crate::debug::MAX_FRAMES_IN_FLIGHT.load(std::sync::atomic::Ordering::Relaxed) {
-            self.device.poll();
-            return true;
+            profile_operation!(self, DriverPoll, self.device.poll());
+            return profile_busy_result!(self, profile_started, true);
         }
         if !self.resolving {
-            return self.uploads_over_budget();
+            return profile_busy_result!(self, profile_started, self.uploads_over_budget());
         }
-        self.device.poll();
-        match self.targets.poll_resolve(&self.device, &*self.memory) {
+        profile_operation!(self, DriverPoll, self.device.poll());
+        let result = match self.targets.poll_resolve(&self.device, &*self.memory) {
             ResolveStatus::Pending => true,
             ResolveStatus::Done { written, in_gpu_memory } => {
                 self.finish_resolve(written, in_gpu_memory);
                 false
             }
-        }
+        };
+        profile_busy_result!(self, profile_started, result)
+    }
+
+    fn retire_uploads(&mut self) -> u64 {
+        #[cfg(feature = "cpu-profile")]
+        let before = self.uploads_in_flight.len();
+        let bytes = profile_operation!(self, UploadQueueWalk, {
+            while self.uploads_in_flight.front().is_some_and(|(f, _)| f.is_ready()) {
+                if let Some(Err(e)) = self.uploads_in_flight.pop_front().and_then(|(f, _)| f.try_take()) {
+                    log::warn!("renderer: waiting for uploads failed: {e}");
+                }
+            }
+            self.uploads_in_flight.iter().map(|(_, bytes)| bytes).sum::<u64>()
+        });
+        #[cfg(feature = "cpu-profile")]
+        self.cpu_profile.upload_queue(before, self.uploads_in_flight.len());
+        bytes
     }
 
     /// Whether more than `upload_budget` bytes were uploaded for submissions the GPU hasn't
     /// finished: then the renderer waits (between commands) until enough of them have. Uploads
     /// not submitted yet are submitted first, so that they're waited for too.
     fn uploads_over_budget(&mut self) -> bool {
-        let retire = |queue: &mut std::collections::VecDeque<(Pending<gpu_webgpu::Result<()>>, u64)>| {
-            while queue.front().is_some_and(|(f, _)| f.is_ready()) {
-                if let Some(Err(e)) = queue.pop_front().and_then(|(f, _)| f.try_take()) {
-                    log::warn!("renderer: waiting for uploads failed: {e}");
-                }
-            }
-            queue.iter().map(|(_, bytes)| bytes).sum::<u64>()
-        };
-        let mut in_flight = retire(&mut self.uploads_in_flight);
+        let mut in_flight = self.retire_uploads();
         let pending = gpu_webgpu::counters::upload_bytes() - self.uploaded_at_submit;
         let waiting = std::mem::take(&mut self.upload_waiting);
         if in_flight + pending <= self.upload_budget {
@@ -848,8 +912,8 @@ impl Executor {
         if pending > 0 {
             self.flush();
         }
-        self.device.poll();
-        in_flight = retire(&mut self.uploads_in_flight);
+        profile_operation!(self, DriverPoll, self.device.poll());
+        in_flight = self.retire_uploads();
         if in_flight <= self.upload_budget {
             return false;
         }
@@ -879,7 +943,7 @@ impl Executor {
     /// Encodes and submits everything recorded.
     pub fn flush(&mut self) {
         let started = crate::renderer::Stopwatch::start();
-        self.submit_batch();
+        profile_operation!(self, Submit, self.submit_batch());
         self.times.submits += started.elapsed();
     }
 
@@ -1079,7 +1143,12 @@ impl Executor {
             _ => return,
         }
         log::trace!("renderer: draw {}", self.stats.draws + self.stats.skipped_draws);
-        match self.record_draw() {
+        #[cfg(feature = "cpu-profile")]
+        self.cpu_profile.begin_draw();
+        let result = self.record_draw();
+        #[cfg(feature = "cpu-profile")]
+        self.cpu_profile.end_draw(result.is_ok());
+        match result {
             Ok(()) => self.stats.draws += 1,
             Err(skip) => {
                 self.stats.skipped_draws += 1;
@@ -1167,6 +1236,10 @@ impl Executor {
     }
 
     fn sync_shared(&mut self, addr: u32, len: u32) {
+        #[cfg(feature = "cpu-profile")]
+        let profile_started = self.cpu_profile.start();
+        #[cfg(feature = "cpu-profile")]
+        self.cpu_profile.shared_range(len);
         let memory = self.memory.clone();
         let uploaded = self.shared.uploaded;
         if self.shared.sync(&self.device, &*memory, addr, len).is_err() {
@@ -1174,6 +1247,8 @@ impl Executor {
             self.shared.sync(&self.device, &*memory, addr, len).expect("no conflicts in an empty batch");
         }
         self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
+        #[cfg(feature = "cpu-profile")]
+        self.cpu_profile.operation(crate::cpu_profile::Operation::SharedSync, profile_started);
     }
 
     /// Milliseconds each stage of the last sampled draw (one in 32) took, for diagnosing slow draws.
@@ -1187,8 +1262,10 @@ impl Executor {
     }
 
     fn record_draw(&mut self) -> std::result::Result<(), Skip> {
-        // Stage timing (a clock read per stage, a JavaScript call on the web) for one draw in 32.
-        self.timing_sample = (self.stats.draws + self.stats.skipped_draws).is_multiple_of(32);
+        // Legacy warning timing: avoid stage clocks and formatting when warnings cannot log.
+        // The optional cpu-profile counters and coarse OpTimes remain independent.
+        self.timing_sample = (self.stats.draws + self.stats.skipped_draws).is_multiple_of(32)
+            && log::log_enabled!(log::Level::Warn);
         let regs = &self.regs;
         let desc = DrawDescription::from_registers(regs);
         let program = ShaderProgramSetup::from_registers(regs);
@@ -1372,10 +1449,11 @@ impl Executor {
 
         mark!(self, 2);
         // Index data and ring space (submit first if this draw's data may not fit).
-        let index_bytes: Option<(IndexFormat, Vec<u8>)> = match &host.indices {
+        // `host` owns the converted indices until the ring copies them below.
+        let index_bytes: Option<(IndexFormat, &[u8])> = match &host.indices {
             HostIndices::None => None,
-            HostIndices::U16(v) => Some((IndexFormat::Uint16, as_bytes(v).to_vec())),
-            HostIndices::U32(v) => Some((IndexFormat::Uint32, as_bytes(v).to_vec())),
+            HostIndices::U16(v) => Some((IndexFormat::Uint16, as_bytes(v))),
+            HostIndices::U32(v) => Some((IndexFormat::Uint32, as_bytes(v))),
         };
         let index_len = index_bytes.as_ref().map_or(0, |(_, b)| b.len() as u64 + 4);
         let gathered_len = match direct {
@@ -1388,7 +1466,13 @@ impl Executor {
         // Each float constant binding spans a full stage's constants past its offset.
         if self.indices.remaining() < index_len
             || self.gathered_indices.remaining() < gathered_len
-            || !self.floats.has_room(&[FLOAT_CONSTANTS_SIZE, FLOAT_CONSTANTS_SIZE, FETCH_SIZE, SYSTEM_SIZE, BOOL_LOOP_SIZE])
+            || !self.floats.has_room(&[
+                FLOAT_CONSTANTS_SIZE,
+                FLOAT_CONSTANTS_SIZE,
+                FETCH_SIZE,
+                SYSTEM_SIZE,
+                BOOL_LOOP_SIZE,
+            ])
         {
             self.flush();
         }
@@ -1398,10 +1482,53 @@ impl Executor {
         let regs = &self.regs;
         let mut ranges = std::mem::take(&mut self.vertex_ranges);
         ranges.clear();
-        ranges.extend(vs.translation.vertex_bindings.iter().map(|b| {
-            let f = VertexFetchConstant::read(regs, b.fetch_constant);
-            (f.address_bytes(), f.size.saturating_mul(4))
-        }));
+        let range_work = if self.vertex_range_narrowing {
+            vs.vertex_ranges.as_ref().map(|plan| {
+                use crate::vertex_range::{Entry, EntrySource};
+                // These first/base/instance values match the draw/draw_indexed calls in
+                // encode_pass. Converted/expanded draws keep the original full ranges.
+                let domain = Entry {
+                    source: if direct.is_some() {
+                        EntrySource::DirectDma
+                    } else if matches!(host.indices, HostIndices::None) {
+                        EntrySource::Sequential
+                    } else {
+                        EntrySource::Converted
+                    },
+                    count: host.vertex_count,
+                    offset: desc.index_params.offset,
+                    min: desc.index_params.min,
+                    max: desc.index_params.max,
+                    first_vertex: 0,
+                    host_base_vertex: 0,
+                    first_instance: 0,
+                    instance_count: 1,
+                    index_endian: direct.map_or(0, |(ib, ..)| ib.endian.raw()),
+                    index_load: expansion != VertexExpansion::None && desc.source_select == SourceSelect::Dma,
+                    expanded: expansion != VertexExpansion::None,
+                }
+                .domain();
+                plan.for_each_range(regs.fetch_constants(), domain, |r| ranges.push((r.address, r.bytes)))
+            })
+        } else {
+            None
+        };
+        if let Some(work) = range_work {
+            self.stats.vertex_range_eligible_bindings =
+                self.stats.vertex_range_eligible_bindings.saturating_add(u64::from(work.eligible));
+            self.stats.vertex_range_narrowed_bindings =
+                self.stats.vertex_range_narrowed_bindings.saturating_add(u64::from(work.narrowed));
+            self.stats.vertex_range_avoided_pages = self.stats.vertex_range_avoided_pages.saturating_add(work.avoided_pages);
+            self.stats.vertex_range_fallback_bindings =
+                self.stats.vertex_range_fallback_bindings.saturating_add(u64::from(work.bindings - work.narrowed));
+        } else {
+            ranges.extend(vs.translation.vertex_bindings.iter().map(|b| {
+                let f = VertexFetchConstant::read(regs, b.fetch_constant);
+                (f.address_bytes(), f.size.saturating_mul(4))
+            }));
+            self.stats.vertex_range_fallback_bindings = self.stats.vertex_range_fallback_bindings
+                .saturating_add(vs.translation.vertex_bindings.len() as u64);
+        }
         let index_load = if expansion != VertexExpansion::None && desc.source_select == SourceSelect::Dma {
             desc.index_buffer.inspect(|ib| ranges.push((ib.guest_base, ib.size_bytes())))
         } else {
@@ -1498,6 +1625,12 @@ impl Executor {
         } else {
             system.alpha_test_function = compare_function::ALWAYS;
         }
+        if let Some(coverage) =
+            output.alpha_to_coverage.filter(|_| !crate::debug::NO_A2C.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            f |= flags::encode_alpha_to_mask(setup.msaa_samples.raw(), coverage.offsets)
+                .ok_or_else(|| Skip::Warn("invalid alpha-to-mask sample count or offsets".into()))?;
+        }
         system.flags = f;
         system.vertex_base_index = desc.index_params.offset as i32;
         system.vertex_index_min = desc.index_params.min;
@@ -1585,7 +1718,7 @@ impl Executor {
                 Some(DrawIndices::Shared { buffer, format: direct_format.expect("set with direct"), offset })
             }
             (None, Some((format, bytes))) => {
-                let offset = self.indices.push(&bytes).expect("index ring space was checked");
+                let offset = self.indices.push(bytes).expect("index ring space was checked");
                 Some(DrawIndices::Ring { format, offset })
             }
             (None, None) => None,
@@ -2029,9 +2162,9 @@ impl Executor {
             color_slots: color_slots(targets),
             sample_count: targets.sample_count,
             sample_mask: targets.sample_mask,
-            alpha_to_coverage: output.alpha_to_coverage.is_some()
-                && targets.sample_count > 1
-                && !crate::debug::NO_A2C.load(std::sync::atomic::Ordering::Relaxed),
+            // Exact guest coverage is output before color exponent bias; host
+            // A2C would incorrectly mask those samples a second time.
+            alpha_to_coverage: false,
         }
     }
 
@@ -2116,8 +2249,12 @@ impl Executor {
         let result = {
             let started = crate::renderer::Stopwatch::start();
             self.device.push_error_scope(ErrorFilter::Validation);
-            let pipeline = self.device.create_render_pipeline(&desc);
-            let result = match self.device.block_on(self.device.pop_error_scope()) {
+            let pipeline = profile_operation!(self, PipelineCreate, self.device.create_render_pipeline(&desc));
+            let result = match profile_operation!(
+                self,
+                PipelineValidationWait,
+                self.device.block_on(self.device.pop_error_scope())
+            ) {
                 Ok(None) => Ok(pipeline),
                 Ok(Some(e)) => Err(gpu_webgpu::Error::Invalid(e.to_string())),
                 Err(e) => Err(e),
@@ -2130,7 +2267,7 @@ impl Executor {
         #[cfg(target_os = "emscripten")]
         let pending = {
             let started = crate::renderer::Stopwatch::start();
-            let pending = self.device.create_render_pipeline_async(&desc);
+            let pending = profile_operation!(self, PipelineCreate, self.device.create_render_pipeline_async(&desc));
             self.times.pipelines += started.elapsed();
             pending
         };

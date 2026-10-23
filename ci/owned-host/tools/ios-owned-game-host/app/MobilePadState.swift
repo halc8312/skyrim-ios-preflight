@@ -104,19 +104,56 @@ enum MobileControlsLayout {
         return PadRect(x: safeBounds.x, y: safeBounds.y, width: safeBounds.width,
                        height: max(0, safeBounds.height - reservedBottom))
     }
+    static func buttonSize(_ control: MobilePadControl, viewport: PadRect, scale: Double) -> PadPoint {
+        let scale = scale.isFinite ? min(1.35, max(1, scale)) : 1
+        let diameter = max(44, min(54, viewport.height * 0.13))
+        return PadPoint(x: (control == .start || control == .back ? 64 : diameter) * scale,
+                        y: diameter * scale)
+    }
+    static func hit(at point: PadPoint, frameFor: (MobilePadControl) -> PadRect?,
+                    retaining held: MobilePadControl? = nil) -> MobilePadControl? {
+        // Small finger drift should not interrupt a held action. Leaving the
+        // extra eight points still releases it, and another button can be slid onto.
+        if let held, let frame = frameFor(held), frame.valid {
+            let tolerance = PadRect(x: frame.x - 8, y: frame.y - 8,
+                                    width: frame.width + 16, height: frame.height + 16)
+            if tolerance.contains(point) { return held }
+        }
+        return MobilePadControl.allCases.reversed().first { frameFor($0)?.contains(point) == true }
+    }
 }
 
 struct MobileControlsSettings: Codable, Equatable {
     var version = 1
     var sensitivity = 1.0
     var invertY = false
-    var cameraMode: MobileCameraMode = .swipe
+    var cameraMode: MobileCameraMode = .stick
+    var buttonScale = 1.0
+    var buttonOpacity = 0.64
     var positions: [String: PadPoint] = [:]
+
+    private enum CodingKeys: String, CodingKey {
+        case version, sensitivity, invertY, cameraMode, buttonScale, buttonOpacity, positions
+    }
+    init() {}
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        version = try values.decode(Int.self, forKey: .version)
+        sensitivity = try values.decode(Double.self, forKey: .sensitivity)
+        invertY = try values.decode(Bool.self, forKey: .invertY)
+        // Existing saved swipe choices and layouts must not become new defaults.
+        cameraMode = try values.decode(MobileCameraMode.self, forKey: .cameraMode)
+        positions = try values.decode([String: PadPoint].self, forKey: .positions)
+        buttonScale = try values.decodeIfPresent(Double.self, forKey: .buttonScale) ?? 1
+        buttonOpacity = try values.decodeIfPresent(Double.self, forKey: .buttonOpacity) ?? 0.64
+    }
 
     func normalized() -> MobileControlsSettings {
         guard version == 1 else { return MobileControlsSettings() }
         var result = self
         result.sensitivity = sensitivity.isFinite ? min(3, max(0.25, sensitivity)) : 1
+        result.buttonScale = buttonScale.isFinite ? min(1.35, max(1, buttonScale)) : 1
+        result.buttonOpacity = buttonOpacity.isFinite ? min(0.85, max(0.35, buttonOpacity)) : 0.64
         result.positions = [:]
         for control in MobilePadControl.allCases {
             guard let p = positions[control.rawValue], p.x.isFinite, p.y.isFinite else { continue }
@@ -199,11 +236,16 @@ struct MobilePadInput {
     func held(_ control: MobilePadControl) -> Bool {
         roles.values.contains { if case .button(let held) = $0 { return held == control }; return false }
     }
+    func button(for id: Int) -> MobilePadControl? {
+        guard let role = roles[id], case .button(let control) = role else { return nil }
+        return control
+    }
 
     mutating func configure(viewport: PadRect, settings: MobileControlsSettings) {
         let value = settings.normalized()
         if self.viewport != viewport || self.settings.cameraMode != value.cameraMode
-            || self.settings.invertY != value.invertY || self.settings.sensitivity != value.sensitivity { cancelAll() }
+            || self.settings.invertY != value.invertY || self.settings.sensitivity != value.sensitivity
+            || self.settings.buttonScale != value.buttonScale { cancelAll() }
         self.viewport = viewport
         self.settings = value
     }
@@ -233,12 +275,17 @@ struct MobilePadInput {
             if settings.cameraMode == .stick {
                 let radius = max(1, viewport.height * 0.12)
                 let v = MobilePadMath.unit((p.x - anchor.x) / radius, (p.y - anchor.y) * ySign / radius)
-                look = MobilePadMath.unit(v.x * abs(v.x) * settings.sensitivity,
-                                          v.y * abs(v.y) * settings.sensitivity)
+                // Curve the magnitude, not each axis: preserve the finger's
+                // direction and full diagonal travel while keeping fine control.
+                let gain = hypot(v.x, v.y) * settings.sensitivity
+                look = MobilePadMath.unit(v.x * gain, v.y * gain)
             } else {
                 // XInput accepts a turn-rate axis, not an absolute camera angle.
                 // Normalize finger velocity in viewport-heights/sec, responding on this event.
-                let dt = min(1.0 / 15, max(1.0 / 240, time - previousTime))
+                guard time > previousTime else { return }
+                // Use the real interval after a delayed event. Capping it at
+                // 1/15 s inflated slow deliveries into fast camera turns.
+                let dt = max(1.0 / 240, time - previousTime)
                 let scale = max(1, viewport.height) * dt * 1.5
                 look = MobilePadMath.unit((p.x - previous.x) * settings.sensitivity / scale,
                                           (p.y - previous.y) * ySign * settings.sensitivity / scale)

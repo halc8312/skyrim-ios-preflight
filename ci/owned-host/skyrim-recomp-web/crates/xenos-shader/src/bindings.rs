@@ -98,6 +98,28 @@ pub mod flags {
     pub const COLOR_RANGE_7E3: u32 = 1;
     /// 16-bit EDRAM fixed point (k_16_16, k_16_16_16_16): [-32, 32].
     pub const COLOR_RANGE_FIXED16: u32 = 2;
+    /// Guest alpha-to-mask uses unbiased oC0.a, unlike host alpha-to-coverage
+    /// which would see the color exponent bias and format clamp.
+    pub const ALPHA_TO_MASK: u32 = 1 << 18;
+    /// Two bits: guest sample count log2 (0=1x,1=2x,2=4x).
+    pub const ALPHA_TO_MASK_SAMPLES_SHIFT: u32 = 19;
+    /// Four two-bit pixel-quad offsets, index=(x&1)*2+(y&1).
+    pub const ALPHA_TO_MASK_OFFSETS_SHIFT: u32 = 21;
+
+    /// Packs decoded guest state without changing the112-byte GPU uniform ABI.
+    pub fn encode_alpha_to_mask(samples_log2: u32, offsets: [u32; 4]) -> Option<u32> {
+        if samples_log2 > 2 || offsets.iter().any(|&offset| offset > 3) {
+            return None;
+        }
+        Some(
+            ALPHA_TO_MASK
+                | samples_log2 << ALPHA_TO_MASK_SAMPLES_SHIFT
+                | offsets
+                    .iter()
+                    .enumerate()
+                    .fold(0, |bits, (i, &offset)| bits | offset << (ALPHA_TO_MASK_OFFSETS_SHIFT + 2 * i as u32)),
+        )
+    }
 }
 
 /// Alpha test comparison functions (`xenos::CompareFunction`).

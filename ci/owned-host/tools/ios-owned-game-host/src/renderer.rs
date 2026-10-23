@@ -36,6 +36,35 @@ pub fn is_ready(token: u64) -> bool {
     })
 }
 
+/// Read only the owned renderer's existing coarse report. No GPU work or wait.
+/// Renderer and guest elapsed clocks have different initialization epochs.
+pub(crate) fn performance_snapshot(token: u64) -> Option<serde_json::Value> {
+    let owner = OWNER.get()?;
+    if owner.token != token || ATTACHMENT.load(Ordering::Acquire) != 2 {
+        return None;
+    }
+    let s = owner.renderer.diagnostics.performance_snapshot()?;
+    macro_rules! numeric {
+        ($($field:ident),+ $(,)?) => {{
+            let mut values = serde_json::Map::new();
+            $(values.insert(stringify!($field).into(), serde_json::Value::from(s.$field));)+
+            serde_json::Value::Object(values)
+        }};
+    }
+    Some(numeric!(sample_end_elapsed_ms, window_ms, age_ms, stale,
+        presentable_swaps_window, draws_window, draws_total, skipped_draws_total,
+        resolves_total, gpu_resolves_total, submissions_total, pipelines_total, upload_waits_total,
+        constant_upload_bytes_total, index_upload_bytes_total, memory_upload_bytes_total,
+        texture_set_misses_total, texture_set_stale_total, texture_loads_total, texture_reloads_total,
+        vertex_range_eligible_bindings_total, vertex_range_narrowed_bindings_total,
+        vertex_range_avoided_pages_total, vertex_range_fallback_bindings_total,
+        texture_hits_total, texture_fallbacks_total, texture_deferred_total, texture_evictions_total,
+        texture_host_bytes, texture_pooled_bytes, mirror_slot_bytes, mirror_blocks,
+        mirror_evictions_total, mirror_slot_conflicts_total, texture_sets_window_ms,
+        pipelines_window_ms, shaders_window_ms, resolves_window_ms, submits_window_ms,
+        renderer_busy_window_ms))
+}
+
 fn attach(token: u64, layer: *mut c_void, width: u32, height: u32) -> Result<(), i32> {
     // Startup waits for the renderer, whose iOS layer configuration dispatches
     // synchronously to main. Refuse main-thread entry before claiming attachment

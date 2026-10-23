@@ -36,7 +36,7 @@ use runtime_core::Runtime;
 use runtime_core::memory::GuestMemory;
 use vfs::Vfs;
 
-use dispatch::{Export, ImportName, ModuleId, StubConfig};
+use dispatch::{Export, ImportName, ModuleId, RegisteredExport, StubConfig};
 use objects::ObjectManager;
 use thread::KThread;
 use variables::Variables;
@@ -71,10 +71,11 @@ pub struct Kernel {
     pub(crate) terminate_notifications: Mutex<Vec<(u32, u32)>>,
     pub(crate) stubs: StubConfig,
     pub(crate) import_policy: import_policy::ImportPolicy,
-    pub(crate) exports: HashMap<(ModuleId, u16), Export>,
+    pub(crate) exports: HashMap<(ModuleId, u16), RegisteredExport>,
     pub(crate) import_names: HashMap<(ModuleId, u16), &'static str>,
     pub(crate) module_names: Vec<String>,
-    /// Call counters per import; read-mostly, so counting never parks a thread.
+    /// Counters for imports without a registered handler. Implemented imports
+    /// keep their counters beside the immutable handler registration.
     pub(crate) stats: std::sync::RwLock<HashMap<(ModuleId, u16), Arc<std::sync::atomic::AtomicU64>>>,
     pub(crate) threads: Mutex<HashMap<u32, Arc<KThread>>>,
     /// Allocated dynamic TLS slots.
@@ -151,7 +152,7 @@ impl Kernel {
             terminate_notifications: Mutex::new(Vec::new()),
             stubs,
             import_policy: policy,
-            exports: all_exports().map(|e| ((e.module, e.ordinal), *e)).collect(),
+            exports: all_exports().map(|e| ((e.module, e.ordinal), RegisteredExport::new(*e))).collect(),
             import_names: import_names.iter().map(|n| ((ModuleId(n.module), n.ordinal), n.name)).collect(),
             module_names,
             stats: std::sync::RwLock::new(HashMap::new()),
@@ -271,7 +272,12 @@ impl Kernel {
 
     /// Calls an implemented export by name from host code (tests, tools).
     pub fn call_export(&'static self, name: &str, ctx: &mut runtime_core::PPCContext, args: &[u32]) -> u64 {
-        let e = self.exports.values().find(|e| e.name == name).unwrap_or_else(|| panic!("no export named {name}"));
+        let e = self
+            .exports
+            .values()
+            .map(|e| e.export)
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("no export named {name}"));
         for (i, &a) in args.iter().enumerate() {
             if i < 8 {
                 ctx.set_gpr(3 + i, a as u64);

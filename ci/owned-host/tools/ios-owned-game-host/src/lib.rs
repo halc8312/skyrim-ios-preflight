@@ -6,6 +6,8 @@ pub mod abi_v2;
 pub mod audio_output;
 pub mod binding;
 pub mod config_overlay;
+#[cfg(all(feature = "fixture-tools", feature = "metal-renderer", target_os = "ios"))]
+mod alpha_coverage_probe;
 pub mod device_settings;
 #[cfg(all(feature = "fixture-tools", feature = "metal-renderer", target_os = "ios", target_arch = "aarch64"))]
 mod graphics_fixture;
@@ -15,6 +17,7 @@ pub mod lifecycle;
 pub mod mapping;
 pub mod native_trace;
 pub mod paths;
+pub mod performance_diagnostics;
 pub mod progress_diagnostics;
 pub mod renderer_policy;
 pub mod save_store;

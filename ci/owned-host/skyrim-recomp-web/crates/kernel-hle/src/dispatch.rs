@@ -34,6 +34,30 @@ pub struct Export {
     pub handler: Handler,
 }
 
+/// Immutable handler registration with its lazily observed call counter.
+/// Keeping the counter beside the handler avoids a shared statistics lock and
+/// an Arc increment/decrement on every implemented import. The OnceLock keeps
+/// never-called exports absent from diagnostic snapshots, including when a
+/// used counter has wrapped back to zero.
+pub(crate) struct RegisteredExport {
+    pub export: Export,
+    calls: std::sync::OnceLock<std::sync::atomic::AtomicU64>,
+}
+
+impl RegisteredExport {
+    pub fn new(export: Export) -> Self {
+        Self { export, calls: std::sync::OnceLock::new() }
+    }
+
+    fn note_call(&self) -> u64 {
+        self.calls.get_or_init(Default::default).fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+    }
+
+    fn call_count(&self) -> Option<u64> {
+        self.calls.get().map(|n| n.load(std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
 impl fmt::Debug for Export {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}#{:#05X} {}", self.module.0, self.ordinal, self.name)
@@ -157,7 +181,7 @@ pub fn parse_num(s: &str) -> Result<u64, String> {
 impl Kernel {
     pub fn import_name(&self, module: ModuleId, ordinal: u16) -> String {
         if let Some(e) = self.exports.get(&(module, ordinal)) {
-            return e.name.to_string();
+            return e.export.name.to_string();
         }
         if let Some(n) = self.import_names.get(&(module, ordinal)) {
             return n.to_string();
@@ -172,11 +196,16 @@ impl Kernel {
     /// Runs one import call. The return value goes to r3.
     pub fn dispatch(&'static self, module: ModuleId, ordinal: u16, ctx: &mut PPCContext) {
         crate::thread::note_kernel_call();
-        let export = self.exports.get(&(module, ordinal)).copied();
-        let counter = self.stats.read().unwrap().get(&(module, ordinal)).cloned();
-        let counter =
-            counter.unwrap_or_else(|| self.stats.write().unwrap().entry((module, ordinal)).or_default().clone());
-        let calls = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let registered = self.exports.get(&(module, ordinal));
+        let export = registered.map(|e| e.export);
+        let calls = if let Some(e) = registered {
+            e.note_call()
+        } else {
+            let counter = self.stats.read().unwrap().get(&(module, ordinal)).cloned();
+            let counter =
+                counter.unwrap_or_else(|| self.stats.write().unwrap().entry((module, ordinal)).or_default().clone());
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+        };
         let args: [u32; 8] = std::array::from_fn(|i| ctx.gpr32(3 + i));
 
         match export {
@@ -259,15 +288,19 @@ impl Kernel {
     /// Every import called so far, sorted by module and ordinal.
     pub fn import_stats(&self) -> Vec<(ModuleId, u16, String, ImportStats)> {
         let stats = self.stats.read().unwrap();
-        let mut v: Vec<_> = stats
+        let mut v: Vec<_> = self
+            .exports
             .iter()
-            .map(|(&(m, o), n)| {
+            .filter_map(|(&(m, o), e)| {
+                e.call_count().map(|calls| (m, o, self.import_name(m, o), ImportStats { calls, implemented: true }))
+            })
+            .chain(stats.iter().map(|(&(m, o), n)| {
                 let s = ImportStats {
                     calls: n.load(std::sync::atomic::Ordering::Relaxed),
                     implemented: self.exports.contains_key(&(m, o)),
                 };
                 (m, o, self.import_name(m, o), s)
-            })
+            }))
             .collect();
         v.sort_by_key(|(m, o, _, _)| (*m, *o));
         v
@@ -318,3 +351,7 @@ pub unsafe extern "C-unwind" fn skyrt_kernel_call(module: u32, ordinal: u32, ctx
     let ctx = unsafe { &mut *ctx };
     kernel.dispatch(ModuleId(module), ordinal as u16, ctx);
 }
+
+#[cfg(test)]
+#[path = "dispatch_counter_tests.rs"]
+mod counter_tests;

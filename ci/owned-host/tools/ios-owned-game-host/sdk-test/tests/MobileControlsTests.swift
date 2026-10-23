@@ -85,6 +85,38 @@ final class MobileControlsTests: XCTestCase {
         swipe.tick(time: 0.02); XCTAssertGreaterThan(swipe.snapshot.rx, 0)
         swipe.tick(time: 0.06); XCTAssertEqual(swipe.snapshot, .neutral)
         swipe.end(1); XCTAssertNil(swipe.cameraAnchor)
+
+        // Sparse guest polls can observe a held stick even when display ticks
+        // continue between them. A swipe still intentionally releases after 33 ms.
+        let held = normal.snapshot
+        for poll in [1.0 / 15, 0.2, 0.5] {
+            normal.tick(time: poll)
+            XCTAssertEqual(normal.snapshot, held)
+        }
+        normal.end(1); XCTAssertEqual(normal.snapshot, .neutral)
+
+        var diagonal = configured()
+        diagonal.begin(1, at: PadPoint(x: 650, y: 300), time: 0, button: nil)
+        let radius = viewport.height * 0.12
+        diagonal.move(1, to: PadPoint(x: 650 + radius * 0.8, y: 300 - radius * 0.6), time: 0.02, button: nil)
+        XCTAssertEqual(diagonal.snapshot.rx, MobilePadMath.axis(0.8))
+        XCTAssertEqual(diagonal.snapshot.ry, MobilePadMath.axis(0.6))
+
+        var delayed = configured(.swipe), timely = configured(.swipe)
+        for id in 0...1 {
+            if id == 0 {
+                timely.begin(1, at: PadPoint(x: 650, y: 300), time: 0, button: nil)
+                timely.move(1, to: PadPoint(x: 659, y: 300), time: 0.02, button: nil)
+            } else {
+                delayed.begin(1, at: PadPoint(x: 650, y: 300), time: 0, button: nil)
+                delayed.move(1, to: PadPoint(x: 740, y: 300), time: 0.2, button: nil)
+            }
+        }
+        XCTAssertEqual(delayed.snapshot.rx, timely.snapshot.rx, "Equal finger velocity must not accelerate after delayed delivery")
+        let beforeStale = delayed.snapshot
+        delayed.move(1, to: PadPoint(x: 600, y: 300), time: 0.2, button: nil)
+        delayed.move(1, to: PadPoint(x: 600, y: 300), time: 0.1, button: nil)
+        XCTAssertEqual(delayed.snapshot, beforeStale)
     }
 
     func testTouchOwnershipDoesNotStealActiveStick() {
@@ -115,6 +147,28 @@ final class MobileControlsTests: XCTestCase {
         input.begin(4, at: PadPoint(x: 50, y: 250), time: 0, button: .left)
         XCTAssertEqual(input.snapshot.buttons, 5)
         XCTAssertEqual(MobilePadControl.allCases.reduce(UInt16(0)) { $0 | $1.mask } & 0x0C00, 0)
+
+        let frames: [MobilePadControl: PadRect] = [
+            .a: PadRect(x: 800, y: 400, width: 50, height: 50),
+            .b: PadRect(x: 900, y: 400, width: 50, height: 50)
+        ]
+        var button = configured()
+        button.begin(5, at: PadPoint(x: 825, y: 425), time: 0, button: .a)
+        let drift = PadPoint(x: 854, y: 425)
+        XCTAssertNil(MobileControlsLayout.hit(at: drift, frameFor: { frames[$0] }))
+        let retained = MobileControlsLayout.hit(at: drift, frameFor: { frames[$0] }, retaining: button.button(for: 5))
+        button.move(5, to: drift, time: 0.01,
+                    button: retained)
+        XCTAssertEqual(button.snapshot.buttons, MobilePadControl.a.mask)
+        let released = PadPoint(x: 859, y: 425)
+        let outside = MobileControlsLayout.hit(at: released, frameFor: { frames[$0] }, retaining: button.button(for: 5))
+        button.move(5, to: released, time: 0.02, button: outside)
+        XCTAssertEqual(button.snapshot, .neutral)
+        button.move(5, to: PadPoint(x: 925, y: 425), time: 0.03,
+                    button: MobileControlsLayout.hit(at: PadPoint(x: 925, y: 425), frameFor: { frames[$0] }))
+        XCTAssertEqual(button.snapshot.buttons, MobilePadControl.b.mask)
+        button.end(5); XCTAssertEqual(button.snapshot, .neutral)
+        XCTAssertNil(MobileControlsLayout.hit(at: PadPoint(x: .nan, y: 425), frameFor: { frames[$0] }, retaining: .a))
     }
 
     func testAxisAndLayoutBoundsRejectNonFiniteInputs() {
@@ -148,11 +202,22 @@ final class MobileControlsTests: XCTestCase {
         let tiny = MobilePadMath.center(position: .zero, viewport: viewport,
             safe: PadRect(x: 10, y: 10, width: 5, height: 5), size: size)
         XCTAssertEqual(tiny, PadPoint(x: 12.5, y: 12.5))
+        for control in MobilePadControl.allCases {
+            let original = MobileControlsLayout.buttonSize(control, viewport: viewport, scale: 1)
+            let enlarged = MobileControlsLayout.buttonSize(control, viewport: viewport, scale: 1.35)
+            XCTAssertGreaterThanOrEqual(original.y, 44)
+            XCTAssertEqual(enlarged.y, original.y * 1.35, accuracy: 0.000001)
+            let center = MobilePadMath.center(position: PadPoint(x: 1, y: 1), viewport: viewport, safe: safe, size: enlarged)
+            XCTAssertLessThanOrEqual(center.x + enlarged.x / 2, safe.x + safe.width)
+            XCTAssertLessThanOrEqual(center.y + enlarged.y / 2, safe.y + safe.height)
+        }
     }
 
     func testSettingsRoundTripAndVersionFallback() throws {
         var settings = MobileControlsSettings()
+        XCTAssertEqual(settings.cameraMode, .stick)
         settings.sensitivity = 2; settings.invertY = true; settings.cameraMode = .stick
+        settings.buttonScale = 1.25; settings.buttonOpacity = 0.4
         settings.positions["a"] = PadPoint(x: 0.8, y: 0.6)
         let decoded = try JSONDecoder().decode(MobileControlsSettings.self, from: JSONEncoder().encode(settings))
         XCTAssertEqual(decoded.normalized(), settings)
@@ -161,6 +226,18 @@ final class MobileControlsTests: XCTestCase {
         let normalized = settings.normalized()
         XCTAssertEqual(normalized.sensitivity, 3); XCTAssertEqual(normalized.positions["a"], PadPoint(x: 0, y: 1))
         XCTAssertNil(normalized.positions["unknown"]); XCTAssertNil(normalized.positions["b"])
+        let legacy = Data(#"{"version":1,"sensitivity":1.5,"invertY":true,"cameraMode":"swipe","positions":{"a":{"x":0.7,"y":0.6}}}"#.utf8)
+        let migrated = try JSONDecoder().decode(MobileControlsSettings.self, from: legacy).normalized()
+        XCTAssertEqual(migrated.cameraMode, .swipe)
+        XCTAssertEqual(migrated.sensitivity, 1.5); XCTAssertTrue(migrated.invertY)
+        XCTAssertEqual(migrated.positions["a"], PadPoint(x: 0.7, y: 0.6))
+        XCTAssertEqual(migrated.buttonScale, 1); XCTAssertEqual(migrated.buttonOpacity, 0.64)
+        settings.buttonScale = 99; settings.buttonOpacity = -1
+        XCTAssertEqual(settings.normalized().buttonScale, 1.35)
+        XCTAssertEqual(settings.normalized().buttonOpacity, 0.35)
+        settings.buttonScale = .nan; settings.buttonOpacity = .infinity
+        XCTAssertEqual(settings.normalized().buttonScale, 1)
+        XCTAssertEqual(settings.normalized().buttonOpacity, 0.64)
         settings.version = 2; XCTAssertEqual(settings.normalized(), MobileControlsSettings())
         settings.version = 1; settings.sensitivity = .nan; XCTAssertEqual(settings.normalized().sensitivity, 1)
     }
@@ -193,7 +270,14 @@ final class MobileControlsTests: XCTestCase {
         }
 
         for editing in [false, true] {
-            overlay.configure(settings: MobileControlsSettings(), editing: editing, suspended: false,
+            var settings = MobileControlsSettings()
+            if editing {
+                // Keep the first image at default appearance. The second exercises
+                // the largest supported targets and a lower saved opacity in UIKit.
+                settings.buttonScale = 1.35
+                settings.buttonOpacity = 0.4
+            }
+            overlay.configure(settings: settings, editing: editing, suspended: false,
                               cancellation: editing ? 1 : 0, onPad: { _ in }, onLayout: { _, _ in })
             window.layoutIfNeeded(); overlay.setNeedsLayout(); overlay.layoutIfNeeded()
             overlay.setNeedsDisplay(); overlay.layer.displayIfNeeded()

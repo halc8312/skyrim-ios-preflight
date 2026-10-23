@@ -32,7 +32,6 @@ final class GraphicsPresentationTests: XCTestCase {
         // A delayed timer callback must not turn an over-budget native call
         // into a pass. The outer SDK runner remains a further process ceiling.
         if DispatchTime.now().uptimeNanoseconds - started > 15_000_000_000 { _exit(124) }
-        deadline.finish()
         XCTAssertEqual(result.0, 0)
         XCTAssertEqual(result.1.version, 0x0001_0000)
         XCTAssertEqual(result.1.bytes, 32)
@@ -40,6 +39,31 @@ final class GraphicsPresentationTests: XCTestCase {
         XCTAssertEqual(result.1.reserved, 0)
         XCTAssertEqual(result.1.checks, 255)
         XCTAssertEqual(result.1.rendered_cases, 6)
+        // Keep every original presenter assertion above. This additional probe
+        // runs actual authored Xenos shaders through the production translator
+        // and offscreen Metal pipelines, with individual sample readback.
+        XCTAssertEqual(OHFixtureAlphaCoverageProbeV1(nil, 32), -1)
+        var sentinel = OHAlphaCoverageProbeV1()
+        sentinel.version = 77
+        let untouched = withUnsafeBytes(of: sentinel) { Data($0) }
+        XCTAssertEqual(OHFixtureAlphaCoverageProbeV1(&sentinel, 31), -1)
+        XCTAssertEqual(withUnsafeBytes(of: sentinel) { Data($0) }, untouched, "refusal leaves output untouched")
+        let coverage: (Int32, OHAlphaCoverageProbeV1) = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var value = OHAlphaCoverageProbeV1()
+                let status = OHFixtureAlphaCoverageProbeV1(&value, MemoryLayout<OHAlphaCoverageProbeV1>.size)
+                continuation.resume(returning: (status, value))
+            }
+        }
+        if DispatchTime.now().uptimeNanoseconds - started > 15_000_000_000 { _exit(124) }
+        deadline.finish()
+        XCTAssertEqual(coverage.0, 0)
+        XCTAssertEqual(coverage.1.version, 0x0001_0000)
+        XCTAssertEqual(coverage.1.bytes, 32)
+        XCTAssertEqual(coverage.1.backend, 5, "actual Metal backend is required")
+        XCTAssertEqual(coverage.1.reserved, 0)
+        XCTAssertEqual(coverage.1.checks, 1023)
+        XCTAssertEqual(coverage.1.rendered_cases, 17)
         let report: [String: Any] = ["schema": 1, "backend": result.1.backend, "checks": result.1.checks,
             "rendered_cases": result.1.rendered_cases, "offscreen": true, "displayed": false,
             "game": false, "iphone": false]

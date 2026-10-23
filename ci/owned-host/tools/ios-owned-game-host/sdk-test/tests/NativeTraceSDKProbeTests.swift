@@ -12,7 +12,8 @@ final class NativeTraceSDKProbeTests: XCTestCase {
         defer { watchdog.cancel() }
         XCTAssertEqual(Bundle.main.bundleIdentifier, "com.halc8312.ownedgamehost")
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "0.1.0")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "11")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "12")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "LSSupportsGameMode") as? Bool, true)
         XCTAssertEqual(MemoryLayout<OHNativeTraceSDKResult>.size, 32)
         let observed: (Int32, OHNativeTraceSDKResult) = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {

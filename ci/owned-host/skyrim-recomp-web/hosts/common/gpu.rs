@@ -29,10 +29,17 @@ impl GuestPhysical {
 
 impl PhysicalMemory for GuestPhysical {
     fn read(&self, addr: u32, out: &mut [u8]) {
-        out.fill(0);
         let mem = self.0.mem();
         let len = out.len();
-        self.pieces(addr, len, |guest, offset, n| mem.read_bytes(guest, &mut out[offset..offset + n]));
+        let mut copied_end = 0;
+        self.pieces(addr, len, |guest, offset, n| {
+            // Only unmapped gaps need zeroing. Backed pieces overwrite every
+            // byte themselves; keep their translations/order/width unchanged.
+            out[copied_end..offset].fill(0);
+            mem.read_bytes(guest, &mut out[offset..offset + n]);
+            copied_end = offset + n;
+        });
+        out[copied_end..].fill(0);
     }
 
     fn write(&self, addr: u32, data: &[u8]) {

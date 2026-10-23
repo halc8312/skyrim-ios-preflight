@@ -14,6 +14,8 @@ pub struct CachedShader {
     pub translation: Translation,
     /// The decoded microcode (vertex shaders are run on the CPU to bound unclipped draws).
     pub shader: Shader,
+    /// Conservative vertex fetch proof, analyzed once with this cached shader.
+    pub vertex_ranges: Option<crate::vertex_range::CachedPlan>,
     options: TranslationOptions,
     /// Identifies this (microcode, options) pair in pipeline keys.
     pub id: u64,
@@ -92,7 +94,14 @@ impl ShaderCache {
         // Hundreds of shaders' source would stay in the heap (wasm memory, which never shrinks).
         let mut translation = translation;
         translation.wgsl = String::new();
-        Some(Rc::new(CachedShader { module, translation, shader, options: options.clone(), id: self.next_id }))
+        let vertex_ranges = if stage == ShaderStage::Vertex {
+            crate::vertex_range::CachedPlan::from_shader(&shader).ok()
+        } else {
+            None
+        };
+        Some(Rc::new(CachedShader {
+            module, translation, shader, vertex_ranges, options: options.clone(), id: self.next_id,
+        }))
     }
 }
 

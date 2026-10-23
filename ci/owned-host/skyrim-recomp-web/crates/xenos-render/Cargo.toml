@@ -7,6 +7,12 @@ license.workspace = true
 publish.workspace = true
 build = "build.rs"
 
+[features]
+# Numeric, opt-in host elapsed-time measurements for local diagnostics.
+cpu-profile = []
+# Authored offscreen conformance helpers; never enabled by normal hosts.
+public-probes = []
+
 [dependencies]
 d3d-hle.workspace = true
 gpu-webgpu.workspace = true

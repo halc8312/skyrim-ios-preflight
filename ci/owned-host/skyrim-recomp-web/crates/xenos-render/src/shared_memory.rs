@@ -66,6 +66,12 @@ pub struct MirrorStats {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Conflict;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PageIdentity {
+    Version(u64),
+    Hash(u64),
+}
+
 pub struct SharedMemory {
     /// The slot buffers, [`SHARED_MEMORY_CHUNK_BYTES`] each once created; small placeholders
     /// (one per buffer, as they're bound writable side by side) until slots in them are needed.
@@ -88,7 +94,7 @@ pub struct SharedMemory {
     warned_pinned: bool,
     stats: MirrorStats,
     /// Write version (or content hash) of each uploaded page, by page number.
-    pages: Vec<Option<u64>>,
+    pages: Vec<Option<PageIdentity>>,
     /// Pages read by draws of the batch being recorded.
     batch: PageSet,
     /// Pages the GPU wrote (resolves stored into the buffers) after their CPU content, identified
@@ -96,7 +102,7 @@ pub struct SharedMemory {
     /// A page leaves the set when the CPU rewrites it (its identity changes).
     gpu_pages: PageSet,
     scratch: Vec<u8>,
-    changed: Vec<(u32, u64)>,
+    changed: Vec<(u32, PageIdentity)>,
     /// Bytes uploaded so far.
     pub uploaded: u64,
 }
@@ -175,12 +181,12 @@ fn hash_page(data: &[u8]) -> u64 {
 
 impl SharedMemory {
     /// Identifies page `p`'s current contents (`scratch` is clobbered).
-    fn identify(memory: &dyn PhysicalMemory, p: u32, scratch: &mut [u8]) -> u64 {
+    fn identify(memory: &dyn PhysicalMemory, p: u32, scratch: &mut [u8]) -> PageIdentity {
         if let Some(version) = memory.version(p, PAGE) {
-            return version;
+            return PageIdentity::Version(version);
         }
         memory.read(p, scratch);
-        hash_page(scratch)
+        PageIdentity::Hash(hash_page(scratch))
     }
 
     fn usage() -> BufferUsage {
@@ -479,8 +485,19 @@ impl SharedMemory {
             memory.read(first, &mut self.scratch);
             device.queue().write_buffer(&self.chunks[chunk], offset, &self.scratch);
             self.uploaded += self.scratch.len() as u64;
-            for &(p, hash) in &self.changed[i..i + n] {
-                self.pages[(p / PAGE) as usize] = Some(hash);
+            for (j, &(p, identity)) in self.changed[i..i + n].iter().enumerate() {
+                // Conflict preflight and staging are separate reads. A hash
+                // must describe the bytes actually submitted: storing the
+                // earlier hash could hide an A -> B(staging) -> A change.
+                // Keep a tracked version from before the read, so any writes
+                // observed by the next version query still force another sync.
+                let uploaded_identity = match identity {
+                    PageIdentity::Hash(_) => {
+                        PageIdentity::Hash(hash_page(&self.scratch[j * PAGE as usize..(j + 1) * PAGE as usize]))
+                    }
+                    PageIdentity::Version(_) => identity,
+                };
+                self.pages[(p / PAGE) as usize] = Some(uploaded_identity);
                 self.gpu_pages.remove(p / PAGE);
             }
             i += n;
@@ -622,3 +639,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, not(target_os = "emscripten")))]
+#[path = "shared_memory_snapshot_tests.rs"]
+mod snapshot_tests;

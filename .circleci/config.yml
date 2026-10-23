@@ -2,7 +2,7 @@
 version: 2.1
 
 parameters:
-  run_public_device_build:
+  run_public_build_and_ui:
     type: boolean
     default: false
   reviewed_source_commit:
@@ -10,41 +10,37 @@ parameters:
     default: ""
 
 jobs:
-  public_device_build:
+  public_build_and_ui:
     macos:
       xcode: "26.6.0"
     resource_class: m4pro.medium
     working_directory: ~/skyrim-ios-preflight
     environment:
-      PUBLIC_DEVICE_BUILD_ENABLED: "<< pipeline.parameters.run_public_device_build >>"
+      PUBLIC_BUILD_AND_UI_ENABLED: "<< pipeline.parameters.run_public_build_and_ui >>"
       REVIEWED_SOURCE_COMMIT: "<< pipeline.parameters.reviewed_source_commit >>"
       DEVELOPER_DIR: /Applications/Xcode-26.6.app/Contents/Developer
       SKYRT_OWNED_HOST_SCOPE: ""
     steps:
       - checkout
       - run:
-          name: Build the reviewed public device-only route
-          # Inactivity only. The reused stage retains its own 1500-second guard;
-          # CircleCI Free has a 60-minute job ceiling, not a 30-minute guarantee.
+          name: Build the public device app and run Simulator UI evidence once
+          # Inactivity only; the existing inner stage guard is still 1500s.
           no_output_timeout: 30m
           command: |
             set -euo pipefail
-            python3 -B .circleci/check_manual_request.py
-            route_parent="$(mktemp -d "${TMPDIR:-/tmp}/public-circle-route.XXXXXX")"
+            route_parent="$(mktemp -d "${TMPDIR:-/tmp}/public-ui-route.XXXXXX")"
             route="$route_parent/prepared"
-            python3 -B ci/prepare-fix-build-route/prepare_route.py prepare \
+            python3 -B ci/prepare-mobile-build-route/prepare_ui_route.py prepare \
               --repo "$PWD" --source-commit "$REVIEWED_SOURCE_COMMIT" --output "$route"
             bash "$route/preflight.sh"
-            python3 -B ci/prepare-fix-build-route/prepare_route.py verify \
+            python3 -B ci/prepare-mobile-build-route/prepare_ui_route.py recheck \
               --repo "$PWD" --source-commit "$REVIEWED_SOURCE_COMMIT" --output "$route"
-      # CircleCI retains available failure artifacts too; their presence is not
-      # a successful-build assertion. Only the existing verify step emits that.
       - store_artifacts:
           path: out/owned-host
-          destination: public-device-build-only
+          destination: public-device-build-and-ui-evidence
 
 workflows:
-  manually_requested_public_device:
-    when: << pipeline.parameters.run_public_device_build >>
+  manually_requested_public_build_and_ui:
+    when: << pipeline.parameters.run_public_build_and_ui >>
     jobs:
-      - public_device_build
+      - public_build_and_ui

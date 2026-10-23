@@ -23,6 +23,8 @@ struct DeviceGraphicsSettingsView: View {
     @ObservedObject var preferences: DevicePreferences
     @ObservedObject var session: OwnedSession
     @Environment(\.dismiss) private var dismiss
+    @State private var memoryUsage: DeviceMemoryUsage?
+    @State private var runtimeStatus: DeviceRuntimeStatus?
     private var graphics: DeviceGraphicsSettings { preferences.settings.graphics }
     var body: some View {
         NavigationStack {
@@ -67,7 +69,7 @@ struct DeviceGraphicsSettingsView: View {
                 }
                 Section("メモリ・次回の起動から") {
                     Toggle("モバイル向けテクスチャキャッシュ", isOn: Binding(get: { graphics.mobileBudget }, set: { value in preferences.graphics { $0.mobileBudget = value } }))
-                    Text("ONでは新規テクスチャの転送も制限するため、読み込み中にテクスチャが一時的に欠ける場合があります。")
+                    Text("ONではキャッシュの目安を128 MiBに抑え、読み込み速度は制限しません。OFFでは広いキャッシュを使い、再読み込みを減らします。初回の読み込みは一時的に重くなる場合があります。")
                         .font(.footnote).foregroundStyle(.secondary)
                     Picker("共有メモリキャッシュ", selection: Binding(get: { graphics.mirrorMiB }, set: { value in preferences.graphics { $0.mirrorMiB = value } })) {
                         ForEach(DeviceGraphicsSettings.mirrorBudgets, id: \.self) { Text($0 == 0 ? "自動" : "\($0) MiB").tag($0) }
@@ -78,6 +80,15 @@ struct DeviceGraphicsSettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("現在の状態") {
+                    if let runtimeStatus {
+                        LabeledContent("省電力モード", value: runtimeStatus.lowPowerMode ? "ON" : "OFF")
+                        LabeledContent("端末の温度状態", value: runtimeStatus.thermalLabel)
+                    }
+                    if let memoryUsage {
+                        LabeledContent("アプリのメモリ", value: "\(memoryUsage.usedMiB) / 約\(memoryUsage.budgetMiB) MiB")
+                        Text("使用量と利用できる上限の目安です。設定を開いた時点の値で、OSの判断で変化します。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     LabeledContent("新しいフレーム", value: session.decodedFPSLabel)
                     LabeledContent("画面転送", value: session.presentedFPSLabel)
                     LabeledContent("ゲームからの入力", value: session.sourceSizeLabel)
@@ -90,6 +101,10 @@ struct DeviceGraphicsSettingsView: View {
                 }
             }
             .navigationTitle("画質とパフォーマンス")
+            .onAppear {
+                memoryUsage = DeviceMemoryUsage.read()
+                runtimeStatus = DeviceRuntimeStatus.read()
+            }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完了") { dismiss() } } }
         }
     }
