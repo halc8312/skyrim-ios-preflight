@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+case "${SKYRT_OWNED_HOST_SCOPE:-}" in
+  '') owned_host_scope=full ;;
+  normal-play-evidence) owned_host_scope=normal-play-evidence ;;
+  *) printf '%s\n' 'Unknown public owned-host scope refused.' >&2; exit 2 ;;
+esac
+readonly owned_host_scope
 test "$(uname -s)" = Darwin
 test "$#" -eq 2
 work="$1"
@@ -262,6 +268,10 @@ if python3 "$harness/ci/probe-macos-output.py" 2>&1 | tee "$output/public-macos-
 else
   printf '%s\n' 'PUBLIC_MACOS_OUTPUT_DRIVER_UNAVAILABLE {"schema":1,"diagnostic_only":true,"simulator_audio_verified":false}'
 fi
+# The recovery workflow reuses separately verified V1/mobile evidence; it must
+# not claim those SDK cases executed here. Their default full-run blocks stay
+# unchanged, and the same public source preparation/builds above run in both.
+if [[ "$owned_host_scope" == full ]]; then
 fullchain_failed=0
 if python3 "$host/sdk-test/run_sdk_tests.py" --stage "$work/owned-app-simulator" \
   --output "$output/xctest" --destination "platform=iOS Simulator,id=$device_id" \
@@ -278,6 +288,7 @@ if python3 "$host/sdk-test/run_mobile_controls_tests.py" --stage "$work/owned-ap
   :
 else
   mobile_failed=1
+fi
 fi
 # A distinct bundle and DerivedData run the V2 process-once Kernel separately.
 # Any V2 refusal fails this pipeline. Existing V1/audio gates retain their
@@ -300,6 +311,7 @@ if python3 "$host/sdk-test/run_v2_sdk_tests.py" --normal-play --stage "$work/own
 else
   normal_play_failed=1
 fi
+normal_play_capture_failed=1
 if [[ "$normal_play_failed" -eq 0 ]]; then
   # Capture the actual public launch UI without starting a guest. This is a
   # visual artifact only; no successful game/device assertion comes from it.
@@ -321,10 +333,42 @@ finally:
     subprocess.run(['xcrun','simctl','terminate',device,bundle], capture_output=True, timeout=10)
 PY
   then
-    :
+    normal_play_capture_failed=0
   else
     printf '%s\n' 'PUBLIC_NORMAL_PLAY_LAUNCH_CAPTURE {"captured":false,"visual_review_performed":false,"iphone_verified":false}'
   fi
+fi
+# This explicitly selected workflow ends after its V2 diagnostic/normal SDK
+# gates and launch capture. Its result is never a full integration/audio pass.
+if [[ "$owned_host_scope" == normal-play-evidence ]]; then
+  python3 - "$output/normal-play-evidence-scope.json" \
+    "$v2_failed" "$normal_play_failed" "$normal_play_capture_failed" <<'PY'
+from pathlib import Path
+import json, sys
+values = sys.argv[2:]
+if len(values) != 3 or any(value not in ('0', '1') for value in values):
+    raise ValueError('invalid_public_scope_gate_status')
+v2, normal, capture = map(int, values)
+sdk_passed = not any((v2, normal))
+complete = sdk_passed and capture == 0
+report = dict(schema=1, scope='normal-play-evidence', public_fixture_only=True,
+    v1_sdk_executed=False, mobile_sdk_executed=False,
+    v2_sdk_executed=True, normal_play_sdk_executed=True,
+    v2_failed=v2, normal_play_failed=normal,
+    selected_sdk_gates_passed=sdk_passed, launch_capture_available=capture == 0,
+    normal_play_evidence_complete=complete, normal_play_smoke_only=True,
+    feature_sdk_tests_executed=False, audio_sdk_tests_executed=False,
+    mandatory_audio_gate_satisfied=False, full_integration_verified=False,
+    audio_output_verified=False, game_executed=False, physical_iphone_verified=False,
+    long_running_play_verified=False, visual_review_performed=False,
+    bounded_stages_deadline_seconds=450)
+encoded = json.dumps(report, sort_keys=True)
+with Path(sys.argv[1]).open('x', encoding='utf-8') as stream:
+    stream.write(encoded + '\n')
+print('PUBLIC_NORMAL_PLAY_EVIDENCE_SCOPE ' + encoded)
+raise SystemExit(0 if complete else 1)
+PY
+  exit 0
 fi
 # Compare an independent public audio API after the Simulator has installed
 # and run the SDK apps. This optional diagnostic never replaces the six

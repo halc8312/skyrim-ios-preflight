@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Manual source-only host integration. No title input, credentials or billing.
 set -euo pipefail
+case "${SKYRT_OWNED_HOST_SCOPE:-}" in
+  '') owned_host_stage_seconds=1500 ;;
+  normal-play-evidence) owned_host_stage_seconds=450 ;;
+  *) printf '%s\n' 'Unknown public owned-host scope refused.' >&2; exit 2 ;;
+esac
+readonly owned_host_stage_seconds
 test "$(uname -s)" = Darwin
 test "$#" -eq 0
 harness="$(cd "$(dirname "$0")/.." && pwd)"
@@ -35,5 +41,5 @@ git -C "$simde" remote add origin https://github.com/simd-everywhere/simde-no-te
 git -C "$simde" fetch --depth 1 origin "$simde_commit"
 git -C "$simde" checkout -q --detach FETCH_HEAD
 test "$(git -C "$simde" rev-parse HEAD)" = "$simde_commit"
-python3 "$harness/ci/run-bounded-command.py" 1500 \
+python3 "$harness/ci/run-bounded-command.py" "$owned_host_stage_seconds" \
   bash "$harness/ci/run-ios-owned-host-tests.sh" "$work" "$simde"

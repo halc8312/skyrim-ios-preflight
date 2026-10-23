@@ -102,6 +102,7 @@ workflows:
       - out/owned-host/*.txt
       - out/owned-host/*.ll
       - out/owned-host/*.bin
+      - out/owned-host/normal-play-launch-screen.png
       - out/owned-host/audio-hang/*.txt
       - out/owned-host/audio-hang/*.log
       - out/owned-host/audio-hang/*.json
@@ -125,6 +126,69 @@ workflows:
       - out/owned-host/xctest-v2/*.txt
       - out/owned-host/xctest-v2/*.json
       - out/owned-host/xctest-v2/*.xcresult
+      - out/owned-host/xctest-public-v2-normal-play/*.log
+      - out/owned-host/xctest-public-v2-normal-play/*.txt
+      - out/owned-host/xctest-public-v2-normal-play/*.json
+      - out/owned-host/xctest-public-v2-normal-play/*.xcresult
+      - out/owned-host/xctest-mobile/*.log
+      - out/owned-host/xctest-mobile/*.txt
+      - out/owned-host/xctest-mobile/*.json
+      - out/owned-host/xctest-mobile/*.xcresult
+      - out/owned-host/xctest-mobile/screenshots/*
+      - out/owned-host/xctest-device-features/*.json
+      - out/owned-host/xctest-device-features/*/*.log
+      - out/owned-host/xctest-device-features/*/*.txt
+      - out/owned-host/xctest-device-features/*/*.json
+      - out/owned-host/xctest-device-features/*/*.xcresult
+      - out/owned-host/xctest-device-features/*/screenshots/*
+  ios-public-normal-play-evidence:
+    name: iOS public normal-play evidence
+    instance_type: mac_mini_m2
+    max_build_duration: 9
+    environment:
+      xcode: latest
+      vars:
+        SKYRT_OWNED_HOST_SCOPE: normal-play-evidence
+    # Manual recovery only. V1/mobile evidence is separate; features/audio are
+    # not run here, and this workflow never claims full integration success.
+    scripts:
+      - name: Build public host and recover V2 diagnostic and normal-play evidence
+        script: bash ci/run-ios-owned-host-preflight.sh
+    artifacts:
+      - out/owned-host/*.ipa
+      - out/owned-host/*.json
+      - out/owned-host/*.log
+      - out/owned-host/*.txt
+      - out/owned-host/*.ll
+      - out/owned-host/*.bin
+      - out/owned-host/normal-play-launch-screen.png
+      - out/owned-host/audio-hang/*.txt
+      - out/owned-host/audio-hang/*.log
+      - out/owned-host/audio-hang/*.json
+      - out/owned-host/audioqueue-environment
+      - out/owned-host/gpu-framework/*.txt
+      - out/owned-host/gpu-framework/*.json
+      - out/owned-host/gpu-framework/*.log
+      - out/owned-host/gpu-framework/*-export-policy/*.json
+      - out/owned-host/gpu-framework/*-export-policy/*.txt
+      - out/owned-host/gpu-framework/device/WgpuNative.framework
+      - out/owned-host/gpu-framework/simulator/WgpuNative.framework
+      - out/owned-host/xctest/*.log
+      - out/owned-host/xctest/*.txt
+      - out/owned-host/xctest/*.json
+      - out/owned-host/xctest/*.xcresult
+      - out/owned-host/fixture-simulator-v2/*.log
+      - out/owned-host/fixture-simulator-v2/*.txt
+      - out/owned-host/fixture-simulator-v2/*.ll
+      - out/owned-host/fixture-simulator-v2/*.json
+      - out/owned-host/xctest-v2/*.log
+      - out/owned-host/xctest-v2/*.txt
+      - out/owned-host/xctest-v2/*.json
+      - out/owned-host/xctest-v2/*.xcresult
+      - out/owned-host/xctest-public-v2-normal-play/*.log
+      - out/owned-host/xctest-public-v2-normal-play/*.txt
+      - out/owned-host/xctest-public-v2-normal-play/*.json
+      - out/owned-host/xctest-public-v2-normal-play/*.xcresult
       - out/owned-host/xctest-mobile/*.log
       - out/owned-host/xctest-mobile/*.txt
       - out/owned-host/xctest-mobile/*.json
