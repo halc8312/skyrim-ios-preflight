@@ -47,6 +47,8 @@ pub(crate) fn causal_snapshot(token: u64) -> Option<serde_json::Value> {
         "live":snapshot.live, "audio_live":snapshot.audio_live,
         "render":ring(snapshot.render), "audio":ring(snapshot.audio), "frames":ring(snapshot.frames),
         "stage_totals":snapshot.totals, "reasons":snapshot.reasons,
+        "backend_detail":{"schema":1, "backend":1, "host_elapsed_totals":snapshot.details,
+            "constant_capacity_rejections":snapshot.capacity_rejections},
     }))
 }
 struct MetalOwner {

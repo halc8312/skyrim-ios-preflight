@@ -9,6 +9,13 @@ pub const STAGES: usize = 24;
 pub const REASONS: usize = 32;
 pub const LONG_US: u64 = 250_000;
 
+/// Additional host boundaries; kept separate from the stable 24-stage IDs.
+/// None of these durations is GPU execution time. Only the renderer writes them.
+#[repr(usize)]
+#[derive(Clone, Copy)]
+pub enum Detail { MainEncoderFinish, ConstantEncoderFinish, CompletionRegistration }
+pub const DETAILS: usize = 3;
+
 /// Flush reasons occupy 0..=16; known fatal contracts occupy 24..=30.
 pub(crate) fn fatal_reason_index(reason: u32) -> usize {
     match reason { 10..=16 => reason as usize + 14, _ => 31 }
@@ -135,6 +142,8 @@ pub struct Session {
     swap: AtomicU64,
     previous_frame_us: AtomicU64,
     failure: AtomicU64,
+    details: [Record<5>; DETAILS],
+    capacity_rejections: [AtomicU64; 4],
 }
 impl Session {
     pub fn new(id: u64, origin: Instant) -> Self {
@@ -142,7 +151,9 @@ impl Session {
             render: Ring::default(), audio: Ring::default(), frames: Ring::default(),
             totals: std::array::from_fn(|_| Record::default()),
             reasons: std::array::from_fn(|_| AtomicU64::new(0)), seq: AtomicU64::new(0), swap: AtomicU64::new(0),
-            previous_frame_us: AtomicU64::new(0), failure: AtomicU64::new(0) }
+            previous_frame_us: AtomicU64::new(0), failure: AtomicU64::new(0),
+            details: std::array::from_fn(|_| Record::default()),
+            capacity_rejections: std::array::from_fn(|_| AtomicU64::new(0)) }
     }
     pub fn elapsed_us(&self, at: Instant) -> u64 {
         at.checked_duration_since(self.origin).map_or(0, |d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
@@ -151,6 +162,13 @@ impl Session {
     pub fn fail(&self, reason: u32) { let _ = self.failure.compare_exchange(0, u64::from(reason), SeqCst, SeqCst); }
     pub fn reason(&self, reason: usize) {
         if let Some(counter) = self.reasons.get(reason) { saturating_add(counter, 1); }
+    }
+    /// Bits: block bytes, record count, changed values, invalid/overflow demand.
+    /// Several limits may reject the same planned allocation.
+    pub fn constant_capacity_rejected(&self, mask: u8) {
+        for (bit, count) in self.capacity_rejections.iter().enumerate() {
+            if mask & (1 << bit) != 0 { saturating_add(count, 1); }
+        }
     }
     fn finish_stage(&self, stage: usize, elapsed: u64) {
         let Some(record) = self.totals.get(stage) else { return };
@@ -193,7 +211,9 @@ impl Session {
         let mut result = Snapshot { session: self.id, capture_started_us, observed_us: 0, failure: self.failure.load(SeqCst), live: self.live.read(), audio_live: self.audio_live.read(),
             render: self.render.snapshot(), audio: self.audio.snapshot(), frames: self.frames.snapshot(),
             totals: self.totals.iter().map(|record| record.read(None).map(|(_, words)| words)).collect(),
-            reasons: std::array::from_fn(|i| self.reasons[i].load(SeqCst)) };
+            reasons: std::array::from_fn(|i| self.reasons[i].load(SeqCst)),
+            details: self.details.iter().map(|record| record.read(None).map(|(_, words)| words)).collect(),
+            capacity_rejections: std::array::from_fn(|i| self.capacity_rejections[i].load(SeqCst)) };
         result.observed_us = self.elapsed_us(Instant::now());
         result
     }
@@ -211,6 +231,26 @@ pub struct Snapshot {
     pub frames: (u64, u64, Vec<Vec<u64>>),
     pub totals: Vec<Option<[u64; 5]>>,
     pub reasons: [u64; REASONS],
+    pub details: Vec<Option<[u64; 5]>>,
+    pub capacity_rejections: [u64; 4],
+}
+
+/// No clock reads, allocations or atomics when explicit diagnostics are off.
+pub struct DetailGuard<'a> { session: &'a Session, detail: usize, started: Instant }
+impl<'a> DetailGuard<'a> {
+    pub fn enter(session: &'a Option<Arc<Session>>, detail: Detail) -> Option<Self> {
+        Some(Self { session: session.as_deref()?, detail: detail as usize, started: Instant::now() })
+    }
+}
+impl Drop for DetailGuard<'_> {
+    fn drop(&mut self) {
+        let elapsed = u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let record = &self.session.details[self.detail];
+        let (generation, old) = record.read(None).unwrap_or((0, [0; 5]));
+        if generation >= u64::MAX / 2 - 1 { return; }
+        record.write(generation + 1, [old[0].saturating_add(1), old[1].saturating_add(elapsed), old[2].max(elapsed),
+            old[3].saturating_add(u64::from(elapsed > LONG_US)), old[4].saturating_add(u64::from(elapsed > 1_000_000))]);
+    }
 }
 
 pub struct Guard {
@@ -289,5 +329,21 @@ mod tests {
             if let Some(row) = live.read() { assert!(row[1..].iter().all(|v| *v == row[1])); }
         }
         thread.join().unwrap();
+    }
+    #[test]
+    fn detail_is_opt_in_and_preserves_live_stage_and_capacity_causes() {
+        assert!(DetailGuard::enter(&None, Detail::MainEncoderFinish).is_none());
+        let session = Some(Arc::new(Session::new(8, Instant::now())));
+        let _outer = Guard::enter(&session, Stage::Flush);
+        { let _detail = DetailGuard::enter(&session, Detail::MainEncoderFinish); }
+        let s = session.as_ref().unwrap();
+        s.constant_capacity_rejected(1 | 4);
+        s.constant_capacity_rejected(4);
+        let snapshot = s.snapshot();
+        assert_eq!(snapshot.live.unwrap()[5], Stage::Flush as u64);
+        assert_eq!(snapshot.details[0].unwrap()[0], 1);
+        assert!(snapshot.details[1].is_none());
+        assert_eq!(snapshot.capacity_rejections, [1, 0, 2, 0]);
+        assert_eq!(snapshot.totals.len(), 24);
     }
 }

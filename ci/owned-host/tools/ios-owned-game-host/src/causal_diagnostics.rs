@@ -19,7 +19,7 @@ pub fn record(point: Snapshot, observed_ms: u64, snapshot: Option<Value>) -> Che
         return Err("causal checkpoint phase invalid");
     }
     let data = json!({
-        "schema":1, "kind":"frame_stability_causal", "unit":"us",
+        "schema":2, "kind":"frame_stability_causal", "unit":"us",
         "clock":"guest_session_monotonic", "checkpoint_seconds":point.seconds,
         "deadline_seconds":point.deadline_seconds, "observed_guest_elapsed_ms":observed_ms,
         "snapshot_available":snapshot.is_some(), "snapshot":snapshot,

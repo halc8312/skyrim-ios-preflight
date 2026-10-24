@@ -18,7 +18,7 @@ NOT_BEFORE = datetime(2026, 10, 23, 22, 30, tzinfo=timezone.utc)  # 2026-10-24 0
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 BOOTSTRAP_PINS = {
     "ci/prepare-fix-build-route/prepare_route.py": "a8c087b7cd8a0ea10925d226adbe813cca8a9b928ddd79c20cd2adeff8bfb7ce",
-    "ci/prepare-fix-build-route/reference-pins.json": "a256acde2b4fc29b3a5fabfb8c57ad50eccc78ff9d4369c759b49026152565ca",
+    "ci/prepare-fix-build-route/reference-pins.json": "ed1cc2afb67c7a31f0c2f2dcaccae6e4cc5b6ac8a2449da35e61eff0e2249d4a",
     "ci/run-bounded-command.py": "f7391d02a43dc5dc97ea7f017cd5e502c70b7a4f06b4ce05a9e4972b49a890dd",
 }
 INPUT_PINS = {
@@ -28,7 +28,7 @@ INPUT_PINS = {
     "sdk-test/tests/MobileControlsTests.swift": "9c1bd7b322b00e0faba222b56d6f2c28c9d8f2bc915be8364074e6b1ed082d40",
     "src/alpha_coverage_probe.rs": "b95c96f882ef3502f11668a353cb107e29835152dec6ed63e4dcb10b76cce678",
     "native/GraphicsPresentationProbe.h": "451769e952e8d7c95cd8c2f296476cc29f3d49ebf374f13e88774eeaf9b79f2a",
-    "sdk-test/tests/GraphicsPresentationTests.swift": "640182cb2850ca1c67c9a1ead0b08c3b6e99c18c05d0700efee0ae0ec5dc4dd4",
+    "sdk-test/tests/GraphicsPresentationTests.swift": "d4cf940ab0faa68d2b63ba00df302848aa6ed4adb1d8abb3dd519162baac730a",
 }
 KERNEL_PINS = {
     "lib.rs": "6751fbbdbabd662a2cc68c043b6c6a0280d6241d478c015d0274c0d69bdbdfcd",
@@ -44,6 +44,14 @@ SELECTION = 'selection="$(python3 - <<\'PY\'\n'
 SELECTION_END = "\naudio_watch_pid=\n"
 GUI = "# Controlled environment comparison: preserve the same source, runtime, UDID\n"
 GUI_END = 'python3 "$harness/ci/probe-host-audio.py" --phase post_gui'
+METAL_STAGE_ANCHOR = '    "$host/native/GraphicsPresentationProbe.h" "$stage/native/"\n'
+METAL_STAGE_GATE = '  # Explicit authored Metal probe sources; original source and loader gates remain.\n  cp "$host/native/ConstantReplayKernel.h" "$host/native/MetalConstantReplay.metal" \\\n    "$host/native/MetalConstantProbe.h" "$host/native/MetalConstantProbe.mm" \\\n    "$host/native/MetalConstantValidation.h" "$stage/native/"\n'
+METAL_TOOLCHAIN_GATE = '''# Compile the authored MSL offline; Xcode 26 may need its official optional component.
+if ! xcrun -sdk iphoneos metal --version > "$output/metal-toolchain.log" 2>&1; then
+  xcodebuild -downloadComponent metalToolchain >> "$output/metal-toolchain.log" 2>&1
+  xcrun -sdk iphoneos metal --version >> "$output/metal-toolchain.log" 2>&1
+fi
+'''
 COUNTER_ANCHOR = '  audio::tests -- --test-threads=1 2>&1 | tee "$output/public-audio-observer-tests.log"\n'
 COUNTER_GATE = '''# Focused public counter regression; reuse the existing kernel test products.
 cargo +nightly-2026-10-11 test --locked --offline \\
@@ -113,6 +121,7 @@ def derive(setup, stages, repo, output):
     if before.count(COUNTER_ANCHOR) != 1:
         raise ValueError("counter_gate_must_precede_build_loop")
     before = before.replace(COUNTER_ANCHOR, COUNTER_ANCHOR + COUNTER_GATE)
+    before += METAL_TOOLCHAIN_GATE
     loop, _ = rest.split(AFTER)
     if not loop.endswith("\ndone\n"):
         raise ValueError("simulator_loop_boundary")
@@ -120,7 +129,10 @@ def derive(setup, stages, repo, output):
     gui = stages[stages.index(GUI):stages.index(GUI_END)]
     if not gui.endswith("PY\n"):
         raise ValueError("simulator_gui_boundary")
-    # Preserve the original device+simulator loop exactly, after one pass over
+    if loop.count(METAL_STAGE_ANCHOR) != 1:
+        raise ValueError("metal_probe_stage_anchor_changed")
+    loop = loop.replace(METAL_STAGE_ANCHOR, METAL_STAGE_ANCHOR + METAL_STAGE_GATE)
+    # Preserve the original device+simulator loop plus the explicit probe copy,
     # the source/worker/policy gates and WGPU builder. No second app build loop.
     selected = before + LOOP + loop + "\n" + selection
     selected += '''cleanup() {

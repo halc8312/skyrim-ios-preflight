@@ -12,6 +12,8 @@ mod alpha_coverage_probe;
 pub mod device_settings;
 #[cfg(all(feature = "fixture-tools", feature = "metal-renderer", target_os = "ios", target_arch = "aarch64"))]
 mod graphics_fixture;
+#[cfg(all(feature = "fixture-tools", feature = "metal-renderer", target_os = "ios", target_arch = "aarch64"))]
+mod constant_backend_fixture;
 pub mod guest_fatal;
 pub mod guest_abi;
 pub mod lifecycle;

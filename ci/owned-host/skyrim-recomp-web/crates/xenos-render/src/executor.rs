@@ -1012,7 +1012,7 @@ impl Executor {
         // The float constant blocks are built first, in a command buffer of their own.
         let patches = {
             let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::Constants);
-            self.floats.encode(&self.device)
+            self.floats.encode_observed(&self.device, &self.causal)
         }.map(|(commands, bytes)| {
             self.stats.constant_upload_bytes += bytes;
             commands
@@ -1022,7 +1022,10 @@ impl Executor {
             self.targets.flush_uploads(&self.device);
             self.textures.flush_loads(&self.device);
         }
-        let main = self.encoder.take().map(|encoder| encoder.finish("xenos"));
+        let main = self.encoder.take().map(|encoder| {
+            let _detail = crate::causal::DetailGuard::enter(&self.causal, crate::causal::Detail::MainEncoderFinish);
+            encoder.finish("xenos")
+        });
         // Uploads without commands are submitted too (empty), to know when they've reached the GPU.
         let uploaded = gpu_webgpu::counters::upload_bytes();
         if patches.is_some() || main.is_some() || uploaded > self.uploaded_at_submit {
@@ -1030,6 +1033,7 @@ impl Executor {
             self.device.queue().submit(patches.into_iter().chain(main));
             self.stats.submissions += 1;
             if uploaded > self.uploaded_at_submit {
+                let _detail = crate::causal::DetailGuard::enter(&self.causal, crate::causal::Detail::CompletionRegistration);
                 let done = self.device.queue().on_submitted_work_done();
                 self.uploads_in_flight.push_back((done, uploaded - self.uploaded_at_submit));
                 self.uploaded_at_submit = uploaded;
@@ -1739,6 +1743,9 @@ impl Executor {
         if !self.floats.has_room(&[FLOAT_CONSTANTS_SIZE, FLOAT_CONSTANTS_SIZE, FETCH_SIZE, SYSTEM_SIZE, BOOL_LOOP_SIZE]) {
             let (demands, count) = self.constant_demands(&system, float_reads);
             if !self.floats.has_room_for(&demands[..count]) {
+                if let Some(session) = &self.causal {
+                    session.constant_capacity_rejected(self.floats.capacity_failure(&demands[..count]));
+                }
                 let targets = self.pass.as_ref().expect("pass prepared").targets.clone();
                 self.flush_reason(5);
                 // flush encoded the old pass, including its clears. The same

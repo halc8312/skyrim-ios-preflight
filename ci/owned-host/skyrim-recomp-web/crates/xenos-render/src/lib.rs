@@ -13,6 +13,8 @@
 extern crate self as xenos_render;
 
 mod constant_patch;
+#[cfg(all(feature = "public-probes", not(target_os = "emscripten")))]
+pub use constant_patch::backend_probe;
 pub mod causal;
 #[cfg(feature = "cpu-profile")]
 pub mod cpu_profile;

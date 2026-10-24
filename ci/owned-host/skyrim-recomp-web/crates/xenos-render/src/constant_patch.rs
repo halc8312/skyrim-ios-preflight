@@ -32,6 +32,9 @@ const INDICES: usize = 256;
 const STAGES: u32 = 5;
 // Count, followed by (first index word, record count, maximum block vec4s) per stage.
 const BIN_HEADER_WORDS: usize = 1 + STAGES as usize * 3;
+#[cfg(all(feature = "public-probes", not(target_os = "emscripten")))]
+#[path = "constant_backend_probe.rs"]
+pub mod backend_probe;
 pub const FETCH: u32 = 2;
 pub const SYSTEM: u32 = 3;
 pub const BOOL_LOOP: u32 = 4;
@@ -44,26 +47,57 @@ pub(crate) struct BlockDemand {
     pub changed_vec4s: usize,
 }
 
-fn demands_fit(mut cursor: u64, alignment: u64, mut records: usize, mut values: usize,
+fn demands_fit(cursor: u64, alignment: u64, records: usize, values: usize,
     demands: &[BlockDemand]) -> bool {
+    let (mut cursor, mut records, mut values) = (cursor, records, values);
     for demand in demands {
         if demand.bytes > demand.window || !demand.bytes.is_multiple_of(16)
-            || demand.changed_vec4s > (demand.bytes / 16) as usize { return false; }
+            || demand.changed_vec4s > (demand.bytes / 16) as usize || alignment == 0 { return false; }
         let Some(offset) = cursor.checked_add(alignment - 1).map(|n| n / alignment * alignment) else { return false };
         let Some(end) = offset.checked_add(demand.window) else { return false };
         if end > BLOCK_BUFFER_BYTES { return false; }
         let Some(next) = offset.checked_add(demand.bytes.max(16)) else { return false };
-        cursor = next;
-        records = records.saturating_add(1);
-        values = values.saturating_add(demand.changed_vec4s);
+        cursor = next; records = records.saturating_add(1); values = values.saturating_add(demand.changed_vec4s);
         if records > MAX_RECORDS || values > MAX_VALUES { return false; }
     }
     true
 }
 
+// Report all budgets crossed by the existing plan, without changing allocation.
+fn demand_failure(mut cursor: u64, alignment: u64, mut records: usize, mut values: usize,
+    demands: &[BlockDemand]) -> u8 {
+    if alignment == 0 { return 8; }
+    let mut failure = 0;
+    for demand in demands {
+        if demand.bytes > demand.window || !demand.bytes.is_multiple_of(16)
+            || demand.changed_vec4s > (demand.bytes / 16) as usize { return failure | 8; }
+        let Some(offset) = cursor.checked_add(alignment - 1).map(|n| n / alignment * alignment) else { return failure | 8 };
+        let Some(end) = offset.checked_add(demand.window) else { return failure | 8 };
+        if end > BLOCK_BUFFER_BYTES { failure |= 1; }
+        let Some(next) = offset.checked_add(demand.bytes.max(16)) else { return failure | 8 };
+        cursor = next;
+        records = records.saturating_add(1);
+        values = values.saturating_add(demand.changed_vec4s);
+        if records > MAX_RECORDS { failure |= 2; }
+        if values > MAX_VALUES { failure |= 4; }
+    }
+    failure
+}
+
 #[cfg(test)]
 mod demand_tests {
     use super::*;
+    #[test]
+    fn capacity_causes_distinguish_each_budget_and_combined_rejection() {
+        let one = BlockDemand { window: 4096, bytes: 16, changed_vec4s: 1 };
+        assert_eq!(demand_failure(BLOCK_BUFFER_BYTES, 256, 0, 0, &[one]), 1);
+        assert_eq!(demand_failure(0, 256, MAX_RECORDS, 0, &[one]), 2);
+        assert_eq!(demand_failure(0, 256, 0, MAX_VALUES, &[one]), 4);
+        assert_eq!(demand_failure(BLOCK_BUFFER_BYTES, 256, MAX_RECORDS, MAX_VALUES, &[one]), 7);
+        assert_eq!(demand_failure(0, 256, 0, 0, &[BlockDemand { bytes: 17, ..one }]), 8);
+        assert_eq!(demand_failure(0, 0, 0, 0, &[one]), 8);
+        assert_eq!(demand_failure(BLOCK_BUFFER_BYTES - 4096, 256, MAX_RECORDS - 1, MAX_VALUES - 1, &[one]), 0);
+    }
     #[test]
     fn reuse_and_partial_blocks_reserve_actual_offsets_records_and_values() {
         let one = BlockDemand { window: 4096, bytes: 16, changed_vec4s: 1 };
@@ -276,6 +310,10 @@ impl ConstantPatcher {
         demands_fit(self.cursor, self.alignment, (self.records.len() - 1) / RECORD_WORDS, self.values.len() / 16, demands)
     }
 
+    pub(crate) fn capacity_failure(&self, demands: &[BlockDemand]) -> u8 {
+        demand_failure(self.cursor, self.alignment, (self.records.len() - 1) / RECORD_WORDS, self.values.len() / 16, demands)
+    }
+
     #[cfg(test)]
     pub(crate) fn allocation_state(&self) -> (u64, usize, usize) {
         (self.cursor, (self.records.len() - 1) / RECORD_WORDS, self.values.len() / 16)
@@ -333,7 +371,13 @@ impl ConstantPatcher {
 
     /// Uploads the patches and returns the command buffer that applies them (to submit before
     /// the draws that read the blocks), with the bytes uploaded; `None` if there are none.
+    #[cfg(test)]
     pub fn encode(&mut self, device: &Device) -> Option<(CommandBuffer, u64)> {
+        self.encode_observed(device, &None)
+    }
+
+    pub(crate) fn encode_observed(&mut self, device: &Device,
+        causal: &Option<std::sync::Arc<crate::causal::Session>>) -> Option<(CommandBuffer, u64)> {
         if self.records[0] == 0 {
             return None;
         }
@@ -357,6 +401,7 @@ impl ConstantPatcher {
             pass.dispatch_workgroups(STAGES, 1, 1);
             pass.end();
         }
+        let _detail = crate::causal::DetailGuard::enter(causal, crate::causal::Detail::ConstantEncoderFinish);
         Some((encoder.finish("xenos constant patches"), (records.len() + self.values.len()) as u64))
     }
 

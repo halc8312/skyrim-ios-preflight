@@ -4,14 +4,14 @@
   "files": {
     "ci/run-ios-owned-host-preflight.sh": "bb490f30819f9d8138f59daf84f87d394c2af98d902885c3f8ac4172875a3462",
     "ci/run-ios-owned-host-tests.sh": "88e970c411dd02af01ef7d86cc067c979d2dc93bb9c9e69fa69f3063f5da3b18",
-    "ci/prepare-owned-host-kit.py": "6c1c7ff63c90ba18ac3f4bfbdca7afff3ff0a05c17422af2ed66771b31dae65b",
-    "ci/owned-host/source-allowlist.txt": "7bbedcc407670faccf85fffec851e97429287d264b251c38394e0e803630da16",
-    "ci/owned-host/public-source-manifest.json": "7a6c4ba8e32131137f1cfd81fa0cea7f6b8980c2439de8c9173400eb199f9b53",
+    "ci/prepare-owned-host-kit.py": "282ef862b783029f7f063a58a2769f220a8893bf591281218dc2ae42515a8f28",
+    "ci/owned-host/source-allowlist.txt": "81479ecbc687799f369355df99cf78fbf89a4a8a96481838d0c662c84e23094c",
+    "ci/owned-host/public-source-manifest.json": "83f8332331a3edf113f439a38fe94ed55560b585a1d358c179446f157b0bca8b",
     "ci/gpu-framework/build_frameworks.sh": "e6c93c1090e68fef469932a6eee8a5603367e4ad8aa4555c243529ee6a2d10af",
     "ci/build-owned-host-fixture.sh": "5859d59fb50fe1d741ce2112d82998bb8aadb9da3d52b97e43f2a7edda6d0f53",
     "ci/package-owned-host-ipa.py": "76fffd51c6ebd71902956b998ff74198ca628ee72b705a48629e616498464991",
     "ci/run-bounded-command.py": "f7391d02a43dc5dc97ea7f017cd5e502c70b7a4f06b4ce05a9e4972b49a890dd"
   },
-  "source_freeze_records": 319,
+  "source_freeze_records": 328,
   "reference_commit_scope": "unchanged orchestration only; new source freeze requires separately reviewed commit"
 }

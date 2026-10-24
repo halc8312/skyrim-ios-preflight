@@ -642,3 +642,15 @@
 !/ci/prepare-fix-build-route/testdata/
 !/ci/prepare-fix-build-route/testdata/ios-prepare-fix-build-only.yml
 !/ci/prepare-fix-build-route/testdata/codemagic-build-only.fragment.yaml
+
+# Explicit authored build14 native Metal comparison inputs.
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/examples/
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/examples/constant_probe_fixtures.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/constant_backend_probe.rs
+!/ci/owned-host/tools/ios-owned-game-host/native/ConstantReplayKernel.h
+!/ci/owned-host/tools/ios-owned-game-host/native/MetalConstantProbe.h
+!/ci/owned-host/tools/ios-owned-game-host/native/MetalConstantProbe.mm
+!/ci/owned-host/tools/ios-owned-game-host/native/MetalConstantReplay.metal
+!/ci/owned-host/tools/ios-owned-game-host/native/MetalConstantValidation.h
+!/ci/owned-host/tools/ios-owned-game-host/sdk-test/native/ConstantKernelPortableTests.cpp
+!/ci/owned-host/tools/ios-owned-game-host/src/constant_backend_fixture.rs

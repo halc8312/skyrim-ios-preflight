@@ -15,6 +15,37 @@ private final class GraphicsProbeDeadline: @unchecked Sendable {
 }
 
 final class GraphicsPresentationTests: XCTestCase {
+    private func runPublicConstantBackendParity() async throws {
+        executionTimeAllowance = 30
+        XCTAssertEqual(OHRunPublicConstantComparisonV1(nil, 56), -1)
+        var sentinel = OHConstantComparisonV1(); sentinel.version = 77
+        let original = withUnsafeBytes(of: sentinel) { Data($0) }
+        XCTAssertEqual(OHRunPublicConstantComparisonV1(&sentinel, 55), -1)
+        XCTAssertEqual(withUnsafeBytes(of: sentinel) { Data($0) }, original)
+        let start = DispatchTime.now().uptimeNanoseconds
+        let deadline = GraphicsProbeDeadline()
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 25) {
+            deadline.terminateIfUnfinished()
+        }
+        let (status, value): (Int32, OHConstantComparisonV1) = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var value = OHConstantComparisonV1()
+                let status = OHRunPublicConstantComparisonV1(&value, MemoryLayout<OHConstantComparisonV1>.size)
+                continuation.resume(returning: (status, value))
+            }
+        }
+        if DispatchTime.now().uptimeNanoseconds - start > 25_000_000_000 { _exit(124) }
+        deadline.finish()
+        XCTAssertEqual(status, 0)
+        XCTAssertEqual(value.version, 0x10000); XCTAssertEqual(value.bytes, 56)
+        XCTAssertEqual(value.backend_a, 1); XCTAssertEqual(value.backend_b, 2)
+        XCTAssertEqual(value.cases, 6); XCTAssertEqual(value.samples, 72)
+        XCTAssertGreaterThan(value.compared_bytes, 0)
+        // No speed threshold. Simulator results cannot select a phone backend.
+        XCTAssertEqual(value.flags, 7); XCTAssertEqual(value.reserved, 0)
+        print("PUBLIC_CONSTANT_BACKEND_RESULT \(value.cases) \(value.samples) \(value.compared_bytes) \(value.flags)")
+    }
+
     func testPublicOffscreenMetalPresentation() async throws {
         executionTimeAllowance = 20
         let started = DispatchTime.now().uptimeNanoseconds
@@ -64,6 +95,7 @@ final class GraphicsPresentationTests: XCTestCase {
         XCTAssertEqual(coverage.1.reserved, 0)
         XCTAssertEqual(coverage.1.checks, 1023)
         XCTAssertEqual(coverage.1.rendered_cases, 17)
+        try await runPublicConstantBackendParity()
         let report: [String: Any] = ["schema": 1, "backend": result.1.backend, "checks": result.1.checks,
             "rendered_cases": result.1.rendered_cases, "offscreen": true, "displayed": false,
             "game": false, "iphone": false]

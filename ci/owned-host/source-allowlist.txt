@@ -111,7 +111,9 @@ skyrim-recomp-web/crates/xenos-edram/src/shaders.rs
 skyrim-recomp-web/crates/xenos-edram/tests/gpu.rs
 skyrim-recomp-web/crates/xenos-render/Cargo.toml
 skyrim-recomp-web/crates/xenos-render/build.rs
+skyrim-recomp-web/crates/xenos-render/examples/constant_probe_fixtures.rs
 skyrim-recomp-web/crates/xenos-render/src/causal.rs
+skyrim-recomp-web/crates/xenos-render/src/constant_backend_probe.rs
 skyrim-recomp-web/crates/xenos-render/src/constant_demand_tests.rs
 skyrim-recomp-web/crates/xenos-render/src/constant_patch.rs
 skyrim-recomp-web/crates/xenos-render/src/constant_patch_bin_tests.rs
@@ -225,8 +227,13 @@ tools/ios-owned-game-host/app/MobilePadState.swift
 tools/ios-owned-game-host/app/OwnedHost-Bridging-Header.h
 tools/ios-owned-game-host/app/OwnedHostApp.swift
 tools/ios-owned-game-host/app/RendererBridge.h
+tools/ios-owned-game-host/native/ConstantReplayKernel.h
 tools/ios-owned-game-host/native/DeviceGraphics.h
 tools/ios-owned-game-host/native/GraphicsPresentationProbe.h
+tools/ios-owned-game-host/native/MetalConstantProbe.h
+tools/ios-owned-game-host/native/MetalConstantProbe.mm
+tools/ios-owned-game-host/native/MetalConstantReplay.metal
+tools/ios-owned-game-host/native/MetalConstantValidation.h
 tools/ios-owned-game-host/native/OwnedHost.h
 tools/ios-owned-game-host/native/OwnedHostAudio.h
 tools/ios-owned-game-host/native/OwnedHostAudio.mm
@@ -239,6 +246,7 @@ tools/ios-owned-game-host/project.yml
 tools/ios-owned-game-host/sdk-test/audio_control_gate_test.cpp
 tools/ios-owned-game-host/sdk-test/audio_render_gate_test.cpp
 tools/ios-owned-game-host/sdk-test/build_public_sdk_fixture.py
+tools/ios-owned-game-host/sdk-test/native/ConstantKernelPortableTests.cpp
 tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.cpp
 tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.h
 tools/ios-owned-game-host/sdk-test/native/PublicOwnedFixtureV2.cpp
@@ -266,6 +274,7 @@ tools/ios-owned-game-host/src/bin/public_fixture_resources.rs
 tools/ios-owned-game-host/src/binding.rs
 tools/ios-owned-game-host/src/causal_diagnostics.rs
 tools/ios-owned-game-host/src/config_overlay.rs
+tools/ios-owned-game-host/src/constant_backend_fixture.rs
 tools/ios-owned-game-host/src/darwin.rs
 tools/ios-owned-game-host/src/device_settings.rs
 tools/ios-owned-game-host/src/graphics_fixture.rs
