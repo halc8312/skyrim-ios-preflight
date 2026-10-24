@@ -9,6 +9,11 @@ skyrim-recomp-web/crates/d3d-hle/src/lib.rs
 skyrim-recomp-web/crates/d3d-hle/src/verify.rs
 skyrim-recomp-web/crates/gpu-webgpu/Cargo.toml
 skyrim-recomp-web/crates/gpu-webgpu/build.rs
+skyrim-recomp-web/crates/gpu-webgpu/examples/common/mod.rs
+skyrim-recomp-web/crates/gpu-webgpu/examples/common/offscreen.rs
+skyrim-recomp-web/crates/gpu-webgpu/examples/common/scene.rs
+skyrim-recomp-web/crates/gpu-webgpu/examples/web_triangle.rs
+skyrim-recomp-web/crates/gpu-webgpu/src/bounded_cache.rs
 skyrim-recomp-web/crates/gpu-webgpu/src/buffer.rs
 skyrim-recomp-web/crates/gpu-webgpu/src/command.rs
 skyrim-recomp-web/crates/gpu-webgpu/src/counters.rs
@@ -26,6 +31,7 @@ skyrim-recomp-web/crates/gpu-webgpu/src/staging.rs
 skyrim-recomp-web/crates/gpu-webgpu/src/surface.rs
 skyrim-recomp-web/crates/gpu-webgpu/src/timing.rs
 skyrim-recomp-web/crates/gpu-webgpu/src/web.rs
+skyrim-recomp-web/crates/gpu-webgpu/tests/offscreen.rs
 skyrim-recomp-web/crates/kernel-hle/Cargo.toml
 skyrim-recomp-web/crates/kernel-hle/src/audio.rs
 skyrim-recomp-web/crates/kernel-hle/src/d3d.rs
@@ -33,6 +39,8 @@ skyrim-recomp-web/crates/kernel-hle/src/dbgprint.rs
 skyrim-recomp-web/crates/kernel-hle/src/dispatch.rs
 skyrim-recomp-web/crates/kernel-hle/src/dispatch_counter_tests.rs
 skyrim-recomp-web/crates/kernel-hle/src/gpu.rs
+skyrim-recomp-web/crates/kernel-hle/src/gpu_alias_diagnostics_tests.rs
+skyrim-recomp-web/crates/kernel-hle/src/gpu_effect_order_tests.rs
 skyrim-recomp-web/crates/kernel-hle/src/import_policy.rs
 skyrim-recomp-web/crates/kernel-hle/src/input.rs
 skyrim-recomp-web/crates/kernel-hle/src/io.rs
@@ -76,6 +84,7 @@ skyrim-recomp-web/crates/kernel-hle/src/zlib.rs
 skyrim-recomp-web/crates/runtime-core/Cargo.toml
 skyrim-recomp-web/crates/runtime-core/src/address_space.rs
 skyrim-recomp-web/crates/runtime-core/src/address_space_order_tests.rs
+skyrim-recomp-web/crates/runtime-core/src/alias_diagnostics.rs
 skyrim-recomp-web/crates/runtime-core/src/context.rs
 skyrim-recomp-web/crates/runtime-core/src/dirty.rs
 skyrim-recomp-web/crates/runtime-core/src/guest.rs
@@ -99,8 +108,11 @@ skyrim-recomp-web/crates/xenos-edram/src/format.rs
 skyrim-recomp-web/crates/xenos-edram/src/lib.rs
 skyrim-recomp-web/crates/xenos-edram/src/ownership.rs
 skyrim-recomp-web/crates/xenos-edram/src/shaders.rs
+skyrim-recomp-web/crates/xenos-edram/tests/gpu.rs
 skyrim-recomp-web/crates/xenos-render/Cargo.toml
 skyrim-recomp-web/crates/xenos-render/build.rs
+skyrim-recomp-web/crates/xenos-render/src/causal.rs
+skyrim-recomp-web/crates/xenos-render/src/constant_demand_tests.rs
 skyrim-recomp-web/crates/xenos-render/src/constant_patch.rs
 skyrim-recomp-web/crates/xenos-render/src/constant_patch_bin_tests.rs
 skyrim-recomp-web/crates/xenos-render/src/cpu_profile.rs
@@ -112,6 +124,7 @@ skyrim-recomp-web/crates/xenos-render/src/executor.rs
 skyrim-recomp-web/crates/xenos-render/src/extent.rs
 skyrim-recomp-web/crates/xenos-render/src/lib.rs
 skyrim-recomp-web/crates/xenos-render/src/native.rs
+skyrim-recomp-web/crates/xenos-render/src/native_frame_stability.rs
 skyrim-recomp-web/crates/xenos-render/src/native_performance.rs
 skyrim-recomp-web/crates/xenos-render/src/present.rs
 skyrim-recomp-web/crates/xenos-render/src/present_cache_tests.rs
@@ -166,11 +179,13 @@ skyrim-recomp-web/crates/xenos-state/src/viewport.rs
 skyrim-recomp-web/crates/xenos-state/src/xenos.rs
 skyrim-recomp-web/crates/xenos-texture-cache/Cargo.toml
 skyrim-recomp-web/crates/xenos-texture-cache/build.rs
+skyrim-recomp-web/crates/xenos-texture-cache/src/eviction_order.rs
 skyrim-recomp-web/crates/xenos-texture-cache/src/format.rs
 skyrim-recomp-web/crates/xenos-texture-cache/src/gpu_load.rs
 skyrim-recomp-web/crates/xenos-texture-cache/src/hash.rs
 skyrim-recomp-web/crates/xenos-texture-cache/src/hash_range_tests.rs
 skyrim-recomp-web/crates/xenos-texture-cache/src/lib.rs
+skyrim-recomp-web/crates/xenos-texture-cache/tests/cache.rs
 skyrim-recomp-web/crates/xenos-texture/Cargo.toml
 skyrim-recomp-web/crates/xenos-texture/src/address.rs
 skyrim-recomp-web/crates/xenos-texture/src/bc.rs
@@ -249,6 +264,7 @@ tools/ios-owned-game-host/src/alpha_coverage_probe.rs
 tools/ios-owned-game-host/src/audio_output.rs
 tools/ios-owned-game-host/src/bin/public_fixture_resources.rs
 tools/ios-owned-game-host/src/binding.rs
+tools/ios-owned-game-host/src/causal_diagnostics.rs
 tools/ios-owned-game-host/src/config_overlay.rs
 tools/ios-owned-game-host/src/darwin.rs
 tools/ios-owned-game-host/src/device_settings.rs

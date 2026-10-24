@@ -6,6 +6,7 @@ pub mod abi_v2;
 pub mod audio_output;
 pub mod binding;
 pub mod config_overlay;
+pub mod causal_diagnostics;
 #[cfg(all(feature = "fixture-tools", feature = "metal-renderer", target_os = "ios"))]
 mod alpha_coverage_probe;
 pub mod device_settings;

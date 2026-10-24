@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use kernel_hle::Kernel;
-use kernel_hle::gpu::GpuBackend;
+use kernel_hle::gpu::{GpuBackend, GpuWaitError};
 use xenos_render::{Command, PhysicalMemory, RendererHandle, ShaderStage};
 
 const PAGE: u32 = 4096;
@@ -14,12 +14,12 @@ pub struct GuestPhysical(pub &'static Kernel);
 impl GuestPhysical {
     /// Calls `f(guest_address, offset, len)` for each page-bounded piece of `[addr, addr + len)`
     /// that is backed by guest memory.
-    fn pieces(&self, addr: u32, len: usize, mut f: impl FnMut(u32, usize, usize)) {
+    fn pieces(&self, addr: u32, len: usize, access: runtime_core::alias_diagnostics::Access, mut f: impl FnMut(u32, usize, usize)) {
         let mut done = 0usize;
         while done < len {
             let phys = addr.wrapping_add(done as u32);
             let n = ((PAGE - phys % PAGE) as usize).min(len - done);
-            if let Some(guest) = self.0.rt.space.translate_physical(phys) {
+            if let Some(guest) = self.0.rt.space.translate_physical_for_gpu(phys, access) {
                 f(guest, done, n);
             }
             done += n;
@@ -32,7 +32,7 @@ impl PhysicalMemory for GuestPhysical {
         let mem = self.0.mem();
         let len = out.len();
         let mut copied_end = 0;
-        self.pieces(addr, len, |guest, offset, n| {
+        self.pieces(addr, len, runtime_core::alias_diagnostics::Access::Read, |guest, offset, n| {
             // Only unmapped gaps need zeroing. Backed pieces overwrite every
             // byte themselves; keep their translations/order/width unchanged.
             out[copied_end..offset].fill(0);
@@ -44,7 +44,7 @@ impl PhysicalMemory for GuestPhysical {
 
     fn write(&self, addr: u32, data: &[u8]) {
         let mem = self.0.mem();
-        self.pieces(addr, data.len(), |guest, offset, n| mem.write_bytes(guest, &data[offset..offset + n]));
+        self.pieces(addr, data.len(), runtime_core::alias_diagnostics::Access::Write, |guest, offset, n| mem.write_bytes(guest, &data[offset..offset + n]));
     }
 
     fn version(&self, addr: u32, len: u32) -> Option<u64> {
@@ -74,16 +74,16 @@ impl GpuBackend for Renderer {
         self.0.submit(Command::Swap { fetch, width, height });
     }
 
-    fn wait_idle(&self) {
-        self.0.wait_idle();
+    fn wait_idle(&self) -> Result<(), GpuWaitError> {
+        self.0.wait_idle().map_err(wait_error)
     }
 
     fn d3d(&self, cmd: d3d_hle::command::Command) -> u64 {
         self.0.submit(Command::D3d(cmd))
     }
 
-    fn wait_for(&self, seq: u64) {
-        self.0.wait_for(seq);
+    fn wait_for(&self, seq: u64) -> Result<(), GpuWaitError> {
+        self.0.wait_for(seq).map_err(wait_error)
     }
 
     fn submitted(&self) -> Option<u64> {
@@ -92,6 +92,13 @@ impl GpuBackend for Renderer {
 
     fn completed(&self) -> u64 {
         self.0.completed()
+    }
+}
+
+fn wait_error(error: xenos_render::WaitError) -> GpuWaitError {
+    match error {
+        xenos_render::WaitError::Closed => GpuWaitError::Closed,
+        xenos_render::WaitError::Failed(reason) => GpuWaitError::Failed(reason),
     }
 }
 

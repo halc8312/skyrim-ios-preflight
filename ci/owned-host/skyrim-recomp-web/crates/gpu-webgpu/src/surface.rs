@@ -220,12 +220,15 @@ impl Surface {
 impl SurfaceFrame {
     /// Natively queues the frame for display. On the web the browser shows whatever was drawn
     /// to the canvas texture when the thread returns to its event loop, so this only drops it.
-    pub fn present(self) {
+    pub fn present(self) -> Result<()> {
         #[cfg(not(target_os = "emscripten"))]
-        unsafe {
-            ffi::wgpuSurfacePresent(self.surface.raw());
-        }
+        let status = unsafe { ffi::wgpuSurfacePresent(self.surface.raw()) };
         drop(self);
+        #[cfg(not(target_os = "emscripten"))]
+        if status != ffi::WGPUStatus::Success {
+            return Err(Error::Surface("present API failed".into()));
+        }
+        Ok(())
     }
 
     pub fn surface(&self) -> &Surface {

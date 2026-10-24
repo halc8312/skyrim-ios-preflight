@@ -1,5 +1,5 @@
 {
-  "file_count": 303,
+  "file_count": 319,
   "game_data_included": false,
   "game_executed": false,
   "physical_iphone_verified": false,
@@ -53,6 +53,26 @@
       "bytes": 11854,
       "sha256": "d82c66d8d101bce5268010b82fcfb654ede7e22d04a6bbc3bc9321fa34a52e1e"
     },
+    "skyrim-recomp-web/crates/gpu-webgpu/examples/common/mod.rs": {
+      "bytes": 36,
+      "sha256": "2b676cc6e4b75339b3526c34c092b9272617ba3c37cfed7eab4ca351ab810275"
+    },
+    "skyrim-recomp-web/crates/gpu-webgpu/examples/common/offscreen.rs": {
+      "bytes": 3535,
+      "sha256": "c1b838026328f078a15ff23881adee92eeb109f43b856fcc852f59b70006b135"
+    },
+    "skyrim-recomp-web/crates/gpu-webgpu/examples/common/scene.rs": {
+      "bytes": 8031,
+      "sha256": "4c3d569f111b7bf85b3a20cbf70c84db460d3b2e17c7e3f6b9f013d20f0034e2"
+    },
+    "skyrim-recomp-web/crates/gpu-webgpu/examples/web_triangle.rs": {
+      "bytes": 8790,
+      "sha256": "ff837c7a8269fc805bc7043ff9232c7366cd1ef958cc2e8cfdc13577ef7f56ca"
+    },
+    "skyrim-recomp-web/crates/gpu-webgpu/src/bounded_cache.rs": {
+      "bytes": 6888,
+      "sha256": "3687fc76b7372051c73ff0223960157ce66eabf6dec608c1dcf8dbdd777c76fd"
+    },
     "skyrim-recomp-web/crates/gpu-webgpu/src/buffer.rs": {
       "bytes": 11402,
       "sha256": "7303d3d874623599e750258e5434b69337e9487c954ec813c2991b0a475feacf"
@@ -90,8 +110,8 @@
       "sha256": "35adad9ad549e27c34836a1ef9c569a85b1a26610c5ad2d81946769145d7fd6a"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/src/lib.rs": {
-      "bytes": 6912,
-      "sha256": "eb86a20c05d1afbeb36e64238ee9bfb81b44b5571b89a9cf1eb5d7779cd388ac"
+      "bytes": 6936,
+      "sha256": "d0c52f167011b9eea87fab9a3826377be2f8c5f27e0c23c54437e53d754ad62e"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/src/memory.rs": {
       "bytes": 3268,
@@ -110,8 +130,8 @@
       "sha256": "13956760f3a5e65953900247e7add28d014202feff2560cbd44989b2ec9f0d37"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/src/surface.rs": {
-      "bytes": 9560,
-      "sha256": "99d6fd72acebfc60f31d13a6412ec8dd9f87c1e80a5696eddfed72d7bb3dc663"
+      "bytes": 9758,
+      "sha256": "abac8bbd5aad4878915d58c9aa67fed10c9e3a763838fd58bbf2807529b03284"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/src/timing.rs": {
       "bytes": 8590,
@@ -121,13 +141,17 @@
       "bytes": 5272,
       "sha256": "82547e2df3fcf458d2fd50e28d441a58cb95c93d75e0f5e755ec706577f915f3"
     },
+    "skyrim-recomp-web/crates/gpu-webgpu/tests/offscreen.rs": {
+      "bytes": 4399,
+      "sha256": "44c34004d97ca8aeb565f1ad91c33c4074defd11f85b23ab14a616f3165a9d1f"
+    },
     "skyrim-recomp-web/crates/kernel-hle/Cargo.toml": {
       "bytes": 495,
       "sha256": "7c9d10c0d9f019e6757596198cb6951746ceeb183dcb40c293b8cc127363c11d"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/audio.rs": {
-      "bytes": 13018,
-      "sha256": "14940ca04bba45cb4c5e398819bcecdf079d6749cfbec31f7280668bcfd94532"
+      "bytes": 17586,
+      "sha256": "158f5a3c5cb73cbeba9218265a855d550f7f357372fc9ba3b61afb2ee934fa7e"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/d3d.rs": {
       "bytes": 21470,
@@ -146,8 +170,16 @@
       "sha256": "ce8e30b56ed4f25390a2583ab1c16087085763ff767b927353b5e6e8b66d3e1b"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/gpu.rs": {
-      "bytes": 63221,
-      "sha256": "c36811e0395a6b5f4a1cabf5ee1b1470418452c0d8431bce29682da93336b7b4"
+      "bytes": 66549,
+      "sha256": "2ae5e37ee70a1a042d807a6f8e695f087b64499e523d784ffd3f2c384bd0982d"
+    },
+    "skyrim-recomp-web/crates/kernel-hle/src/gpu_alias_diagnostics_tests.rs": {
+      "bytes": 7604,
+      "sha256": "883282de2afe89895db256772d9d397168839cfcdea49a1194c2539cf62ded6a"
+    },
+    "skyrim-recomp-web/crates/kernel-hle/src/gpu_effect_order_tests.rs": {
+      "bytes": 14675,
+      "sha256": "54aef852599b99c2126277e4acfae7988da3dc5ce5902fdde3fb989871328cce"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/import_policy.rs": {
       "bytes": 9693,
@@ -314,12 +346,16 @@
       "sha256": "361f230bc678fdd19d40414031bcafa7ddaea42f837184ffa490c25be62a3a95"
     },
     "skyrim-recomp-web/crates/runtime-core/src/address_space.rs": {
-      "bytes": 20679,
-      "sha256": "89f4669d169c96ccf8474f2a55261a6ebcffc8b374b97abebe40eeacc704972d"
+      "bytes": 30008,
+      "sha256": "b844b7d2cb38f5366799e626314f2ace91fe3a766c707996bf615a9d32b81b66"
     },
     "skyrim-recomp-web/crates/runtime-core/src/address_space_order_tests.rs": {
       "bytes": 5860,
       "sha256": "327b8331885ec9a7ab40e32fa8322a90dea17bb319b41871c83926f377f0dad9"
+    },
+    "skyrim-recomp-web/crates/runtime-core/src/alias_diagnostics.rs": {
+      "bytes": 11495,
+      "sha256": "b925892d7e7204e828015fd6d6dd6ca1466e0bc4b4225038f75fe523f66b9129"
     },
     "skyrim-recomp-web/crates/runtime-core/src/context.rs": {
       "bytes": 5055,
@@ -342,8 +378,8 @@
       "sha256": "69662d1acf0cc7f2c9ee7fac1a64d1700f6102265a9b9cc7df22399743778668"
     },
     "skyrim-recomp-web/crates/runtime-core/src/lib.rs": {
-      "bytes": 509,
-      "sha256": "638f26f2b7b8cce0012a6fb30658ae0c720ac62f6f727b519a3ecfda7dfb6b30"
+      "bytes": 517,
+      "sha256": "e49129759cc0168f5abf4b7de013b1bfe57eb86e5ccbc42d56603e44497a0bd8"
     },
     "skyrim-recomp-web/crates/runtime-core/src/memory.rs": {
       "bytes": 40507,
@@ -390,8 +426,8 @@
       "sha256": "5e9e2cd4d3a814e675144dfe1f264120c81a1fce8e86414376ad0277903e5e60"
     },
     "skyrim-recomp-web/crates/xenos-edram/src/cache.rs": {
-      "bytes": 84974,
-      "sha256": "2999209d03ea7283a14111e488a85f0191cf935dce4ab072adf5238348924d62"
+      "bytes": 84970,
+      "sha256": "bf6b425be425534ef704f52154f93ee422a4eacdabd9662b113da27ed9f07cbd"
     },
     "skyrim-recomp-web/crates/xenos-edram/src/dest.rs": {
       "bytes": 5771,
@@ -413,6 +449,10 @@
       "bytes": 38221,
       "sha256": "7856f322b8080c0c294dda0e5de24a2d0d0bac80fd86f2f97e1a9a52dc2f8898"
     },
+    "skyrim-recomp-web/crates/xenos-edram/tests/gpu.rs": {
+      "bytes": 56301,
+      "sha256": "1172abb4085f394ce0d3754b06e39860db0b34b5ed248cc82c42ce3c696ffe53"
+    },
     "skyrim-recomp-web/crates/xenos-render/Cargo.toml": {
       "bytes": 1010,
       "sha256": "0cb3c582e22f9f4b53c34d1fdcba7aad238cb9a81383b3ebaa596a813329cd11"
@@ -421,9 +461,17 @@
       "bytes": 551,
       "sha256": "d1d4112f61e2e653b9b259f48f1d399b3a83dfdc7fc605a9c45d25f5ba22b432"
     },
+    "skyrim-recomp-web/crates/xenos-render/src/causal.rs": {
+      "bytes": 12673,
+      "sha256": "fcf01dde5795e0feb38d1a94e62fdc7ecbb0c5e8d3ec56b0a0ea9815ea800739"
+    },
+    "skyrim-recomp-web/crates/xenos-render/src/constant_demand_tests.rs": {
+      "bytes": 7022,
+      "sha256": "54115056405e9cc26439510e4e41883826145eb03d37ceaef8c392581b13834b"
+    },
     "skyrim-recomp-web/crates/xenos-render/src/constant_patch.rs": {
-      "bytes": 16708,
-      "sha256": "f8ce8d7562c23d033d3a6a40d3d3921bc62776085538e0b62a4851b4fe6ef4b7"
+      "bytes": 19258,
+      "sha256": "f2d9ef432b40d5d7e0e32e2a9cd4832684e5cdd7ee2189a6379ea31139fd5a6d"
     },
     "skyrim-recomp-web/crates/xenos-render/src/constant_patch_bin_tests.rs": {
       "bytes": 12593,
@@ -450,24 +498,28 @@
       "sha256": "2b0ebd6f4f8217e598246d05f3e0d0fecfc2070d783e94df9508ff7213f00a0d"
     },
     "skyrim-recomp-web/crates/xenos-render/src/executor.rs": {
-      "bytes": 107192,
-      "sha256": "77664c486408f9b9b0b70d3c19a398de4c4d97a47527c0861d7738f43b906f1a"
+      "bytes": 115037,
+      "sha256": "ffb7dc83dbd710b06046a0fb12faa99bb665579b3172b18ef52a8856c85720d1"
     },
     "skyrim-recomp-web/crates/xenos-render/src/extent.rs": {
       "bytes": 12458,
       "sha256": "1280fff01e7cca9747a9ccc0647f8576bf814cecf25382fad719a31375b1cf7a"
     },
     "skyrim-recomp-web/crates/xenos-render/src/lib.rs": {
-      "bytes": 5117,
-      "sha256": "fd5f4e2e00c841735dc93f546735625c8602ce4dfd610b8147d3b02891912599"
+      "bytes": 5195,
+      "sha256": "02ce62a27def0f18b04a68c7def0dfd58a5702ac27ba474d89b94d213e46211b"
     },
     "skyrim-recomp-web/crates/xenos-render/src/native.rs": {
-      "bytes": 39341,
-      "sha256": "be592ad97f22d7f76ec99135053abd0824cd9966ed292ffb3f0a501afcc5bc35"
+      "bytes": 44048,
+      "sha256": "3104b828bf3b37d03b54604249f29a4d7b09fa92c1757635c1250baca24665e9"
+    },
+    "skyrim-recomp-web/crates/xenos-render/src/native_frame_stability.rs": {
+      "bytes": 10758,
+      "sha256": "722974c9e479442aa897f62ed96c85fa12c59886f970d3a9f3c8d21438dcaccb"
     },
     "skyrim-recomp-web/crates/xenos-render/src/native_performance.rs": {
-      "bytes": 17994,
-      "sha256": "3920e0e5548545fe2d65b8e536578596cfb8654fee04678ec34aeca1efe17941"
+      "bytes": 24087,
+      "sha256": "61022a688cf7a3e85a2ffd8f9b0371da024235298ef7ca3c275ee7c0eae7cd1c"
     },
     "skyrim-recomp-web/crates/xenos-render/src/present.rs": {
       "bytes": 16436,
@@ -482,8 +534,8 @@
       "sha256": "a7306587a25f7f70d7a61e30a6dcb48664620bdc47fecf0bc9cdcc6a9887a922"
     },
     "skyrim-recomp-web/crates/xenos-render/src/queue.rs": {
-      "bytes": 7714,
-      "sha256": "b8dc394acb5ff5e36742da0d94ae4c63ed85a549e16db874480feb8bfa14fbb7"
+      "bytes": 9282,
+      "sha256": "0f9b288a463d48a846c2ef5a8b856cb108af08049c75ff8c7aba93b1a61f798e"
     },
     "skyrim-recomp-web/crates/xenos-render/src/registers.rs": {
       "bytes": 9699,
@@ -494,8 +546,8 @@
       "sha256": "a084b50995ebef8c755d854ab800b8c2920d0e252b619fbc54d13f655d3567e4"
     },
     "skyrim-recomp-web/crates/xenos-render/src/renderer.rs": {
-      "bytes": 21314,
-      "sha256": "de9992afbdac77ddbd49367d0e50accb295c8de97e197a1970beb8d89b2a850f"
+      "bytes": 25704,
+      "sha256": "602a3992d7ed1596a1e18c3edfc376264796c789733af3bbe03dc7619fd899e2"
     },
     "skyrim-recomp-web/crates/xenos-render/src/ring.rs": {
       "bytes": 2981,
@@ -510,12 +562,12 @@
       "sha256": "910875d676218d453505304b9c4ceebbf2cf6eb82837a25f957e662ce2eb6e9a"
     },
     "skyrim-recomp-web/crates/xenos-render/src/shared_memory.rs": {
-      "bytes": 26949,
-      "sha256": "75e60118062e4410609f4edaa3a479733315c8c7f1a200e0e53d227ff10b8433"
+      "bytes": 30012,
+      "sha256": "48604182286bd6a2cd2fc6eaf14eb61e3a69c57717c14501778669cb0e17193f"
     },
     "skyrim-recomp-web/crates/xenos-render/src/shared_memory_snapshot_tests.rs": {
-      "bytes": 6358,
-      "sha256": "e567ae8f225b951aeb28b583af897fe403603ef57d0bc17eabfd9dff69692529"
+      "bytes": 9261,
+      "sha256": "e45acbc822d3c20a502cc74e715ef14c1b6ce69220e3407a9a3fc64c0bb364c8"
     },
     "skyrim-recomp-web/crates/xenos-render/src/targets.rs": {
       "bytes": 4089,
@@ -534,16 +586,16 @@
       "sha256": "a171b358a06095e8b7d04e16300a1d68ffe44bc4b034d206816f1793bb5eb5a3"
     },
     "skyrim-recomp-web/crates/xenos-render/src/web.rs": {
-      "bytes": 14145,
-      "sha256": "a7d21782e4666fab255d3b868739418603c6f129aa738e61fd1f6e8ba6fb3484"
+      "bytes": 14146,
+      "sha256": "9e81a03edfe393384c1c3b65a85efd4a863b6894522cb1fa00f984c1a666a3fa"
     },
     "skyrim-recomp-web/crates/xenos-render/tests/alpha_coverage_native.rs": {
       "bytes": 12872,
       "sha256": "c2739b553c1eaff99e3e1a6a7ea0ce62baa48b905ffa260296b481d51ee5206a"
     },
     "skyrim-recomp-web/crates/xenos-render/tests/common/mod.rs": {
-      "bytes": 4876,
-      "sha256": "c2a7b98d0257777cd0b2ae724a89b510ef99feaa7842b8785824d747432656b5"
+      "bytes": 5084,
+      "sha256": "6558abd3236894a1abaf54c6c7409ec76d54d0d1eada04f5e80e02d8ee9e557f"
     },
     "skyrim-recomp-web/crates/xenos-render/tests/converted_indices_native.rs": {
       "bytes": 9482,
@@ -558,8 +610,8 @@
       "sha256": "cca373b965d4b499ec178f8826d9b12b39b3d28c5340dbb9e371298911706abe"
     },
     "skyrim-recomp-web/crates/xenos-render/tests/vertex_ranges_native.rs": {
-      "bytes": 17906,
-      "sha256": "37ca4ad79e5a28eaf3e7ff9226b09d005937a6245cb57bf447884affcb5d6f6a"
+      "bytes": 18035,
+      "sha256": "6e73ba669d6e323eae920edbe123d74df479449310ae1915c0b82bc9469431de"
     },
     "skyrim-recomp-web/crates/xenos-shader/Cargo.toml": {
       "bytes": 359,
@@ -681,13 +733,17 @@
       "bytes": 551,
       "sha256": "d1d4112f61e2e653b9b259f48f1d399b3a83dfdc7fc605a9c45d25f5ba22b432"
     },
+    "skyrim-recomp-web/crates/xenos-texture-cache/src/eviction_order.rs": {
+      "bytes": 6415,
+      "sha256": "2d0506e9ac73e9421231a4019c2356ec9c926b6ac479b581a71a53d7f74dd590"
+    },
     "skyrim-recomp-web/crates/xenos-texture-cache/src/format.rs": {
       "bytes": 2444,
       "sha256": "74b4dcffd8f3966ebb104f2b26787907f58714e36625973ba8baae8b8a13c98a"
     },
     "skyrim-recomp-web/crates/xenos-texture-cache/src/gpu_load.rs": {
-      "bytes": 30978,
-      "sha256": "68f933a989b13c1880f6e1faada4b3398c21df282700b88339b801b8d08bc851"
+      "bytes": 31217,
+      "sha256": "0695334e03154143f995629fb3c098d87cab0b970196aa4e6bdc47676708729a"
     },
     "skyrim-recomp-web/crates/xenos-texture-cache/src/hash.rs": {
       "bytes": 1988,
@@ -698,8 +754,12 @@
       "sha256": "ccd93fe7e0f34eb045fb249fbd9d9841952840346596c4a5c2176f9bfd3e93e5"
     },
     "skyrim-recomp-web/crates/xenos-texture-cache/src/lib.rs": {
-      "bytes": 59280,
-      "sha256": "c3c7531f866dc436ff0d11aa5c1856ff3b4db7cbf1663b2b909f916622fd4fe8"
+      "bytes": 61435,
+      "sha256": "73d0a773d5f05ddcc0aa5af1c61793835674c2cd476a5d064aca0ba6c03936a9"
+    },
+    "skyrim-recomp-web/crates/xenos-texture-cache/tests/cache.rs": {
+      "bytes": 57935,
+      "sha256": "8464e8987f407696bcb3228ed4382781602421830de91f3e8011e23b7a3d1d44"
     },
     "skyrim-recomp-web/crates/xenos-texture/Cargo.toml": {
       "bytes": 384,
@@ -794,12 +854,12 @@
       "sha256": "6853c078583c38aefe61183d1baa8e8b74df6019a62ae68550aabdd864bd5188"
     },
     "skyrim-recomp-web/hosts/common/gpu.rs": {
-      "bytes": 7886,
-      "sha256": "c9082cec5fc39cbb2da889cbf03d0592d4f0c0319d22935b98399aa351c6f802"
+      "bytes": 8197,
+      "sha256": "fb566ebd6019888be0844921ae88062f67d83c40fc1e12ca3e9be9f2acdfd661"
     },
     "source-allowlist.txt": {
-      "bytes": 16064,
-      "sha256": "638f6cfc20b4a328f2ad2292d045232675e0e2283a8b48745e5fa8b2b3e2f527"
+      "bytes": 17038,
+      "sha256": "7bbedcc407670faccf85fffec851e97429287d264b251c38394e0e803630da16"
     },
     "tools/ios-owned-game-host/AUDIO.md": {
       "bytes": 9670,
@@ -899,7 +959,7 @@
     },
     "tools/ios-owned-game-host/project.yml": {
       "bytes": 3685,
-      "sha256": "0fa2bd3867e9e91c9fa75f46542832e3ce4c4e37e91220bc3fa49eb2768d3c4d"
+      "sha256": "d22227d5bbc02d41c486e2565bcd49c5be7a47b5470f56d1bdd8279dfaf01cdd"
     },
     "tools/ios-owned-game-host/sdk-test/audio_control_gate_test.cpp": {
       "bytes": 5719,
@@ -1013,6 +1073,10 @@
       "bytes": 28614,
       "sha256": "e77aafb0187a4663031423990d059e8b0ff46a2d0cb05662017b6a3a743db040"
     },
+    "tools/ios-owned-game-host/src/causal_diagnostics.rs": {
+      "bytes": 2701,
+      "sha256": "85bffad659ff25970f04c5db5ff8858522e7adb24e681c388f5c30a64a6d3348"
+    },
     "tools/ios-owned-game-host/src/config_overlay.rs": {
       "bytes": 4774,
       "sha256": "63e218f3c32cc0cbe8527af8b094beeb4e8efd54199801a99e2678cc37bec3f1"
@@ -1038,8 +1102,8 @@
       "sha256": "33c5eb97ffe82b8b6e9f46b5b98704c10ad9a3f7e7487cff6917a50022094bc9"
     },
     "tools/ios-owned-game-host/src/lib.rs": {
-      "bytes": 1707,
-      "sha256": "e6433bc7f9101524b0b69dd935135e1d9b25d643bc45458c632e2bd68362968f"
+      "bytes": 1735,
+      "sha256": "55fbe0d3996c3c45a774e3648d3e5a3e425096e49e11bba5040ad6b2d0e8d6a7"
     },
     "tools/ios-owned-game-host/src/lifecycle.rs": {
       "bytes": 5442,
@@ -1074,8 +1138,8 @@
       "sha256": "b6d6df200036c1c98bf37d729641e46831bb52aa248005391089e0a49775373a"
     },
     "tools/ios-owned-game-host/src/renderer.rs": {
-      "bytes": 11837,
-      "sha256": "81c1453c0cd7040acb20a4c3fc7c93268283cc3884cd095a69f5992c4d82f92a"
+      "bytes": 14298,
+      "sha256": "e96d41db305e03a4247d3cb60a25c306017b06b510edbb0791b222f853a2b2de"
     },
     "tools/ios-owned-game-host/src/renderer_policy.rs": {
       "bytes": 2515,
@@ -1086,12 +1150,12 @@
       "sha256": "2c1040397bfc52e9d0b19b2289ad86694ef7f95286efb8efce9fe148116d4d79"
     },
     "tools/ios-owned-game-host/src/runtime.rs": {
-      "bytes": 30895,
-      "sha256": "769031906763cbb8eab7c36d675e0f568a54233319260a142494ae8e83bd79d8"
+      "bytes": 32244,
+      "sha256": "432b4d9b0d5c9d70da545587d7705b3405c2bd1615bacd07619b1a9f48097a52"
     },
     "tools/ios-owned-game-host/src/save_store.rs": {
-      "bytes": 69275,
-      "sha256": "97bf2ce04fb0562d49c5c27e7f952a7e56607d66bc5b88948a72e447d13f3652"
+      "bytes": 71288,
+      "sha256": "5ff7c058bc229c4a2b53f8d3c95b56df997766e38053129faa27f7122d711158"
     },
     "tools/ios-owned-game-host/src/xex_envelope.rs": {
       "bytes": 4122,

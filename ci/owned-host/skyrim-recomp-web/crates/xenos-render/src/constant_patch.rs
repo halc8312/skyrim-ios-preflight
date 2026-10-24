@@ -36,6 +36,49 @@ pub const FETCH: u32 = 2;
 pub const SYSTEM: u32 = 3;
 pub const BOOL_LOOP: u32 = 4;
 
+/// One new block; omitted blocks reuse an existing offset without consuming a record.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BlockDemand {
+    pub window: u64,
+    pub bytes: u64,
+    pub changed_vec4s: usize,
+}
+
+fn demands_fit(mut cursor: u64, alignment: u64, mut records: usize, mut values: usize,
+    demands: &[BlockDemand]) -> bool {
+    for demand in demands {
+        if demand.bytes > demand.window || !demand.bytes.is_multiple_of(16)
+            || demand.changed_vec4s > (demand.bytes / 16) as usize { return false; }
+        let Some(offset) = cursor.checked_add(alignment - 1).map(|n| n / alignment * alignment) else { return false };
+        let Some(end) = offset.checked_add(demand.window) else { return false };
+        if end > BLOCK_BUFFER_BYTES { return false; }
+        let Some(next) = offset.checked_add(demand.bytes.max(16)) else { return false };
+        cursor = next;
+        records = records.saturating_add(1);
+        values = values.saturating_add(demand.changed_vec4s);
+        if records > MAX_RECORDS || values > MAX_VALUES { return false; }
+    }
+    true
+}
+
+#[cfg(test)]
+mod demand_tests {
+    use super::*;
+    #[test]
+    fn reuse_and_partial_blocks_reserve_actual_offsets_records_and_values() {
+        let one = BlockDemand { window: 4096, bytes: 16, changed_vec4s: 1 };
+        assert!(demands_fit(BLOCK_BUFFER_BYTES, 256, MAX_RECORDS, MAX_VALUES, &[]));
+        assert!(!demands_fit(BLOCK_BUFFER_BYTES, 256, 0, 0, &[one]));
+        assert!(demands_fit(BLOCK_BUFFER_BYTES - 4096, 256, MAX_RECORDS - 1, MAX_VALUES - 1, &[one]));
+        assert!(!demands_fit(BLOCK_BUFFER_BYTES - 4096, 256, MAX_RECORDS - 1, MAX_VALUES - 1, &[one, one]));
+        assert!(!demands_fit(0, 256, MAX_RECORDS, 0, &[one]));
+        assert!(!demands_fit(0, 256, 0, MAX_VALUES, &[one]));
+        assert!(demands_fit(0, 256, 0, MAX_VALUES, &[BlockDemand { changed_vec4s: 0, ..one }]));
+        assert!(!demands_fit(u64::MAX, 256, 0, 0, &[one]));
+        assert!(!demands_fit(0, 256, 0, 0, &[BlockDemand { bytes: 17, ..one }]));
+    }
+}
+
 const SHADER: &str = r#"
 // records[0] is the record count; record r starts at 1 + 12 r.
 @group(0) @binding(0) var<storage, read> records: array<u32>;
@@ -228,6 +271,18 @@ impl ConstantPatcher {
             && (self.records.len() - 1) / RECORD_WORDS + windows.len() <= MAX_RECORDS
             && self.values.len() / 16 + vec4s <= MAX_VALUES
     }
+
+    pub(crate) fn has_room_for(&self, demands: &[BlockDemand]) -> bool {
+        demands_fit(self.cursor, self.alignment, (self.records.len() - 1) / RECORD_WORDS, self.values.len() / 16, demands)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn allocation_state(&self) -> (u64, usize, usize) {
+        (self.cursor, (self.records.len() - 1) / RECORD_WORDS, self.values.len() / 16)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn exhaust_window_for_test(&mut self) { self.cursor = BLOCK_BUFFER_BYTES; }
 
     /// Adds `data` (vec4s of stage `stage`) as a block bound with `window` bytes, given the
     /// stage's previous block of this submission. Returns its offset. Check

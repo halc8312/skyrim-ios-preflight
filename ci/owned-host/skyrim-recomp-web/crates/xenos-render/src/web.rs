@@ -303,7 +303,7 @@ impl Running {
             let mut encoder = device.create_command_encoder("present");
             self.renderer.presenter.encode(&mut encoder, &view, size.0, size.1);
             device.queue().submit([encoder.finish("present")]);
-            frame.present();
+            frame.present()?;
             self.presents.push(std::time::Instant::now());
         }
         for e in self.renderer.device.take_errors() {

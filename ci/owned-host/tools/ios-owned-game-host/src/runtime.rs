@@ -501,6 +501,19 @@ fn snapshot(name: &str) -> Check<()> {
 }
 fn progress_snapshot(t: u64, point: progress_diagnostics::Snapshot) -> Check<()> {
     let content = CONTENT.get().ok_or("diagnostic content absent")?;
+    // Capture the common-clock state before any checkpoint file IO. This does
+    // not invoke GPU work or wait for the renderer, even during a driver stall.
+    #[cfg(feature = "metal-renderer")]
+    let causal = crate::renderer::causal_snapshot(t);
+    #[cfg(not(feature = "metal-renderer"))]
+    let causal = None;
+    let causal = STARTED.get().and_then(|start| {
+        let observed = u64::try_from(start.elapsed().as_millis()).ok()?;
+        crate::causal_diagnostics::record(point, observed, causal).ok()
+    });
+    if let Some((name, bytes)) = causal {
+        let _ = paths::publish_json_new(content, name, &bytes);
+    }
     #[cfg(feature = "metal-renderer")]
     let renderer = {
         let mut status = crate::renderer_policy::OHRendererStatusV1::default();
@@ -599,6 +612,19 @@ fn start_session(t: u64, mode: RunMode) -> Check<()> {
     }
     let now = Instant::now();
     STARTED.set(now).map_err(|_| "guest already started")?;
+    #[cfg(feature = "metal-renderer")]
+    if mode.deadline_seconds().is_some() {
+        let session = crate::renderer::begin_causal_session(t, now)?;
+        let kernel = KERNEL.get().ok_or("Kernel missing")?;
+        if !kernel.audio.set_work_observer(std::sync::Arc::new(move |event| {
+            use kernel_hle::audio::AudioWorkEvent;
+            match event {
+                AudioWorkEvent::Begin(at) => session.audio_begin(at),
+                AudioWorkEvent::Drained { at, empty_periods, frames } => session.audio_drained(at, empty_periods, frames),
+                AudioWorkEvent::End(at) => session.audio_end(at),
+            }
+        })) { return Err("causal audio observer already active"); }
+    }
     if let Some(seconds) = mode.deadline_seconds() {
         std::thread::Builder::new()
             .name("owned-hard-deadline".into())

@@ -35,9 +35,15 @@ jobs:
             bash "$route/preflight.sh"
             python3 -B ci/prepare-mobile-build-route/prepare_ui_route.py recheck \
               --repo "$PWD" --source-commit "$REVIEWED_SOURCE_COMMIT" --output "$route"
+            # One download contains the public IPA and its original review evidence.
+            python3 -B ci/run-bounded-command.py 120 python3 -B -c \
+              'from pathlib import Path; import shutil; p=Path("out/public-review"); p.mkdir(exist_ok=False); shutil.make_archive(str(p/"SkyrimLab-build13-review"), "zip", "out", "owned-host")'
       - store_artifacts:
           path: out/owned-host
           destination: public-device-build-and-ui-evidence
+      - store_artifacts:
+          path: out/public-review
+          destination: public-review-download
 
 workflows:
   manually_requested_public_build_and_ui:

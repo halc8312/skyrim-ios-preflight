@@ -286,7 +286,9 @@ fn direct_dma_u16_u32_endian_and_complete_clamps_match_full_sync() {
             assert_eq!(shape(sa), shape(sb));
             assert_eq!(sa.index_upload_bytes, 0, "real direct-index path");
             assert_eq!(sb.vertex_range_narrowed_bindings, 2);
-            assert_eq!((aw.queries, bw.queries), (258, 3)); // both existing index syncs retained
+            // The complete draw now synchronizes its index page once, alongside
+            // vertex pages. Pixels and zero warm uploads remain checked above/below.
+            assert_eq!((aw.queries, bw.queries), (257, 2));
             assert_eq!((aw.reads, bw.reads), (0, 0));
         }
     }

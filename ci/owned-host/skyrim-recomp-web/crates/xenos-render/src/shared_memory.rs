@@ -64,7 +64,19 @@ pub struct MirrorStats {
 /// A page changed after an earlier draw of the current batch read it (or a slot is needed and
 /// only blocks the batch reads could give theirs up).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Conflict;
+pub enum Conflict {
+    PageWritten,
+    SlotsInBatch,
+    PreserveGpuOnly,
+    CapacityUnavailable,
+}
+
+impl Conflict {
+    pub fn needs_submit(self) -> bool { matches!(self, Self::PageWritten | Self::SlotsInBatch) }
+    pub fn reason(self) -> u32 {
+        match self { Self::PageWritten => 10, Self::SlotsInBatch => 11, Self::PreserveGpuOnly => 12, Self::CapacityUnavailable => 13 }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PageIdentity {
@@ -91,12 +103,13 @@ pub struct SharedMemory {
     /// Per slot: the frame its block was last used in.
     last_used: Vec<u32>,
     frame: u32,
-    warned_pinned: bool,
+    reserved: PageSet,
     stats: MirrorStats,
     /// Write version (or content hash) of each uploaded page, by page number.
     pages: Vec<Option<PageIdentity>>,
     /// Pages read by draws of the batch being recorded.
     batch: PageSet,
+    batch_epoch: u64,
     /// Pages the GPU wrote (resolves stored into the buffers) after their CPU content, identified
     /// in `pages`, was uploaded: the buffers hold their current data and guest memory is stale.
     /// A page leaves the set when the CPU rewrites it (its identity changes).
@@ -180,6 +193,64 @@ fn hash_page(data: &[u8]) -> u64 {
 }
 
 impl SharedMemory {
+    /// Pins the complete draw working set across preparation flushes.
+    /// This does not change the table or destroy a mapped block.
+    pub fn reserve_draw(&mut self, ranges: &[(u32, u32)]) -> Result<(), Conflict> {
+        self.reserved.clear();
+        let mut count = 0;
+        for &(addr, len) in ranges {
+            if len == 0 || u64::from(addr) >= PHYSICAL_SIZE { continue; }
+            let end = (u64::from(addr) + u64::from(len)).min(PHYSICAL_SIZE);
+            for block in addr / BLOCK..=((end - 1) / u64::from(BLOCK)) as u32 {
+                if !self.reserved.contains(block) { self.reserved.insert(block); count += 1; }
+            }
+        }
+        if count > self.max_chunks * SLOTS_PER_CHUNK {
+            self.reserved.clear();
+            return Err(Conflict::CapacityUnavailable);
+        }
+        Ok(())
+    }
+
+    pub fn release_draw(&mut self) { self.reserved.clear(); }
+
+    pub(crate) fn batch_epoch(&self) -> u64 { self.batch_epoch }
+
+    /// Protects the already captured GPU snapshot in the batch that will read it.
+    /// Preparation may submit earlier work and clear `batch` after sync(). The
+    /// draw reservation keeps its mappings alive, but does not protect their
+    /// contents once released. Re-arm the page hazards immediately before the
+    /// draw is recorded, without re-reading newer CPU bytes over that snapshot.
+    pub fn protect_draw_snapshot(&mut self, ranges: &[(u32, u32)]) -> Result<(), Conflict> {
+        for &(addr, len) in ranges {
+            let end = (u64::from(addr) + u64::from(len)).min(PHYSICAL_SIZE);
+            let mut page = u64::from(addr & !(PAGE - 1));
+            if len == 0 || page >= PHYSICAL_SIZE { continue; }
+            while page < end {
+                let p = (page / u64::from(PAGE)) as u32;
+                if self.pages[p as usize].is_none() || self.slot_of[(page / u64::from(BLOCK)) as usize] == 0 {
+                    return Err(Conflict::CapacityUnavailable);
+                }
+                self.batch.insert(p);
+                page += u64::from(PAGE);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn any_gpu_current(&mut self, memory: &dyn PhysicalMemory, ranges: &[(u32, u32)]) -> bool {
+        for &(addr, len) in ranges {
+            let end = (u64::from(addr) + u64::from(len)).min(PHYSICAL_SIZE);
+            let mut page = u64::from(addr & !(PAGE - 1));
+            while page < end {
+                let p = page as u32;
+                if self.gpu_pages.contains(p / PAGE)
+                    && self.pages[(p / PAGE) as usize] == Some(Self::identify(memory, p, &mut self.scratch)) { return true; }
+                page += u64::from(PAGE);
+            }
+        }
+        false
+    }
     /// Identifies page `p`'s current contents (`scratch` is clobbered).
     fn identify(memory: &dyn PhysicalMemory, p: u32, scratch: &mut [u8]) -> PageIdentity {
         if let Some(version) = memory.version(p, PAGE) {
@@ -230,10 +301,11 @@ impl SharedMemory {
             owner: vec![0; SLOTS as usize],
             last_used: vec![0; SLOTS as usize],
             frame: 1,
-            warned_pinned: false,
+            reserved: PageSet::new(),
             stats: MirrorStats::default(),
             pages: vec![None; PAGES as usize],
             batch: PageSet::new(),
+            batch_epoch: 0,
             gpu_pages: PageSet::new(),
             scratch: vec![0; PAGE as usize],
             changed: Vec::new(),
@@ -353,7 +425,7 @@ impl SharedMemory {
         let mut batch_held = false;
         for slot in 0..used {
             let block = self.owner[slot as usize] - 1;
-            if keep.contains(&block) {
+            if keep.contains(&block) || self.reserved.contains(block) {
                 continue;
             }
             let (in_batch, pinned) = self.block_busy(block);
@@ -371,17 +443,10 @@ impl SharedMemory {
         if best.is_none() && batch_held {
             // Submitting the batch frees its blocks.
             self.stats.slot_conflicts += 1;
-            return Err(Conflict);
+            return Err(Conflict::SlotsInBatch);
         }
-        let Some((slot, _)) = best.or_else(|| {
-            // Only resolve output is left: dropping it loses data the GPU produced.
-            if !self.warned_pinned {
-                self.warned_pinned = true;
-                log::warn!("shared memory: slots full of resolve output; dropping some");
-            }
-            best_pinned
-        }) else {
-            return Ok(None);
+        let Some((slot, _)) = best else {
+            return Err(if best_pinned.is_some() { Conflict::PreserveGpuOnly } else { Conflict::CapacityUnavailable });
         };
         self.evict(device, slot);
         Ok(Some(slot))
@@ -434,7 +499,7 @@ impl SharedMemory {
                             self.owner[slot as usize] = b + k + 1;
                             *changed = true;
                         }
-                        None => log::warn!("shared memory: no slot for block {:#010X}", (b + k) * BLOCK),
+                        None => return Err(Conflict::CapacityUnavailable),
                     }
                 }
             }
@@ -462,7 +527,7 @@ impl SharedMemory {
             let hash = Self::identify(memory, p, &mut self.scratch);
             if self.pages[(p / PAGE) as usize] != Some(hash) {
                 if self.batch.contains(p / PAGE) {
-                    return Err(Conflict);
+                    return Err(Conflict::PageWritten);
                 }
                 self.changed.push((p, hash));
             }
@@ -593,6 +658,7 @@ impl SharedMemory {
     /// The recorded batch was submitted.
     pub fn end_batch(&mut self) {
         self.batch.clear();
+        self.batch_epoch = self.batch_epoch.wrapping_add(1);
     }
 
     /// Forgets what was uploaded for `[addr, addr + len)` (it changed behind our back, e.g. a

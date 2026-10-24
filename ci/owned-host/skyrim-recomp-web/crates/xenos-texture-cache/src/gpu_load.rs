@@ -20,6 +20,9 @@ pub trait GpuSource {
     /// loaded from it (only what changed since it was last brought up to date is uploaded,
     /// rather than the whole texture). `false` if that isn't possible right now.
     fn sync(&mut self, ranges: &[GuestRange]) -> bool;
+    /// Whether CPU fallback can read a current copy. Mixed GPU ownership is
+    /// not equivalent to covers=false. Default sources keep their prior contract.
+    fn cpu_read_allowed(&mut self, _ranges: &[GuestRange]) -> bool { true }
     /// Encodes copies of physical bytes `[address, address + len)` (both multiples of 4) of the
     /// GPU copy into `dst` at `dst_offset`. `false` (with nothing encoded) if part of the range
     /// isn't mirrored.

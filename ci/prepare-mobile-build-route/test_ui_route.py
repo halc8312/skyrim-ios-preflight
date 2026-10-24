@@ -245,10 +245,16 @@ class PublicUIRouteTests(unittest.TestCase):
         self.assertEqual(job["macos"], before["jobs"]["public_device_build"]["macos"])
         self.assertEqual(job["macos"]["xcode"], "26.6.0")
         self.assertEqual(job["resource_class"], "m4pro.medium")
-        self.assertEqual(job["steps"][-1]["store_artifacts"]["path"], "out/owned-host")
+        self.assertEqual(job["steps"][-2]["store_artifacts"]["path"], "out/owned-host")
+        self.assertEqual(job["steps"][-1]["store_artifacts"],
+                         dict(path="out/public-review", destination="public-review-download"))
         command = job["steps"][1]["run"]["command"]
         self.assertEqual(command.count("prepare_ui_route.py prepare"), 1)
         self.assertEqual(command.count("prepare_ui_route.py recheck"), 1)
+        self.assertEqual(command.count("shutil.make_archive"), 1)
+        self.assertIn("ci/run-bounded-command.py 120 python3", command)
+        self.assertIn('"out/public-review"', command)
+        self.assertLess(command.index("prepare_ui_route.py recheck"), command.index("shutil.make_archive"))
         self.assertIn('bash "$route/preflight.sh"', command)
 
 

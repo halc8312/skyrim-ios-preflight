@@ -38,6 +38,14 @@ pub enum AudioEvent<'a> {
     Deactivated { client: usize, generation: u64 },
 }
 pub type AudioObserver = Arc<dyn for<'a> Fn(AudioEvent<'a>) + Send + Sync>;
+
+/// Diagnostic-only worker phases. No sample or guest address crosses this API.
+pub enum AudioWorkEvent {
+    Begin(Instant),
+    Drained { at: Instant, empty_periods: u64, frames: u64 },
+    End(Instant),
+}
+pub type AudioWorkObserver = Arc<dyn Fn(AudioWorkEvent) + Send + Sync>;
 type PlayedFrame = (usize, u64, Box<[f32; FRAME_SAMPLES]>);
 
 /// Driver handle given to the title (Xenia's encoding).
@@ -61,10 +69,12 @@ pub struct AudioSystem {
     worker: Once,
     output: OnceLock<AudioOutput>,
     observer: OnceLock<AudioObserver>,
+    work_observer: OnceLock<AudioWorkObserver>,
     next_generation: AtomicU64,
 }
 
 impl AudioSystem {
+    pub fn set_work_observer(&self, observer: AudioWorkObserver) -> bool { self.work_observer.set(observer).is_ok() }
     /// Installs the host's output (once; later calls are ignored).
     pub fn set_output(&self, output: AudioOutput) {
         let _ = self.output.set(output);
@@ -141,8 +151,13 @@ impl AudioSystem {
         false
     }
 
+    #[cfg(test)]
     fn drain_period(&self, finished: &mut Vec<PlayedFrame>) {
         let mut clients = self.clients.lock().unwrap();
+        Self::drain_locked(&mut clients, finished);
+    }
+
+    fn drain_locked(clients: &mut [Option<Client>; MAX_CLIENTS], finished: &mut Vec<PlayedFrame>) {
         for (index, client) in clients.iter_mut().enumerate() {
             if let Some(client) = client
                 && let Some(frame) = client.pending.pop_front()
@@ -150,6 +165,26 @@ impl AudioSystem {
                 client.queued -= 1;
                 finished.push((index, client.generation, frame));
             }
+        }
+    }
+
+    /// Catch up to this iteration's fixed clock. Empty periods linearize with
+    /// enqueue under the same mutex and preserve the original period phase.
+    fn drain_due(&self, played_until: &mut Instant, now: Instant, finished: &mut Vec<PlayedFrame>) -> u64 {
+        loop {
+            let Some(late) = now.checked_duration_since(*played_until) else { return 0 };
+            if late < FRAME_PERIOD { return 0; }
+            let mut clients = self.clients.lock().unwrap();
+            if clients.iter().flatten().all(|client| client.pending.is_empty()) {
+                let periods = late.as_nanos() / FRAME_PERIOD.as_nanos();
+                // Subtracting the remainder avoids multiplying an enormous
+                // period count after suspension, and never changes the phase.
+                let remainder = Duration::from_nanos((late.as_nanos() % FRAME_PERIOD.as_nanos()) as u64);
+                *played_until = now.checked_sub(remainder).expect("remainder is within the elapsed interval");
+                return u64::try_from(periods).unwrap_or(u64::MAX);
+            }
+            *played_until = played_until.checked_add(FRAME_PERIOD).expect("period fits before now");
+            Self::drain_locked(&mut clients, finished);
         }
     }
 
@@ -212,12 +247,15 @@ fn audio_worker_main(k: &'static Kernel, ctx: &mut PPCContext) {
     loop {
         // Play frames that are due, one per period, freeing queue slots.
         let now = Instant::now();
+        let work_observer = k.audio.work_observer.get();
+        if let Some(observer) = work_observer { observer(AudioWorkEvent::Begin(now)); }
         let mut finished: Vec<PlayedFrame> = Vec::new();
-        while played_until + FRAME_PERIOD <= now {
-            played_until += FRAME_PERIOD;
-            k.audio.drain_period(&mut finished);
+        let empty_periods = k.audio.drain_due(&mut played_until, now, &mut finished);
+        if let Some(observer) = work_observer {
+            observer(AudioWorkEvent::Drained { at: Instant::now(), empty_periods, frames: finished.len() as u64 });
         }
         k.audio.deliver(&finished);
+        if let Some(observer) = work_observer { observer(AudioWorkEvent::End(Instant::now())); }
 
         // Ask the most overdue client with room for another frame.
         let due = {
@@ -252,6 +290,50 @@ fn audio_worker_main(k: &'static Kernel, ctx: &mut PPCContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_catchup_preserves_phase_and_enqueue_after_skip_is_not_lost() {
+        let audio = AudioSystem::default();
+        let start = Instant::now();
+        let mut played = start;
+        let now = start + Duration::from_secs(86_400) + Duration::from_nanos(127);
+        let mut finished = Vec::new();
+        let expected = now.duration_since(start).as_nanos() / FRAME_PERIOD.as_nanos();
+        assert_eq!(audio.drain_due(&mut played, now, &mut finished), expected as u64);
+        assert_eq!(played.duration_since(start).as_nanos() % FRAME_PERIOD.as_nanos(), 0);
+        assert!(now.duration_since(played) < FRAME_PERIOD && finished.is_empty());
+        assert_eq!(audio.insert_client(1, 2, now), Some(0));
+        assert!(audio.queue_frame(0, 1, Box::new([0.25; FRAME_SAMPLES])));
+        let next = played + FRAME_PERIOD;
+        audio.drain_due(&mut played, next, &mut finished);
+        assert_eq!(finished.len(), 1);
+        assert_eq!((finished[0].0, finished[0].1, finished[0].2[0]), (0, 1, 0.25));
+    }
+
+    #[test]
+    fn catchup_keeps_period_major_order_and_only_skips_empty_tail() {
+        let audio = AudioSystem::default();
+        let start = Instant::now();
+        assert_eq!(audio.insert_client(1, 2, start), Some(0));
+        assert_eq!(audio.insert_client(3, 4, start), Some(1));
+        for value in [1.0, 2.0] {
+            assert!(audio.queue_frame(0, 1, Box::new([value; FRAME_SAMPLES])));
+        }
+        for value in [3.0, 4.0, 5.0] {
+            assert!(audio.queue_frame(1, 2, Box::new([value; FRAME_SAMPLES])));
+        }
+        let now = start + FRAME_PERIOD * 37 + Duration::from_nanos(17);
+        let mut played = start;
+        let mut finished = Vec::new();
+        assert_eq!(audio.drain_due(&mut played, now, &mut finished), 34);
+        let sequence: Vec<_> = finished.iter().map(|(client, generation, frame)| (*client, *generation, frame[0])).collect();
+        assert_eq!(sequence, [(0, 1, 1.0), (1, 2, 3.0), (0, 1, 2.0), (1, 2, 4.0), (1, 2, 5.0)]);
+        assert_eq!(played, start + FRAME_PERIOD * 37);
+        assert!(audio.clients.lock().unwrap().iter().flatten().all(|c| c.queued == 0));
+        audio.remove_client(0);
+        assert_eq!(audio.insert_client(5, 6, now), Some(0));
+        assert!(!audio.queue_frame(0, 1, Box::new([9.0; FRAME_SAMPLES])));
+    }
 
     #[test]
     fn driver_handles_round_trip() {

@@ -1,0 +1,35 @@
+# CANDIDATE ONLY. Requires later approval for a paid build; no plan change.
+# Supply SKYRT_REVIEWED_SOURCE_COMMIT as a non-secret manual build variable.
+# It must be the independently reviewed exact commit selected for this build.
+workflows:
+  ios-prepare-fix-device-build-only:
+    name: iOS public-source device build only
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: "26.6"
+    # No triggering events. Existing full-verification workflows stay unchanged.
+    scripts:
+      - name: Build pinned public host only and retain honest scope evidence
+        script: |
+          set -euo pipefail
+          cd "${CM_BUILD_DIR:?Missing CI checkout}"
+          : "${SKYRT_REVIEWED_SOURCE_COMMIT:?Supply independently reviewed source commit}"
+          [[ "$SKYRT_REVIEWED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$SKYRT_REVIEWED_SOURCE_COMMIT" = "${CM_COMMIT:?Missing CI commit}"
+          route_parent="$(mktemp -d "${TMPDIR:-/tmp}/owned-build-only-route.XXXXXX")"
+          route="$route_parent/derived"
+          python3 ci/prepare-fix-build-route/prepare_route.py prepare \
+            --repo "$CM_BUILD_DIR" --source-commit "$SKYRT_REVIEWED_SOURCE_COMMIT" --output "$route"
+          SKYRT_OWNED_HOST_SCOPE='' python3 ci/run-bounded-command.py 1500 bash "$route/preflight.sh"
+          python3 ci/prepare-fix-build-route/prepare_route.py verify \
+            --repo "$CM_BUILD_DIR" --source-commit "$SKYRT_REVIEWED_SOURCE_COMMIT" --output "$route"
+    artifacts:
+      - out/owned-host/*.ipa
+      - out/owned-host/*.json
+      - out/owned-host/*.log
+      - out/owned-host/*.txt
+      - out/owned-host/gpu-framework/*.json
+      - out/owned-host/gpu-framework/*.txt
+      - out/owned-host/gpu-framework/*-export-policy/*.json
+      - out/owned-host/gpu-framework/*-export-policy/*.txt

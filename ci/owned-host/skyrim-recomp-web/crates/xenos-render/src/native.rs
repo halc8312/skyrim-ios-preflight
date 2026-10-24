@@ -8,6 +8,8 @@ use std::time::Duration;
 
 use gpu_webgpu::*;
 
+#[path = "native_frame_stability.rs"]
+mod frame_stability;
 #[path = "native_performance.rs"]
 mod performance;
 pub use performance::NativePerformanceSnapshot;
@@ -90,16 +92,20 @@ impl Window {
 
 /// The window's surface and how it is configured.
 struct Presentation {
+    causal: Option<Arc<crate::causal::Session>>,
     window: Window,
     surface: Surface,
     format: TextureFormat,
     present_mode: PresentMode,
     configured: (u32, u32),
     max_dimension: u32,
+    configures: u64,
 }
 
 impl Presentation {
     fn configure(&mut self, device: &Device, settings: PresentationSettings) {
+        let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::Configure);
+        self.configures = self.configures.saturating_add(1);
         let (width, height) = self.window.size();
         let size = settings.output_size(width, height, self.max_dimension);
         self.configured = (size.0.max(1), size.1.max(1));
@@ -132,11 +138,18 @@ impl Presentation {
         if size != self.configured {
             self.configure(device, settings);
         }
-        let frame = match self.surface.current_frame() {
+        let acquired = {
+            let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::Acquire);
+            self.surface.current_frame()
+        };
+        let frame = match acquired {
             Ok(frame) => frame,
-            Err(Error::SurfaceStatus(_)) => {
-                // Outdated or lost (e.g. mid-resize): reconfigure and show the next frame.
-                self.configure(device, settings);
+            Err(Error::SurfaceStatus(status)) => {
+                // A temporary timeout does not invalidate the configuration.
+                // Reconfiguration itself may wait for GPU work to retire.
+                if surface_needs_reconfigure(status) {
+                    self.configure(device, settings);
+                }
                 return false;
             }
             Err(e) => {
@@ -146,10 +159,43 @@ impl Presentation {
         };
         let view = frame.texture.create_view(None);
         let mut encoder = device.create_command_encoder("present");
-        presenter.encode(&mut encoder, &view, self.configured.0, self.configured.1);
-        device.queue().submit([encoder.finish("present")]);
-        frame.present();
-        true
+        {
+            let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::PresentEncode);
+            presenter.encode(&mut encoder, &view, self.configured.0, self.configured.1);
+        }
+        {
+            let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::PresentSubmit);
+            device.queue().submit([encoder.finish("present")]);
+        }
+        let result = {
+            let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::PresentCall);
+            frame.present()
+        };
+        match result {
+            Ok(()) => true,
+            Err(error) => {
+                log::warn!("renderer: presenting window frame failed: {error}");
+                false
+            }
+        }
+    }
+}
+
+fn surface_needs_reconfigure(status: gpu_webgpu::ffi::WGPUSurfaceGetCurrentTextureStatus) -> bool {
+    use gpu_webgpu::ffi::WGPUSurfaceGetCurrentTextureStatus as Status;
+    matches!(status, Status::Outdated | Status::Lost)
+}
+
+#[cfg(test)]
+mod surface_recovery_tests {
+    use super::*;
+    use gpu_webgpu::ffi::WGPUSurfaceGetCurrentTextureStatus as Status;
+    #[test]
+    fn only_lost_or_outdated_acquisition_forces_reconfiguration() {
+        for status in [Status::Outdated, Status::Lost] { assert!(surface_needs_reconfigure(status)); }
+        for status in [Status::Timeout, Status::Error, Status::SuccessOptimal, Status::SuccessSuboptimal, Status(99)] {
+            assert!(!surface_needs_reconfigure(status));
+        }
     }
 }
 
@@ -171,6 +217,7 @@ pub struct NativeDiagnostics(Arc<NativeProgress>);
 
 #[derive(Default)]
 struct NativeProgress {
+    causal: crate::causal::Control,
     performance: performance::PerformanceStore,
     settings: SettingsControl,
     applied_settings: SettingsControl,
@@ -208,6 +255,12 @@ pub struct NativeSnapshot {
 }
 
 impl NativeDiagnostics {
+    pub fn begin_causal_session(&self, id: u64, origin: std::time::Instant) -> bool {
+        self.0.causal.start(id, origin)
+    }
+
+    pub fn causal_session(&self) -> Option<Arc<crate::causal::Session>> { self.0.causal.session() }
+
     /// Latest completed five-second report, with explicit age/staleness. Missing,
     /// contended or poisoned storage returns None; never waits for the renderer.
     pub fn performance_snapshot(&self) -> Option<NativePerformanceSnapshot> {
@@ -361,6 +414,7 @@ fn spawn_renderer(
                 let _ = tx.send(Err(error.clone()));
             }
             log::error!("renderer stopped: {error}");
+            renderer.fail(1);
         }
         renderer.close();
         progress.0.stopped.store(true, Ordering::Release);
@@ -459,12 +513,14 @@ fn run(
             };
             log::info!("renderer: presenting in a window as {format:?}, {present_mode:?}");
             let mut p = Presentation {
+                causal: None,
                 window: window.clone(),
                 surface,
                 format,
                 present_mode,
                 configured: (0, 0),
                 max_dimension: device.limits().maxTextureDimension2D,
+                configures: 0,
             };
             p.configure(&device, PresentationSettings::default());
             Some(p)
@@ -516,20 +572,31 @@ fn run(
     let mut report_draws = renderer.executor.stats.draws;
     let mut last_decoded_frame = 0;
     let mut presentation_admission = PresentAdmission::default();
+    let mut frame_stability = frame_stability::FrameStability::default();
+    let mut source_cursor = 0;
+    let mut iteration_max_ms = 0u64;
 
     loop {
         if diagnostics.0.cancelled.load(Ordering::Acquire) {
             return Ok(());
         }
-        instance.process_events();
+        if renderer.executor.causal.is_none() {
+            renderer.executor.causal = diagnostics.causal_session();
+        }
+        {
+            let _phase = crate::causal::Guard::enter(&renderer.executor.causal, crate::causal::Stage::Poll);
+            instance.process_events();
+        }
         let started = std::time::Instant::now();
         let before = handle.completed();
         renderer.pump(handle, Some(Duration::from_millis(5)), None, |r, size| {
             let swap = diagnostics.0.swap_requests.fetch_add(1, Ordering::Release) + 1;
             let Some((w, h)) = size else {
                 diagnostics.0.unrendered_swaps.fetch_add(1, Ordering::Release);
+                frame_stability.swap(presentation_clock.elapsed());
                 return;
             };
+            let mut swap_finished = None;
             diagnostics.0.source_size.store(Window::pack_size(w, h), Ordering::Release);
             if r.presenter.frames != last_decoded_frame {
                 diagnostics.0.decoded_frames.fetch_add(1, Ordering::Release);
@@ -544,7 +611,17 @@ fn run(
                 r.presenter.set_output_options(&r.device, requested.settings, format);
                 diagnostics.0.applied_settings.applied(requested);
                 if presentation_admission.admit(presentation_clock.elapsed(), requested.settings.frame_limit()) {
-                    if p.present(&r.device, &r.presenter, requested.settings) {
+                    if p.causal.is_none() { p.causal = r.executor.causal.clone(); }
+                    let present_started = std::time::Instant::now();
+                    let success = p.present(&r.device, &r.presenter, requested.settings);
+                    let present_finished = std::time::Instant::now();
+                    frame_stability.present(
+                        present_started.duration_since(presentation_clock),
+                        present_finished.duration_since(presentation_clock),
+                        success,
+                    );
+                    swap_finished = Some(present_finished);
+                    if success {
                         diagnostics.0.presented_frames.fetch_add(1, Ordering::Release);
                         diagnostics
                             .0
@@ -559,7 +636,9 @@ fn run(
                 r.presenter.set_output_options(&r.device, requested.settings, format);
                 diagnostics.0.applied_settings.applied(requested);
             }
-            presents.push(std::time::Instant::now());
+            let swap_finished = swap_finished.unwrap_or_else(std::time::Instant::now);
+            frame_stability.swap(swap_finished.duration_since(presentation_clock));
+            presents.push(swap_finished);
             let Some(dir) = &options.dump_dir else { return };
             if format != TextureFormat::RGBA8Unorm {
                 return;
@@ -588,6 +667,14 @@ fn run(
             }
             offscreen = Some(target);
         });
+        // Reuse the enqueue/dequeue timestamps already collected by Renderer;
+        // keep these distinct from callback and native-present completion gaps.
+        for (submitted, queue_wait) in renderer.swap_timings.iter().skip(source_cursor) {
+            if let Some(enqueued) = submitted.checked_duration_since(presentation_clock) {
+                frame_stability.source(enqueued, *queue_wait);
+            }
+        }
+        source_cursor = renderer.swap_timings.len();
         let errors = device.take_errors();
         diagnostics.0.gpu_errors.fetch_add(errors.len() as u64, Ordering::Release);
         let had_errors = !errors.is_empty();
@@ -602,9 +689,15 @@ fn run(
         {
             return Err(Error::Invalid("checked renderer encountered a GPU, device-loss or PNG error".into()));
         }
+        if let Some(reason) = renderer.executor.failure {
+            if let Some(session) = &renderer.executor.causal { session.fail(reason); }
+            return Err(Error::Invalid(format!("renderer memory contract failed ({reason})")));
+        }
         // Time spent executing commands (not waiting for the title to submit some).
+        let iteration_elapsed = started.elapsed();
+        iteration_max_ms = iteration_max_ms.max(iteration_elapsed.as_millis().try_into().unwrap_or(u64::MAX));
         if handle.completed() != before || renderer.backlog_len() > 0 {
-            busy += started.elapsed();
+            busy += iteration_elapsed;
         }
         let window = report_at.elapsed();
         if window >= Duration::from_secs(5) {
@@ -617,6 +710,8 @@ fn run(
                 &mut renderer.swap_timings,
                 log::log_enabled!(log::Level::Info),
             );
+            source_cursor = 0;
+            let frame_window = frame_stability.finish_window();
             if let Some(pacing) = pacing {
                 log::info!(
                     "perf: {fps:.1} guest swaps/s, {} draws/frame; renderer busy {:.0}%; {}",
@@ -637,6 +732,9 @@ fn run(
                         busy,
                         draws_before: report_draws,
                         presentable_swaps: frames,
+                        frame_stability: frame_window,
+                        iteration_max_ms,
+                        surface_configures: presentation.as_ref().map_or(0, |p| p.configures),
                     },
                     renderer.executor.stats,
                     renderer.executor.texture_stats(),

@@ -2,6 +2,7 @@
 //! context layout, clocks, kernel structure layouts and the thread model.
 
 pub mod address_space;
+pub mod alias_diagnostics;
 pub mod context;
 pub mod dirty;
 pub mod guest;

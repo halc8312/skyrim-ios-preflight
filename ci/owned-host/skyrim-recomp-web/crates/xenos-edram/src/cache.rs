@@ -550,9 +550,9 @@ enum Held {
 }
 
 /// Bind groups by layout and resources (see `cached_bind_group`).
-type GroupCache = HashMap<Vec<u64>, (BindGroup, Vec<Held>)>;
+type GroupCache = gpu_webgpu::bounded_cache::BoundedCache<Vec<u64>, (BindGroup, Vec<Held>)>;
 
-/// Bind groups cached at most (the cache is cleared when full).
+/// Bind groups cached at most; only the least recently used reference is retired.
 const MAX_CACHED_GROUPS: usize = 2048;
 
 fn uniform(arena: &RefCell<ParamsArena>, device: &Device, words: &[u32]) -> Params {
@@ -643,9 +643,6 @@ fn cached_bind_group(
     if let Some((group, _)) = cache.get(&key) {
         return group.clone();
     }
-    if cache.len() >= MAX_CACHED_GROUPS {
-        cache.clear();
-    }
     let group = device.create_bind_group(label, layout, entries);
     let held = entries
         .iter()
@@ -711,7 +708,7 @@ impl EdramCache {
                 pending: Vec::new(),
                 pending_start: 0,
             }),
-            groups: RefCell::new(HashMap::new()),
+            groups: RefCell::new(GroupCache::new(MAX_CACHED_GROUPS)),
         }
     }
 

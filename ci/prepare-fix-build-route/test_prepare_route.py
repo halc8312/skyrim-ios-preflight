@@ -113,7 +113,9 @@ class PreparationTests(unittest.TestCase):
                     route.prepare(repo, COMMIT, output, pins)
 
     def test_workflow_is_manual_standard_bounded_and_unsigned(self):
-        text = Path(__file__).with_name("ios-prepare-fix-build-only.yml").read_text()
+        # Archived candidates are fixtures, not active workflows or quota advice.
+        fixtures = Path(__file__).parent / "testdata"
+        text = (fixtures / "ios-prepare-fix-build-only.yml").read_text()
         self.assertIn("workflow_dispatch:", text)
         self.assertIn("runs-on: macos-26\n", text)
         self.assertIn("timeout-minutes: 30", text)
@@ -124,7 +126,7 @@ class PreparationTests(unittest.TestCase):
         self.assertNotIn("secrets.", text)
         self.assertNotIn("-xlarge", text)
         self.assertNotIn("-large", text)
-        codemagic = Path(__file__).with_name("codemagic-build-only.fragment.yaml").read_text()
+        codemagic = (fixtures / "codemagic-build-only.fragment.yaml").read_text()
         self.assertIn("instance_type: mac_mini_m2", codemagic)
         self.assertIn("max_build_duration: 30", codemagic)
         self.assertIn("SKYRT_REVIEWED_SOURCE_COMMIT", codemagic)

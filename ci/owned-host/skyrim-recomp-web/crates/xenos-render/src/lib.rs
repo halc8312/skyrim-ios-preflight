@@ -9,7 +9,11 @@
 //! The renderer reads guest memory (front buffers, vertex data, textures) itself through
 //! [`PhysicalMemory`], at physical addresses as the GPU sees them.
 
+#[cfg(test)]
+extern crate self as xenos_render;
+
 mod constant_patch;
+pub mod causal;
 #[cfg(feature = "cpu-profile")]
 pub mod cpu_profile;
 mod d3d;
@@ -41,7 +45,7 @@ use std::sync::Arc;
 
 pub use xenos_shader::ShaderStage;
 
-pub use queue::RendererHandle;
+pub use queue::{RendererHandle, WaitError};
 pub use renderer::{TargetsFactory, wanted_features};
 pub use shared_memory::{MirrorStats, default_mirror_limit, set_mirror_limit};
 

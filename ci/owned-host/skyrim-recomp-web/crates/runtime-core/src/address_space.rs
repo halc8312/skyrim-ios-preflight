@@ -399,6 +399,173 @@ impl AddressSpace {
         result
     }
 
+    /// Diagnostic observation only: the HLE MmGetPhysicalAddress entry identifies the origin.
+    /// No current allocator/mapping result is changed. Busy/poisoned observations are counted.
+    pub fn observe_xex_physical_query(&self, addr: u32) {
+        use crate::alias_diagnostics::{self as diag, Counter};
+        if !diag::enabled() || region_of(addr) != Region::Xex {
+            return;
+        }
+        diag::count(Counter::XexOriginQuery);
+        if let Some((physical, xex)) = self.alias_commit_observation(addr & (map::PHYSICAL_SIZE - 1)) {
+            if !xex {
+                diag::count(Counter::XexOriginUncommitted);
+            }
+            if physical && xex {
+                diag::count(Counter::OverlapObservation);
+            }
+        }
+    }
+
+    /// Renderer-only observed translation. The baseline result is computed FIRST and retained.
+    /// A subsequent coherent pair of allocator states may differ; such disagreement is explicit.
+    pub fn translate_physical_for_gpu(&self, phys: u32, access: crate::alias_diagnostics::Access) -> Option<u32> {
+        use crate::alias_diagnostics::{self as diag, Access, Counter};
+        let selected = self.translate_physical(phys);
+        if !diag::enabled() {
+            return selected;
+        }
+        diag::count(match access {
+            Access::Read => Counter::RendererReadPage,
+            Access::Write => Counter::RendererWritePage,
+        });
+        let write_xex_counter = matches!(access, Access::Write).then_some(Counter::RendererWriteTranslationSelectedXex);
+        self.observe_physical_selection(phys, selected, write_xex_counter);
+        selected
+    }
+
+    /// CP-side observed translation, for both reads and writes. The result is retained before
+    /// the later allocator observation, exactly as for renderer translations. CP observations
+    /// contribute to generic selection/history and CP write-intent counters, never renderer counters.
+    /// This observes the translated starting page, not every byte/page in a subsequent range or
+    /// every later use of a cached translation. No ownership or stable backing lease is implied.
+    pub fn translate_physical_for_cp(&self, phys: u32, access: crate::alias_diagnostics::Access) -> Option<u32> {
+        let selected = self.translate_physical(phys);
+        if crate::alias_diagnostics::enabled() {
+            let write_xex_counter = matches!(access, crate::alias_diagnostics::Access::Write)
+                .then_some(crate::alias_diagnostics::Counter::CpWriteTranslationSelectedXex);
+            self.observe_physical_selection(phys, selected, write_xex_counter);
+        }
+        selected
+    }
+
+    fn observe_physical_selection(
+        &self,
+        phys: u32,
+        selected: Option<u32>,
+        write_xex_counter: Option<crate::alias_diagnostics::Counter>,
+    ) {
+        use crate::alias_diagnostics::{self as diag, Counter};
+        let p = phys & (map::PHYSICAL_SIZE - 1);
+        let class = match selected {
+            Some(a) if a == map::PHYSICAL_BASE + p => 1,
+            Some(_) => 2,
+            None => 0,
+        };
+        diag::count(match class {
+            1 => Counter::SelectedPhysical,
+            2 => Counter::SelectedXex,
+            _ => Counter::SelectedUnmapped,
+        });
+        // Classify the retained original result before optional heap/record probes. This
+        // counts a translated write intent, never successful/completed memory writes.
+        if class == 2 {
+            if let Some(counter) = write_xex_counter {
+                diag::count(counter);
+            }
+        }
+        if let Some((physical, xex)) = self.alias_commit_observation(p) {
+            let expected = if physical {
+                1
+            } else if xex {
+                2
+            } else {
+                0
+            };
+            if class != expected {
+                diag::count(Counter::SelectionSnapshotMismatch);
+            }
+            let overlap = physical && xex;
+            if overlap {
+                diag::count(Counter::OverlapObservation);
+            }
+            diag::selection(p / PAGE_4K, class, overlap, xex || class == 2);
+        }
+    }
+
+    /// Both try-locks must succeed for a coherent point observation. No diagnostics mutex is
+    /// held while either heap lock is held, and no blocking lock/order dependency is added.
+    fn alias_commit_observation(&self, p: u32) -> Option<(bool, bool)> {
+        use crate::alias_diagnostics::{self as diag, Counter};
+        use std::sync::TryLockError;
+        let miss = |error| {
+            diag::count(match error {
+                TryLockError::WouldBlock => Counter::ProbeBusy,
+                TryLockError::Poisoned(_) => Counter::ProbePoisoned,
+            });
+        };
+        let physical = match self.physical.try_lock() {
+            Ok(h) => h,
+            Err(e) => {
+                miss(e);
+                return None;
+            }
+        };
+        let xex = match self.xex_heap.try_lock() {
+            Ok(h) => h,
+            Err(e) => {
+                miss(e);
+                return None;
+            }
+        };
+        Some((
+            physical.state_of(p) == Some(PageState::Committed),
+            xex.state_of(map::XEX_BASE + p) == Some(PageState::Committed),
+        ))
+    }
+
+    /// Explicit, bounded allocator scan, intended for a startup/final diagnostics worker, not
+    /// each draw. Both heap locks cover the entire scan; after return it is no ownership lease.
+    pub fn alias_overlap_snapshot(&self) -> crate::alias_diagnostics::OverlapScan {
+        use crate::alias_diagnostics::{self as diag, OverlapScan};
+        use std::sync::TryLockError;
+        let mut out = OverlapScan::default();
+        if !diag::enabled() {
+            return out;
+        }
+        let physical = match self.physical.try_lock() {
+            Ok(h) => h,
+            Err(e) => {
+                out.status = if matches!(e, TryLockError::WouldBlock) { 2 } else { 3 };
+                return out;
+            }
+        };
+        let xex = match self.xex_heap.try_lock() {
+            Ok(h) => h,
+            Err(e) => {
+                out.status = if matches!(e, TryLockError::WouldBlock) { 2 } else { 3 };
+                return out;
+            }
+        };
+        out.status = 1;
+        let mut start = None;
+        for page in 0..=(map::XEX_END - map::XEX_BASE) / PAGE_4K {
+            let overlaps = page < (map::XEX_END - map::XEX_BASE) / PAGE_4K
+                && physical.state_of(page * PAGE_4K) == Some(PageState::Committed)
+                && xex.state_of(map::XEX_BASE + page * PAGE_4K) == Some(PageState::Committed);
+            if page < (map::XEX_END - map::XEX_BASE) / PAGE_4K {
+                out.scanned_pages += 1;
+            }
+            if overlaps {
+                out.overlap_pages += 1;
+                start.get_or_insert(page);
+            } else if let Some(first_page) = start.take() {
+                out.add_range(first_page, page - first_page);
+            }
+        }
+        out
+    }
+
     // --- XEX region ---------------------------------------------------------------------
 
     /// Reserves and commits a fixed range in the XEX region (image, header copy).
@@ -490,7 +657,9 @@ impl AddressSpace {
         // The page's state only: `query` measures the whole run of like pages, which can be
         // most of a heap (the command processor asks for every buffer it reads).
         let state = match region_of(addr) {
-            Region::Virtual | Region::Stack | Region::Xex => self.with_page_heap(addr, |h| h.state_of(addr)).ok().flatten(),
+            Region::Virtual | Region::Stack | Region::Xex => {
+                self.with_page_heap(addr, |h| h.state_of(addr)).ok().flatten()
+            }
             Region::Physical(_) => self.physical_address(addr).and_then(|p| self.physical.lock().unwrap().state_of(p)),
             Region::System | Region::Mmio => Some(PageState::Committed),
             Region::HostReserved => None,
@@ -512,3 +681,60 @@ impl AddressSpace {
 #[cfg(test)]
 #[path = "address_space_order_tests.rs"]
 mod ordering_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+mod alias_write_heap_tests {
+    use super::*;
+    use crate::alias_diagnostics::{self as diag, Counter};
+    const CHILD: &str = "address_space::alias_write_heap_tests::retained_selection_busy_heap_fixture";
+    #[test]
+    fn write_counter_survives_later_busy_heap_probe() {
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", CHILD, "--nocapture"])
+            .env("SKYRT_PUBLIC_ALIAS_WRITE_HEAP_CHILD", "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("public heap fixture deadline");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "public heap fixture failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    }
+    #[test]
+    #[ignore = "fresh subprocess only: guest-memory translations and diagnostics are process-global"]
+    fn retained_selection_busy_heap_fixture() {
+        assert_eq!(std::env::var("SKYRT_PUBLIC_ALIAS_WRITE_HEAP_CHILD").as_deref(), Ok("1"));
+        let space = AddressSpace::new().unwrap();
+        space.alloc_xex(map::XEX_BASE, PAGE_4K).unwrap();
+        let selected = space.translate_physical(0);
+        assert_eq!(selected, Some(map::XEX_BASE));
+        assert!(diag::enable());
+        let guard = space.physical.lock().unwrap();
+        // The actual selection was retained before the deliberate later observation failure.
+        space.observe_physical_selection(0, selected, Some(Counter::CpWriteTranslationSelectedXex));
+        let s = diag::snapshot();
+        assert_eq!(s.counters[Counter::CpWriteTranslationSelectedXex as usize], 1);
+        assert_eq!(s.counters[Counter::ProbeBusy as usize], 1);
+        assert!(s.records.is_empty());
+        drop(guard);
+        // No write tag: the same XEX selection for a read cannot increment either write counter.
+        space.observe_physical_selection(0, selected, None);
+        let s = diag::snapshot();
+        assert_eq!(s.counters[Counter::CpWriteTranslationSelectedXex as usize], 1);
+        assert_eq!(s.counters[Counter::RendererWriteTranslationSelectedXex as usize], 0);
+    }
+}

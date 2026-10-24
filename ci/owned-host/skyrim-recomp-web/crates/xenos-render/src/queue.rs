@@ -16,6 +16,7 @@ struct State {
     completed: u64,
     /// The renderer is gone; nothing will complete any more.
     closed: bool,
+    failure: Option<u32>,
     /// The renderer is blocked in `take`, and how many threads are in `wait_idle`: wakeups are
     /// only sent to someone waiting (each is a futex wake, and on the web may wake a worker; a
     /// frame queues thousands of commands).
@@ -50,6 +51,21 @@ pub struct RendererHandle {
     shared: Arc<Shared>,
 }
 
+/// An interrupted wait never establishes completion of guest-visible effects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaitError {
+    Closed,
+    Failed(u32),
+}
+
+fn wait_result(state: &State, target: u64) -> Result<(), WaitError> {
+    if state.completed >= target {
+        Ok(())
+    } else {
+        Err(state.failure.map_or(WaitError::Closed, WaitError::Failed))
+    }
+}
+
 impl RendererHandle {
     pub fn new() -> Self {
         Self::default()
@@ -82,7 +98,7 @@ impl RendererHandle {
 
     /// Blocks until every command submitted so far has been processed (or the renderer has
     /// stopped).
-    pub fn wait_idle(&self) {
+    pub fn wait_idle(&self) -> Result<(), WaitError> {
         let mut s = self.shared.state.lock().unwrap();
         let target = s.submitted;
         s.idle_waiters += 1;
@@ -90,17 +106,19 @@ impl RendererHandle {
             s = self.shared.changed.wait(s).unwrap();
         }
         s.idle_waiters -= 1;
+        wait_result(&s, target)
     }
 
     /// Blocks until the command with sequence number `seq` has been processed (or the renderer
     /// has stopped).
-    pub fn wait_for(&self, seq: u64) {
+    pub fn wait_for(&self, seq: u64) -> Result<(), WaitError> {
         let mut s = self.shared.state.lock().unwrap();
         s.idle_waiters += 1;
         while s.completed < seq && !s.closed {
             s = self.shared.changed.wait(s).unwrap();
         }
         s.idle_waiters -= 1;
+        wait_result(&s, seq)
     }
 
     /// Renderer side: when the swap it is executing was submitted.
@@ -153,6 +171,9 @@ impl RendererHandle {
     /// Renderer side: everything up to `seq` is done.
     pub(crate) fn complete(&self, seq: u64) {
         let mut s = self.shared.state.lock().unwrap();
+        if s.closed {
+            return;
+        }
         s.completed = s.completed.max(seq);
         self.shared.completed.store(s.completed, Ordering::Release);
         let wake = s.idle_waiters > 0;
@@ -164,9 +185,22 @@ impl RendererHandle {
 
     /// Renderer side: the renderer stopped; release all waiters for good.
     pub(crate) fn close(&self) {
+        self.stop(None);
+    }
+
+    pub(crate) fn fail(&self, reason: u32) {
+        self.stop(Some(reason));
+    }
+
+    fn stop(&self, failure: Option<u32>) {
         let mut s = self.shared.state.lock().unwrap();
+        if s.closed {
+            return;
+        }
         s.closed = true;
+        s.failure = failure;
         s.pending.clear();
+        s.swaps.clear();
         drop(s);
         self.shared.changed.notify_all();
     }
@@ -192,7 +226,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
             renderer.complete(2);
         });
-        h.wait_idle();
+        h.wait_idle().unwrap();
         assert_eq!(h.completed(), 2);
         t.join().unwrap();
     }
@@ -203,10 +237,27 @@ mod tests {
         h.submit(swap());
         let renderer = h.clone();
         let t = std::thread::spawn(move || renderer.close());
-        h.wait_idle();
+        assert_eq!(h.wait_idle(), Err(WaitError::Closed));
         t.join().unwrap();
         // Submissions after closing are dropped and never block.
         h.submit(swap());
-        h.wait_idle();
+        assert_eq!(h.wait_idle(), Err(WaitError::Closed));
+    }
+
+    #[test]
+    fn failure_never_advances_the_successful_prefix_and_late_callbacks_are_ignored() {
+        let h = RendererHandle::new();
+        h.submit(swap());
+        h.submit(swap());
+        h.complete(1);
+        h.fail(7);
+        assert_eq!(h.wait_for(1), Ok(()));
+        assert_eq!(h.wait_for(2), Err(WaitError::Failed(7)));
+        assert_eq!(h.wait_idle(), Err(WaitError::Failed(7)));
+        h.complete(2);
+        h.close();
+        assert_eq!(h.completed(), 1);
+        assert_eq!(h.wait_for(2), Err(WaitError::Failed(7)));
+        assert!(h.take(None).is_empty());
     }
 }

@@ -14,6 +14,9 @@
 //!
 //! Interrupt callbacks run on those threads as DPCs, as on hardware. The packet
 //! semantics follow Xenia's command processor (src/xenia/gpu).
+//! Opt-in alias diagnostics observe each physical translation's starting page, including CP
+//! writes. They do not count every later access through a cached ring/writeback translation,
+//! cover every page of a multi-page transfer, or prove stable backing for that transfer.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -21,6 +24,7 @@ use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
 use runtime_core::PPCContext;
+use runtime_core::alias_diagnostics::Access;
 use runtime_core::layout::{PROCTYPE_TITLE, kpcr, kthread};
 use runtime_core::memory::GuestMemory;
 use runtime_core::thread::spawn_host_thread;
@@ -175,6 +179,13 @@ struct InterruptCallback {
     user_data: u32,
 }
 
+/// A stopped wait cannot authorize a CPU-visible effect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuWaitError {
+    Closed,
+    Failed(u32),
+}
+
 /// The renderer, fed by the command processor in stream order.
 pub trait GpuBackend: Send + Sync {
     /// Register writes `(index, value)` from the command stream, in order.
@@ -188,14 +199,14 @@ pub trait GpuBackend: Send + Sync {
     /// base address).
     fn swap(&self, fetch: [u32; 6], width: u32, height: u32);
     /// Blocks until everything sent so far has been executed, including writes to guest memory.
-    fn wait_idle(&self);
+    fn wait_idle(&self) -> Result<(), GpuWaitError>;
     /// `--gpu d3d`: a D3D call for the D3D-level renderer; returns its sequence number.
     fn d3d(&self, _cmd: d3d_hle::command::Command) -> u64 {
         0
     }
     /// Blocks until the command with sequence number `seq` has been executed.
-    fn wait_for(&self, _seq: u64) {
-        self.wait_idle();
+    fn wait_for(&self, _seq: u64) -> Result<(), GpuWaitError> {
+        self.wait_idle()
     }
     /// Sequence number of the last command sent, for effects deferred until the renderer has
     /// executed it (see [`GpuBackend::completed`]); `None`: such effects wait for the renderer.
@@ -369,7 +380,7 @@ impl Kernel {
     /// 2^(size_log2 + 3) bytes. Starts the command processor on first use.
     pub fn gpu_initialize_ring_buffer(&'static self, ptr: u32, size_log2: u32) {
         let mem = self.mem();
-        let Some(base) = self.rt.space.translate_physical(ptr) else {
+        let Some(base) = self.rt.space.translate_physical_for_cp(ptr, Access::Write) else {
             log::error!("VdInitializeRingBuffer: {ptr:#010X} is not GPU-visible memory");
             return;
         };
@@ -500,6 +511,7 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         deferred_count: 0,
         syncs: [0; 128],
         sync_wait: Duration::ZERO,
+        backend_failure: None,
         frame_draws: 0,
         full_frame_seen: false,
         d3d_marker: None,
@@ -526,7 +538,9 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         if ring.base == 0 || write_index == read_index {
             if !cp.deferred.is_empty() {
                 // Out of commands: the title may be waiting for one of these.
-                cp.run_deferred(true);
+                if !cp.run_deferred(true) {
+                    return;
+                }
                 continue;
             }
             // Titles kick the ring by storing CP_RB_WPTR, which nothing
@@ -544,7 +558,7 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         log::trace!("ring {read_index:#X}..{write_index:#X}");
         let writeback = match ring.rptr_writeback {
             0 => None,
-            phys => k.rt.space.translate_physical(phys).or_else(|| {
+            phys => k.rt.space.translate_physical_for_cp(phys, Access::Write).or_else(|| {
                 log::warn!("GPU: read pointer writeback address {phys:#010X} unmapped");
                 None
             }),
@@ -555,10 +569,15 @@ fn command_processor_main(k: &'static Kernel, ctx: &mut PPCContext) {
         // while the rest of the batch, which may wait for the renderer at fences, is executed.
         while reader.remaining > 0 {
             if !cp.packet(&mut reader) {
+                if cp.backend_failure.is_some() {
+                    return;
+                }
                 // Malformed stream: drop the rest of this batch.
                 reader.skip(reader.remaining);
             }
-            cp.run_deferred(false);
+            if !cp.run_deferred(false) {
+                return;
+            }
             if let Some(a) = writeback {
                 mem.write_u32(a, reader.pos);
                 k.gpu.note_progress();
@@ -608,6 +627,8 @@ struct CommandProcessor<'a> {
     /// Waits for the renderer since the last report (see `report_syncs`).
     syncs: [u32; 128],
     sync_wait: Duration,
+    /// An interrupted renderer wait must not release CPU-visible effects as completed.
+    backend_failure: Option<GpuWaitError>,
     /// Draws since the last swap, and whether a frame with many draws was reported (the end of
     /// a world load, for load-time measurements).
     frame_draws: u32,
@@ -698,70 +719,116 @@ impl CommandProcessor<'_> {
     }
 
     /// Lets the backend catch up before an effect the CPU can observe.
-    fn sync(&mut self, opcode: u32) {
+    #[must_use]
+    fn sync(&mut self, opcode: u32) -> bool {
+        if self.backend_failure.is_some() {
+            return false;
+        }
         self.flush_registers();
         if let Some(b) = &self.backend {
             let started = Instant::now();
-            b.wait_idle();
+            let result = b.wait_idle();
             self.syncs[opcode as usize & 0x7F] += 1;
             self.sync_wait += started.elapsed();
+            if !self.accept_wait(result) {
+                return false;
+            }
         }
         // Everything sent has been executed: the deferred effects are due (before this one).
-        self.run_deferred(true);
+        self.run_deferred(true)
+    }
+
+    fn accept_wait(&mut self, result: Result<(), GpuWaitError>) -> bool {
+        if let Err(error) = result {
+            if self.backend_failure.is_none() {
+                self.backend_failure = Some(error);
+                log::error!("GPU: renderer wait interrupted: {error:?}; dependent effects stopped");
+                self.k.request_exit(0xC000_0001);
+            }
+            return false;
+        }
+        self.backend_failure.is_none()
     }
 
     /// `action` once the renderer has executed everything sent before it: queued if the backend
     /// tracks completion, so the command processor needn't wait (on the web each wait is a
     /// round trip through the renderer worker's event loop, ~20 per frame).
-    fn defer(&mut self, opcode: u32, action: Deferred) {
+    #[must_use]
+    fn defer(&mut self, opcode: u32, action: Deferred) -> bool {
+        if self.backend_failure.is_some() {
+            return false;
+        }
         self.flush_registers();
         let sync = matches!(SYNC_EFFECTS.load(Ordering::Relaxed), SYNC_DEFAULT_ON | SYNC_FORCED_ON);
         match self.backend.as_ref().and_then(|b| b.submitted()).filter(|_| !sync) {
             Some(seq) => {
                 self.deferred.push_back((seq, action));
                 self.deferred_count += 1;
-                self.run_deferred(false);
+                self.run_deferred(false)
             }
             None => {
-                self.sync(opcode);
+                if !self.sync(opcode) {
+                    return false;
+                }
                 self.run(action);
+                true
             }
         }
     }
 
     /// Runs the deferred effects the renderer has caught up with, in order; with `block`, all
     /// of them, waiting for the renderer.
-    fn run_deferred(&mut self, block: bool) {
+    #[must_use]
+    fn run_deferred(&mut self, block: bool) -> bool {
+        if self.backend_failure.is_some() {
+            return false;
+        }
         while let Some(&(seq, action)) = self.deferred.front() {
             let Some(b) = self.backend.clone() else { break };
             if b.completed() < seq {
                 if !block {
-                    return;
+                    return true;
                 }
                 let started = Instant::now();
-                b.wait_for(seq);
+                let result = b.wait_for(seq);
                 self.sync_wait += started.elapsed();
+                if !self.accept_wait(result) {
+                    return false;
+                }
             }
             self.deferred.pop_front();
             self.run(action);
         }
+        true
     }
 
     /// Waits for the renderer to reach the oldest deferred effect and runs it.
-    fn run_next_deferred(&mut self) {
-        let Some((seq, action)) = self.deferred.pop_front() else { return };
+    #[must_use]
+    fn run_next_deferred(&mut self) -> bool {
+        if self.backend_failure.is_some() {
+            return false;
+        }
+        let Some(&(seq, action)) = self.deferred.front() else { return true };
         if let Some(b) = self.backend.clone()
             && b.completed() < seq
         {
             let started = Instant::now();
-            b.wait_for(seq);
+            let result = b.wait_for(seq);
             self.syncs[pm4::WAIT_REG_MEM as usize] += 1;
             self.sync_wait += started.elapsed();
+            if !self.accept_wait(result) {
+                return false;
+            }
         }
+        self.deferred.pop_front();
         self.run(action);
+        true
     }
 
     fn run(&mut self, action: Deferred) {
+        if self.backend_failure.is_some() {
+            return;
+        }
         match action {
             Deferred::Fence { addr, data } => self.event_write_shd(addr, data),
             Deferred::Zpd { report } => self.write_zpd_report(report),
@@ -799,7 +866,7 @@ impl CommandProcessor<'_> {
 
     /// Reads `count` dwords of guest physical memory (big-endian words).
     fn read_physical(&self, addr: u32, count: u32) -> Option<Vec<u32>> {
-        let base = self.k.rt.space.translate_physical(addr & 0x1FFF_FFFF)?;
+        let base = self.k.rt.space.translate_physical_for_cp(addr & 0x1FFF_FFFF, Access::Read)?;
         Some((0..count).map(|i| self.mem.read_u32(base + i * 4)).collect())
     }
 
@@ -855,6 +922,9 @@ impl CommandProcessor<'_> {
     fn execute(&mut self, r: &mut Reader) {
         while r.remaining > 0 {
             if !self.packet(r) {
+                if self.backend_failure.is_some() {
+                    return;
+                }
                 // Malformed stream: drop the rest of this buffer.
                 r.skip(r.remaining);
             }
@@ -862,6 +932,9 @@ impl CommandProcessor<'_> {
     }
 
     fn packet(&mut self, r: &mut Reader) -> bool {
+        if self.backend_failure.is_some() {
+            return false;
+        }
         let start = r.base + r.pos * 4;
         let packet = r.read(self.mem);
         log::trace!("{start:#010X}: {packet:08X} ({} dwords left)", r.remaining);
@@ -947,7 +1020,7 @@ impl CommandProcessor<'_> {
             pm4::INTERRUPT => {
                 let cpu_mask = r.read(mem);
                 log::trace!("INTERRUPT cpu mask {cpu_mask:#X}");
-                self.defer(pm4::INTERRUPT, Deferred::Interrupt { cpu_mask });
+                if !self.defer(pm4::INTERRUPT, Deferred::Interrupt { cpu_mask }) { return false; }
             }
             pm4::XE_SWAP => {
                 let signature = r.read(mem);
@@ -981,7 +1054,7 @@ impl CommandProcessor<'_> {
                 let length = r.read(mem) & 0xF_FFFF;
                 log::trace!("indirect buffer {ptr:#010X}, {length} dwords");
                 if length != 0 {
-                    match self.k.rt.space.translate_physical(ptr) {
+                    match self.k.rt.space.translate_physical_for_cp(ptr, Access::Read) {
                         Some(base) => {
                             let mut ib = Reader { base, capacity: length, pos: 0, remaining: length };
                             self.execute(&mut ib);
@@ -995,6 +1068,7 @@ impl CommandProcessor<'_> {
                     (r.read(mem), r.read(mem), r.read(mem), r.read(mem), r.read(mem));
                 log::trace!(
                     "WAIT_REG_MEM info {info:#X} addr {addr:#010X} (at {:?}) ref {reference:#X} mask {mask:#X} wait {wait:#X}",
+                    // This lookup only formats a log; actual polling is observed in load().
                     (info & 0x10 != 0).then(|| self.k.rt.space.translate_physical(addr & !3)).flatten()
                 );
                 // Usually already satisfied (Skyrim issues ~30 per frame): then the renderer
@@ -1003,10 +1077,14 @@ impl CommandProcessor<'_> {
                     // Often a wait for a deferred fence: run deferred effects (waiting for the
                     // renderer only as far as each needs) until the condition holds.
                     while !self.deferred.is_empty() && !self.reg_mem_matches(info, addr, reference, mask) {
-                        self.run_next_deferred();
+                        if !self.run_next_deferred() {
+                            return false;
+                        }
                     }
                     if !self.reg_mem_matches(info, addr, reference, mask) {
-                        self.sync(pm4::WAIT_REG_MEM);
+                        if !self.sync(pm4::WAIT_REG_MEM) {
+                            return false;
+                        }
                         self.wait_reg_mem(info, addr, reference, mask, wait);
                     }
                 }
@@ -1021,12 +1099,16 @@ impl CommandProcessor<'_> {
             }
             pm4::REG_TO_MEM => {
                 let (index, addr) = (r.read(mem), r.read(mem));
-                self.sync(pm4::REG_TO_MEM);
+                if !self.sync(pm4::REG_TO_MEM) {
+                    return false;
+                }
                 let v = self.read_register(index);
                 self.store(addr, v);
             }
             pm4::MEM_WRITE => {
-                self.sync(pm4::MEM_WRITE);
+                if !self.sync(pm4::MEM_WRITE) {
+                    return false;
+                }
                 let mut addr = r.read(mem);
                 for _ in 1..count {
                     let v = r.read(mem);
@@ -1037,7 +1119,9 @@ impl CommandProcessor<'_> {
             pm4::COND_WRITE => {
                 let (info, poll, reference, mask, write_addr, data) =
                     (r.read(mem), r.read(mem), r.read(mem), r.read(mem), r.read(mem), r.read(mem));
-                self.sync(pm4::COND_WRITE);
+                if !self.sync(pm4::COND_WRITE) {
+                    return false;
+                }
                 let value = if info & 0x10 != 0 { self.load(poll) } else { self.read_register(poll) };
                 if match_value_and_ref(value & mask, reference, info) {
                     if info & 0x100 != 0 {
@@ -1055,7 +1139,7 @@ impl CommandProcessor<'_> {
                 let (initiator, addr, value) = (r.read(mem), r.read(mem), r.read(mem));
                 self.write_register(reg::VGT_EVENT_INITIATOR, initiator & 0x3F);
                 let data = if initiator >> 31 != 0 { self.k.gpu.counter.load(Ordering::Relaxed) } else { value };
-                self.defer(pm4::EVENT_WRITE_SHD, Deferred::Fence { addr, data });
+                if !self.defer(pm4::EVENT_WRITE_SHD, Deferred::Fence { addr, data }) { return false; }
             }
             pm4::EVENT_WRITE_EXT => {
                 let (initiator, addr) = (r.read(mem), r.read(mem));
@@ -1066,7 +1150,7 @@ impl CommandProcessor<'_> {
                 // Screen extents: min/max x, min/max y (in 8-pixel units), min/max z.
                 const MAX_SIZE: u16 = 8192;
                 let extents = [0, MAX_SIZE >> 3, 0, MAX_SIZE >> 3, 0, 1];
-                match self.k.rt.space.translate_physical(addr & !3) {
+                match self.k.rt.space.translate_physical_for_cp(addr & !3, Access::Write) {
                     Some(a) => {
                         for (i, e) in extents.into_iter().enumerate() {
                             mem.write_u16(a + i as u32 * 2, e);
@@ -1079,7 +1163,7 @@ impl CommandProcessor<'_> {
                 let initiator = r.read(mem);
                 self.write_register(reg::VGT_EVENT_INITIATOR, initiator & 0x3F);
                 let report = self.read_register(reg::RB_SAMPLE_COUNT_ADDR);
-                self.defer(pm4::EVENT_WRITE_ZPD, Deferred::Zpd { report });
+                if !self.defer(pm4::EVENT_WRITE_ZPD, Deferred::Zpd { report }) { return false; }
             }
             pm4::SET_CONSTANT => {
                 let offset_type = r.read(mem);
@@ -1327,7 +1411,7 @@ impl CommandProcessor<'_> {
             let n = index - reg::SCRATCH_REG0;
             if gpu.read_register(mem, reg::SCRATCH_UMSK) & (1 << n) != 0 {
                 let addr = gpu.read_register(mem, reg::SCRATCH_ADDR).wrapping_add(n * 4);
-                match self.k.rt.space.translate_physical(addr) {
+                match self.k.rt.space.translate_physical_for_cp(addr, Access::Write) {
                     Some(a) => mem.write_u32(a, value),
                     None => log::warn!("GPU: scratch writeback to unmapped {addr:#010X}"),
                 }
@@ -1342,7 +1426,7 @@ impl CommandProcessor<'_> {
 
     /// GPU-side 32-bit load from physical memory with the address's endian mode.
     fn load(&self, addr: u32) -> u32 {
-        match self.k.rt.space.translate_physical(addr & !3) {
+        match self.k.rt.space.translate_physical_for_cp(addr & !3, Access::Read) {
             Some(a) => gpu_swap(self.mem.read_u32(a).swap_bytes(), addr & 3),
             None => {
                 log::warn!("GPU: read from unmapped {addr:#010X}");
@@ -1352,7 +1436,7 @@ impl CommandProcessor<'_> {
     }
 
     fn store(&self, addr: u32, value: u32) {
-        match self.k.rt.space.translate_physical(addr & !3) {
+        match self.k.rt.space.translate_physical_for_cp(addr & !3, Access::Write) {
             Some(a) => self.mem.write_u32(a, gpu_swap(value, addr & 3).swap_bytes()),
             None => log::warn!("GPU: write to unmapped {addr:#010X}"),
         }
@@ -1415,7 +1499,7 @@ impl CommandProcessor<'_> {
         self.zpd_samples = self.zpd_samples.wrapping_add(ZPD_SAMPLES_PER_REPORT);
         // xe_gpu_depth_sample_counts: Total, ZFail, ZPass, StencilFail as
         // little-endian A/B pairs.
-        let Some(a) = self.k.rt.space.translate_physical(report) else {
+        let Some(a) = self.k.rt.space.translate_physical_for_cp(report, Access::Write) else {
             log::warn!("GPU: occlusion report to unmapped {report:#010X}");
             return;
         };
@@ -1428,6 +1512,10 @@ impl CommandProcessor<'_> {
 
 /// Samples each fake occlusion report adds (an on-screen 32x32 quad).
 const ZPD_SAMPLES_PER_REPORT: u32 = 1024;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "gpu_effect_order_tests.rs"]
+mod effect_order_tests;
 
 #[cfg(test)]
 mod tests {

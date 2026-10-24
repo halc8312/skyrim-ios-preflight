@@ -5,6 +5,61 @@ use std::sync::Mutex;
 
 const BYTES: usize = PAGE as usize * 2;
 
+#[test]
+fn a_draw_snapshot_survives_preparation_submit_and_later_cpu_changes() {
+    let device = device();
+    let memory = Memory::new(true, false);
+    let ranges = [(0, BYTES as u32)];
+    let mut shared = SharedMemory::new(&device);
+    shared.reserve_draw(&ranges).unwrap();
+    shared.sync(&device, &memory, 0, BYTES as u32).unwrap();
+    shared.end_batch(); // a preparation flush: this draw is not encoded yet
+    memory.replace(0x73); // preserve the captured snapshot, do not silently refresh it
+    shared.protect_draw_snapshot(&ranges).unwrap();
+    shared.release_draw();
+    assert_eq!(shared.sync(&device, &memory, 0, BYTES as u32), Err(Conflict::PageWritten));
+    expect_bytes(&readback(&device, &shared), &pattern(0x19));
+    shared.end_batch(); // the actual draw's batch has now been submitted
+    shared.sync(&device, &memory, 0, BYTES as u32).unwrap();
+    expect_bytes(&readback(&device, &shared), &pattern(0x73));
+    let mut unmapped = SharedMemory::new(&device);
+    assert_eq!(unmapped.protect_draw_snapshot(&ranges), Err(Conflict::CapacityUnavailable));
+    assert!(unmapped.protect_draw_snapshot(&[(u32::MAX, 3), (0, 0)]).is_ok());
+}
+
+#[test]
+fn gpu_only_victims_and_over_capacity_draws_never_lose_their_mapping_or_data() {
+    let device = device();
+    let memory = Memory::new(true, false);
+    let mut shared = SharedMemory::new(&device);
+    shared.max_chunks = 1;
+    shared.sync(&device, &memory, 0, BYTES as u32).unwrap();
+    shared.end_batch();
+    let (chunk, offset) = shared.contiguous(0, BYTES as u32).unwrap();
+    let bytes = pattern(0xC1);
+    device.queue().write_buffer(&shared.chunks[chunk], offset, &bytes);
+    // Fill the bookkeeping with GPU-only victims. The real first slot has
+    // authored pixels; no missing slot is ever accessed by the GPU fixture.
+    for block in 0..SLOTS_PER_CHUNK {
+        shared.owner[block as usize] = block + 1;
+        shared.slot_of[block as usize] = block + 1;
+        shared.gpu_pages.insert(block * PAGES_PER_BLOCK);
+    }
+    let before = shared.slot_of.clone();
+    assert_eq!(shared.free_slot(&device, SLOTS_PER_CHUNK..=SLOTS_PER_CHUNK), Err(Conflict::PreserveGpuOnly));
+    assert_eq!(shared.slot_of, before);
+    assert_eq!(shared.stats.evictions, 0);
+    expect_bytes(&readback(&device, &shared), &bytes);
+    assert_eq!(shared.reserve_draw(&[(0, (SLOTS_PER_CHUNK + 1) * BLOCK)]), Err(Conflict::CapacityUnavailable));
+    assert_eq!(shared.slot_of, before);
+    shared.reserve_draw(&[(0, SLOTS_PER_CHUNK * BLOCK), (1, SLOTS_PER_CHUNK * BLOCK - 1)]).unwrap();
+    shared.end_batch();
+    assert_eq!(shared.free_slot(&device, SLOTS_PER_CHUNK..=SLOTS_PER_CHUNK), Err(Conflict::CapacityUnavailable));
+    shared.release_draw();
+    assert_eq!(shared.free_slot(&device, SLOTS_PER_CHUNK..=SLOTS_PER_CHUNK), Err(Conflict::PreserveGpuOnly));
+    expect_bytes(&readback(&device, &shared), &bytes);
+}
+
 fn pattern(seed: u8) -> Vec<u8> {
     (0..BYTES).map(|i| seed.wrapping_add((i as u8).wrapping_mul(17))).collect()
 }
@@ -166,7 +221,7 @@ fn conflict_preflight_and_gpu_written_pages_preserve_the_previous_batch() {
         expect_bytes(&readback(&device, &shared), &gpu);
         memory.replace(0x38);
         let uploaded = shared.uploaded;
-        assert_eq!(shared.sync(&device, &memory, 0, BYTES as u32), Err(Conflict));
+        assert_eq!(shared.sync(&device, &memory, 0, BYTES as u32), Err(Conflict::PageWritten));
         assert_eq!(shared.uploaded, uploaded);
         expect_bytes(&readback(&device, &shared), &gpu);
         shared.end_batch();

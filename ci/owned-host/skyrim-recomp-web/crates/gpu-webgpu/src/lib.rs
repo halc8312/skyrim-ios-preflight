@@ -42,6 +42,7 @@ macro_rules! flag_ops {
 #[rustfmt::skip]
 pub mod ffi;
 mod buffer;
+pub mod bounded_cache;
 mod command;
 pub mod counters;
 mod device;

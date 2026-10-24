@@ -8,6 +8,7 @@
 *.rs text eol=lf
 *.h text eol=lf
 *.toml text eol=lf
+*.py text eol=lf
 Cargo.lock text eol=lf
 /ci/prepare-fix-build-route/reference-pins.json text eol=lf
 /ci/prepare-mobile-build-route/prepare_ui_route.py text eol=lf

@@ -6,12 +6,13 @@ use std::time::{Duration, Instant};
 use crate::executor::{ExecutorStats, OpTimes};
 use crate::shared_memory::MirrorStats;
 use xenos_texture_cache::CacheStats;
+use super::frame_stability::FrameStabilitySnapshot;
 
 const STALE_AFTER_MS: u64 = 10_000;
 
 /// A fixed-size observation of one completed native report window.
 ///
-/// `*_total` counters are cumulative since this Executor/cache was created;
+/// `*_total` counters are cumulative for this renderer session;
 /// byte gauges without that suffix describe current residency. Window times
 /// are host elapsed time, may include driver blocking, and may overlap/nest.
 /// They are neither CPU thread time nor GPU execution time and are not additive.
@@ -64,6 +65,39 @@ pub struct NativePerformanceSnapshot {
     /// Existing native-loop busy accounting: command/presentation work including
     /// driver waits, excluding iterations that only wait for title submissions.
     pub renderer_busy_window_ms: u64,
+    /// Native swap-callback completion intervals, including undecodable swaps.
+    /// A gap crossing a report boundary is assigned to the window it ends in.
+    pub swap_intervals_total: u64,
+    pub swap_gap_max_window_ms: u64,
+    pub swap_gap_max_total_ms: u64,
+    pub swap_gaps_over_100ms_total: u64,
+    pub swap_gaps_over_250ms_total: u64,
+    pub swap_gaps_over_1000ms_total: u64,
+    /// Accepted monotonic guest-enqueue spacing and enqueue-to-renderer-dequeue wait. These do not
+    /// identify which guest thread ran or measure guest CPU execution time.
+    pub source_samples_window: u64,
+    pub source_gap_max_window_ms: u64,
+    pub source_gap_max_total_ms: u64,
+    pub swap_queue_wait_max_window_ms: u64,
+    pub swap_queue_wait_max_total_ms: u64,
+    /// Native presentation API calls; completion is not display/GPU completion.
+    /// Failed calls contribute cost/count, but never a successful-present gap.
+    pub present_calls_window: u64,
+    pub present_call_max_window_ms: u64,
+    pub present_call_max_total_ms: u64,
+    pub present_failures_total: u64,
+    pub present_gap_max_window_ms: u64,
+    pub present_gap_max_total_ms: u64,
+    /// Busy-probe counts by reason; these do not measure GPU/CPU time.
+    pub gpu_frame_limit_polls_total: u64,
+    pub gpu_upload_limit_polls_total: u64,
+    pub gpu_resolve_pending_polls_total: u64,
+    /// Longest existing pipeline-create/check measurement, truncated to ms.
+    pub pipeline_call_max_total_ms: u64,
+    /// Longest measured pump/observation/error-check segment, including idle
+    /// queue wait and driver blocking. Excludes event processing and reporting.
+    pub renderer_iteration_max_total_ms: u64,
+    pub surface_configures_total: u64,
 }
 
 pub(super) struct Window {
@@ -72,6 +106,9 @@ pub(super) struct Window {
     pub busy: Duration,
     pub draws_before: u64,
     pub presentable_swaps: u64,
+    pub frame_stability: FrameStabilitySnapshot,
+    pub iteration_max_ms: u64,
+    pub surface_configures: u64,
 }
 
 fn milliseconds(time: Duration) -> Option<u64> {
@@ -132,6 +169,29 @@ impl NativePerformanceSnapshot {
             resolves_window_ms: delta(times.resolves, previous_times.resolves)?,
             submits_window_ms: delta(times.submits, previous_times.submits)?,
             renderer_busy_window_ms: milliseconds(window.busy)?,
+            swap_intervals_total: window.frame_stability.swap_intervals_total,
+            swap_gap_max_window_ms: window.frame_stability.swap_gap_max_window_ms,
+            swap_gap_max_total_ms: window.frame_stability.swap_gap_max_total_ms,
+            swap_gaps_over_100ms_total: window.frame_stability.swap_gaps_over_100ms_total,
+            swap_gaps_over_250ms_total: window.frame_stability.swap_gaps_over_250ms_total,
+            swap_gaps_over_1000ms_total: window.frame_stability.swap_gaps_over_1000ms_total,
+            source_samples_window: window.frame_stability.source_samples_window,
+            source_gap_max_window_ms: window.frame_stability.source_gap_max_window_ms,
+            source_gap_max_total_ms: window.frame_stability.source_gap_max_total_ms,
+            swap_queue_wait_max_window_ms: window.frame_stability.swap_queue_wait_max_window_ms,
+            swap_queue_wait_max_total_ms: window.frame_stability.swap_queue_wait_max_total_ms,
+            present_calls_window: window.frame_stability.present_calls_window,
+            present_call_max_window_ms: window.frame_stability.present_call_max_window_ms,
+            present_call_max_total_ms: window.frame_stability.present_call_max_total_ms,
+            present_failures_total: window.frame_stability.present_failures_total,
+            present_gap_max_window_ms: window.frame_stability.present_gap_max_window_ms,
+            present_gap_max_total_ms: window.frame_stability.present_gap_max_total_ms,
+            gpu_frame_limit_polls_total: stats.gpu_frame_limit_polls,
+            gpu_upload_limit_polls_total: stats.gpu_upload_limit_polls,
+            gpu_resolve_pending_polls_total: stats.gpu_resolve_pending_polls,
+            pipeline_call_max_total_ms: stats.pipeline_call_max_ms,
+            renderer_iteration_max_total_ms: window.iteration_max_ms,
+            surface_configures_total: window.surface_configures,
         })
     }
 }
@@ -183,6 +243,9 @@ mod tests {
                 busy: Duration::from_millis(4321),
                 draws_before: 0,
                 presentable_swaps: 9,
+                frame_stability: FrameStabilitySnapshot::default(),
+                iteration_max_ms: 0,
+                surface_configures: 0,
             },
             ExecutorStats { draws, constant_upload_bytes: draws * 3, ..Default::default() },
             CacheStats::default(),
@@ -212,6 +275,8 @@ mod tests {
             vertex_range_narrowed_bindings: 28,
             vertex_range_avoided_pages: 27,
             vertex_range_fallback_bindings: 26,
+            gpu_frame_limit_polls: 110, gpu_upload_limit_polls: 220,
+            gpu_resolve_pending_polls: 330, pipeline_call_max_ms: 440,
             ..Default::default()
         };
         let textures = CacheStats {
@@ -247,6 +312,19 @@ mod tests {
                 busy: Duration::from_micros(4321999),
                 draws_before: 100,
                 presentable_swaps: 9,
+                frame_stability: FrameStabilitySnapshot {
+                    swap_intervals_total: 50, swap_gap_max_window_ms: 1200,
+                    swap_gap_max_total_ms: 2000, swap_gaps_over_100ms_total: 7,
+                    swap_gaps_over_250ms_total: 3, swap_gaps_over_1000ms_total: 2,
+                    source_samples_window: 9, source_gap_max_window_ms: 100,
+                    source_gap_max_total_ms: 200, swap_queue_wait_max_window_ms: 300,
+                    swap_queue_wait_max_total_ms: 700, present_calls_window: 5,
+                    present_call_max_window_ms: 21, present_call_max_total_ms: 88,
+                    present_failures_total: 1, present_gap_max_window_ms: 1205,
+                    present_gap_max_total_ms: 2500,
+                },
+                iteration_max_ms: 1000,
+                surface_configures: 2,
             },
             stats,
             textures,
@@ -303,6 +381,17 @@ mod tests {
         assert_eq!([result.vertex_range_eligible_bindings_total, result.vertex_range_narrowed_bindings_total,
             result.vertex_range_avoided_pages_total, result.vertex_range_fallback_bindings_total], [29, 28, 27, 26]);
         assert_eq!(times.submits, Duration::from_millis(1500));
+        assert_eq!([
+            result.swap_intervals_total, result.swap_gap_max_window_ms, result.swap_gap_max_total_ms,
+            result.swap_gaps_over_100ms_total, result.swap_gaps_over_250ms_total, result.swap_gaps_over_1000ms_total,
+            result.source_samples_window, result.source_gap_max_window_ms, result.swap_queue_wait_max_window_ms,
+            result.present_calls_window, result.present_call_max_window_ms, result.present_failures_total,
+            result.present_gap_max_window_ms, result.source_gap_max_total_ms,
+            result.swap_queue_wait_max_total_ms, result.present_call_max_total_ms, result.present_gap_max_total_ms,
+        ], [50, 1200, 2000, 7, 3, 2, 9, 100, 300, 5, 21, 1, 1205, 200, 700, 88, 2500]);
+        assert_eq!([result.gpu_frame_limit_polls_total, result.gpu_upload_limit_polls_total,
+            result.gpu_resolve_pending_polls_total, result.pipeline_call_max_total_ms,
+            result.renderer_iteration_max_total_ms, result.surface_configures_total], [110, 220, 330, 440, 1000, 2]);
         assert!(std::mem::size_of::<NativePerformanceSnapshot>() <= 512);
     }
 
@@ -314,6 +403,9 @@ mod tests {
             busy: Duration::from_secs(1),
             draws_before: 0,
             presentable_swaps: 0,
+            frame_stability: FrameStabilitySnapshot::default(),
+            iteration_max_ms: 0,
+            surface_configures: 0,
         };
         let capture = |window, now, before| {
             NativePerformanceSnapshot::capture(

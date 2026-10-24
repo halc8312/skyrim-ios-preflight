@@ -19,8 +19,39 @@ static ATTACHMENT: AtomicU32 = AtomicU32::new(0);
 static OWNER: OnceLock<MetalOwner> = OnceLock::new();
 static BOOT_SETTINGS: OnceLock<BootConfiguration> = OnceLock::new();
 fn boot_settings() -> &'static BootConfiguration { BOOT_SETTINGS.get_or_init(BootConfiguration::default) }
+
+pub(crate) fn begin_causal_session(token: u64, origin: std::time::Instant) -> crate::Check<Arc<xenos_render::causal::Session>> {
+    let owner = OWNER.get().ok_or("causal renderer owner absent")?;
+    if owner.token != token || ATTACHMENT.load(Ordering::Acquire) != 2 {
+        return Err("causal renderer owner invalid");
+    }
+    if !owner.renderer.diagnostics.begin_causal_session(token, origin) {
+        return Err("causal session already active");
+    }
+    owner.renderer.diagnostics.causal_session().ok_or("causal session unavailable")
+}
+
+pub(crate) fn causal_snapshot(token: u64) -> Option<serde_json::Value> {
+    let owner = OWNER.get()?;
+    if owner.token != token || ATTACHMENT.load(Ordering::Acquire) != 2 { return None; }
+    let snapshot = owner.renderer.diagnostics.causal_session()?.snapshot();
+    let ring = |(overwritten, unavailable, records): (u64, u64, Vec<Vec<u64>>)| {
+        serde_json::json!({"overwritten":overwritten, "unavailable":unavailable, "records":records})
+    };
+    Some(serde_json::json!({
+        "session":snapshot.session, "capture_started_us":snapshot.capture_started_us,
+        "observed_us":snapshot.observed_us, "failure_reason":snapshot.failure, "experiment_id":1,
+        "presentation_words":owner.renderer.diagnostics.presentation_status().requested.settings.words(),
+        "boot_words":[owner.boot.video_width, owner.boot.video_height, owner.boot.internal_scale,
+            owner.boot.mirror_mib, owner.boot.mobile_texture_budget],
+        "live":snapshot.live, "audio_live":snapshot.audio_live,
+        "render":ring(snapshot.render), "audio":ring(snapshot.audio), "frames":ring(snapshot.frames),
+        "stage_totals":snapshot.totals, "reasons":snapshot.reasons,
+    }))
+}
 struct MetalOwner {
     token: u64,
+    boot: OHBootGraphicsV1,
     size: Arc<AtomicU64>,
     renderer: StartedRenderer,
 }
@@ -62,7 +93,14 @@ pub(crate) fn performance_snapshot(token: u64) -> Option<serde_json::Value> {
         texture_host_bytes, texture_pooled_bytes, mirror_slot_bytes, mirror_blocks,
         mirror_evictions_total, mirror_slot_conflicts_total, texture_sets_window_ms,
         pipelines_window_ms, shaders_window_ms, resolves_window_ms, submits_window_ms,
-        renderer_busy_window_ms))
+        renderer_busy_window_ms, swap_intervals_total, swap_gap_max_window_ms,
+        swap_gap_max_total_ms, swap_gaps_over_100ms_total, swap_gaps_over_250ms_total,
+        swap_gaps_over_1000ms_total, source_samples_window, source_gap_max_window_ms,
+        source_gap_max_total_ms, swap_queue_wait_max_window_ms, swap_queue_wait_max_total_ms,
+        present_calls_window, present_call_max_window_ms, present_call_max_total_ms,
+        present_failures_total, present_gap_max_window_ms, present_gap_max_total_ms,
+        gpu_frame_limit_polls_total, gpu_upload_limit_polls_total, gpu_resolve_pending_polls_total,
+        pipeline_call_max_total_ms, renderer_iteration_max_total_ms, surface_configures_total))
 }
 
 fn attach(token: u64, layer: *mut c_void, width: u32, height: u32) -> Result<(), i32> {
@@ -128,6 +166,7 @@ fn attach(token: u64, layer: *mut c_void, width: u32, height: u32) -> Result<(),
     OWNER
         .set(MetalOwner {
             token,
+            boot,
             size,
             renderer,
         })

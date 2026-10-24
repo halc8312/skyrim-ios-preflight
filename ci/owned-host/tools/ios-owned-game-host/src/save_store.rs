@@ -92,6 +92,14 @@ mod imp {
         "diagnostic-30s.json",
         "diagnostic-120s.json",
         "diagnostic-300s.json",
+        "performance-30s.json",
+        "performance-120s.json",
+        "performance-300s.json",
+        "performance-final.json",
+        "causal-30s.json",
+        "causal-120s.json",
+        "causal-300s.json",
+        "causal-final.json",
         ".first-failure.json.pending",
         ".diagnostic-final.json.pending",
         ".guest-exit.json.pending",
@@ -99,6 +107,14 @@ mod imp {
         ".diagnostic-30s.json.pending",
         ".diagnostic-120s.json.pending",
         ".diagnostic-300s.json.pending",
+        ".performance-30s.json.pending",
+        ".performance-120s.json.pending",
+        ".performance-300s.json.pending",
+        ".performance-final.json.pending",
+        ".causal-30s.json.pending",
+        ".causal-120s.json.pending",
+        ".causal-300s.json.pending",
+        ".causal-final.json.pending",
     ];
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1272,16 +1288,9 @@ mod imp {
             let first = prepare_session(&f.store, &f.game, &id, &sid(1)).unwrap();
             assert!(fs::read_dir(&first.content).unwrap().next().is_none());
             put_save(&first.content, b"authored original");
-            fs::write(
-                first.content.join("diagnostic-final.json"),
-                b"authored diagnostic excluded",
-            )
-            .unwrap();
-            fs::write(
-                first.content.join(".first-failure.json.pending"),
-                b"incomplete diagnostic excluded",
-            )
-            .unwrap();
+            for name in DIAGNOSTICS {
+                fs::write(first.content.join(name), b"authored diagnostic excluded").unwrap();
+            }
             let first_path = first.content.clone();
             let pointer = latest(&first);
             drop(first);
@@ -1294,8 +1303,10 @@ mod imp {
                 fs::read(second.content.join(format!("{PACKAGE}.title"))).unwrap(),
                 b"Authored Save Display Name"
             );
-            assert!(!second.content.join("diagnostic-final.json").exists());
-            assert!(!second.content.join(".first-failure.json.pending").exists());
+            for name in DIAGNOSTICS {
+                assert!(!second.content.join(name).exists(), "diagnostic copied: {name}");
+                assert_eq!(fs::read(first_path.join(name)).unwrap(), b"authored diagnostic excluded");
+            }
             assert_ne!(
                 fs::metadata(first_path.join(DATA)).unwrap().ino(),
                 fs::metadata(second.content.join(DATA)).unwrap().ino()
@@ -1755,6 +1766,38 @@ mod imp {
             std::os::unix::fs::symlink(&f.game, f.source.join("diagnostic-final.json")).unwrap();
             assert!(export_seed_manifest(&f.source, &f.manifest, &f.game, &identity()).is_err());
             assert!(canonical_json(b"{\"schema\":1,\"schema\":1}").is_err());
+        }
+
+        #[test]
+        fn diagnostic_names_do_not_admit_unknown_files_directories_or_links() {
+            for (name, kind) in [
+                ("performance-extra.json", 0),
+                ("causal-extra.json", 0),
+                (".performance-final.json.pending.extra", 0),
+                ("performance-final.json", 1),
+                ("causal-final.json", 1),
+                ("performance-final.json", 2),
+                (".causal-final.json.pending", 2),
+            ] {
+                let f = Fixture::new();
+                let id = identity();
+                let first = prepare_session(&f.store, &f.game, &id, &sid(1)).unwrap();
+                put_save(&first.content, b"authored preserved save");
+                let pointer = latest(&first);
+                let before = fs::read(&pointer).unwrap();
+                match kind {
+                    0 => fs::write(first.content.join(name), b"unknown diagnostic").unwrap(),
+                    1 => fs::create_dir(first.content.join(name)).unwrap(),
+                    _ => std::os::unix::fs::symlink(
+                        first.content.join(DATA), first.content.join(name),
+                    ).unwrap(),
+                }
+                let content = first.content.clone();
+                drop(first);
+                assert!(prepare_session(&f.store, &f.game, &id, &sid(2)).is_err(), "{name}:{kind}");
+                assert_eq!(fs::read(&pointer).unwrap(), before);
+                assert_eq!(fs::read(content.join(DATA)).unwrap(), b"authored preserved save");
+            }
         }
     }
 }

@@ -41,6 +41,7 @@ pub struct OneTarget {
     pub view: TextureView,
     pub size: u32,
     pub setups: std::rc::Rc<std::cell::RefCell<Vec<RenderTargetSetup>>>,
+    pub initial_clear: Option<Color>,
 }
 
 impl OneTarget {
@@ -53,7 +54,7 @@ impl OneTarget {
             ..Default::default()
         });
         let view = texture.create_view(None);
-        OneTarget { texture, view, size, setups: Default::default() }
+        OneTarget { texture, view, size, setups: Default::default(), initial_clear: None }
     }
 
     /// Reads the texture back as RGBA8 rows.
@@ -98,7 +99,10 @@ impl RenderTargetCache for OneTarget {
             sample_count: 1,
             sample_mask: !0,
             blendable: [true; 4],
-            clears: Default::default(),
+            clears: xenos_render::targets::AttachmentClears {
+                colors: [self.initial_clear.take(), None, None, None],
+                ..Default::default()
+            },
         })
     }
 

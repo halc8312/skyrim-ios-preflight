@@ -73,6 +73,10 @@ const HANDHELD_UPLOAD_BUDGET: u64 = 32 << 20;
 
 const SYSTEM_SIZE: u64 = std::mem::size_of::<SystemConstants>() as u64;
 
+#[cfg(all(test, not(target_os = "emscripten")))]
+#[path = "constant_demand_tests.rs"]
+mod constant_demand_tests;
+
 /// The shared memory as the texture cache's source of GPU-only data.
 struct SharedSource<'a> {
     device: &'a Device,
@@ -81,6 +85,7 @@ struct SharedSource<'a> {
     /// The batch being recorded: texture loads are recorded after what it has so far (the
     /// pass being recorded is encoded later, after them).
     encoder: &'a mut Option<CommandEncoder>,
+    failure: &'a mut Option<u32>,
 }
 
 impl GpuSource for SharedSource<'_> {
@@ -93,6 +98,13 @@ impl GpuSource for SharedSource<'_> {
         // A page that changed after a recorded draw read it can't be updated before that draw
         // is submitted.
         ranges.iter().all(|r| self.shared.sync(self.device, self.memory, r.address, r.length).is_ok())
+    }
+
+    fn cpu_read_allowed(&mut self, ranges: &[xenos_texture::GuestRange]) -> bool {
+        let ranges: Vec<_> = ranges.iter().map(|r| (r.address, r.length)).collect();
+        let allowed = !self.shared.any_gpu_current(self.memory, &ranges);
+        if !allowed { *self.failure = Some(14); }
+        allowed
     }
 
     fn gather(&self, encoder: &mut CommandEncoder, address: u32, len: u32, dst: &Buffer, dst_offset: u64) -> bool {
@@ -389,6 +401,8 @@ const DRAW_STAGES: [&str; 9] = [
 ];
 
 pub struct Executor {
+    pub(crate) causal: Option<Arc<crate::causal::Session>>,
+    pub(crate) failure: Option<u32>,
     #[cfg(feature = "cpu-profile")]
     cpu_profile: crate::cpu_profile::CpuProfile,
     stage_marks: [f64; DRAW_STAGES.len() + 1],
@@ -396,7 +410,7 @@ pub struct Executor {
     timing_sample: bool,
     /// Texture bindings of recent draws by shader pair and the fetch constant words they read
     /// (see `TextureSet`); cleared whenever the texture cache may answer differently.
-    texture_sets: FxHashMap<u64, (Rc<TextureSet>, u64)>,
+    texture_sets: gpu_webgpu::bounded_cache::BoundedCache<u64, (Rc<TextureSet>, u64), std::hash::BuildHasherDefault<rustc_hash::FxHasher>>,
     texture_set_key: Vec<u32>,
     device: Device,
     memory: Arc<dyn PhysicalMemory>,
@@ -500,6 +514,14 @@ pub struct ExecutorStats {
     pub vertex_range_fallback_bindings: u64,
     /// Times the renderer waited for the GPU to catch up with uploads (`upload_budget`).
     pub upload_waits: u64,
+    /// Busy probes returning true by GPU wait reason. Counts are not elapsed
+    /// time, GPU progress, or proof that a complete outer iteration did no work.
+    pub gpu_frame_limit_polls: u64,
+    pub gpu_upload_limit_polls: u64,
+    pub gpu_resolve_pending_polls: u64,
+    /// Largest host call to create/check a pipeline (native synchronous path).
+    /// Milliseconds are truncated; a zero can mean a call shorter than 1 ms.
+    pub pipeline_call_max_ms: u64,
     /// Texture sets bound anew (not remembered, or their textures changed since).
     pub texture_set_misses: u64,
     /// Of those, remembered sets whose textures changed (reloaded or dropped).
@@ -610,6 +632,7 @@ fn as_bytes<T: Copy>(v: &[T]) -> &[u8] {
 
 /// What a skipped draw is reported as (once per distinct reason).
 enum Skip {
+    Fatal(u32),
     Silent,
     Culled,
     NoTargets,
@@ -679,11 +702,13 @@ impl Executor {
         );
         let shared_group = shared_memory_group(device, &shared_layout, &shared);
         Executor {
+            causal: None,
+            failure: None,
             #[cfg(feature = "cpu-profile")]
             cpu_profile: crate::cpu_profile::CpuProfile::default(),
             stage_marks: [0.0; DRAW_STAGES.len() + 1],
             timing_sample: false,
-            texture_sets: FxHashMap::default(),
+            texture_sets: gpu_webgpu::bounded_cache::BoundedCache::with_hasher(MAX_TEXTURE_SETS, std::hash::BuildHasherDefault::default()),
             texture_set_key: Vec::new(),
             device: device.clone(),
             memory,
@@ -780,8 +805,10 @@ impl Executor {
             shared: &mut self.shared,
             memory: &*self.memory,
             encoder: &mut self.encoder,
+            failure: &mut self.failure,
         };
         let bound = self.textures.bind_with(&self.device, &texture_memory, &constants, &binding, Some(&mut source));
+        if self.failure.is_some() { return None; }
         self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
         // The presenter shows it right away: submit its load. It's drawn until the next swap, so
         // it must survive making room for other textures until then.
@@ -855,6 +882,7 @@ impl Executor {
 
     /// Whether a resolve is still in flight (polls it). Nothing else may run until it finishes.
     pub fn busy(&mut self) -> bool {
+        let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::GpuWait);
         #[cfg(feature = "cpu-profile")]
         let profile_started = self.cpu_profile.start();
         // Frames the GPU hasn't finished: past MAX_FRAMES_IN_FLIGHT, wait. Nothing else stops
@@ -866,11 +894,16 @@ impl Executor {
             }
         }
         if self.frames_in_flight.len() > crate::debug::MAX_FRAMES_IN_FLIGHT.load(std::sync::atomic::Ordering::Relaxed) {
+            self.stats.gpu_frame_limit_polls = self.stats.gpu_frame_limit_polls.saturating_add(1);
             profile_operation!(self, DriverPoll, self.device.poll());
             return profile_busy_result!(self, profile_started, true);
         }
         if !self.resolving {
-            return profile_busy_result!(self, profile_started, self.uploads_over_budget());
+            let result = self.uploads_over_budget();
+            if result {
+                self.stats.gpu_upload_limit_polls = self.stats.gpu_upload_limit_polls.saturating_add(1);
+            }
+            return profile_busy_result!(self, profile_started, result);
         }
         profile_operation!(self, DriverPoll, self.device.poll());
         let result = match self.targets.poll_resolve(&self.device, &*self.memory) {
@@ -880,6 +913,9 @@ impl Executor {
                 false
             }
         };
+        if result {
+            self.stats.gpu_resolve_pending_polls = self.stats.gpu_resolve_pending_polls.saturating_add(1);
+        }
         profile_busy_result!(self, profile_started, result)
     }
 
@@ -924,7 +960,13 @@ impl Executor {
 
     /// Frame boundary: submits everything and ages caches.
     pub fn end_frame(&mut self) {
-        self.flush();
+        self.end_frame_before_present();
+        self.mark_frame_submitted();
+    }
+
+    pub(crate) fn end_frame_before_present(&mut self) {
+        let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::FrameEnd);
+        self.flush_reason(1);
         // Sets with fallbacks are made again (their textures may load now); the others are
         // revalidated when reused (`TextureCache::touch`).
         let frame = self.frame;
@@ -932,7 +974,6 @@ impl Executor {
         self.textures.destroy_retired();
         self.targets.end_frame();
         self.shared.end_frame();
-        self.frames_in_flight.push_back(self.device.queue().on_submitted_work_done());
         self.textures.end_frame();
         let frame = self.frame;
         // Kept a while unused: pooled textures (with the same views) come back a few frames later.
@@ -940,27 +981,52 @@ impl Executor {
         self.frame += 1;
     }
 
+    /// Covers explicit submissions through this point, not display release or
+    /// a backend's internal presentation commands. Pending writes are separate.
+    pub(crate) fn mark_frame_submitted(&mut self) {
+        self.frames_in_flight.push_back(self.device.queue().on_submitted_work_done());
+    }
+
     /// Encodes and submits everything recorded.
     pub fn flush(&mut self) {
+        self.flush_reason(0);
+    }
+
+    fn flush_reason(&mut self, reason: usize) {
+        if let Some(session) = &self.causal { session.reason(reason); }
+        let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::Flush);
         let started = crate::renderer::Stopwatch::start();
         profile_operation!(self, Submit, self.submit_batch());
         self.times.submits += started.elapsed();
     }
 
     fn submit_batch(&mut self) {
-        self.encode_pass();
-        self.stats.index_upload_bytes += self.indices.upload(&self.device);
+        {
+            let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::EncodePass);
+            self.encode_pass();
+        }
+        {
+            let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::IndexUpload);
+            self.stats.index_upload_bytes += self.indices.upload(&self.device);
+        }
         // The float constant blocks are built first, in a command buffer of their own.
-        let patches = self.floats.encode(&self.device).map(|(commands, bytes)| {
+        let patches = {
+            let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::Constants);
+            self.floats.encode(&self.device)
+        }.map(|(commands, bytes)| {
             self.stats.constant_upload_bytes += bytes;
             commands
         });
-        self.targets.flush_uploads(&self.device);
-        self.textures.flush_loads(&self.device);
+        {
+            let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::TextureUpload);
+            self.targets.flush_uploads(&self.device);
+            self.textures.flush_loads(&self.device);
+        }
         let main = self.encoder.take().map(|encoder| encoder.finish("xenos"));
         // Uploads without commands are submitted too (empty), to know when they've reached the GPU.
         let uploaded = gpu_webgpu::counters::upload_bytes();
         if patches.is_some() || main.is_some() || uploaded > self.uploaded_at_submit {
+            let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::QueueSubmit);
             self.device.queue().submit(patches.into_iter().chain(main));
             self.stats.submissions += 1;
             if uploaded > self.uploaded_at_submit {
@@ -969,6 +1035,7 @@ impl Executor {
                 self.uploaded_at_submit = uploaded;
             }
         }
+        let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::Cleanup);
         self.textures.end_batch();
         self.floats.rewind();
         #[cfg(not(target_os = "emscripten"))]
@@ -1135,6 +1202,8 @@ impl Executor {
 
     /// Executes the draw described by the registers (VGT_DRAW_INITIATOR etc. already written).
     pub fn draw(&mut self) {
+        if self.failure.is_some() { return; }
+        let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::Draw);
         debug_assert!(!self.resolving, "draw while a resolve is pending");
         let mode = RbModecontrol::read(&self.regs).edram_mode;
         match mode {
@@ -1146,6 +1215,7 @@ impl Executor {
         #[cfg(feature = "cpu-profile")]
         self.cpu_profile.begin_draw();
         let result = self.record_draw();
+        self.shared.release_draw();
         #[cfg(feature = "cpu-profile")]
         self.cpu_profile.end_draw(result.is_ok());
         match result {
@@ -1153,6 +1223,12 @@ impl Executor {
             Err(skip) => {
                 self.stats.skipped_draws += 1;
                 match skip {
+                    Skip::Fatal(reason) => {
+                        self.failure = Some(reason);
+                        if let Some(session) = &self.causal {
+                            session.reason(crate::causal::fatal_reason_index(reason));
+                        }
+                    }
                     Skip::Warn(m) => self.warn_once(m),
                     Skip::Culled => self.stats.culled += 1,
                     Skip::NoTargets => self.stats.no_targets += 1,
@@ -1165,6 +1241,7 @@ impl Executor {
     }
 
     fn resolve(&mut self) {
+        let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::Resolve);
         let started = crate::renderer::Stopwatch::start();
         self.record_resolve();
         self.times.resolves += started.elapsed();
@@ -1194,9 +1271,13 @@ impl Executor {
         }
         // The destination's pages are synced (and so in the batch's pages: a later CPU write to
         // them can't be uploaded under the resolve output before the batch is submitted).
-        let shared = gpu_store.then(|| {
-            self.sync_shared(info.copy_dest_extent_start, info.copy_dest_extent_length);
-        });
+        if gpu_store {
+            if let Err(reason) = self.sync_shared(info.copy_dest_extent_start, info.copy_dest_extent_length) {
+                self.failure = Some(reason);
+                return;
+            }
+        }
+        let shared = gpu_store.then_some(());
         let target = SharedMemoryTarget {
             chunks: &self.shared.chunks,
             table: &self.shared.table,
@@ -1235,20 +1316,22 @@ impl Executor {
         self.shaders.get(&self.device, stage, &code.0, code.1, options).ok_or(Skip::NoPipeline)
     }
 
-    fn sync_shared(&mut self, addr: u32, len: u32) {
+    fn sync_shared(&mut self, addr: u32, len: u32) -> std::result::Result<(), u32> {
         #[cfg(feature = "cpu-profile")]
         let profile_started = self.cpu_profile.start();
         #[cfg(feature = "cpu-profile")]
         self.cpu_profile.shared_range(len);
         let memory = self.memory.clone();
         let uploaded = self.shared.uploaded;
-        if self.shared.sync(&self.device, &*memory, addr, len).is_err() {
-            self.flush();
-            self.shared.sync(&self.device, &*memory, addr, len).expect("no conflicts in an empty batch");
+        if let Err(error) = self.shared.sync(&self.device, &*memory, addr, len) {
+            if !error.needs_submit() { return Err(error.reason()); }
+            self.flush_reason(error.reason() as usize);
+            self.shared.sync(&self.device, &*memory, addr, len).map_err(|error| error.reason())?;
         }
         self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
         #[cfg(feature = "cpu-profile")]
         self.cpu_profile.operation(crate::cpu_profile::Operation::SharedSync, profile_started);
+        Ok(())
     }
 
     /// Milliseconds each stage of the last sampled draw (one in 32) took, for diagnosing slow draws.
@@ -1274,15 +1357,9 @@ impl Executor {
         }
         let options =
             ConversionOptions { bake_index_params: false, allow_16bit_indices: true, expand_point_sprites: true };
-        // Mirrored first, to see whether it can be bound where it is: in consecutive slots of
-        // one buffer, or else copied (on the GPU) to the index ring.
-        let direct = match direct_index_buffer(&desc) {
-            Some(ib) => {
-                self.sync_shared(ib.guest_base, ib.size_bytes());
-                Some((ib, self.shared.contiguous(ib.guest_base, ib.size_bytes())))
-            }
-            None => None,
-        };
+        // Plan topology before touching the mirror. Final index placement is
+        // obtained only after the complete draw's ranges have been reserved.
+        let direct = direct_index_buffer(&desc).map(|ib| (ib, None::<(usize, u64)>));
         let host = match direct {
             // Drawn with the guest indices as they are: only the topology is needed.
             Some((ib, ..)) => convert_primitive(
@@ -1456,25 +1533,8 @@ impl Executor {
             HostIndices::U32(v) => Some((IndexFormat::Uint32, as_bytes(v))),
         };
         let index_len = index_bytes.as_ref().map_or(0, |(_, b)| b.len() as u64 + 4);
-        let gathered_len = match direct {
-            Some((ib, None)) => gathered_index_range(&ib).1 + 4,
-            _ => 0,
-        };
-        if index_len.max(gathered_len) > INDEX_RING_SIZE {
-            return Err(Skip::Warn(format!("draw with {} bytes of indices skipped", index_len.max(gathered_len))));
-        }
-        // Each float constant binding spans a full stage's constants past its offset.
-        if self.indices.remaining() < index_len
-            || self.gathered_indices.remaining() < gathered_len
-            || !self.floats.has_room(&[
-                FLOAT_CONSTANTS_SIZE,
-                FLOAT_CONSTANTS_SIZE,
-                FETCH_SIZE,
-                SYSTEM_SIZE,
-                BOOL_LOOP_SIZE,
-            ])
-        {
-            self.flush();
+        if self.indices.remaining() < index_len {
+            self.flush_reason(3);
         }
 
         mark!(self, 3);
@@ -1535,22 +1595,32 @@ impl Executor {
             None
         };
         if let Some((ib, ..)) = direct {
-            ranges.push((ib.guest_base, ib.size_bytes()));
+            // Allocate consecutive index slots before vertex ranges can
+            // fragment a free run, preserving the former direct-index order.
+            ranges.insert(0, (ib.guest_base, ib.size_bytes()));
         }
+        self.shared.reserve_draw(&ranges).map_err(|error| Skip::Fatal(error.reason()))?;
+        let draw_batch_epoch = self.shared.batch_epoch();
         for &(addr, len) in &ranges {
-            self.sync_shared(addr, len);
+            self.sync_shared(addr, len).map_err(Skip::Fatal)?;
         }
         self.vertex_ranges = ranges;
+        let direct = direct.map(|(ib, _)| (ib, self.shared.contiguous(ib.guest_base, ib.size_bytes())));
+        let gathered_len = match direct { Some((ib, None)) => gathered_index_range(&ib).1 + 4, _ => 0 };
+        if index_len.max(gathered_len) > INDEX_RING_SIZE {
+            return Err(Skip::Warn(format!("draw with {} bytes of indices skipped", index_len.max(gathered_len))));
+        }
+        if self.gathered_indices.remaining() < gathered_len { self.flush_reason(4); }
 
         mark!(self, 4);
         // Textures (past the hard texture memory cap, earlier loads of this frame are dropped
         // once the work using them is submitted).
         if self.textures.over_budget() {
-            self.flush();
+            self.flush_reason(6);
             let destroyed = self.textures.trim_submitted();
             self.texture_sets.retain(|_, (set, _)| !set.views.iter().any(|v| destroyed.contains(v)));
         }
-        let textures = self.texture_set(&vs, ps.as_deref());
+        let textures = self.texture_set(&vs, ps.as_deref())?;
 
         mark!(self, 5);
         // Render targets (encode the previous pass first if they change).
@@ -1663,6 +1733,24 @@ impl Executor {
             vs.translation.info.float_constants_read(),
             ps.as_ref().map_or(0, |p| p.translation.info.float_constants_read()),
         ];
+        // The cheap worst-case check normally succeeds. Near capacity only,
+        // calculate actual new blocks/changed values without clearing dirty
+        // bits or advancing offsets. Reuse consumes no ring space at all.
+        if !self.floats.has_room(&[FLOAT_CONSTANTS_SIZE, FLOAT_CONSTANTS_SIZE, FETCH_SIZE, SYSTEM_SIZE, BOOL_LOOP_SIZE]) {
+            let (demands, count) = self.constant_demands(&system, float_reads);
+            if !self.floats.has_room_for(&demands[..count]) {
+                let targets = self.pass.as_ref().expect("pass prepared").targets.clone();
+                self.flush_reason(5);
+                // flush encoded the old pass, including its clears. The same
+                // prepared attachments remain owned; never replay those clears.
+                let mut targets = targets;
+                targets.clears = Default::default();
+                self.pass = Some(Pass { setup: setup.clone(), targets, draws: Vec::new() });
+                let (demands, count) = self.constant_demands(&system, float_reads);
+                if !self.floats.has_room_for(&demands[..count]) { return Err(Skip::Fatal(15)); }
+                if let Some(session) = &self.causal { session.reason(16); }
+            } else if let Some(session) = &self.causal { session.reason(15); }
+        }
         let constant_offsets = self.push_constants(&system, float_reads);
 
         mark!(self, 7);
@@ -1710,10 +1798,10 @@ impl Executor {
                 Some(DrawIndices::Gathered { format, offset: offset + u64::from(ib.guest_base - start) })
             }
             (Some((ib, Some((buffer, offset)))), _) => {
-                // Its blocks keep their slots while the batch reads them, unless syncing this
-                // draw's other data had to submit the batch and then needed the slots.
+                // The complete draw reservation keeps this placement stable
+                // through every preparation flush.
                 if self.shared.contiguous(ib.guest_base, ib.size_bytes()) != Some((buffer, offset)) {
-                    return Err(Skip::Warn("index buffer moved in shared memory while recording a draw".into()));
+                    return Err(Skip::Fatal(16));
                 }
                 Some(DrawIndices::Shared { buffer, format: direct_format.expect("set with direct"), offset })
             }
@@ -1743,9 +1831,49 @@ impl Executor {
             indices,
             count: host.vertex_count,
         };
+        // Any preparation flush (including a retry in a later sync range)
+        // cleared the old batch's hazards. Its slots stayed reserved; protect
+        // their captured bytes for the batch that actually contains this draw.
+        if self.shared.batch_epoch() != draw_batch_epoch {
+            self.shared.protect_draw_snapshot(&self.vertex_ranges).map_err(|error| Skip::Fatal(error.reason()))?;
+        }
         self.pass.as_mut().expect("pass created above").draws.push(draw);
         mark!(self, DRAW_STAGES.len());
         Ok(())
+    }
+
+    /// Exact allocation demand in push order. Only scratch capacity changes.
+    fn constant_demands(&mut self, system: &SystemConstants, float_reads: [u32; 2]) -> ([constant_patch::BlockDemand; 5], usize) {
+        use constant_patch::BlockDemand;
+        let mut demands = [BlockDemand { window: 0, bytes: 0, changed_vec4s: 0 }; 5];
+        let mut count = 0;
+        let mut values = std::mem::take(&mut self.constant_cache.values);
+        for stage in 0..2 {
+            let read = float_reads[stage] as usize;
+            if read == 0 { continue; }
+            let changed = match &self.constant_cache.float[stage] {
+                None => read,
+                Some(block) => { self.regs.float_delta(stage, read, &block.data, &mut values); values.len() / 16 }
+            };
+            if changed != 0 {
+                demands[count] = BlockDemand { window: FLOAT_CONSTANTS_SIZE, bytes: read as u64 * 16, changed_vec4s: changed };
+                count += 1;
+            }
+        }
+        self.constant_cache.values = values;
+        for (previous, data, window) in [
+            (&self.constant_cache.bool_loop, as_bytes(self.regs.bool_loop_constants()), BOOL_LOOP_SIZE),
+            (&self.constant_cache.fetch, as_bytes(self.regs.fetch_constants()), FETCH_SIZE),
+            (&self.constant_cache.system, system.as_bytes(), SYSTEM_SIZE),
+        ] {
+            if previous.as_ref().is_some_and(|block| block.data == data) { continue; }
+            let changed = data.chunks(16).enumerate().filter(|(index, bytes)| {
+                previous.as_ref().and_then(|block| block.data.get(index * 16..index * 16 + 16)) != Some(*bytes)
+            }).count();
+            demands[count] = BlockDemand { window, bytes: data.len() as u64, changed_vec4s: changed };
+            count += 1;
+        }
+        (demands, count)
     }
 
     /// Pushes the constants this draw needs; returns the dynamic offsets in binding order.
@@ -1938,7 +2066,7 @@ impl Executor {
     /// The textures the shaders' fetches bind under the current fetch constants. Draws mostly
     /// repeat recent sets, so they're remembered by the shaders and the fetch constant words read,
     /// and reused while their textures stay current (checked once per frame) and cached.
-    fn texture_set(&mut self, vs: &CachedShader, ps: Option<&CachedShader>) -> Rc<TextureSet> {
+    fn texture_set(&mut self, vs: &CachedShader, ps: Option<&CachedShader>) -> std::result::Result<Rc<TextureSet>, Skip> {
         let fetch = self.regs.fetch_constants();
         let key = &mut self.texture_set_key;
         key.clear();
@@ -1964,7 +2092,7 @@ impl Executor {
         {
             if self.textures.touch(&TextureMemory(self.memory.clone()), &set.textures) {
                 *used = self.frame;
-                return set.clone();
+                return Ok(set.clone());
             }
             self.stats.texture_set_stale += 1;
         }
@@ -1984,8 +2112,10 @@ impl Executor {
                     shared: &mut self.shared,
                     memory: &*self.memory,
                     encoder: &mut self.encoder,
+                    failure: &mut self.failure,
                 };
                 let bound = self.textures.bind_with(&self.device, &texture_memory, &fetch, binding, Some(&mut source));
+                if let Some(reason) = self.failure { return Err(Skip::Fatal(reason)); }
                 self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
                 match bound.texture {
                     Some(texture) => textures.push(texture),
@@ -2012,12 +2142,9 @@ impl Executor {
             pipeline_layout,
             group,
         });
-        if self.texture_sets.len() >= MAX_TEXTURE_SETS {
-            self.texture_sets.clear();
-        }
         self.times.texture_sets += started.elapsed();
         self.texture_sets.insert(hash, (set.clone(), self.frame));
-        set
+        Ok(set)
     }
 
     fn texture_layout(&mut self, key: &[(u32, SlotKind)]) -> (BindGroupLayout, PipelineLayout, u32) {
@@ -2259,7 +2386,7 @@ impl Executor {
                 Ok(Some(e)) => Err(gpu_webgpu::Error::Invalid(e.to_string())),
                 Err(e) => Err(e),
             };
-            self.times.pipelines += started.elapsed();
+            self.record_pipeline_call(started.elapsed());
             result
         };
         // On the web: compiled in the background (a synchronous pipeline would be compiled on
@@ -2268,7 +2395,7 @@ impl Executor {
         let pending = {
             let started = crate::renderer::Stopwatch::start();
             let pending = profile_operation!(self, PipelineCreate, self.device.create_render_pipeline_async(&desc));
-            self.times.pipelines += started.elapsed();
+            self.record_pipeline_call(started.elapsed());
             pending
         };
         #[cfg(target_os = "emscripten")]
@@ -2281,6 +2408,13 @@ impl Executor {
             }
         };
         self.compiled(key, result, vs, ps)
+    }
+
+    fn record_pipeline_call(&mut self, elapsed: std::time::Duration) {
+        self.times.pipelines += elapsed;
+        self.stats.pipeline_call_max_ms = self.stats.pipeline_call_max_ms.max(
+            elapsed.as_millis().try_into().unwrap_or(u64::MAX),
+        );
     }
 
     fn compiled(

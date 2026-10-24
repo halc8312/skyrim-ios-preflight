@@ -23,6 +23,7 @@
 //! over the device limits, dimension mismatches) binds a zeroed 1x1 fallback of the right view
 //! dimension and logs a warning once per fetch constant.
 
+mod eviction_order;
 mod format;
 mod gpu_load;
 mod hash;
@@ -999,12 +1000,15 @@ impl TextureCache {
         // (resolve output, also when a texture only partly covers it), and otherwise cheaper
         // than uploading the texture's bytes, as textures are reloaded whole when any of their
         // memory changes while the copy is updated by changed page.
-        if let Some(gpu) = gpu
-            && (gpu.covers(&ranges) || (self.config.gpu_conversion && gpu.sync(&ranges)))
-        {
-            match self.load_on_gpu(device, &mut *gpu, fetch, &info, caps, ranges.clone(), hash) {
-                Some(entry) => return Ok(entry),
-                None => log::debug!("{}: not loadable from GPU memory; using guest memory", info.format.name()),
+        if let Some(gpu) = gpu {
+            if gpu.covers(&ranges) || (self.config.gpu_conversion && gpu.sync(&ranges)) {
+                match self.load_on_gpu(device, &mut *gpu, fetch, &info, caps, ranges.clone(), hash) {
+                    Some(entry) => return Ok(entry),
+                    None => log::debug!("{}: not loadable from GPU memory", info.format.name()),
+                }
+            }
+            if !gpu.cpu_read_allowed(&ranges) {
+                return Err("current texture data requires GPU readback".into());
             }
         }
         if self.config.gpu_conversion
@@ -1243,7 +1247,14 @@ impl TextureCache {
             } else if let Some(p) = self.retiring.pop() {
                 live -= p.bytes;
                 p.texture.destroy();
-            } else if let Some(key) = self
+            } else {
+                break;
+            }
+        }
+        let mut scanned = 0usize;
+        while live + bytes > cap && eviction_order::direct_scan_fits(scanned, self.textures.len()) {
+            scanned = scanned.saturating_add(self.textures.len());
+            if let Some(key) = self
                 .textures
                 .iter()
                 .filter(|(_, e)| e.last_used < self.frame && !self.is_protected(e))
@@ -1257,6 +1268,24 @@ impl TextureCache {
             } else {
                 self.over_budget = true;
                 return;
+            }
+        }
+        if live + bytes > cap {
+            let victims = eviction_order::oldest_first(
+                self.textures.iter().filter(|(_, e)| e.last_used < self.frame && !self.is_protected(e))
+                    .map(|(k, e)| (*k, e.last_used)),
+            );
+            for key in victims {
+                if live + bytes <= cap {
+                    break;
+                }
+                let e = self.textures.remove(&key).expect("collected above");
+                live -= e.bytes;
+                e.texture.destroy();
+                self.stats.evicted += 1;
+            }
+            if live + bytes > cap {
+                self.over_budget = true;
             }
         }
     }
@@ -1300,25 +1329,45 @@ impl TextureCache {
             p.texture.destroy();
         }
         while live > target {
-            if let Some(p) = self.pool.take_oldest() {
-                live -= p.bytes;
-                p.texture.destroy();
-                continue;
-            }
-            let Some(key) = self
+            let Some(p) = self.pool.take_oldest() else { break };
+            live -= p.bytes;
+            p.texture.destroy();
+        }
+        let mut scanned = 0usize;
+        while live > target && eviction_order::direct_scan_fits(scanned, self.textures.len()) {
+            scanned = scanned.saturating_add(self.textures.len());
+            let Some(first) = self
                 .textures
                 .iter()
                 .filter(|(_, e)| !self.is_protected(e))
                 .min_by_key(|(_, e)| e.last_used)
                 .map(|(k, _)| *k)
             else {
-                break;
+                return destroyed_views;
             };
-            let e = self.textures.remove(&key).expect("found above");
+            // Small pressure events retain the allocation-free direct path.
+            let e = self.textures.remove(&first).expect("found above");
             live -= e.bytes;
             destroyed_views.extend(e.views.iter().flatten().map(|v| v.raw() as usize));
             e.texture.destroy();
             self.stats.evicted += 1;
+        }
+        if live > target {
+            // Construct the remaining LRU order once; repeated pressure no
+            // longer performs an unbounded number of whole-cache scans.
+            let victims = eviction_order::oldest_first(
+                self.textures.iter().filter(|(_, e)| !self.is_protected(e)).map(|(k, e)| (*k, e.last_used)),
+            );
+            for key in victims {
+                if live <= target {
+                    break;
+                }
+                let e = self.textures.remove(&key).expect("collected above");
+                live -= e.bytes;
+                destroyed_views.extend(e.views.iter().flatten().map(|v| v.raw() as usize));
+                e.texture.destroy();
+                self.stats.evicted += 1;
+            }
         }
         destroyed_views
     }

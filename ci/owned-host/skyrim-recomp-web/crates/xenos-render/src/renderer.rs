@@ -102,6 +102,62 @@ pub(crate) struct Renderer {
     mosaic: Option<crate::present::FrontBuffer>,
 }
 
+#[cfg(all(test, not(target_os = "emscripten")))]
+mod completion_tests {
+    use super::*;
+    use gpu_webgpu::{DeviceDescriptor, Instance, RequestAdapterOptions};
+
+    struct EmptyMemory;
+    impl PhysicalMemory for EmptyMemory {
+        fn read(&self, _: u32, out: &mut [u8]) { out.fill(0); }
+        fn write(&self, _: u32, _: &[u8]) {}
+    }
+
+    #[test]
+    fn failure_preserves_the_genuinely_completed_prefix() {
+        let instance = Instance::new().unwrap();
+        let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions::default())).unwrap();
+        let device = instance.block_on(adapter.request_device(&DeviceDescriptor::default())).unwrap();
+        let mut renderer = Renderer::new(&device, Arc::new(EmptyMemory), TextureFormat::RGBA8Unorm,
+            Box::new(|device| Box::new(crate::edram::EdramTargets::new(device))));
+        let handle = RendererHandle::new();
+        let prefix = handle.submit(Command::Registers(Vec::new()));
+        let failed = handle.submit(Command::Swap { fetch: [0; 6], width: 1, height: 1 });
+        renderer.pump(&handle, None, None, |renderer, _| { renderer.executor.failure = Some(16); });
+        assert_eq!(handle.wait_for(prefix), Ok(()));
+        assert_eq!(handle.wait_for(failed), Err(crate::WaitError::Failed(16)));
+        assert_eq!(handle.completed(), prefix);
+        assert!(device.take_errors().is_empty());
+    }
+
+    #[test]
+    fn ready_blocked_command_is_published_before_input_wait_even_at_zero_budget() {
+        let instance = Instance::new().unwrap();
+        let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions::default())).unwrap();
+        let device = instance.block_on(adapter.request_device(&DeviceDescriptor::default())).unwrap();
+        let mut renderer = Renderer::new(&device, Arc::new(EmptyMemory), TextureFormat::RGBA8Unorm,
+            Box::new(|device| Box::new(crate::edram::EdramTargets::new(device))));
+        let handle = RendererHandle::new();
+        let seq = handle.submit(Command::Registers(Vec::new()));
+        // Model an already completed resolve belonging to the previous pump.
+        assert_eq!(handle.take(None).len(), 1);
+        renderer.blocked = Some(seq);
+        let producer = handle.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let result = producer.wait_for(seq);
+            if result.is_ok() { producer.submit(Command::Registers(Vec::new())); }
+            tx.send(result).unwrap();
+        });
+        renderer.pump(&handle, Some(Duration::from_millis(30)), Some(0.0), |_, _| unreachable!());
+        let result = rx.recv_timeout(Duration::from_secs(2));
+        handle.close();
+        thread.join().unwrap();
+        assert_eq!(result, Ok(Ok(())));
+        assert_eq!(handle.completed(), seq);
+    }
+}
+
 impl Renderer {
     pub fn new(
         device: &Device,
@@ -169,7 +225,16 @@ impl Renderer {
         budget_ms: Option<f64>,
         mut on_swap: impl FnMut(&mut Self, Option<(u32, u32)>),
     ) {
+        // The producer may be waiting for this command and therefore have no
+        // new work to wake take(). Finish/publish it before waiting for input.
+        if self.blocked.is_some() {
+            if self.executor.busy() {
+                return;
+            }
+            handle.complete(self.blocked.take().expect("checked above"));
+        }
         if self.backlog.is_empty() {
+            let _phase = crate::causal::Guard::enter(&self.executor.causal, crate::causal::Stage::InputWait);
             self.backlog = handle.take(timeout);
         }
         let start = now_ms();
@@ -194,6 +259,8 @@ impl Renderer {
                 continue;
             };
             executed += 1;
+            if let Some(session) = &self.executor.causal { session.command(seq); }
+            let _phase = crate::causal::Guard::enter(&self.executor.causal, crate::causal::Stage::Command);
             let what: (&str, usize) = match &cmd {
                 Command::Registers(w) => ("registers", w.len()),
                 Command::Shader { code, .. } => ("shader", code.len()),
@@ -213,12 +280,21 @@ impl Renderer {
                     if let Some(submitted) = handle.take_swap_time() {
                         self.swap_timings.push((submitted, submitted.elapsed()));
                     }
-                    self.executor.end_frame();
+                    self.executor.end_frame_before_present();
                     // `--render-debug d3d-surfaces`: the surface mosaic made at the D3D present.
-                    let front = match self.mosaic.take() {
+                    let front = {
+                        let _phase = crate::causal::Guard::enter(&self.executor.causal, crate::causal::Stage::FrontBuffer);
+                        match self.mosaic.take() {
                         Some(mosaic) => Some(mosaic),
                         None => self.executor.front_buffer(fetch),
+                        }
                     };
+                    if let Some(reason) = self.executor.failure {
+                        if let Some(seq) = done { handle.complete(seq); }
+                        handle.fail(reason);
+                        self.backlog.clear();
+                        return;
+                    }
                     let size = self.presenter.swap(&self.device, front);
                     gpu_webgpu::timing::collect();
                     if self.presenter.frames == 1 || self.presenter.frames.is_multiple_of(300) {
@@ -242,6 +318,8 @@ impl Renderer {
                         self.calls_at = (self.presenter.frames, calls);
                     }
                     on_swap(self, size);
+                    self.executor.mark_frame_submitted();
+                    if let Some(session) = &self.executor.causal { session.frame(std::time::Instant::now()); }
                 }
                 Command::D3d(_) if self.d3d.is_none() => log::warn!("renderer: D3D call without --gpu d3d"),
                 Command::D3d(cmd) => {
@@ -273,6 +351,12 @@ impl Renderer {
                         self.executor.stats
                     );
                 }
+            }
+            if let Some(reason) = self.executor.failure {
+                if let Some(seq) = done { handle.complete(seq); }
+                handle.fail(reason);
+                self.backlog.clear();
+                return;
             }
             // A draw that started a resolve completes once the resolve has.
             if self.executor.busy() {
