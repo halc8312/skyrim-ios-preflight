@@ -16,7 +16,7 @@ HELPER_PINS = {
     "ci/prepare-fix-build-route/prepare_route.py":
         "a8c087b7cd8a0ea10925d226adbe813cca8a9b928ddd79c20cd2adeff8bfb7ce",
     "ci/prepare-fix-build-route/reference-pins.json":
-        "ca018912d981727648aad3f06b91711f6f2b98e4304659b6738e96845b4805dd",
+        "a256acde2b4fc29b3a5fabfb8c57ad50eccc78ff9d4369c759b49026152565ca",
     "ci/run-bounded-command.py":
         "f7391d02a43dc5dc97ea7f017cd5e502c70b7a4f06b4ce05a9e4972b49a890dd",
 }
