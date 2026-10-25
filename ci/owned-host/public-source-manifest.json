@@ -1,5 +1,5 @@
 {
-  "file_count": 365,
+  "file_count": 369,
   "game_data_included": false,
   "game_executed": false,
   "physical_iphone_verified": false,
@@ -518,8 +518,8 @@
       "sha256": "2b0ebd6f4f8217e598246d05f3e0d0fecfc2070d783e94df9508ff7213f00a0d"
     },
     "skyrim-recomp-web/crates/xenos-render/src/executor.rs": {
-      "bytes": 113621,
-      "sha256": "b3ec2e8d27b02affda887cb10153cc4263f8c2a540e678e332a25afc3fdec575"
+      "bytes": 106789,
+      "sha256": "60281eae277f929a4c2ded6fa3765561f9b4ea208a98bbc5b7d4aeb0946c56f0"
     },
     "skyrim-recomp-web/crates/xenos-render/src/extent.rs": {
       "bytes": 12458,
@@ -538,8 +538,8 @@
       "sha256": "360ed2b873f3709943faba546f956eff629efa64b79b9e61272dfac65e1ee483"
     },
     "skyrim-recomp-web/crates/xenos-render/src/lib.rs": {
-      "bytes": 5747,
-      "sha256": "8d45baa80f87f1ed9ec9dcd8ba0db8622d21a61c33098d38cc6795400409c36f"
+      "bytes": 5816,
+      "sha256": "db996b87f93ab20e3dce2ae81e5d55c7bd58289446f17e4731ba0d51bb6329e5"
     },
     "skyrim-recomp-web/crates/xenos-render/src/native.rs": {
       "bytes": 44048,
@@ -553,9 +553,25 @@
       "bytes": 24087,
       "sha256": "61022a688cf7a3e85a2ffd8f9b0371da024235298ef7ca3c275ee7c0eae7cd1c"
     },
+    "skyrim-recomp-web/crates/xenos-render/src/pipeline_plan.rs": {
+      "bytes": 4785,
+      "sha256": "80e2d8d19e343db45b61e635dcf6c8803b23f8eb44f8df481fa1bbd985f3758d"
+    },
+    "skyrim-recomp-web/crates/xenos-render/src/pipeline_plan_tests.rs": {
+      "bytes": 20628,
+      "sha256": "ee2b1983e524cf6a0840ee20eb5485f6c8a963cfc2880b55ba8d779bd7191fc3"
+    },
+    "skyrim-recomp-web/crates/xenos-render/src/pipeline_webgpu.rs": {
+      "bytes": 6424,
+      "sha256": "8e17f5f741e961c66e9e5c25f34e49898bd2bc39dd5fc7ad424fe4a1ae726634"
+    },
     "skyrim-recomp-web/crates/xenos-render/src/prepared.rs": {
       "bytes": 3959,
       "sha256": "75726fe1908697ea2389381b576955500580307f041498fe242c6ea2afbdc32c"
+    },
+    "skyrim-recomp-web/crates/xenos-render/src/prepared_shader.rs": {
+      "bytes": 6379,
+      "sha256": "00e99f14a269402301e0ed2c7de31c2d3c4f0f4e0172c6a595210f824dbc7664"
     },
     "skyrim-recomp-web/crates/xenos-render/src/prepared_tests.rs": {
       "bytes": 6743,
@@ -610,8 +626,8 @@
       "sha256": "43b4795b0e2d06fde535605dccac8f82e26617a4a7646512620a872cb200b8f0"
     },
     "skyrim-recomp-web/crates/xenos-render/src/shaders.rs": {
-      "bytes": 4093,
-      "sha256": "910875d676218d453505304b9c4ceebbf2cf6eb82837a25f957e662ce2eb6e9a"
+      "bytes": 3940,
+      "sha256": "03413d0b0bcd020c25337d41f6144e01a16bad04952d499446773ed35a2d79c6"
     },
     "skyrim-recomp-web/crates/xenos-render/src/shared_memory.rs": {
       "bytes": 30012,
@@ -938,8 +954,8 @@
       "sha256": "fb566ebd6019888be0844921ae88062f67d83c40fc1e12ca3e9be9f2acdfd661"
     },
     "source-allowlist.txt": {
-      "bytes": 19882,
-      "sha256": "4a638fd26538982e7d93cf4409b9db3bc801d68c78da752c792276e3f92e02b1"
+      "bytes": 20128,
+      "sha256": "a004c1ed6be6be2473497656cef8372c594c20699487427e99f6d4590a51ecf8"
     },
     "tools/ios-owned-game-host/AUDIO.md": {
       "bytes": 9670,
@@ -1119,7 +1135,7 @@
     },
     "tools/ios-owned-game-host/project.yml": {
       "bytes": 4120,
-      "sha256": "330cdb8f55d2a6de1eb8e9d013e5671330f3683c18aa199ed9d46126839f1718"
+      "sha256": "880227bc75ed0eebec48d1df32d60f3d1f9c24eeb6772d2693ea1be3a0df48a7"
     },
     "tools/ios-owned-game-host/sdk-test/audio_control_gate_test.cpp": {
       "bytes": 5719,
@@ -1215,7 +1231,7 @@
     },
     "tools/ios-owned-game-host/sdk-test/tests/NativeTraceSDKProbeTests.swift": {
       "bytes": 2988,
-      "sha256": "9d1b644a72647b7dcb24855fc069560274474318066202ae90850e31e6c2db6d"
+      "sha256": "967471b69c406803a47706a6ade849afdfe7e14e4410bec1eec91080021b77a3"
     },
     "tools/ios-owned-game-host/sdk-test/tests/OwnedHostAudioTests.swift": {
       "bytes": 14713,

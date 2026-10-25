@@ -4,19 +4,15 @@ use rustc_hash::FxHashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 
+use crate::prepared_shader::PreparedShader;
 use gpu_webgpu::{Device, ShaderModule};
-use xenos_shader::{Shader, ShaderStage, Translation, TranslationOptions};
+use xenos_shader::{Shader, ShaderStage, TranslationOptions};
 
 pub struct CachedShader {
     pub module: ShaderModule,
-    /// The translation's metadata; its WGSL is dropped once the module exists (see
-    /// [`CachedShader::wgsl`]).
-    pub translation: Translation,
-    /// The decoded microcode (vertex shaders are run on the CPU to bound unclipped draws).
-    pub shader: Shader,
+    prepared: PreparedShader,
     /// Conservative vertex fetch proof, analyzed once with this cached shader.
     pub vertex_ranges: Option<crate::vertex_range::CachedPlan>,
-    options: TranslationOptions,
     /// Identifies this (microcode, options) pair in pipeline keys.
     pub id: u64,
 }
@@ -80,34 +76,43 @@ impl ShaderCache {
             }
         };
         let started = crate::renderer::Stopwatch::start();
-        let translation = shader.translate(options);
+        let (prepared, source) = PreparedShader::from_decoded(shader, options);
         self.translate_time += started.elapsed();
         let translated = crate::renderer::Stopwatch::start();
-        for w in &translation.warnings {
+        for w in &prepared.translation.warnings {
             log::debug!("shader {stage:?} {hash:016X}: {w}");
         }
         // The translator's output is validated with naga in its tests; anything the device
         // still rejects is reported through its uncaptured-error log.
-        let module = device.create_shader_module_wgsl(&format!("{stage:?} {hash:016X}"), &translation.wgsl);
+        let module = device.create_shader_module_wgsl(&format!("{stage:?} {hash:016X}"), &source);
         self.module_time += translated.elapsed();
         self.next_id += 1;
         // Hundreds of shaders' source would stay in the heap (wasm memory, which never shrinks).
-        let mut translation = translation;
-        translation.wgsl = String::new();
+        drop(source);
         let vertex_ranges = if stage == ShaderStage::Vertex {
-            crate::vertex_range::CachedPlan::from_shader(&shader).ok()
+            crate::vertex_range::CachedPlan::from_shader(prepared.shader()).ok()
         } else {
             None
         };
-        Some(Rc::new(CachedShader {
-            module, translation, shader, vertex_ranges, options: options.clone(), id: self.next_id,
-        }))
+        Some(Rc::new(CachedShader { module, prepared, vertex_ranges, id: self.next_id }))
     }
 }
 
 impl CachedShader {
     /// The module's WGSL, translated again (for diagnostics).
     pub fn wgsl(&self) -> String {
-        self.shader.translate(&self.options).wgsl
+        self.prepared().wgsl()
+    }
+
+    /// The CPU record is shared by the game cache and future backend adapters.
+    pub fn prepared(&self) -> &PreparedShader {
+        &self.prepared
+    }
+}
+
+impl std::ops::Deref for CachedShader {
+    type Target = PreparedShader;
+    fn deref(&self) -> &Self::Target {
+        &self.prepared
     }
 }

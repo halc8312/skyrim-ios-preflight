@@ -134,7 +134,11 @@ skyrim-recomp-web/crates/xenos-render/src/lib.rs
 skyrim-recomp-web/crates/xenos-render/src/native.rs
 skyrim-recomp-web/crates/xenos-render/src/native_frame_stability.rs
 skyrim-recomp-web/crates/xenos-render/src/native_performance.rs
+skyrim-recomp-web/crates/xenos-render/src/pipeline_plan.rs
+skyrim-recomp-web/crates/xenos-render/src/pipeline_plan_tests.rs
+skyrim-recomp-web/crates/xenos-render/src/pipeline_webgpu.rs
 skyrim-recomp-web/crates/xenos-render/src/prepared.rs
+skyrim-recomp-web/crates/xenos-render/src/prepared_shader.rs
 skyrim-recomp-web/crates/xenos-render/src/prepared_tests.rs
 skyrim-recomp-web/crates/xenos-render/src/present.rs
 skyrim-recomp-web/crates/xenos-render/src/present_cache_tests.rs

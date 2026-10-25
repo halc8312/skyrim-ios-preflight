@@ -25,28 +25,31 @@ pub mod debug_alpha_coverage;
 pub mod edram;
 pub mod executor;
 mod extent;
-mod present;
-pub mod prepared;
 pub mod frame_plan;
-pub mod sampled_frame;
-pub mod target_frame;
 #[cfg(all(feature = "public-probes", feature = "metal-shaders", not(target_os = "emscripten")))]
 pub mod frame_probe;
-#[cfg(all(feature = "public-probes", feature = "metal-shaders", not(target_os = "emscripten")))]
-pub mod sampled_probe;
-#[cfg(all(feature = "public-probes", feature = "metal-shaders", not(target_os = "emscripten")))]
-pub mod target_fixtures;
+pub mod pipeline_plan;
+mod pipeline_webgpu;
+pub mod prepared;
+pub mod prepared_shader;
+mod present;
 #[cfg(not(target_os = "emscripten"))]
 mod presentation_probe;
 mod queue;
 pub mod registers;
 mod renderer;
 mod ring;
+pub mod sampled_frame;
+#[cfg(all(feature = "public-probes", feature = "metal-shaders", not(target_os = "emscripten")))]
+pub mod sampled_probe;
 pub mod settings;
 mod shaders;
 mod shared_memory;
-mod vertex_range;
+#[cfg(all(feature = "public-probes", feature = "metal-shaders", not(target_os = "emscripten")))]
+pub mod target_fixtures;
+pub mod target_frame;
 pub mod targets;
+mod vertex_range;
 
 #[cfg(not(target_os = "emscripten"))]
 pub mod native;

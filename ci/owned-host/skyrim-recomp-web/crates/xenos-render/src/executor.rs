@@ -20,24 +20,21 @@ use xenos_shader::{
 };
 use xenos_state::RegisterSource;
 use xenos_state::bitfields::*;
-use xenos_state::blend::{HostBlendFactor, HostBlendOperation, OutputMergerState, normalized_color_mask};
+use xenos_state::blend::{OutputMergerState, normalized_color_mask};
 use xenos_state::depth_stencil::{DepthStencilState as GuestDepthStencil, normalized_depth_control};
 use xenos_state::edram::RenderTargetSetup;
-use xenos_state::primitive::{
-    DrawDescription, HostDraw, HostIndices, HostTopology, IndexBufferInfo, PrimitiveExpansion,
-};
+use xenos_state::primitive::{DrawDescription, HostDraw, HostIndices, IndexBufferInfo, PrimitiveExpansion};
 use xenos_state::resolve::{ResolveOptions, resolve_info};
 use xenos_state::shader::ShaderProgramSetup;
 use xenos_state::viewport::{
-    CullMode as GuestCull, FrontFace as GuestFrontFace, RasterizerState, Scissor, ViewportArgs, ViewportRegisters,
-    host_viewport_info, scissor,
+    CullMode as GuestCull, RasterizerState, Scissor, ViewportArgs, ViewportRegisters, host_viewport_info, scissor,
 };
 use xenos_state::xenos::{self, EdramMode, MsaaSamples, SourceSelect};
 use xenos_texture_cache::{GpuSource, TextureCache};
 
 use crate::constant_patch::{self, ConstantPatcher};
-use crate::present::FrontBuffer;
 use crate::prepared::{DrawState, prepare_geometry};
+use crate::present::FrontBuffer;
 use crate::registers::{ActiveShaders, RegisterFile, dirty};
 use crate::ring::Ring;
 use crate::shaders::{CachedShader, ShaderCache};
@@ -103,7 +100,9 @@ impl GpuSource for SharedSource<'_> {
     fn cpu_read_allowed(&mut self, ranges: &[xenos_texture::GuestRange]) -> bool {
         let ranges: Vec<_> = ranges.iter().map(|r| (r.address, r.length)).collect();
         let allowed = !self.shared.any_gpu_current(self.memory, &ranges);
-        if !allowed { *self.failure = Some(14); }
+        if !allowed {
+            *self.failure = Some(14);
+        }
         allowed
     }
 
@@ -143,43 +142,7 @@ enum SlotKind {
     Sampler { filtering: bool },
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct ColorKey {
-    format: TextureFormat,
-    blend: Option<[(BlendOperation, BlendFactor, BlendFactor); 2]>,
-    write_mask: u32,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct DepthKey {
-    format: TextureFormat,
-    write: bool,
-    compare: CompareFunction,
-    stencil: [(CompareFunction, StencilOperation, StencilOperation, StencilOperation); 2],
-    read_mask: u32,
-    write_mask: u32,
-    bias: i32,
-    slope_scale_bits: u32,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct PipelineKey {
-    vertex: u64,
-    pixel: Option<u64>,
-    /// Which texture bind group layout (see `texture_layouts`).
-    texture_layout: u32,
-    topology: PrimitiveTopology,
-    strip_index_format: IndexFormat,
-    cull: CullMode,
-    front_face: FrontFace,
-    colors: [Option<ColorKey>; 4],
-    depth: Option<DepthKey>,
-    /// Color attachment slots of the pass (bound slots up to the last one).
-    color_slots: usize,
-    sample_count: u32,
-    sample_mask: u32,
-    alpha_to_coverage: bool,
-}
+type PipelineKey = crate::pipeline_plan::Pipeline<TextureFormat>;
 
 /// Time spent in renderer operations that are rare per frame but may be slow on some devices
 /// (phones loading a world), for the perf log.
@@ -378,7 +341,11 @@ pub struct Executor {
     timing_sample: bool,
     /// Texture bindings of recent draws by shader pair and the fetch constant words they read
     /// (see `TextureSet`); cleared whenever the texture cache may answer differently.
-    texture_sets: gpu_webgpu::bounded_cache::BoundedCache<u64, (Rc<TextureSet>, u64), std::hash::BuildHasherDefault<rustc_hash::FxHasher>>,
+    texture_sets: gpu_webgpu::bounded_cache::BoundedCache<
+        u64,
+        (Rc<TextureSet>, u64),
+        std::hash::BuildHasherDefault<rustc_hash::FxHasher>,
+    >,
     texture_set_key: Vec<u32>,
     device: Device,
     memory: Arc<dyn PhysicalMemory>,
@@ -523,72 +490,6 @@ fn layout_entry(binding: u32, visibility: ShaderStage, ty: BufferBindingType, si
     }
 }
 
-fn topology(t: HostTopology) -> PrimitiveTopology {
-    match t {
-        HostTopology::PointList => PrimitiveTopology::PointList,
-        HostTopology::LineList => PrimitiveTopology::LineList,
-        HostTopology::LineStrip => PrimitiveTopology::LineStrip,
-        HostTopology::TriangleList => PrimitiveTopology::TriangleList,
-        HostTopology::TriangleStrip => PrimitiveTopology::TriangleStrip,
-    }
-}
-
-fn compare(f: xenos::CompareFunction) -> CompareFunction {
-    use xenos::CompareFunction as C;
-    match f {
-        C::Never => CompareFunction::Never,
-        C::Less => CompareFunction::Less,
-        C::Equal => CompareFunction::Equal,
-        C::LessEqual => CompareFunction::LessEqual,
-        C::Greater => CompareFunction::Greater,
-        C::NotEqual => CompareFunction::NotEqual,
-        C::GreaterEqual => CompareFunction::GreaterEqual,
-        C::Always => CompareFunction::Always,
-    }
-}
-
-fn stencil_op(op: xenos::StencilOp) -> StencilOperation {
-    use xenos::StencilOp as S;
-    match op {
-        S::Keep => StencilOperation::Keep,
-        S::Zero => StencilOperation::Zero,
-        S::Replace => StencilOperation::Replace,
-        S::IncrementClamp => StencilOperation::IncrementClamp,
-        S::DecrementClamp => StencilOperation::DecrementClamp,
-        S::Invert => StencilOperation::Invert,
-        S::IncrementWrap => StencilOperation::IncrementWrap,
-        S::DecrementWrap => StencilOperation::DecrementWrap,
-    }
-}
-
-fn blend_factor(f: HostBlendFactor) -> BlendFactor {
-    match f {
-        HostBlendFactor::Zero => BlendFactor::Zero,
-        HostBlendFactor::One => BlendFactor::One,
-        HostBlendFactor::Src => BlendFactor::Src,
-        HostBlendFactor::OneMinusSrc => BlendFactor::OneMinusSrc,
-        HostBlendFactor::SrcAlpha => BlendFactor::SrcAlpha,
-        HostBlendFactor::OneMinusSrcAlpha => BlendFactor::OneMinusSrcAlpha,
-        HostBlendFactor::Dst => BlendFactor::Dst,
-        HostBlendFactor::OneMinusDst => BlendFactor::OneMinusDst,
-        HostBlendFactor::DstAlpha => BlendFactor::DstAlpha,
-        HostBlendFactor::OneMinusDstAlpha => BlendFactor::OneMinusDstAlpha,
-        HostBlendFactor::SrcAlphaSaturated => BlendFactor::SrcAlphaSaturated,
-        HostBlendFactor::Constant => BlendFactor::Constant,
-        HostBlendFactor::OneMinusConstant => BlendFactor::OneMinusConstant,
-    }
-}
-
-fn blend_operation(op: HostBlendOperation) -> BlendOperation {
-    match op {
-        HostBlendOperation::Add => BlendOperation::Add,
-        HostBlendOperation::Subtract => BlendOperation::Subtract,
-        HostBlendOperation::ReverseSubtract => BlendOperation::ReverseSubtract,
-        HostBlendOperation::Min => BlendOperation::Min,
-        HostBlendOperation::Max => BlendOperation::Max,
-    }
-}
-
 fn has_stencil(format: TextureFormat) -> bool {
     matches!(format, TextureFormat::Depth24PlusStencil8 | TextureFormat::Depth32FloatStencil8 | TextureFormat::Stencil8)
 }
@@ -676,7 +577,10 @@ impl Executor {
             cpu_profile: crate::cpu_profile::CpuProfile::default(),
             stage_marks: [0.0; DRAW_STAGES.len() + 1],
             timing_sample: false,
-            texture_sets: gpu_webgpu::bounded_cache::BoundedCache::with_hasher(MAX_TEXTURE_SETS, std::hash::BuildHasherDefault::default()),
+            texture_sets: gpu_webgpu::bounded_cache::BoundedCache::with_hasher(
+                MAX_TEXTURE_SETS,
+                std::hash::BuildHasherDefault::default(),
+            ),
             texture_set_key: Vec::new(),
             device: device.clone(),
             memory,
@@ -713,10 +617,8 @@ impl Executor {
                     gpu_conversion: !crate::debug::CPU_TEXTURES.load(std::sync::atomic::Ordering::Relaxed),
                     ..Default::default()
                 };
-                let config = texture_budget::for_executor(
-                    config,
-                    crate::HANDHELD.load(std::sync::atomic::Ordering::Relaxed),
-                );
+                let config =
+                    texture_budget::for_executor(config, crate::HANDHELD.load(std::sync::atomic::Ordering::Relaxed));
                 let config = match crate::debug::LOAD_CAP_MIB.load(std::sync::atomic::Ordering::Relaxed) {
                     u64::MAX => config,
                     0 => xenos_texture_cache::CacheConfig { max_load_bytes_per_second: u64::MAX, ..config },
@@ -776,7 +678,9 @@ impl Executor {
             failure: &mut self.failure,
         };
         let bound = self.textures.bind_with(&self.device, &texture_memory, &constants, &binding, Some(&mut source));
-        if self.failure.is_some() { return None; }
+        if self.failure.is_some() {
+            return None;
+        }
         self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
         // The presenter shows it right away: submit its load. It's drawn until the next swap, so
         // it must survive making room for other textures until then.
@@ -961,7 +865,9 @@ impl Executor {
     }
 
     fn flush_reason(&mut self, reason: usize) {
-        if let Some(session) = &self.causal { session.reason(reason); }
+        if let Some(session) = &self.causal {
+            session.reason(reason);
+        }
         let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::Flush);
         let started = crate::renderer::Stopwatch::start();
         profile_operation!(self, Submit, self.submit_batch());
@@ -981,7 +887,8 @@ impl Executor {
         let patches = {
             let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::Constants);
             self.floats.encode_observed(&self.device, &self.causal)
-        }.map(|(commands, bytes)| {
+        }
+        .map(|(commands, bytes)| {
             self.stats.constant_upload_bytes += bytes;
             commands
         });
@@ -1001,7 +908,8 @@ impl Executor {
             self.device.queue().submit(patches.into_iter().chain(main));
             self.stats.submissions += 1;
             if uploaded > self.uploaded_at_submit {
-                let _detail = crate::causal::DetailGuard::enter(&self.causal, crate::causal::Detail::CompletionRegistration);
+                let _detail =
+                    crate::causal::DetailGuard::enter(&self.causal, crate::causal::Detail::CompletionRegistration);
                 let done = self.device.queue().on_submitted_work_done();
                 self.uploads_in_flight.push_back((done, uploaded - self.uploaded_at_submit));
                 self.uploaded_at_submit = uploaded;
@@ -1174,7 +1082,9 @@ impl Executor {
 
     /// Executes the draw described by the registers (VGT_DRAW_INITIATOR etc. already written).
     pub fn draw(&mut self) {
-        if self.failure.is_some() { return; }
+        if self.failure.is_some() {
+            return;
+        }
         let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::Draw);
         debug_assert!(!self.resolving, "draw while a resolve is pending");
         let mode = RbModecontrol::read(&self.regs).edram_mode;
@@ -1296,7 +1206,9 @@ impl Executor {
         let memory = self.memory.clone();
         let uploaded = self.shared.uploaded;
         if let Err(error) = self.shared.sync(&self.device, &*memory, addr, len) {
-            if !error.needs_submit() { return Err(error.reason()); }
+            if !error.needs_submit() {
+                return Err(error.reason());
+            }
             self.flush_reason(error.reason() as usize);
             self.shared.sync(&self.device, &*memory, addr, len).map_err(|error| error.reason())?;
         }
@@ -1319,8 +1231,8 @@ impl Executor {
     fn record_draw(&mut self) -> std::result::Result<(), Skip> {
         // Legacy warning timing: avoid stage clocks and formatting when warnings cannot log.
         // The optional cpu-profile counters and coarse OpTimes remain independent.
-        self.timing_sample = (self.stats.draws + self.stats.skipped_draws).is_multiple_of(32)
-            && log::log_enabled!(log::Level::Warn);
+        self.timing_sample =
+            (self.stats.draws + self.stats.skipped_draws).is_multiple_of(32) && log::log_enabled!(log::Level::Warn);
         let regs = &self.regs;
         let desc = DrawDescription::from_registers(regs);
         let program = ShaderProgramSetup::from_registers(regs);
@@ -1539,7 +1451,8 @@ impl Executor {
                 self.stats.vertex_range_eligible_bindings.saturating_add(u64::from(work.eligible));
             self.stats.vertex_range_narrowed_bindings =
                 self.stats.vertex_range_narrowed_bindings.saturating_add(u64::from(work.narrowed));
-            self.stats.vertex_range_avoided_pages = self.stats.vertex_range_avoided_pages.saturating_add(work.avoided_pages);
+            self.stats.vertex_range_avoided_pages =
+                self.stats.vertex_range_avoided_pages.saturating_add(work.avoided_pages);
             self.stats.vertex_range_fallback_bindings =
                 self.stats.vertex_range_fallback_bindings.saturating_add(u64::from(work.bindings - work.narrowed));
         } else {
@@ -1547,8 +1460,8 @@ impl Executor {
                 let f = VertexFetchConstant::read(regs, b.fetch_constant);
                 (f.address_bytes(), f.size.saturating_mul(4))
             }));
-            self.stats.vertex_range_fallback_bindings = self.stats.vertex_range_fallback_bindings
-                .saturating_add(vs.translation.vertex_bindings.len() as u64);
+            self.stats.vertex_range_fallback_bindings =
+                self.stats.vertex_range_fallback_bindings.saturating_add(vs.translation.vertex_bindings.len() as u64);
         }
         let index_load = if expansion != VertexExpansion::None && desc.source_select == SourceSelect::Dma {
             desc.index_buffer.inspect(|ib| ranges.push((ib.guest_base, ib.size_bytes())))
@@ -1567,11 +1480,16 @@ impl Executor {
         }
         self.vertex_ranges = ranges;
         let direct = direct.map(|(ib, _)| (ib, self.shared.contiguous(ib.guest_base, ib.size_bytes())));
-        let gathered_len = match direct { Some((ib, None)) => gathered_index_range(&ib).1 + 4, _ => 0 };
+        let gathered_len = match direct {
+            Some((ib, None)) => gathered_index_range(&ib).1 + 4,
+            _ => 0,
+        };
         if index_len.max(gathered_len) > INDEX_RING_SIZE {
             return Err(Skip::Warn(format!("draw with {} bytes of indices skipped", index_len.max(gathered_len))));
         }
-        if self.gathered_indices.remaining() < gathered_len { self.flush_reason(4); }
+        if self.gathered_indices.remaining() < gathered_len {
+            self.flush_reason(4);
+        }
 
         mark!(self, 4);
         // Textures (past the hard texture memory cap, earlier loads of this frame are dropped
@@ -1697,7 +1615,8 @@ impl Executor {
         // The cheap worst-case check normally succeeds. Near capacity only,
         // calculate actual new blocks/changed values without clearing dirty
         // bits or advancing offsets. Reuse consumes no ring space at all.
-        if !self.floats.has_room(&[FLOAT_CONSTANTS_SIZE, FLOAT_CONSTANTS_SIZE, FETCH_SIZE, SYSTEM_SIZE, BOOL_LOOP_SIZE]) {
+        if !self.floats.has_room(&[FLOAT_CONSTANTS_SIZE, FLOAT_CONSTANTS_SIZE, FETCH_SIZE, SYSTEM_SIZE, BOOL_LOOP_SIZE])
+        {
             let (demands, count) = self.constant_demands(&system, float_reads);
             if !self.floats.has_room_for(&demands[..count]) {
                 if let Some(session) = &self.causal {
@@ -1711,9 +1630,15 @@ impl Executor {
                 targets.clears = Default::default();
                 self.pass = Some(Pass { setup: setup.clone(), targets, draws: Vec::new() });
                 let (demands, count) = self.constant_demands(&system, float_reads);
-                if !self.floats.has_room_for(&demands[..count]) { return Err(Skip::Fatal(15)); }
-                if let Some(session) = &self.causal { session.reason(16); }
-            } else if let Some(session) = &self.causal { session.reason(15); }
+                if !self.floats.has_room_for(&demands[..count]) {
+                    return Err(Skip::Fatal(15));
+                }
+                if let Some(session) = &self.causal {
+                    session.reason(16);
+                }
+            } else if let Some(session) = &self.causal {
+                session.reason(15);
+            }
         }
         let constant_offsets = self.push_constants(&system, float_reads);
 
@@ -1777,9 +1702,14 @@ impl Executor {
         };
 
         let state = DrawState::new(
-            [viewport.xy_offset[0] as f32, viewport.xy_offset[1] as f32,
-                viewport.xy_extent[0] as f32, viewport.xy_extent[1] as f32,
-                viewport.z_min, viewport.z_max],
+            [
+                viewport.xy_offset[0] as f32,
+                viewport.xy_offset[1] as f32,
+                viewport.xy_extent[0] as f32,
+                viewport.xy_extent[1] as f32,
+                viewport.z_min,
+                viewport.z_max,
+            ],
             [scissor.offset[0], scissor.offset[1], scissor.extent[0], scissor.extent[1]],
             output.blend_constant.map(f64::from),
             u32::from(depth_stencil.stencil_reference),
@@ -1804,20 +1734,30 @@ impl Executor {
     }
 
     /// Exact allocation demand in push order. Only scratch capacity changes.
-    fn constant_demands(&mut self, system: &SystemConstants, float_reads: [u32; 2]) -> ([constant_patch::BlockDemand; 5], usize) {
+    fn constant_demands(
+        &mut self,
+        system: &SystemConstants,
+        float_reads: [u32; 2],
+    ) -> ([constant_patch::BlockDemand; 5], usize) {
         use constant_patch::BlockDemand;
         let mut demands = [BlockDemand { window: 0, bytes: 0, changed_vec4s: 0 }; 5];
         let mut count = 0;
         let mut values = std::mem::take(&mut self.constant_cache.values);
         for stage in 0..2 {
             let read = float_reads[stage] as usize;
-            if read == 0 { continue; }
+            if read == 0 {
+                continue;
+            }
             let changed = match &self.constant_cache.float[stage] {
                 None => read,
-                Some(block) => { self.regs.float_delta(stage, read, &block.data, &mut values); values.len() / 16 }
+                Some(block) => {
+                    self.regs.float_delta(stage, read, &block.data, &mut values);
+                    values.len() / 16
+                }
             };
             if changed != 0 {
-                demands[count] = BlockDemand { window: FLOAT_CONSTANTS_SIZE, bytes: read as u64 * 16, changed_vec4s: changed };
+                demands[count] =
+                    BlockDemand { window: FLOAT_CONSTANTS_SIZE, bytes: read as u64 * 16, changed_vec4s: changed };
                 count += 1;
             }
         }
@@ -1827,10 +1767,16 @@ impl Executor {
             (&self.constant_cache.fetch, as_bytes(self.regs.fetch_constants()), FETCH_SIZE),
             (&self.constant_cache.system, system.as_bytes(), SYSTEM_SIZE),
         ] {
-            if previous.as_ref().is_some_and(|block| block.data == data) { continue; }
-            let changed = data.chunks(16).enumerate().filter(|(index, bytes)| {
-                previous.as_ref().and_then(|block| block.data.get(index * 16..index * 16 + 16)) != Some(*bytes)
-            }).count();
+            if previous.as_ref().is_some_and(|block| block.data == data) {
+                continue;
+            }
+            let changed = data
+                .chunks(16)
+                .enumerate()
+                .filter(|(index, bytes)| {
+                    previous.as_ref().and_then(|block| block.data.get(index * 16..index * 16 + 16)) != Some(*bytes)
+                })
+                .count();
             demands[count] = BlockDemand { window, bytes: data.len() as u64, changed_vec4s: changed };
             count += 1;
         }
@@ -2027,7 +1973,11 @@ impl Executor {
     /// The textures the shaders' fetches bind under the current fetch constants. Draws mostly
     /// repeat recent sets, so they're remembered by the shaders and the fetch constant words read,
     /// and reused while their textures stay current (checked once per frame) and cached.
-    fn texture_set(&mut self, vs: &CachedShader, ps: Option<&CachedShader>) -> std::result::Result<Rc<TextureSet>, Skip> {
+    fn texture_set(
+        &mut self,
+        vs: &CachedShader,
+        ps: Option<&CachedShader>,
+    ) -> std::result::Result<Rc<TextureSet>, Skip> {
         let fetch = self.regs.fetch_constants();
         let key = &mut self.texture_set_key;
         key.clear();
@@ -2076,7 +2026,9 @@ impl Executor {
                     failure: &mut self.failure,
                 };
                 let bound = self.textures.bind_with(&self.device, &texture_memory, &fetch, binding, Some(&mut source));
-                if let Some(reason) = self.failure { return Err(Skip::Fatal(reason)); }
+                if let Some(reason) = self.failure {
+                    return Err(Skip::Fatal(reason));
+                }
                 self.stats.memory_upload_bytes += self.shared.uploaded - uploaded;
                 match bound.texture {
                     Some(texture) => textures.push(texture),
@@ -2190,70 +2142,34 @@ impl Executor {
         depth_stencil: &GuestDepthStencil,
         targets: &DrawTargets,
     ) -> PipelineKey {
-        // Every bound slot gets a target (write mask 0 where the draw doesn't write it), so the
-        // pipeline matches the pass.
-        let colors = std::array::from_fn(|i| {
-            let (_, format) = targets.colors[i].as_ref()?;
-            let state = output.targets[i];
-            Some(ColorKey {
-                format: *format,
-                blend: state.and_then(|s| s.blend).filter(|_| targets.blendable[i]).map(|(c, a)| {
-                    [c, a]
-                        .map(|x| (blend_operation(x.operation), blend_factor(x.src_factor), blend_factor(x.dst_factor)))
+        use crate::pipeline_plan::{self as pp, Attachments, ColorFormat, IndexWidth};
+        pp::prepare(
+            pp::Draw {
+                vertex_shader: vs.id,
+                pixel_shader: ps.map(|p| p.id),
+                texture_layout,
+                topology: host.topology,
+                strip_indices: match strip_index_format {
+                    IndexFormat::Uint16 => IndexWidth::U16,
+                    IndexFormat::Uint32 => IndexWidth::U32,
+                    _ => IndexWidth::None,
+                },
+            },
+            Attachments {
+                colors: std::array::from_fn(|i| {
+                    targets.colors[i]
+                        .as_ref()
+                        .map(|(_, format)| ColorFormat { format: *format, blendable: targets.blendable[i] })
                 }),
-                write_mask: state.map_or(0, |s| s.write_mask),
-            })
-        });
-        let depth = targets.depth.as_ref().map(|(_, format)| {
-            let stencil = has_stencil(*format) && depth_stencil.stencil_enabled;
-            let face = |s: xenos_state::depth_stencil::StencilFaceState| {
-                if stencil {
-                    (compare(s.compare), stencil_op(s.fail_op), stencil_op(s.depth_fail_op), stencil_op(s.pass_op))
-                } else {
-                    (CompareFunction::Always, StencilOperation::Keep, StencilOperation::Keep, StencilOperation::Keep)
-                }
-            };
-            // Depth changes less per host pixel at higher resolution scales (Xenia scales it too).
-            let (bias, slope) = if rasterizer.polygonal {
-                (rasterizer.depth_bias.constant, rasterizer.depth_bias.slope_scale * self.resolution_scale as f32)
-            } else {
-                (0, 0.0)
-            };
-            DepthKey {
-                format: *format,
-                write: depth_stencil.depth_write_enabled,
-                compare: compare(depth_stencil.depth_compare),
-                stencil: [face(depth_stencil.stencil_front), face(depth_stencil.stencil_back)],
-                read_mask: if stencil { u32::from(depth_stencil.stencil_read_mask) } else { 0xFF },
-                write_mask: if stencil { u32::from(depth_stencil.stencil_write_mask) } else { 0 },
-                bias,
-                slope_scale_bits: slope.to_bits(),
-            }
-        });
-        PipelineKey {
-            vertex: vs.id,
-            pixel: ps.map(|p| p.id),
-            texture_layout,
-            topology: topology(host.topology),
-            strip_index_format,
-            cull: match rasterizer.cull_mode {
-                GuestCull::None => CullMode::None,
-                GuestCull::Front => CullMode::Front,
-                GuestCull::Back => CullMode::Back,
+                depth: targets.depth.as_ref().map(|(_, format)| crate::pipeline_webgpu::depth_format(*format)),
+                sample_count: targets.sample_count,
+                sample_mask: targets.sample_mask,
             },
-            front_face: match rasterizer.front_face {
-                GuestFrontFace::Ccw => FrontFace::CCW,
-                GuestFrontFace::Cw => FrontFace::CW,
-            },
-            colors,
-            depth,
-            color_slots: color_slots(targets),
-            sample_count: targets.sample_count,
-            sample_mask: targets.sample_mask,
-            // Exact guest coverage is output before color exponent bias; host
-            // A2C would incorrectly mask those samples a second time.
-            alpha_to_coverage: false,
-        }
+            rasterizer,
+            output,
+            depth_stencil,
+            self.resolution_scale,
+        )
     }
 
     fn pipeline(
@@ -2272,40 +2188,8 @@ impl Executor {
             }
             None => {}
         }
-        let color_targets: Vec<ColorTargetState> = key.colors[..key.color_slots]
-            .iter()
-            .map(|c| match c {
-                Some(c) => ColorTargetState {
-                    format: c.format,
-                    blend: c.blend.map(|[color, alpha]| BlendState {
-                        color: BlendComponent { operation: color.0, src_factor: color.1, dst_factor: color.2 },
-                        alpha: BlendComponent { operation: alpha.0, src_factor: alpha.1, dst_factor: alpha.2 },
-                    }),
-                    write_mask: ColorWriteMask(u64::from(c.write_mask)),
-                },
-                None => {
-                    ColorTargetState { format: TextureFormat::Undefined, blend: None, write_mask: ColorWriteMask::None }
-                }
-            })
-            .collect();
-        let face = |f: (CompareFunction, StencilOperation, StencilOperation, StencilOperation)| StencilFaceState {
-            compare: f.0,
-            fail_op: f.1,
-            depth_fail_op: f.2,
-            pass_op: f.3,
-        };
-        let depth_stencil = key.depth.as_ref().map(|d| DepthStencilState {
-            format: d.format,
-            depth_write_enabled: d.write,
-            depth_compare: d.compare,
-            stencil_front: face(d.stencil[0]),
-            stencil_back: face(d.stencil[1]),
-            stencil_read_mask: d.read_mask,
-            stencil_write_mask: d.write_mask,
-            depth_bias: d.bias,
-            depth_bias_slope_scale: f32::from_bits(d.slope_scale_bits),
-            depth_bias_clamp: 0.0,
-        });
+        let color_targets = crate::pipeline_webgpu::colors(&key);
+        let depth_stencil = crate::pipeline_webgpu::depth(&key);
         let fragment = ps.map(|ps| FragmentState {
             stage: ProgrammableStage::new(&ps.module, ps.translation.entry_point),
             targets: &color_targets,
@@ -2315,19 +2199,9 @@ impl Executor {
             layout: Some(layout),
             vertex: ProgrammableStage::new(&vs.module, vs.translation.entry_point),
             vertex_buffers: &[],
-            primitive: PrimitiveState {
-                topology: key.topology,
-                strip_index_format: key.strip_index_format,
-                front_face: key.front_face,
-                cull_mode: key.cull,
-                unclipped_depth: false,
-            },
+            primitive: crate::pipeline_webgpu::primitive(&key),
             depth_stencil,
-            multisample: MultisampleState {
-                count: key.sample_count,
-                mask: key.sample_mask,
-                alpha_to_coverage_enabled: key.alpha_to_coverage,
-            },
+            multisample: crate::pipeline_webgpu::multisample(&key),
             fragment,
         };
         self.stats.pipelines += 1;
@@ -2373,9 +2247,8 @@ impl Executor {
 
     fn record_pipeline_call(&mut self, elapsed: std::time::Duration) {
         self.times.pipelines += elapsed;
-        self.stats.pipeline_call_max_ms = self.stats.pipeline_call_max_ms.max(
-            elapsed.as_millis().try_into().unwrap_or(u64::MAX),
-        );
+        self.stats.pipeline_call_max_ms =
+            self.stats.pipeline_call_max_ms.max(elapsed.as_millis().try_into().unwrap_or(u64::MAX));
     }
 
     fn compiled(
