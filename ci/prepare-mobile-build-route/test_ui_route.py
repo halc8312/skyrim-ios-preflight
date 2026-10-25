@@ -36,6 +36,15 @@ def input_scripts():
 
 
 class PublicUIRouteTests(unittest.TestCase):
+    def test_actual_reference_pin_chain_matches_every_reviewed_input(self):
+        route.load_route(CLOUD)
+        pins=json.loads((CLOUD/'ci/prepare-fix-build-route/reference-pins.json').read_text())
+        for name,wanted in pins['files'].items():
+            with self.subTest(source=name):
+                self.assertEqual(hashlib.sha256((CLOUD/name).read_bytes()).hexdigest(),wanted)
+        route.require_input_snapshot(CLOUD)
+        runner.load_helpers(HOST)
+
     def test_manual_false_default_exact_commit_and_scope_refusal(self):
         commit = "a" * 40
         env = dict(CIRCLECI="true", PUBLIC_BUILD_AND_UI_ENABLED="true", REVIEWED_SOURCE_COMMIT=commit,
