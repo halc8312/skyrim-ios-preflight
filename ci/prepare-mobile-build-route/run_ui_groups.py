@@ -16,7 +16,7 @@ import time
 HELPER_PINS = {
     "run_sdk_tests.py": "a0be403dc52cc61f93b27a2d1d419de98bb6494313f619789c127f67aa597ed0",
     "run_mobile_controls_tests.py": "c33dd044ab63d444053b4634a0074599d25add4a266d35e85675762075631d34",
-    "run_device_features_tests.py": "6008b582af6090ce55a03fcfcfa4211de4e23fc2453e272119f438d325872d55",
+    "run_device_features_tests.py": "d59ab62c9de5440f059a1c9b3ef77cb5ec32f5044f7ce7edc9d5a8fde343a9ac",
 }
 
 

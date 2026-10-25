@@ -15,6 +15,37 @@ private final class GraphicsProbeDeadline: @unchecked Sendable {
 }
 
 final class GraphicsPresentationTests: XCTestCase {
+    private func runPublicFrameBackendParity() async throws {
+        executionTimeAllowance = 90
+        XCTAssertEqual(OHRunPublicFrameComparisonV1(nil, 48), -1)
+        var sentinel = OHFrameComparisonV1(); sentinel.version = 77
+        let original = withUnsafeBytes(of: sentinel) { Data($0) }
+        XCTAssertEqual(OHRunPublicFrameComparisonV1(&sentinel, 47), -1)
+        XCTAssertEqual(withUnsafeBytes(of: sentinel) { Data($0) }, original)
+        let started = DispatchTime.now().uptimeNanoseconds
+        let deadline = GraphicsProbeDeadline()
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 45) { deadline.terminateIfUnfinished() }
+        let (status, value): (Int32, OHFrameComparisonV1) = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var value = OHFrameComparisonV1()
+                let status = OHRunPublicFrameComparisonV1(&value, MemoryLayout<OHFrameComparisonV1>.size)
+                continuation.resume(returning: (status, value))
+            }
+        }
+        if DispatchTime.now().uptimeNanoseconds - started > 45_000_000_000 { _exit(124) }
+        deadline.finish()
+        XCTAssertEqual(status, 0)
+        XCTAssertEqual(value.version, 0x10000); XCTAssertEqual(value.bytes, 48)
+        XCTAssertEqual(value.backend_a, 1); XCTAssertEqual(value.backend_b, 2)
+        XCTAssertEqual(value.cases, 9); XCTAssertEqual(value.renders, 36)
+        XCTAssertEqual(value.compared_bytes, 147456); XCTAssertEqual(value.flags, 7)
+        let marker: [String: Any] = ["schema": 1, "cases": value.cases, "renders": value.renders,
+            "compared_bytes": value.compared_bytes, "flags": value.flags, "offscreen": true,
+            "game": false, "iphone": false, "performance_measured": false]
+        let data = try JSONSerialization.data(withJSONObject: marker, options: [.sortedKeys])
+        print("PUBLIC_FRAME_COMPARISON_RESULT \(String(decoding: data, as: UTF8.self))")
+    }
+
     private func runPublicConstantBackendParity() async throws {
         executionTimeAllowance = 30
         XCTAssertEqual(OHRunPublicConstantComparisonV1(nil, 56), -1)
@@ -96,6 +127,7 @@ final class GraphicsPresentationTests: XCTestCase {
         XCTAssertEqual(coverage.1.checks, 1023)
         XCTAssertEqual(coverage.1.rendered_cases, 17)
         try await runPublicConstantBackendParity()
+        try await runPublicFrameBackendParity()
         let report: [String: Any] = ["schema": 1, "backend": result.1.backend, "checks": result.1.checks,
             "rendered_cases": result.1.rendered_cases, "offscreen": true, "displayed": false,
             "game": false, "iphone": false]

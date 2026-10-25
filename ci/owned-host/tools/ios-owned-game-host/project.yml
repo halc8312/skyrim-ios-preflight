@@ -26,6 +26,11 @@ targets:
       - path: native/OwnedHostAudio.mm
       - path: native/MetalConstantProbe.mm
       - path: native/MetalConstantReplay.metal
+      - path: native/MetalFrameProbe.mm
+      - path: native/public-frame-libraries/PublicXenosVertex.metallib
+        buildPhase: resources
+      - path: native/public-frame-libraries/PublicXenosPixel.metallib
+        buildPhase: resources
       - path: sdk-test/native/NativeTraceSDKProbe.cpp
       - path: Resources/OwnedGuestBinding.json
         buildPhase: resources
@@ -47,7 +52,7 @@ targets:
       properties:
         CFBundleDisplayName: Skyrim Lab
         CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "14"
+        CFBundleVersion: "15"
         CADisableMinimumFrameDurationOnPhone: true
         LSSupportsGameMode: true
         UILaunchScreen: {}

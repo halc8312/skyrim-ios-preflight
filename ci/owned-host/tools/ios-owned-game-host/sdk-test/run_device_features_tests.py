@@ -33,7 +33,8 @@ AUDIO_TESTS = (
     "testAudioPullIsPlanarSilenceWithoutClients",
 )
 GROUPS = {
-    "graphics": ("GraphicsPresentationTests", GRAPHICS_TESTS, 20),
+    # Original 15s presenter + 25s constants + new 45s pass-plan watchdogs.
+    "graphics": ("GraphicsPresentationTests", GRAPHICS_TESTS, 90),
     "settings": ("DeviceSettingsTests", SETTINGS_TESTS, 40),
     "audio": ("OwnedHostAudioTests", AUDIO_TESTS, 30),
 }
@@ -107,6 +108,21 @@ def validate_marker(group: str, text: str) -> dict | None:
     return value
 
 
+def validate_frame_marker(text: str) -> dict:
+    prefix = "PUBLIC_FRAME_COMPARISON_RESULT "
+    lines = [line for line in text.splitlines() if prefix.strip() in line]
+    if len(lines) != 1 or not lines[0].startswith(prefix):
+        raise ValueError("one complete frame comparison marker required")
+    value = _sdk.strict_json(lines[0][len(prefix):])
+    expected = dict(schema=1, cases=9, renders=36, compared_bytes=147456, flags=7,
+                    offscreen=True, game=False, iphone=False, performance_measured=False)
+    if type(value) is not dict or set(value) != set(expected):
+        raise ValueError("frame comparison schema differs")
+    if any(type(value[k]) is not type(v) or value[k] != v for k, v in expected.items()):
+        raise ValueError("frame comparison incomplete or outside public scope")
+    return value
+
+
 def make_test_command(group: str, derived: Path, destination: str, result: Path) -> list[str]:
     cls, tests, allowance = GROUPS[group]
     if not tests:
@@ -133,6 +149,7 @@ def run_group(group: str, stage: Path, derived: Path, output: Path, destination:
     text = console.decode("utf-8", "strict")
     validate_console(group, text)
     marker = validate_marker(group, text)
+    frame_marker = validate_frame_marker(text) if group == "graphics" else None
     _mobile.run_command(["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result)],
                         stage, evidence / "xcresult-summary", deadline, "public feature summary failed", cap=15)
     raw = _mobile.read_command_log(evidence / "xcresult-summary.stdout.log", _mobile.SUMMARY_LIMIT)
@@ -154,6 +171,8 @@ def run_group(group: str, stage: Path, derived: Path, output: Path, destination:
                   visual_review_performed=0, external_test_deadline_seconds=GROUP_DEADLINE_SECONDS, **attachments)
     if marker is not None:
         report["native_public_probe"] = marker
+    if frame_marker is not None:
+        report["native_frame_comparison"] = frame_marker
     with (evidence / "public-feature-result.json").open("x", encoding="utf-8") as stream:
         json.dump(report, stream, indent=2); stream.write("\n")
     return report

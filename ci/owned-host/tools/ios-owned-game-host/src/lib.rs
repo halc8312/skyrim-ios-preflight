@@ -47,3 +47,5 @@ pub mod renderer;
 compile_error!(
     "apple-host requires plain ARM64 iOS/device or Simulator; default tests are portable"
 );
+#[cfg(all(feature = "fixture-tools", feature = "metal-renderer", target_os = "ios", target_arch = "aarch64"))]
+mod frame_backend_fixture;

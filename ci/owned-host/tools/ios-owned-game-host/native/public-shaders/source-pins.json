@@ -1,0 +1,17 @@
+{
+  "files": {
+    "PublicFrameShaders.h": {
+      "bytes": 1033,
+      "sha256": "0300822e697ff88c7333a328b231e24d6057f4464cc5a21fcb3c771cfba0520e"
+    },
+    "pixel.metal": {
+      "bytes": 24892,
+      "sha256": "3f0d918a8cf62fc89c2d9cbbeac7cc6d074c23d29d92081f31bd09c9bf9b381b"
+    },
+    "vertex.metal": {
+      "bytes": 27408,
+      "sha256": "eccde911bf297f79b0662750cfc3c44bd69428c8056340f233b8843ce19a165d"
+    }
+  },
+  "schema": 1
+}

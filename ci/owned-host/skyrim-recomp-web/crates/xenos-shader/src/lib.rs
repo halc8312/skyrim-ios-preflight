@@ -198,3 +198,5 @@ pub fn disassemble(stage: ShaderStage, ucode: &[u32]) -> Result<String, UcodeErr
 pub fn translate(stage: ShaderStage, ucode: &[u32], options: &TranslationOptions) -> Result<Translation, UcodeError> {
     Ok(Shader::new(stage, ucode)?.translate(options))
 }
+#[cfg(feature = "metal")]
+pub mod msl;

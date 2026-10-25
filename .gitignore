@@ -654,3 +654,25 @@
 !/ci/owned-host/tools/ios-owned-game-host/native/MetalConstantValidation.h
 !/ci/owned-host/tools/ios-owned-game-host/sdk-test/native/ConstantKernelPortableTests.cpp
 !/ci/owned-host/tools/ios-owned-game-host/src/constant_backend_fixture.rs
+
+# Explicit authored build15 frame-plan and offline shader inputs.
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/examples/frame_probe_fixtures.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/frame_plan.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/frame_plan_tests.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/frame_probe.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/prepared.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/prepared_tests.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-shader/src/msl.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-shader/src/msl_tests.rs
+!/ci/owned-host/tools/ios-owned-game-host/native/FramePlanPacket.h
+!/ci/owned-host/tools/ios-owned-game-host/native/MetalFrameProbe.h
+!/ci/owned-host/tools/ios-owned-game-host/native/MetalFrameProbe.mm
+!/ci/owned-host/tools/ios-owned-game-host/native/compile_public_frame_shaders.py
+!/ci/owned-host/tools/ios-owned-game-host/native/public-shaders/
+!/ci/owned-host/tools/ios-owned-game-host/native/public-shaders/PublicFrameShaders.h
+!/ci/owned-host/tools/ios-owned-game-host/native/public-shaders/pixel.metal
+!/ci/owned-host/tools/ios-owned-game-host/native/public-shaders/source-pins.json
+!/ci/owned-host/tools/ios-owned-game-host/native/public-shaders/vertex.metal
+!/ci/owned-host/tools/ios-owned-game-host/native/test_compile_public_frame_shaders.py
+!/ci/owned-host/tools/ios-owned-game-host/sdk-test/native/FramePlanPortableTests.cpp
+!/ci/owned-host/tools/ios-owned-game-host/src/frame_backend_fixture.rs

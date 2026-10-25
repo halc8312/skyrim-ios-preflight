@@ -4,4 +4,5 @@
 #include "OwnedHostAudio.h"
 #include "GraphicsPresentationProbe.h"
 #include "MetalConstantProbe.h"
+#include "MetalFrameProbe.h"
 #include "../sdk-test/native/NativeTraceSDKProbe.h"

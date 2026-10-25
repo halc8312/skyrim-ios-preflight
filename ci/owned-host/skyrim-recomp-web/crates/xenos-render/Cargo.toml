@@ -12,6 +12,8 @@ build = "build.rs"
 cpu-profile = []
 # Authored offscreen conformance helpers; never enabled by normal hosts.
 public-probes = []
+# CPU shader lowering/reflection for the separate native backend.
+metal-shaders = ["xenos-shader/metal"]
 
 [dependencies]
 d3d-hle.workspace = true
@@ -32,3 +34,7 @@ naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in"] }
 xenos-state.workspace = true
 xenos-texture.workspace = true
 gpu-webgpu.workspace = true
+
+[[example]]
+name = "frame_probe_fixtures"
+required-features = ["public-probes", "metal-shaders"]

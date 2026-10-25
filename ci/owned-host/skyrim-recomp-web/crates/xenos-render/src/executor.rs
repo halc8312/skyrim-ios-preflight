@@ -24,8 +24,7 @@ use xenos_state::blend::{HostBlendFactor, HostBlendOperation, OutputMergerState,
 use xenos_state::depth_stencil::{DepthStencilState as GuestDepthStencil, normalized_depth_control};
 use xenos_state::edram::RenderTargetSetup;
 use xenos_state::primitive::{
-    ConversionOptions, DrawDescription, HostDraw, HostIndices, HostTopology, IndexBufferInfo, IndexSource,
-    PrimitiveExpansion, convert_primitive, process_draw,
+    DrawDescription, HostDraw, HostIndices, HostTopology, IndexBufferInfo, PrimitiveExpansion,
 };
 use xenos_state::resolve::{ResolveOptions, resolve_info};
 use xenos_state::shader::ShaderProgramSetup;
@@ -38,6 +37,7 @@ use xenos_texture_cache::{GpuSource, TextureCache};
 
 use crate::constant_patch::{self, ConstantPatcher};
 use crate::present::FrontBuffer;
+use crate::prepared::{DrawState, prepare_geometry};
 use crate::registers::{ActiveShaders, RegisterFile, dirty};
 use crate::ring::Ring;
 use crate::shaders::{CachedShader, ShaderCache};
@@ -217,10 +217,7 @@ struct RecordedDraw {
     textures: BindGroup,
     /// Dynamic offsets of group 0, in binding order.
     constant_offsets: [u32; 5],
-    viewport: [f32; 6],
-    scissor: [u32; 4],
-    blend_constant: Color,
-    stencil_reference: u32,
+    state: DrawState,
     indices: Option<DrawIndices>,
     count: u32,
 }
@@ -299,35 +296,6 @@ enum DrawIndices {
 fn gathered_index_range(ib: &IndexBufferInfo) -> (u32, u64) {
     let start = ib.guest_base & !3;
     (start, (u64::from(ib.guest_base) + u64::from(ib.size_bytes())).next_multiple_of(4) - u64::from(start))
-}
-
-/// Whether the draw can read its guest index buffer straight from shared memory (like Xenia's
-/// renderers do), with the vertex shader applying the endian swap to each index: lists and strips
-/// (whose index buffer must then also be mirrored in consecutive slots). Strips restart at the
-/// host's 0xFFFF / 0xFFFFFFFF, which are the same before and after the swap, so their guest reset
-/// index must be that (or reset be off: a guest index of all ones is then taken as a restart,
-/// which titles don't rely on).
-fn direct_index_buffer(desc: &DrawDescription) -> Option<IndexBufferInfo> {
-    use xenos::PrimitiveType as P;
-    let ib = desc.index_buffer?;
-    if desc.tessellation.is_some() || ib.count == 0 {
-        return None;
-    }
-    let strip = match desc.primitive_type {
-        P::LineList | P::TriangleList => false,
-        P::LineStrip | P::LineStrip2D | P::TriangleStrip | P::TriStrip2D => true,
-        _ => return None,
-    };
-    if strip {
-        let all_ones = match ib.format {
-            xenos::IndexFormat::Int16 => 0xFFFF,
-            xenos::IndexFormat::Int32 => 0xFFFF_FFFF,
-        };
-        if desc.reset_index.is_some_and(|r| r != all_ones) {
-            return None;
-        }
-    }
-    Some(ib)
 }
 
 struct Pass {
@@ -1142,27 +1110,27 @@ impl Executor {
                 rp.set_bind_group(bindings::TEXTURE_GROUP, &d.textures, &[]);
                 last_textures = Some(textures);
             }
-            let viewport = d.viewport.map(f32::to_bits);
+            let viewport = d.state.viewport_bits;
             if last_viewport != Some(viewport) {
-                let [x, y, w, h, z0, z1] = d.viewport;
+                let [x, y, w, h, z0, z1] = d.state.viewport();
                 rp.set_viewport(x, y, w, h, z0, z1);
                 last_viewport = Some(viewport);
             }
-            let scissor = if one_pixel { [d.scissor[0], d.scissor[1], 1, 1] } else { d.scissor };
+            let scissor = if one_pixel { [d.state.scissor[0], d.state.scissor[1], 1, 1] } else { d.state.scissor };
             if last_scissor != Some(scissor) {
                 let [sx, sy, sw, sh] = scissor;
                 rp.set_scissor_rect(sx, sy, sw, sh);
                 last_scissor = Some(scissor);
             }
-            let c = d.blend_constant;
-            let blend = [c.r, c.g, c.b, c.a].map(f64::to_bits);
+            let blend = d.state.blend_bits;
             if last_blend != Some(blend) {
-                rp.set_blend_constant(d.blend_constant);
+                let [r, g, b, a] = d.state.blend();
+                rp.set_blend_constant(Color { r, g, b, a });
                 last_blend = Some(blend);
             }
-            if last_stencil != Some(d.stencil_reference) {
-                rp.set_stencil_reference(d.stencil_reference);
-                last_stencil = Some(d.stencil_reference);
+            if last_stencil != Some(d.state.stencil_reference) {
+                rp.set_stencil_reference(d.state.stencil_reference);
+                last_stencil = Some(d.state.stencil_reference);
             }
             if skip_draws {
                 continue;
@@ -1359,23 +1327,12 @@ impl Executor {
         if !program.rasterization_enabled {
             return Err(Skip::Warn("memory export only draw (not emulated)".into()));
         }
-        let options =
-            ConversionOptions { bake_index_params: false, allow_16bit_indices: true, expand_point_sprites: true };
-        // Plan topology before touching the mirror. Final index placement is
-        // obtained only after the complete draw's ranges have been reserved.
-        let direct = direct_index_buffer(&desc).map(|ib| (ib, None::<(usize, u64)>));
-        let host = match direct {
-            // Drawn with the guest indices as they are: only the topology is needed.
-            Some((ib, ..)) => convert_primitive(
-                desc.primitive_type,
-                IndexSource::Auto { count: ib.count },
-                None,
-                desc.index_params,
-                &options,
-            ),
-            None => process_draw(&desc, &StateMemory(&*self.memory), &options),
-        }
-        .map_err(|e| Skip::Warn(format!("draw skipped: {e}")))?;
+        // CPU-only conversion is shared by the legacy and native backend paths.
+        // A direct-index recipe still needs the existing draw reservation below.
+        let prepared = prepare_geometry(&desc, &StateMemory(&*self.memory))
+            .map_err(|e| Skip::Warn(format!("draw skipped: {e}")))?;
+        let direct = prepared.direct_indices.map(|ib| (ib, None::<(usize, u64)>));
+        let host = prepared.draw;
         if host.vertex_count == 0 {
             return Err(Skip::Silent);
         }
@@ -1819,22 +1776,19 @@ impl Executor {
             (None, None) => None,
         };
 
-        let [r, g, b, a] = output.blend_constant.map(f64::from);
+        let state = DrawState::new(
+            [viewport.xy_offset[0] as f32, viewport.xy_offset[1] as f32,
+                viewport.xy_extent[0] as f32, viewport.xy_extent[1] as f32,
+                viewport.z_min, viewport.z_max],
+            [scissor.offset[0], scissor.offset[1], scissor.extent[0], scissor.extent[1]],
+            output.blend_constant.map(f64::from),
+            u32::from(depth_stencil.stencil_reference),
+        );
         let draw = RecordedDraw {
             pipeline,
             textures: textures_group,
             constant_offsets,
-            viewport: [
-                viewport.xy_offset[0] as f32,
-                viewport.xy_offset[1] as f32,
-                viewport.xy_extent[0] as f32,
-                viewport.xy_extent[1] as f32,
-                viewport.z_min,
-                viewport.z_max,
-            ],
-            scissor: [scissor.offset[0], scissor.offset[1], scissor.extent[0], scissor.extent[1]],
-            blend_constant: Color { r, g, b, a },
-            stencil_reference: u32::from(depth_stencil.stencil_reference),
+            state,
             indices,
             count: host.vertex_count,
         };

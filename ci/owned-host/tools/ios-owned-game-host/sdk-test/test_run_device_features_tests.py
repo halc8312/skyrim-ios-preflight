@@ -17,6 +17,8 @@ AUDIO = dict(schema=1, audio_version=1, transport_bytes=160, native_status_bytes
              source_rate_hz=48000, source_channels=2, client_capacity=8, queue_capacity_frames=8192,
              profiles=3, authored_only=True, game_audio_verified=False, audible_output_verified=False,
              physical_iphone_verified=False)
+FRAME = dict(schema=1, cases=9, renders=36, compared_bytes=147456, flags=7,
+             offscreen=True, game=False, iphone=False, performance_measured=False)
 
 
 def console(group, tests=None):
@@ -26,7 +28,8 @@ def console(group, tests=None):
     for name in tests:
         case = f"-[OwnedGameHostTests.{cls} {name}]"
         lines += [f"Test Case '{case}' started.", f"Test Case '{case}' passed (0.001 seconds)."]
-    if group == "graphics": lines += [driver.GRAPHICS_PREFIX + json.dumps(GRAPHICS)]
+    if group == "graphics": lines += [driver.GRAPHICS_PREFIX + json.dumps(GRAPHICS),
+                                      "PUBLIC_FRAME_COMPARISON_RESULT " + json.dumps(FRAME)]
     if group == "audio": lines += [driver.AUDIO_PREFIX + json.dumps(AUDIO)]
     lines += [f"Executed {len(expected)} tests, with 0 failures (0 unexpected)", "** TEST EXECUTE SUCCEEDED **"]
     return "\n".join(lines) + "\n"
@@ -38,6 +41,17 @@ def summary(group):
 
 
 class DeviceFeatureDriverTests(unittest.TestCase):
+    def test_frame_comparison_requires_all_cases_both_backends_and_public_scope(self):
+        prefix="PUBLIC_FRAME_COMPARISON_RESULT "
+        good=prefix+json.dumps(FRAME)
+        self.assertEqual(driver.validate_frame_marker(good),FRAME)
+        for key,value in FRAME.items():
+            for wrong in ([not value,0,"false"] if type(value)is bool else [value+1,True,str(value)]):
+                with self.subTest(key=key,value=wrong),self.assertRaises(ValueError):
+                    driver.validate_frame_marker(prefix+json.dumps(dict(FRAME,**{key:wrong})))
+        for bad in ["",good+"\n"+good,"fake "+good,prefix+"[]",good[:-1]+',"schema":1}']:
+            with self.assertRaises(ValueError):driver.validate_frame_marker(bad)
+
     def test_three_fixed_groups_exact_cases_and_either_serial_order(self):
         self.assertEqual({k: len(v[1]) for k,v in driver.GROUPS.items()}, dict(graphics=1,settings=6,audio=6))
         for group, (_, tests, _) in driver.GROUPS.items():
