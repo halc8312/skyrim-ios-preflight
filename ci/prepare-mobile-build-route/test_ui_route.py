@@ -36,6 +36,23 @@ def input_scripts():
 
 
 class PublicUIRouteTests(unittest.TestCase):
+    def test_build_number_matches_the_preserved_native_trace_assertion_before_runner_work(self):
+        self.assertEqual(route.require_build_alignment(HOST), "17")
+        with tempfile.TemporaryDirectory() as temp:
+            host = Path(temp)
+            (host / "sdk-test/tests").mkdir(parents=True)
+            project = (HOST / "project.yml").read_text(encoding="utf-8")
+            native = (HOST / "sdk-test/tests/NativeTraceSDKProbeTests.swift").read_text(encoding="utf-8")
+            (host / "project.yml").write_text(project,encoding="utf-8")
+            test = host / "sdk-test/tests/NativeTraceSDKProbeTests.swift"
+            test.write_text(native,encoding="utf-8")
+            self.assertEqual(route.require_build_alignment(host), "17")
+            stale = native.replace('as? String, "17")','as? String, "16")')
+            self.assertNotEqual(stale,native)
+            test.write_text(stale,encoding="utf-8")
+            with self.assertRaisesRegex(ValueError,"build_expectation_mismatch"):
+                route.require_build_alignment(host)
+
     def test_actual_reference_pin_chain_matches_every_reviewed_input(self):
         route.load_route(CLOUD)
         pins=json.loads((CLOUD/'ci/prepare-fix-build-route/reference-pins.json').read_text())

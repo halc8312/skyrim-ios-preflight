@@ -18,10 +18,12 @@ NOT_BEFORE = datetime(2026, 10, 23, 22, 30, tzinfo=timezone.utc)  # 2026-10-24 0
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 BOOTSTRAP_PINS = {
     "ci/prepare-fix-build-route/prepare_route.py": "a8c087b7cd8a0ea10925d226adbe813cca8a9b928ddd79c20cd2adeff8bfb7ce",
-    "ci/prepare-fix-build-route/reference-pins.json": "5dbee1fd85526bee1fa9dbf8a624ee3d050bd3966709802c8a69e58e48717dfb",
+    "ci/prepare-fix-build-route/reference-pins.json": "fbcd5b06d09d88ff00de85be903b20e1f83d24888ccd022c5a515aa52b25585f",
     "ci/run-bounded-command.py": "f7391d02a43dc5dc97ea7f017cd5e502c70b7a4f06b4ce05a9e4972b49a890dd",
 }
 INPUT_PINS = {
+    "sdk-test/tests/NativeTraceSDKProbeTests.swift": "9d1b644a72647b7dcb24855fc069560274474318066202ae90850e31e6c2db6d",
+    "project.yml": "330cdb8f55d2a6de1eb8e9d013e5671330f3683c18aa199ed9d46126839f1718",
     "native/MetalFrameProbe.h": "d0193c1c66017d3f8085ed61706b1991081354e160ffdacf4b14e59f27997b47",
     "native/MetalFrameProbe.mm": "8730fb9ca6002e4f11ff07aaccb56608299d6d46fb844de1d34dae600897097c",
     "native/TargetFrameLifetime.h": "fb46ab5555ca7f3fe7dbada25688405c500536e0424f5a6d43c494a2c0fb4c16",
@@ -123,6 +125,17 @@ def require_input_snapshot(repo):
     kernel = repo / "ci/owned-host/skyrim-recomp-web/crates/kernel-hle/src"
     for name, expected in KERNEL_PINS.items():
         checked(kernel / name, expected)
+    require_build_alignment(base)
+
+
+def require_build_alignment(base):
+    project = (base / "project.yml").read_text(encoding="utf-8")
+    native = (base / "sdk-test/tests/NativeTraceSDKProbeTests.swift").read_text(encoding="utf-8")
+    declared = re.findall(r'(?m)^\s+CFBundleVersion:\s*"([1-9][0-9]{0,5})"\s*$', project)
+    expected = re.findall(r'XCTAssertEqual\(Bundle\.main\.object\(forInfoDictionaryKey: "CFBundleVersion"\) as\? String, "([1-9][0-9]{0,5})"\)', native)
+    if len(declared) != 1 or declared != expected:
+        raise ValueError("public_host_build_expectation_mismatch")
+    return declared[0]
 
 
 def derive(setup, stages, repo, output):
