@@ -18,6 +18,9 @@ use xenos_state::{
     xenos::{IndexFormat as GuestIndexFormat, MajorMode, PrimitiveType, SourceSelect},
 };
 
+#[path = "target_probe.rs"]
+mod target_backend;
+
 pub const SIZE: u32 = 32;
 pub const REQUIRED_STORAGE_BUFFERS: u32 = 6;
 
@@ -584,10 +587,23 @@ impl WebGpuFrames {
         })
     }
     pub fn render(&self, frame: &fp::FramePlan) -> Result<Vec<u8>, String> {
+        frame.require_first_clear().map_err(|_| "external initialization requires TargetFrame".to_string())?;
         checked_gpu(&self.device, "planned render", || self.render_inner(frame, None))?
     }
     pub fn render_sampled(&self, frame: &crate::sampled_frame::SampledFrame) -> Result<Vec<u8>, String> {
+        frame
+            .geometry()
+            .require_first_clear()
+            .map_err(|_| "external initialization requires TargetFrame".to_string())?;
         checked_gpu(&self.device, "sampled planned render", || self.render_inner(frame.geometry(), Some(frame)))?
+    }
+    pub fn render_targets(&self, frame: &crate::target_frame::TargetFrame) -> Result<Vec<u8>, String> {
+        checked_gpu(&self.device, "ordered target render", || target_backend::render(self, frame, false))?
+    }
+    /// Opt-in conformance comparison only. Frame-local slots with tracked hazards;
+    /// this is not a production cross-frame cache or a game backend switch.
+    pub fn render_targets_reusing(&self, frame: &crate::target_frame::TargetFrame) -> Result<Vec<u8>, String> {
+        checked_gpu(&self.device, "reused target render", || target_backend::render(self, frame, true))?
     }
     fn render_inner(
         &self,

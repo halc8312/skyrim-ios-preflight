@@ -15,15 +15,31 @@ private final class GraphicsProbeDeadline: @unchecked Sendable {
 }
 
 final class GraphicsPresentationTests: XCTestCase {
-    private static func frameProbe(_ sampled: Bool, _ out: UnsafeMutablePointer<OHFrameComparisonV1>?, _ bytes: Int) -> Int32 {
-        sampled ? OHRunPublicSampledFrameComparisonV1(out, bytes) : OHRunPublicFrameComparisonV1(out, bytes)
+    private enum Comparison: Sendable, Equatable {
+        case buffer, sampled, targets
+        var cases: UInt64 { switch self { case .buffer: 9; case .sampled: 15; case .targets: 16 } }
+        var renders: UInt64 { switch self { case .buffer: 36; case .sampled: 60; case .targets: 128 } }
+        var comparedBytes: UInt64 { switch self { case .buffer: 147456; case .sampled: 245760; case .targets: 442624 } }
+        var flags: UInt64 { self == .targets ? 15 : 7 }
+        var prefix: String { switch self {
+            case .buffer: "PUBLIC_FRAME_COMPARISON_RESULT"
+            case .sampled: "PUBLIC_SAMPLED_FRAME_COMPARISON_RESULT"
+            case .targets: "PUBLIC_TARGET_FRAME_COMPARISON_RESULT"
+        } }
     }
-    private func runPublicFrameBackendParity(sampled: Bool = false) async throws {
+    private static func frameProbe(_ mode: Comparison, _ out: UnsafeMutablePointer<OHFrameComparisonV1>?, _ bytes: Int) -> Int32 {
+        switch mode {
+        case .buffer: OHRunPublicFrameComparisonV1(out, bytes)
+        case .sampled: OHRunPublicSampledFrameComparisonV1(out, bytes)
+        case .targets: OHRunPublicTargetFrameComparisonV1(out, bytes)
+        }
+    }
+    private func runPublicFrameBackendParity(_ mode: Comparison = .buffer) async throws {
         executionTimeAllowance = 90
-        XCTAssertEqual(Self.frameProbe(sampled, nil, 48), -1)
+        XCTAssertEqual(Self.frameProbe(mode, nil, 48), -1)
         var sentinel = OHFrameComparisonV1(); sentinel.version = 77
         let original = withUnsafeBytes(of: sentinel) { Data($0) }
-        XCTAssertEqual(Self.frameProbe(sampled, &sentinel, 47), -1)
+        XCTAssertEqual(Self.frameProbe(mode, &sentinel, 47), -1)
         XCTAssertEqual(withUnsafeBytes(of: sentinel) { Data($0) }, original)
         let started = DispatchTime.now().uptimeNanoseconds
         let deadline = GraphicsProbeDeadline()
@@ -31,7 +47,7 @@ final class GraphicsPresentationTests: XCTestCase {
         let (status, value): (Int32, OHFrameComparisonV1) = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 var value = OHFrameComparisonV1()
-                let status = Self.frameProbe(sampled, &value, MemoryLayout<OHFrameComparisonV1>.size)
+                let status = Self.frameProbe(mode, &value, MemoryLayout<OHFrameComparisonV1>.size)
                 continuation.resume(returning: (status, value))
             }
         }
@@ -43,18 +59,21 @@ final class GraphicsPresentationTests: XCTestCase {
         }
         XCTAssertEqual(value.version, 0x10000); XCTAssertEqual(value.bytes, 48)
         XCTAssertEqual(value.backend_a, 1); XCTAssertEqual(value.backend_b, 2)
-        XCTAssertEqual(value.cases, sampled ? 15 : 9); XCTAssertEqual(value.renders, sampled ? 60 : 36)
-        XCTAssertEqual(value.compared_bytes, sampled ? 245760 : 147456); XCTAssertEqual(value.flags, 7)
+        XCTAssertEqual(value.cases, mode.cases); XCTAssertEqual(value.renders, mode.renders)
+        XCTAssertEqual(value.compared_bytes, mode.comparedBytes); XCTAssertEqual(value.flags, mode.flags)
         let marker: [String: Any] = ["schema": 1, "cases": value.cases, "renders": value.renders,
             "compared_bytes": value.compared_bytes, "flags": value.flags, "offscreen": true,
             "game": false, "iphone": false, "performance_measured": false]
         let data = try JSONSerialization.data(withJSONObject: marker, options: [.sortedKeys])
-        let prefix = sampled ? "PUBLIC_SAMPLED_FRAME_COMPARISON_RESULT" : "PUBLIC_FRAME_COMPARISON_RESULT"
-        print("\(prefix) \(String(decoding: data, as: UTF8.self))")
+        print("\(mode.prefix) \(String(decoding: data, as: UTF8.self))")
     }
 
     func testPublicOffscreenSampledMetalPresentation() async throws {
-        try await runPublicFrameBackendParity(sampled: true)
+        try await runPublicFrameBackendParity(.sampled)
+    }
+
+    func testPublicOffscreenTargetMetalPresentation() async throws {
+        try await runPublicFrameBackendParity(.targets)
     }
 
     private func runPublicConstantBackendParity() async throws {

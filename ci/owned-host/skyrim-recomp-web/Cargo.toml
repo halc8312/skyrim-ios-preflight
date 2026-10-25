@@ -1,37 +1,36 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/xex",
-    "crates/runtime-core",
-    "crates/kernel-hle",
     "crates/d3d-hle",
-    "crates/vfs",
-    "crates/guest-sys",
-    "crates/xenos-shader",
-    "crates/xenos-texture",
-    "crates/xenos-state",
     "crates/gpu-webgpu",
-    "crates/xenos-render",
-    "crates/xenos-texture-cache",
+    "crates/kernel-hle",
+    "crates/runtime-core",
+    "crates/vfs",
     "crates/xenos-edram",
+    "crates/xenos-render",
+    "crates/xenos-shader",
+    "crates/xenos-state",
+    "crates/xenos-texture",
+    "crates/xenos-texture-cache",
+    "crates/xex",
     "crates/xma-decoder",
-    "hosts/host-native",
-    "hosts/host-cpu-diagnostic",
-    "hosts/host-web",
-    "xtask",
 ]
 # guest-sys and the hosts need recompiled guest code (XENON_RECOMP_OUT), so a bare
 # `cargo build` / `cargo test` only covers the crates that build without it.
 default-members = [
-    "crates/xex",
-    "crates/runtime-core",
-    "crates/kernel-hle",
     "crates/d3d-hle",
+    "crates/gpu-webgpu",
+    "crates/kernel-hle",
+    "crates/runtime-core",
     "crates/vfs",
+    "crates/xenos-edram",
+    "crates/xenos-render",
     "crates/xenos-shader",
-    "crates/xenos-texture",
     "crates/xenos-state",
-    "xtask",
+    "crates/xenos-texture",
+    "crates/xenos-texture-cache",
+    "crates/xex",
+    "crates/xma-decoder",
 ]
 
 [workspace.package]

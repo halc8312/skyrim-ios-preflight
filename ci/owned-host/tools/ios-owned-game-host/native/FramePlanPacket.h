@@ -26,7 +26,12 @@ struct Packet {
     bool zero(size_t at,size_t count) const { for(size_t i=0;i<count;++i)if(bytes[at+i])return false;return true; }
     bool unit(double x) const { return std::isfinite(x)&&x>=0&&x<=1; }
 
-    bool validate() const {
+    bool validate() const { return validate_impl(true); }
+    // Geometry is usable only after an enclosing OHRT packet has proved every
+    // attachment's initialization. Standalone OHFP retains its first clear.
+    bool validate_geometry() const { return validate_impl(false); }
+private:
+    bool validate_impl(bool require_first_clear) const {
         if(bytes.size()<64||bytes.size()>(4u<<20)||word(0)!=0x5046484f||word(1)!=0x31303030||word(2)!=1
             ||word(3)<1||word(3)>1024||word(4)<1||word(4)>1024||word(5)>64||word(6)<1||word(6)>16
             ||word(7)>128||word(8)>1280||word(9)!=64||word(14)!=bytes.size()||word(15)!=0)return false;
@@ -46,7 +51,7 @@ struct Packet {
         uint32_t draw_cursor=0,binding_cursor=0;
         for(uint32_t i=0;i<word(6);++i){
             auto p=pass(i);auto count=u32(p+44),flags=u32(p+48);
-            if((flags&~3u)||(!i&&flags!=3)||u32(p+40)!=draw_cursor||count>word(7)-draw_cursor||!zero(p+52,12))return false;
+            if((flags&~3u)||(require_first_clear&&!i&&flags!=3)||u32(p+40)!=draw_cursor||count>word(7)-draw_cursor||!zero(p+52,12))return false;
             for(size_t j=0;j<4;++j)if(!unit(f64(p+j*8)))return false;
             if(!unit(f64(p+32)))return false;
             if(!(flags&1)&&!zero(p,32))return false;

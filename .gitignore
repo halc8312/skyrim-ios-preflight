@@ -686,3 +686,14 @@
 !/ci/owned-host/tools/ios-owned-game-host/native/public-sampled-shaders/pixel.metal
 !/ci/owned-host/tools/ios-owned-game-host/native/public-sampled-shaders/source-pins.json
 !/ci/owned-host/tools/ios-owned-game-host/sdk-test/native/SampledFramePortableTests.cpp
+
+# Frozen public target-frame sources
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/examples/target_probe_fixtures.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/target_fixtures.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/target_frame.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/target_frame_tests.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/target_lifetime.rs
+!/ci/owned-host/skyrim-recomp-web/crates/xenos-render/src/target_probe.rs
+!/ci/owned-host/tools/ios-owned-game-host/native/TargetFrameLifetime.h
+!/ci/owned-host/tools/ios-owned-game-host/native/TargetFramePacket.h
+!/ci/owned-host/tools/ios-owned-game-host/sdk-test/native/TargetFramePortableTests.cpp

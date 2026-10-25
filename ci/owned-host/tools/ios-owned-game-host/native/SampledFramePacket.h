@@ -13,16 +13,20 @@ struct Packet {
     size_t sampler(size_t i) const {return word(12)+i*64;}
     size_t binding(size_t i) const {return word(13)+i*16;}
     ohframe::Packet geometry() const {return {wire.bytes.subspan(word(4),word(5))};}
-    bool validate() const {
+    bool validate() const { return validate_impl(false); }
+    // Only enclosing OHRT operations can prove contextual geometry initialized
+    // or use empty input tables. Standalone OHST keeps its original contract.
+    bool validate_inputs() const { return validate_impl(true) && word(9)==0; }
+    bool validate_impl(bool input_bundle) const {
         const uint64_t bytes=wire.bytes.size();
         if(bytes<80||bytes>(4u<<20)||word(0)!=0x5453484f||word(1)!=0x31303030||word(2)!=1
             ||word(3)!=bytes||word(4)!=80||word(5)<64||word(5)%8||uint64_t(word(5))+80>bytes
-            ||word(6)<1||word(6)>16||word(7)<word(6)||word(7)>176||word(8)<1||word(8)>16
+            ||(!input_bundle&&word(6)<1)||word(6)>16||word(7)<word(6)||word(7)>176||(!input_bundle&&word(8)<1)||word(8)>16
             ||word(9)>4096||!wire.zero(60,20))return false;
         const uint64_t to=80+uint64_t(word(5)),mo=to+uint64_t(word(6))*40,
             so=mo+uint64_t(word(7))*24,bo=so+uint64_t(word(8))*64,data=bo+uint64_t(word(9))*16;
         if(word(10)!=to||word(11)!=mo||word(12)!=so||word(13)!=bo||word(14)!=data||data>bytes)return false;
-        const auto base=geometry();if(!base.validate())return false;
+        const auto base=geometry();if(!(input_bundle?base.validate_geometry():base.validate()))return false;
         std::set<std::pair<uint32_t,uint64_t>> textures,samplers;
         uint64_t cursor=data;uint32_t mi=0;
         for(uint32_t i=0;i<word(6);++i){

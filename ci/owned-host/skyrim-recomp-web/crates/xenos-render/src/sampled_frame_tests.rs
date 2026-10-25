@@ -43,6 +43,22 @@ fn bindings() -> Vec<Binding> {
         Binding { binding: 1, resource: Resource::Sampler(v(2, 1)) },
     ]
 }
+#[test]
+fn standalone_sampled_contract_still_requires_cpu_texture_and_sampler() {
+    assert!(SampledFrame::new(geometry(0), vec![], vec![], vec![]).is_err());
+    assert!(SampledFrame::new(geometry(0), vec![texture()], vec![], vec![]).is_err());
+    assert!(SampledFrame::new(geometry(0), vec![], vec![sampler()], vec![]).is_err());
+}
+#[test]
+fn standalone_sampled_contract_refuses_external_first_load_with_valid_resources() {
+    let mut passes = geometry(1).passes().to_vec();
+    passes[0].clear_color = None;
+    let contextual = FramePlan::target_geometry(4, 4, vec![], passes).unwrap();
+    assert_eq!(
+        SampledFrame::new(contextual, vec![texture()], vec![sampler()], vec![bindings()]).unwrap_err(),
+        Error::Uninitialized,
+    );
+}
 fn word(b: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
 }

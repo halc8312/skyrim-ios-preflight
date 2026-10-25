@@ -169,7 +169,21 @@ impl SampledFrame {
         bindings: Vec<Vec<Binding>>,
     ) -> Result<Self, Error> {
         let s = Self { geometry, textures, samplers, bindings };
-        s.validate()?;
+        s.validate(true)?;
+        Ok(s)
+    }
+    /// Resource bundle embedded only in the target-frame contract. Empty input
+    /// tables and contextual geometry are legal there: the outer operations
+    /// prove initialization. Standalone OHST keeps its first-clear requirement
+    /// and still requires a texture and sampler.
+    pub(crate) fn inputs(
+        geometry: FramePlan,
+        textures: Vec<TextureVersion>,
+        samplers: Vec<SamplerVersion>,
+    ) -> Result<Self, Error> {
+        let count = geometry.passes().iter().map(|p| p.draws.len()).sum();
+        let s = Self { geometry, textures, samplers, bindings: vec![vec![]; count] };
+        s.validate(false)?;
         Ok(s)
     }
     pub fn geometry(&self) -> &FramePlan {
@@ -184,10 +198,13 @@ impl SampledFrame {
     pub fn bindings(&self) -> &[Vec<Binding>] {
         &self.bindings
     }
-    fn validate(&self) -> Result<(), Error> {
-        if self.textures.is_empty()
+    fn validate(&self, require_sampled: bool) -> Result<(), Error> {
+        if require_sampled {
+            self.geometry.require_first_clear()?;
+        }
+        if (require_sampled && self.textures.is_empty())
             || self.textures.len() > MAX_TEXTURES
-            || self.samplers.is_empty()
+            || (require_sampled && self.samplers.is_empty())
             || self.samplers.len() > MAX_SAMPLERS
             || self.bindings.len() != self.geometry.passes().iter().map(|p| p.draws.len()).sum::<usize>()
         {

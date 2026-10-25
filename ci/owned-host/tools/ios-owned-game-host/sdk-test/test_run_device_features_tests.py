@@ -20,6 +20,7 @@ AUDIO = dict(schema=1, audio_version=1, transport_bytes=160, native_status_bytes
 FRAME = dict(schema=1, cases=9, renders=36, compared_bytes=147456, flags=7,
              offscreen=True, game=False, iphone=False, performance_measured=False)
 SAMPLED = dict(FRAME, cases=15, renders=60, compared_bytes=245760)
+TARGETS = dict(FRAME, cases=16, renders=128, compared_bytes=442624, flags=15)
 
 
 def console(group, tests=None):
@@ -31,7 +32,8 @@ def console(group, tests=None):
         lines += [f"Test Case '{case}' started.", f"Test Case '{case}' passed (0.001 seconds)."]
     if group == "graphics": lines += [driver.GRAPHICS_PREFIX + json.dumps(GRAPHICS),
                                       "PUBLIC_FRAME_COMPARISON_RESULT " + json.dumps(FRAME),
-                                      "PUBLIC_SAMPLED_FRAME_COMPARISON_RESULT " + json.dumps(SAMPLED)]
+                                      "PUBLIC_SAMPLED_FRAME_COMPARISON_RESULT " + json.dumps(SAMPLED),
+                                      "PUBLIC_TARGET_FRAME_COMPARISON_RESULT " + json.dumps(TARGETS)]
     if group == "audio": lines += [driver.AUDIO_PREFIX + json.dumps(AUDIO)]
     lines += [f"Executed {len(expected)} tests, with 0 failures (0 unexpected)", "** TEST EXECUTE SUCCEEDED **"]
     return "\n".join(lines) + "\n"
@@ -64,8 +66,19 @@ class DeviceFeatureDriverTests(unittest.TestCase):
         for bad in ["",good+"\n"+good,"fake "+good,prefix+"[]",good[:-1]+',"schema":1}',prefix+json.dumps(FRAME),"PUBLIC_FRAME_COMPARISON_RESULT "+json.dumps(FRAME)]:
             with self.assertRaises(ValueError):driver.validate_frame_marker(bad,sampled=True)
 
+    def test_target_comparison_requires_both_allocation_policies_and_strict_scope(self):
+        prefix="PUBLIC_TARGET_FRAME_COMPARISON_RESULT ";good=prefix+json.dumps(TARGETS)
+        self.assertEqual(driver.validate_frame_marker(good,targets=True),TARGETS)
+        for key,value in TARGETS.items():
+            for wrong in ([not value,0,"false"] if type(value)is bool else [value+1,True,str(value)]):
+                with self.subTest(key=key,value=wrong),self.assertRaises(ValueError):
+                    driver.validate_frame_marker(prefix+json.dumps(dict(TARGETS,**{key:wrong})),targets=True)
+        for bad in ["",good+"\n"+good,"fake "+good,prefix+"[]",good[:-1]+',"schema":1}',prefix+json.dumps(SAMPLED),prefix+json.dumps(dict(TARGETS,renders=64,compared_bytes=221312,flags=7))]:
+            with self.assertRaises(ValueError):driver.validate_frame_marker(bad,targets=True)
+        with self.assertRaises(ValueError):driver.validate_frame_marker(good,targets=True,sampled=True)
+
     def test_three_fixed_groups_exact_cases_and_either_serial_order(self):
-        self.assertEqual({k: len(v[1]) for k,v in driver.GROUPS.items()}, dict(graphics=2,settings=6,audio=6))
+        self.assertEqual({k: len(v[1]) for k,v in driver.GROUPS.items()}, dict(graphics=3,settings=6,audio=6))
         for group, (_, tests, _) in driver.GROUPS.items():
             for order in (tests, tuple(reversed(tests))):
                 with self.subTest(group=group):
@@ -194,7 +207,8 @@ class DeviceFeatureDriverTests(unittest.TestCase):
             else:
                 self.assertEqual(driver.main(args),0)
                 report=json.loads((output/"public-device-features-result.json").read_text())
-                self.assertEqual(report["expected_cases"],14)
+                self.assertEqual(report["expected_cases"],15)
+                self.assertEqual(report["groups"]["graphics"]["native_target_frame_comparison"],TARGETS)
                 self.assertEqual(set(report["groups"]),set(driver.GROUPS))
                 for group in driver.GROUPS:
                     self.assertTrue((output/group/"xcresult-summary.json").is_file())

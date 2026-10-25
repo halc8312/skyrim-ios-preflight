@@ -49,6 +49,19 @@ fn version_mismatch_duplicates_and_uninitialized_load_are_refused() {
 }
 
 #[test]
+fn standalone_first_clear_is_required_for_both_attachments_and_context_is_explicit() {
+    for (color, depth) in [(None, Some(1.)), (Some([0.; 4]), None), (None, None)] {
+        let p = Pass { clear_color: color, clear_depth: depth, draws: vec![] };
+        assert_eq!(FramePlan::new(4, 4, vec![], vec![p.clone()]).unwrap_err(), Error::Uninitialized);
+        let geometry = FramePlan::target_geometry(4, 4, vec![], vec![p]).unwrap();
+        assert_eq!(geometry.require_first_clear(), Err(Error::Uninitialized));
+    }
+    assert_eq!(FramePlan::target_geometry(4, 4, vec![], vec![]).unwrap_err(), Error::Limit);
+    let p = Pass { clear_color: None, clear_depth: Some(f64::NAN), draws: vec![] };
+    assert_eq!(FramePlan::target_geometry(4, 4, vec![], vec![p]).unwrap_err(), Error::State);
+}
+
+#[test]
 fn out_of_range_buffers_scissors_and_nonfinite_state_are_refused() {
     let a = resource(1, &[0; 8]);
     let base = draw(a.version);

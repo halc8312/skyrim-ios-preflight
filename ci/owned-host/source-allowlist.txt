@@ -114,6 +114,7 @@ skyrim-recomp-web/crates/xenos-render/build.rs
 skyrim-recomp-web/crates/xenos-render/examples/constant_probe_fixtures.rs
 skyrim-recomp-web/crates/xenos-render/examples/frame_probe_fixtures.rs
 skyrim-recomp-web/crates/xenos-render/examples/sampled_probe_fixtures.rs
+skyrim-recomp-web/crates/xenos-render/examples/target_probe_fixtures.rs
 skyrim-recomp-web/crates/xenos-render/src/causal.rs
 skyrim-recomp-web/crates/xenos-render/src/constant_backend_probe.rs
 skyrim-recomp-web/crates/xenos-render/src/constant_demand_tests.rs
@@ -150,6 +151,11 @@ skyrim-recomp-web/crates/xenos-render/src/settings.rs
 skyrim-recomp-web/crates/xenos-render/src/shaders.rs
 skyrim-recomp-web/crates/xenos-render/src/shared_memory.rs
 skyrim-recomp-web/crates/xenos-render/src/shared_memory_snapshot_tests.rs
+skyrim-recomp-web/crates/xenos-render/src/target_fixtures.rs
+skyrim-recomp-web/crates/xenos-render/src/target_frame.rs
+skyrim-recomp-web/crates/xenos-render/src/target_frame_tests.rs
+skyrim-recomp-web/crates/xenos-render/src/target_lifetime.rs
+skyrim-recomp-web/crates/xenos-render/src/target_probe.rs
 skyrim-recomp-web/crates/xenos-render/src/targets.rs
 skyrim-recomp-web/crates/xenos-render/src/texture_budget.rs
 skyrim-recomp-web/crates/xenos-render/src/vertex_range.rs
@@ -258,6 +264,8 @@ tools/ios-owned-game-host/native/OwnedHostNative.h
 tools/ios-owned-game-host/native/OwnedHostNative.mm
 tools/ios-owned-game-host/native/PublicOwnedFixture.cpp
 tools/ios-owned-game-host/native/SampledFramePacket.h
+tools/ios-owned-game-host/native/TargetFrameLifetime.h
+tools/ios-owned-game-host/native/TargetFramePacket.h
 tools/ios-owned-game-host/native/compile_public_frame_shaders.py
 tools/ios-owned-game-host/native/public-sampled-shaders/PublicSampledShaders.h
 tools/ios-owned-game-host/native/public-sampled-shaders/pixel.metal
@@ -278,6 +286,7 @@ tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.h
 tools/ios-owned-game-host/sdk-test/native/PublicOwnedFixtureV2.cpp
 tools/ios-owned-game-host/sdk-test/native/PublicV2SDKProbe.h
 tools/ios-owned-game-host/sdk-test/native/SampledFramePortableTests.cpp
+tools/ios-owned-game-host/sdk-test/native/TargetFramePortableTests.cpp
 tools/ios-owned-game-host/sdk-test/prepare_v2_sdk_stage.py
 tools/ios-owned-game-host/sdk-test/run_device_features_tests.py
 tools/ios-owned-game-host/sdk-test/run_mobile_controls_tests.py

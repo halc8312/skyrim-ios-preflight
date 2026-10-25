@@ -68,10 +68,13 @@ class PublicUIRouteTests(unittest.TestCase):
         prebuild, rest = original.split(route.LOOP)
         loop, _ = rest.split(route.AFTER)
         expected = (prebuild + route.LOOP + loop).replace(route.HARNESS, "harness=/public/repo")
-        self.assertTrue(selected.replace(route.COUNTER_GATE, "").replace(route.METAL_STAGE_GATE, "").replace(route.SAMPLED_STAGE_GATE, "").replace(route.METAL_TOOLCHAIN_GATE, "").startswith(expected))
+        self.assertTrue(selected.replace(route.COUNTER_GATE, "").replace(route.METAL_STAGE_GATE, "").replace(route.SAMPLED_STAGE_GATE, "").replace(route.TARGET_STAGE_GATE, "").replace(route.METAL_TOOLCHAIN_GATE, "").startswith(expected))
         self.assertEqual(selected.count(route.COUNTER_GATE), 1)
         self.assertEqual(selected.count(route.METAL_STAGE_GATE), 1)
         self.assertEqual(selected.count(route.SAMPLED_STAGE_GATE), 1)
+        self.assertEqual(selected.count(route.TARGET_STAGE_GATE), 1)
+        self.assertIn('"$host/native/TargetFramePacket.h"',route.TARGET_STAGE_GATE)
+        self.assertIn('"$host/native/TargetFrameLifetime.h"',route.TARGET_STAGE_GATE)
         self.assertIn('"$host/native/SampledFramePacket.h"',route.SAMPLED_STAGE_GATE)
         self.assertIn('"$host/native/public-sampled-shaders/PublicSampledShaders.h"',route.SAMPLED_STAGE_GATE)
         self.assertIn('"$stage/native/public-sampled-libraries" sampled',route.SAMPLED_STAGE_GATE)
@@ -177,7 +180,7 @@ class PublicUIRouteTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256((HERE / "run_ui_groups.py").read_bytes()).hexdigest(), route.UI_RUNNER_SHA)
         loaded = runner.load_helpers(HOST)
         self.assertEqual((len(loaded._mobile.TESTS), len(loaded.SETTINGS_TESTS),
-                          len(loaded.GRAPHICS_TESTS), len(loaded.AUDIO_TESTS)), (10, 6, 2, 6))
+                          len(loaded.GRAPHICS_TESTS), len(loaded.AUDIO_TESTS)), (10, 6, 3, 6))
         with tempfile.TemporaryDirectory() as temp:
             host = Path(temp).resolve(strict=True)
             (host / "sdk-test").mkdir()
@@ -215,7 +218,7 @@ class PublicUIRouteTests(unittest.TestCase):
                 mock.call("settings", stage, built / "DerivedData", output, destination),
                 mock.call("graphics", stage, built / "DerivedData", output, destination)])
             self.assertEqual(report["exported_png_count"], 4)
-            self.assertEqual(report["graphics_cases_passed"], 2)
+            self.assertEqual(report["graphics_cases_passed"], 3)
             self.assertIs(report["public_offscreen_graphics_test_passed"], True)
             for name in ("audio_sdk_tests_executed", "mandatory_audio_gate_satisfied", "audio_output_verified",
                          "full_integration_verified", "game_executed", "physical_iphone_verified", "visual_review_performed"):
@@ -331,7 +334,7 @@ function python3() {
             self.assertEqual(result.returncode,0,result.stderr.decode())
             self.assertIn(b'raw_xcresult_omitted=True',result.stdout)
             for name,data in before.items():self.assertEqual((source/name).read_bytes(),data)
-            with zipfile.ZipFile(root/'out/public-review/SkyrimLab-build16-metal-texture-review.zip') as archive:
+            with zipfile.ZipFile(root/'out/public-review/SkyrimLab-build17-metal-target-review.zip') as archive:
                 self.assertEqual(set(archive.namelist())-{n for n in archive.namelist() if n.endswith('/')},{'owned-host/'+n for n in required})
                 for name in required:self.assertEqual(archive.read('owned-host/'+name),before[name])
 

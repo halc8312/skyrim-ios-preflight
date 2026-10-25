@@ -87,8 +87,28 @@ pub enum Error {
 impl FramePlan {
     pub fn new(width: u32, height: u32, resources: Vec<BufferVersion>, passes: Vec<Pass>) -> Result<Self, Error> {
         let plan = Self { width, height, resources, passes };
-        plan.validate()?;
+        plan.validate(true)?;
         Ok(plan)
+    }
+    /// Geometry embedded in a TargetFrame. Only that enclosing contract may
+    /// prove initialization with an earlier copy instead of a first-pass clear.
+    pub(crate) fn target_geometry(
+        width: u32,
+        height: u32,
+        resources: Vec<BufferVersion>,
+        passes: Vec<Pass>,
+    ) -> Result<Self, Error> {
+        let plan = Self { width, height, resources, passes };
+        plan.validate(false)?;
+        Ok(plan)
+    }
+    /// Standalone consumers cannot execute geometry whose initialization needs
+    /// the enclosing TargetFrame's operations. Keep this check before GPU work.
+    pub(crate) fn require_first_clear(&self) -> Result<(), Error> {
+        if !self.passes.first().is_some_and(|p| p.clear_color.is_some() && p.clear_depth.is_some()) {
+            return Err(Error::Uninitialized);
+        }
+        Ok(())
     }
     pub fn width(&self) -> u32 {
         self.width
@@ -107,7 +127,7 @@ impl FramePlan {
         let end = (slice.offset as usize).checked_add(slice.bytes as usize).ok_or(Error::Range)?;
         r.bytes.get(slice.offset as usize..end).ok_or(Error::Range)
     }
-    fn validate(&self) -> Result<(), Error> {
+    fn validate(&self, require_first_clear: bool) -> Result<(), Error> {
         if !(1..=1024).contains(&self.width)
             || !(1..=1024).contains(&self.height)
             || self.resources.len() > MAX_RESOURCES
@@ -129,8 +149,8 @@ impl FramePlan {
             }
             total = total.checked_add(24 + r.bytes.len() + 7).ok_or(Error::Limit)?;
         }
-        if self.passes[0].clear_color.is_none() || self.passes[0].clear_depth.is_none() {
-            return Err(Error::Uninitialized);
+        if require_first_clear {
+            self.require_first_clear()?;
         }
         for pass in &self.passes {
             if pass.clear_color.iter().flatten().any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
