@@ -14,8 +14,26 @@ fn explicit_slots_and_runtime_byte_sizes_are_reflected() {
     assert_eq!(
         m.bindings,
         vec![
-            Binding { group: 0, binding: 3, slot: 0, kind: ResourceKind::Uniform, used: true, minimum_bytes: 16 },
-            Binding { group: 1, binding: 4, slot: 1, kind: ResourceKind::StorageRead, used: true, minimum_bytes: 4 },
+            Binding {
+                group: 0,
+                binding: 3,
+                slot: 0,
+                kind: ResourceKind::Uniform,
+                used: true,
+                minimum_bytes: 16,
+                texture_type: None,
+                comparison_sampler: false
+            },
+            Binding {
+                group: 1,
+                binding: 4,
+                slot: 1,
+                kind: ResourceKind::StorageRead,
+                used: true,
+                minimum_bytes: 4,
+                texture_type: None,
+                comparison_sampler: false
+            },
         ]
     );
     assert_eq!(m.runtime_sizes, vec![RuntimeSize { group: 1, binding: 4, word: 0, global_index: 0 }]);
@@ -36,6 +54,29 @@ fn texture_and_sampler_slots_are_independent_and_keep_guest_bindings() {
         [(96, 0, ResourceKind::Texture), (97, 0, ResourceKind::Sampler)]
     );
     assert_eq!(m.sizes_buffer_slot, None);
+    assert_eq!(
+        m.bindings[0].texture_type,
+        Some(TextureType { shape: TextureShape::D2, scalar: TextureScalar::Float, multisampled: false })
+    );
+    assert!(!m.bindings[1].comparison_sampler);
+}
+
+#[test]
+fn sampled_resource_types_do_not_silently_become_filterable_2d_float() {
+    for (declaration, shape, scalar, multisampled) in [
+        ("texture_2d<u32>", TextureShape::D2, TextureScalar::Uint, false),
+        ("texture_cube<f32>", TextureShape::Cube, TextureScalar::Float, false),
+        ("texture_2d_array<i32>", TextureShape::D2Array, TextureScalar::Sint, false),
+        ("texture_multisampled_2d<f32>", TextureShape::D2, TextureScalar::Float, true),
+        ("texture_depth_2d", TextureShape::D2, TextureScalar::Depth, false),
+    ] {
+        let source = format!(
+            "@group(2) @binding(0) var t:{declaration}; @group(2) @binding(1) var s:sampler_comparison; @fragment fn main()->@location(0) vec4<f32>{{return vec4<f32>(1.);}}"
+        );
+        let m = lower_wgsl(&source, Stage::Pixel, "main").unwrap();
+        assert_eq!(m.bindings[0].texture_type, Some(TextureType { shape, scalar, multisampled }));
+        assert!(m.bindings[1].comparison_sampler);
+    }
 }
 
 #[test]

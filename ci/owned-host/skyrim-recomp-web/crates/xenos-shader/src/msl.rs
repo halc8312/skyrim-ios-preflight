@@ -16,6 +16,29 @@ pub enum ResourceKind {
     Sampler,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextureShape {
+    D1,
+    D2,
+    D2Array,
+    D3,
+    Cube,
+    CubeArray,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextureScalar {
+    Float,
+    Sint,
+    Uint,
+    Depth,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextureType {
+    pub shape: TextureShape,
+    pub scalar: TextureScalar,
+    pub multisampled: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Binding {
     pub group: u32,
@@ -25,6 +48,8 @@ pub struct Binding {
     pub kind: ResourceKind,
     pub used: bool,
     pub minimum_bytes: u32,
+    pub texture_type: Option<TextureType>,
+    pub comparison_sampler: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,13 +145,41 @@ pub fn lower_wgsl(source: &str, stage: crate::ShaderStage, entry: &str) -> Resul
             ResourceKind::Uniform | ResourceKind::StorageRead | ResourceKind::StorageReadWrite => layout[var.ty].size,
             _ => 0,
         };
-        globals.push((binding, kind, !usage[handle].is_empty(), minimum));
+        let texture_type = if let TypeInner::Image { dim, arrayed, class } = *ty {
+            let shape = match (dim, arrayed) {
+                (naga::ImageDimension::D1, false) => TextureShape::D1,
+                (naga::ImageDimension::D2, false) => TextureShape::D2,
+                (naga::ImageDimension::D2, true) => TextureShape::D2Array,
+                (naga::ImageDimension::D3, false) => TextureShape::D3,
+                (naga::ImageDimension::Cube, false) => TextureShape::Cube,
+                (naga::ImageDimension::Cube, true) => TextureShape::CubeArray,
+                _ => return Err(Error::UnsupportedResource),
+            };
+            let (scalar, multisampled) = match class {
+                naga::ImageClass::Sampled { kind, multi } => (
+                    match kind {
+                        naga::ScalarKind::Float => TextureScalar::Float,
+                        naga::ScalarKind::Sint => TextureScalar::Sint,
+                        naga::ScalarKind::Uint => TextureScalar::Uint,
+                        _ => return Err(Error::UnsupportedResource),
+                    },
+                    multi,
+                ),
+                naga::ImageClass::Depth { multi } => (TextureScalar::Depth, multi),
+                _ => return Err(Error::UnsupportedResource),
+            };
+            Some(TextureType { shape, scalar, multisampled })
+        } else {
+            None
+        };
+        let comparison_sampler = matches!(ty, TypeInner::Sampler { comparison: true });
+        globals.push((binding, kind, !usage[handle].is_empty(), minimum, texture_type, comparison_sampler));
     }
     globals.sort_by_key(|(b, ..)| (b.group, b.binding));
     let mut slots = [0u8; 3];
     let mut bindings = Vec::new();
     let mut resources = backend::EntryPointResources::default();
-    for (binding, kind, used, minimum_bytes) in globals {
+    for (binding, kind, used, minimum_bytes, texture_type, comparison_sampler) in globals {
         let namespace = match kind {
             ResourceKind::Texture => 1,
             ResourceKind::Sampler => 2,
@@ -147,7 +200,16 @@ pub fn lower_wgsl(source: &str, stage: crate::ShaderStage, entry: &str) -> Resul
             _ => target.sampler = Some(backend::BindSamplerTarget::Resource(slot)),
         }
         resources.resources.insert(ResourceBinding { group: binding.group, binding: binding.binding }, target);
-        bindings.push(Binding { group: binding.group, binding: binding.binding, slot, kind, used, minimum_bytes });
+        bindings.push(Binding {
+            group: binding.group,
+            binding: binding.binding,
+            slot,
+            kind,
+            used,
+            minimum_bytes,
+            texture_type,
+            comparison_sampler,
+        });
     }
     let sizes_buffer_slot = runtime_sizes
         .iter()

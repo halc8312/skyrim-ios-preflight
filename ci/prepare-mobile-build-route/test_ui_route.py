@@ -59,9 +59,14 @@ class PublicUIRouteTests(unittest.TestCase):
         prebuild, rest = original.split(route.LOOP)
         loop, _ = rest.split(route.AFTER)
         expected = (prebuild + route.LOOP + loop).replace(route.HARNESS, "harness=/public/repo")
-        self.assertTrue(selected.replace(route.COUNTER_GATE, "").replace(route.METAL_STAGE_GATE, "").replace(route.METAL_TOOLCHAIN_GATE, "").startswith(expected))
+        self.assertTrue(selected.replace(route.COUNTER_GATE, "").replace(route.METAL_STAGE_GATE, "").replace(route.SAMPLED_STAGE_GATE, "").replace(route.METAL_TOOLCHAIN_GATE, "").startswith(expected))
         self.assertEqual(selected.count(route.COUNTER_GATE), 1)
         self.assertEqual(selected.count(route.METAL_STAGE_GATE), 1)
+        self.assertEqual(selected.count(route.SAMPLED_STAGE_GATE), 1)
+        self.assertIn('"$host/native/SampledFramePacket.h"',route.SAMPLED_STAGE_GATE)
+        self.assertIn('"$host/native/public-sampled-shaders/PublicSampledShaders.h"',route.SAMPLED_STAGE_GATE)
+        self.assertIn('"$stage/native/public-sampled-libraries" sampled',route.SAMPLED_STAGE_GATE)
+        self.assertEqual(route.SAMPLED_STAGE_GATE.count('compile_public_frame_shaders.py'),1)
         self.assertEqual(selected.count(route.METAL_TOOLCHAIN_GATE), 1)
         self.assertLess(selected.index(route.METAL_TOOLCHAIN_GATE), selected.index(route.LOOP))
         self.assertIn('xcodebuild -downloadComponent metalToolchain', route.METAL_TOOLCHAIN_GATE)
@@ -163,7 +168,7 @@ class PublicUIRouteTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256((HERE / "run_ui_groups.py").read_bytes()).hexdigest(), route.UI_RUNNER_SHA)
         loaded = runner.load_helpers(HOST)
         self.assertEqual((len(loaded._mobile.TESTS), len(loaded.SETTINGS_TESTS),
-                          len(loaded.GRAPHICS_TESTS), len(loaded.AUDIO_TESTS)), (10, 6, 1, 6))
+                          len(loaded.GRAPHICS_TESTS), len(loaded.AUDIO_TESTS)), (10, 6, 2, 6))
         with tempfile.TemporaryDirectory() as temp:
             host = Path(temp).resolve(strict=True)
             (host / "sdk-test").mkdir()
@@ -201,7 +206,7 @@ class PublicUIRouteTests(unittest.TestCase):
                 mock.call("settings", stage, built / "DerivedData", output, destination),
                 mock.call("graphics", stage, built / "DerivedData", output, destination)])
             self.assertEqual(report["exported_png_count"], 4)
-            self.assertEqual(report["graphics_cases_passed"], 1)
+            self.assertEqual(report["graphics_cases_passed"], 2)
             self.assertIs(report["public_offscreen_graphics_test_passed"], True)
             for name in ("audio_sdk_tests_executed", "mandatory_audio_gate_satisfied", "audio_output_verified",
                          "full_integration_verified", "game_executed", "physical_iphone_verified", "visual_review_performed"):
@@ -298,7 +303,7 @@ function python3() {
                 self.assertEqual((Path(tmp)/'rechecked').read_text(),'checked')
                 self.assertEqual((Path(tmp)/'archive-attempted').read_text(),'archived')
 
-    def test_compact_artifacts_keep_original_evidence_and_exclude_only_rebuild_caches(self):
+    def test_compact_artifacts_keep_originals_logs_results_and_images_within_free_storage(self):
         import yaml, zipfile
         config=yaml.safe_load((CLOUD/'.circleci/config.yml').read_text())
         command=config['jobs']['public_build_and_ui']['steps'][1]['run']['command']
@@ -306,18 +311,18 @@ function python3() {
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);source=root/'out/owned-host'
             required=['OwnedGameHost-0.1.0-unsigned.ipa','public-source-manifest.json','xctest/public-fullchain-result.json',
-                'xctest-ui/graphics/xcodebuild.stdout.log','xctest-ui/graphics/GraphicsPresentationTests.xcresult/Info.plist',
+                'xctest-ui/graphics/xcodebuild.stdout.log',
                 'xctest-ui/mobile/screenshots/a.png','xctest-ui/mobile/screenshots/b.png',
                 'xctest-ui/settings/screenshots/a.png','xctest-ui/settings/screenshots/b.png']
-            caches=['gpu-framework/device/cache.bin','xctest/DerivedData/Build/object.o']
+            caches=['gpu-framework/device/cache.bin','xctest/DerivedData/Build/object.o','xctest-ui/graphics/GraphicsPresentationTests.xcresult/Info.plist']
             for name in required+caches:
                 p=source/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(name.encode())
             before={name:(source/name).read_bytes() for name in required+caches}
             result=subprocess.run([sys.executable,'-c',code],cwd=tmp,capture_output=True,timeout=10)
             self.assertEqual(result.returncode,0,result.stderr.decode())
-            self.assertIn(b'raw_xcresult_omitted=False',result.stdout)
+            self.assertIn(b'raw_xcresult_omitted=True',result.stdout)
             for name,data in before.items():self.assertEqual((source/name).read_bytes(),data)
-            with zipfile.ZipFile(root/'out/public-review/SkyrimLab-build15-metal-frame-review.zip') as archive:
+            with zipfile.ZipFile(root/'out/public-review/SkyrimLab-build16-metal-texture-review.zip') as archive:
                 self.assertEqual(set(archive.namelist())-{n for n in archive.namelist() if n.endswith('/')},{'owned-host/'+n for n in required})
                 for name in required:self.assertEqual(archive.read('owned-host/'+name),before[name])
 

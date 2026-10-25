@@ -15,12 +15,15 @@ private final class GraphicsProbeDeadline: @unchecked Sendable {
 }
 
 final class GraphicsPresentationTests: XCTestCase {
-    private func runPublicFrameBackendParity() async throws {
+    private static func frameProbe(_ sampled: Bool, _ out: UnsafeMutablePointer<OHFrameComparisonV1>?, _ bytes: Int) -> Int32 {
+        sampled ? OHRunPublicSampledFrameComparisonV1(out, bytes) : OHRunPublicFrameComparisonV1(out, bytes)
+    }
+    private func runPublicFrameBackendParity(sampled: Bool = false) async throws {
         executionTimeAllowance = 90
-        XCTAssertEqual(OHRunPublicFrameComparisonV1(nil, 48), -1)
+        XCTAssertEqual(Self.frameProbe(sampled, nil, 48), -1)
         var sentinel = OHFrameComparisonV1(); sentinel.version = 77
         let original = withUnsafeBytes(of: sentinel) { Data($0) }
-        XCTAssertEqual(OHRunPublicFrameComparisonV1(&sentinel, 47), -1)
+        XCTAssertEqual(Self.frameProbe(sampled, &sentinel, 47), -1)
         XCTAssertEqual(withUnsafeBytes(of: sentinel) { Data($0) }, original)
         let started = DispatchTime.now().uptimeNanoseconds
         let deadline = GraphicsProbeDeadline()
@@ -28,7 +31,7 @@ final class GraphicsPresentationTests: XCTestCase {
         let (status, value): (Int32, OHFrameComparisonV1) = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 var value = OHFrameComparisonV1()
-                let status = OHRunPublicFrameComparisonV1(&value, MemoryLayout<OHFrameComparisonV1>.size)
+                let status = Self.frameProbe(sampled, &value, MemoryLayout<OHFrameComparisonV1>.size)
                 continuation.resume(returning: (status, value))
             }
         }
@@ -40,13 +43,18 @@ final class GraphicsPresentationTests: XCTestCase {
         }
         XCTAssertEqual(value.version, 0x10000); XCTAssertEqual(value.bytes, 48)
         XCTAssertEqual(value.backend_a, 1); XCTAssertEqual(value.backend_b, 2)
-        XCTAssertEqual(value.cases, 9); XCTAssertEqual(value.renders, 36)
-        XCTAssertEqual(value.compared_bytes, 147456); XCTAssertEqual(value.flags, 7)
+        XCTAssertEqual(value.cases, sampled ? 15 : 9); XCTAssertEqual(value.renders, sampled ? 60 : 36)
+        XCTAssertEqual(value.compared_bytes, sampled ? 245760 : 147456); XCTAssertEqual(value.flags, 7)
         let marker: [String: Any] = ["schema": 1, "cases": value.cases, "renders": value.renders,
             "compared_bytes": value.compared_bytes, "flags": value.flags, "offscreen": true,
             "game": false, "iphone": false, "performance_measured": false]
         let data = try JSONSerialization.data(withJSONObject: marker, options: [.sortedKeys])
-        print("PUBLIC_FRAME_COMPARISON_RESULT \(String(decoding: data, as: UTF8.self))")
+        let prefix = sampled ? "PUBLIC_SAMPLED_FRAME_COMPARISON_RESULT" : "PUBLIC_FRAME_COMPARISON_RESULT"
+        print("\(prefix) \(String(decoding: data, as: UTF8.self))")
+    }
+
+    func testPublicOffscreenSampledMetalPresentation() async throws {
+        try await runPublicFrameBackendParity(sampled: true)
     }
 
     private func runPublicConstantBackendParity() async throws {

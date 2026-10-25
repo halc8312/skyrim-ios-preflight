@@ -31,6 +31,8 @@ targets:
         buildPhase: resources
       - path: native/public-frame-libraries/PublicXenosPixel.metallib
         buildPhase: resources
+      - path: native/public-sampled-libraries/PublicSampledPixel.metallib
+        buildPhase: resources
       - path: sdk-test/native/NativeTraceSDKProbe.cpp
       - path: Resources/OwnedGuestBinding.json
         buildPhase: resources
@@ -52,7 +54,7 @@ targets:
       properties:
         CFBundleDisplayName: Skyrim Lab
         CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "15"
+        CFBundleVersion: "16"
         CADisableMinimumFrameDurationOnPhone: true
         LSSupportsGameMode: true
         UILaunchScreen: {}

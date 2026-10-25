@@ -37,15 +37,15 @@ jobs:
             recheck_status=0
             python3 -B ci/prepare-mobile-build-route/prepare_ui_route.py recheck \
               --repo "$PWD" --source-commit "$REVIEWED_SOURCE_COMMIT" --output "$route" || recheck_status=$?
-            # Preserve proof on failure and avoid storing rebuildable caches twice.
+            # Preserve logs/results/PNGs on failure within the remaining Free storage.
             python3 -B ci/run-bounded-command.py 120 python3 -B -c '
             from pathlib import Path
             import os, shutil
             source=Path("out/owned-host")
             evidence=Path("out/public-evidence/owned-host")
             review=Path("out/public-review")
-            excluded={"DerivedData","gpu-framework"}
-            limit=100*1024*1024
+            excluded={"DerivedData","gpu-framework",".xcresult"}
+            limit=20*1024*1024
             def retained_size():
                 total=0
                 for parent,dirs,files in os.walk(source,followlinks=False):
@@ -54,15 +54,14 @@ jobs:
                         assert not (Path(parent)/name).is_symlink(), "public_evidence_symlink"
                     total+=sum((Path(parent)/name).stat().st_size for name in files)
                 return total
-            if retained_size()>limit: excluded.add(".xcresult")
             size=retained_size()
             assert size<=limit, "bounded_public_evidence_required"
             def ignore(parent,names):
                 return [n for n in names if n in excluded or (".xcresult" in excluded and n.endswith(".xcresult"))]
             shutil.copytree(source,evidence,ignore=ignore)
             review.mkdir(exist_ok=False)
-            archive=Path(shutil.make_archive(str(review/"SkyrimLab-build15-metal-frame-review"),"zip","out/public-evidence","owned-host"))
-            assert archive.stat().st_size<=110*1024*1024, "bounded_public_archive_required"
+            archive=Path(shutil.make_archive(str(review/"SkyrimLab-build16-metal-texture-review"),"zip","out/public-evidence","owned-host"))
+            assert archive.stat().st_size<=25*1024*1024, "bounded_public_archive_required"
             print("PUBLIC_COMPACT_EVIDENCE",size,"raw_xcresult_omitted="+str(".xcresult" in excluded),flush=True)
             '
             if [ "$preflight_status" -ne 0 ]; then exit "$preflight_status"; fi

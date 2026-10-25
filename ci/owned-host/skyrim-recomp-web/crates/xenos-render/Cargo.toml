@@ -38,3 +38,7 @@ gpu-webgpu.workspace = true
 [[example]]
 name = "frame_probe_fixtures"
 required-features = ["public-probes", "metal-shaders"]
+
+[[example]]
+name = "sampled_probe_fixtures"
+required-features = ["public-probes", "metal-shaders"]

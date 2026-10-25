@@ -15,7 +15,7 @@ _mobile = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mobile)
 _sdk = _mobile._sdk
 
-GRAPHICS_TESTS = ("testPublicOffscreenMetalPresentation",)
+GRAPHICS_TESTS = ("testPublicOffscreenMetalPresentation", "testPublicOffscreenSampledMetalPresentation")
 SETTINGS_TESTS = (
     "testPresetsProduceBoundedNativeTuplesAndKeepOriginalDefault",
     "testInvalidPersistedValuesCannotRequestUnboundedAllocationOrRate",
@@ -108,13 +108,13 @@ def validate_marker(group: str, text: str) -> dict | None:
     return value
 
 
-def validate_frame_marker(text: str) -> dict:
-    prefix = "PUBLIC_FRAME_COMPARISON_RESULT "
+def validate_frame_marker(text: str, sampled: bool = False) -> dict:
+    prefix = "PUBLIC_SAMPLED_FRAME_COMPARISON_RESULT " if sampled else "PUBLIC_FRAME_COMPARISON_RESULT "
     lines = [line for line in text.splitlines() if prefix.strip() in line]
     if len(lines) != 1 or not lines[0].startswith(prefix):
         raise ValueError("one complete frame comparison marker required")
     value = _sdk.strict_json(lines[0][len(prefix):])
-    expected = dict(schema=1, cases=9, renders=36, compared_bytes=147456, flags=7,
+    expected = dict(schema=1, cases=15 if sampled else 9, renders=60 if sampled else 36, compared_bytes=245760 if sampled else 147456, flags=7,
                     offscreen=True, game=False, iphone=False, performance_measured=False)
     if type(value) is not dict or set(value) != set(expected):
         raise ValueError("frame comparison schema differs")
@@ -150,6 +150,7 @@ def run_group(group: str, stage: Path, derived: Path, output: Path, destination:
     validate_console(group, text)
     marker = validate_marker(group, text)
     frame_marker = validate_frame_marker(text) if group == "graphics" else None
+    sampled_marker = validate_frame_marker(text, sampled=True) if group == "graphics" else None
     _mobile.run_command(["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result)],
                         stage, evidence / "xcresult-summary", deadline, "public feature summary failed", cap=15)
     raw = _mobile.read_command_log(evidence / "xcresult-summary.stdout.log", _mobile.SUMMARY_LIMIT)
@@ -173,6 +174,8 @@ def run_group(group: str, stage: Path, derived: Path, output: Path, destination:
         report["native_public_probe"] = marker
     if frame_marker is not None:
         report["native_frame_comparison"] = frame_marker
+    if sampled_marker is not None:
+        report["native_sampled_frame_comparison"] = sampled_marker
     with (evidence / "public-feature-result.json").open("x", encoding="utf-8") as stream:
         json.dump(report, stream, indent=2); stream.write("\n")
     return report

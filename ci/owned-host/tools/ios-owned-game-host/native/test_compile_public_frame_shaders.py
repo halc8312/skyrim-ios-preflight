@@ -13,15 +13,28 @@ from unittest import mock
 spec=importlib.util.spec_from_file_location('public_frame_compiler',Path(__file__).with_name('compile_public_frame_shaders.py'))
 compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
-def authored(root):
+def authored(root,sampled=False):
     src=root/'authored';src.mkdir()
-    names=['vertex.metal','pixel.metal','PublicFrameShaders.h']
+    names=['pixel.metal','PublicSampledShaders.h'] if sampled else ['vertex.metal','pixel.metal','PublicFrameShaders.h']
     for name in names:(src/name).write_text('// authored\n')
     pins={'schema':1,'files':{name:{'bytes':(src/name).stat().st_size,'sha256':hashlib.sha256((src/name).read_bytes()).hexdigest()} for name in names}}
     (src/'source-pins.json').write_text(json.dumps(pins))
     return src
 
 class CompilerTests(unittest.TestCase):
+    def test_sampled_shader_set_compiles_one_pinned_library_and_requires_matching_header(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);src=authored(root,sampled=True);calls=[]
+            def run(command,**kwargs):
+                calls.append(command);self.assertTrue(kwargs['check'])
+                Path(command[command.index('-o')+1]).write_bytes(b'AIR' if '-c' in command else b'MTLB'+bytes(1024))
+            with mock.patch.object(compiler.subprocess,'check_output',return_value='/SDK'),mock.patch.object(compiler.subprocess,'run',side_effect=run),contextlib.redirect_stdout(io.StringIO()):
+                compiler.compile('simulator',src,root/'fresh','sampled')
+            self.assertEqual(len(calls),2);self.assertTrue((root/'fresh/PublicSampledPixel.metallib').is_file())
+            (src/'PublicSampledShaders.h').write_text('// changed\n')
+            with mock.patch.object(compiler.subprocess,'check_output') as read,self.assertRaises(ValueError):compiler.compile('device',src,root/'new','sampled')
+            read.assert_not_called()
+
     def test_invalid_variant_never_creates_or_executes(self):
         with mock.patch.object(compiler.subprocess,'check_output') as read,self.assertRaises(ValueError):
             compiler.compile('macos','missing','missing-output')

@@ -19,6 +19,7 @@ AUDIO = dict(schema=1, audio_version=1, transport_bytes=160, native_status_bytes
              physical_iphone_verified=False)
 FRAME = dict(schema=1, cases=9, renders=36, compared_bytes=147456, flags=7,
              offscreen=True, game=False, iphone=False, performance_measured=False)
+SAMPLED = dict(FRAME, cases=15, renders=60, compared_bytes=245760)
 
 
 def console(group, tests=None):
@@ -29,7 +30,8 @@ def console(group, tests=None):
         case = f"-[OwnedGameHostTests.{cls} {name}]"
         lines += [f"Test Case '{case}' started.", f"Test Case '{case}' passed (0.001 seconds)."]
     if group == "graphics": lines += [driver.GRAPHICS_PREFIX + json.dumps(GRAPHICS),
-                                      "PUBLIC_FRAME_COMPARISON_RESULT " + json.dumps(FRAME)]
+                                      "PUBLIC_FRAME_COMPARISON_RESULT " + json.dumps(FRAME),
+                                      "PUBLIC_SAMPLED_FRAME_COMPARISON_RESULT " + json.dumps(SAMPLED)]
     if group == "audio": lines += [driver.AUDIO_PREFIX + json.dumps(AUDIO)]
     lines += [f"Executed {len(expected)} tests, with 0 failures (0 unexpected)", "** TEST EXECUTE SUCCEEDED **"]
     return "\n".join(lines) + "\n"
@@ -52,8 +54,18 @@ class DeviceFeatureDriverTests(unittest.TestCase):
         for bad in ["",good+"\n"+good,"fake "+good,prefix+"[]",good[:-1]+',"schema":1}']:
             with self.assertRaises(ValueError):driver.validate_frame_marker(bad)
 
+    def test_sampled_comparison_requires_its_own_complete_strict_public_result(self):
+        prefix="PUBLIC_SAMPLED_FRAME_COMPARISON_RESULT ";good=prefix+json.dumps(SAMPLED)
+        self.assertEqual(driver.validate_frame_marker(good,sampled=True),SAMPLED)
+        for key,value in SAMPLED.items():
+            for wrong in ([not value,0,"false"] if type(value)is bool else [value+1,True,str(value)]):
+                with self.subTest(key=key,value=wrong),self.assertRaises(ValueError):
+                    driver.validate_frame_marker(prefix+json.dumps(dict(SAMPLED,**{key:wrong})),sampled=True)
+        for bad in ["",good+"\n"+good,"fake "+good,prefix+"[]",good[:-1]+',"schema":1}',prefix+json.dumps(FRAME),"PUBLIC_FRAME_COMPARISON_RESULT "+json.dumps(FRAME)]:
+            with self.assertRaises(ValueError):driver.validate_frame_marker(bad,sampled=True)
+
     def test_three_fixed_groups_exact_cases_and_either_serial_order(self):
-        self.assertEqual({k: len(v[1]) for k,v in driver.GROUPS.items()}, dict(graphics=1,settings=6,audio=6))
+        self.assertEqual({k: len(v[1]) for k,v in driver.GROUPS.items()}, dict(graphics=2,settings=6,audio=6))
         for group, (_, tests, _) in driver.GROUPS.items():
             for order in (tests, tuple(reversed(tests))):
                 with self.subTest(group=group):
@@ -182,7 +194,7 @@ class DeviceFeatureDriverTests(unittest.TestCase):
             else:
                 self.assertEqual(driver.main(args),0)
                 report=json.loads((output/"public-device-features-result.json").read_text())
-                self.assertEqual(report["expected_cases"],13)
+                self.assertEqual(report["expected_cases"],14)
                 self.assertEqual(set(report["groups"]),set(driver.GROUPS))
                 for group in driver.GROUPS:
                     self.assertTrue((output/group/"xcresult-summary.json").is_file())

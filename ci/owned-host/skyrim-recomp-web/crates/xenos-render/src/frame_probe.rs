@@ -60,12 +60,12 @@ pub struct Fixture {
     pub expected: Vec<u8>,
     pub tolerance: u8,
 }
-struct Builder {
-    resources: Vec<fp::BufferVersion>,
-    bindings: Vec<fp::Binding>,
+pub(crate) struct Builder {
+    pub(crate) resources: Vec<fp::BufferVersion>,
+    pub(crate) bindings: Vec<fp::Binding>,
 }
 impl Builder {
-    fn resource(&mut self, id: u32, generation: u64, bytes: Vec<u8>) -> fp::BufferSlice {
+    pub(crate) fn resource(&mut self, id: u32, generation: u64, bytes: Vec<u8>) -> fp::BufferSlice {
         let version = fp::Version { id, generation };
         let len = bytes.len() as u32;
         if let Some(r) = self.resources.iter().find(|r| r.version == version) {
@@ -75,14 +75,14 @@ impl Builder {
         }
         fp::BufferSlice { version, offset: 0, bytes: len }
     }
-    fn bind(&mut self, group: u32, binding: u32, slice: fp::BufferSlice) {
+    pub(crate) fn bind(&mut self, group: u32, binding: u32, slice: fp::BufferSlice) {
         if let Some(b) = self.bindings.iter_mut().find(|b| b.group == group && b.binding == binding) {
             b.slice = slice;
         } else {
             self.bindings.push(fp::Binding { group, binding, slice });
         }
     }
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let mut b = Self { resources: vec![], bindings: vec![] };
         for (binding, len) in [(0, 4096), (1, 160), (2, 768), (3, 112), (4, 4096)] {
             let bytes = match binding {
@@ -110,7 +110,7 @@ impl Builder {
         b.bind(1, 4, slice);
         b
     }
-    fn draw(
+    pub(crate) fn draw(
         &mut self,
         color: [f32; 4],
         z: f32,
@@ -357,21 +357,36 @@ pub struct WebGpuFrames {
     vertex_entry: &'static str,
     pixel_entry: &'static str,
     used: BTreeSet<(u32, u32)>,
-    layouts: [BindGroupLayout; 2],
+    layouts: [BindGroupLayout; 3],
+    sampled_types: BTreeMap<u32, bool>,
     pipeline_layout: PipelineLayout,
     diagnosed: std::cell::Cell<bool>,
 }
 
 fn reflected_layouts(
     shaders: &[&Translation; 2],
-) -> Result<([Vec<BindGroupLayoutEntry>; 2], BTreeSet<(u32, u32)>), String> {
+) -> Result<([Vec<BindGroupLayoutEntry>; 3], BTreeSet<(u32, u32)>), String> {
     let mut reflected = BTreeMap::<_, (msl::ResourceKind, u32, ShaderStage)>::new();
     for (shader, visibility) in shaders.iter().zip([ShaderStage::Vertex, ShaderStage::Fragment]) {
         for b in msl::lower(shader).map_err(|e| format!("lower {e:?}"))?.bindings.into_iter().filter(|b| b.used) {
-            if b.group > 1
-                || b.binding > 4
-                || !matches!(b.kind, msl::ResourceKind::Uniform | msl::ResourceKind::StorageRead)
-            {
+            let buffer = b.group <= 1
+                && b.binding <= 4
+                && matches!(b.kind, msl::ResourceKind::Uniform | msl::ResourceKind::StorageRead);
+            let sampled = b.group == 2
+                && b.binding <= 127
+                && match b.kind {
+                    msl::ResourceKind::Texture => {
+                        b.texture_type
+                            == Some(msl::TextureType {
+                                shape: msl::TextureShape::D2,
+                                scalar: msl::TextureScalar::Float,
+                                multisampled: false,
+                            })
+                    }
+                    msl::ResourceKind::Sampler => !b.comparison_sampler,
+                    _ => false,
+                };
+            if !buffer && !sampled {
                 return Err("unsupported planned shader binding".into());
             }
             let entry = reflected.entry((b.group, b.binding)).or_insert((b.kind, b.minimum_bytes, visibility));
@@ -382,19 +397,27 @@ fn reflected_layouts(
         }
     }
     let used = reflected.keys().copied().collect();
-    let mut groups: [Vec<BindGroupLayoutEntry>; 2] = Default::default();
+    let mut groups: [Vec<BindGroupLayoutEntry>; 3] = Default::default();
     for ((group, binding), (kind, minimum, visibility)) in reflected {
         groups[group as usize].push(BindGroupLayoutEntry {
             binding,
             visibility,
-            ty: BindingType::Buffer {
-                ty: if kind == msl::ResourceKind::Uniform {
-                    BufferBindingType::Uniform
-                } else {
-                    BufferBindingType::ReadOnlyStorage
+            ty: match kind {
+                msl::ResourceKind::Texture => BindingType::Texture {
+                    sample_type: TextureSampleType::Float,
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
                 },
-                has_dynamic_offset: false,
-                min_binding_size: u64::from(minimum),
+                msl::ResourceKind::Sampler => BindingType::Sampler(SamplerBindingType::Filtering),
+                _ => BindingType::Buffer {
+                    ty: if kind == msl::ResourceKind::Uniform {
+                        BufferBindingType::Uniform
+                    } else {
+                        BufferBindingType::ReadOnlyStorage
+                    },
+                    has_dynamic_offset: false,
+                    min_binding_size: u64::from(minimum),
+                },
             },
         });
     }
@@ -527,7 +550,16 @@ impl WebGpuFrames {
     }
     pub fn new(device: Device) -> Result<Self, String> {
         let [vertex, pixel] = shaders()?;
+        Self::with_shaders(device, vertex, pixel)
+    }
+    pub fn new_sampled(device: Device) -> Result<Self, String> {
+        let [vertex, pixel] = crate::sampled_probe::shaders()?;
+        Self::with_shaders(device, vertex, pixel)
+    }
+    fn with_shaders(device: Device, vertex: Translation, pixel: Translation) -> Result<Self, String> {
         let (entries, used) = reflected_layouts(&[&vertex, &pixel])?;
+        let sampled_types =
+            entries[2].iter().map(|e| (e.binding, matches!(e.ty, BindingType::Texture { .. }))).collect();
         let vertex_entry = vertex.entry_point;
         let pixel_entry = pixel.entry_point;
         let (vertex, pixel, layouts, pipeline_layout) = checked_gpu(&device, "shader/layout", || {
@@ -535,7 +567,7 @@ impl WebGpuFrames {
             let pixel = device.create_shader_module_wgsl("public planned Xenos pixel", &pixel.wgsl);
             let layouts = entries.map(|entries| device.create_bind_group_layout("explicit planned bindings", &entries));
             let pipeline_layout =
-                device.create_pipeline_layout("explicit planned shader pair", &[&layouts[0], &layouts[1]]);
+                device.create_pipeline_layout("explicit planned shader pair", &[&layouts[0], &layouts[1], &layouts[2]]);
             (vertex, pixel, layouts, pipeline_layout)
         })?;
         Ok(Self {
@@ -546,15 +578,104 @@ impl WebGpuFrames {
             pixel_entry,
             used,
             layouts,
+            sampled_types,
             pipeline_layout,
             diagnosed: std::cell::Cell::new(false),
         })
     }
     pub fn render(&self, frame: &fp::FramePlan) -> Result<Vec<u8>, String> {
-        checked_gpu(&self.device, "planned render", || self.render_inner(frame))?
+        checked_gpu(&self.device, "planned render", || self.render_inner(frame, None))?
     }
-    fn render_inner(&self, frame: &fp::FramePlan) -> Result<Vec<u8>, String> {
+    pub fn render_sampled(&self, frame: &crate::sampled_frame::SampledFrame) -> Result<Vec<u8>, String> {
+        checked_gpu(&self.device, "sampled planned render", || self.render_inner(frame.geometry(), Some(frame)))?
+    }
+    fn render_inner(
+        &self,
+        frame: &fp::FramePlan,
+        sampled: Option<&crate::sampled_frame::SampledFrame>,
+    ) -> Result<Vec<u8>, String> {
+        use crate::sampled_frame::{AddressMode as A, FilterMode as F, Resource};
+        if sampled.is_some() == self.sampled_types.is_empty() {
+            return Err("wrong sampled shader/plan mode".into());
+        }
+        if let Some(s) = sampled {
+            for bindings in s.bindings() {
+                if bindings.len() != self.sampled_types.len()
+                    || bindings.iter().any(|b| {
+                        self.sampled_types.get(&b.binding) != Some(&matches!(b.resource, Resource::Texture(_)))
+                    })
+                {
+                    return Err("sampled binding type or coverage does not match shader reflection".into());
+                }
+            }
+        }
         let device = &self.device;
+        let mut sampled_textures = Vec::new();
+        let mut sampled_views = Vec::new();
+        let mut sampled_samplers = Vec::new();
+        if let Some(s) = sampled {
+            for t in s.textures() {
+                let texture = checked_gpu(device, "sampled texture", || {
+                    device.create_texture(&TextureDescriptor {
+                        label: "immutable RGBA8 sampled version",
+                        size: extent(t.width, t.height, 1),
+                        mip_level_count: t.mips.len() as u32,
+                        format: TextureFormat::RGBA8Unorm,
+                        usage: TextureUsage::TextureBinding | TextureUsage::CopyDst,
+                        ..Default::default()
+                    })
+                })?;
+                checked_gpu(device, "sampled mip upload", || {
+                    for (level, m) in t.mips.iter().enumerate() {
+                        device.queue().write_texture(
+                            &TexelCopyTextureInfo {
+                                texture: &texture,
+                                mip_level: level as u32,
+                                origin: origin(0, 0, 0),
+                                aspect: TextureAspect::All,
+                            },
+                            &m.bytes,
+                            m.bytes_per_row,
+                            Some((t.height >> level).max(1)),
+                            extent((t.width >> level).max(1), (t.height >> level).max(1), 1),
+                        );
+                    }
+                })?;
+                sampled_views.push(checked_gpu(device, "sampled view", || texture.create_view(None))?);
+                sampled_textures.push(texture);
+            }
+            let address = |a| match a {
+                A::ClampToEdge => AddressMode::ClampToEdge,
+                A::Repeat => AddressMode::Repeat,
+                A::MirrorRepeat => AddressMode::MirrorRepeat,
+            };
+            let filter = |f| match f {
+                F::Nearest => FilterMode::Nearest,
+                F::Linear => FilterMode::Linear,
+            };
+            for s in s.samplers() {
+                let state = s.state;
+                sampled_samplers.push(checked_gpu(device, "sampled sampler", || {
+                    device.create_sampler(&SamplerDescriptor {
+                        label: "immutable sampled state",
+                        address_mode_u: address(state.address[0]),
+                        address_mode_v: address(state.address[1]),
+                        address_mode_w: address(state.address[2]),
+                        min_filter: filter(state.filters[0]),
+                        mag_filter: filter(state.filters[1]),
+                        mipmap_filter: if state.filters[2] == F::Nearest {
+                            MipmapFilterMode::Nearest
+                        } else {
+                            MipmapFilterMode::Linear
+                        },
+                        lod_min_clamp: state.lod[0],
+                        lod_max_clamp: state.lod[1],
+                        max_anisotropy: state.anisotropy,
+                        compare: None,
+                    })
+                })?);
+            }
+        }
         let resources: Vec<_> = frame
             .resources()
             .iter()
@@ -633,6 +754,27 @@ impl WebGpuFrames {
                     let bg = device.create_bind_group("planned bindings", &self.layouts[group as usize], &entries);
                     groups.push(bg);
                 }
+                let entries: Vec<_> = sampled
+                    .map(|s| {
+                        s.bindings()[draw_index]
+                            .iter()
+                            .map(|b| BindGroupEntry {
+                                binding: b.binding,
+                                resource: match b.resource {
+                                    Resource::Texture(v) => BindingResource::TextureView(
+                                        &sampled_views
+                                            [s.textures().iter().position(|t| t.version == v).expect("sealed texture")],
+                                    ),
+                                    Resource::Sampler(v) => BindingResource::Sampler(
+                                        &sampled_samplers
+                                            [s.samplers().iter().position(|t| t.version == v).expect("sealed sampler")],
+                                    ),
+                                },
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                groups.push(device.create_bind_group("planned sampled bindings", &self.layouts[2], &entries));
                 groups
             })?;
             held.push((pipeline, groups));
@@ -712,6 +854,21 @@ impl WebGpuFrames {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sampled_layout_rejects_other_dimensions_scalars_and_comparison_samplers() {
+        let [vertex, base] = shaders().unwrap();
+        for source in [
+            "@group(2) @binding(0) var t:texture_cube<f32>; @group(2) @binding(1) var s:sampler; @fragment fn main()->@location(0) vec4<f32>{return textureSampleLevel(t,s,vec3<f32>(1.,0.,0.),0.);}",
+            "@group(2) @binding(0) var t:texture_2d<u32>; @fragment fn main()->@location(0) vec4<f32>{return vec4<f32>(textureLoad(t,vec2<i32>(0),0));}",
+            "@group(2) @binding(0) var t:texture_multisampled_2d<f32>; @fragment fn main()->@location(0) vec4<f32>{return textureLoad(t,vec2<i32>(0),0);}",
+            "@group(2) @binding(0) var t:texture_depth_2d; @group(2) @binding(1) var s:sampler_comparison; @fragment fn main()->@location(0) vec4<f32>{return vec4<f32>(textureSampleCompare(t,s,vec2<f32>(0.5),0.5));}",
+        ] {
+            let mut pixel = base.clone();
+            pixel.wgsl = source.into();
+            pixel.entry_point = "main";
+            assert!(reflected_layouts(&[&vertex, &pixel]).unwrap_err().contains("unsupported planned shader binding"));
+        }
+    }
     #[test]
     fn reflected_layout_matches_the_authored_shader_buffer_contract() {
         let [vertex, pixel] = shaders().unwrap();

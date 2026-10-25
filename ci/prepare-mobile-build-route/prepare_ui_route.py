@@ -18,7 +18,7 @@ NOT_BEFORE = datetime(2026, 10, 23, 22, 30, tzinfo=timezone.utc)  # 2026-10-24 0
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 BOOTSTRAP_PINS = {
     "ci/prepare-fix-build-route/prepare_route.py": "a8c087b7cd8a0ea10925d226adbe813cca8a9b928ddd79c20cd2adeff8bfb7ce",
-    "ci/prepare-fix-build-route/reference-pins.json": "5183153cb5e46e3418753da4499eb127b8dd52598861e66864b5cb7dbacc00bb",
+    "ci/prepare-fix-build-route/reference-pins.json": "250bcbba41f403f58f3dcf32c76544deed45a7560e39ce60b9b50f2502fa15ef",
     "ci/run-bounded-command.py": "f7391d02a43dc5dc97ea7f017cd5e502c70b7a4f06b4ce05a9e4972b49a890dd",
 }
 INPUT_PINS = {
@@ -28,14 +28,14 @@ INPUT_PINS = {
     "sdk-test/tests/MobileControlsTests.swift": "9c1bd7b322b00e0faba222b56d6f2c28c9d8f2bc915be8364074e6b1ed082d40",
     "src/alpha_coverage_probe.rs": "b95c96f882ef3502f11668a353cb107e29835152dec6ed63e4dcb10b76cce678",
     "native/GraphicsPresentationProbe.h": "451769e952e8d7c95cd8c2f296476cc29f3d49ebf374f13e88774eeaf9b79f2a",
-    "sdk-test/tests/GraphicsPresentationTests.swift": "3041abc2c214fccee9277de73cee7049caa119625b015fe07f115ed6e73940ff",
+    "sdk-test/tests/GraphicsPresentationTests.swift": "cf0f7a2a597c891e85838fd232d9f00d4bcc16ac6433bf7ab79324811a2cb48e",
 }
 KERNEL_PINS = {
     "lib.rs": "6751fbbdbabd662a2cc68c043b6c6a0280d6241d478c015d0274c0d69bdbdfcd",
     "dispatch.rs": "9747e76edf9cd3007dde77afeb8f6125c6b4151c8023dbe4c0c8ebe5e154e714",
     "dispatch_counter_tests.rs": "ce8e30b56ed4f25390a2583ab1c16087085763ff767b927353b5e6e8b66d3e1b",
 }
-UI_RUNNER_SHA = "b7c773225df9e188640ebd525b698732af695f1b1649f11af9584736d19a4f36"
+UI_RUNNER_SHA = "02ce5ff111123499cb55ec9f1b6fe8f9301dcde53232aaff75895f6f334605de"
 HARNESS = 'harness="$(cd "$(dirname "$0")/.." && pwd)"'
 LOOP = "for variant in device simulator; do\n"
 AFTER = "\n# The V2 image is independently compiled from public authored sources."
@@ -46,6 +46,14 @@ GUI = "# Controlled environment comparison: preserve the same source, runtime, U
 GUI_END = 'python3 "$harness/ci/probe-host-audio.py" --phase post_gui'
 METAL_STAGE_ANCHOR = '    "$host/native/GraphicsPresentationProbe.h" "$stage/native/"\n'
 METAL_STAGE_GATE = '  # Explicit authored Metal probe sources; original source and loader gates remain.\n  cp "$host/native/ConstantReplayKernel.h" "$host/native/MetalConstantReplay.metal" \\\n    "$host/native/MetalConstantProbe.h" "$host/native/MetalConstantProbe.mm" \\\n    "$host/native/MetalConstantValidation.h" "$stage/native/"\n  cp "$host/native/FramePlanPacket.h" "$host/native/MetalFrameProbe.h" \\\n    "$host/native/MetalFrameProbe.mm" "$stage/native/"\n  mkdir -p "$stage/native/public-shaders"\n  cp "$host/native/public-shaders/PublicFrameShaders.h" "$stage/native/public-shaders/"\n  python3 "$host/native/compile_public_frame_shaders.py" "$variant" \\\n    "$host/native/public-shaders" "$stage/native/public-frame-libraries" \\\n    > "$output/$variant-public-xenos-shaders.log" 2>&1\n'
+SAMPLED_STAGE_GATE = '''  # Separate authored sampled-resource library; no game shader input.
+  cp "$host/native/SampledFramePacket.h" "$stage/native/"
+  mkdir -p "$stage/native/public-sampled-shaders"
+  cp "$host/native/public-sampled-shaders/PublicSampledShaders.h" "$stage/native/public-sampled-shaders/"
+  python3 "$host/native/compile_public_frame_shaders.py" "$variant" \\
+    "$host/native/public-sampled-shaders" "$stage/native/public-sampled-libraries" sampled \\
+    > "$output/$variant-public-sampled-shaders.log" 2>&1
+'''
 METAL_TOOLCHAIN_GATE = '''# Compile the authored MSL offline; Xcode 26 may need its official optional component.
 if ! xcrun -sdk iphoneos metal --version > "$output/metal-toolchain.log" 2>&1; then
   xcodebuild -downloadComponent metalToolchain >> "$output/metal-toolchain.log" 2>&1
@@ -131,7 +139,7 @@ def derive(setup, stages, repo, output):
         raise ValueError("simulator_gui_boundary")
     if loop.count(METAL_STAGE_ANCHOR) != 1:
         raise ValueError("metal_probe_stage_anchor_changed")
-    loop = loop.replace(METAL_STAGE_ANCHOR, METAL_STAGE_ANCHOR + METAL_STAGE_GATE)
+    loop = loop.replace(METAL_STAGE_ANCHOR, METAL_STAGE_ANCHOR + METAL_STAGE_GATE + SAMPLED_STAGE_GATE)
     # Preserve the original device+simulator loop plus the explicit probe copy,
     # the source/worker/policy gates and WGPU builder. No second app build loop.
     selected = before + LOOP + loop + "\n" + selection

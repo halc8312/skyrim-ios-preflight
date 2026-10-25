@@ -1,0 +1,13 @@
+{
+  "files": {
+    "PublicSampledShaders.h": {
+      "bytes": 746,
+      "sha256": "94d76d974b2bf2c617cfc9fe85ad5f1f354bac014c0c6b687470908774c2a874"
+    },
+    "pixel.metal": {
+      "bytes": 25848,
+      "sha256": "6f75d5d312db4537806751b24959bf5b7d4424ba7430d4d593e75f9904916a66"
+    }
+  },
+  "schema": 1
+}

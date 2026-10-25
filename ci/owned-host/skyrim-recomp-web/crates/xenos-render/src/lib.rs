@@ -28,8 +28,11 @@ mod extent;
 mod present;
 pub mod prepared;
 pub mod frame_plan;
+pub mod sampled_frame;
 #[cfg(all(feature = "public-probes", feature = "metal-shaders", not(target_os = "emscripten")))]
 pub mod frame_probe;
+#[cfg(all(feature = "public-probes", feature = "metal-shaders", not(target_os = "emscripten")))]
+pub mod sampled_probe;
 #[cfg(not(target_os = "emscripten"))]
 mod presentation_probe;
 mod queue;

@@ -113,6 +113,7 @@ skyrim-recomp-web/crates/xenos-render/Cargo.toml
 skyrim-recomp-web/crates/xenos-render/build.rs
 skyrim-recomp-web/crates/xenos-render/examples/constant_probe_fixtures.rs
 skyrim-recomp-web/crates/xenos-render/examples/frame_probe_fixtures.rs
+skyrim-recomp-web/crates/xenos-render/examples/sampled_probe_fixtures.rs
 skyrim-recomp-web/crates/xenos-render/src/causal.rs
 skyrim-recomp-web/crates/xenos-render/src/constant_backend_probe.rs
 skyrim-recomp-web/crates/xenos-render/src/constant_demand_tests.rs
@@ -142,6 +143,9 @@ skyrim-recomp-web/crates/xenos-render/src/registers.rs
 skyrim-recomp-web/crates/xenos-render/src/registers_delta_tests.rs
 skyrim-recomp-web/crates/xenos-render/src/renderer.rs
 skyrim-recomp-web/crates/xenos-render/src/ring.rs
+skyrim-recomp-web/crates/xenos-render/src/sampled_frame.rs
+skyrim-recomp-web/crates/xenos-render/src/sampled_frame_tests.rs
+skyrim-recomp-web/crates/xenos-render/src/sampled_probe.rs
 skyrim-recomp-web/crates/xenos-render/src/settings.rs
 skyrim-recomp-web/crates/xenos-render/src/shaders.rs
 skyrim-recomp-web/crates/xenos-render/src/shared_memory.rs
@@ -253,7 +257,11 @@ tools/ios-owned-game-host/native/OwnedHostAudioRenderGate.h
 tools/ios-owned-game-host/native/OwnedHostNative.h
 tools/ios-owned-game-host/native/OwnedHostNative.mm
 tools/ios-owned-game-host/native/PublicOwnedFixture.cpp
+tools/ios-owned-game-host/native/SampledFramePacket.h
 tools/ios-owned-game-host/native/compile_public_frame_shaders.py
+tools/ios-owned-game-host/native/public-sampled-shaders/PublicSampledShaders.h
+tools/ios-owned-game-host/native/public-sampled-shaders/pixel.metal
+tools/ios-owned-game-host/native/public-sampled-shaders/source-pins.json
 tools/ios-owned-game-host/native/public-shaders/PublicFrameShaders.h
 tools/ios-owned-game-host/native/public-shaders/pixel.metal
 tools/ios-owned-game-host/native/public-shaders/source-pins.json
@@ -269,6 +277,7 @@ tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.cpp
 tools/ios-owned-game-host/sdk-test/native/NativeTraceSDKProbe.h
 tools/ios-owned-game-host/sdk-test/native/PublicOwnedFixtureV2.cpp
 tools/ios-owned-game-host/sdk-test/native/PublicV2SDKProbe.h
+tools/ios-owned-game-host/sdk-test/native/SampledFramePortableTests.cpp
 tools/ios-owned-game-host/sdk-test/prepare_v2_sdk_stage.py
 tools/ios-owned-game-host/sdk-test/run_device_features_tests.py
 tools/ios-owned-game-host/sdk-test/run_mobile_controls_tests.py
