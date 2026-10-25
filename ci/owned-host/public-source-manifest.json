@@ -526,8 +526,8 @@
       "sha256": "dd909df92c9b31083db10bffbbfca7688bdcc059bb83549e366f2cf7ce9830b6"
     },
     "skyrim-recomp-web/crates/xenos-render/src/frame_probe.rs": {
-      "bytes": 33383,
-      "sha256": "2d79e55674d7ca4a2d4cc38e6b2e80024e3fbb4e79e09e439bf5190e32a1491d"
+      "bytes": 35374,
+      "sha256": "201df74f2882026365548587fcd37efbf775461572fddda9dd5273c72fbb91c9"
     },
     "skyrim-recomp-web/crates/xenos-render/src/lib.rs": {
       "bytes": 5460,
@@ -1198,8 +1198,8 @@
       "sha256": "039d009476d801d6e723178d01ef6916c5aac8fea634b002ba524e8381fd26c6"
     },
     "tools/ios-owned-game-host/src/frame_backend_fixture.rs": {
-      "bytes": 9209,
-      "sha256": "747c70823f302944c88e6e4868fdb070a9da7b8bd5ef8b342fed47fc26e0de93"
+      "bytes": 9541,
+      "sha256": "57306176d7bbc234eb9adb2701704ea3a8e2084e1d0f1635ee6cb701c089cf7c"
     },
     "tools/ios-owned-game-host/src/graphics_fixture.rs": {
       "bytes": 1760,

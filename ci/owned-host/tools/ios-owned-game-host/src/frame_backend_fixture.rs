@@ -1,5 +1,5 @@
 //! Public Xenos shaders + CPU-owned pass plans; never attaches to the game.
-use gpu_webgpu::{BackendType, DeviceDescriptor, Instance, RequestAdapterOptions};
+use gpu_webgpu::{BackendType, Instance, RequestAdapterOptions};
 use std::{
     ffi::c_void,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -168,8 +168,14 @@ fn execute() -> Result<Report, String> {
         if adapter.info().backend != BackendType::Metal {
             return Err("Metal adapter required".into());
         }
+        let descriptor = frame_probe::device_descriptor(&adapter)?;
+        eprintln!(
+            "PUBLIC_FRAME_DEVICE_LIMITS {}",
+            serde_json::json!({"adapter_storage_buffers":adapter.limits().maxStorageBuffersPerShaderStage,
+            "requested_storage_buffers":frame_probe::REQUIRED_STORAGE_BUFFERS,"game":false,"physical_iphone":false})
+        );
         let device = instance
-            .block_on(adapter.request_device(&DeviceDescriptor::default()))
+            .block_on(adapter.request_device(&descriptor))
             .map_err(|e| format!("device: {e:?}"))?;
         WebGpuFrames::new(device)
     })();

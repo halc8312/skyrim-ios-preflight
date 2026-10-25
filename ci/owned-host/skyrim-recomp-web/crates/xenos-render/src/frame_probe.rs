@@ -19,6 +19,26 @@ use xenos_state::{
 };
 
 pub const SIZE: u32 = 32;
+pub const REQUIRED_STORAGE_BUFFERS: u32 = 6;
+
+/// Request the six reflected vertex storage buffers explicitly. Metal's native
+/// default device can expose only four even when the adapter supports more.
+pub fn device_descriptor(adapter: &Adapter) -> Result<DeviceDescriptor<'static>, String> {
+    let supported = adapter.limits().maxStorageBuffersPerShaderStage;
+    if supported < REQUIRED_STORAGE_BUFFERS {
+        return Err(format!(
+            "planned storage buffers require {REQUIRED_STORAGE_BUFFERS}, adapter supports {supported}"
+        ));
+    }
+    Ok(DeviceDescriptor {
+        label: "authored frame comparison",
+        required_limits: Some(Limits {
+            maxStorageBuffersPerShaderStage: REQUIRED_STORAGE_BUFFERS,
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+}
 // Same public, hand-authored Xenos operations as debug_alpha_coverage. No game
 // microcode is embedded: fetch float3 position, export position/color, copy color.
 const VERTEX: [u32; 12] =
@@ -720,7 +740,7 @@ mod tests {
     fn authored_planned_passes_match_independent_pixels() {
         let instance = Instance::new().unwrap();
         let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions::default())).unwrap();
-        let device = instance.block_on(adapter.request_device(&DeviceDescriptor::default())).unwrap();
+        let device = instance.block_on(adapter.request_device(&device_descriptor(&adapter).unwrap())).unwrap();
         let mut backend = WebGpuFrames::new(device).unwrap();
         let fixtures = fixtures();
         for f in fixtures.iter().chain(fixtures.iter().rev()) {
@@ -737,5 +757,25 @@ mod tests {
         assert!(error.contains("public_missing_vertex_entry"), "detailed validation must survive: {error}");
         backend.vertex_entry = entry;
         assert!(verify(f, &backend.render(&f.frame).unwrap()));
+    }
+
+    #[test]
+    fn four_storage_buffers_reproduce_the_metal_default_failure_and_six_recover() {
+        let instance = Instance::new().unwrap();
+        let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions::default())).unwrap();
+        let limited = DeviceDescriptor {
+            required_limits: Some(Limits { maxStorageBuffersPerShaderStage: 4, ..Default::default() }),
+            ..Default::default()
+        };
+        let device = instance.block_on(adapter.request_device(&limited)).unwrap();
+        let error = WebGpuFrames::new(device).err().expect("four cannot hold the authored storage ABI");
+        assert!(error.contains("limit is 4") && error.contains("StorageBuffers"), "{error}");
+        let descriptor = device_descriptor(&adapter).unwrap();
+        assert_eq!(descriptor.required_limits.unwrap().maxStorageBuffersPerShaderStage, 6);
+        let device = instance.block_on(adapter.request_device(&descriptor)).unwrap();
+        let backend = WebGpuFrames::new(device).unwrap();
+        for fixture in fixtures() {
+            assert!(verify(&fixture, &backend.render(&fixture.frame).unwrap()));
+        }
     }
 }
