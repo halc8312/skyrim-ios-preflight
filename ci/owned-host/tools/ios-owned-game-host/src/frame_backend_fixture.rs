@@ -86,27 +86,23 @@ fn native_guards(metal: &Metal, packet: &[u8], bytes: usize) -> Result<(), Strin
     Ok(())
 }
 fn execute() -> Result<Report, String> {
-    let instance = Instance::new().map_err(|_| "instance")?;
-    let adapter = instance
-        .block_on(instance.request_adapter(&RequestAdapterOptions::default()))
-        .map_err(|_| "adapter")?;
-    if adapter.info().backend != BackendType::Metal {
-        return Err("Metal adapter required".into());
-    }
-    let device = instance
-        .block_on(adapter.request_device(&DeviceDescriptor::default()))
-        .map_err(|_| "device")?;
-    let web = WebGpuFrames::new(device)?;
     let metal = Metal(unsafe { OHMetalFrameCreateV1() });
     if metal.0.is_null() {
         return Err("offline Metal shaders".into());
     }
     let fixtures = frame_probe::fixtures();
-    native_guards(
+    let mut failures = Vec::new();
+    if let Err(error) = native_guards(
         &metal,
         &fixtures[0].frame.packet(),
         fixtures[0].expected.len(),
-    )?;
+    ) {
+        eprintln!("PUBLIC_FRAME_GUARD_ERROR {error}");
+        failures.push(error);
+    }
+    let mut native_verified = 0;
+    let mut webgpu_verified = 0;
+    let mut native_outputs = Vec::new();
     let mut report = Report {
         version: 0x10000,
         bytes: 48,
@@ -119,10 +115,6 @@ fn execute() -> Result<Report, String> {
         ..Default::default()
     };
     for (ordinal, f) in fixtures.iter().chain(fixtures.iter().rev()).enumerate() {
-        let expected = web.render(&f.frame)?;
-        if !frame_probe::verify(f, &expected) {
-            return Err(format!("WebGPU pixels case {}", f.id));
-        }
         let packet = f.frame.packet();
         let mut actual = vec![0x77; f.expected.len()];
         let status = unsafe {
@@ -134,21 +126,93 @@ fn execute() -> Result<Report, String> {
                 actual.len(),
             )
         };
-        if status != 0 {
-            return Err(format!("Metal render {} case {}", status, f.id));
-        }
-        if !frame_probe::verify(f, &actual)
-            || actual
-                .iter()
-                .zip(&expected)
-                .any(|(a, b)| a.abs_diff(*b) > f.tolerance)
-        {
+        let native_ok = status == 0 && frame_probe::verify(f, &actual);
+        if native_ok {
+            native_verified += 1;
+            eprintln!(
+                "PUBLIC_FRAME_NATIVE_CASE {}",
+                serde_json::json!({"case":f.id,"ordinal":ordinal,
+                "oracle_match":true,"bytes":actual.len(),"game":false,"physical_iphone":false})
+            );
+        } else {
             let mismatch = actual
                 .iter()
                 .zip(&f.expected)
-                .position(|(a, b)| a.abs_diff(*b) > f.tolerance)
-                .unwrap_or(usize::MAX);
-            return Err(format!("Metal pixels case {} byte {}", f.id, mismatch));
+                .position(|(a, b)| a.abs_diff(*b) > f.tolerance);
+            let error = if status != 0 {
+                format!("Metal render status={status} case={}", f.id)
+            } else {
+                format!(
+                    "Metal pixels case={} first_byte={mismatch:?} values={:?}",
+                    f.id,
+                    mismatch.map(|i| (actual[i], f.expected[i]))
+                )
+            };
+            eprintln!("PUBLIC_FRAME_NATIVE_ERROR {error}");
+            failures.push(error);
+        }
+        native_outputs.push(native_ok.then_some(actual));
+    }
+    // Finish and log all native evidence before entering a backend that could
+    // terminate the process on an uncaught compiler/driver error.
+    eprintln!(
+        "PUBLIC_FRAME_NATIVE_COMPLETE {}",
+        serde_json::json!({"oracle_renders":native_verified,
+        "expected_renders":fixtures.len()*2,"game":false,"physical_iphone":false,"performance_measured":false})
+    );
+    let web = (|| -> Result<WebGpuFrames, String> {
+        let instance = Instance::new().map_err(|e| format!("instance: {e:?}"))?;
+        let adapter = instance
+            .block_on(instance.request_adapter(&RequestAdapterOptions::default()))
+            .map_err(|e| format!("adapter: {e:?}"))?;
+        if adapter.info().backend != BackendType::Metal {
+            return Err("Metal adapter required".into());
+        }
+        let device = instance
+            .block_on(adapter.request_device(&DeviceDescriptor::default()))
+            .map_err(|e| format!("device: {e:?}"))?;
+        WebGpuFrames::new(device)
+    })();
+    let web = match web {
+        Ok(web) => Some(web),
+        Err(error) => {
+            eprintln!("PUBLIC_FRAME_WGPU_ERROR initialization: {error}");
+            failures.push(error);
+            None
+        }
+    };
+    for (ordinal, f) in fixtures.iter().chain(fixtures.iter().rev()).enumerate() {
+        let expected = web.as_ref().and_then(|web| match web.render(&f.frame) {
+            Ok(bytes) if frame_probe::verify(f, &bytes) => {
+                webgpu_verified += 1;
+                Some(bytes)
+            }
+            result => {
+                let error = format!(
+                    "WebGPU case={} ordinal={ordinal}: {}",
+                    f.id,
+                    result
+                        .err()
+                        .unwrap_or_else(|| "independent pixel oracle mismatch".into())
+                );
+                eprintln!("PUBLIC_FRAME_WGPU_ERROR {error}");
+                failures.push(error);
+                None
+            }
+        });
+        let Some(expected) = expected else {
+            continue;
+        };
+        let Some(actual) = &native_outputs[ordinal] else {
+            continue;
+        };
+        if actual
+            .iter()
+            .zip(&expected)
+            .any(|(a, b)| a.abs_diff(*b) > f.tolerance)
+        {
+            failures.push(format!("backend pixel disagreement case {}", f.id));
+            continue;
         }
         report.renders += 2;
         report.compared_bytes += (actual.len() + expected.len()) as u64;
@@ -158,6 +222,21 @@ fn execute() -> Result<Report, String> {
             "maximum_unorm_error":f.tolerance,"oracle_and_pair_match":true,"offline_xenos_shaders":true,
             "immutable_buffer_versions":true,"passes":f.frame.passes().len(),"game":false,"physical_iphone":false,"performance_measured":false})
         );
+    }
+    eprintln!(
+        "PUBLIC_FRAME_PARTIAL_RESULT {}",
+        serde_json::json!({"native_oracle_renders":native_verified,
+        "webgpu_oracle_renders":webgpu_verified,"full_pairs":report.renders/2,"failures":failures.len(),
+        "game":false,"physical_iphone":false,"performance_measured":false})
+    );
+    if let Some(error) = failures.first() {
+        return Err(format!("{} failures; first: {error}", failures.len()));
+    }
+    if report.renders != fixtures.len() as u64 * 4
+        || native_verified != fixtures.len() * 2
+        || webgpu_verified != fixtures.len() * 2
+    {
+        return Err("incomplete planned comparison".into());
     }
     Ok(report)
 }

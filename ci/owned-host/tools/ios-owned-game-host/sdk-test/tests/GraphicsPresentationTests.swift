@@ -34,7 +34,10 @@ final class GraphicsPresentationTests: XCTestCase {
         }
         if DispatchTime.now().uptimeNanoseconds - started > 45_000_000_000 { _exit(124) }
         deadline.finish()
-        XCTAssertEqual(status, 0)
+        guard status == 0 else {
+            XCTFail("Public frame comparison failed (\(status)); native/WebGPU diagnostics are in the test output")
+            return
+        }
         XCTAssertEqual(value.version, 0x10000); XCTAssertEqual(value.bytes, 48)
         XCTAssertEqual(value.backend_a, 1); XCTAssertEqual(value.backend_b, 2)
         XCTAssertEqual(value.cases, 9); XCTAssertEqual(value.renders, 36)

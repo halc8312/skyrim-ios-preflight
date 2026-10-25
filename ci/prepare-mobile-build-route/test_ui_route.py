@@ -3,8 +3,11 @@ import importlib.util
 import hashlib
 from datetime import timedelta
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -255,7 +258,7 @@ class PublicUIRouteTests(unittest.TestCase):
         self.assertEqual(job["macos"], before["jobs"]["public_device_build"]["macos"])
         self.assertEqual(job["macos"]["xcode"], "26.6.0")
         self.assertEqual(job["resource_class"], "m4pro.medium")
-        self.assertEqual(job["steps"][-2]["store_artifacts"]["path"], "out/owned-host")
+        self.assertEqual(job["steps"][-2]["store_artifacts"]["path"], "out/public-evidence/owned-host")
         self.assertEqual(job["steps"][-1]["store_artifacts"],
                          dict(path="out/public-review", destination="public-review-download"))
         command = job["steps"][1]["run"]["command"]
@@ -266,6 +269,56 @@ class PublicUIRouteTests(unittest.TestCase):
         self.assertIn('"out/public-review"', command)
         self.assertLess(command.index("prepare_ui_route.py recheck"), command.index("shutil.make_archive"))
         self.assertIn('bash "$route/preflight.sh"', command)
+
+    def test_failure_archive_never_hides_test_or_source_recheck_failure(self):
+        import yaml
+        config = yaml.safe_load((CLOUD / ".circleci/config.yml").read_text())
+        command = config['jobs']['public_build_and_ui']['steps'][1]['run']['command']
+        stubs = r'''
+function bash() { return "$TEST_PREFLIGHT_STATUS"; }
+function python3() {
+  if [[ "$*" == *" recheck "* ]]; then
+    printf checked > "$TMPDIR/rechecked"
+    return "$TEST_RECHECK_STATUS"
+  fi
+  if [[ "$*" == *"ci/run-bounded-command.py"* ]]; then
+    printf archived > "$TMPDIR/archive-attempted"
+    return "$TEST_ARCHIVE_STATUS"
+  fi
+  return 0
+}
+'''
+        for preflight,recheck,archive,expected in [(0,0,0,0),(17,0,0,17),(0,18,0,18),(17,18,0,17),(0,0,19,19)]:
+            with self.subTest(statuses=(preflight,recheck,archive)), tempfile.TemporaryDirectory() as tmp:
+                env=dict(os.environ,TMPDIR=tmp,REVIEWED_SOURCE_COMMIT='a'*40,
+                    TEST_PREFLIGHT_STATUS=str(preflight),TEST_RECHECK_STATUS=str(recheck),TEST_ARCHIVE_STATUS=str(archive))
+                result=subprocess.run(['bash','-c',stubs+'\n'+command],cwd=tmp,env=env,capture_output=True,timeout=10)
+                self.assertEqual(result.returncode,expected,result.stderr.decode())
+                self.assertEqual((Path(tmp)/'rechecked').read_text(),'checked')
+                self.assertEqual((Path(tmp)/'archive-attempted').read_text(),'archived')
+
+    def test_compact_artifacts_keep_original_evidence_and_exclude_only_rebuild_caches(self):
+        import yaml, zipfile
+        config=yaml.safe_load((CLOUD/'.circleci/config.yml').read_text())
+        command=config['jobs']['public_build_and_ui']['steps'][1]['run']['command']
+        code=command.split("<<'PY'\n",1)[1].split('\nPY\n',1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);source=root/'out/owned-host'
+            required=['OwnedGameHost-0.1.0-unsigned.ipa','public-source-manifest.json','xctest/public-fullchain-result.json',
+                'xctest-ui/graphics/xcodebuild.stdout.log','xctest-ui/graphics/GraphicsPresentationTests.xcresult/Info.plist',
+                'xctest-ui/mobile/screenshots/a.png','xctest-ui/mobile/screenshots/b.png',
+                'xctest-ui/settings/screenshots/a.png','xctest-ui/settings/screenshots/b.png']
+            caches=['gpu-framework/device/cache.bin','xctest/DerivedData/Build/object.o']
+            for name in required+caches:
+                p=source/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(name.encode())
+            before={name:(source/name).read_bytes() for name in required+caches}
+            result=subprocess.run([sys.executable,'-c',code],cwd=tmp,capture_output=True,timeout=10)
+            self.assertEqual(result.returncode,0,result.stderr.decode())
+            self.assertIn(b'raw_xcresult_omitted=False',result.stdout)
+            for name,data in before.items():self.assertEqual((source/name).read_bytes(),data)
+            with zipfile.ZipFile(root/'out/public-review/SkyrimLab-build15-metal-frame-review.zip') as archive:
+                self.assertEqual(set(archive.namelist())-{n for n in archive.namelist() if n.endswith('/')},{'owned-host/'+n for n in required})
+                for name in required:self.assertEqual(archive.read('owned-host/'+name),before[name])
 
 
 if __name__ == "__main__":

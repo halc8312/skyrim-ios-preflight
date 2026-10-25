@@ -526,8 +526,8 @@
       "sha256": "dd909df92c9b31083db10bffbbfca7688bdcc059bb83549e366f2cf7ce9830b6"
     },
     "skyrim-recomp-web/crates/xenos-render/src/frame_probe.rs": {
-      "bytes": 27279,
-      "sha256": "a12cb34fc3d3b93299c9b73a7256599e4376acf010fc79e46200148c459f0d2f"
+      "bytes": 33383,
+      "sha256": "2d79e55674d7ca4a2d4cc38e6b2e80024e3fbb4e79e09e439bf5190e32a1491d"
     },
     "skyrim-recomp-web/crates/xenos-render/src/lib.rs": {
       "bytes": 5460,
@@ -1134,8 +1134,8 @@
       "sha256": "33ebe2ab01460560ff7e146f5d4f1092ab5aac7bcf655716ab7fe439751f75e5"
     },
     "tools/ios-owned-game-host/sdk-test/tests/GraphicsPresentationTests.swift": {
-      "bytes": 7757,
-      "sha256": "b7bd16bc1f35360b4f3e4cc95e7247b037f7ce63d79b383e454cd54201f25e95"
+      "bytes": 7901,
+      "sha256": "3041abc2c214fccee9277de73cee7049caa119625b015fe07f115ed6e73940ff"
     },
     "tools/ios-owned-game-host/sdk-test/tests/MobileControlsTests.swift": {
       "bytes": 18697,
@@ -1198,8 +1198,8 @@
       "sha256": "039d009476d801d6e723178d01ef6916c5aac8fea634b002ba524e8381fd26c6"
     },
     "tools/ios-owned-game-host/src/frame_backend_fixture.rs": {
-      "bytes": 6049,
-      "sha256": "c75829bfd6981e6448a8fbdc04df6e805a3b1777b93ecc112a47a1121d2511a6"
+      "bytes": 9209,
+      "sha256": "747c70823f302944c88e6e4868fdb070a9da7b8bd5ef8b342fed47fc26e0de93"
     },
     "tools/ios-owned-game-host/src/graphics_fixture.rs": {
       "bytes": 1760,

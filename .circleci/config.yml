@@ -32,14 +32,43 @@ jobs:
             route="$route_parent/prepared"
             python3 -B ci/prepare-mobile-build-route/prepare_ui_route.py prepare \
               --repo "$PWD" --source-commit "$REVIEWED_SOURCE_COMMIT" --output "$route"
-            bash "$route/preflight.sh"
+            preflight_status=0
+            bash "$route/preflight.sh" || preflight_status=$?
+            recheck_status=0
             python3 -B ci/prepare-mobile-build-route/prepare_ui_route.py recheck \
-              --repo "$PWD" --source-commit "$REVIEWED_SOURCE_COMMIT" --output "$route"
-            # One download contains the public IPA and its original review evidence.
-            python3 -B ci/run-bounded-command.py 120 python3 -B -c \
-              'from pathlib import Path; import shutil; p=Path("out/public-review"); p.mkdir(exist_ok=False); shutil.make_archive(str(p/"SkyrimLab-build15-metal-frame-review"), "zip", "out", "owned-host")'
+              --repo "$PWD" --source-commit "$REVIEWED_SOURCE_COMMIT" --output "$route" || recheck_status=$?
+            # Preserve proof on failure and avoid storing rebuildable caches twice.
+            python3 -B ci/run-bounded-command.py 120 python3 -B - <<'PY'
+            from pathlib import Path
+            import os, shutil
+            source=Path("out/owned-host")
+            evidence=Path("out/public-evidence/owned-host")
+            review=Path("out/public-review")
+            excluded={"DerivedData","gpu-framework"}
+            limit=100<<20
+            def retained_size():
+                total=0
+                for parent,dirs,files in os.walk(source,followlinks=False):
+                    dirs[:]=[n for n in dirs if n not in excluded and not (".xcresult" in excluded and n.endswith(".xcresult"))]
+                    for name in [*dirs,*files]:
+                        assert not (Path(parent)/name).is_symlink(), "public_evidence_symlink"
+                    total+=sum((Path(parent)/name).stat().st_size for name in files)
+                return total
+            if retained_size()>limit: excluded.add(".xcresult")
+            size=retained_size()
+            assert size<=limit, "bounded_public_evidence_required"
+            def ignore(parent,names):
+                return [n for n in names if n in excluded or (".xcresult" in excluded and n.endswith(".xcresult"))]
+            shutil.copytree(source,evidence,ignore=ignore)
+            review.mkdir(exist_ok=False)
+            archive=Path(shutil.make_archive(str(review/"SkyrimLab-build15-metal-frame-review"),"zip","out/public-evidence","owned-host"))
+            assert archive.stat().st_size<=110<<20, "bounded_public_archive_required"
+            print("PUBLIC_COMPACT_EVIDENCE",size,"raw_xcresult_omitted="+str(".xcresult" in excluded),flush=True)
+            PY
+            if [ "$preflight_status" -ne 0 ]; then exit "$preflight_status"; fi
+            exit "$recheck_status"
       - store_artifacts:
-          path: out/owned-host
+          path: out/public-evidence/owned-host
           destination: public-device-build-and-ui-evidence
       - store_artifacts:
           path: out/public-review

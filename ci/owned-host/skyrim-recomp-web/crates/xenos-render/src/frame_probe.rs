@@ -6,7 +6,10 @@ use crate::{
 };
 use gpu_webgpu::*;
 use std::result::Result;
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 use xenos_shader::{Shader, ShaderStage as GuestStage, Translation, TranslationOptions, bindings, msl};
 use xenos_state::{
     bitfields::VgtDrawInitiator,
@@ -334,38 +337,201 @@ pub struct WebGpuFrames {
     vertex_entry: &'static str,
     pixel_entry: &'static str,
     used: BTreeSet<(u32, u32)>,
+    layouts: [BindGroupLayout; 2],
+    pipeline_layout: PipelineLayout,
+    diagnosed: std::cell::Cell<bool>,
 }
+
+fn reflected_layouts(
+    shaders: &[&Translation; 2],
+) -> Result<([Vec<BindGroupLayoutEntry>; 2], BTreeSet<(u32, u32)>), String> {
+    let mut reflected = BTreeMap::<_, (msl::ResourceKind, u32, ShaderStage)>::new();
+    for (shader, visibility) in shaders.iter().zip([ShaderStage::Vertex, ShaderStage::Fragment]) {
+        for b in msl::lower(shader).map_err(|e| format!("lower {e:?}"))?.bindings.into_iter().filter(|b| b.used) {
+            if b.group > 1
+                || b.binding > 4
+                || !matches!(b.kind, msl::ResourceKind::Uniform | msl::ResourceKind::StorageRead)
+            {
+                return Err("unsupported planned shader binding".into());
+            }
+            let entry = reflected.entry((b.group, b.binding)).or_insert((b.kind, b.minimum_bytes, visibility));
+            if entry.0 != b.kind || entry.1 != b.minimum_bytes {
+                return Err("incompatible planned shader stages".into());
+            }
+            entry.2 |= visibility;
+        }
+    }
+    let used = reflected.keys().copied().collect();
+    let mut groups: [Vec<BindGroupLayoutEntry>; 2] = Default::default();
+    for ((group, binding), (kind, minimum, visibility)) in reflected {
+        groups[group as usize].push(BindGroupLayoutEntry {
+            binding,
+            visibility,
+            ty: BindingType::Buffer {
+                ty: if kind == msl::ResourceKind::Uniform {
+                    BufferBindingType::Uniform
+                } else {
+                    BufferBindingType::ReadOnlyStorage
+                },
+                has_dynamic_offset: false,
+                min_binding_size: u64::from(minimum),
+            },
+        });
+    }
+    Ok((groups, used))
+}
+
+// Close both supported scopes and drain uncaptured errors before using an
+// object. Pinned wgpu-native v29 panics on ErrorFilter::Internal despite its C
+// header listing that value; internal/backend errors use the device callback.
+fn checked_gpu<T>(device: &Device, label: &str, create: impl FnOnce() -> T) -> Result<T, String> {
+    for filter in [ErrorFilter::OutOfMemory, ErrorFilter::Validation] {
+        device.push_error_scope(filter);
+    }
+    let value = create();
+    let mut errors = Vec::new();
+    for kind in ["validation", "out-of-memory"] {
+        match device.block_on(device.pop_error_scope()) {
+            Ok(Some(error)) => errors.push(format!("{kind}: {error} ({error:?})")),
+            Err(error) => errors.push(format!("{kind} scope: {error:?}")),
+            Ok(None) => {}
+        }
+    }
+    errors.extend(device.take_errors().into_iter().map(|e| format!("uncaptured: {e} ({e:?})")));
+    if errors.is_empty() { Ok(value) } else { Err(format!("{label}: {}", errors.join("; "))) }
+}
+const CONTROL_VERTEX: &str = "struct Out { @builtin(position) position:vec4<f32>, @location(0) color:vec4<f32> }; @vertex fn control_vs()->Out { var o:Out; o.position=vec4<f32>(0.,0.,0.5,1.); o.color=vec4<f32>(1.,0.,0.,1.); return o; }";
+const CONTROL_PIXEL: &str =
+    "@fragment fn control_ps(@location(0) color:vec4<f32>)->@location(0) vec4<f32>{return color;}";
+fn planned_pipeline(
+    device: &Device,
+    layout: &PipelineLayout,
+    d: &fp::Draw,
+    vertex: &ShaderModule,
+    vertex_entry: &str,
+    pixel: &ShaderModule,
+    pixel_entry: &str,
+) -> RenderPipeline {
+    let blend = d.blend.then_some(BlendState {
+        color: BlendComponent {
+            operation: BlendOperation::Add,
+            src_factor: BlendFactor::SrcAlpha,
+            dst_factor: BlendFactor::OneMinusSrcAlpha,
+        },
+        alpha: BlendComponent {
+            operation: BlendOperation::Add,
+            src_factor: BlendFactor::One,
+            dst_factor: BlendFactor::OneMinusSrcAlpha,
+        },
+    });
+    let color_targets =
+        [ColorTargetState { format: TextureFormat::RGBA8Unorm, blend, write_mask: ColorWriteMask::All }];
+    device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: "planned Xenos shader pair",
+        layout: Some(layout),
+        vertex: ProgrammableStage::new(vertex, vertex_entry),
+        vertex_buffers: &[],
+        primitive: PrimitiveState {
+            topology: match d.topology {
+                fp::Topology::Triangles => PrimitiveTopology::TriangleList,
+                fp::Topology::TriangleStrip => PrimitiveTopology::TriangleStrip,
+            },
+            strip_index_format: if d.topology == fp::Topology::TriangleStrip {
+                d.indices.map_or(IndexFormat::Undefined, |i| {
+                    if i.stride == 2 { IndexFormat::Uint16 } else { IndexFormat::Uint32 }
+                })
+            } else {
+                IndexFormat::Undefined
+            },
+            ..Default::default()
+        },
+        depth_stencil: Some(DepthStencilState {
+            format: TextureFormat::Depth32Float,
+            depth_write_enabled: d.depth_less_write,
+            depth_compare: if d.depth_less_write { CompareFunction::Less } else { CompareFunction::Always },
+            stencil_front: StencilFaceState {
+                compare: CompareFunction::Always,
+                fail_op: StencilOperation::Keep,
+                depth_fail_op: StencilOperation::Keep,
+                pass_op: StencilOperation::Keep,
+            },
+            stencil_back: StencilFaceState {
+                compare: CompareFunction::Always,
+                fail_op: StencilOperation::Keep,
+                depth_fail_op: StencilOperation::Keep,
+                pass_op: StencilOperation::Keep,
+            },
+            stencil_read_mask: 0,
+            stencil_write_mask: 0,
+            depth_bias: 0,
+            depth_bias_slope_scale: 0.,
+            depth_bias_clamp: 0.,
+        }),
+        multisample: MultisampleState::default(),
+        fragment: Some(FragmentState { stage: ProgrammableStage::new(pixel, pixel_entry), targets: &color_targets }),
+    })
+}
+
 impl WebGpuFrames {
+    fn diagnose_pipeline(&self, d: &fp::Draw) {
+        if self.diagnosed.replace(true) {
+            return;
+        }
+        let shaders = checked_gpu(&self.device, "diagnostic control shaders", || {
+            (
+                self.device.create_shader_module_wgsl("control vertex", CONTROL_VERTEX),
+                self.device.create_shader_module_wgsl("control pixel", CONTROL_PIXEL),
+            )
+        });
+        let (vertex, pixel) = match shaders {
+            Ok(shaders) => shaders,
+            Err(error) => {
+                eprintln!("PUBLIC_FRAME_PIPELINE_CONTROL_ERROR {error}");
+                return;
+            }
+        };
+        for (name, vs, ve, ps, pe) in [
+            ("control-both", &vertex, "control_vs", &pixel, "control_ps"),
+            ("translated-vertex", &self.vertex, self.vertex_entry, &pixel, "control_ps"),
+            ("translated-pixel", &vertex, "control_vs", &self.pixel, self.pixel_entry),
+        ] {
+            let result = checked_gpu(&self.device, name, || {
+                planned_pipeline(&self.device, &self.pipeline_layout, d, vs, ve, ps, pe)
+            });
+            eprintln!(
+                "PUBLIC_FRAME_PIPELINE_CONTROL name={name} success={} error={:?}",
+                result.is_ok(),
+                result.as_ref().err()
+            );
+        }
+    }
     pub fn new(device: Device) -> Result<Self, String> {
         let [vertex, pixel] = shaders()?;
-        let mut used = BTreeSet::new();
-        for shader in [&vertex, &pixel] {
-            for b in msl::lower(shader).map_err(|e| format!("lower {e:?}"))?.bindings {
-                if b.used {
-                    used.insert((b.group, b.binding));
-                }
-            }
-        }
+        let (entries, used) = reflected_layouts(&[&vertex, &pixel])?;
         let vertex_entry = vertex.entry_point;
         let pixel_entry = pixel.entry_point;
-        device.push_error_scope(ErrorFilter::Validation);
-        let vertex = device.create_shader_module_wgsl("public planned Xenos vertex", &vertex.wgsl);
-        let pixel = device.create_shader_module_wgsl("public planned Xenos pixel", &pixel.wgsl);
-        let error = device.block_on(device.pop_error_scope()).map_err(|e| format!("shader scope {e:?}"))?;
-        if error.is_some() {
-            return Err("shader validation".into());
-        }
-        Ok(Self { device, vertex, pixel, vertex_entry, pixel_entry, used })
+        let (vertex, pixel, layouts, pipeline_layout) = checked_gpu(&device, "shader/layout", || {
+            let vertex = device.create_shader_module_wgsl("public planned Xenos vertex", &vertex.wgsl);
+            let pixel = device.create_shader_module_wgsl("public planned Xenos pixel", &pixel.wgsl);
+            let layouts = entries.map(|entries| device.create_bind_group_layout("explicit planned bindings", &entries));
+            let pipeline_layout =
+                device.create_pipeline_layout("explicit planned shader pair", &[&layouts[0], &layouts[1]]);
+            (vertex, pixel, layouts, pipeline_layout)
+        })?;
+        Ok(Self {
+            device,
+            vertex,
+            pixel,
+            vertex_entry,
+            pixel_entry,
+            used,
+            layouts,
+            pipeline_layout,
+            diagnosed: std::cell::Cell::new(false),
+        })
     }
     pub fn render(&self, frame: &fp::FramePlan) -> Result<Vec<u8>, String> {
-        let device = &self.device;
-        device.push_error_scope(ErrorFilter::Validation);
-        let result = self.render_inner(frame);
-        let validation = device.block_on(device.pop_error_scope()).map_err(|e| format!("scope {e:?}"))?;
-        if validation.is_some() || !device.take_errors().is_empty() {
-            return Err("GPU validation".into());
-        }
-        result
+        checked_gpu(&self.device, "planned render", || self.render_inner(frame))?
     }
     fn render_inner(&self, frame: &fp::FramePlan) -> Result<Vec<u8>, String> {
         let device = &self.device;
@@ -406,96 +572,49 @@ impl WebGpuFrames {
         // and validate pipelines before recording, so an invalid object is never
         // submitted to wgpu-native (which may otherwise terminate the process).
         let mut held = Vec::new();
-        for d in frame.passes().iter().flat_map(|p| &p.draws) {
-            let blend = d.blend.then_some(BlendState {
-                color: BlendComponent {
-                    operation: BlendOperation::Add,
-                    src_factor: BlendFactor::SrcAlpha,
-                    dst_factor: BlendFactor::OneMinusSrcAlpha,
+        for (draw_index, d) in frame.passes().iter().flat_map(|p| &p.draws).enumerate() {
+            let pipeline = match checked_gpu(
+                device,
+                &format!("pipeline draw={draw_index} topology={:?} count={}", d.topology, d.count),
+                || {
+                    planned_pipeline(
+                        device,
+                        &self.pipeline_layout,
+                        d,
+                        &self.vertex,
+                        self.vertex_entry,
+                        &self.pixel,
+                        self.pixel_entry,
+                    )
                 },
-                alpha: BlendComponent {
-                    operation: BlendOperation::Add,
-                    src_factor: BlendFactor::One,
-                    dst_factor: BlendFactor::OneMinusSrcAlpha,
-                },
-            });
-            let color_targets =
-                [ColorTargetState { format: TextureFormat::RGBA8Unorm, blend, write_mask: ColorWriteMask::All }];
-            device.push_error_scope(ErrorFilter::Validation);
-            let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-                label: "planned Xenos shader pair",
-                layout: None,
-                vertex: ProgrammableStage::new(&self.vertex, self.vertex_entry),
-                vertex_buffers: &[],
-                primitive: PrimitiveState {
-                    topology: match d.topology {
-                        fp::Topology::Triangles => PrimitiveTopology::TriangleList,
-                        fp::Topology::TriangleStrip => PrimitiveTopology::TriangleStrip,
-                    },
-                    strip_index_format: if d.topology == fp::Topology::TriangleStrip {
-                        d.indices.map_or(IndexFormat::Undefined, |i| {
-                            if i.stride == 2 { IndexFormat::Uint16 } else { IndexFormat::Uint32 }
+            ) {
+                Ok(pipeline) => pipeline,
+                Err(error) => {
+                    self.diagnose_pipeline(d);
+                    return Err(error);
+                }
+            };
+            let groups = checked_gpu(device, &format!("bindings draw={draw_index}"), || {
+                let mut groups = Vec::new();
+                for group in [0, 1] {
+                    let entries: Vec<_> = d
+                        .bindings
+                        .iter()
+                        .filter(|b| b.group == group && self.used.contains(&(b.group, b.binding)))
+                        .map(|b| BindGroupEntry {
+                            binding: b.binding,
+                            resource: BindingResource::Buffer {
+                                buffer: &resources[find(b.slice.version)],
+                                offset: u64::from(b.slice.offset),
+                                size: Some(u64::from(b.slice.bytes)),
+                            },
                         })
-                    } else {
-                        IndexFormat::Undefined
-                    },
-                    ..Default::default()
-                },
-                depth_stencil: Some(DepthStencilState {
-                    format: TextureFormat::Depth32Float,
-                    depth_write_enabled: d.depth_less_write,
-                    depth_compare: if d.depth_less_write { CompareFunction::Less } else { CompareFunction::Always },
-                    stencil_front: StencilFaceState {
-                        compare: CompareFunction::Always,
-                        fail_op: StencilOperation::Keep,
-                        depth_fail_op: StencilOperation::Keep,
-                        pass_op: StencilOperation::Keep,
-                    },
-                    stencil_back: StencilFaceState {
-                        compare: CompareFunction::Always,
-                        fail_op: StencilOperation::Keep,
-                        depth_fail_op: StencilOperation::Keep,
-                        pass_op: StencilOperation::Keep,
-                    },
-                    stencil_read_mask: 0,
-                    stencil_write_mask: 0,
-                    depth_bias: 0,
-                    depth_bias_slope_scale: 0.,
-                    depth_bias_clamp: 0.,
-                }),
-                multisample: MultisampleState::default(),
-                fragment: Some(FragmentState {
-                    stage: ProgrammableStage::new(&self.pixel, self.pixel_entry),
-                    targets: &color_targets,
-                }),
-            });
-            let error = device.block_on(device.pop_error_scope()).map_err(|e| format!("pipeline scope {e:?}"))?;
-            if error.is_some() {
-                return Err("pipeline validation".into());
-            }
-            device.push_error_scope(ErrorFilter::Validation);
-            let mut groups = Vec::new();
-            for group in [0, 1] {
-                let entries: Vec<_> = d
-                    .bindings
-                    .iter()
-                    .filter(|b| b.group == group && self.used.contains(&(b.group, b.binding)))
-                    .map(|b| BindGroupEntry {
-                        binding: b.binding,
-                        resource: BindingResource::Buffer {
-                            buffer: &resources[find(b.slice.version)],
-                            offset: u64::from(b.slice.offset),
-                            size: Some(u64::from(b.slice.bytes)),
-                        },
-                    })
-                    .collect();
-                let bg = device.create_bind_group("planned bindings", &pipeline.get_bind_group_layout(group), &entries);
-                groups.push(bg);
-            }
-            let error = device.block_on(device.pop_error_scope()).map_err(|e| format!("binding scope {e:?}"))?;
-            if error.is_some() {
-                return Err("binding validation".into());
-            }
+                        .collect();
+                    let bg = device.create_bind_group("planned bindings", &self.layouts[group as usize], &entries);
+                    groups.push(bg);
+                }
+                groups
+            })?;
             held.push((pipeline, groups));
         }
         let mut draw_index = 0;
@@ -574,11 +693,35 @@ impl WebGpuFrames {
 mod tests {
     use super::*;
     #[test]
+    fn reflected_layout_matches_the_authored_shader_buffer_contract() {
+        let [vertex, pixel] = shaders().unwrap();
+        let (groups, used) = reflected_layouts(&[&vertex, &pixel]).unwrap();
+        assert_eq!(groups[0].len(), 3);
+        assert_eq!(groups[1].len(), 5);
+        assert_eq!(used.len(), 8);
+        for (group, entries) in groups.iter().enumerate() {
+            for entry in entries {
+                let BindingType::Buffer { ty, has_dynamic_offset, min_binding_size } = entry.ty else {
+                    panic!("buffer ABI");
+                };
+                assert!(!has_dynamic_offset);
+                let expected = match (group, entry.binding) {
+                    (0, 0) => (BufferBindingType::ReadOnlyStorage, 4096, ShaderStage::Vertex),
+                    (0, 2) => (BufferBindingType::Uniform, 768, ShaderStage::Vertex),
+                    (0, 3) => (BufferBindingType::Uniform, 112, ShaderStage::Vertex | ShaderStage::Fragment),
+                    (1, 0..=4) => (BufferBindingType::ReadOnlyStorage, 4, ShaderStage::Vertex),
+                    _ => panic!("unexpected authored binding"),
+                };
+                assert_eq!((ty, min_binding_size, entry.visibility), expected);
+            }
+        }
+    }
+    #[test]
     fn authored_planned_passes_match_independent_pixels() {
         let instance = Instance::new().unwrap();
         let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions::default())).unwrap();
         let device = instance.block_on(adapter.request_device(&DeviceDescriptor::default())).unwrap();
-        let backend = WebGpuFrames::new(device).unwrap();
+        let mut backend = WebGpuFrames::new(device).unwrap();
         let fixtures = fixtures();
         for f in fixtures.iter().chain(fixtures.iter().rev()) {
             let result = backend.render(&f.frame).unwrap();
@@ -588,5 +731,11 @@ mod tests {
         let mut corrupted = f.expected.clone();
         corrupted[0] ^= 0xff;
         assert!(!verify(f, &corrupted));
+        let entry = backend.vertex_entry;
+        backend.vertex_entry = "public_missing_vertex_entry";
+        let error = backend.render(&f.frame).unwrap_err();
+        assert!(error.contains("public_missing_vertex_entry"), "detailed validation must survive: {error}");
+        backend.vertex_entry = entry;
+        assert!(verify(f, &backend.render(&f.frame).unwrap()));
     }
 }
