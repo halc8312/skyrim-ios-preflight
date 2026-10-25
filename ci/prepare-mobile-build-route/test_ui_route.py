@@ -269,6 +269,7 @@ class PublicUIRouteTests(unittest.TestCase):
         self.assertIn('"out/public-review"', command)
         self.assertLess(command.index("prepare_ui_route.py recheck"), command.index("shutil.make_archive"))
         self.assertIn('bash "$route/preflight.sh"', command)
+        self.assertNotIn('<<',command,'CircleCI treats unescaped shell/Python << as template syntax')
 
     def test_failure_archive_never_hides_test_or_source_recheck_failure(self):
         import yaml
@@ -301,7 +302,7 @@ function python3() {
         import yaml, zipfile
         config=yaml.safe_load((CLOUD/'.circleci/config.yml').read_text())
         command=config['jobs']['public_build_and_ui']['steps'][1]['run']['command']
-        code=command.split("<<'PY'\n",1)[1].split('\nPY\n',1)[0]
+        code=command.split("python3 -B ci/run-bounded-command.py 120 python3 -B -c '\n",1)[1].split("\n'\n",1)[0]
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);source=root/'out/owned-host'
             required=['OwnedGameHost-0.1.0-unsigned.ipa','public-source-manifest.json','xctest/public-fullchain-result.json',
