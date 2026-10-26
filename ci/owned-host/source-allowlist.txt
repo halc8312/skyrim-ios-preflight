@@ -145,8 +145,12 @@ skyrim-recomp-web/crates/xenos-render/src/extent.rs
 skyrim-recomp-web/crates/xenos-render/src/frame_plan.rs
 skyrim-recomp-web/crates/xenos-render/src/frame_plan_tests.rs
 skyrim-recomp-web/crates/xenos-render/src/frame_probe.rs
+skyrim-recomp-web/crates/xenos-render/src/gfx/mod.rs
+skyrim-recomp-web/crates/xenos-render/src/gfx/sink.rs
+skyrim-recomp-web/crates/xenos-render/src/gfx/webgpu.rs
 skyrim-recomp-web/crates/xenos-render/src/lib.rs
 skyrim-recomp-web/crates/xenos-render/src/native.rs
+skyrim-recomp-web/crates/xenos-render/src/native_coverage.rs
 skyrim-recomp-web/crates/xenos-render/src/native_frame_stability.rs
 skyrim-recomp-web/crates/xenos-render/src/native_performance.rs
 skyrim-recomp-web/crates/xenos-render/src/pipeline_plan.rs
@@ -177,6 +181,7 @@ skyrim-recomp-web/crates/xenos-render/src/target_lifetime.rs
 skyrim-recomp-web/crates/xenos-render/src/target_probe.rs
 skyrim-recomp-web/crates/xenos-render/src/targets.rs
 skyrim-recomp-web/crates/xenos-render/src/texture_budget.rs
+skyrim-recomp-web/crates/xenos-render/src/thread_clock.rs
 skyrim-recomp-web/crates/xenos-render/src/vertex_range.rs
 skyrim-recomp-web/crates/xenos-render/src/vertex_range_tests.rs
 skyrim-recomp-web/crates/xenos-render/src/web.rs
@@ -233,6 +238,7 @@ skyrim-recomp-web/crates/xenos-texture/src/convert.rs
 skyrim-recomp-web/crates/xenos-texture/src/endian.rs
 skyrim-recomp-web/crates/xenos-texture/src/fetch.rs
 skyrim-recomp-web/crates/xenos-texture/src/format.rs
+skyrim-recomp-web/crates/xenos-texture/src/gpu_load.rs
 skyrim-recomp-web/crates/xenos-texture/src/host.rs
 skyrim-recomp-web/crates/xenos-texture/src/layout.rs
 skyrim-recomp-web/crates/xenos-texture/src/lib.rs
@@ -388,6 +394,7 @@ tools/native-metal-engine/bridge/src/surface.rs
 tools/native-metal-engine/bridge/src/surface_metal.rs
 tools/native-metal-engine/bridge/src/timing.rs
 tools/native-metal-engine/bridge/tests/compat.rs
+tools/native-metal-engine/fixtures/constants.rs
 tools/native-metal-engine/gpu-hal/Cargo.lock
 tools/native-metal-engine/gpu-hal/Cargo.toml
 tools/native-metal-engine/gpu-hal/src/backend.rs

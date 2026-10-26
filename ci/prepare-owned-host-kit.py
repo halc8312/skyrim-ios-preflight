@@ -8,8 +8,8 @@ import sys
 import tomllib
 
 MANIFEST = "source-allowlist.txt"
-ALLOWLIST_SHA256 = "d8f928d5544cdc4ba14d020dc72c185de787cc92a4c1d61965359be056330c05"
-SOURCE_MANIFEST_SHA256 = "3d9964faaa8f582a214c7d063c9a03d2f9c83398b9c1c829c9d9a8e2760416e4"
+ALLOWLIST_SHA256 = "19fc70dc8c030132baecb9f0fe719fdd41eafd81702d1a74904183969e9a99a7"
+SOURCE_MANIFEST_SHA256 = "9804d0332b1a2eb4f830a14a9aec123fb4c367391ce723ea2f142f1cf6325db8"
 MEMBERS = ["crates/" + name for name in
            ("d3d-hle", "gpu-webgpu", "kernel-hle", "runtime-core", "vfs",
             "xenos-edram", "xenos-gfx", "xenos-render", "xenos-shader", "xenos-state",
@@ -17,7 +17,8 @@ MEMBERS = ["crates/" + name for name in
 
 
 def allowed_source_root(name):
-    return (name in (MANIFEST, "tools/windows-ios-guest-probe/audit_private_guest_symbols.py")
+    return (name in (MANIFEST, "tools/windows-ios-guest-probe/audit_private_guest_symbols.py",
+                     "tools/native-metal-engine/fixtures/constants.rs")
             or name.startswith(("skyrim-recomp-web/", "tools/ios-resident-guest-probe/",
                                 "tools/ios-owned-game-host/", "tools/ios-signed-image-policy/",
                                 "tools/windows-ios-guest-probe/owned-guest-abi/",
