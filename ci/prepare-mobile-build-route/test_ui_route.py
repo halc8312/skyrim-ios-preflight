@@ -286,8 +286,13 @@ class PublicUIRouteTests(unittest.TestCase):
         self.assertEqual(set(after["jobs"]), {"public_build_and_ui"})
         self.assertEqual(set(after["workflows"]), {"manually_requested_public_build_and_ui"})
         self.assertIs(after["parameters"]["run_public_build_and_ui"]["default"], False)
-        self.assertEqual(after["workflows"]["manually_requested_public_build_and_ui"]["when"],
-                         "<< pipeline.parameters.run_public_build_and_ui >>")
+        workflow = after["workflows"]["manually_requested_public_build_and_ui"]
+        self.assertEqual(workflow["when"], {"or": [
+            "<< pipeline.parameters.run_public_build_and_ui >>",
+            {"matches": {"pattern": "^skyrim-native-build19-once-[0-9a-f]{40}$",
+                         "value": "<< pipeline.git.tag >>"}}]})
+        self.assertEqual(workflow["jobs"], [{"public_build_and_ui": {"filters": {
+            "tags": {"only": "/^skyrim-native-build19-once-[0-9a-f]{40}$/"}}}}])
         job = after["jobs"]["public_build_and_ui"]
         self.assertEqual(job["macos"], before["jobs"]["public_device_build"]["macos"])
         self.assertEqual(job["macos"]["xcode"], "26.6.0")
@@ -296,6 +301,9 @@ class PublicUIRouteTests(unittest.TestCase):
         self.assertEqual(job["steps"][-1]["store_artifacts"],
                          dict(path="out/public-review", destination="public-review-download"))
         command = job["steps"][1]["run"]["command"]
+        self.assertEqual(command.count("authorize_tag.py"), 1)
+        self.assertLess(command.index("authorize_tag.py"), command.index("prepare_ui_route.py prepare"))
+        self.assertNotIn('REVIEWED_SOURCE_COMMIT="$CIRCLE_SHA1"', command)
         self.assertEqual(command.count("prepare_ui_route.py prepare"), 1)
         self.assertEqual(command.count("prepare_ui_route.py recheck"), 1)
         self.assertEqual(command.count("shutil.make_archive"), 1)

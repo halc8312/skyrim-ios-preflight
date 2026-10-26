@@ -1,4 +1,4 @@
-# Candidate only: install at .circleci/config.yml after separate approval.
+# Explicit manual parameter or one reviewed build19 tag; ordinary pushes stay idle.
 version: 2.1
 
 parameters:
@@ -28,6 +28,11 @@ jobs:
           no_output_timeout: 30m
           command: |
             set -euo pipefail
+            if [ -n "${CIRCLE_TAG:-}" ]; then
+              REVIEWED_SOURCE_COMMIT="$(python3 -B ci/prepare-mobile-build-route/authorize_tag.py --repo "$PWD")"
+              export REVIEWED_SOURCE_COMMIT
+              export PUBLIC_BUILD_AND_UI_ENABLED=true
+            fi
             route_parent="$(mktemp -d "${TMPDIR:-/tmp}/public-ui-route.XXXXXX")"
             route="$route_parent/prepared"
             python3 -B ci/prepare-mobile-build-route/prepare_ui_route.py prepare \
@@ -75,6 +80,14 @@ jobs:
 
 workflows:
   manually_requested_public_build_and_ui:
-    when: << pipeline.parameters.run_public_build_and_ui >>
+    when:
+      or:
+        - << pipeline.parameters.run_public_build_and_ui >>
+        - matches:
+            pattern: "^skyrim-native-build19-once-[0-9a-f]{40}$"
+            value: << pipeline.git.tag >>
     jobs:
-      - public_build_and_ui
+      - public_build_and_ui:
+          filters:
+            tags:
+              only: /^skyrim-native-build19-once-[0-9a-f]{40}$/
