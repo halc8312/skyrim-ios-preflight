@@ -1,0 +1,54 @@
+[package]
+name = "skyrim-native-gpu"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+# Kept independent until the complete facade can switch as one session. The
+# currently installed app does not select this experimental backend.
+[workspace]
+
+[patch.crates-io]
+# Pinned upstream source plus a scoped, tested SPIR-V SampleMask correction.
+# Does not alter the registry, live renderer, Naga validation, or Metal writer.
+naga = { path = "../vendor/naga-29.0.3" }
+
+[features]
+fault-injection = ["wgpu-types/counters"]
+# Fixed authored MSL kernel. Opt-in until the Apple runtime oracle passes.
+metal-stencil-export = []
+# Restricted output-mask lowering; opt-in pending the Apple runtime oracle.
+metal-fixed-sample-mask = []
+
+[dependencies]
+# Already pinned transitively; borrow exact little-endian record bytes safely.
+bytemuck = "=1.25.0"
+xenos-shader = { path = "../../../skyrim-recomp-web/crates/xenos-shader" }
+xenos-gfx = { path = "../../../skyrim-recomp-web/crates/xenos-gfx" }
+xenos-state = { path = "../../../skyrim-recomp-web/crates/xenos-state" }
+xenos-texture = { path = "../../../skyrim-recomp-web/crates/xenos-texture" }
+wgpu-hal = { version = "=29.0.3", default-features = false }
+wgpu-types = { version = "=29.0.3", default-features = false, features = ["std"] }
+naga = { version = "=29.0.3", default-features = false, features = ["wgsl-in"] }
+wgpu-naga-bridge = "=29.0.3"
+log = { version = "0.4", features = ["std"] }
+
+[dev-dependencies]
+# Exercise the actual MSL writer locally too; this is not a Metal SDK compile.
+naga = { version = "=29.0.3", default-features = false, features = ["msl-out"] }
+
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
+wgpu-hal = { version = "=29.0.3", default-features = false, features = ["vulkan"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+wgpu-hal = { version = "=29.0.3", default-features = false, features = ["metal"] }
+objc2 = "=0.6.4"
+objc2-metal = "=0.3.2"
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["CALayer", "CAMetalLayer", "objc2-metal", "objc2-core-foundation"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+dispatch2 = { version = "=0.3.1", default-features = false, features = ["std"] }
+
+[profile.release]
+debug = "line-tables-only"

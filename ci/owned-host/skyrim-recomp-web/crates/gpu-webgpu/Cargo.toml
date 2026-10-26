@@ -7,7 +7,11 @@ license.workspace = true
 publish.workspace = true
 build = "build.rs"
 
+[features]
+native-metal = ["dep:gpu-native-bridge"]
+
 [dependencies]
+gpu-native-bridge = { path = "../../../tools/native-metal-engine/bridge", optional = true }
 log.workspace = true
 
 [dev-dependencies]

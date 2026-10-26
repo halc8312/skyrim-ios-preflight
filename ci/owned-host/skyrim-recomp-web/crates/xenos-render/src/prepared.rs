@@ -69,38 +69,8 @@ fn direct_index_buffer(desc: &DrawDescription) -> Option<IndexBufferInfo> {
     Some(ib)
 }
 
-/// Dynamic raster state captured at draw time. Float bits are preserved exactly
-/// for state reuse (including signed zero); this does not validate or normalize
-/// guest values. The backend applies its existing range/feature checks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(C)]
-pub struct DrawState {
-    pub viewport_bits: [u32; 6],
-    pub scissor: [u32; 4],
-    pub blend_bits: [u64; 4],
-    pub stencil_reference: u32,
-    pub reserved: u32,
-}
-
-impl DrawState {
-    pub fn new(viewport: [f32; 6], scissor: [u32; 4], blend: [f64; 4], stencil_reference: u32) -> Self {
-        Self {
-            viewport_bits: viewport.map(f32::to_bits),
-            scissor,
-            blend_bits: blend.map(f64::to_bits),
-            stencil_reference,
-            reserved: 0,
-        }
-    }
-    pub fn viewport(&self) -> [f32; 6] {
-        self.viewport_bits.map(f32::from_bits)
-    }
-    pub fn blend(&self) -> [f64; 4] {
-        self.blend_bits.map(f64::from_bits)
-    }
-}
-
-const _: () = assert!(std::mem::size_of::<DrawState>() == 80);
+/// Backend-independent raster state, kept at its original public path.
+pub use crate::gfx::sink::DrawState;
 
 #[cfg(test)]
 #[path = "prepared_tests.rs"]

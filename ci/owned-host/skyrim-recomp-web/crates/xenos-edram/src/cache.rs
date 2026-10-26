@@ -628,15 +628,15 @@ fn cached_bind_group(
     entries: &[BindGroupEntry<'_>],
 ) -> BindGroup {
     let mut key = Vec::with_capacity(1 + entries.len() * 4);
-    key.push(layout.raw() as usize as u64);
+    key.push(layout.identity() as u64);
     for e in entries {
         key.push(u64::from(e.binding));
         match &e.resource {
             BindingResource::Buffer { buffer, offset, size } => {
-                key.extend([buffer.raw() as usize as u64, *offset, size.unwrap_or(u64::MAX)]);
+                key.extend([buffer.identity() as u64, *offset, size.unwrap_or(u64::MAX)]);
             }
-            BindingResource::TextureView(v) => key.push(v.raw() as usize as u64),
-            BindingResource::Sampler(s) => key.push(s.raw() as usize as u64),
+            BindingResource::TextureView(v) => key.push(v.identity() as u64),
+            BindingResource::Sampler(s) => key.push(s.identity() as u64),
         }
     }
     let mut cache = cache.borrow_mut();
@@ -1330,18 +1330,10 @@ struct CopyPlan {
     source: ResolveEdramInfo,
     words_per_pixel: u32,
     dest_bpp: u32,
-    mode: u32,
     out_bytes: u64,
 }
 
-struct ClearPlan {
-    key: RenderTargetKey,
-    /// Absolute first tile and tile count claimed by the clear.
-    start: u32,
-    length: u32,
-    rect: Cutout,
-    value: [u32; 2],
-}
+use xenos_gfx::edram_clear::ClearPlan;
 
 /// A resolve source outside the EDRAM emulation: a host texture standing for one whole surface
 /// (the `--gpu d3d` renderer's D3D surfaces).
@@ -1497,115 +1489,22 @@ impl EdramCache {
             return Err(EdramError::InvalidMsaa(source.msaa_samples.raw()));
         }
         let (kind, _) = info.copy_kind(1, 1).ok_or(EdramError::UnsupportedCopy(info.dest_format))?;
-        use ResolveCopyKind as K;
-        let (mode, words_per_pixel, dest_bpp) = match kind {
-            K::Fast32bpp1x2xMsaa | K::Fast32bpp4xMsaa => (0, 1, 32),
-            K::Fast64bpp1x2xMsaa | K::Fast64bpp4xMsaa => (1, 2, 64),
-            K::Full8bpp => (2, 1, 8),
-            K::Full16bpp => (2, 1, 16),
-            K::Full32bpp => (2, 1, 32),
-            K::Full64bpp => (2, 2, 64),
-            K::Full128bpp => (2, 4, 128),
-            K::Dxt3aAs1111 => (3, 1, 64),
-        };
+        let (_, words_per_pixel, dest_bpp) = xenos_gfx::edram_resolve::copy_encoding(kind);
         let out_bytes = info.rect.width as u64 * info.rect.height as u64 * words_per_pixel as u64 * 4;
         if out_bytes > self.max_output_bytes {
             return Err(EdramError::ResolveTooLarge { bytes: out_bytes, max: self.max_output_bytes });
         }
-        Ok(Some(CopyPlan { kind, source, words_per_pixel, dest_bpp, mode, out_bytes }))
+        Ok(Some(CopyPlan { kind, source, words_per_pixel, dest_bpp, out_bytes }))
     }
 
     /// Xenia's PrepareHostRenderTargetsResolveClear: the clear rectangle in render target pixels and
     /// the tiles depth and color clears claim (kept from overlapping each other).
     fn plan_clears(&self, info: &ResolveInfo) -> Result<Vec<ClearPlan>, EdramError> {
-        let depth = info.depth_edram.filter(|_| info.is_clearing_depth());
-        let color = info.color_edram.filter(|_| info.is_clearing_color());
-        let (pitch32, offset32, msaa) = if let Some(d) = depth {
-            (d.pitch_tiles, d.base_tiles.wrapping_sub(info.depth_original_base), d.msaa_samples)
-        } else if let Some(c) = color {
-            let s = c.format_is_64bpp as u32;
-            (c.pitch_tiles >> s, c.base_tiles.wrapping_sub(info.color_original_base) >> s, c.msaa_samples)
-        } else {
-            return Ok(Vec::new());
-        };
-        if msaa.count().is_none() {
-            return Err(EdramError::InvalidMsaa(msaa.raw()));
-        }
-        if pitch32 == 0 {
-            return Ok(Vec::new());
-        }
-        let (sx, sy) = (msaa.samples_x_log2(), msaa.samples_y_log2());
-        let pitch_pixels = pitch32 * (EDRAM_TILE_WIDTH_SAMPLES >> sx);
-        if pitch_pixels > self.max_dimension {
-            return Err(EdramError::PitchTooLarge { width: pitch_pixels, max: self.max_dimension });
-        }
-        let height = self.rt_height(pitch32, msaa);
-        let offset_rows = offset32 / pitch32;
-        let x = ((offset32 - offset_rows * pitch32) * (EDRAM_TILE_WIDTH_SAMPLES >> sx)
-            + (info.edram_offset_x_div_8 << 3))
-            .min(pitch_pixels);
-        let y = (offset_rows * (EDRAM_TILE_HEIGHT_SAMPLES >> sy) + (info.edram_offset_y_div_8 << 3)).min(height);
-        let w = info.rect.width.min(pitch_pixels - x);
-        let h = info.rect.height.min(height - y);
-        if w == 0 || h == 0 {
-            return Ok(Vec::new());
-        }
-        let start32 = ((y << sy) / EDRAM_TILE_HEIGHT_SAMPLES) * pitch32 + (x << sx) / EDRAM_TILE_WIDTH_SAMPLES;
-        let length32 = (((y + h - 1) << sy) / EDRAM_TILE_HEIGHT_SAMPLES) * pitch32
-            + ((x + w - 1) << sx) / EDRAM_TILE_WIDTH_SAMPLES
-            + 1
-            - start32;
-        let span = |is_64: bool| {
-            let s = is_64 as u32;
-            let start = (start32 << s).min(EDRAM_TILE_COUNT);
-            (start, ((start32 + length32) << s).min(EDRAM_TILE_COUNT) - start)
-        };
-        let (depth_start, mut depth_len) = depth.map_or((0, 0), |_| span(false));
-        let (color_start, mut color_len) = color.map_or((0, 0), |c| span(c.format_is_64bpp));
-        let depth_wrapped = info.depth_original_base.wrapping_add(depth_start) & (EDRAM_TILE_COUNT - 1);
-        let color_wrapped = info.color_original_base.wrapping_add(color_start) & (EDRAM_TILE_COUNT - 1);
-        if depth_len != 0 && color_len != 0 {
-            let distance = |from: u32, to: u32| if to < from { EDRAM_TILE_COUNT } else { 0 } + to - from;
-            depth_len = depth_len.min(distance(depth_wrapped, color_wrapped));
-            color_len = color_len.min(distance(color_wrapped, depth_wrapped));
-        }
-        let rect = [x, y, x + w, y + h];
-        let mut plans = Vec::new();
-        if let Some(d) = depth.filter(|_| depth_len != 0) {
-            plans.push(ClearPlan {
-                key: RenderTargetKey {
-                    base_tiles: info.depth_original_base & (EDRAM_TILE_COUNT - 1),
-                    pitch_tiles_at_32bpp: pitch32,
-                    msaa_samples: msaa,
-                    is_depth: true,
-                    format: d.format,
-                },
-                start: depth_wrapped,
-                length: depth_len,
-                rect,
-                value: [info.depth_clear, 0],
-            });
-        }
-        if let Some(c) = color.filter(|_| color_len != 0) {
-            let format = ColorRenderTargetFormat::from_raw(c.format).storage_format();
-            if host_color_format(format).is_none() {
-                return Err(EdramError::UnsupportedFormat(c.format));
-            }
-            plans.push(ClearPlan {
-                key: RenderTargetKey {
-                    base_tiles: info.color_original_base & (EDRAM_TILE_COUNT - 1),
-                    pitch_tiles_at_32bpp: pitch32,
-                    msaa_samples: msaa,
-                    is_depth: false,
-                    format: format.raw(),
-                },
-                start: color_wrapped,
-                length: color_len,
-                rect,
-                value: info.color_clear_value(),
-            });
-        }
-        Ok(plans)
+        xenos_gfx::edram_clear::plan_clears(info, self.max_dimension).map_err(|e| match e {
+            xenos_gfx::edram_clear::Error::InvalidMsaa(n) => EdramError::InvalidMsaa(n),
+            xenos_gfx::edram_clear::Error::UnsupportedFormat(n) => EdramError::UnsupportedFormat(n),
+            xenos_gfx::edram_clear::Error::PitchTooLarge {width,max} => EdramError::PitchTooLarge {width,max},
+        })
     }
 
     /// Clears `clear.rect` of its render target, or of `external` (a host texture with the
@@ -1679,7 +1578,6 @@ impl EdramCache {
             Some((rt, offset)) => (Some(rt), offset),
             None => (None, [0, 0]),
         };
-        let source = plan.source;
         // Dump the source tiles from their owners into the EDRAM-layout buffer (an external
         // source is read directly by the resolve shader instead).
         let (base, row_length, rows, pitch) = info.copy_edram_tile_span().expect("copy has a source");
@@ -1749,39 +1647,11 @@ impl EdramCache {
         }
         let out = self.resolve_out.clone().expect("created above");
         let dest_info = info.copy_dest_info;
-        let flags = source.is_depth as u32
-            | ((source.format_is_64bpp as u32) << 1)
-            | ((dest_info.copy_dest_swap as u32) << 2)
-            | ((source.decode_pwl_gamma as u32) << 3);
         let params = uniform(
             &self.params,
             device,
-            &[
-                info.rect.width,
-                info.rect.height,
-                info.edram_offset_x_div_8 << 3,
-                info.edram_offset_y_div_8 << 3,
-                source.base_tiles & (EDRAM_TILE_COUNT - 1),
-                source.pitch_tiles,
-                source.msaa_samples.raw(),
-                flags,
-                source.format,
-                plan.mode,
-                info.copy_sample_select.raw(),
-                info.dest_format.raw(),
-                dest_info.copy_dest_number.raw(),
-                (dest_info.copy_dest_exp_bias.clamp(-32, 31) as f32).exp2().to_bits(),
-                plan.words_per_pixel,
-                plan.dest_bpp,
-                info.copy_func,
-                info.copy_ref,
-                info.copy_mask,
-                offset[0] * self.scale,
-                offset[1] * self.scale,
-                0,
-                0,
-                0,
-            ],
+            &xenos_gfx::edram_resolve::copy_words(info, plan.kind, offset, self.scale)
+                .expect("copy has a source"),
         );
         // The output buffer is bound whole (the shaders don't take its length), so the group
         // doesn't depend on this resolve's size.

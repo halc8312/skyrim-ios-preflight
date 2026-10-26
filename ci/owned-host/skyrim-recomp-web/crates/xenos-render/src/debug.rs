@@ -3,6 +3,9 @@
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+/// Fixed at executor creation. Default unchanged; bounded A/B experiments only.
+pub(crate) static CONSTANT_BLOCK_MIB: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(4);
+
 /// Every draw's scissor is one pixel: vertex work stays, pixel shading is (almost) gone.
 pub(crate) static SCISSOR_ONE_PIXEL: AtomicBool = AtomicBool::new(false);
 /// Draw calls are left out of the passes (all state is still recorded and set).
@@ -62,6 +65,13 @@ pub(crate) static GPU_TIME: AtomicBool = AtomicBool::new(false);
 
 /// Turns on experiment `mode`: `scissor`, `nodraw` or `frames=N` (frames in flight).
 pub fn enable(mode: &str) -> Result<(), String> {
+    if let Some(n) = mode.strip_prefix("constant-blocks=") {
+        let mib = n.parse::<u32>().map_err(|e| format!("--render-debug {mode}: {e}"))?;
+        crate::constant_patch::BlockCapacity::from_mib(mib)?;
+        CONSTANT_BLOCK_MIB.store(mib, Ordering::Relaxed);
+        log::info!("renderer comparison: constant block capacity {mib} MiB for next executor");
+        return Ok(());
+    }
     if let Some(n) = mode.strip_prefix("trace-frame=") {
         let n: u64 = n.parse().map_err(|e| format!("--render-debug {mode}: {e}"))?;
         TRACE_FRAME.store(n, Ordering::Relaxed);
@@ -137,6 +147,8 @@ pub fn enable(mode: &str) -> Result<(), String> {
 /// The experiments in effect, for log lines ("" if none).
 pub fn describe() -> String {
     let mut parts = Vec::new();
+    let constants = CONSTANT_BLOCK_MIB.load(Ordering::Relaxed);
+    if constants != 4 { parts.push(format!("constant-blocks={constants}")); }
     if SCISSOR_ONE_PIXEL.load(Ordering::Relaxed) {
         parts.push("scissor".to_string());
     }

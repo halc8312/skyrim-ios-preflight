@@ -8,11 +8,11 @@ import sys
 import tomllib
 
 MANIFEST = "source-allowlist.txt"
-ALLOWLIST_SHA256 = "a004c1ed6be6be2473497656cef8372c594c20699487427e99f6d4590a51ecf8"
-SOURCE_MANIFEST_SHA256 = "75609156b85ed7e12b1467f0646232e701ed3ec0d1891929f1a4deb29c68de37"
+ALLOWLIST_SHA256 = "d8f928d5544cdc4ba14d020dc72c185de787cc92a4c1d61965359be056330c05"
+SOURCE_MANIFEST_SHA256 = "3d9964faaa8f582a214c7d063c9a03d2f9c83398b9c1c829c9d9a8e2760416e4"
 MEMBERS = ["crates/" + name for name in
            ("d3d-hle", "gpu-webgpu", "kernel-hle", "runtime-core", "vfs",
-            "xenos-edram", "xenos-render", "xenos-shader", "xenos-state",
+            "xenos-edram", "xenos-gfx", "xenos-render", "xenos-shader", "xenos-state",
             "xenos-texture", "xenos-texture-cache", "xex", "xma-decoder")]
 
 
@@ -20,7 +20,9 @@ def allowed_source_root(name):
     return (name in (MANIFEST, "tools/windows-ios-guest-probe/audit_private_guest_symbols.py")
             or name.startswith(("skyrim-recomp-web/", "tools/ios-resident-guest-probe/",
                                 "tools/ios-owned-game-host/", "tools/ios-signed-image-policy/",
-                                "tools/windows-ios-guest-probe/owned-guest-abi/")))
+                                "tools/windows-ios-guest-probe/owned-guest-abi/",
+                                "tools/native-metal-engine/bridge/", "tools/native-metal-engine/gpu-hal/",
+                                "tools/native-metal-engine/vendor/naga-29.0.3/")))
 
 
 def prepare(root, output):
@@ -29,14 +31,14 @@ def prepare(root, output):
     if output.exists() or output.resolve().is_relative_to(root):
         raise ValueError("owned_host_output_must_be_fresh_and_separate")
     manifest = (root / MANIFEST).read_bytes()
-    if len(manifest) > 32768 or hashlib.sha256(manifest).hexdigest() != ALLOWLIST_SHA256:
+    if len(manifest) > 65536 or hashlib.sha256(manifest).hexdigest() != ALLOWLIST_SHA256:
         raise ValueError("owned_host_manifest_size")
     frozen = (root / "public-source-manifest.json").read_bytes()
-    if len(frozen) > 65536 or hashlib.sha256(frozen).hexdigest() != SOURCE_MANIFEST_SHA256:
+    if len(frozen) > 160000 or hashlib.sha256(frozen).hexdigest() != SOURCE_MANIFEST_SHA256:
         raise ValueError("owned_host_source_manifest_sha256")
     records = json.loads(frozen)["source_files"]
     names = manifest.decode("utf-8").splitlines()
-    if (not 1 <= len(names) <= 500 or names != sorted(set(names)) or MANIFEST not in names
+    if (not 1 <= len(names) <= 900 or names != sorted(set(names)) or MANIFEST not in names
             or len({name.casefold() for name in names}) != len(names)):
         raise ValueError("owned_host_manifest_order_or_count")
     if set(records) != set(names):
@@ -65,7 +67,7 @@ def prepare(root, output):
         if records[name] != {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}:
             raise ValueError("owned_host_source_hash_mismatch")
         files.append((name, data))
-    if sum(len(data) for _, data in files) > 10_000_000:
+    if sum(len(data) for _, data in files) > 20_000_000:
         raise ValueError("owned_host_sources_size")
     workspace_path = "skyrim-recomp-web/Cargo.toml"
     original = next(data for name, data in files if name == workspace_path)
@@ -96,7 +98,7 @@ def prepare(root, output):
     print("owned_host_source_allowlist_sha256=" + hashlib.sha256(manifest).hexdigest())
     print("owned_host_frozen_source_manifest_sha256=" + hashlib.sha256(frozen).hexdigest())
     print("owned_host_staged_workspace_sha256=" + hashlib.sha256(text.encode("utf-8")).hexdigest())
-    print("owned_host_workspace_members=13; original_sources_unchanged=true")
+    print("owned_host_workspace_members=14; original_sources_unchanged=true")
 
 
 if __name__ == "__main__":

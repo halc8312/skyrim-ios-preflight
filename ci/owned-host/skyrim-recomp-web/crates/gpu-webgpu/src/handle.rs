@@ -27,6 +27,9 @@ macro_rules! handle {
                 }
             }
 
+            /// Stable identity for caches; does not expose a backend ABI handle.
+            pub fn identity(&self) -> usize { self.raw as usize }
+
             /// The underlying webgpu.h handle (still owned by `self`).
             pub fn raw(&self) -> crate::ffi::$raw {
                 self.raw

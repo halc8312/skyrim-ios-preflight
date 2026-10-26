@@ -163,13 +163,18 @@ impl Presentation {
             let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::PresentEncode);
             presenter.encode(&mut encoder, &view, self.configured.0, self.configured.1);
         }
+        let commands=encoder.finish("present");
+        #[cfg(not(feature="native-metal"))]
         {
             let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::PresentSubmit);
-            device.queue().submit([encoder.finish("present")]);
+            device.queue().submit([commands]);
         }
         let result = {
             let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::PresentCall);
-            frame.present()
+            #[cfg(feature="native-metal")]
+            { frame.present_with(commands) }
+            #[cfg(not(feature="native-metal"))]
+            { frame.present() }
         };
         match result {
             Ok(()) => true,

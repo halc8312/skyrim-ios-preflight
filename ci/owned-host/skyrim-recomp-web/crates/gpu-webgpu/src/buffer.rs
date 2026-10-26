@@ -125,6 +125,8 @@ impl Buffer {
         Self { raw, state, _thread: PhantomData }
     }
 
+    pub fn identity(&self) -> usize { self.raw() as usize }
+
     pub fn raw(&self) -> ffi::WGPUBuffer {
         self.raw
     }

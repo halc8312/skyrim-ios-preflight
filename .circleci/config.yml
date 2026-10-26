@@ -60,7 +60,7 @@ jobs:
                 return [n for n in names if n in excluded or (".xcresult" in excluded and n.endswith(".xcresult"))]
             shutil.copytree(source,evidence,ignore=ignore)
             review.mkdir(exist_ok=False)
-            archive=Path(shutil.make_archive(str(review/"SkyrimLab-build18-metal-common-state-review"),"zip","out/public-evidence","owned-host"))
+            archive=Path(shutil.make_archive(str(review/"SkyrimLab-build19-native-metal-review"),"zip","out/public-evidence","owned-host"))
             assert archive.stat().st_size<=25*1024*1024, "bounded_public_archive_required"
             print("PUBLIC_COMPACT_EVIDENCE",size,"raw_xcresult_omitted="+str(".xcresult" in excluded),flush=True)
             '

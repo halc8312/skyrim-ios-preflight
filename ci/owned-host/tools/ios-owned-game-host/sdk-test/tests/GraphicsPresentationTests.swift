@@ -1,6 +1,8 @@
 import Darwin
 import Foundation
 import XCTest
+import UIKit
+import QuartzCore
 
 private final class GraphicsProbeDeadline: @unchecked Sendable {
     private let lock = NSLock()
@@ -15,6 +17,36 @@ private final class GraphicsProbeDeadline: @unchecked Sendable {
 }
 
 final class GraphicsPresentationTests: XCTestCase {
+    @MainActor private func runNativeSurfaceOracle() async throws {
+        guard OHNativeRendererSelectedV1() == 1 else { return }
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }.first { $0.isKeyWindow })
+        let layer = CAMetalLayer()
+        layer.frame = CGRect(x: 24, y: 24, width: 64, height: 64)
+        window.layer.addSublayer(layer)
+        defer { layer.removeFromSuperlayer() }
+        let address = UInt(bitPattern: Unmanaged.passUnretained(layer).toOpaque())
+        let deadline = GraphicsProbeDeadline()
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 20) { deadline.terminateIfUnfinished() }
+        let result: (Int32, OHGraphicsPresentationProbeV1) = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var value = OHGraphicsPresentationProbeV1()
+                let status = OHFixtureNativeSurfaceProbeV1(UnsafeMutableRawPointer(bitPattern: address), &value, 32)
+                continuation.resume(returning: (status, value))
+            }
+        }
+        deadline.finish()
+        XCTAssertEqual(result.0, 0)
+        XCTAssertEqual(result.1.version, 0x0001_0000)
+        XCTAssertEqual(result.1.backend, 5)
+        XCTAssertEqual(result.1.checks, 15)
+        XCTAssertEqual(result.1.rendered_cases, 3)
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = "Native-Metal-surface-oracle"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        print("PUBLIC_NATIVE_SURFACE_RESULT \(result.0) \(result.1.checks) \(result.1.rendered_cases)")
+    }
     private enum Comparison: Sendable, Equatable {
         case buffer, sampled, targets
         var cases: UInt64 { switch self { case .buffer: 9; case .sampled: 15; case .targets: 16 } }
@@ -108,7 +140,7 @@ final class GraphicsPresentationTests: XCTestCase {
     }
 
     func testPublicOffscreenMetalPresentation() async throws {
-        executionTimeAllowance = 20
+        executionTimeAllowance = 45
         let started = DispatchTime.now().uptimeNanoseconds
         let deadline = GraphicsProbeDeadline()
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 15) {
@@ -158,6 +190,7 @@ final class GraphicsPresentationTests: XCTestCase {
         XCTAssertEqual(coverage.1.rendered_cases, 17)
         try await runPublicConstantBackendParity()
         try await runPublicFrameBackendParity()
+        try await runNativeSurfaceOracle()
         let report: [String: Any] = ["schema": 1, "backend": result.1.backend, "checks": result.1.checks,
             "rendered_cases": result.1.rendered_cases, "offscreen": true, "displayed": false,
             "game": false, "iphone": false]

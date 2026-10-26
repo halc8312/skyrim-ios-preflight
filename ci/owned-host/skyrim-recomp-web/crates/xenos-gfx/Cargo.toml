@@ -1,0 +1,10 @@
+[package]
+name = "xenos-gfx"
+description = "GPU-independent Xenos pipeline and draw recording contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+xenos-state.workspace = true

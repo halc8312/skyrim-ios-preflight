@@ -257,6 +257,7 @@ fn MmFreePhysicalMemory(c: &mut Call) -> u64 {
 
 fn MmGetPhysicalAddress(c: &mut Call) -> u64 {
     let addr = c.arg(0);
+    c.kernel.rt.space.observe_xex_physical_query(addr);
     c.kernel.rt.space.physical_address(addr).unwrap_or_else(|| {
         log::warn!("MmGetPhysicalAddress({addr:#010X}): not physical memory");
         0

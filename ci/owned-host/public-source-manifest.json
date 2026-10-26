@@ -1,5 +1,4 @@
 {
-  "file_count": 369,
   "game_data_included": false,
   "game_executed": false,
   "physical_iphone_verified": false,
@@ -8,14 +7,15 @@
   "public_source_only": true,
   "sdk_compile_verified_at_freeze": false,
   "sdk_files_included": false,
+  "file_count": 625,
   "source_files": {
     "skyrim-recomp-web/Cargo.lock": {
-      "bytes": 11047,
-      "sha256": "b9abcc06c707cbf691dffd7a43aa65fac90b1de792ede91a1ba93c7f9a25b4c3"
+      "bytes": 27225,
+      "sha256": "ac57aac577d52f538c4f5206bc61d59bd30239f3a897a40aeaa0ab7fcfb6baa1"
     },
     "skyrim-recomp-web/Cargo.toml": {
-      "bytes": 1969,
-      "sha256": "97e2b238d3e8454931dfaac8babd8b67f46c809587e29a21ca60f8830ec327c8"
+      "bytes": 2221,
+      "sha256": "f97dfb97ebb3c1e1ca0b8583fe763da1d1106df1a77bed4db967aa114000878d"
     },
     "skyrim-recomp-web/cpp/ppc_context.h": {
       "bytes": 33121,
@@ -46,12 +46,12 @@
       "sha256": "8c47d1250cee0ee3df7e610ab074a7e6b94ae1da4ac2a169452c62bfb6cd3cb8"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/Cargo.toml": {
-      "bytes": 319,
-      "sha256": "24ea4e144e30eebad580ec12d85cf9eeec176483013455b06ccd722740459cad"
+      "bytes": 468,
+      "sha256": "e8cf4a706626981cb1d259948f6fb1b68376e3813d7ec6468367c74daaf16a4f"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/build.rs": {
-      "bytes": 11854,
-      "sha256": "d82c66d8d101bce5268010b82fcfb654ede7e22d04a6bbc3bc9321fa34a52e1e"
+      "bytes": 12181,
+      "sha256": "b40e9f86c8cb47e618b0164929dc85c8b0cfbc8d9cc2f8b8f8d7e6435e9f93c9"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/examples/common/mod.rs": {
       "bytes": 36,
@@ -74,8 +74,8 @@
       "sha256": "3687fc76b7372051c73ff0223960157ce66eabf6dec608c1dcf8dbdd777c76fd"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/src/buffer.rs": {
-      "bytes": 11402,
-      "sha256": "7303d3d874623599e750258e5434b69337e9487c954ec813c2991b0a475feacf"
+      "bytes": 11465,
+      "sha256": "74f2e6cc7aa99a8b8e1a8b15169e2def4ac83b73d2f05fcbdceddb7f426c41d7"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/src/command.rs": {
       "bytes": 20799,
@@ -102,16 +102,20 @@
       "sha256": "15dc41568e7284b3e5e98e545cabe4e0890cb31512bb002ea512aae1335ea331"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/src/handle.rs": {
-      "bytes": 3188,
-      "sha256": "44495123e69465302990e3ae4d0ad8078ef37aec7d13fcfa5e8bbd11db08f1ba"
+      "bytes": 3340,
+      "sha256": "b6fc68f0bdf59bc94aad66e681f7c506d2c1a30a1a9fbe799e211a941a9ffadb"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/src/instance.rs": {
       "bytes": 6678,
       "sha256": "35adad9ad549e27c34836a1ef9c569a85b1a26610c5ad2d81946769145d7fd6a"
     },
+    "skyrim-recomp-web/crates/gpu-webgpu/src/legacy.rs": {
+      "bytes": 6923,
+      "sha256": "e490eee341af78c5df2715538273c32a55463c418611748aefc598175694e855"
+    },
     "skyrim-recomp-web/crates/gpu-webgpu/src/lib.rs": {
-      "bytes": 6936,
-      "sha256": "d0c52f167011b9eea87fab9a3826377be2f8c5f27e0c23c54437e53d754ad62e"
+      "bytes": 284,
+      "sha256": "4f25ef9d309fcf053cc284cff8b0b25726cac1fa1bbf34f2c0851f91ccbdfcac"
     },
     "skyrim-recomp-web/crates/gpu-webgpu/src/memory.rs": {
       "bytes": 3268,
@@ -282,8 +286,8 @@
       "sha256": "fa6a3bbf3557efa79bb827baba45eee792223a23ff55a43d78662b07013b8a3a"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/xboxkrnl/memory.rs": {
-      "bytes": 14167,
-      "sha256": "8d7caede0f74ead3db4a7f0e24dbfb6f0393012345e36533dcad608a16162717"
+      "bytes": 14224,
+      "sha256": "721f38cdc21ec8670c76ef842e6f54f9415b18a136046d71e531aeb5b7105b13"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/xboxkrnl/misc.rs": {
       "bytes": 8816,
@@ -338,8 +342,8 @@
       "sha256": "5a245d02e708931fcbf2b06ae6caed2f03cf4c4844266040d0063d3ec92ce74c"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/zlib.rs": {
-      "bytes": 17914,
-      "sha256": "ce1cd2037ae41956b3defdd4e07a321998103d267c6236de56fc5cb8163e37d8"
+      "bytes": 17972,
+      "sha256": "a5bf5a76e460bbaccabb1745022e480ae7a78309acde9ec8ef336771229fff28"
     },
     "skyrim-recomp-web/crates/runtime-core/Cargo.toml": {
       "bytes": 322,
@@ -350,8 +354,8 @@
       "sha256": "b844b7d2cb38f5366799e626314f2ace91fe3a766c707996bf615a9d32b81b66"
     },
     "skyrim-recomp-web/crates/runtime-core/src/address_space_order_tests.rs": {
-      "bytes": 5860,
-      "sha256": "327b8331885ec9a7ab40e32fa8322a90dea17bb319b41871c83926f377f0dad9"
+      "bytes": 6128,
+      "sha256": "8c8ac7e122296bb09a422c9d33600e93843839a71050a523260ee63edf211eb4"
     },
     "skyrim-recomp-web/crates/runtime-core/src/alias_diagnostics.rs": {
       "bytes": 11495,
@@ -370,8 +374,8 @@
       "sha256": "69eb8c8557a8cdbf13bee08c2da270a1263066b9e623a11d8460145214d69bc0"
     },
     "skyrim-recomp-web/crates/runtime-core/src/heap.rs": {
-      "bytes": 19174,
-      "sha256": "5d3e8b5c6850e4702e27c42f0ecd25b5194b3074214dcc9ac6ec4822c6c2701e"
+      "bytes": 18708,
+      "sha256": "9ff9e3aa4052ed4409beffd413be1e3b15015c4b33ef2dba3cd24aa0cd225c7b"
     },
     "skyrim-recomp-web/crates/runtime-core/src/layout.rs": {
       "bytes": 4542,
@@ -382,8 +386,8 @@
       "sha256": "e49129759cc0168f5abf4b7de013b1bfe57eb86e5ccbc42d56603e44497a0bd8"
     },
     "skyrim-recomp-web/crates/runtime-core/src/memory.rs": {
-      "bytes": 40507,
-      "sha256": "348650cea962ef37d5832fedf4be7ef5d8c1bf0738bbb32ed730cd515f7e6901"
+      "bytes": 39555,
+      "sha256": "60c0260ad2e287e3f93b05c07376c8d938249e94787d78097b7e1d619fb9330e"
     },
     "skyrim-recomp-web/crates/runtime-core/src/runtime.rs": {
       "bytes": 7427,
@@ -418,44 +422,100 @@
       "sha256": "83896d6274f2be8a438759e1b40a3e9f3ce7eb320173d8a553a5b833e35ef732"
     },
     "skyrim-recomp-web/crates/xenos-edram/Cargo.toml": {
-      "bytes": 400,
-      "sha256": "34cb88f71be710af18a715db73fcaac4fbed0d712b2e75b8a441acb60b01cc71"
+      "bytes": 413,
+      "sha256": "ef220f2f52d87fb39cf822b9352dd0ef7803cf8c7225d97e6221c010aae22030"
     },
     "skyrim-recomp-web/crates/xenos-edram/build.rs": {
       "bytes": 551,
       "sha256": "5e9e2cd4d3a814e675144dfe1f264120c81a1fce8e86414376ad0277903e5e60"
     },
     "skyrim-recomp-web/crates/xenos-edram/src/cache.rs": {
-      "bytes": 84970,
-      "sha256": "bf6b425be425534ef704f52154f93ee422a4eacdabd9662b113da27ed9f07cbd"
+      "bytes": 79335,
+      "sha256": "85dc7e0ddfed56504c3283f6e66a52135c9494904814a5b4b41756a3b6a33398"
     },
     "skyrim-recomp-web/crates/xenos-edram/src/dest.rs": {
       "bytes": 5771,
       "sha256": "7c5a39089318c2de5d5184596051d594bf5a406e3a7c530dd1ac81bd092cd0c6"
     },
     "skyrim-recomp-web/crates/xenos-edram/src/format.rs": {
-      "bytes": 8731,
-      "sha256": "079a6b6d3d3faf5bd0959764c28e4cf1e42bdd9de113aa36274be6bda28d2b3e"
+      "bytes": 8668,
+      "sha256": "a7b93d1e4cc656fd787a5294171535c13c7eaa7052bc832379a309675c9d44c5"
     },
     "skyrim-recomp-web/crates/xenos-edram/src/lib.rs": {
       "bytes": 4464,
       "sha256": "bcf9e4103ec697a390abc6f93880fb47d4410f5bc508f67b24737698d948bf37"
     },
     "skyrim-recomp-web/crates/xenos-edram/src/ownership.rs": {
-      "bytes": 4878,
-      "sha256": "a370df94a6380f58dca4a3d11ffcfff69846797908cc9de62407a19582a2cb27"
+      "bytes": 178,
+      "sha256": "3a0d7694d2e60771ff80de0dbe3ccb4f68786933f9debbc90738bb0e9b5558db"
     },
     "skyrim-recomp-web/crates/xenos-edram/src/shaders.rs": {
-      "bytes": 38221,
-      "sha256": "7856f322b8080c0c294dda0e5de24a2d0d0bac80fd86f2f97e1a9a52dc2f8898"
+      "bytes": 117,
+      "sha256": "456333dbada28eb2d2f0469243b5e8ef6c59725e80d2ceec4dc34ea17690df02"
     },
     "skyrim-recomp-web/crates/xenos-edram/tests/gpu.rs": {
-      "bytes": 56301,
-      "sha256": "1172abb4085f394ce0d3754b06e39860db0b34b5ed248cc82c42ce3c696ffe53"
+      "bytes": 59715,
+      "sha256": "aca9e896548fd4f96b9d7baff2759245c4bc2a08edf7c16825d2cbe6f4b50554"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/Cargo.toml": {
+      "bytes": 250,
+      "sha256": "53e33c3e321955bd9a4e5185f79fdfb23524411a6b5eb324205209e42c38ff1d"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/constant_patch.wgsl": {
+      "bytes": 1098,
+      "sha256": "2f846830704c198b425f352febab36abe7f27809c0acf0b25b1fbd0f3d74abfd"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/constant_segments.rs": {
+      "bytes": 25027,
+      "sha256": "8dc0a5578033d273268efcde164722ce040234b83c1d73dc8d945432cf06c14f"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/constants.rs": {
+      "bytes": 6482,
+      "sha256": "fd28157bf96f420799477274355f167f4707ef293ea2eaa89d2986536d884748"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/edram_clear.rs": {
+      "bytes": 4951,
+      "sha256": "f552aba590f9b90bf4b3ec51cee3ce7c322430c534e8fd471d23c0817d6c1461"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/edram_ownership.rs": {
+      "bytes": 4730,
+      "sha256": "09c8950f851297fb3ce344385939a5216fcee6ba50670441f8114a50226ab1c1"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/edram_resolve.rs": {
+      "bytes": 1703,
+      "sha256": "27b4b2784a501b4782b461d6e359e81d4bc3344077c796e68775ecd091eb25b4"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/edram_shaders.rs": {
+      "bytes": 40602,
+      "sha256": "e69804a9366c1cbdc0b5e4d9145df7ee2f29a3f747c2f3bcc8a0021e37d07de9"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/edram_transfer.rs": {
+      "bytes": 4961,
+      "sha256": "6861b7045e48b30bc67994cb11fe59264718d9fb0027c521e49187da894012f3"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/lib.rs": {
+      "bytes": 306,
+      "sha256": "7eba4685a1e31ebab11c761535e4014befb5d554cb9a41f59da4cb8db4e5c4f6"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/pipeline.rs": {
+      "bytes": 4727,
+      "sha256": "20660930e07b1dbb3513c0e046dcadcfcf65098d8b3621424d57e87ca0c5015c"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/presentation.rs": {
+      "bytes": 4814,
+      "sha256": "8e1ef57c97eca014285b23000df14a011fe8cf66aec5a8ed45a77b5308654f9b"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/sink.rs": {
+      "bytes": 8482,
+      "sha256": "8ab6bfd93bdaded3356743b33ec07364ea7b9036847bc21cae148294a5b07c0f"
+    },
+    "skyrim-recomp-web/crates/xenos-gfx/src/sink_tests.rs": {
+      "bytes": 5927,
+      "sha256": "5696e4cb71d160a6ab5411a86eecc7384ae1dedfc81d1552892c8a8db626a512"
     },
     "skyrim-recomp-web/crates/xenos-render/Cargo.toml": {
-      "bytes": 1426,
-      "sha256": "548c5bae78e046dd4a6f37542e5f514eb27e20bfc3d0b2d92878b58d965e0ff4"
+      "bytes": 1689,
+      "sha256": "1b06e9ab31e1e51a3a2e9e98f4ef62709bd358dcb8311c159f027bfa88ce90b4"
     },
     "skyrim-recomp-web/crates/xenos-render/build.rs": {
       "bytes": 551,
@@ -478,8 +538,8 @@
       "sha256": "85ffb00273f9b4ef21e393cd3e99474f9bc687c4ea23a92ae9c51734199b25f0"
     },
     "skyrim-recomp-web/crates/xenos-render/src/causal.rs": {
-      "bytes": 15653,
-      "sha256": "cdf44880bc4a82445f5bd6e6520703e52f06d995747390cd737db467823dbfa0"
+      "bytes": 18850,
+      "sha256": "c45ef40c93f63f464617700b50af8aae009d2a5fc2d7a957428b44fe15f92f16"
     },
     "skyrim-recomp-web/crates/xenos-render/src/constant_backend_probe.rs": {
       "bytes": 17319,
@@ -490,8 +550,8 @@
       "sha256": "54115056405e9cc26439510e4e41883826145eb03d37ceaef8c392581b13834b"
     },
     "skyrim-recomp-web/crates/xenos-render/src/constant_patch.rs": {
-      "bytes": 21824,
-      "sha256": "0e18fe421a8bb5edaa7252a60c05182768436262dd71f4f594b3dfb058314f3a"
+      "bytes": 25837,
+      "sha256": "c62c4aac3b863ac0712fc9e818af0aa2c58ee1a14d1f4ec5c857985102e7a239"
     },
     "skyrim-recomp-web/crates/xenos-render/src/constant_patch_bin_tests.rs": {
       "bytes": 12593,
@@ -506,8 +566,8 @@
       "sha256": "2ca423d43610f3828e2660e179944c2b994587e25a28aba4377f1868e06c21f2"
     },
     "skyrim-recomp-web/crates/xenos-render/src/debug.rs": {
-      "bytes": 8114,
-      "sha256": "cdb7b0f81a15954e78149aa62e1e63e44f4946193e5f3fd8449e4d1691712b53"
+      "bytes": 8851,
+      "sha256": "11b9960ebaea4478016c9db1f0b785a7005371d362ef16ee4558393ca077fc2c"
     },
     "skyrim-recomp-web/crates/xenos-render/src/debug_alpha_coverage.rs": {
       "bytes": 16458,
@@ -518,8 +578,8 @@
       "sha256": "2b0ebd6f4f8217e598246d05f3e0d0fecfc2070d783e94df9508ff7213f00a0d"
     },
     "skyrim-recomp-web/crates/xenos-render/src/executor.rs": {
-      "bytes": 106789,
-      "sha256": "60281eae277f929a4c2ded6fa3765561f9b4ea208a98bbc5b7d4aeb0946c56f0"
+      "bytes": 106923,
+      "sha256": "be4530e2f58851accb74111e4afea4fb82f1b476d3464d5b96ff77f7d629366b"
     },
     "skyrim-recomp-web/crates/xenos-render/src/extent.rs": {
       "bytes": 12458,
@@ -538,12 +598,12 @@
       "sha256": "360ed2b873f3709943faba546f956eff629efa64b79b9e61272dfac65e1ee483"
     },
     "skyrim-recomp-web/crates/xenos-render/src/lib.rs": {
-      "bytes": 5816,
-      "sha256": "db996b87f93ab20e3dce2ae81e5d55c7bd58289446f17e4731ba0d51bb6329e5"
+      "bytes": 5904,
+      "sha256": "0dda4ec4fbcd7f86bb7f7778c9e96b7866d28994e76fcdb595a78f83abd49d49"
     },
     "skyrim-recomp-web/crates/xenos-render/src/native.rs": {
-      "bytes": 44048,
-      "sha256": "3104b828bf3b37d03b54604249f29a4d7b09fa92c1757635c1250baca24665e9"
+      "bytes": 45285,
+      "sha256": "0d0ebdced09425c88e2cf0e58ff0c064c10a0f776ee3dfcf55dbe118223a9135"
     },
     "skyrim-recomp-web/crates/xenos-render/src/native_frame_stability.rs": {
       "bytes": 10758,
@@ -554,8 +614,8 @@
       "sha256": "61022a688cf7a3e85a2ffd8f9b0371da024235298ef7ca3c275ee7c0eae7cd1c"
     },
     "skyrim-recomp-web/crates/xenos-render/src/pipeline_plan.rs": {
-      "bytes": 4785,
-      "sha256": "80e2d8d19e343db45b61e635dcf6c8803b23f8eb44f8df481fa1bbd985f3758d"
+      "bytes": 164,
+      "sha256": "0dbb2dc3d49d0a32beb17c927d341eacad624279ca02fdae540a4dd81eab0493"
     },
     "skyrim-recomp-web/crates/xenos-render/src/pipeline_plan_tests.rs": {
       "bytes": 20628,
@@ -566,8 +626,8 @@
       "sha256": "8e17f5f741e961c66e9e5c25f34e49898bd2bc39dd5fc7ad424fe4a1ae726634"
     },
     "skyrim-recomp-web/crates/xenos-render/src/prepared.rs": {
-      "bytes": 3959,
-      "sha256": "75726fe1908697ea2389381b576955500580307f041498fe242c6ea2afbdc32c"
+      "bytes": 3101,
+      "sha256": "e6d012f92ff62418b64f325958018f9faa3ddef784a681966f338c4c476ccf15"
     },
     "skyrim-recomp-web/crates/xenos-render/src/prepared_shader.rs": {
       "bytes": 6379,
@@ -578,12 +638,12 @@
       "sha256": "4e9ea8ffcbe03a3346025c30a8d24fe0e89fa0dce276572daeff49b97c052b48"
     },
     "skyrim-recomp-web/crates/xenos-render/src/present.rs": {
-      "bytes": 16436,
-      "sha256": "fd9f57c57a56734edb108bfcde75d8089217971cbd471d8549a9a2f10329b862"
+      "bytes": 11466,
+      "sha256": "6936e769f3e7d6b7e5b5f346671250b1aa3c4bb63491d8cbb06d2bc49ce5a621"
     },
     "skyrim-recomp-web/crates/xenos-render/src/present_cache_tests.rs": {
-      "bytes": 9387,
-      "sha256": "17f5a6d77d11b4779df92c5f65f2a1e88effb2d5c7dd5bd62c97604a78d4b3f7"
+      "bytes": 9790,
+      "sha256": "b923ca1cc0225daa6122d9d3d479b355332d68903b3589d4cd93642159e1b982"
     },
     "skyrim-recomp-web/crates/xenos-render/src/presentation_probe.rs": {
       "bytes": 6119,
@@ -666,8 +726,8 @@
       "sha256": "648130b835ec1a620e061a5356f19ccb0e77fc75c67dfc9f3f82981ac501ac58"
     },
     "skyrim-recomp-web/crates/xenos-render/src/vertex_range.rs": {
-      "bytes": 16491,
-      "sha256": "8b94109e51bfc3ec2d39c9ec38d54a05dd602dd992450fc7961ba950802eb906"
+      "bytes": 17091,
+      "sha256": "bfc8f6d25a3ddb8d1312a7b8296f7c5fac5a1e5c60b331388d06ab516a0b6d5b"
     },
     "skyrim-recomp-web/crates/xenos-render/src/vertex_range_tests.rs": {
       "bytes": 17930,
@@ -696,6 +756,10 @@
     "skyrim-recomp-web/crates/xenos-render/tests/draw_native.rs": {
       "bytes": 15994,
       "sha256": "cca373b965d4b499ec178f8826d9b12b39b3d28c5340dbb9e371298911706abe"
+    },
+    "skyrim-recomp-web/crates/xenos-render/tests/present_native.rs": {
+      "bytes": 3199,
+      "sha256": "d604c810a3c35c58b14d1bbcdbbe0ac3171fdd3eb4af538ba7b94c4a6603197d"
     },
     "skyrim-recomp-web/crates/xenos-render/tests/vertex_ranges_native.rs": {
       "bytes": 18035,
@@ -838,8 +902,8 @@
       "sha256": "74b4dcffd8f3966ebb104f2b26787907f58714e36625973ba8baae8b8a13c98a"
     },
     "skyrim-recomp-web/crates/xenos-texture-cache/src/gpu_load.rs": {
-      "bytes": 31217,
-      "sha256": "0695334e03154143f995629fb3c098d87cab0b970196aa4e6bdc47676708729a"
+      "bytes": 16185,
+      "sha256": "325abacf197416ff2a81069036df0acf1f48ad4c9fed8e848a698b400014ace7"
     },
     "skyrim-recomp-web/crates/xenos-texture-cache/src/hash.rs": {
       "bytes": 1988,
@@ -850,8 +914,8 @@
       "sha256": "ccd93fe7e0f34eb045fb249fbd9d9841952840346596c4a5c2176f9bfd3e93e5"
     },
     "skyrim-recomp-web/crates/xenos-texture-cache/src/lib.rs": {
-      "bytes": 61435,
-      "sha256": "73d0a773d5f05ddcc0aa5af1c61793835674c2cd476a5d064aca0ba6c03936a9"
+      "bytes": 62921,
+      "sha256": "a07dacea853576f77012338f03a2060a0f8b36f95204b1d963cf7917e0b2ed1e"
     },
     "skyrim-recomp-web/crates/xenos-texture-cache/tests/cache.rs": {
       "bytes": 57935,
@@ -894,8 +958,8 @@
       "sha256": "906765966232214a4dfa64dd8e66afde605a0b3a40e93901b56a4d4777c652b0"
     },
     "skyrim-recomp-web/crates/xenos-texture/src/lib.rs": {
-      "bytes": 2130,
-      "sha256": "118b7ae1956b6ed6586866d866fb8594d6aae39fb5b332d7d645702e7dc3ab8e"
+      "bytes": 2149,
+      "sha256": "d2a8efbad3d7afd3df833dc1802ca9c75299354d1ae28378a489d56708abe752"
     },
     "skyrim-recomp-web/crates/xenos-texture/src/load.rs": {
       "bytes": 15498,
@@ -954,24 +1018,24 @@
       "sha256": "fb566ebd6019888be0844921ae88062f67d83c40fc1e12ca3e9be9f2acdfd661"
     },
     "source-allowlist.txt": {
-      "bytes": 20128,
-      "sha256": "a004c1ed6be6be2473497656cef8372c594c20699487427e99f6d4590a51ecf8"
+      "bytes": 36694,
+      "sha256": "d8f928d5544cdc4ba14d020dc72c185de787cc92a4c1d61965359be056330c05"
     },
     "tools/ios-owned-game-host/AUDIO.md": {
       "bytes": 9670,
       "sha256": "26259cc3d5d052690d1fcbba30464f6f304b1a0f3136256ed27ce36b501a91ce"
     },
     "tools/ios-owned-game-host/Cargo.lock": {
-      "bytes": 14851,
-      "sha256": "d9d2afd7c8d56c8d17629b0834e3981cfc17b4df78635d8e0236700e8299f297"
+      "bytes": 31022,
+      "sha256": "81cbf2f2b729d83f0d8e9b1085baeb4c91f3f3c86f26438f5f8e2fa5f9def532"
     },
     "tools/ios-owned-game-host/Cargo.toml": {
-      "bytes": 1441,
-      "sha256": "07d8a1ca98a083bca56c7d734f92681a40cc6f4b6ea8df79bada6f2aaca7d68a"
+      "bytes": 1585,
+      "sha256": "41c827f163de19bda7c28896796d0ba7c27ccf623ef9a939682748750975f5f6"
     },
     "tools/ios-owned-game-host/README.md": {
-      "bytes": 12136,
-      "sha256": "fdac30bf2b773329c1aacfeea10567c6b2106599a7baf437e70e456b68765b45"
+      "bytes": 15561,
+      "sha256": "bf7932adbfc31b7c42d66e9676e296701a20ecbdbe4acf2f7742b27183ef148e"
     },
     "tools/ios-owned-game-host/app/DeviceAudioCommands.swift": {
       "bytes": 5191,
@@ -1026,8 +1090,8 @@
       "sha256": "511f3633a797d9d11b487a72219c43f36f2ce666e49cb04a6e886a6f9b623df1"
     },
     "tools/ios-owned-game-host/native/GraphicsPresentationProbe.h": {
-      "bytes": 1477,
-      "sha256": "451769e952e8d7c95cd8c2f296476cc29f3d49ebf374f13e88774eeaf9b79f2a"
+      "bytes": 1622,
+      "sha256": "6e7f24e1cba0d370f32eaa6a7b3c902fbe7d084902207a8db027438d3b175104"
     },
     "tools/ios-owned-game-host/native/MetalConstantProbe.h": {
       "bytes": 1642,
@@ -1134,8 +1198,8 @@
       "sha256": "b5c1b9b5628505f81309a1ee67eea706f673ea34c58114c5aeb56d3eb54f6f3e"
     },
     "tools/ios-owned-game-host/project.yml": {
-      "bytes": 4120,
-      "sha256": "880227bc75ed0eebec48d1df32d60f3d1f9c24eeb6772d2693ea1be3a0df48a7"
+      "bytes": 4117,
+      "sha256": "d4f5102d619ae110bb28eafb10d9981afa089f58c3da8d59e54afc112ba01ddb"
     },
     "tools/ios-owned-game-host/sdk-test/audio_control_gate_test.cpp": {
       "bytes": 5719,
@@ -1182,8 +1246,8 @@
       "sha256": "6913b96a26f1dbfbe033d0e8edfe433d6cc7986f137367360bb510915a7f4605"
     },
     "tools/ios-owned-game-host/sdk-test/prepare_v2_sdk_stage.py": {
-      "bytes": 5090,
-      "sha256": "c4dc4258e5648adeacc0c481871752426d697a89cacd7e6110c0222f4bc87805"
+      "bytes": 5223,
+      "sha256": "561db6babddc463e6fef0db29c0f3aa423fbf5f8dc18f0ef17419d4a6660dfa0"
     },
     "tools/ios-owned-game-host/sdk-test/run_device_features_tests.py": {
       "bytes": 12301,
@@ -1194,12 +1258,12 @@
       "sha256": "c33dd044ab63d444053b4634a0074599d25add4a266d35e85675762075631d34"
     },
     "tools/ios-owned-game-host/sdk-test/run_sdk_tests.py": {
-      "bytes": 15058,
-      "sha256": "a0be403dc52cc61f93b27a2d1d419de98bb6494313f619789c127f67aa597ed0"
+      "bytes": 16816,
+      "sha256": "238983d6945b0d5dbfb7b9d9d11278edfdd5c065b7333742d946518daa5371a2"
     },
     "tools/ios-owned-game-host/sdk-test/run_v2_sdk_tests.py": {
-      "bytes": 11867,
-      "sha256": "7ed5b942a81919d3dd189188c5f755e3171476538206893e9fa1c45c74120144"
+      "bytes": 11759,
+      "sha256": "acd85935caefa554b30225138802e1d0a91cafd328cb2918c8f45a26d8bedebc"
     },
     "tools/ios-owned-game-host/sdk-test/test_run_device_features_tests.py": {
       "bytes": 15995,
@@ -1210,28 +1274,28 @@
       "sha256": "de7724d3f46a7caf9672df20d2c449911c5edc0972441eb03e80f57d7b54a150"
     },
     "tools/ios-owned-game-host/sdk-test/test_run_sdk_tests.py": {
-      "bytes": 15284,
-      "sha256": "a71f96f948aa7fb13d7cc8a0c05b952eedc3dd083b11bbeca4fce7884bb15f66"
+      "bytes": 17621,
+      "sha256": "d1cd353ff36da3894d67af2ab2706dd8ceb6abbc5fcbdb450ff2f680468472f0"
     },
     "tools/ios-owned-game-host/sdk-test/test_v2_sdk_fixture.py": {
-      "bytes": 35443,
-      "sha256": "8c2d913142f73892413edf5c8efd54af32a7609edfe8ddb1e94beb6109954eca"
+      "bytes": 36663,
+      "sha256": "5f2daa6158e14f5c4e1fe095994abeb3eaaea6dffce1c0226ef5c033581af23a"
     },
     "tools/ios-owned-game-host/sdk-test/tests/DeviceSettingsTests.swift": {
       "bytes": 13864,
       "sha256": "33ebe2ab01460560ff7e146f5d4f1092ab5aac7bcf655716ab7fe439751f75e5"
     },
     "tools/ios-owned-game-host/sdk-test/tests/GraphicsPresentationTests.swift": {
-      "bytes": 9295,
-      "sha256": "b29c1a6ad9749a3a6cf5393e6f5c52af7306260d98d91e48b3c34217d0598358"
+      "bytes": 11114,
+      "sha256": "a692c083d9d9121e2fe59e8fdd0141b4eb72aa870117cec48c060e189f665507"
     },
     "tools/ios-owned-game-host/sdk-test/tests/MobileControlsTests.swift": {
       "bytes": 18697,
       "sha256": "9c1bd7b322b00e0faba222b56d6f2c28c9d8f2bc915be8364074e6b1ed082d40"
     },
     "tools/ios-owned-game-host/sdk-test/tests/NativeTraceSDKProbeTests.swift": {
-      "bytes": 2988,
-      "sha256": "967471b69c406803a47706a6ade849afdfe7e14e4410bec1eec91080021b77a3"
+      "bytes": 3272,
+      "sha256": "5bfc259bf8d1ccec43386177785b0e691bb4ce5b9368669ded2ae76f8b2dbbf9"
     },
     "tools/ios-owned-game-host/sdk-test/tests/OwnedHostAudioTests.swift": {
       "bytes": 14713,
@@ -1302,8 +1366,8 @@
       "sha256": "33c5eb97ffe82b8b6e9f46b5b98704c10ad9a3f7e7487cff6917a50022094bc9"
     },
     "tools/ios-owned-game-host/src/lib.rs": {
-      "bytes": 2014,
-      "sha256": "ffe26e6f0a90770759cd9ce835ec8432936edc90df2a20facf3235e04e5d2852"
+      "bytes": 2153,
+      "sha256": "6399aa3a916c7d0b070992082cb48cba8f4d3163ab8bbbd1e2921a1de16fe7e7"
     },
     "tools/ios-owned-game-host/src/lifecycle.rs": {
       "bytes": 5442,
@@ -1312,6 +1376,10 @@
     "tools/ios-owned-game-host/src/mapping.rs": {
       "bytes": 12465,
       "sha256": "34722b321214904e39c69732c729d61b3849913c3a42b7419ddc1c26f94a0e2c"
+    },
+    "tools/ios-owned-game-host/src/native_surface_fixture.rs": {
+      "bytes": 4516,
+      "sha256": "d375575447ce9fad393a15ed613df2ec1188d1d45c5d4b7d529bda0863b860ab"
     },
     "tools/ios-owned-game-host/src/native_trace.rs": {
       "bytes": 5099,
@@ -1338,8 +1406,8 @@
       "sha256": "b6d6df200036c1c98bf37d729641e46831bb52aa248005391089e0a49775373a"
     },
     "tools/ios-owned-game-host/src/renderer.rs": {
-      "bytes": 14463,
-      "sha256": "d16c0d3eda71a2cdcfad0a2e862d1f629694a801235419533c6c006809942505"
+      "bytes": 14809,
+      "sha256": "0d3858fe064648b6da99a7673e8b64edc65db6457394cb414a465c3fb2ccee7c"
     },
     "tools/ios-owned-game-host/src/renderer_policy.rs": {
       "bytes": 2515,
@@ -1449,6 +1517,962 @@
       "bytes": 12856,
       "sha256": "bba63dd5389d007f0c22418bf23b33c2967edd0fb1b63ed7b30e1a94db713b53"
     },
+    "tools/native-metal-engine/bridge/Cargo.lock": {
+      "bytes": 22420,
+      "sha256": "190e4e44a981a386404e003f46a4e1370362fb4b6baa8bc0d76c73fa411e015c"
+    },
+    "tools/native-metal-engine/bridge/Cargo.toml": {
+      "bytes": 543,
+      "sha256": "46fb45560bb03d506585f7d962f4516029d3d04e0276a27089630bdaf2c4b255"
+    },
+    "tools/native-metal-engine/bridge/src/api.rs": {
+      "bytes": 11392,
+      "sha256": "9761e43f78a3cc3529b5c308fa31d40fcbed58bb152f18664fa4cf2213575c9e"
+    },
+    "tools/native-metal-engine/bridge/src/commands.rs": {
+      "bytes": 25729,
+      "sha256": "73dbfe3ec973491e2363a4066438ba32dd54d59f0c8abae99cde632c16a5c3bf"
+    },
+    "tools/native-metal-engine/bridge/src/convert.rs": {
+      "bytes": 26162,
+      "sha256": "6095af543bd46b3a5e477fcdfb565cc5498140a2aaf7c7cafa1ed5b30a44e96e"
+    },
+    "tools/native-metal-engine/bridge/src/device.rs": {
+      "bytes": 12852,
+      "sha256": "f80d92412f2e275c90bb5c2c38ffcf0ec3897aa8b69b8fdadebb4f316567a515"
+    },
+    "tools/native-metal-engine/bridge/src/lib.rs": {
+      "bytes": 5576,
+      "sha256": "a1070ee7d46d3eb6746136e355da1ccc2819a9cb1da87def8d5b096df3db93d3"
+    },
+    "tools/native-metal-engine/bridge/src/pending.rs": {
+      "bytes": 2150,
+      "sha256": "d15412b98353cb7401c0b249b67d26f67505751dbfcc7d79eb12e0badb3bbb48"
+    },
+    "tools/native-metal-engine/bridge/src/resources.rs": {
+      "bytes": 33457,
+      "sha256": "8c2587c797fa18f0915904c45c63b524a0f03f5d3bdcb76532d99910c6dc4c10"
+    },
+    "tools/native-metal-engine/bridge/src/surface.rs": {
+      "bytes": 3058,
+      "sha256": "463be9e9ab0f8f61b055ca350401c03bcc181291a2039bbffe7c055c21952f80"
+    },
+    "tools/native-metal-engine/bridge/src/surface_metal.rs": {
+      "bytes": 7040,
+      "sha256": "8dcb7512f39e28b97d60526df31f6f462817f1f3210cb18448bee825ac28eef4"
+    },
+    "tools/native-metal-engine/bridge/src/timing.rs": {
+      "bytes": 471,
+      "sha256": "29da31f3c13a8fc5966d231499027850c4282a248f2f759dda70407c29cc6979"
+    },
+    "tools/native-metal-engine/bridge/tests/compat.rs": {
+      "bytes": 8512,
+      "sha256": "d9b75eb56b48a31b04aaf10bbac574eb3de96f88c1e44dcb2f615f12089a20f3"
+    },
+    "tools/native-metal-engine/gpu-hal/Cargo.lock": {
+      "bytes": 22281,
+      "sha256": "e0528ce9ffa70ff26c3cb02545a9a009c135fb1661ac80c79135b3ec3880b587"
+    },
+    "tools/native-metal-engine/gpu-hal/Cargo.toml": {
+      "bytes": 2288,
+      "sha256": "5b73a39faa7ca049f2756dff1bfc461b7a438c23f395b28dc4b7962e67678c7b"
+    },
+    "tools/native-metal-engine/gpu-hal/src/backend.rs": {
+      "bytes": 3102,
+      "sha256": "6ffd096cb22814087c1e9c7e8c7099260926fce0644024e29f6401c44d6c4030"
+    },
+    "tools/native-metal-engine/gpu-hal/src/bindings.rs": {
+      "bytes": 23125,
+      "sha256": "69aa0d3ec3c36d4e7740aa6a7dbe161de5cab5f1bbc4626444f1363e50bf4cf4"
+    },
+    "tools/native-metal-engine/gpu-hal/src/compute.rs": {
+      "bytes": 13990,
+      "sha256": "ecc43df455d07359f2ff8337e43cd73e4c580501070f5facad5a5077e91d7fdd"
+    },
+    "tools/native-metal-engine/gpu-hal/src/compute/general.rs": {
+      "bytes": 11848,
+      "sha256": "9352fb2a3e7f510f8398e79556e7c78669e1698160a864236495753e213c1083"
+    },
+    "tools/native-metal-engine/gpu-hal/src/constants.rs": {
+      "bytes": 8387,
+      "sha256": "8478a1a6e1b41776872e6d41a97c9bce42ba64624277168d96e81f6883003605"
+    },
+    "tools/native-metal-engine/gpu-hal/src/edram.rs": {
+      "bytes": 23006,
+      "sha256": "23e40deb48c74e361dd1bd7f39667ac935a8ef5f79ece2179686ac2363f7ca37"
+    },
+    "tools/native-metal-engine/gpu-hal/src/edram/targets.rs": {
+      "bytes": 24425,
+      "sha256": "03f6c5ac027a53cf3730b648ba04fe8d601282f15924baf564b587c4245b0aed"
+    },
+    "tools/native-metal-engine/gpu-hal/src/edram/targets/clear.rs": {
+      "bytes": 11641,
+      "sha256": "3c27134ddef0fbd4dd3b224df4667629c3e453bf7f22d852623005b694350cd1"
+    },
+    "tools/native-metal-engine/gpu-hal/src/edram/targets/draws.rs": {
+      "bytes": 33933,
+      "sha256": "5fb00a37a6c3119af694d962956654408bad3443d299053d3409dc6f9f6b20bd"
+    },
+    "tools/native-metal-engine/gpu-hal/src/edram/targets/guest_memory.rs": {
+      "bytes": 23965,
+      "sha256": "8f3eb5d35beaba746db7ac738e225da6220ebfd11428498092e65ce1fe553572"
+    },
+    "tools/native-metal-engine/gpu-hal/src/edram/targets/guest_memory/writeback.rs": {
+      "bytes": 5828,
+      "sha256": "f5f18d054274f608c3b7e8c49d543c6473c651e83151d1748bb9b6a67a7d70c3"
+    },
+    "tools/native-metal-engine/gpu-hal/src/edram/targets/guest_texture.rs": {
+      "bytes": 36837,
+      "sha256": "3308d5c9ae6ad8c90aec2f183ac23ada2b63d04692417d38d18d9460ef5b35cf"
+    },
+    "tools/native-metal-engine/gpu-hal/src/edram/targets/journal.rs": {
+      "bytes": 3572,
+      "sha256": "5fe795e8cf406ca9c5d091c78d74dd312820a0b78e80f5263b65a029a5e5655b"
+    },
+    "tools/native-metal-engine/gpu-hal/src/edram/targets/resolve.rs": {
+      "bytes": 27455,
+      "sha256": "b7c67eb4424074047c047568b0e77640d93e6ba98e5cae33b57dc604cedaa6d6"
+    },
+    "tools/native-metal-engine/gpu-hal/src/fixup.rs": {
+      "bytes": 3222,
+      "sha256": "cd60321a2c70f0b09ca412ce407067effd6accfa5a7ee0bf9d8e35bf0719fdfd"
+    },
+    "tools/native-metal-engine/gpu-hal/src/guest_shader.rs": {
+      "bytes": 10058,
+      "sha256": "dea63fb3c20aded4289980c5003fb3014432ad2caf186c5212e1106a19755e69"
+    },
+    "tools/native-metal-engine/gpu-hal/src/lib.rs": {
+      "bytes": 48109,
+      "sha256": "07fe3dfdda202452c728a97d3fad5970548bf13cff63ea50f4988f33392a95d9"
+    },
+    "tools/native-metal-engine/gpu-hal/src/ordered_upload.rs": {
+      "bytes": 5356,
+      "sha256": "9b6ef067daca0f0b3e7529e63e16a1b735ad7beeb0f412ff928564f541ecc009"
+    },
+    "tools/native-metal-engine/gpu-hal/src/pipeline.rs": {
+      "bytes": 10877,
+      "sha256": "42cd32d16a8577fa38ee525a639c4d765a5f64f558c1c9559bdc8b6747604eda"
+    },
+    "tools/native-metal-engine/gpu-hal/src/presentation.rs": {
+      "bytes": 10942,
+      "sha256": "3f37b7e381aa2c32de1a94adc5cec78644ef03a726a1f797f59ef32142ae3f00"
+    },
+    "tools/native-metal-engine/gpu-hal/src/render.rs": {
+      "bytes": 43933,
+      "sha256": "d75a56e9fc9cfa011bb8b126cb5f7ed0d52b41f8e6e58c82182c7587a1e32c91"
+    },
+    "tools/native-metal-engine/gpu-hal/src/render/metal_stencil.rs": {
+      "bytes": 8773,
+      "sha256": "e554bf64a118c3fcb1932c3234aa2e69864901a9878237140163f967fbef263e"
+    },
+    "tools/native-metal-engine/gpu-hal/src/render/recording.rs": {
+      "bytes": 32061,
+      "sha256": "86e1644e389a72611554e1b3960313df4e3f7bd7389ed1a40ae97798a3ed27df"
+    },
+    "tools/native-metal-engine/gpu-hal/src/render/stencil_restore.metal": {
+      "bytes": 1496,
+      "sha256": "5f7e2040187680f579af7962705ba17eb73aea9291c181eefe94b1885937c1e4"
+    },
+    "tools/native-metal-engine/gpu-hal/src/reservation.rs": {
+      "bytes": 8101,
+      "sha256": "98fac5a003a9e8604c242f498052cb13f46e3fc62771221294fa4ad9117611f6"
+    },
+    "tools/native-metal-engine/gpu-hal/src/session.rs": {
+      "bytes": 29471,
+      "sha256": "9a2149ead7d7c32bf65838a5cd7938e01645df3a60abdc99cc473444006881f8"
+    },
+    "tools/native-metal-engine/gpu-hal/src/session/worker.rs": {
+      "bytes": 7149,
+      "sha256": "843b05fe1fb9f8aff886316eb6b67e48342330b92efafe1270b271c5bd965af1"
+    },
+    "tools/native-metal-engine/gpu-hal/src/shader.rs": {
+      "bytes": 18386,
+      "sha256": "1b705654bfb7009fefe789e3f925c1de21a44b944132d83289b738bc737c89fc"
+    },
+    "tools/native-metal-engine/gpu-hal/src/shader/color_outputs.rs": {
+      "bytes": 9055,
+      "sha256": "1d0d865e55dd447501b3f2750771e6055c7de3c856464d2e890c5e71c72e2353"
+    },
+    "tools/native-metal-engine/gpu-hal/src/shader/sample_mask.rs": {
+      "bytes": 8688,
+      "sha256": "bbc5d816bd6c87475cb674f47be1547dc52a6e3319c63e3cc8b630a9addd9b38"
+    },
+    "tools/native-metal-engine/gpu-hal/src/staging.rs": {
+      "bytes": 6110,
+      "sha256": "f716a3e9f961f1ea7e9b7757eb8da1620590cf06da8f83c895af22a240b95bd6"
+    },
+    "tools/native-metal-engine/gpu-hal/src/surface.rs": {
+      "bytes": 3183,
+      "sha256": "d29476ef93cdf0657b17c1091abc01981e6bbd4b463680e169bf4687d2f337e9"
+    },
+    "tools/native-metal-engine/gpu-hal/src/surface/metal.rs": {
+      "bytes": 9439,
+      "sha256": "7a3863113324c30f903b6e055e0b0b537026d29b0233ce3d4e47728e2792fca7"
+    },
+    "tools/native-metal-engine/gpu-hal/src/texture.rs": {
+      "bytes": 37176,
+      "sha256": "7e68e0a809d2c1325636b0303fe3460010442499edea5cf594aa7a9536bd42b7"
+    },
+    "tools/native-metal-engine/gpu-hal/src/timeline.rs": {
+      "bytes": 5063,
+      "sha256": "bfabb1c5c22efffefd9fea8e3520f52f945acb84054ab0ee81bbb96664af0be8"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/color_outputs.rs": {
+      "bytes": 5620,
+      "sha256": "66426e3ac4d5a96fe9645ea585155c042780bdf1fc7adff3aa5a0e956dd29cdd"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/compressed.rs": {
+      "bytes": 19807,
+      "sha256": "b51cf5be368e28425f521aa84498ae6608f2d2513f4c9b74d0633bda3064571c"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/compute.rs": {
+      "bytes": 7376,
+      "sha256": "ad9637fddd05f8eed2c7de727e62062626ccb76d460321740075ec55899a5551"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/compute_batch.rs": {
+      "bytes": 8701,
+      "sha256": "38773691c2e4111b8df011dfce8bf17749154d38d7fb28b24044958380acf41c"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/constant_frame.rs": {
+      "bytes": 19947,
+      "sha256": "efed45c05535cdc56f643ddb657543409e4cac3ca142b51bcadf7305720418ee"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/constant_rollover.rs": {
+      "bytes": 24146,
+      "sha256": "daf8b457bcb34f9ef1dad22be9f7ecb33396eeb36de425f273d3a1ab28914df1"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/deferred_bindings.rs": {
+      "bytes": 6278,
+      "sha256": "4206832a47b326e157ffe164aabfa61ba0062eb747e31a988b44fc0e7c892275"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/depth_codec.rs": {
+      "bytes": 11435,
+      "sha256": "99eee914240b225fbfc9d508df7e2dc8051434b20b9d703421a87fc6f18f742f"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/depth_only.rs": {
+      "bytes": 6732,
+      "sha256": "a5904500ebac46d5e8efe2b85e59ab8313fa5d78d4ffe378ebae6d78a2e8ecd5"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/edram.rs": {
+      "bytes": 45937,
+      "sha256": "37592e26d999bed6e33ffe0eb2ef03525ddf69669ac429e66ed711ea5fffb641"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/edram_transfer.rs": {
+      "bytes": 20748,
+      "sha256": "191c996d8bafddaae78e3cd8073398c1d7c59b2e84703e9e738279397390241e"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/guest_clear.rs": {
+      "bytes": 7977,
+      "sha256": "c3c0aac29d813023a96ebc90d2800eb17f510669df785154898ca46d063ec5cb"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/guest_frame.rs": {
+      "bytes": 5911,
+      "sha256": "59527b2668b8c621478f6a9ef1be7c6389064e5e468eee68219059d252d27630"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/guest_journal.rs": {
+      "bytes": 3732,
+      "sha256": "92123014ade73c980e31aa7c55806ae45a0b4cb642d6f3c586936c95b8a0e362"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/guest_memory.rs": {
+      "bytes": 26403,
+      "sha256": "3caa179580c2e301f0142b86e9910dca0cad9624c592b947b2c48399acc81d76"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/guest_store.rs": {
+      "bytes": 24687,
+      "sha256": "0df4119a8d7824f4a675f6e25fc5c81d170a58ee2ec89f12e5243a2c486c317e"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/guest_texture.rs": {
+      "bytes": 20664,
+      "sha256": "1059ccd545d722d6389c6fbf1b8e31016997aff62b1959870842dcb740b13dd4"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/ordered_upload.rs": {
+      "bytes": 11628,
+      "sha256": "cfb61896b01ccb2630b280ba533ad730fbd5eca5a40b5d1c07dbd9af1aa6386d"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/parity.rs": {
+      "bytes": 10106,
+      "sha256": "417ae0db04f1e3ca975e5f2f9dee58c522218ebdf6efb81879c5001823b83dca"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/pipeline.rs": {
+      "bytes": 6366,
+      "sha256": "d640f209b678747c4b877b067b1c92665edc022329a13a865937841a0d58e9e2"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/presentation.rs": {
+      "bytes": 8802,
+      "sha256": "05a7d9414b35bc87bfb414a2cbfa4a0b7189927193fbb0800c77fde0d4363a9f"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/recorder.rs": {
+      "bytes": 15113,
+      "sha256": "087526596056d11662837aa810edf36bf130a2efa5463a0a27a7076aadc89d52"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/reservation.rs": {
+      "bytes": 11511,
+      "sha256": "9a02ca70d7d608f1ca1436ae4f4fbda0df416690735a82968ef589aa72b89af7"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/resolve_cache.rs": {
+      "bytes": 14186,
+      "sha256": "28041919e843ae689a4620b2664995a1d69c5888755273e943531cf9ce67f532"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/sample_lowering.rs": {
+      "bytes": 13623,
+      "sha256": "43059faf037dc1847b0cbd839a27120653d599c974d202be3ace39d9642241eb"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/session.rs": {
+      "bytes": 18468,
+      "sha256": "8c0f50e706361776201b134aca89214fef57e36611d699a9dc105a3eff9149fd"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/staging.rs": {
+      "bytes": 9683,
+      "sha256": "391e3c383595acf630978117c63724ae42488db43a5a833e726c5fc921172abc"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/store_kernel.rs": {
+      "bytes": 12938,
+      "sha256": "8b2a1d5e2f8ff53a53ce269042406e6110ad7407dd8dc44df845cef6155829af"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/target_cache.rs": {
+      "bytes": 19462,
+      "sha256": "8066d4ec166495315c086906d2b71a99c4a10d3d9d416a47c6bf13f82eef5d2c"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/cases/target_scope.rs": {
+      "bytes": 2061,
+      "sha256": "28969c3174c3db8245f8401174216c87a3b41c52cdb4255e9cfa7d548d58425e"
+    },
+    "tools/native-metal-engine/gpu-hal/tests/transfers.rs": {
+      "bytes": 104181,
+      "sha256": "dd74c385c3afa5ef56abda40fb4e89feb949c2cedc869e26e3def5b447563d33"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/.cargo/config.toml": {
+      "bytes": 39,
+      "sha256": "7248ed3bed246d755d7bf9e5d7842d74b5c270ba6c29ad907872b55a67707ee0"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/.cargo_vcs_info.json": {
+      "bytes": 98,
+      "sha256": "cc04491a85bc5b09f21b901ec91ed3924d4ec645d44b3f3b73f5063ddfbebf7a"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/.gitattributes": {
+      "bytes": 32,
+      "sha256": "33cb61bade82aa84344a56a2708cce6db1d496f4ab5917f097faa9fa9c176b18"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/.gitignore": {
+      "bytes": 163,
+      "sha256": "bea8e127d435715ffe8e461ec0a519478c2a7dc86efccd871c885120b0c31fb1"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/CHANGELOG.md": {
+      "bytes": 54865,
+      "sha256": "e60105d413f857e37dae165f819c47491d0a595183d3c9146b259d811b98b14f"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/Cargo.lock": {
+      "bytes": 13466,
+      "sha256": "40b94b8cdebc8e5d637422e258767bafa031524c155813a29225abfbf1d5cd25"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/Cargo.toml": {
+      "bytes": 4244,
+      "sha256": "94a9a25f6b007e0f382feb7a65c0045666187c0f4ae47eedfc8cb83c2606a8a8"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/Cargo.toml.orig": {
+      "bytes": 4295,
+      "sha256": "b662cce2f4a6b857a1b6d3c575dba5fbbb32cd624ed78503fd95f9998370ab35"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/LICENSE.APACHE": {
+      "bytes": 10173,
+      "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/LICENSE.MIT": {
+      "bytes": 1078,
+      "sha256": "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/README.md": {
+      "bytes": 4103,
+      "sha256": "5f2e894ebee3fabf280690ac67117d500824b69036a50ab63d09b84100377b3a"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/build.rs": {
+      "bytes": 570,
+      "sha256": "e9098f486e87d91710c07d40f1b32716e5debfe94a0b5e53e37075b0ee997eec"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/arena/handle.rs": {
+      "bytes": 3241,
+      "sha256": "a64b2ed8c97ea22eff20c431e930a303d67164c158cf5514535dc29601f4bc49"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/arena/handle_set.rs": {
+      "bytes": 3689,
+      "sha256": "b8e00d3ab51337e82d59a38dc6bd7cef45337da24b9618147fcdd6ec8917617b"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/arena/handlevec.rs": {
+      "bytes": 2837,
+      "sha256": "208d99644f9a6b6c1e88bbf9b280b01c62ce5bc8243727b31bafc3cc296d71c9"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/arena/mod.rs": {
+      "bytes": 10521,
+      "sha256": "d16e93e946b174aff821110490d8fc291bd6fe95f23347319d8254267c4ea343"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/arena/range.rs": {
+      "bytes": 4208,
+      "sha256": "0041168cee4c25d6b5bd4ba5cd42e138383f6a845e95ead3689bd3dd85c8b55c"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/arena/unique_arena.rs": {
+      "bytes": 8154,
+      "sha256": "8fbe23c266d2d7e6f992e085124308ab6b300aeed92b2ea2cbeea62ea09c3aea"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/continue_forward.rs": {
+      "bytes": 12801,
+      "sha256": "8194d238763caa6d5601ec3af56ba39a471c39945f43152b58d582092c99aefa"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/dot/mod.rs": {
+      "bytes": 34510,
+      "sha256": "6786d7e5bb85973cff381d7d422e64921682e7d51b6c06a623076a653a5a068f"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/glsl/conv.rs": {
+      "bytes": 8347,
+      "sha256": "decdfeb28a99de9d166f28a2354bdc6463b3abb86f8098e7af5587d19c129a7a"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/glsl/features.rs": {
+      "bytes": 29831,
+      "sha256": "aa0dbe8368b97e4f7228f3fed64b628421fba529a9041c4249f4b9e24b847d3f"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/glsl/keywords.rs": {
+      "bytes": 13745,
+      "sha256": "fee8ed132e44bace54869a7c169a1ab7ed55db1bf590b4b1bce9efa4552e1dd7"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/glsl/mod.rs": {
+      "bytes": 23588,
+      "sha256": "e0c9d1ff076ef92c4ff27cc6c93661eddd00d53794d12cbb1113c7e879d068a3"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/glsl/writer.rs": {
+      "bytes": 201104,
+      "sha256": "bd328f638575c2be9c5a2567ecf06a55ca482ef8747a7d341b27f71fc2b50dc3"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/hlsl/conv.rs": {
+      "bytes": 9632,
+      "sha256": "9f9056bff2c66c5ad34dfeaa665810e1ee935925ccbf212ea65b976e01a041b3"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/hlsl/help.rs": {
+      "bytes": 97404,
+      "sha256": "12ddb9d08fe64eb34b66ae2166edffce5106a04ccef0b8cc0391a6fafd676270"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/hlsl/keywords.rs": {
+      "bytes": 20941,
+      "sha256": "35285ad56319ba8c8ba86064d71e7cdba82303ecfe4cfda97fb983a53c17a14b"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/hlsl/mod.rs": {
+      "bytes": 30205,
+      "sha256": "873aabbfc8627a226ceb90f0f3934c09f247f6ef330d1e89144d13d6777ee086"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/hlsl/ray.rs": {
+      "bytes": 22831,
+      "sha256": "e3c9edc9b410af18ccf8bf717e4a33af20eefd15a404cdf460460236000dc8bd"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/hlsl/storage.rs": {
+      "bytes": 27904,
+      "sha256": "5083d03b1f25fe767e45e0c507bd30424352fccd48484c081620712d3682aae8"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/hlsl/writer.rs": {
+      "bytes": 207653,
+      "sha256": "e40d23091f338a6c3c9e7c5f48a2faa57ac20142eb0a0d13f42c710430039a94"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/mod.rs": {
+      "bytes": 14179,
+      "sha256": "9c049f3d488a49d1cd6ca01c64df9df367cd54b328ac23abc998cacca1915dbd"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/msl/keywords.rs": {
+      "bytes": 8474,
+      "sha256": "7d3f4f907f50df135e8c460f4aa95d8f7392f2e5a3aa4a7b8a3a4c9ac34afbf0"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/msl/mod.rs": {
+      "bytes": 35788,
+      "sha256": "31fe752daedff498b13224a8c238a039975a3b1d47e7c5f4b8222a19d50074c3"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/msl/sampler.rs": {
+      "bytes": 3986,
+      "sha256": "173ffc391fae1b3008cea89d7bb2e183eeb182acd30a5bae80b1f0cf1af569f9"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/msl/writer.rs": {
+      "bytes": 353063,
+      "sha256": "e0477d761c4fb20445bc54457a278320e7a65dc51bf25209d24aa951639e8704"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/pipeline_constants.rs": {
+      "bytes": 41322,
+      "sha256": "015fd8a06faeacd89f6aa89545d460ab705959f640b060f072859a331c21151a"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/block.rs": {
+      "bytes": 187977,
+      "sha256": "66b0914e1fb189d400f2ce284e43ea42903fb3e7165b5f1203a7ba47040e5057"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/f16_polyfill.rs": {
+      "bytes": 3181,
+      "sha256": "598be9f4de28d68e29050ca1ffe9037ea24770be0db0163ec80b03eb93df0765"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/helpers.rs": {
+      "bytes": 7035,
+      "sha256": "a5288be5845b3793373542de76febef51286faff3155d832fcfe099e1b51b57b"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/image.rs": {
+      "bytes": 51731,
+      "sha256": "6c5c9ff9007eee3a12f0ccf6248c2ad1b62e70cccb499f7723b94e38d2dc3d3e"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/index.rs": {
+      "bytes": 25101,
+      "sha256": "05b10dda48ffd08fb906304f3a184516d869ff973fcb8757faa13fb28dcec8f1"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/instructions.rs": {
+      "bytes": 41465,
+      "sha256": "390163762bbd40ba1c482dd56cf4bd08405b4bc9fc3758319f82d4fe7df846d5"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/layout.rs": {
+      "bytes": 7273,
+      "sha256": "3123ddc7d3887aece7b73550a5cf66306c6bc45ba79852bce8e0d0031a0a65f8"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/mesh_shader.rs": {
+      "bytes": 41449,
+      "sha256": "314e591230cbe1005fbbeeb4c3230026382d41592df5f0f61a3bbb4f7bdfd9b8"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/mod.rs": {
+      "bytes": 43173,
+      "sha256": "d8c4e3c2a901aa10f7c0a62e2fb4e915356fe6d2b5b8797bdb8637b592a93dcf"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/ray/mod.rs": {
+      "bytes": 162,
+      "sha256": "bcd6fe9cd407c13d6eb76740217e49992e3479a8e327410b8d9688d2b0eea21c"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/ray/query.rs": {
+      "bytes": 70135,
+      "sha256": "e49a8d5be0a828f7b6f0dc076b57a37b402942ea0fc777130b550e80aff73ff0"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/reclaimable.rs": {
+      "bytes": 2412,
+      "sha256": "c6276d944b7d9a1b4002e29e6b5ee8dc72c64fec74b5c35416e8b0d8ee8c6a88"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/selection.rs": {
+      "bytes": 9972,
+      "sha256": "4d8b695a9796ca2cb701ef3c4a52d8c0099c55818487f5163edd3c58e1610156"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/subgroup.rs": {
+      "bytes": 9211,
+      "sha256": "68fc3e3153022a0a8bddec20ad9221820678f02921878318e571d5aa2ca13cee"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/spv/writer.rs": {
+      "bytes": 164802,
+      "sha256": "c5727e10284790c091e173c6a579964604521931ea9033b0a3c6665a71e778d7"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/wgsl/mod.rs": {
+      "bytes": 2565,
+      "sha256": "9df14a10f3b1aa53d6c9e0a636371efbbe0ac7465f010ed8587b0cdf6463e4b2"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/wgsl/polyfill/inverse/inverse_2x2_f16.wgsl": {
+      "bytes": 274,
+      "sha256": "9e7635d04724822931c805a8b35e76d6d294d447e4ea8d57b308ce45609bf736"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/wgsl/polyfill/inverse/inverse_2x2_f32.wgsl": {
+      "bytes": 274,
+      "sha256": "340d491abde07f93996391796db65a5f88402663eaf6b9d2d894d11cb8cf8b6d"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/wgsl/polyfill/inverse/inverse_3x3_f16.wgsl": {
+      "bytes": 835,
+      "sha256": "4f13a1a4b3e1b51f0f992d13c55cf854a80917554a4d13c997819fa1fe776ba4"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/wgsl/polyfill/inverse/inverse_3x3_f32.wgsl": {
+      "bytes": 835,
+      "sha256": "9b16d2f4b9e433c8e03a0cb46ab48508f3bf7e185ce1b4e26106c47e81a677cb"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/wgsl/polyfill/inverse/inverse_4x4_f16.wgsl": {
+      "bytes": 2958,
+      "sha256": "86d39d1db5d03995b404950279db7f1698ad9622982aa319fdedb7532673235b"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/wgsl/polyfill/inverse/inverse_4x4_f32.wgsl": {
+      "bytes": 2958,
+      "sha256": "dc510525ac2dce66389a8c4bf8b2f31f0dedd9e6debdbe4ffd939a0a7fc533d3"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/wgsl/polyfill/mod.rs": {
+      "bytes": 2320,
+      "sha256": "f4ab3c9b9cdc36d16dab00d0f7f07d6e6beda0e27a36053e9b5ffeeb7ca18edc"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/back/wgsl/writer.rs": {
+      "bytes": 84897,
+      "sha256": "fd35dab0482547dd984b8e726ed3f1f77d31a27c303e4c6a666240e1f211009e"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/common/diagnostic_debug.rs": {
+      "bytes": 3985,
+      "sha256": "8c73fe605e5b6162d0485e264287ac50c061cf581743feebbffe1474d1d3516d"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/common/diagnostic_display.rs": {
+      "bytes": 4157,
+      "sha256": "46f1ff8a32179703ef0bcdb704db9f6e6e8b4eaad6cadf94577eeab3d8a16cd1"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/common/mod.rs": {
+      "bytes": 357,
+      "sha256": "0c979fd43068cfbceb7b29ff0bc578327e0770d5403c12f48d8605f77efbe200"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/common/predeclared.rs": {
+      "bytes": 1002,
+      "sha256": "a5f42d55f2e13d8f5a8213d4a881e9155c3994c4054d43edcf7bd7bb7c868ccf"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/common/wgsl/diagnostics.rs": {
+      "bytes": 2292,
+      "sha256": "4fec985b4c5cc6dfae4dd78bd7c850adc88a1761d7b6691de0355ea49300e532"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/common/wgsl/mod.rs": {
+      "bytes": 236,
+      "sha256": "d944915ff692c96aecca67737bccc2d5d9eb68f475166a2744f29a025f4a4c93"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/common/wgsl/to_wgsl.rs": {
+      "bytes": 14503,
+      "sha256": "02427ffa30c278326238ed9e247eaa2bd07240e43af9922f1bd286e386d20075"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/common/wgsl/types.rs": {
+      "bytes": 17602,
+      "sha256": "62da42d9d21f542b7aed9393303ba8c17feed49c4f82cb4a339fa0ac2bfacef0"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/compact/expressions.rs": {
+      "bytes": 17278,
+      "sha256": "e2b4267ef76b75e452bc3b58c474b0a2960f0ffbec15788a79cc63eea14d73d6"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/compact/functions.rs": {
+      "bytes": 4242,
+      "sha256": "b033cfe2212f1fd8170076a960c5793c2e62857603baa738ea5280e8880c0eac"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/compact/handle_set_map.rs": {
+      "bytes": 4917,
+      "sha256": "b4688bff174487f2da4a1a946af07c80b6ba59f60dc84184c6a30039354209e8"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/compact/mod.rs": {
+      "bytes": 46647,
+      "sha256": "e677096449031a12cb0e9381430e382c0bdbdb0cd1364e5785b03329a9f14e3b"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/compact/statements.rs": {
+      "bytes": 18290,
+      "sha256": "9750a315fc926f71daa57cf56b5b2ab22785efa7921d1e69159c55bc1cef72f3"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/compact/types.rs": {
+      "bytes": 3575,
+      "sha256": "32abe0e0e0d55044685c5c0d20d1688970217f106270f2bd4a35aa0444a5bdfe"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/diagnostic_filter.rs": {
+      "bytes": 9517,
+      "sha256": "5e3d14a774974148b7d2918617ba3e2c3a07493e0f90485a7de9db86e05a7cd0"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/error.rs": {
+      "bytes": 6480,
+      "sha256": "36b0cf4fde2b6cf616f8de5b3a444942843487f5e16f14cbb1e4b1d84e93bc59"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/atomic_upgrade.rs": {
+      "bytes": 9774,
+      "sha256": "86ce9f9628d92a1a09802cb534bb4310236b83f2799c921b81c687f009c589be"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/ast.rs": {
+      "bytes": 12109,
+      "sha256": "34fdd3d113b85d1f9cad8dc9ccdd944d1c5e88eae8f46b7088baa49e0307ef7b"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/builtins.rs": {
+      "bytes": 90314,
+      "sha256": "ffe36464b5758dd8c917c3e9505d4027268e4b019174f0f95a229cd16d4cafa1"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/context.rs": {
+      "bytes": 61066,
+      "sha256": "40db6d3cd1018aeb33a34e2e8e7380c33067de58f1011078d7fe80bb59bf0208"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/error.rs": {
+      "bytes": 9139,
+      "sha256": "7ff2769319490f2cdaa3ebedda71148903d208f0171305ca24bed1caf2d6c62e"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/functions.rs": {
+      "bytes": 61489,
+      "sha256": "6540d4f9ad9b569b3cfdd27084b497881ba1e861a5d5ebff9e39c5cb493f6bd7"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/lex.rs": {
+      "bytes": 11660,
+      "sha256": "24706628b600b5ce435cef464c84196ac5d58013122a97e7b59d509cc25f85a2"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/mod.rs": {
+      "bytes": 7030,
+      "sha256": "132f2a60812b3910f65e6281562d4dc94efa329fd1eb0f2778ffe67631a35f78"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/offset.rs": {
+      "bytes": 7004,
+      "sha256": "66bd524a2d17dc44f431430dcbbb74a771fdab43c9581e88bb1123e6cfec516b"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/parser.rs": {
+      "bytes": 16222,
+      "sha256": "95426e630b3ef8a9581f90c0e98af6e18bd419803baad02ebee0451c64d0f25d"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/parser/declarations.rs": {
+      "bytes": 26483,
+      "sha256": "311212375f0ba39ef77889acadd54b9909cc9d043e424c0b6c9db3220d68d03e"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/parser/expressions.rs": {
+      "bytes": 21027,
+      "sha256": "828f11ed3227de315d5d1b14f6f84ce098f77af9e31ff3ceb4e4906121d932fd"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/parser/functions.rs": {
+      "bytes": 25710,
+      "sha256": "302e24e06190aff555131c33f9a80b15df6a0390d6c776f888a44d5ef7df697e"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/parser/types.rs": {
+      "bytes": 16981,
+      "sha256": "ee242048a65cd3709e16b70a3882e9296e615327480f2ad779e3d2523778181f"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/parser_tests.rs": {
+      "bytes": 18556,
+      "sha256": "6834f0d595f4077266054e5da43e4f1b60e5c6780611ab0f530d9964cc62fad3"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/token.rs": {
+      "bytes": 2379,
+      "sha256": "83780c0c1954ef216896c9d8a48e412b357783e00ccd4909a7a249935c742629"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/types.rs": {
+      "bytes": 12845,
+      "sha256": "286395d82707a09d28b4c1a8bade917822478e53d8eb277ceec5fa9e71649ba2"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/glsl/variables.rs": {
+      "bytes": 27074,
+      "sha256": "f8e3c2302c33fd2e3ac9af9867401227b1a5313fe914d9728ad8a8e891e07217"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/interpolator.rs": {
+      "bytes": 2808,
+      "sha256": "caf8c8c3ddca56fbece33cc18615c4d8c5b3b68112c9de22196d9dd49c84bf96"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/mod.rs": {
+      "bytes": 13742,
+      "sha256": "412eae25106fbe832342b04efc55c66922f9b4116aa51cee0e24eae49a936c6e"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/spv/convert.rs": {
+      "bytes": 9752,
+      "sha256": "10e99bc6cc745dd6475ccb4794dba4b80307b42afd71118de904ec6fdb09ccc6"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/spv/error.rs": {
+      "bytes": 7496,
+      "sha256": "72397b185fe791ec126616b1cf40ab732cf5aeabf273f93e0703eb7a1de9b7de"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/spv/function.rs": {
+      "bytes": 30523,
+      "sha256": "3c98c637fa3613a073bb8f4fc0a30c27153e8601c7f82a1c0730600020aca488"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/spv/image.rs": {
+      "bytes": 35363,
+      "sha256": "c39ffdb19a19861cec009de39431a879be99bdd4d9d08c0ecdef397c2f3f6fa5"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/spv/mod.rs": {
+      "bytes": 119112,
+      "sha256": "bf9716d69a84126950a567f0013c35ef0b3c2297605e3d94fe7d61e240f0d589"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/spv/next_block.rs": {
+      "bytes": 143479,
+      "sha256": "4d8ab292fc9fc96105931ec1c907c44bd5828f2e3232dd60f8f42a5bdeb1497e"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/spv/null.rs": {
+      "bytes": 1340,
+      "sha256": "ee20287365e025e8bcc91f29df930ff8b63cb6d7f26db0b1789d54de614a7353"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/type_gen.rs": {
+      "bytes": 24031,
+      "sha256": "111832af89a268ae3206d2ba2159b9b9d64224ed09375a29eec142725ea7fb34"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/error.rs": {
+      "bytes": 64189,
+      "sha256": "9121311450ae5720e6c878162cc116fc5ab9db2ca266d0821c2e0b2def4f5f74"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/index.rs": {
+      "bytes": 8151,
+      "sha256": "476e5c4eddb14dfb53eee7976bcf4276c8a3fad81fbed92dc7b5dd31a5ab1593"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/lower/construction.rs": {
+      "bytes": 24517,
+      "sha256": "1685112c2cc40984a71574cbb17c022b298691f03a03472b198874500d24ecd9"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/lower/conversion.rs": {
+      "bytes": 19019,
+      "sha256": "98289fcf3f0f39a16ec1fb90bc32ac8babbf8476b83c1f7b06f5fd2b2c2c388c"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/lower/mod.rs": {
+      "bytes": 201361,
+      "sha256": "1992e43793bbdafb481419683a3cc07ca129d02a0133e82d631bdd9f920aaec9"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/lower/template_list.rs": {
+      "bytes": 6805,
+      "sha256": "62ca31b4f3240c16f70caa3e78801a556da740010186e5c1f3723e3ef6f6c815"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/mod.rs": {
+      "bytes": 3094,
+      "sha256": "c115e0154a68b762d162ef3529060f23659b13f95f8e2d326f043015ff3baf06"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/parse/ast.rs": {
+      "bytes": 13691,
+      "sha256": "0550ce8b91fbcdf382015c1a38faebd4e26d8cfa1bd352fe137044166190ebaf"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/parse/conv.rs": {
+      "bytes": 25555,
+      "sha256": "0abbab52e11c74627d0cae7f662084fa016c5b12d57ac73e01a2e95406621cca"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/parse/directive.rs": {
+      "bytes": 3577,
+      "sha256": "c96f33cef2c1d8a374fe1b3827538f7db33d6b7811a6e0914d29de80b8963257"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/parse/directive/enable_extension.rs": {
+      "bytes": 11944,
+      "sha256": "0313249a27b7a231b7b87b1d23b7fd64819e46a76ea9873c74e12b868af909e6"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/parse/directive/language_extension.rs": {
+      "bytes": 4349,
+      "sha256": "1ddfd0331ece96eddbb07a971991dd6285bd58e0276d94a5c26bf30eab0ac5be"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/parse/lexer.rs": {
+      "bytes": 43033,
+      "sha256": "7208b9d96e850b285a45fb114b8a40eb74ce2cc143c528a1e967626d8395fcc0"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/parse/mod.rs": {
+      "bytes": 94888,
+      "sha256": "afcde0be178e02c1f7bb98c64c551aabb80e4face2c765baa5bf29aa533b0e62"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/parse/number.rs": {
+      "bytes": 16177,
+      "sha256": "7af92c71031e4c4258e9d8d323f7ee99a2fd4be3b6975ab9b8b53b95431845d9"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/front/wgsl/tests.rs": {
+      "bytes": 24193,
+      "sha256": "c0bc29cc8cc786a0b589da267b99a9b5e0c0871f8326d84d3b563025860f77bc"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/ir/block.rs": {
+      "bytes": 3510,
+      "sha256": "85bac7b476b48240ebfe3660a2b3e781752faa895f71f7e52393e75e0bd8dbb7"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/ir/mod.rs": {
+      "bytes": 109539,
+      "sha256": "eeea6b2856c515b8c7aa91289b234b1567ee94ae5546a76357d1c113bcc50b54"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/keywords/mod.rs": {
+      "bytes": 177,
+      "sha256": "47a6fde012bf7d1e70f0fac7762f6a8e7dca6b9bbb99e2cada773c61527cfbfe"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/keywords/wgsl.rs": {
+      "bytes": 8500,
+      "sha256": "2448982b88efc945cad1fca249e111f9e8cee7fdca110e13913960b012cc94b4"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/lib.rs": {
+      "bytes": 4554,
+      "sha256": "9d6216a8bd1d3dc644932ffab36694585d290464054026c41f2b10f3fdd800b7"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/non_max_u32.rs": {
+      "bytes": 4917,
+      "sha256": "df5761bdb673a0939bde3081f1eb28258577d124792dd16d0376cee475fe2c02"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/constant_evaluator.rs": {
+      "bytes": 184673,
+      "sha256": "7cedbd37719966ed3a7385c5a170332bae0dec7e112ba6f768878b5d0cf5b65a"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/emitter.rs": {
+      "bytes": 1037,
+      "sha256": "76e264b4c0877fe30bf20135685a289b76001188a78d5ca5b88edae5bb29646b"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/index.rs": {
+      "bytes": 26560,
+      "sha256": "a356017af35132873944f45183de968f3ccb605d9b953365488d2cb80ae0cfba"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/keyword_set.rs": {
+      "bytes": 5378,
+      "sha256": "928414d2b79ee48735d532e03d3f0a58427c3f27a2a0c6938425749b00943784"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/layouter.rs": {
+      "bytes": 10052,
+      "sha256": "fc30325208c0d2abf8a7c8374b76bad0eb5a842067e1014fc406a90ddaff5fc6"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/mod.rs": {
+      "bytes": 36700,
+      "sha256": "85ce9ef6de3101ca7a9de38723d1fda401b28f5f85bce0ac4bf3f27f6812d8ab"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/namer.rs": {
+      "bytes": 16777,
+      "sha256": "48f8dbc1d097d7517d1e140c7e013b2511c0efc55a07a527789a8d0e22fa9e11"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/overloads/any_overload_set.rs": {
+      "bytes": 3661,
+      "sha256": "877cd637d979abc08caa021dabb9821a79fc9109eb97024a230bcfac82830388"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/overloads/constructor_set.rs": {
+      "bytes": 5431,
+      "sha256": "b702f866ac1472bcc075bd0bede450388123b5899431934fd60a29865498c68b"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/overloads/list.rs": {
+      "bytes": 6315,
+      "sha256": "0a4ff2a43e035da2cf4a321a15afaff676377838095e691d3e5447f8d9180ab7"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/overloads/mathfunction.rs": {
+      "bytes": 8581,
+      "sha256": "305716a575bed3ec456db583e65bd5a972f1448612b6f260b278ae0b79802540"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/overloads/mod.rs": {
+      "bytes": 10596,
+      "sha256": "0e96479cbd0ec9fa8200a5e88c16a22ee7ed2021ecf6f80a7e4ded69cad5239f"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/overloads/one_bits_iter.rs": {
+      "bytes": 2521,
+      "sha256": "6b98769fdec777d311248084f13958c5cca44659d0928603ece8618387ea58b2"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/overloads/regular.rs": {
+      "bytes": 18345,
+      "sha256": "73d64fab79019d589cb0595d0ef606fd6af732c42a418c60c81da4c96e113c89"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/overloads/rule.rs": {
+      "bytes": 4495,
+      "sha256": "b7f87d5ca0cffdaa8ee0db0110918f5a726359fd8a72bc638d8ce27a4b0ae3b2"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/overloads/scalar_set.rs": {
+      "bytes": 4639,
+      "sha256": "3729bc754dbf29a2337379ecb46568fdc3149a48074a354244da91e3d9cb5cef"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/overloads/utils.rs": {
+      "bytes": 2663,
+      "sha256": "d8f661579e917edb892b6a7e8babadbc0db1a110d74558b81b49b3331bd07a5e"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/terminator.rs": {
+      "bytes": 1756,
+      "sha256": "961edb1bbc2cfb0fe7da02e39103e57fd46e3b94a5c59276d31a195a2bffd551"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/type_methods.rs": {
+      "bytes": 25297,
+      "sha256": "f424d5b22985b0e442778014260499b53cf02c8dde8d65c03313b957d17d0b9f"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/proc/typifier.rs": {
+      "bytes": 36426,
+      "sha256": "2d9d1ec55b1c2d2f8f612cd3dbae8ff98e5d475b8292e3ddf60d3cf2966d0cab"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/racy_lock.rs": {
+      "bytes": 1553,
+      "sha256": "c56313dcaf212301ddf9e665872f35868ce966002d175ae153c1f14c1b2c048a"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/span.rs": {
+      "bytes": 15092,
+      "sha256": "d9442df7578e032eb7a1227911f24d215f7ca083bec2d6a4c9acfdb81e4b1c50"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/valid/analyzer.rs": {
+      "bytes": 64590,
+      "sha256": "91dbcf6d9888d71978270f1f01aca3805be3c74e29aeba3d824e26c5e7b34e17"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/valid/compose.rs": {
+      "bytes": 4499,
+      "sha256": "46eeed8c4d5b66fc043ddb701074bd864a9fdd24e38b88e282046230acefb747"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/valid/expression.rs": {
+      "bytes": 66942,
+      "sha256": "a034b66a39d65c29769e808d77e3123694e285a7812f2a831a5f652349535a57"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/valid/function.rs": {
+      "bytes": 92510,
+      "sha256": "03f15cd3dceaed23d589c293b88666a4a24e824dc4581db0529eb688d205b1f4"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/valid/handles.rs": {
+      "bytes": 43583,
+      "sha256": "79eca0d668c2015657fb98887df827192abedd3681147586e96bf8c6f0f736cd"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/valid/interface.rs": {
+      "bytes": 71798,
+      "sha256": "74b26c1ffec12b283134c2bf1f01e97106974a2ef6fee28914b6b93300b4f0b7"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/valid/mod.rs": {
+      "bytes": 34517,
+      "sha256": "5305d2a7792cd30ec9659377fba43e614e78f62d9d32b37bee36408d890c6f9d"
+    },
+    "tools/native-metal-engine/vendor/naga-29.0.3/src/valid/type.rs": {
+      "bytes": 41484,
+      "sha256": "33340df1ab43bb68264cf7a3e27b59b79345bf4ac204ad62307d1f3be87de65d"
+    },
     "tools/windows-ios-guest-probe/audit_private_guest_symbols.py": {
       "bytes": 24331,
       "sha256": "7859c1b0feaa48267a6e684aa460ab37a26bc99801e309838f52b6dffafa01f7"
@@ -1485,5 +2509,7 @@
       "bytes": 180,
       "sha256": "5579ec9213dec11ae48610572206216afcd0dcf0f047449f63c3e2ac189bc12c"
     }
-  }
+  },
+  "renderer_backend": "native-hal",
+  "native_gpu_core_version": "29.0.3"
 }

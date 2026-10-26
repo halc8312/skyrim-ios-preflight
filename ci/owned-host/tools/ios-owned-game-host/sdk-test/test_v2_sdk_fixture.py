@@ -176,7 +176,8 @@ class V2FixtureTests(unittest.TestCase):
                      base / "Resources", base / "Frameworks/WgpuNative.framework", base / "sdk-test/native",
                      framework, resources):
             path.mkdir(parents=True, exist_ok=True)
-        (base / "project.yml").write_text((HERE.parent / "project.yml").read_text())
+        (base / "project.yml").write_text((HERE.parent / "project.yml").read_text().replace(
+            "        SKYRIMRendererBackend: native-hal\n", "        SKYRIMRendererBackend: webgpu\n"))
         (base / "app/OwnedHost-Bridging-Header.h").write_text('#include "OwnedHost.h"\n')
         (base / "include/PrivateGuestABIV2.h").write_text("// public authored stand-in\n")
         (base / "Libraries/libios_owned_game_host.a").write_bytes(b"authored library placeholder")
@@ -204,6 +205,24 @@ class V2FixtureTests(unittest.TestCase):
             self.assertIn("PublicV2SDKProbe.h", (output / "app/OwnedHost-Bridging-Header.h").read_text())
             self.assertEqual(before, {p.relative_to(base): p.read_bytes() for p in base.rglob("*") if p.is_file()})
             with self.assertRaises(ValueError): s.prepare(base, fixture, resources, output)
+
+    def test_native_stage_preserves_renderer_and_omits_legacy_framework(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve(strict=True)
+            base, fixture, resources = self.stage_inputs(root)
+            project = base / "project.yml"
+            project.write_text(project.read_text().replace("SKYRIMRendererBackend: webgpu",
+                                                           "SKYRIMRendererBackend: native-hal"))
+            with self.assertRaises(ValueError):
+                s.prepare(base, fixture, resources, root / "rejected")
+            self.assertFalse((root / "rejected").exists())
+            binary = base / "Frameworks/WgpuNative.framework/WgpuNative"
+            binary.unlink()
+            binary.parent.rmdir()
+            output = s.prepare(base, fixture, resources, root / "native-v2")
+            self.assertEqual(d.sdk.renderer_kind(output), "native-hal")
+            self.assertIsNone(d.sdk.staged_gpu_sha(output))
+            self.assertTrue((output / "Frameworks/PrivateGuest.framework/PrivateGuest").is_file())
 
     def test_stage_refuses_wrong_abi_identity_overlap_and_symlink_before_creation(self):
         with tempfile.TemporaryDirectory() as temporary:

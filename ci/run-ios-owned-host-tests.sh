@@ -68,17 +68,29 @@ python3 -B -m unittest discover -s "$harness/ci" -p 'test_prepare_owned_host_kit
 python3 -B -m unittest discover -s "$harness/ci" -p 'test_watch_public_audio_hang.py' -v \
   2>&1 | tee "$output/public-audio-hang-helper-tests.log"
 
-# The already reviewed pinned public source builder retains its 228-export,
-# Metal/WGSL, matching-platform and strict synthetic coexistence gates.
-WGPU_PREFLIGHT_WORK_DIR="$work/wgpu-public" \
-WGPU_PREFLIGHT_OUTPUT_DIR="$output/gpu-framework" \
-  bash "$harness/ci/gpu-framework/build_frameworks.sh" 2>&1 | tee "$output/public-wgpu-build.log"
+# Exercise the direct backend on the runner's real Metal device before the
+# single device/Simulator application build. All workloads are authored/public.
+# The former WebGPU C framework is not built or embedded in this route.
+MTL_DEBUG_LAYER=1 cargo +nightly-2026-10-11 test --locked \
+  --manifest-path "$kit/tools/native-metal-engine/gpu-hal/Cargo.toml" \
+  --features fault-injection,metal-fixed-sample-mask,metal-stencil-export \
+  -- --test-threads=1 --nocapture 2>&1 | tee "$output/native-metal-core-tests.log"
+MTL_DEBUG_LAYER=1 cargo +nightly-2026-10-11 test --locked \
+  --manifest-path "$kit/tools/native-metal-engine/bridge/Cargo.toml" \
+  --test compat -- --test-threads=1 --nocapture 2>&1 | tee "$output/native-metal-boundary-tests.log"
+MTL_DEBUG_LAYER=1 cargo +nightly-2026-10-11 test --locked \
+  --manifest-path "$kit/skyrim-recomp-web/Cargo.toml" \
+  -p xenos-edram -p xenos-texture-cache -p xenos-render \
+  --features xenos-render/native-metal,xenos-render/public-probes,xenos-render/metal-shaders \
+  --test gpu --test cache --test alpha_coverage_native --test converted_indices_native \
+  --test draw_native --test present_native --test vertex_ranges_native \
+  -- --test-threads=1 --nocapture 2>&1 | tee "$output/native-metal-renderer-tests.log"
 export RUSTFLAGS='-C lto=off -C embed-bitcode=no -C panic=unwind'
 unset CARGO_ENCODED_RUSTFLAGS || true
 
 for variant in device simulator; do
-  host_features=metal-renderer
-  if [[ "$variant" == simulator ]]; then host_features=metal-renderer,fixture-tools; fi
+  host_features=native-metal
+  if [[ "$variant" == simulator ]]; then host_features=native-metal,fixture-tools; fi
   if [[ "$variant" == device ]]; then rust_target=aarch64-apple-ios; else rust_target=aarch64-apple-ios-sim; fi
   built="$work/owned-fixture-$variant"
   bash "$harness/ci/build-owned-host-fixture.sh" "$kit" "$simde" "$built" "$variant" \
@@ -95,8 +107,7 @@ for variant in device simulator; do
   for record in fixture.ll actual-exports.txt undefined.txt symbols.txt disassembly.txt link-metadata.json; do
     cp "$built/$record" "$output/$variant-$record"
   done
-  WGPU_NATIVE_FRAMEWORK_DIR="$output/gpu-framework/$variant" \
-    cargo +nightly-2026-10-11 rustc --locked --release --lib --features "$host_features" \
+  cargo +nightly-2026-10-11 rustc --locked --release --lib --features "$host_features" \
       --target "$rust_target" --manifest-path "$host/Cargo.toml" -- --print=native-static-libs \
       2>&1 | tee "$output/host-$variant-build.log"
   stage="$work/owned-app-$variant"
@@ -112,13 +123,13 @@ for variant in device simulator; do
     "$host/native/GraphicsPresentationProbe.h" "$stage/native/"
   cp "$generic/PrivateGuestABI.h" "$generic/PrivateGuestABIV2.h" "$stage/include/"
   cp "$CARGO_TARGET_DIR/$rust_target/release/libios_owned_game_host.a" "$stage/Libraries/"
-  cp -R "$built/PrivateGuest.framework" "$output/gpu-framework/$variant/WgpuNative.framework" "$stage/Frameworks/"
+  cp -R "$built/PrivateGuest.framework" "$stage/Frameworks/"
   cp "$resources/OwnedGuestBinding.json" "$stage/Resources/"
   cp "$resources/default.xex" "$stage/Resources/PublicFixture/"
   if [[ "$variant" == device ]]; then
     # Strip only an automatically signed PUBLIC dependency, explicitly and
     # before the all-images unsigned audit. Never alter a private input here.
-    for framework in "$stage/Frameworks/PrivateGuest.framework" "$stage/Frameworks/WgpuNative.framework"; do
+    for framework in "$stage/Frameworks/PrivateGuest.framework"; do
       name="$(basename "$framework" .framework)"
       if /usr/bin/codesign --display --verbose=2 "$framework" > "$output/device-$name-signature-before.log" 2>&1; then
         /usr/bin/codesign --remove-signature "$framework" > "$output/device-$name-remove-signature.log" 2>&1
@@ -136,10 +147,10 @@ for variant in device simulator; do
       /usr/bin/codesign --remove-signature "$app" > "$output/device-app-remove-signature.log" 2>&1
     fi
     python3 "$harness/ci/package-owned-host-ipa.py" "$app" \
-      "$output/OwnedGameHost-0.1.0-unsigned.ipa" "$output/device-ipa-metadata.json" \
+      "$output/OwnedGameHost-0.1.0-unsigned.ipa" "$output/device-ipa-metadata.json" native-hal \
       | tee "$output/device-ipa-audit.log"
   else
-    for framework in "$stage/Frameworks/PrivateGuest.framework" "$stage/Frameworks/WgpuNative.framework"; do
+    for framework in "$stage/Frameworks/PrivateGuest.framework"; do
       name="$(basename "$framework" .framework)"
       /usr/bin/codesign --force --sign - --timestamp=none "$framework" > "$output/simulator-$name-codesign.log" 2>&1
       /usr/bin/codesign --verify --strict --verbose=2 "$framework" > "$output/simulator-$name-codesign-verify.log" 2>&1

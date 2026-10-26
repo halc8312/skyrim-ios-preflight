@@ -454,7 +454,8 @@ mod free_run_tests {
                 }
                 2 => {
                     let lo = 0x4000_0000 + (rand() % 0x300) * 0x1_0000;
-                    if let Ok(a) = h.alloc_range(lo, lo + 0x40_0000, 0x3000, PAGE_SIZE, true, protect::READWRITE, false) {
+                    if let Ok(a) = h.alloc_range(lo, lo + 0x40_0000, 0x3000, PAGE_SIZE, true, protect::READWRITE, false)
+                    {
                         assert!(a.address >= lo && a.address + 0x3000 <= lo + 0x40_0001);
                         live.push(a.address);
                     }

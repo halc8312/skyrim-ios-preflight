@@ -258,7 +258,10 @@ pub extern "C" fn skyrt_inflate(strm: u32, flush: i32) -> i32 {
             // SAFETY: committed guest ranges the title handed to inflate; input and output don't
             // overlap (zlib requires it), and the stream's owner waits for this call.
             let (input, output) = unsafe {
-                (std::slice::from_raw_parts(src, avail_in as usize), std::slice::from_raw_parts_mut(dst, avail_out as usize))
+                (
+                    std::slice::from_raw_parts(src, avail_in as usize),
+                    std::slice::from_raw_parts_mut(dst, avail_out as usize),
+                )
             };
             host.step(input, output, flush)
         }
@@ -411,4 +414,3 @@ mod tests {
         assert_eq!(h.adler, zlib_rs::adler32::adler32(1, &data));
     }
 }
-

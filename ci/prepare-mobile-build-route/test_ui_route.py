@@ -37,7 +37,7 @@ def input_scripts():
 
 class PublicUIRouteTests(unittest.TestCase):
     def test_build_number_matches_the_preserved_native_trace_assertion_before_runner_work(self):
-        self.assertEqual(route.require_build_alignment(HOST), "18")
+        self.assertEqual(route.require_build_alignment(HOST), "19")
         with tempfile.TemporaryDirectory() as temp:
             host = Path(temp)
             (host / "sdk-test/tests").mkdir(parents=True)
@@ -46,8 +46,8 @@ class PublicUIRouteTests(unittest.TestCase):
             (host / "project.yml").write_text(project,encoding="utf-8")
             test = host / "sdk-test/tests/NativeTraceSDKProbeTests.swift"
             test.write_text(native,encoding="utf-8")
-            self.assertEqual(route.require_build_alignment(host), "18")
-            stale = native.replace('as? String, "18")','as? String, "17")')
+            self.assertEqual(route.require_build_alignment(host), "19")
+            stale = native.replace('as? String, "19")','as? String, "17")')
             self.assertNotEqual(stale,native)
             test.write_text(stale,encoding="utf-8")
             with self.assertRaisesRegex(ValueError,"build_expectation_mismatch"):
@@ -351,7 +351,7 @@ function python3() {
             self.assertEqual(result.returncode,0,result.stderr.decode())
             self.assertIn(b'raw_xcresult_omitted=True',result.stdout)
             for name,data in before.items():self.assertEqual((source/name).read_bytes(),data)
-            with zipfile.ZipFile(root/'out/public-review/SkyrimLab-build18-metal-common-state-review.zip') as archive:
+            with zipfile.ZipFile(root/'out/public-review/SkyrimLab-build19-native-metal-review.zip') as archive:
                 self.assertEqual(set(archive.namelist())-{n for n in archive.namelist() if n.endswith('/')},{'owned-host/'+n for n in required})
                 for name in required:self.assertEqual(archive.read('owned-host/'+name),before[name])
 

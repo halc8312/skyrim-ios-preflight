@@ -1,0 +1,19 @@
+[package]
+name = "gpu-native-bridge"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace]
+
+[patch.crates-io]
+naga = { path = "../vendor/naga-29.0.3" }
+
+[dependencies]
+skyrim-native-gpu = { path = "../gpu-hal", features = ["metal-fixed-sample-mask"] }
+log = "0.4"
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2 = "=0.6.4"
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["CALayer", "CAMetalLayer", "objc2-metal", "objc2-core-foundation"] }

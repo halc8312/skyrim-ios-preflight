@@ -8,14 +8,19 @@ publish.workspace = true
 build = "build.rs"
 
 [features]
+# Whole-session direct HAL backend; no mixed-device fallback.
+native-metal = ["gpu-webgpu/native-metal"]
 # Numeric, opt-in host elapsed-time measurements for local diagnostics.
 cpu-profile = []
 # Authored offscreen conformance helpers; never enabled by normal hosts.
 public-probes = []
 # CPU shader lowering/reflection for the separate native backend.
 metal-shaders = ["xenos-shader/metal"]
+# Root-only numeric audit of actual submitted game shaders/draws. No source dump.
+native-coverage = []
 
 [dependencies]
+xenos-gfx.workspace = true
 d3d-hle.workspace = true
 gpu-webgpu.workspace = true
 log.workspace = true
@@ -28,6 +33,7 @@ xenos-texture-cache.workspace = true
 
 [target.'cfg(not(target_os = "emscripten"))'.dependencies]
 png = "=0.17.16"
+libc.workspace = true
 
 [dev-dependencies]
 naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in"] }

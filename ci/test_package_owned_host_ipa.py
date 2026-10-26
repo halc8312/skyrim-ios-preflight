@@ -22,6 +22,27 @@ def image(kind, platform=2, signature=None):
 
 
 class PublicUnsignedPackageTests(unittest.TestCase):
+    def test_native_provider_requires_its_marker_and_excludes_legacy_framework(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            app = self.app(root)
+            info_path = app / "Info.plist"
+            info = plistlib.loads(info_path.read_bytes())
+            info["SKYRIMRendererBackend"] = "native-hal"
+            info_path.write_bytes(plistlib.dumps(info))
+            with self.assertRaises(ValueError):
+                packager.package(app, root / "reject.ipa", root / "reject.json", "native-hal")
+            self.assertFalse((root / "reject.ipa").exists())
+            (app / "Frameworks/WgpuNative.framework/WgpuNative").unlink()
+            packager.package(app, root / "native.ipa", root / "native.json", "native-hal")
+            report = json.loads((root / "native.json").read_text())
+            self.assertEqual(report["renderer"], "native-hal")
+            self.assertEqual(set(report["images"]), {"OwnedGameHost", "Frameworks/PrivateGuest.framework/PrivateGuest"})
+            del info["SKYRIMRendererBackend"]
+            info_path.write_bytes(plistlib.dumps(info))
+            with self.assertRaises(ValueError):
+                packager.package(app, root / "missing.ipa", root / "missing.json", "native-hal")
+
     def app(self, root):
         app = root / "OwnedGameHost.app"
         app.mkdir()

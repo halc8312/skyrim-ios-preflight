@@ -161,8 +161,7 @@ def main(argv=None):
     output.mkdir()
     fixture_sha = hashlib.sha256(mobile.read_command_log(
         stage / "Frameworks/PrivateGuest.framework/PrivateGuest", 16 * 1024 * 1024)).hexdigest()
-    wgpu_sha = hashlib.sha256(mobile.read_command_log(
-        stage / "Frameworks/WgpuNative.framework/WgpuNative", 128 * 1024 * 1024)).hexdigest()
+    wgpu_sha = sdk.staged_gpu_sha(stage)
     deadline = time.monotonic() + 300
     def run(command, name, cap=None, result=None):
         return mobile.run_command(command, stage, output / name, deadline,

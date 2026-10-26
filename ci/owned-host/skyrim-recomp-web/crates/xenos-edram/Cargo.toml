@@ -12,3 +12,4 @@ gpu-webgpu.workspace = true
 log.workspace = true
 xenos-state.workspace = true
 xenos-texture.workspace = true
+xenos-gfx.workspace = true

@@ -1293,11 +1293,11 @@ impl TextureCache {
     /// Keeps the texture of `view` (e.g. the front buffer being presented, which is drawn again
     /// until the next one) from being destroyed to make room; replaces the previous one.
     pub fn protect(&mut self, view: &TextureView) {
-        self.protected = view.raw() as usize;
+        self.protected = view.identity();
     }
 
     fn is_protected(&self, e: &Entry) -> bool {
-        self.protected != 0 && e.views.iter().flatten().any(|v| v.raw() as usize == self.protected)
+        self.protected != 0 && e.views.iter().flatten().any(|v| v.identity() == self.protected)
     }
 
     /// Whether textures were created past `max_live_bytes` that only submitting the recorded
@@ -1325,7 +1325,7 @@ impl TextureCache {
             .collect();
         for p in dropped {
             live -= p.bytes;
-            destroyed_views.extend(p.views.iter().flatten().map(|v| v.raw() as usize));
+            destroyed_views.extend(p.views.iter().flatten().map(|v| v.identity()));
             p.texture.destroy();
         }
         while live > target {
@@ -1348,7 +1348,7 @@ impl TextureCache {
             // Small pressure events retain the allocation-free direct path.
             let e = self.textures.remove(&first).expect("found above");
             live -= e.bytes;
-            destroyed_views.extend(e.views.iter().flatten().map(|v| v.raw() as usize));
+            destroyed_views.extend(e.views.iter().flatten().map(|v| v.identity()));
             e.texture.destroy();
             self.stats.evicted += 1;
         }
@@ -1364,7 +1364,7 @@ impl TextureCache {
                 }
                 let e = self.textures.remove(&key).expect("collected above");
                 live -= e.bytes;
-                destroyed_views.extend(e.views.iter().flatten().map(|v| v.raw() as usize));
+                destroyed_views.extend(e.views.iter().flatten().map(|v| v.identity()));
                 e.texture.destroy();
                 self.stats.evicted += 1;
             }

@@ -16,6 +16,13 @@ pub const LONG_US: u64 = 250_000;
 pub enum Detail { MainEncoderFinish, ConstantEncoderFinish, CompletionRegistration }
 pub const DETAILS: usize = 3;
 
+/// Separate from the stable elapsed-detail IDs. Each row is
+/// [calls, wall_ns, successful_cpu_samples, cpu_ns, maximum_cpu_ns].
+#[repr(usize)]
+#[derive(Clone, Copy)]
+pub enum ThreadWork { MainEncoderFinish, ConstantEncoderFinish, QueueSubmit }
+pub const THREAD_WORK: usize = 3;
+
 /// Flush reasons occupy 0..=16; known fatal contracts occupy 24..=30.
 pub(crate) fn fatal_reason_index(reason: u32) -> usize {
     match reason { 10..=16 => reason as usize + 14, _ => 31 }
@@ -143,7 +150,9 @@ pub struct Session {
     previous_frame_us: AtomicU64,
     failure: AtomicU64,
     details: [Record<5>; DETAILS],
+    thread_work: [Record<5>; THREAD_WORK],
     capacity_rejections: [AtomicU64; 4],
+    constant_block_bytes: AtomicU64,
 }
 impl Session {
     pub fn new(id: u64, origin: Instant) -> Self {
@@ -153,7 +162,8 @@ impl Session {
             reasons: std::array::from_fn(|_| AtomicU64::new(0)), seq: AtomicU64::new(0), swap: AtomicU64::new(0),
             previous_frame_us: AtomicU64::new(0), failure: AtomicU64::new(0),
             details: std::array::from_fn(|_| Record::default()),
-            capacity_rejections: std::array::from_fn(|_| AtomicU64::new(0)) }
+            thread_work: std::array::from_fn(|_| Record::default()),
+            capacity_rejections: std::array::from_fn(|_| AtomicU64::new(0)), constant_block_bytes: AtomicU64::new(0) }
     }
     pub fn elapsed_us(&self, at: Instant) -> u64 {
         at.checked_duration_since(self.origin).map_or(0, |d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
@@ -169,6 +179,11 @@ impl Session {
         for (bit, count) in self.capacity_rejections.iter().enumerate() {
             if mask & (1 << bit) != 0 { saturating_add(count, 1); }
         }
+    }
+    pub(crate) fn constant_block_capacity(&self, bytes: u64) {
+        // Every observation is the actual allocated capacity, never a requested
+        // UI/debug value that could have changed after executor creation.
+        self.constant_block_bytes.store(bytes, SeqCst);
     }
     fn finish_stage(&self, stage: usize, elapsed: u64) {
         let Some(record) = self.totals.get(stage) else { return };
@@ -213,6 +228,8 @@ impl Session {
             totals: self.totals.iter().map(|record| record.read(None).map(|(_, words)| words)).collect(),
             reasons: std::array::from_fn(|i| self.reasons[i].load(SeqCst)),
             details: self.details.iter().map(|record| record.read(None).map(|(_, words)| words)).collect(),
+            thread_work: self.thread_work.iter().map(|record| record.read(None).map(|(_, words)| words)).collect(),
+            constant_block_bytes: self.constant_block_bytes.load(SeqCst),
             capacity_rejections: std::array::from_fn(|i| self.capacity_rejections[i].load(SeqCst)) };
         result.observed_us = self.elapsed_us(Instant::now());
         result
@@ -232,7 +249,38 @@ pub struct Snapshot {
     pub totals: Vec<Option<[u64; 5]>>,
     pub reasons: [u64; REASONS],
     pub details: Vec<Option<[u64; 5]>>,
+    pub thread_work: Vec<Option<[u64; 5]>>,
+    /// Zero until a constant encode boundary is observed in this session.
+    pub constant_block_bytes: u64,
     pub capacity_rejections: [u64; 4],
+}
+
+/// Only sampled at coarse native driver boundaries, never per draw or poll.
+/// CPU samples exclude sleep/descheduling but may include driver work on this
+/// thread. Wall minus CPU is not automatically GPU wait (other waits exist).
+pub struct ThreadWorkGuard<'a> {
+    session: &'a Session,
+    work: usize,
+    wall: Instant,
+    cpu: Option<crate::thread_clock::Start>,
+}
+impl<'a> ThreadWorkGuard<'a> {
+    pub fn enter(session: &'a Option<Arc<Session>>, work: ThreadWork) -> Option<Self> {
+        let session = session.as_deref()?;
+        Some(Self { session, work: work as usize, wall: Instant::now(), cpu: crate::thread_clock::Start::now() })
+    }
+}
+impl Drop for ThreadWorkGuard<'_> {
+    fn drop(&mut self) {
+        let cpu = self.cpu.as_ref().and_then(crate::thread_clock::Start::elapsed_ns);
+        let wall = u64::try_from(self.wall.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        let record = &self.session.thread_work[self.work];
+        let (generation, old) = record.read(None).unwrap_or((0, [0; 5]));
+        if generation >= u64::MAX / 2 - 1 { return; }
+        record.write(generation + 1, [old[0].saturating_add(1), old[1].saturating_add(wall),
+            old[2].saturating_add(u64::from(cpu.is_some())), old[3].saturating_add(cpu.unwrap_or(0)),
+            old[4].max(cpu.unwrap_or(0))]);
+    }
 }
 
 /// No clock reads, allocations or atomics when explicit diagnostics are off.
@@ -285,6 +333,22 @@ fn saturating_add(counter: &AtomicU64, value: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn thread_cpu_missing_is_explicit_and_cannot_be_mistaken_for_zero_cpu_work() {
+        assert!(ThreadWorkGuard::enter(&None, ThreadWork::MainEncoderFinish).is_none());
+        let s = Session::new(41, Instant::now());
+        {
+            let _guard = ThreadWorkGuard { session: &s, work: ThreadWork::QueueSubmit as usize,
+                wall: Instant::now(), cpu: None };
+        }
+        let snapshot = s.snapshot();
+        assert_eq!(snapshot.thread_work.len(), 3);
+        assert!(snapshot.thread_work[0].is_none());
+        let row = snapshot.thread_work[2].unwrap();
+        assert_eq!((row[0], row[2], row[3], row[4]), (1, 0, 0, 0));
+        assert!(snapshot.live.is_none());
+        assert!(snapshot.details.iter().all(Option::is_none));
+    }
     #[test]
     fn every_fatal_contract_has_a_distinct_in_bounds_reason() {
         let indexes: std::collections::BTreeSet<_> = (10..=16).map(fatal_reason_index).collect();

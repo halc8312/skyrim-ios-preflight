@@ -5,9 +5,13 @@ use std::time::{Duration, Instant};
 fn device() -> Device {
     #[cfg(target_os = "linux")]
     unsafe {
-        unsafe extern "C" { fn prctl(option: i32, ...) -> i32; }
-        assert_eq!(prctl(4, 0 as std::ffi::c_long, 0 as std::ffi::c_long,
-                        0 as std::ffi::c_long, 0 as std::ffi::c_long), 0);
+        unsafe extern "C" {
+            fn prctl(option: i32, ...) -> i32;
+        }
+        assert_eq!(
+            prctl(4, 0 as std::ffi::c_long, 0 as std::ffi::c_long, 0 as std::ffi::c_long, 0 as std::ffi::c_long),
+            0
+        );
     }
     let instance = Instance::new().unwrap();
     let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions::default())).unwrap();
@@ -17,8 +21,11 @@ fn device() -> Device {
 
 fn source(device: &Device, pixels: &[u8; 16]) -> Texture {
     let texture = device.create_texture(&TextureDescriptor {
-        label: "authored cache source", size: extent(2, 2, 1), format: TextureFormat::RGBA8Unorm,
-        usage: TextureUsage::TextureBinding | TextureUsage::CopyDst, ..Default::default()
+        label: "authored cache source",
+        size: extent(2, 2, 1),
+        format: TextureFormat::RGBA8Unorm,
+        usage: TextureUsage::TextureBinding | TextureUsage::CopyDst,
+        ..Default::default()
     });
     device.queue().write_texture(&TexelCopyTextureInfo::whole(&texture), pixels, 8, None, extent(2, 2, 1));
     texture
@@ -30,18 +37,26 @@ fn front(view: &TextureView, size: (u32, u32), swizzle: [u32; 4]) -> FrontBuffer
 
 fn image(device: &Device, presenter: &Presenter) -> Vec<u8> {
     let texture = device.create_texture(&TextureDescriptor {
-        label: "authored cache output", size: extent(8, 8, 1), format: TextureFormat::RGBA8Unorm,
-        usage: TextureUsage::RenderAttachment | TextureUsage::CopySrc, ..Default::default()
+        label: "authored cache output",
+        size: extent(8, 8, 1),
+        format: TextureFormat::RGBA8Unorm,
+        usage: TextureUsage::RenderAttachment | TextureUsage::CopySrc,
+        ..Default::default()
     });
     let view = texture.create_view(None);
     let read = device.create_buffer(&BufferDescriptor {
-        label: "authored cache readback", size: 256 * 8,
-        usage: BufferUsage::CopyDst | BufferUsage::MapRead, mapped_at_creation: false,
+        label: "authored cache readback",
+        size: 256 * 8,
+        usage: BufferUsage::CopyDst | BufferUsage::MapRead,
+        mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder("authored cache conformance");
     presenter.encode(&mut encoder, &view, 8, 8);
-    encoder.copy_texture_to_buffer(&TexelCopyTextureInfo::whole(&texture),
-        &TexelCopyBufferInfo { buffer: &read, offset: 0, bytes_per_row: 256, rows_per_image: None }, extent(8, 8, 1));
+    encoder.copy_texture_to_buffer(
+        &TexelCopyTextureInfo::whole(&texture),
+        &TexelCopyBufferInfo { buffer: &read, offset: 0, bytes_per_row: 256, rows_per_image: None },
+        extent(8, 8, 1),
+    );
     device.queue().submit([encoder.finish("authored cache conformance")]);
     device.block_on(read.map_async(MapMode::Read, 0, None)).unwrap();
     let mut data = vec![0; 256 * 8];
@@ -51,7 +66,9 @@ fn image(device: &Device, presenter: &Presenter) -> Vec<u8> {
 }
 
 // Only the preserved original-source scratch sets this test-only oracle to 0.
-fn expect_reuse() -> bool { std::env::var("PUBLIC_PRESENT_CACHE_EXPECT_REUSE").as_deref() != Ok("0") }
+fn expect_reuse() -> bool {
+    std::env::var("PUBLIC_PRESENT_CACHE_EXPECT_REUSE").as_deref() != Ok("0")
+}
 
 #[test]
 fn one_current_view_preserves_pixels_lifetime_and_every_swap() {
@@ -92,7 +109,9 @@ fn one_current_view_preserves_pixels_lifetime_and_every_swap() {
         cold.set_output_options(&device, options, TextureFormat::RGBA8Unorm);
         cold.swap(&device, Some(front(view, size, swizzle)));
         assert_eq!(actual, image(&device, &cold), "every output byte, case {index}");
-        if index == 2 { assert_ne!(actual, before_image.clone().unwrap(), "swizzle must still update"); }
+        if index == 2 {
+            assert_ne!(actual, before_image.clone().unwrap(), "swizzle must still update");
+        }
         before_image = Some(actual);
         // Process-global diagnostics are informational here; the standalone
         // ignored benchmark below asserts exact isolated operation counts.
@@ -145,12 +164,19 @@ fn present_bind_group_creation_benchmark() {
             for frame in 0..N {
                 let view = match mode {
                     "repeat" => a.clone(),
-                    "alternate" => if frame % 2 == 0 { a.clone() } else { b.clone() },
+                    "alternate" => {
+                        if frame % 2 == 0 {
+                            a.clone()
+                        } else {
+                            b.clone()
+                        }
+                    }
                     _ => texture.create_view(None),
                 };
-                presenter.swap(&device, Some(FrontBuffer {
-                    view, filterable: true, width: 2, height: 2, swizzle: [0, 1, 2, 3],
-                }));
+                presenter.swap(
+                    &device,
+                    Some(FrontBuffer { view, filterable: true, width: 2, height: 2, swizzle: [0, 1, 2, 3] }),
+                );
             }
             let elapsed = start.elapsed();
             let calls = gpu_webgpu::counters::snapshot().since(&start_calls);
@@ -162,8 +188,14 @@ fn present_bind_group_creation_benchmark() {
             assert!(image(&device, &presenter).chunks_exact(4).all(|pixel| pixel == [255; 4]));
             assert!(elapsed < Duration::from_secs(30));
             times.push(elapsed.as_nanos());
-            println!("PRESENT_CACHE_SAMPLE mode={mode} sample={sample} swaps={N} ns={} bind_groups={} writes={} bytes={} views={}",
-                     elapsed.as_nanos(), calls.bind_groups, calls.write_buffers, calls.write_buffer_bytes, calls.views);
+            println!(
+                "PRESENT_CACHE_SAMPLE mode={mode} sample={sample} swaps={N} ns={} bind_groups={} writes={} bytes={} views={}",
+                elapsed.as_nanos(),
+                calls.bind_groups,
+                calls.write_buffers,
+                calls.write_buffer_bytes,
+                calls.views
+            );
         }
         times.sort_unstable();
         println!("PRESENT_CACHE_MEDIAN mode={mode} swaps={N} samples={SAMPLES} ns={}", times[SAMPLES / 2]);

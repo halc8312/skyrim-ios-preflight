@@ -1418,3 +1418,78 @@ fn shared_memory_store_matches_readback() {
         );
     }
 }
+
+// Mixed sample-count views must rearrange guest pixels before preserving scaled subpixels.
+#[test]
+fn scaled_msaa_alias_transfers_preserve_guest_samples_and_host_subpixels() {
+    let gpu = gpu();
+    for scale in [2, 3] {
+    let mut cache = EdramCache::with_options(&gpu.device,EdramOptions{d24s8_float_host:true,resolution_scale:scale});
+    let mem = Mem::new();
+    let device = &gpu.device;
+    for (msaa, base) in [(MsaaSamples::X2, 2047), (MsaaSamples::X4, 2046)] {
+        let host = |guest: u32| if msaa == MsaaSamples::X2 { guest * 3 } else { guest };
+        draw(&gpu, &mut cache, &color_setup(128, msaa, base, C::K8888), 32, FS_MSAA, &[([0, 0, 160*scale, 32*scale], 0)]);
+        let pitch_tiles = surface_pitch_tiles(128, msaa, false);
+        let mut by_offset = HashMap::new();
+        for y in 0..32*scale {
+            for x in 0..160*scale {
+                for s in 0..msaa.count().unwrap() {
+                    let o = edram_offset_bytes([x, y], base, true, pitch_tiles, msaa, false, false, s, [scale, scale]);
+                    by_offset.insert(o, msaa_pattern(x, y, host(s)));
+                }
+            }
+        }
+        // The same tiles as a 1x surface with the same pitch in tiles.
+        let pitch_1x = pitch_tiles * 80;
+        let rows_1x = 32 << msaa.samples_y_log2();
+        let mut enc = device.create_command_encoder("to 1x");
+        cache.targets(device, &mut enc, &color_setup(pitch_1x, MsaaSamples::X1, base, C::K8888), rows_1x).unwrap();
+        cache.flush_uploads(device);
+        device.queue().submit([enc.finish("to 1x")]);
+        let info = Resolve {
+            pitch: pitch_1x,
+            color_base: base,
+            rect: [0.0, 0.0, pitch_1x as f32, rows_1x as f32],
+            dest_pitch: pitch_1x,
+            dest_height: rows_1x,
+            ..Default::default()
+        }
+        .info();
+        let mut expected = mem.snapshot();
+        run(&gpu, &mut cache, &info, &mem);
+        for y in 0..rows_1x {
+            for x in 0..pitch_1x {
+                let o = edram_offset_bytes([x*scale+scale/2, y*scale+scale/2], base, true, pitch_tiles, MsaaSamples::X1, false, false, 0, [scale, scale]);
+                put(&mut expected, addr_2d(x, y, pitch_1x, 2), &by_offset[&o].to_le_bytes());
+            }
+        }
+        assert_mem(&mem, &expected);
+        // Back to the multisampled surface: every guest sample is restored.
+        let mut enc = device.create_command_encoder("back to msaa");
+        cache.targets(device, &mut enc, &color_setup(128, msaa, base, C::K8888), 32).unwrap();
+        cache.flush_uploads(device);
+        device.queue().submit([enc.finish("back to msaa")]);
+        let last = msaa.count().unwrap() - 1;
+        let info = Resolve {
+            pitch: 128,
+            msaa,
+            color_base: base,
+            sample_select: CopySampleSelect::from_raw(last),
+            rect: [0.0, 0.0, 128.0, 32.0],
+            dest_pitch: 128,
+            dest_height: 32,
+            ..Default::default()
+        }
+        .info();
+        run(&gpu, &mut cache, &info, &mem);
+        for y in 0..32 {
+            for x in 0..128 {
+                put(&mut expected, addr_2d(x, y, 128, 2), &msaa_pattern(x*scale+scale/2, y*scale+scale/2, host(last)).to_le_bytes());
+            }
+        }
+        assert_mem(&mem, &expected);
+    }
+    }
+}
+

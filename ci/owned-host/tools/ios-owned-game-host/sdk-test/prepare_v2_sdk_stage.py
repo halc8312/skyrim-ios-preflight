@@ -63,7 +63,10 @@ def prepare(base, fixture, resources, output):
         raise ValueError("separate explicit public V1/V2 fixture identities required")
     project = project_v2((base / "project.yml").read_text())
     selected = [base / name for name in ("app", "native", "include", "Libraries")]
-    selected += [base / "Frameworks/WgpuNative.framework", base / "sdk-test/native", fixture, resources]
+    wgpu_sha = driver.sdk.staged_gpu_sha(base)
+    selected += [base / "sdk-test/native", fixture, resources]
+    if wgpu_sha is not None:
+        selected.append(base / "Frameworks/WgpuNative.framework")
     for path in selected:
         regular_tree(path)
     if not (base / "include/PrivateGuestABIV2.h").is_file():
@@ -73,7 +76,8 @@ def prepare(base, fixture, resources, output):
     for name in ("app", "native", "include", "Libraries"):
         shutil.copytree(base / name, output / name)
     (output / "Frameworks").mkdir()
-    shutil.copytree(base / "Frameworks/WgpuNative.framework", output / "Frameworks/WgpuNative.framework")
+    if wgpu_sha is not None:
+        shutil.copytree(base / "Frameworks/WgpuNative.framework", output / "Frameworks/WgpuNative.framework")
     shutil.copytree(fixture, output / "Frameworks/PrivateGuest.framework")
     (output / "Resources/PublicFixture").mkdir(parents=True)
     (output / "Resources/OwnedGuestBinding.json").write_bytes(binding)

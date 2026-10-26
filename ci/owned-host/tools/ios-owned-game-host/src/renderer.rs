@@ -48,7 +48,12 @@ pub(crate) fn causal_snapshot(token: u64) -> Option<serde_json::Value> {
         "render":ring(snapshot.render), "audio":ring(snapshot.audio), "frames":ring(snapshot.frames),
         "stage_totals":snapshot.totals, "reasons":snapshot.reasons,
         "backend_detail":{"schema":1, "backend":1, "host_elapsed_totals":snapshot.details,
-            "constant_capacity_rejections":snapshot.capacity_rejections},
+            "constant_capacity_rejections":snapshot.capacity_rejections,
+            "constant_block_bytes":snapshot.constant_block_bytes},
+        "thread_work":{"schema":1,"units":"nanoseconds",
+            "rows":["main_encoder_finish","constant_encoder_finish","queue_submit"],
+            "columns":["calls","wall_ns","successful_cpu_samples","cpu_ns","maximum_cpu_ns"],
+            "totals":snapshot.thread_work},
     }))
 }
 struct MetalOwner {

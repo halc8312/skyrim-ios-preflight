@@ -249,7 +249,8 @@ impl GuestMemory {
         crate::dirty::mark(start, (end - start as u64) as u32);
         let mut result = Ok(());
         linear_runs(start, end - u64::from(start), |_, lin, n| {
-            let rc = unsafe { libc::madvise(self.linear_ptr(lin) as *mut libc::c_void, n as usize, libc::MADV_DONTNEED) };
+            let rc =
+                unsafe { libc::madvise(self.linear_ptr(lin) as *mut libc::c_void, n as usize, libc::MADV_DONTNEED) };
             if rc != 0 && result.is_ok() {
                 result = Err(MemoryError::Os(std::io::Error::last_os_error().to_string()));
             }
@@ -503,7 +504,9 @@ impl GuestMemory {
             unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), self.ptr(addr), data.len()) };
         } else {
             // SAFETY: as above.
-            self.runs(addr, data.len() as u32, |off, p, n| unsafe { std::ptr::copy_nonoverlapping(data.as_ptr().add(off), p, n) });
+            self.runs(addr, data.len() as u32, |off, p, n| unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr().add(off), p, n)
+            });
         }
         crate::dirty::mark(addr, data.len() as u32);
     }

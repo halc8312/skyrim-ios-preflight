@@ -13,11 +13,19 @@ thread_local! {
 
 pub(super) fn before_cleanup(space: &AddressSpace) {
     let hook = CLEANUP_HOOK.with(|cell| cell.borrow_mut().take());
-    if let Some(hook) = hook { hook(space); }
+    if let Some(hook) = hook {
+        hook(space);
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Case { VirtualRelease, Virtual4kRelease, VirtualDecommit, PhysicalRelease, StackRelease }
+enum Case {
+    VirtualRelease,
+    Virtual4kRelease,
+    VirtualDecommit,
+    PhysicalRelease,
+    StackRelease,
+}
 const SENTINEL: u32 = 0xA17E_1E55;
 const VIRTUAL: u32 = 0x4014_0000;
 const VIRTUAL4K: u32 = 0x9014_0000;
@@ -29,8 +37,16 @@ const VIRTUAL4K: u32 = 0x9014_0000;
 fn isolated_space() -> AddressSpace {
     AddressSpace {
         mem: GuestMemory::reserve().unwrap(),
-        virtual_heap: Mutex::new(PageHeap::new("test-virtual", map::VIRTUAL_BASE, map::VIRTUAL_END - map::VIRTUAL_BASE)),
-        virtual_4k_heap: Mutex::new(PageHeap::new("test-virtual-4k", map::VIRTUAL_4K_BASE, map::VIRTUAL_4K_END - map::VIRTUAL_4K_BASE)),
+        virtual_heap: Mutex::new(PageHeap::new(
+            "test-virtual",
+            map::VIRTUAL_BASE,
+            map::VIRTUAL_END - map::VIRTUAL_BASE,
+        )),
+        virtual_4k_heap: Mutex::new(PageHeap::new(
+            "test-virtual-4k",
+            map::VIRTUAL_4K_BASE,
+            map::VIRTUAL_4K_END - map::VIRTUAL_4K_BASE,
+        )),
         stack_heap: Mutex::new(PageHeap::new("test-stack", map::STACK_BASE, map::STACK_END - map::STACK_BASE)),
         xex_heap: Mutex::new(PageHeap::new("test-xex", map::XEX_BASE, map::XEX_END - map::XEX_BASE)),
         physical: Mutex::new(PageHeap::new("test-physical", 0, map::PHYSICAL_SIZE)),
@@ -74,7 +90,11 @@ fn heap_locked(space: &AddressSpace, case: Case) -> bool {
 }
 
 #[derive(Default)]
-struct Observation { cleanup_seen: bool, locked: bool, reused: Option<(u32, u32)> }
+struct Observation {
+    cleanup_seen: bool,
+    locked: bool,
+    reused: Option<(u32, u32)>,
+}
 
 fn check_order(case: Case) {
     let space = isolated_space();
@@ -86,7 +106,9 @@ fn check_order(case: Case) {
         assert!(cell.borrow().is_none());
         *cell.borrow_mut() = Some(Box::new(move |space| {
             let locked = heap_locked(space, case);
-            let reused = if locked { None } else {
+            let reused = if locked {
+                None
+            } else {
                 // The old implementation makes reuse possible here, before
                 // A's pending zero/discard. B completes its own commit/write.
                 let allocation = allocate(space, case);
@@ -97,10 +119,18 @@ fn check_order(case: Case) {
         }));
     });
     match case {
-        Case::VirtualRelease | Case::Virtual4kRelease => { space.release_virtual(original.0).unwrap(); }
-        Case::VirtualDecommit => { space.decommit_virtual(original.0, PAGE_4K).unwrap(); }
-        Case::PhysicalRelease => { space.free_physical(original.0).unwrap(); }
-        Case::StackRelease => { space.free_stack(original.0).unwrap(); }
+        Case::VirtualRelease | Case::Virtual4kRelease => {
+            space.release_virtual(original.0).unwrap();
+        }
+        Case::VirtualDecommit => {
+            space.decommit_virtual(original.0, PAGE_4K).unwrap();
+        }
+        Case::PhysicalRelease => {
+            space.free_physical(original.0).unwrap();
+        }
+        Case::StackRelease => {
+            space.free_stack(original.0).unwrap();
+        }
     }
     assert!(observation.borrow().cleanup_seen);
     let reused = match observation.borrow().reused {
@@ -119,12 +149,22 @@ fn check_order(case: Case) {
 }
 
 #[test]
-fn virtual_release_keeps_cleanup_before_reuse() { check_order(Case::VirtualRelease); }
+fn virtual_release_keeps_cleanup_before_reuse() {
+    check_order(Case::VirtualRelease);
+}
 #[test]
-fn virtual_4k_release_keeps_cleanup_before_reuse() { check_order(Case::Virtual4kRelease); }
+fn virtual_4k_release_keeps_cleanup_before_reuse() {
+    check_order(Case::Virtual4kRelease);
+}
 #[test]
-fn reserved_decommit_keeps_cleanup_before_recommit() { check_order(Case::VirtualDecommit); }
+fn reserved_decommit_keeps_cleanup_before_recommit() {
+    check_order(Case::VirtualDecommit);
+}
 #[test]
-fn physical_release_keeps_cleanup_before_reuse() { check_order(Case::PhysicalRelease); }
+fn physical_release_keeps_cleanup_before_reuse() {
+    check_order(Case::PhysicalRelease);
+}
 #[test]
-fn stack_release_keeps_cleanup_before_reuse() { check_order(Case::StackRelease); }
+fn stack_release_keeps_cleanup_before_reuse() {
+    check_order(Case::StackRelease);
+}

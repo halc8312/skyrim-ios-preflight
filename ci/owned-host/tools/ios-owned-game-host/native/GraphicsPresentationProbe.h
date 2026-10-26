@@ -17,6 +17,8 @@ typedef struct OHGraphicsPresentationProbeV1 {
 // Complete/aligned/writable result, exact sizeof(struct), no output on failure.
 // Native driver calls cannot be interrupted here: test enforces process timeout.
 int32_t OHRunPublicGraphicsProbeV1(OHGraphicsPresentationProbeV1 *out, size_t bytes);
+uint32_t OHNativeRendererSelectedV1(void);
+int32_t OHFixtureNativeSurfaceProbeV1(void *layer, OHGraphicsPresentationProbeV1 *out, size_t bytes);
 // Separate authored translated-shader coverage probe; same no-guest/no-layer
 // boundary. Coverage and per-sample values stay native; only counts are copied.
 typedef struct OHAlphaCoverageProbeV1 {

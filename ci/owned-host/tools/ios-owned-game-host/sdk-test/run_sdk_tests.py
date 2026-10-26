@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import plistlib
 from pathlib import Path
 import re
 import signal
@@ -175,17 +176,55 @@ def validate_summary(summary: dict) -> None:
             raise ValueError("xcresult summary count differs: " + key)
 
 
+def renderer_kind(stage: Path) -> str:
+    text = (stage / "project.yml").read_text()
+    values = re.findall(r"(?m)^\s*SKYRIMRendererBackend:\s*([^\n]+)$", text)
+    if not values:
+        return "webgpu"  # Historical public fixtures predate the explicit marker.
+    if values != ["native-hal"] and values != ["webgpu"]:
+        raise ValueError("unknown or repeated renderer declaration")
+    return values[0]
+
+
+def staged_gpu_sha(stage: Path) -> str | None:
+    framework = stage / "Frameworks/WgpuNative.framework"
+    if renderer_kind(stage) == "native-hal":
+        if framework.exists() or framework.is_symlink():
+            raise ValueError("native renderer stage contains legacy WebGPU framework")
+        return None
+    binary = framework / "WgpuNative"
+    if framework.is_symlink() or binary.is_symlink() or not binary.is_file():
+        raise ValueError("regular legacy GPU framework required")
+    with binary.open("rb") as stream:
+        data = stream.read(128 * 1024 * 1024 + 1)
+    if not 0 < len(data) <= 128 * 1024 * 1024:
+        raise ValueError("bounded legacy GPU framework required")
+    return hashlib.sha256(data).hexdigest()
+
+
 def verify_package(app: Path, binding: bytes, xex: bytes, fixture_sha: str,
-                   wgpu_sha: str, dependencies: str) -> None:
+                   wgpu_sha: str | None, dependencies: str) -> None:
     if (app / "OwnedGuestBinding.json").read_bytes() != binding:
         raise ValueError("packaged independent binding changed")
     if (app / "PublicFixture/default.xex").read_bytes() != xex:
         raise ValueError("packaged self-authored XEX changed")
-    for name, expected in [("PrivateGuest", fixture_sha), ("WgpuNative", wgpu_sha)]:
+    frameworks = [("PrivateGuest", fixture_sha)]
+    if wgpu_sha is not None:
+        frameworks.append(("WgpuNative", wgpu_sha))
+    for name, expected in frameworks:
         binary = app / f"Frameworks/{name}.framework/{name}"
         if hashlib.sha256(binary.read_bytes()).hexdigest() != expected:
             raise ValueError("framework changed during app packaging")
-    if "PrivateGuest" in dependencies or len(re.findall(
+    if "PrivateGuest" in dependencies or ".debug.dylib" in dependencies:
+        raise ValueError("unexpected eager private load or debug stub")
+    if wgpu_sha is None:
+        framework = app / "Frameworks/WgpuNative.framework"
+        info = plistlib.loads((app / "Info.plist").read_bytes())
+        if (info.get("SKYRIMRendererBackend") != "native-hal" or framework.exists()
+                or framework.is_symlink() or "wgpunative" in dependencies.lower()
+                or "wgpu_native" in dependencies.lower()):
+            raise ValueError("native renderer declaration/dependency mismatch")
+    elif len(re.findall(
             r"(?m)^\s+@rpath/WgpuNative\.framework/WgpuNative\s+\(", dependencies)) != 1:
         raise ValueError("unexpected eager private load or missing WebGPU dependency")
 
@@ -225,7 +264,7 @@ def main() -> int:
     if any(not isinstance(v, str) or not re.fullmatch("[0-9a-f]{64}", v) for v in hashes.values()):
         raise ValueError("independent hash spelling differs")
     fixture_sha = hashlib.sha256((stage / "Frameworks/PrivateGuest.framework/PrivateGuest").read_bytes()).hexdigest()
-    wgpu_sha = hashlib.sha256((stage / "Frameworks/WgpuNative.framework/WgpuNative").read_bytes()).hexdigest()
+    wgpu_sha = staged_gpu_sha(stage)
     if run_bounded(["xcodegen", "generate", "--spec", "project.yml"], stage, output / "xcodegen", 30):
         raise RuntimeError("project generation failed")
     deadline = time.monotonic() + 300

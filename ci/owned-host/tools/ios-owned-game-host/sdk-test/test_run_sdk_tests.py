@@ -5,6 +5,7 @@ import io
 import importlib.util
 import json
 import hashlib
+import plistlib
 import tempfile
 from pathlib import Path
 import unittest
@@ -193,6 +194,41 @@ class PublicDriverTests(unittest.TestCase):
             for dependencies in [debug_stub + system, wgpu + private_load + system, wgpu + wgpu + system]:
                 with self.assertRaises(ValueError):
                     driver.verify_package(app, binding, xex, *hashes, dependencies)
+
+    def test_native_package_requires_marker_and_refuses_legacy_and_eager_loads(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = Path(temporary)
+            (app / "project.yml").write_text("  SKYRIMRendererBackend: native-hal\n")
+            self.assertIsNone(driver.staged_gpu_sha(app))
+            binding, xex = b"authored binding", b"authored XEX"
+            (app / "OwnedGuestBinding.json").write_bytes(binding)
+            (app / "PublicFixture").mkdir()
+            (app / "PublicFixture/default.xex").write_bytes(xex)
+            private = app / "Frameworks/PrivateGuest.framework/PrivateGuest"
+            private.parent.mkdir(parents=True)
+            private.write_bytes(b"authored library")
+            sha = hashlib.sha256(private.read_bytes()).hexdigest()
+            info = app / "Info.plist"
+            info.write_bytes(plistlib.dumps(dict(SKYRIMRendererBackend="native-hal")))
+            system = "\t/System/Library/Frameworks/Metal.framework/Metal (compatibility version 1.0.0)\n"
+            driver.verify_package(app, binding, xex, sha, None, system)
+            for load in ("@rpath/WgpuNative.framework/WgpuNative", "@rpath/libwgpu_native.dylib",
+                         "@rpath/PrivateGuest.framework/PrivateGuest", "@rpath/OwnedGameHost.debug.dylib"):
+                with self.subTest(load=load), self.assertRaises(ValueError):
+                    driver.verify_package(app, binding, xex, sha, None, system + "\t" + load + "\n")
+            info.write_bytes(plistlib.dumps({}))
+            with self.assertRaises(ValueError):
+                driver.verify_package(app, binding, xex, sha, None, system)
+            info.write_bytes(plistlib.dumps(dict(SKYRIMRendererBackend="native-hal")))
+            (app / "Frameworks/WgpuNative.framework").mkdir()
+            with self.assertRaises(ValueError):
+                driver.verify_package(app, binding, xex, sha, None, system)
+            with self.assertRaises(ValueError):
+                driver.staged_gpu_sha(app)
+            for declaration in ("unknown", "native-hal\n  SKYRIMRendererBackend: native-hal"):
+                (app / "project.yml").write_text("  SKYRIMRendererBackend: " + declaration + "\n")
+                with self.assertRaises(ValueError):
+                    driver.renderer_kind(app)
 
     def test_failure_tails_are_bounded_and_read_only_own_regular_logs(self):
         with tempfile.TemporaryDirectory() as directory:

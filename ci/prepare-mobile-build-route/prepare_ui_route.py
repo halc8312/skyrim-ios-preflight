@@ -18,12 +18,12 @@ NOT_BEFORE = datetime(2026, 10, 23, 22, 30, tzinfo=timezone.utc)  # 2026-10-24 0
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 BOOTSTRAP_PINS = {
     "ci/prepare-fix-build-route/prepare_route.py": "a8c087b7cd8a0ea10925d226adbe813cca8a9b928ddd79c20cd2adeff8bfb7ce",
-    "ci/prepare-fix-build-route/reference-pins.json": "364782f174e607f8f7242f36a1f3cdf36fb8440603ffdafb91b5d43ef6e5db58",
+    "ci/prepare-fix-build-route/reference-pins.json": "989c855dc7e48372775e40a61b9b34e02ef5ca9a6866a9afd1b94fd8a0482bb4",
     "ci/run-bounded-command.py": "f7391d02a43dc5dc97ea7f017cd5e502c70b7a4f06b4ce05a9e4972b49a890dd",
 }
 INPUT_PINS = {
-    "sdk-test/tests/NativeTraceSDKProbeTests.swift": "967471b69c406803a47706a6ade849afdfe7e14e4410bec1eec91080021b77a3",
-    "project.yml": "880227bc75ed0eebec48d1df32d60f3d1f9c24eeb6772d2693ea1be3a0df48a7",
+    "sdk-test/tests/NativeTraceSDKProbeTests.swift": "5bfc259bf8d1ccec43386177785b0e691bb4ce5b9368669ded2ae76f8b2dbbf9",
+    "project.yml": "d4f5102d619ae110bb28eafb10d9981afa089f58c3da8d59e54afc112ba01ddb",
     "native/MetalFrameProbe.h": "d0193c1c66017d3f8085ed61706b1991081354e160ffdacf4b14e59f27997b47",
     "native/MetalFrameProbe.mm": "8730fb9ca6002e4f11ff07aaccb56608299d6d46fb844de1d34dae600897097c",
     "native/TargetFrameLifetime.h": "fb46ab5555ca7f3fe7dbada25688405c500536e0424f5a6d43c494a2c0fb4c16",
@@ -33,15 +33,15 @@ INPUT_PINS = {
     "app/MobileControlsView.swift": "0de5944765e6d0e524f9d96096742f10786ce2b3996064414168071ce390ddc7",
     "sdk-test/tests/MobileControlsTests.swift": "9c1bd7b322b00e0faba222b56d6f2c28c9d8f2bc915be8364074e6b1ed082d40",
     "src/alpha_coverage_probe.rs": "b95c96f882ef3502f11668a353cb107e29835152dec6ed63e4dcb10b76cce678",
-    "native/GraphicsPresentationProbe.h": "451769e952e8d7c95cd8c2f296476cc29f3d49ebf374f13e88774eeaf9b79f2a",
-    "sdk-test/tests/GraphicsPresentationTests.swift": "b29c1a6ad9749a3a6cf5393e6f5c52af7306260d98d91e48b3c34217d0598358",
+    "native/GraphicsPresentationProbe.h": "6e7f24e1cba0d370f32eaa6a7b3c902fbe7d084902207a8db027438d3b175104",
+    "sdk-test/tests/GraphicsPresentationTests.swift": "a692c083d9d9121e2fe59e8fdd0141b4eb72aa870117cec48c060e189f665507",
 }
 KERNEL_PINS = {
     "lib.rs": "6751fbbdbabd662a2cc68c043b6c6a0280d6241d478c015d0274c0d69bdbdfcd",
     "dispatch.rs": "9747e76edf9cd3007dde77afeb8f6125c6b4151c8023dbe4c0c8ebe5e154e714",
     "dispatch_counter_tests.rs": "ce8e30b56ed4f25390a2583ab1c16087085763ff767b927353b5e6e8b66d3e1b",
 }
-UI_RUNNER_SHA = "b3d4f4eabf37347587303ae9bb420402e9fea520c04ba524d1afcbc792d0b450"
+UI_RUNNER_SHA = "060108bca734f34df2027c869eddb869b3d2f257bf139aaa7085c5ff8f04e393"
 HARNESS = 'harness="$(cd "$(dirname "$0")/.." && pwd)"'
 LOOP = "for variant in device simulator; do\n"
 AFTER = "\n# The V2 image is independently compiled from public authored sources."
@@ -161,7 +161,7 @@ def derive(setup, stages, repo, output):
         raise ValueError("metal_probe_stage_anchor_changed")
     loop = loop.replace(METAL_STAGE_ANCHOR, METAL_STAGE_ANCHOR + METAL_STAGE_GATE + SAMPLED_STAGE_GATE + TARGET_STAGE_GATE)
     # Preserve the original device+simulator loop plus the explicit probe copy,
-    # the source/worker/policy gates and WGPU builder. No second app build loop.
+    # the source/worker/policy gates and native Metal oracles. No second app build loop.
     selected = before + LOOP + loop + "\n" + selection
     selected += '''cleanup() {
   python3 "$harness/ci/run-bounded-command.py" 15 xcrun simctl shutdown "$device_id" >/dev/null 2>&1 || true

@@ -14,6 +14,10 @@ default = []
 apple-host = ["dep:runtime-core", "dep:kernel-hle", "dep:vfs", "dep:xex"]
 fixture-tools = ["dep:runtime-core", "dep:xex", "xenos-render?/public-probes", "xenos-render?/metal-shaders"]
 metal-renderer = ["apple-host", "dep:xenos-render", "dep:gpu-webgpu", "dep:d3d-hle", "dep:log"]
+native-metal = ["metal-renderer", "xenos-render/native-metal"]
+
+[patch.crates-io]
+naga = { path = "../native-metal-engine/vendor/naga-29.0.3" }
 
 [dependencies]
 ios-signed-image-policy = { path = "../ios-signed-image-policy" }

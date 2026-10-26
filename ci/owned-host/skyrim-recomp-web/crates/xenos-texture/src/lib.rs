@@ -21,6 +21,7 @@ pub mod convert;
 pub mod endian;
 pub mod fetch;
 pub mod format;
+pub mod gpu_load;
 pub mod host;
 pub mod layout;
 pub mod load;

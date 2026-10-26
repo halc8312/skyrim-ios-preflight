@@ -23,7 +23,7 @@ def image_metadata(data, kind):
         raise ValueError("expected thin plain ARM64 image")
     if not 1 <= count <= 4096 or not 8 <= commands <= 4_194_304 or 32 + commands > len(data):
         raise ValueError("invalid Mach-O command bounds")
-    offset, platforms = 32, []
+    offset, platforms, linked_libraries = 32, [], []
     for _ in range(count):
         if offset + 8 > 32 + commands:
             raise ValueError("truncated load command")
@@ -36,20 +36,38 @@ def image_metadata(data, kind):
             if size < 24:
                 raise ValueError("truncated build version")
             platforms.append(struct.unpack_from("<III", data, offset + 8))
+        if command in (0xC, 0x80000018, 0x8000001F, 0x80000023):
+            if size < 24:
+                raise ValueError("truncated library load command")
+            name_offset = struct.unpack_from("<I", data, offset + 8)[0]
+            if not 24 <= name_offset < size:
+                raise ValueError("library name outside command")
+            name = data[offset + name_offset:offset + size]
+            if b"\0" not in name:
+                raise ValueError("unterminated library name")
+            linked_libraries.append(name.split(b"\0", 1)[0].decode("utf-8"))
         offset += size
     if offset != 32 + commands or platforms != [(2, 0x1A0000, 0x1A0500)]:
         raise ValueError("device platform/minimum/SDK differs")
     return dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest(),
-                platform=2, minimum_os="26.0", sdk="26.5", code_signature_commands=0)
+                platform=2, minimum_os="26.0", sdk="26.5", code_signature_commands=0,
+                linked_libraries=linked_libraries)
 
 
-def package(app, ipa, metadata):
+def package(app, ipa, metadata, renderer="webgpu"):
     app, ipa, metadata = map(Path, (app, ipa, metadata))
     if app.name != "OwnedGameHost.app" or app.is_symlink() or not app.is_dir():
         raise ValueError("expected built public app bundle")
     if ipa.exists() or metadata.exists():
         raise ValueError("output must be new")
     info = plistlib.loads((app / "Info.plist").read_bytes())
+    if renderer not in ("webgpu", "native-hal"):
+        raise ValueError("unknown renderer provider")
+    expected_images = dict(EXPECTED_IMAGES)
+    if renderer == "native-hal":
+        if info.get("SKYRIMRendererBackend") != "native-hal":
+            raise ValueError("native renderer marker missing")
+        del expected_images["Frameworks/WgpuNative.framework/WgpuNative"]
     if (info.get("CFBundleIdentifier"), info.get("CFBundleExecutable")) != (
             "com.halc8312.ownedgamehost", "OwnedGameHost"):
         raise ValueError("unexpected app identity")
@@ -69,13 +87,15 @@ def package(app, ipa, metadata):
         total += len(data)
         if total > 256_000_000 or len(files) >= 2000:
             raise ValueError("public app size/count limit")
-        if name in EXPECTED_IMAGES:
-            images[name] = image_metadata(data, EXPECTED_IMAGES[name])
+        if name in expected_images:
+            images[name] = image_metadata(data, expected_images[name])
+            if renderer == "native-hal" and any("WgpuNative" in n or "wgpu_native" in n for n in images[name]["linked_libraries"]):
+                raise ValueError("native app still links the legacy C provider")
         elif data[:4] in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
                            b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\xca\xfe\xba\xbf"):
             raise ValueError("unexpected additional executable image")
         files.append((name, data, path.stat().st_mode & 0o777))
-    if set(images) != set(EXPECTED_IMAGES):
+    if set(images) != set(expected_images):
         raise ValueError("missing expected executable image")
     with ipa.open("xb") as stream:
         with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=False) as archive:
@@ -86,7 +106,7 @@ def package(app, ipa, metadata):
                 entry.compress_type = zipfile.ZIP_DEFLATED
                 entry.extra = b""
                 archive.writestr(entry, data)
-    result = dict(public_fixture_only=True, unsigned_device_ipa=True, images=images,
+    result = dict(public_fixture_only=True, unsigned_device_ipa=True, images=images, renderer=renderer,
                   ipa_bytes=ipa.stat().st_size, ipa_sha256=hashlib.sha256(ipa.read_bytes()).hexdigest(),
                   app_bundle_identifier=info["CFBundleIdentifier"], bundle_files=len(files),
                   provisioning_profile_present=False, signature_commands_present=False,
@@ -98,6 +118,6 @@ def package(app, ipa, metadata):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5) or (len(sys.argv)==5 and sys.argv[4] != "native-hal"):
         raise SystemExit("usage: package-owned-host-ipa.py PUBLIC_APP NEW_IPA NEW_METADATA_JSON")
     package(*sys.argv[1:])

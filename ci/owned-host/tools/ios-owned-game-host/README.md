@@ -181,3 +181,55 @@ prepares strict policy 0, verifies starting before renderer attachment is
 refused, attaches Metal, starts, and checks main exit plus numeric counts and
 all false readiness/authentication flags. No general game-memory readback API
 was added for that test.
+
+## Direct Metal comparison slice (development, 2026-10-25)
+
+The live game still uses the existing Xenos/WebGPU/wgpu-Metal renderer. The
+authored `constant_backend_fixture` is a separate offscreen public SDK probe;
+it never attaches to the game, shares its GPU handles, or selects a fallback.
+It is a first replaceable boundary, not a finished native Skyrim renderer.
+
+Both paths consume the same binned integer records and values, using the current
+constant-patch algorithm. The native path has its own Metal device/queue, offline
+`MetalConstantReplay.metal`, shared buffers and ordered blit consumer. The WebGPU
+path uses the production WGSL/layout with probe-only reset/readback resources.
+Rust record-major scalar replay is the independent byte oracle; the actual Metal
+lane core is also compiled as C++ for portable checks. Neither accepts game input.
+
+Pipeline creation and two warm-ups per backend are excluded. Before **every**
+warm-up/sample, reset blocks to 0xa5 and poison readback to 0x5a, with completion
+outside timing. This detects a missing dispatch or copy instead of accepting old
+correct output. Six sizes (6/27/37/68/136/1024 records), interleaved stages,
+shrinking/growing/empty blocks, unchanged values, high mask bits and NaN payloads
+are checked over their full output extents, including gaps. Canonical input
+validation rejects overlapping writes, malformed indices, masks and extents.
+The native/Rust limits are compared before GPU execution.
+
+Three balanced ABBA/BAAB pairs retain all 72 samples. Timings are host elapsed,
+not GPU execution or game FPS. Phase boundaries differ between APIs and must not
+be equated individually. Native upload directly writes shared Metal buffers;
+wgpu chooses its staging/storage strategy. Therefore this compares complete
+implementations, **not** isolated API overhead with equal storage proven.
+Readback/poisoning and a wait after every sample differ from real frame overlap.
+No winner, phone performance claim, or automatic backend choice is made.
+
+`GraphicsPresentationTests.testPublicOffscreenMetalPresentation` retains all
+existing presentation/alpha checks and additionally runs the constant comparison.
+The caller supplies an independent 25-second process deadline. Rust target
+checking is not Objective-C++/MSL compilation or an Apple runtime test.
+
+The next boundaries are: immutable API-neutral draws with exact resource/version
+ownership; direct Metal shader bindings/pipelines; ordered passes/resolves/copies;
+GPU-completion-owned recycling; finally presentation. Reuse Xenos parsing and
+shader analysis. Preserve endian conversion, vertex fetch, clip/depth, blending,
+discard/coverage, EDRAM aliases, load/store meaning and guest-visible fences.
+An unsupported explicit Metal path must fail clearly; never silently call the old
+renderer while reporting a Metal result. Keep the current path available for
+matched comparisons until full-frame pixels, resource lifetimes and game scenes
+are verified. Fixed game timings, streaming policy, LOD and saves are unchanged.
+
+Source-backed comparisons and the migration rationale are recorded in
+`build/native-metal-comparison-v1/research.json` at the lab root. The saved GTA V
+5-star source, current Theft4/MCLA, GLUE 5, Muguet, NFS MW and GoldenPad were
+surveyed; only architecture/algorithm ideas were adopted, without transplanting
+title-specific hooks or treating other projects' FPS as Skyrim evidence.

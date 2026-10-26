@@ -175,15 +175,7 @@ fn color_slots(targets: &DrawTargets) -> usize {
     targets.colors.iter().rposition(Option::is_some).map_or(0, |i| i + 1)
 }
 
-struct RecordedDraw {
-    pipeline: RenderPipeline,
-    textures: BindGroup,
-    /// Dynamic offsets of group 0, in binding order.
-    constant_offsets: [u32; 5],
-    state: DrawState,
-    indices: Option<DrawIndices>,
-    count: u32,
-}
+type RecordedDraw = crate::gfx::sink::DrawPacket<crate::gfx::webgpu::Types>;
 
 /// Records when draw stage `$i` started, for the sampled draws (see `Executor::timing_sample`).
 /// A macro so it borrows only those fields.
@@ -243,16 +235,7 @@ const TEXTURE_GROUP_FRAMES: u64 = 120;
 /// Texture sets remembered at most (the memo is cleared when full).
 const MAX_TEXTURE_SETS: usize = 4096;
 
-/// Where a recorded draw's indices are read from.
-#[derive(Clone, Copy)]
-enum DrawIndices {
-    /// Converted on the CPU and stored in the index ring.
-    Ring { format: IndexFormat, offset: u64 },
-    /// The guest index buffer, copied on the GPU from shared memory to the gathered index ring.
-    Gathered { format: IndexFormat, offset: u64 },
-    /// The guest index buffer itself, in shared memory buffer `buffer`.
-    Shared { buffer: usize, format: IndexFormat, offset: u64 },
-}
+type DrawIndices = crate::gfx::sink::DrawIndices<crate::gfx::webgpu::Types>;
 
 /// The dword-aligned physical range holding `ib`'s indices (start, length): what is copied to
 /// the index ring when they can't be bound where they're mirrored.
@@ -396,6 +379,8 @@ pub struct Executor {
     vertex_ranges: Vec<(u32, u32)>,
     /// Per-instance control for conservative vertex fetch synchronization.
     vertex_range_narrowing: bool,
+    #[cfg(feature = "native-coverage")]
+    native_coverage: Option<crate::native_coverage::Coverage>,
     /// Time spent in operations that may be slow on some devices (see [`OpTimes`]).
     times: OpTimes,
     pass: Option<Pass>,
@@ -632,6 +617,8 @@ impl Executor {
             times: OpTimes::default(),
             vertex_ranges: Vec::new(),
             vertex_range_narrowing: false,
+            #[cfg(feature = "native-coverage")]
+            native_coverage: crate::native_coverage::Coverage::from_environment(),
             pass: None,
             constant_cache: ConstantCache::default(),
             resolving: false,
@@ -851,6 +838,12 @@ impl Executor {
         // Kept a while unused: pooled textures (with the same views) come back a few frames later.
         self.texture_groups.retain(|_, (_, used, _)| *used + TEXTURE_GROUP_FRAMES >= frame);
         self.frame += 1;
+        #[cfg(feature = "native-coverage")]
+        if self.frame.is_multiple_of(64) {
+            if let Some(coverage) = &self.native_coverage {
+                coverage.report(self.frame);
+            }
+        }
     }
 
     /// Covers explicit submissions through this point, not display release or
@@ -899,13 +892,17 @@ impl Executor {
         }
         let main = self.encoder.take().map(|encoder| {
             let _detail = crate::causal::DetailGuard::enter(&self.causal, crate::causal::Detail::MainEncoderFinish);
+            let _thread = crate::causal::ThreadWorkGuard::enter(&self.causal, crate::causal::ThreadWork::MainEncoderFinish);
             encoder.finish("xenos")
         });
         // Uploads without commands are submitted too (empty), to know when they've reached the GPU.
         let uploaded = gpu_webgpu::counters::upload_bytes();
         if patches.is_some() || main.is_some() || uploaded > self.uploaded_at_submit {
             let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::QueueSubmit);
-            self.device.queue().submit(patches.into_iter().chain(main));
+            {
+                let _thread = crate::causal::ThreadWorkGuard::enter(&self.causal, crate::causal::ThreadWork::QueueSubmit);
+                self.device.queue().submit(patches.into_iter().chain(main));
+            }
             self.stats.submissions += 1;
             if uploaded > self.uploaded_at_submit {
                 let _detail =
@@ -986,85 +983,30 @@ impl Executor {
                 stencil_read_only: false,
             }
         });
+        let options = crate::gfx::sink::DebugOptions {
+            one_pixel: crate::debug::SCISSOR_ONE_PIXEL.load(std::sync::atomic::Ordering::Relaxed),
+            skip_draws: crate::debug::SKIP_DRAW_CALLS.load(std::sync::atomic::Ordering::Relaxed),
+        };
+        let resources = crate::gfx::sink::Resources {
+            constants: &constants_group,
+            shared: &shared_group,
+            indices: &index_buffer,
+            gathered: &gathered_buffer,
+            shared_buffers: &shared_buffers,
+        };
+        // Reject corrupt prepared indices before an attachment clear or draw.
+        let packets = match crate::gfx::sink::validate_packets(&pass.draws, resources.shared_buffers.len(), options) {
+            Ok(packets) => packets,
+            Err(error) => { self.warn_once(format!("invalid prepared draw packet: {error:?}")); return; }
+        };
         let mut rp = encoder.begin_render_pass("xenos draws", &colors, depth.as_ref());
-        rp.set_bind_group(bindings::SHARED_MEMORY_GROUP, &shared_group, &[]);
-        // Each WebGPU call has a fixed cost (in browsers especially): state equal to the previous
-        // draw's isn't set again, and index buffers are bound whole once, each draw selecting
-        // its indices with `first_index`.
-        let mut last_pipeline = None;
-        let mut last_constants = None;
-        let mut last_textures = None;
-        let mut last_viewport = None;
-        let mut last_scissor = None;
-        let mut last_blend = None;
-        let mut last_stencil = None;
-        // (shared memory buffer, usize::MAX for the ring or usize::MAX - 1 for the gathered ring;
-        // format)
-        let mut last_index_buffer: Option<(usize, IndexFormat)> = None;
-        let one_pixel = crate::debug::SCISSOR_ONE_PIXEL.load(std::sync::atomic::Ordering::Relaxed);
-        let skip_draws = crate::debug::SKIP_DRAW_CALLS.load(std::sync::atomic::Ordering::Relaxed);
-        for d in &pass.draws {
-            let pipeline = d.pipeline.raw() as usize;
-            if last_pipeline != Some(pipeline) {
-                rp.set_pipeline(&d.pipeline);
-                last_pipeline = Some(pipeline);
-            }
-            if last_constants != Some(d.constant_offsets) {
-                rp.set_bind_group(bindings::FLOAT_CONSTANTS_GROUP, &constants_group, &d.constant_offsets);
-                last_constants = Some(d.constant_offsets);
-            }
-            let textures = d.textures.raw() as usize;
-            if last_textures != Some(textures) {
-                rp.set_bind_group(bindings::TEXTURE_GROUP, &d.textures, &[]);
-                last_textures = Some(textures);
-            }
-            let viewport = d.state.viewport_bits;
-            if last_viewport != Some(viewport) {
-                let [x, y, w, h, z0, z1] = d.state.viewport();
-                rp.set_viewport(x, y, w, h, z0, z1);
-                last_viewport = Some(viewport);
-            }
-            let scissor = if one_pixel { [d.state.scissor[0], d.state.scissor[1], 1, 1] } else { d.state.scissor };
-            if last_scissor != Some(scissor) {
-                let [sx, sy, sw, sh] = scissor;
-                rp.set_scissor_rect(sx, sy, sw, sh);
-                last_scissor = Some(scissor);
-            }
-            let blend = d.state.blend_bits;
-            if last_blend != Some(blend) {
-                let [r, g, b, a] = d.state.blend();
-                rp.set_blend_constant(Color { r, g, b, a });
-                last_blend = Some(blend);
-            }
-            if last_stencil != Some(d.state.stencil_reference) {
-                rp.set_stencil_reference(d.state.stencil_reference);
-                last_stencil = Some(d.state.stencil_reference);
-            }
-            if skip_draws {
-                continue;
-            }
-            let (source, format, offset) = match d.indices {
-                None => {
-                    rp.draw(d.count, 1, 0, 0);
-                    continue;
-                }
-                Some(DrawIndices::Ring { format, offset, .. }) => (usize::MAX, format, offset),
-                Some(DrawIndices::Gathered { format, offset, .. }) => (usize::MAX - 1, format, offset),
-                Some(DrawIndices::Shared { buffer, format, offset, .. }) => (buffer, format, offset),
-            };
-            if last_index_buffer != Some((source, format)) {
-                let buffer = match source {
-                    usize::MAX => &index_buffer,
-                    s if s == usize::MAX - 1 => &gathered_buffer,
-                    s => &shared_buffers[s],
-                };
-                rp.set_index_buffer(buffer, format, 0, None);
-                last_index_buffer = Some((source, format));
-            }
-            let index_size = if format == IndexFormat::Uint32 { 4 } else { 2 };
-            rp.draw_indexed(d.count, 1, (offset / index_size) as u32, 0, 0);
-        }
+        let result = packets.emit(&resources, &mut crate::gfx::webgpu::Pass(&mut rp));
         rp.end();
+        match result {
+            Ok(()) => {},
+            Err(crate::gfx::sink::EmitError::Sink(never)) => match never {},
+            Err(crate::gfx::sink::EmitError::Packet(error)) => self.warn_once(format!("invalid prepared draw packet: {error:?}")),
+        }
         if crate::debug::tracing(self.frame) && pass.targets.sample_count == 1 {
             for (slot, color) in pass.targets.colors.iter().enumerate() {
                 let Some((view, format)) = color else { continue };
@@ -1714,6 +1656,14 @@ impl Executor {
             output.blend_constant.map(f64::from),
             u32::from(depth_stencil.stencil_reference),
         );
+        #[cfg(feature = "native-coverage")]
+        if let Some(coverage) = &mut self.native_coverage {
+            coverage.observe(
+                vs.id, vs.prepared(), ps.as_deref().map(|p| (p.id, p.prepared())),
+                &system, self.regs.fetch_constants(), host.vertex_count,
+                indices.is_some(), host.expansion != PrimitiveExpansion::None,
+            );
+        }
         let draw = RecordedDraw {
             pipeline,
             textures: textures_group,
@@ -2042,7 +1992,7 @@ impl Executor {
         let bound_views = views
             .iter()
             .filter_map(|(_, kind)| match kind {
-                BindingKind::View(v) => Some(v.raw() as usize),
+                BindingKind::View(v) => Some(v.identity()),
                 BindingKind::Sampler(_) => None,
             })
             .collect();
@@ -2101,11 +2051,11 @@ impl Executor {
         // browsers especially). Cached groups keep their views alive, so the handles in the key
         // can't be reused by other objects while the entry exists.
         let mut key = Vec::with_capacity(views.len() + 1);
-        key.push(layout.raw() as usize as u64);
+        key.push(layout.identity() as u64);
         key.extend(views.iter().map(|(binding, kind)| {
             (match kind {
-                BindingKind::View(v) => v.raw() as usize as u64,
-                BindingKind::Sampler(s) => s.raw() as usize as u64,
+                BindingKind::View(v) => v.identity() as u64,
+                BindingKind::Sampler(s) => s.identity() as u64,
             }) ^ (u64::from(*binding) << 48)
         }));
         let frame = self.frame;

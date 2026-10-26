@@ -205,6 +205,24 @@ impl ShaderProof {
     #[cfg(test)]
     pub fn ranges(&self, constants: &[u32; 192], domain: IndexDomain) -> Result<Vec<Range>, &'static str> {
         let mut merged = BTreeMap::<u32, (u64, u64)>::new();
+        self.for_each_read_range(constants, domain, |r| {
+            let low = u64::from(r.address);
+            let high = low + u64::from(r.bytes);
+            let span = merged.entry(r.constant).or_insert((low, high));
+            span.0 = span.0.min(low);
+            span.1 = span.1.max(high);
+        })?;
+        Ok(merged.into_iter().map(|(constant, (low, high))| Range {
+            constant, address: low as u32, bytes: (high - low) as u32,
+        }).collect())
+    }
+
+    /// Strict consumer: every possible read is covered or the entire proof is
+    /// refused. Unlike the optimization-only CachedPlan, this never falls back
+    /// to an unproven full-buffer range. No per-draw allocation is required.
+    pub fn for_each_read_range(
+        &self, constants: &[u32; 192], domain: IndexDomain, mut emit: impl FnMut(Range),
+    ) -> Result<(), &'static str> {
         for f in &self.fetches {
             let first = constants[(2 * f.constant) as usize];
             let second = constants[(2 * f.constant + 1) as usize];
@@ -234,18 +252,9 @@ impl ShaderProof {
                 continue;
             } // Actual vfetch returns zero, reads nothing.
             let high = high.min(end);
-            let span = merged.entry(f.constant).or_insert((low, high));
-            span.0 = span.0.min(low);
-            span.1 = span.1.max(high);
+            emit(Range { constant: f.constant, address: (low * 4) as u32, bytes: ((high - low) * 4) as u32 });
         }
-        Ok(merged
-            .into_iter()
-            .map(|(constant, (low, high))| Range {
-                constant,
-                address: (low * 4) as u32,
-                bytes: ((high - low) * 4) as u32,
-            })
-            .collect())
+        Ok(())
     }
 }
 

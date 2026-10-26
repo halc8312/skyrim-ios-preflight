@@ -20,15 +20,14 @@ use xenos_state::xenos::{ColorRenderTargetFormat, DepthRenderTargetFormat};
 
 /// Host texture format for an EDRAM color format (aliases collapsed to the storage format).
 pub fn host_color_format(format: ColorRenderTargetFormat) -> Option<TextureFormat> {
-    use ColorRenderTargetFormat as C;
-    Some(match format.storage_format() {
-        C::K8888 => TextureFormat::RGBA8Unorm,
-        C::K8888Gamma | C::K2101010Float | C::K16161616 | C::K16161616Float => TextureFormat::RGBA16Float,
-        C::K2101010 => TextureFormat::RGB10A2Unorm,
-        C::K1616 | C::K1616Float => TextureFormat::RG16Float,
-        C::K32Float => TextureFormat::R32Float,
-        C::K3232Float => TextureFormat::RG32Float,
-        _ => return None,
+    use xenos_gfx::edram_transfer::{color_storage,ColorStorage as C};
+    Some(match color_storage(format)? {
+        C::Rgba8 => TextureFormat::RGBA8Unorm,
+        C::Rgba16Float => TextureFormat::RGBA16Float,
+        C::Rgb10A2 => TextureFormat::RGB10A2Unorm,
+        C::Rg16Float => TextureFormat::RG16Float,
+        C::R32Float => TextureFormat::R32Float,
+        C::Rg32Float => TextureFormat::RG32Float,
     })
 }
 

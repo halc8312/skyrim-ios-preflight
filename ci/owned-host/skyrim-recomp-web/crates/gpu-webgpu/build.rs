@@ -19,6 +19,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 fn main() {
+    if env::var_os("CARGO_FEATURE_NATIVE_METAL").is_some() { return; }
     println!("cargo:rerun-if-env-changed=WGPU_NATIVE_DIR");
     println!("cargo:rerun-if-env-changed=WGPU_NATIVE_FRAMEWORK_DIR");
     println!("cargo:rerun-if-env-changed=WGPU_NATIVE_LINK_MODE");

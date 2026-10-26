@@ -15,10 +15,27 @@
 
 use gpu_webgpu::*;
 
-/// Bytes of the block buffer (blocks are sub-allocated like the constant ring; it rewinds after
-/// each submission, and a submission is made first when it's full). Skyrim submits every ~20
-/// draws on average (at each resolve), so 1024 blocks are rarely all used.
+/// Baseline bytes of the block buffer. It rewinds only after submission. Actual
+/// measured workloads can exhaust this budget; larger sizes are opt-in comparisons.
 pub const BLOCK_BUFFER_BYTES: u64 = 4 << 20;
+
+/// Bounded comparison sizes; no automatic choice or default performance claim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BlockCapacity(u64);
+impl BlockCapacity {
+    pub(crate) fn from_mib(mib: u32) -> std::result::Result<Self, &'static str> {
+        if ![4, 8, 16].contains(&mib) { return Err("constant block capacity must be 4, 8 or 16 MiB"); }
+        Ok(Self(u64::from(mib) << 20))
+    }
+    fn validate(self, limits: &Limits) -> std::result::Result<u64, &'static str> {
+        // The entire output buffer is bound as compute storage, even though
+        // individual draw bindings use much smaller dynamic windows.
+        if self.0 > limits.maxBufferSize || self.0 > u64::from(limits.maxStorageBufferBindingSize) {
+            return Err("constant block capacity exceeds enabled device limits");
+        }
+        Ok(self.0)
+    }
+}
 /// Patch records per submission at most (more needs a submission first).
 const MAX_RECORDS: usize = 16384;
 /// Changed vec4s per submission at most.
@@ -47,7 +64,7 @@ pub(crate) struct BlockDemand {
     pub changed_vec4s: usize,
 }
 
-fn demands_fit(cursor: u64, alignment: u64, records: usize, values: usize,
+fn demands_fit_capacity(capacity: u64, cursor: u64, alignment: u64, records: usize, values: usize,
     demands: &[BlockDemand]) -> bool {
     let (mut cursor, mut records, mut values) = (cursor, records, values);
     for demand in demands {
@@ -55,8 +72,9 @@ fn demands_fit(cursor: u64, alignment: u64, records: usize, values: usize,
             || demand.changed_vec4s > (demand.bytes / 16) as usize || alignment == 0 { return false; }
         let Some(offset) = cursor.checked_add(alignment - 1).map(|n| n / alignment * alignment) else { return false };
         let Some(end) = offset.checked_add(demand.window) else { return false };
-        if end > BLOCK_BUFFER_BYTES { return false; }
+        if end > capacity { return false; }
         let Some(next) = offset.checked_add(demand.bytes.max(16)) else { return false };
+        if next > capacity { return false; }
         cursor = next; records = records.saturating_add(1); values = values.saturating_add(demand.changed_vec4s);
         if records > MAX_RECORDS || values > MAX_VALUES { return false; }
     }
@@ -64,7 +82,7 @@ fn demands_fit(cursor: u64, alignment: u64, records: usize, values: usize,
 }
 
 // Report all budgets crossed by the existing plan, without changing allocation.
-fn demand_failure(mut cursor: u64, alignment: u64, mut records: usize, mut values: usize,
+fn demand_failure_capacity(capacity: u64, mut cursor: u64, alignment: u64, mut records: usize, mut values: usize,
     demands: &[BlockDemand]) -> u8 {
     if alignment == 0 { return 8; }
     let mut failure = 0;
@@ -73,8 +91,9 @@ fn demand_failure(mut cursor: u64, alignment: u64, mut records: usize, mut value
             || demand.changed_vec4s > (demand.bytes / 16) as usize { return failure | 8; }
         let Some(offset) = cursor.checked_add(alignment - 1).map(|n| n / alignment * alignment) else { return failure | 8 };
         let Some(end) = offset.checked_add(demand.window) else { return failure | 8 };
-        if end > BLOCK_BUFFER_BYTES { failure |= 1; }
+        if end > capacity { failure |= 1; }
         let Some(next) = offset.checked_add(demand.bytes.max(16)) else { return failure | 8 };
+        if next > capacity { failure |= 1; }
         cursor = next;
         records = records.saturating_add(1);
         values = values.saturating_add(demand.changed_vec4s);
@@ -85,8 +104,36 @@ fn demand_failure(mut cursor: u64, alignment: u64, mut records: usize, mut value
 }
 
 #[cfg(test)]
+fn demands_fit(cursor: u64, alignment: u64, records: usize, values: usize, demands: &[BlockDemand]) -> bool {
+    demands_fit_capacity(BLOCK_BUFFER_BYTES, cursor, alignment, records, values, demands)
+}
+#[cfg(test)]
+fn demand_failure(cursor: u64, alignment: u64, records: usize, values: usize, demands: &[BlockDemand]) -> u8 {
+    demand_failure_capacity(BLOCK_BUFFER_BYTES, cursor, alignment, records, values, demands)
+}
+
+#[cfg(test)]
 mod demand_tests {
     use super::*;
+    #[test]
+    fn capacity_comparisons_change_only_block_budget_and_enforce_actual_storage_limit() {
+        assert!(BlockCapacity::from_mib(0).is_err());
+        assert!(BlockCapacity::from_mib(32).is_err());
+        for mib in [4, 8, 16] {
+            let capacity = BlockCapacity::from_mib(mib).unwrap();
+            let mut limits = Limits::default();
+            limits.maxBufferSize = 32 << 20;
+            limits.maxStorageBufferBindingSize = 16 << 20;
+            assert_eq!(capacity.validate(&limits), Ok(u64::from(mib) << 20));
+            limits.maxStorageBufferBindingSize = capacity.0 - 1;
+            assert!(capacity.validate(&limits).is_err());
+            let demand = BlockDemand { window: 4096, bytes: 16, changed_vec4s: 1 };
+            assert!(demands_fit_capacity(capacity.0, capacity.0 - 4096, 256, 0, 0, &[demand]));
+            assert!(!demands_fit_capacity(capacity.0, capacity.0 - 4096 + 1, 256, 0, 0, &[demand]));
+            assert_eq!(demand_failure_capacity(capacity.0, capacity.0 - 4096 + 1, 256, 0, 0, &[demand]), 1);
+            assert_eq!(demand_failure_capacity(capacity.0, 0, 256, MAX_RECORDS, MAX_VALUES, &[demand]), 6);
+        }
+    }
     #[test]
     fn capacity_causes_distinguish_each_budget_and_combined_rejection() {
         let one = BlockDemand { window: 4096, bytes: 16, changed_vec4s: 1 };
@@ -150,72 +197,17 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
 // The record bytes and their original order are unchanged. Per-stage index lists
 // skip unrelated records, and lanes which never write a block need not replay.
 // There are no workgroup barriers or dependencies between stages or vec4 lanes.
-const BINNED_SHADER: &str = r#"
-@group(0) @binding(0) var<storage, read> records: array<u32>;
-@group(0) @binding(1) var<storage, read> values: array<vec4<u32>>;
-@group(0) @binding(2) var<storage, read_write> blocks: array<vec4<u32>>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) t: u32) {
-    let header = 1u + group.x * 3u;
-    if (t >= records[header + 2u]) {
-        return;
-    }
-    let end = records[header] + records[header + 1u];
-    let word_index = t / 32u;
-    let bit = 1u << (t % 32u);
-    var current = vec4<u32>(0u);
-    for (var index = records[header]; index < end; index++) {
-        let b = 16u + records[index] * 12u;
-        let mask = records[b + 4u + word_index];
-        if ((mask & bit) != 0u) {
-            var n = countOneBits(mask & (bit - 1u));
-            for (var w = 0u; w < word_index; w++) {
-                n += countOneBits(records[b + 4u + w]);
-            }
-            current = values[records[b + 3u] + n];
-        }
-        if (t < records[b + 2u]) {
-            blocks[records[b + 1u] + t] = current;
-        }
-    }
-}
-"#;
+const BINNED_SHADER: &str = xenos_gfx::constants::BINNED_SHADER;
 
 /// Add only a header and ordered index lists; do not reorder or alter any record.
 fn bin_records(records: &[u32]) -> Vec<u32> {
-    let count = records[0] as usize;
-    assert!(count <= MAX_RECORDS && records.len() == 1 + count * RECORD_WORDS, "invalid constant records");
-    let index_base = BIN_HEADER_WORDS + count * RECORD_WORDS;
-    let mut result = vec![0u32; index_base + count];
-    result[0] = count as u32;
-    result[BIN_HEADER_WORDS..index_base].copy_from_slice(&records[1..]);
-    for record in records[1..].chunks_exact(RECORD_WORDS) {
-        let stage = record[0] as usize;
-        assert!(stage < STAGES as usize && record[2] as usize <= INDICES, "invalid constant stage or count");
-        let header = 1 + stage * 3;
-        result[header + 1] += 1;
-        result[header + 2] = result[header + 2].max(record[2]);
-    }
-    let mut next = [0usize; STAGES as usize];
-    let mut start = index_base;
-    for (stage, next) in next.iter_mut().enumerate() {
-        let header = 1 + stage * 3;
-        result[header] = start as u32;
-        *next = start;
-        start += result[header + 1] as usize;
-    }
-    for (index, record) in records[1..].chunks_exact(RECORD_WORDS).enumerate() {
-        let next = &mut next[record[0] as usize];
-        result[*next] = index as u32;
-        *next += 1;
-    }
-    result
+    xenos_gfx::constant_segments::bin_records(records).expect("valid public patch records")
 }
 
 pub struct ConstantPatcher {
     /// The blocks, bound to the draws' float constant bindings.
     pub buffer: Buffer,
+    capacity: u64,
     alignment: u64,
     cursor: u64,
     /// Record count followed by the records.
@@ -230,17 +222,27 @@ pub struct ConstantPatcher {
 
 impl ConstantPatcher {
     pub fn new(device: &Device, alignment: u64) -> Self {
-        // Keep the original replay available through with_binning(false) for reference tests.
-        Self::with_binning(device, alignment, true)
+        let mib = crate::debug::CONSTANT_BLOCK_MIB.load(std::sync::atomic::Ordering::Relaxed);
+        let capacity = BlockCapacity::from_mib(mib).expect("validated constant block comparison size");
+        Self::with_capacity(device, alignment, true, capacity)
+            .expect("requested constant capacity is not supported by this device")
     }
 
+    #[cfg(test)]
     fn with_binning(device: &Device, alignment: u64, binned: bool) -> Self {
+        Self::with_capacity(device, alignment, binned, BlockCapacity(BLOCK_BUFFER_BYTES)).unwrap()
+    }
+
+    fn with_capacity(device: &Device, alignment: u64, binned: bool, capacity: BlockCapacity) -> std::result::Result<Self, &'static str> {
+        let capacity = capacity.validate(&device.limits())?;
+        let alignment = alignment.max(16);
+        if !alignment.is_power_of_two() || alignment > capacity { return Err("invalid constant block alignment"); }
         let buffer = |label, size, usage| {
             device.create_buffer(&BufferDescriptor { label, size, usage, mapped_at_creation: false })
         };
         let blocks = buffer(
             "xenos constant blocks",
-            BLOCK_BUFFER_BYTES,
+            capacity,
             BufferUsage::Storage | BufferUsage::Uniform | BufferUsage::CopySrc,
         );
         let records_buffer = buffer(
@@ -281,9 +283,10 @@ impl ConstantPatcher {
                 BindGroupEntry { binding: 2, resource: whole(&blocks) },
             ],
         );
-        ConstantPatcher {
+        Ok(ConstantPatcher {
             buffer: blocks,
-            alignment: alignment.max(16),
+            capacity,
+            alignment,
             cursor: 0,
             records: vec![0],
             values: Vec::new(),
@@ -292,26 +295,34 @@ impl ConstantPatcher {
             pipeline,
             group,
             binned,
-        }
+        })
     }
 
     /// Whether blocks bound with `windows` bytes each, with all their vec4s changed, still fit
     /// in this submission (else submit first).
     pub fn has_room(&self, windows: &[u64]) -> bool {
         // Each block may start up to an alignment past the previous window's end.
-        let bytes: u64 = windows.iter().map(|w| w.next_multiple_of(self.alignment)).sum();
-        let vec4s: usize = windows.iter().map(|&w| (w as usize / 16).min(INDICES)).sum();
-        self.cursor.next_multiple_of(self.alignment) + bytes <= BLOCK_BUFFER_BYTES
-            && (self.records.len() - 1) / RECORD_WORDS + windows.len() <= MAX_RECORDS
-            && self.values.len() / 16 + vec4s <= MAX_VALUES
+        let bytes = windows.iter().try_fold(0u64, |sum, &window| {
+            let rounded = window.checked_add(self.alignment - 1)? / self.alignment * self.alignment;
+            sum.checked_add(rounded)
+        });
+        let end = self.cursor.checked_add(self.alignment - 1)
+            .map(|n| n / self.alignment * self.alignment)
+            .and_then(|start| start.checked_add(bytes?));
+        let vec4s = windows.iter().try_fold(0usize, |sum, &w| sum.checked_add((w / 16).min(INDICES as u64) as usize));
+        end.is_some_and(|n| n <= self.capacity)
+            && ((self.records.len() - 1) / RECORD_WORDS).checked_add(windows.len()).is_some_and(|n| n <= MAX_RECORDS)
+            && vec4s.and_then(|n| (self.values.len() / 16).checked_add(n)).is_some_and(|n| n <= MAX_VALUES)
     }
 
     pub(crate) fn has_room_for(&self, demands: &[BlockDemand]) -> bool {
-        demands_fit(self.cursor, self.alignment, (self.records.len() - 1) / RECORD_WORDS, self.values.len() / 16, demands)
+        demands_fit_capacity(self.capacity, self.cursor, self.alignment,
+            (self.records.len() - 1) / RECORD_WORDS, self.values.len() / 16, demands)
     }
 
     pub(crate) fn capacity_failure(&self, demands: &[BlockDemand]) -> u8 {
-        demand_failure(self.cursor, self.alignment, (self.records.len() - 1) / RECORD_WORDS, self.values.len() / 16, demands)
+        demand_failure_capacity(self.capacity, self.cursor, self.alignment,
+            (self.records.len() - 1) / RECORD_WORDS, self.values.len() / 16, demands)
     }
 
     #[cfg(test)]
@@ -320,7 +331,7 @@ impl ConstantPatcher {
     }
 
     #[cfg(test)]
-    pub(crate) fn exhaust_window_for_test(&mut self) { self.cursor = BLOCK_BUFFER_BYTES; }
+    pub(crate) fn exhaust_window_for_test(&mut self) { self.cursor = self.capacity; }
 
     /// Adds `data` (vec4s of stage `stage`) as a block bound with `window` bytes, given the
     /// stage's previous block of this submission. Returns its offset. Check
@@ -328,7 +339,7 @@ impl ConstantPatcher {
     pub fn push(&mut self, stage: u32, previous: Option<&[u8]>, data: &[u8], window: u64) -> u32 {
         debug_assert!(data.len().is_multiple_of(16) && data.len() <= INDICES * 16);
         let offset = self.cursor.next_multiple_of(self.alignment);
-        assert!(offset + window <= BLOCK_BUFFER_BYTES, "float constant blocks full");
+        assert!(offset.checked_add(window).is_some_and(|end| end <= self.capacity), "float constant blocks full");
         self.cursor = offset + (data.len() as u64).max(16);
         let first_value = self.values.len() / 16;
         let mut mask = [0u32; INDICES / 32];
@@ -359,7 +370,7 @@ impl ConstantPatcher {
             count <= INDICES && values.len() == mask.iter().map(|m| m.count_ones() as usize).sum::<usize>() * 16
         );
         let offset = self.cursor.next_multiple_of(self.alignment);
-        assert!(offset + window <= BLOCK_BUFFER_BYTES, "float constant blocks full");
+        assert!(offset.checked_add(window).is_some_and(|end| end <= self.capacity), "float constant blocks full");
         self.cursor = offset + (count as u64 * 16).max(16);
         let first_value = self.values.len() / 16;
         self.values.extend_from_slice(values);
@@ -378,6 +389,7 @@ impl ConstantPatcher {
 
     pub(crate) fn encode_observed(&mut self, device: &Device,
         causal: &Option<std::sync::Arc<crate::causal::Session>>) -> Option<(CommandBuffer, u64)> {
+        if let Some(session) = causal { session.constant_block_capacity(self.capacity); }
         if self.records[0] == 0 {
             return None;
         }
@@ -402,6 +414,7 @@ impl ConstantPatcher {
             pass.end();
         }
         let _detail = crate::causal::DetailGuard::enter(causal, crate::causal::Detail::ConstantEncoderFinish);
+        let _thread = crate::causal::ThreadWorkGuard::enter(causal, crate::causal::ThreadWork::ConstantEncoderFinish);
         Some((encoder.finish("xenos constant patches"), (records.len() + self.values.len()) as u64))
     }
 
@@ -417,6 +430,41 @@ impl ConstantPatcher {
 #[cfg(all(test, not(target_os = "emscripten")))]
 #[path = "constant_patch_bin_tests.rs"]
 mod bin_tests;
+
+#[cfg(all(test, not(target_os = "emscripten")))]
+mod capacity_gpu_tests {
+    use super::*;
+    #[test]
+    fn each_capacity_binds_and_writes_the_last_window_without_changing_neighbour_bytes() {
+        let instance = Instance::new().unwrap();
+        let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions::default())).unwrap();
+        let device = instance.block_on(adapter.request_device(&DeviceDescriptor::default())).unwrap();
+        for mib in [4, 8, 16] {
+            device.push_error_scope(ErrorFilter::Validation);
+            let mut patcher = ConstantPatcher::with_capacity(&device, 256, true, BlockCapacity::from_mib(mib).unwrap()).unwrap();
+            let end = (u64::from(mib) << 20) - 4096;
+            patcher.cursor = end;
+            assert!(patcher.has_room(&[4096]));
+            let data: Vec<u8> = (0..4096).map(|n| (n ^ (mib as usize * 13)) as u8).collect();
+            assert_eq!(patcher.push(0, None, &data, 4096), end as u32);
+            assert!(!patcher.has_room(&[4096]));
+            let session = Some(std::sync::Arc::new(crate::causal::Session::new(u64::from(mib), std::time::Instant::now())));
+            let (patches, _) = patcher.encode_observed(&device, &session).unwrap();
+            assert_eq!(session.as_ref().unwrap().snapshot().constant_block_bytes, u64::from(mib) << 20);
+            let readback = device.create_buffer(&BufferDescriptor { label:"last constant window", size:4352,
+                usage:BufferUsage::CopyDst | BufferUsage::MapRead, mapped_at_creation:false });
+            let mut copy = device.create_command_encoder("last constant window");
+            copy.copy_buffer_to_buffer(&patcher.buffer, end - 256, &readback, 0, 4352);
+            device.queue().submit([patches, copy.finish("last constant window")]);
+            device.block_on(readback.map_async(MapMode::Read, 0, None)).unwrap();
+            let mut output = vec![0;4352]; readback.read_mapped(0, &mut output).unwrap(); readback.unmap();
+            assert!(output[..256].iter().all(|&b| b == 0));
+            assert_eq!(&output[256..], data);
+            assert!(device.block_on(device.pop_error_scope()).unwrap().is_none());
+            assert!(device.take_errors().is_empty() && device.lost_reason().is_none());
+        }
+    }
+}
 
 #[cfg(all(test, not(target_os = "emscripten")))]
 mod tests {

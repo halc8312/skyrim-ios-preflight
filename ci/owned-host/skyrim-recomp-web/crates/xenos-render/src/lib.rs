@@ -16,6 +16,7 @@ mod constant_patch;
 #[cfg(all(feature = "public-probes", not(target_os = "emscripten")))]
 pub use constant_patch::backend_probe;
 pub mod causal;
+mod thread_clock;
 #[cfg(feature = "cpu-profile")]
 pub mod cpu_profile;
 mod d3d;
@@ -26,6 +27,7 @@ pub mod edram;
 pub mod executor;
 mod extent;
 pub mod frame_plan;
+pub mod gfx;
 #[cfg(all(feature = "public-probes", feature = "metal-shaders", not(target_os = "emscripten")))]
 pub mod frame_probe;
 pub mod pipeline_plan;
@@ -50,6 +52,8 @@ pub mod target_fixtures;
 pub mod target_frame;
 pub mod targets;
 mod vertex_range;
+#[cfg(feature = "native-coverage")]
+mod native_coverage;
 
 #[cfg(not(target_os = "emscripten"))]
 pub mod native;
