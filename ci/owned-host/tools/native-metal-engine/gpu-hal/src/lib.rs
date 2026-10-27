@@ -1073,6 +1073,10 @@ impl<B: Backend> Gpu<B> {
         self.owner.healthy()?;
         Ok(self.timeline.borrow().verified())
     }
+    /// Wait for verified execution success through `serial`. This is not a
+    /// resource-retirement barrier: on Metal the HAL fence observation may
+    /// lag terminal command-buffer status. Polling still owns/retires flights,
+    /// and an already verified serial returns without polling.
     pub fn wait(&mut self, serial: Serial, timeout: Duration) -> Result<()> {
         if self.timeline.borrow().status(serial)? {
             return Ok(());
@@ -1159,6 +1163,8 @@ impl<B: Backend> Gpu<B> {
 // change success to failure; they cannot manufacture successful GPU execution.
 #[cfg(feature = "fault-injection")]
 impl<B: Backend> Gpu<B> {
+    /// Delay only fence-based retirement evidence. Metal command-buffer status
+    /// remains independently observable; this does not delay GPU execution.
     pub fn delay_fence_observation(&self, cap: Option<Serial>) {
         self.owner.faults.fence_cap.set(cap);
     }

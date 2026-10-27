@@ -1670,8 +1670,8 @@
       "sha256": "dea63fb3c20aded4289980c5003fb3014432ad2caf186c5212e1106a19755e69"
     },
     "tools/native-metal-engine/gpu-hal/src/lib.rs": {
-      "bytes": 48109,
-      "sha256": "07fe3dfdda202452c728a97d3fad5970548bf13cff63ea50f4988f33392a95d9"
+      "bytes": 48568,
+      "sha256": "ba1d562291416dad4c2ee4e0a466ed7e571e8cfb4ba0378dd0869a295ed6d652"
     },
     "tools/native-metal-engine/gpu-hal/src/ordered_upload.rs": {
       "bytes": 5356,
@@ -1866,8 +1866,8 @@
       "sha256": "28969c3174c3db8245f8401174216c87a3b41c52cdb4255e9cfa7d548d58425e"
     },
     "tools/native-metal-engine/gpu-hal/tests/transfers.rs": {
-      "bytes": 104181,
-      "sha256": "dd74c385c3afa5ef56abda40fb4e89feb949c2cedc869e26e3def5b447563d33"
+      "bytes": 105525,
+      "sha256": "85b4cba51cb5c41b2f09d6f802142532b50e60de6f334f282ae5a2c601a630e9"
     },
     "tools/native-metal-engine/vendor/naga-29.0.3/.cargo/config.toml": {
       "bytes": 39,

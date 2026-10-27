@@ -611,21 +611,45 @@ fn backpressure_timeout_is_fail_stop_and_does_not_lose_a_retryable_submission() 
     gpu.submit(vec![]).unwrap();
     gpu.submit(vec![]).unwrap();
     let buffer = gpu.create_buffer("pending", 64, U::COPY_DST).unwrap();
+    let upload_capacity = gpu.pending_upload_remaining();
     gpu.write_buffer(&buffer, 0, &[0x83; 64]).unwrap();
     assert!(matches!(
         gpu.submit(vec![]),
         Err(Error::Failed { serial: 3, .. })
     ));
+    // The cap delays fence-based RETIREMENT, not actual Metal command-buffer
+    // status. Metal may verify the successful prefix while both flights still
+    // own their resources. Vulkan has only fence-based completion evidence.
+    #[cfg(target_vendor = "apple")]
+    {
+        gpu.wait(2, DEADLINE).unwrap();
+        assert_eq!(gpu.verified_serial(), 2);
+    }
+    #[cfg(not(target_vendor = "apple"))]
     assert_eq!(gpu.verified_serial(), 0);
     assert_eq!(gpu.in_flight_count(), 2);
+    assert_eq!(gpu.pending_upload_remaining(), upload_capacity - 64);
     assert!(gpu.write_buffer(&buffer, 0, &[0; 64]).is_err());
     gpu.delay_fence_observation(None);
     gpu.wait(2, DEADLINE).unwrap();
+    // wait() proves execution success, not that the HAL fence observation has
+    // retired the flights. In particular, an already verified wait is a no-op.
+    let deadline = std::time::Instant::now() + DEADLINE;
+    while gpu.in_flight_count() != 0 && std::time::Instant::now() < deadline {
+        assert!(matches!(gpu.poll(), Err(Error::Failed { serial: 3, .. })));
+        if gpu.in_flight_count() != 0 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
     assert_eq!(gpu.in_flight_count(), 0);
     assert_eq!(gpu.verified_serial(), 2);
+    assert_eq!(gpu.pending_upload_remaining(), upload_capacity - 64);
+    assert!(matches!(gpu.submit(vec![]), Err(Error::Failed { serial: 3, .. })));
+    assert_eq!(gpu.pending_upload_remaining(), upload_capacity - 64);
     // Pending writes are still owned and are discarded only by failed-session
     // teardown; callers can never continue while silently assuming they ran.
     drop(buffer);
+    assert_eq!(gpu.live_buffer_count(), 2); // pending destination + upload
     drop(gpu);
     finish(before);
 }
