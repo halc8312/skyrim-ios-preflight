@@ -14,9 +14,9 @@ import re
 import subprocess
 
 
-ANCHOR = "9269d820ebbe934583e13d5630954b9b5bf38232"
+ANCHOR = "cc08348cf7bf63967a2f04fb782ceea5980a9790"
 MANIFEST = "ci/owned-host/public-source-manifest.json"
-MANIFEST_SHA256 = "6e498fbf8bc667b155e7400f2572d201b41cf29b706b281686501575ee24fa3b"
+MANIFEST_SHA256 = "7ed2f774dc5469aad702daa0318d2160418586a262d3df1b79ea05888f6eedc0"
 TAG = re.compile(r"skyrim-native-build19-once-([0-9a-f]{40})\Z")
 DISPATCH_ONLY = frozenset({
     ".circleci/config.yml",
