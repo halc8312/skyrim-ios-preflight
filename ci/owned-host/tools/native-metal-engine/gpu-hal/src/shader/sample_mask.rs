@@ -2,7 +2,9 @@
 //! fixed sample mask. It is NOT equivalent for arbitrary fragment programs:
 //! fixed masks precede fragment shading, output masks follow it. Reject coverage
 //! inputs, centroid/sample interpolation, forced early tests and externally
-//! observable writes rather than silently changing their meaning.
+//! observable writes rather than silently changing their meaning. SampleIndex
+//! remains sample-frequency shading; admit it only when the reachable program
+//! cannot observe other invocations (including implicit texture derivatives).
 use super::*;
 use naga::{Binding, BuiltIn, Expression as E, FunctionResult, Statement as S, TypeInner};
 
@@ -45,10 +47,12 @@ pub(super) fn lower(
     let entry = &module.entry_points[index];
     let input = inputs(module, entry)?;
     if entry.early_depth_test.is_some()
-        || input
-            .builtins
-            .iter()
-            .any(|b| !matches!(b, BuiltIn::Position { .. } | BuiltIn::FrontFacing))
+        || input.builtins.iter().any(|b| {
+            !matches!(
+                b,
+                BuiltIn::Position { .. } | BuiltIn::FrontFacing | BuiltIn::SampleIndex
+            )
+        })
         || input.locations.values().any(|i| {
             matches!(
                 i.sampling,
@@ -69,6 +73,9 @@ pub(super) fn lower(
                 "sample-mask lowering changes fragment side effects",
             ));
         }
+    }
+    if input.builtins.contains(&BuiltIn::SampleIndex) {
+        require_sample_local_program(module, &entry.function)?;
     }
     // Wrapping the old function handles all its returns, switches, loops and
     // discard paths without moving expressions across their original scope.
@@ -199,9 +206,131 @@ pub(super) fn lower(
     Ok(())
 }
 
+/// Keep sample-frequency inputs and execution unchanged. Additional masked-out
+/// invocations cannot affect surviving samples if they have neither external
+/// writes (checked above) nor communication with other invocations. Do not use
+/// Naga uniformity flags for this proof: its fragment derivative flags may be
+/// disabled. Inspect the actual reachable IR, including void helper calls.
+fn require_sample_local_program(module: &naga::Module, entry: &naga::Function) -> Result<()> {
+    let mut functions = vec![entry];
+    let mut visited = vec![false; module.functions.len()];
+    while let Some(function) = functions.pop() {
+        if function.expressions.iter().any(|(_, expression)| {
+            matches!(
+                expression,
+                E::Derivative { .. }
+                    | E::SubgroupBallotResult
+                    | E::SubgroupOperationResult { .. }
+                    | E::ImageSample {
+                        level: naga::SampleLevel::Auto | naga::SampleLevel::Bias(_),
+                        ..
+                    }
+            )
+        }) {
+            return Err(Error::Rejected(
+                "sample-mask lowering changes sample invocation interactions",
+            ));
+        }
+        let mut blocks = vec![&function.body];
+        while let Some(block) = blocks.pop() {
+            for statement in block.iter() {
+                match statement {
+                    S::Block(block) => blocks.push(block),
+                    S::If { accept, reject, .. } => blocks.extend([accept, reject]),
+                    S::Switch { cases, .. } => blocks.extend(cases.iter().map(|case| &case.body)),
+                    S::Loop {
+                        body, continuing, ..
+                    } => blocks.extend([body, continuing]),
+                    S::Call { function, .. } if !visited[function.index()] => {
+                        visited[function.index()] = true;
+                        functions.push(&module.functions[*function]);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn parsed(code: &str) -> (naga::Module, naga::valid::ModuleInfo) {
+        let module = naga::front::wgsl::parse_str(code).unwrap();
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        (module, info)
+    }
+
+    #[test]
+    fn sample_index_reachable_collectives_and_implicit_lod_refuse_before_mutation() {
+        for helper in [
+            "fn helper(x:f32)->f32 {return dpdx(x);}",
+            "fn inner(x:f32)->f32 {return dpdyFine(x);} fn helper(x:f32)->f32 {switch u32(x) {case 0u: {return inner(x);} default: {return 0.;}}}",
+            "fn inner(x:f32)->f32 {return fwidth(x);} fn helper(x:f32)->f32 {var y=0.; loop {y=inner(x); break;} return y;}",
+            "var<private> value:f32; fn inner(x:f32) {value=dpdx(x);} fn helper(x:f32)->f32 {if x>0. {inner(x);} return value;}",
+            "@group(0) @binding(0) var tex:texture_2d<f32>; @group(0) @binding(1) var smp:sampler; fn helper(x:f32)->f32 {return textureSample(tex,smp,vec2f(x)).x;}",
+            "@group(0) @binding(0) var tex:texture_2d<f32>; @group(0) @binding(1) var smp:sampler; fn helper(x:f32)->f32 {return textureSampleBias(tex,smp,vec2f(x),1.).x;}",
+            "fn helper(x:f32)->f32 {return subgroupAdd(x);}",
+            "fn helper(x:f32)->f32 {return f32(subgroupBallot(x>0.).x);}",
+            "fn helper(x:f32)->f32 {return quadSwapX(x);}",
+        ] {
+            let code = format!(
+                "{helper} @fragment fn fs(@builtin(sample_index) s:u32)->@location(0) vec4f {{return vec4f(helper(f32(s)));}}"
+            );
+            let (mut module, info) = parsed(&code);
+            let original = format!("{module:?}");
+            assert_eq!(
+                lower(&mut module, &info, 0, 9),
+                Err(Error::Rejected(
+                    "sample-mask lowering changes sample invocation interactions"
+                )),
+                "{helper}"
+            );
+            assert_eq!(format!("{module:?}"), original);
+        }
+    }
+
+    #[test]
+    fn sample_index_keeps_real_msl_input_and_ignores_unreachable_helpers() {
+        let code = "fn unused(x:f32)->f32{return dpdx(x);} fn pure(s:u32)->f32{return f32(s)*0.25;} @fragment fn fs(@builtin(sample_index) s:u32)->@location(0) vec4f{return vec4f(pure(s));}";
+        let (mut module, info) = parsed(code);
+        lower(&mut module, &info, 0, 9).unwrap();
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        let (msl, translation) = naga::back::msl::write_string(
+            &module,
+            &info,
+            &naga::back::msl::Options {
+                lang_version: (2, 3),
+                fake_missing_bindings: false,
+                ..Default::default()
+            },
+            &naga::back::msl::PipelineOptions {
+                entry_point: Some((naga::ShaderStage::Fragment, "fs".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            translation
+                .entry_point_names
+                .iter()
+                .all(|entry| entry.is_ok())
+        );
+        assert!(msl.contains("[[sample_id]]"));
+        assert!(msl.contains("[[sample_mask]]"));
+    }
+
     #[test]
     fn early_test_variants_are_rejected_before_rewriting_the_function() {
         for early in [

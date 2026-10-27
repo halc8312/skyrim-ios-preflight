@@ -774,12 +774,12 @@
       "sha256": "92448ca917293668f072fd791b2bd3c6550f1e8388a8fa363c2ed9ec1e8b9c90"
     },
     "skyrim-recomp-web/crates/xenos-render/tests/draw_native.rs": {
-      "bytes": 15994,
-      "sha256": "cca373b965d4b499ec178f8826d9b12b39b3d28c5340dbb9e371298911706abe"
+      "bytes": 16047,
+      "sha256": "677a1ded05fce18044818db390c41592280644c9733c291addfdea309c9a0d8d"
     },
     "skyrim-recomp-web/crates/xenos-render/tests/present_native.rs": {
-      "bytes": 3199,
-      "sha256": "d604c810a3c35c58b14d1bbcdbbe0ac3171fdd3eb4af538ba7b94c4a6603197d"
+      "bytes": 3248,
+      "sha256": "4027c6569ca562be761e248016e1d12f5fe8c869e288710b4bddf57e7af6bdfa"
     },
     "skyrim-recomp-web/crates/xenos-render/tests/vertex_ranges_native.rs": {
       "bytes": 18035,
@@ -1686,8 +1686,8 @@
       "sha256": "3f37b7e381aa2c32de1a94adc5cec78644ef03a726a1f797f59ef32142ae3f00"
     },
     "tools/native-metal-engine/gpu-hal/src/render.rs": {
-      "bytes": 43933,
-      "sha256": "d75a56e9fc9cfa011bb8b126cb5f7ed0d52b41f8e6e58c82182c7587a1e32c91"
+      "bytes": 43974,
+      "sha256": "3b5adb069af0e69d57f548e8d6505356979252e563f37ad0e7b8df2fbcec15d2"
     },
     "tools/native-metal-engine/gpu-hal/src/render/metal_stencil.rs": {
       "bytes": 8773,
@@ -1722,8 +1722,8 @@
       "sha256": "1d0d865e55dd447501b3f2750771e6055c7de3c856464d2e890c5e71c72e2353"
     },
     "tools/native-metal-engine/gpu-hal/src/shader/sample_mask.rs": {
-      "bytes": 8688,
-      "sha256": "bbc5d816bd6c87475cb674f47be1547dc52a6e3319c63e3cc8b630a9addd9b38"
+      "bytes": 14564,
+      "sha256": "7571b3c46a2bb202de07690a56be87fadf0171e0e80cfe420a53151d9e1c989e"
     },
     "tools/native-metal-engine/gpu-hal/src/staging.rs": {
       "bytes": 6110,
@@ -1842,8 +1842,8 @@
       "sha256": "28041919e843ae689a4620b2664995a1d69c5888755273e943531cf9ce67f532"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/sample_lowering.rs": {
-      "bytes": 13623,
-      "sha256": "43059faf037dc1847b0cbd839a27120653d599c974d202be3ace39d9642241eb"
+      "bytes": 15738,
+      "sha256": "b81dec86c2441fa3aca4ef2e4fc6ed89b4744429a5e725cdefa943ae3b6d5176"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/session.rs": {
       "bytes": 18468,

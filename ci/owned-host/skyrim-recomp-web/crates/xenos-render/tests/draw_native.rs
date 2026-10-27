@@ -339,7 +339,7 @@ fn draw_resolve_and_present_through_gpu_memory() {
     front.tiled = true;
     front.base_page = DEST >> 12;
     handle.submit(Command::Swap { fetch: front.encode(), width: SIZE, height: SIZE });
-    handle.wait_idle();
+    handle.wait_idle().expect("native renderer completed draw and resolve");
 
     let untouched =
         memory.0.lock().unwrap()[DEST as usize..DEST as usize + (SIZE * SIZE * 4) as usize].iter().all(|&b| b == 0);

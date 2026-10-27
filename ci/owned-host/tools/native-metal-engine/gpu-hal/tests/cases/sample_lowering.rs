@@ -24,6 +24,17 @@ struct M{@location(0) c:vec4f,@builtin(sample_mask) mask:u32,@builtin(frag_depth
 @fragment fn no_output(){}
 @fragment fn discarded(@builtin(position) p:vec4f)->@location(0) vec4f {
  if(p.x<1.){discard;}return vec4f(0.,1.,0.,1.);}
+fn per_sample(p:vec4f,s:u32)->vec4f {
+ let x=u32(p.x);return vec4f(f32(40u*(s+1u)+10u*x),f32(50u*(3u-s)),f32(60u*(s^x)),255.)/255.;}
+@fragment fn sample_direct(@builtin(position) p:vec4f,@builtin(sample_index) s:u32)->@location(0) vec4f {
+ return per_sample(p,s);}
+struct I{@builtin(position) p:vec4f,@builtin(sample_index) s:u32}
+@fragment fn sample_structured(i:I)->C {return C(per_sample(i.p,i.s),f32(i.s+1u)/8.);}
+@fragment fn sample_existing(i:I)->M {
+ return M(per_sample(i.p,i.s),select(5u,10u,i.p.x>=1.),f32(i.s+1u)/8.);}
+@fragment fn sample_discarded(i:I)->C {
+ if(i.s==1u || (i.p.x<1. && i.s==2u)){discard;}
+ return C(per_sample(i.p,i.s),f32(i.s+1u)/8.);}
 "#;
 fn target(gpu: &mut Gpu<Platform>, format: F) -> TextureView<Platform> {
     let image = gpu
@@ -78,6 +89,10 @@ fn restricted_lowering_matches_all_fixed_masks_and_independent_color_depth_stenc
         "mask_only",
         "no_output",
         "discarded",
+        "sample_direct",
+        "sample_structured",
+        "sample_existing",
+        "sample_discarded",
     ] {
         let has_color = !matches!(entry, "mask_only" | "no_output");
         for mask in 0..16u32 {
@@ -163,14 +178,28 @@ fn restricted_lowering_matches_all_fixed_masks_and_independent_color_depth_stenc
                             }
                             "mask_only" => 9,
                             "discarded" if x == 0 => 0,
+                            "sample_existing" => {
+                                if x == 0 {
+                                    5
+                                } else {
+                                    10
+                                }
+                            }
+                            "sample_discarded" if s == 1 || (x == 0 && s == 2) => 0,
                             _ => 15,
                         };
                         let on = mask & program_mask & (1 << s) != 0;
                         let at = (x * 4 + s) * 8;
                         let z =
                             f32::from_bits(u32::from_le_bytes(d[at..at + 4].try_into().unwrap()));
+                        let drawn_depth =
+                            if entry.starts_with("sample_") && entry != "sample_direct" {
+                                (s + 1) as f32 / 8.
+                            } else {
+                                0.25
+                            };
                         assert!(
-                            (z - if on { 0.25 } else { 1. }).abs() <= 1. / 16777215.,
+                            (z - if on { drawn_depth } else { 1. }).abs() <= 1. / 16777215.,
                             "{entry} mask{mask} fixed{fixed} depth x{x} s{s}: {z}"
                         );
                         assert_eq!(
@@ -181,6 +210,13 @@ fn restricted_lowering_matches_all_fixed_masks_and_independent_color_depth_stenc
                         if let Some(c) = &c {
                             let expected = if !on {
                                 [0, 0, 0, 255]
+                            } else if entry.starts_with("sample_") {
+                                [
+                                    (40 * (s + 1) + 10 * x) as u8,
+                                    (50 * (3 - s)) as u8,
+                                    (60 * (s ^ x)) as u8,
+                                    255,
+                                ]
                             } else if x == 0 {
                                 [255, 0, 0, 255]
                             } else {
@@ -214,7 +250,9 @@ fn lowering_rejects_invocation_sensitive_programs_and_foreign_owners() {
     for code in [
         "@fragment fn fs(@builtin(sample_mask) v:u32)->@location(0) vec4f{return vec4f(f32(v));}",
         "struct I{@builtin(sample_mask) v:u32} @fragment fn fs(v:I)->@location(0) vec4f{return vec4f(f32(v.v));}",
-        "@fragment fn fs(@builtin(sample_index) v:u32)->@location(0) vec4f{return vec4f(f32(v));}",
+        "@fragment fn fs(@builtin(sample_index) v:u32)->@location(0) vec4f{return vec4f(dpdx(f32(v)));}",
+        "struct I{@builtin(sample_index) s:u32,@builtin(sample_mask) m:u32} @fragment fn fs(v:I)->@location(0) vec4f{return vec4f(f32(v.s+v.m));}",
+        "@group(0) @binding(0) var<storage,read_write> out:array<u32>; @fragment fn fs(@builtin(sample_index) s:u32)->@location(0) vec4f{out[s]=s;return vec4f(1.);}",
         "@fragment fn fs(@location(0) @interpolate(perspective,centroid) v:f32)->@location(0) vec4f{return vec4f(v);}",
         "@group(0) @binding(0) var<storage,read_write> v:array<u32>; fn write(){v[0]=1u;} @fragment fn fs()->@location(0) vec4f{write();return vec4f(1.);}",
         "@group(0) @binding(0) var<storage,read_write> v:atomic<u32>; @fragment fn fs()->@location(0) vec4f{let old=atomicAdd(&v,1u);return vec4f(f32(old));}",

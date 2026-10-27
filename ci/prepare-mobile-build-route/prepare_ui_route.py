@@ -18,7 +18,7 @@ NOT_BEFORE = datetime(2026, 10, 23, 22, 30, tzinfo=timezone.utc)  # 2026-10-24 0
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 BOOTSTRAP_PINS = {
     "ci/prepare-fix-build-route/prepare_route.py": "a8c087b7cd8a0ea10925d226adbe813cca8a9b928ddd79c20cd2adeff8bfb7ce",
-    "ci/prepare-fix-build-route/reference-pins.json": "6654eb167e3f7fc74dad2b6c7383d462811f70447bcafb99632d0df950edacb5",
+    "ci/prepare-fix-build-route/reference-pins.json": "024eadf4f4a974afa002cad0251eeb18ffc47c0baf92c4cc7aeab5dfb4ab1b08",
     "ci/run-bounded-command.py": "f7391d02a43dc5dc97ea7f017cd5e502c70b7a4f06b4ce05a9e4972b49a890dd",
 }
 INPUT_PINS = {

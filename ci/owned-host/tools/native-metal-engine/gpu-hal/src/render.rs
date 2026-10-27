@@ -452,7 +452,8 @@ impl<B: Backend> Gpu<B> {
         }
         // HAL29 Metal ignores fixed masks. An opt-in, deliberately restricted
         // shader lowering supplies the same covered color/depth/stencil samples
-        // for pure, center-interpolated shaders. The original descriptor was
+        // for pure center-interpolated or independently sample-local shaders.
+        // The original descriptor was
         // validated above, so this cannot legitimize an invalid missing FS.
         let active_colors = d.colors.iter().enumerate().fold(0u32, |bits, (n, c)| {
             bits | if c.is_some() { 1 << n } else { 0 }

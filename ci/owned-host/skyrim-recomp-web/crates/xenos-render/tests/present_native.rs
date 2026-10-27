@@ -71,7 +71,7 @@ fn swap_of_a_tiled_front_buffer_is_presented() {
     )
     .expect("renderer");
     handle.submit(Command::Swap { fetch: fetch.encode(), width: W, height: H });
-    handle.wait_idle();
+    handle.wait_idle().expect("native renderer completed presentation");
 
     let png = dir.join("frame_000001.png");
     let decoder = png::Decoder::new(std::fs::File::open(&png).expect("frame dumped (is a WebGPU adapter available?)"));
