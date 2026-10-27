@@ -67,6 +67,9 @@ impl Gpu<Platform> {
             layer.setDevice(Some(device));
             layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
             layer.setFramebufferOnly(true);
+            // The native surface admits opaque compositing only. Do not inherit
+            // a transparent UIKit layer from the caller or its previous owner.
+            layer.setOpaque(true);
             layer.setMaximumDrawableCount(3);
             layer.setAllowsNextDrawableTimeout(true);
             layer.setPresentsWithTransaction(false);

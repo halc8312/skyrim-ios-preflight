@@ -220,6 +220,9 @@ final class OwnedHostV2FullChainTests: XCTestCase {
         let mainRefused = OHAttachMetalLayerV1(token, UnsafeMutableRawPointer(bitPattern: address), 1280, 720)
         XCTAssertEqual(mainRefused, -9)
         guard mainRefused == -9 else { return }
+        // Require the renderer to establish its opaque compositing contract.
+        // Exclude this authored opposite setting from the observed setters.
+        layer.isOpaque = false
         V2ThreadCheckedMetalLayer.audit.reset()
         v2Stage(20) // Renderer attachment entered.
         let attached = await v2OnWorker {
@@ -230,9 +233,11 @@ final class OwnedHostV2FullChainTests: XCTestCase {
         guard attached == 0 else { return }
         let layerAudit = V2ThreadCheckedMetalLayer.audit.snapshot()
         let requiredSettersObserved = layerAudit.setters & 127 == 127 && layerAudit.configurations >= 1
-        XCTAssertTrue(requiredSettersObserved)
+        XCTAssertTrue(requiredSettersObserved,
+                      "layer setters=\(layerAudit.setters), configurations=\(layerAudit.configurations)")
+        XCTAssertTrue(layer.isOpaque, "renderer must replace the initial nonopaque layer setting")
         XCTAssertEqual(layerAudit.offMain, 0)
-        guard requiredSettersObserved, layerAudit.offMain == 0 else { return }
+        guard requiredSettersObserved, layer.isOpaque, layerAudit.offMain == 0 else { return }
         var renderer = OHRendererStatusV1()
         XCTAssertEqual(OHReadRendererStatusV1(token, &renderer, MemoryLayout<OHRendererStatusV1>.size), 0)
         XCTAssertEqual(renderer.attachment, 2)

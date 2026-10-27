@@ -1326,12 +1326,12 @@
       "sha256": "ec267e42efe869fc5925122ce694e35b696d8ff857b14323489f537ed9e18afa"
     },
     "tools/ios-owned-game-host/sdk-test/tests/OwnedHostFullChainTests.swift": {
-      "bytes": 13300,
-      "sha256": "4d570c008b6a235d1dbab2f19260236b01073b6aad4e5945c683bc3a65cfbc75"
+      "bytes": 13724,
+      "sha256": "7bd913c69c837c4df0431854b7ec03233f53c0dfbe9b9cc31566e115561316c0"
     },
     "tools/ios-owned-game-host/sdk-test/tests/OwnedHostV2FullChainTests.swift": {
-      "bytes": 17907,
-      "sha256": "db550711cac2a1efcff5d43247e6b1e371576bb5f53e0a6fc004fc5ecbed14fd"
+      "bytes": 18314,
+      "sha256": "494e33d2169f0a187f9d0fe61cefa77b01013356ed9f2dbf3867dac9298b8569"
     },
     "tools/ios-owned-game-host/src/abi_v2.rs": {
       "bytes": 4447,
@@ -1734,8 +1734,8 @@
       "sha256": "d29476ef93cdf0657b17c1091abc01981e6bbd4b463680e169bf4687d2f337e9"
     },
     "tools/native-metal-engine/gpu-hal/src/surface/metal.rs": {
-      "bytes": 9439,
-      "sha256": "7a3863113324c30f903b6e055e0b0b537026d29b0233ce3d4e47728e2792fca7"
+      "bytes": 9635,
+      "sha256": "b4838d88f340ad2f6337fe949f4a4bea36946b6a7af7fb97f3f60103485ce917"
     },
     "tools/native-metal-engine/gpu-hal/src/texture.rs": {
       "bytes": 37176,

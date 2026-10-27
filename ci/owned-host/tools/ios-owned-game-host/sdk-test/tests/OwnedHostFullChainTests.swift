@@ -22,7 +22,7 @@ private func onWorker<T>(_ operation: @escaping () -> T) async -> T {
 }
 
 // The public SDK fixture records the actual Objective-C layer setters invoked
-// by WgpuNative. It observes worker startup without changing production classes.
+// by the selected renderer. It observes worker startup without changing production classes.
 private final class MetalLayerThreadAudit {
     private let lock = NSLock()
     private var setters: UInt32 = 0
@@ -182,6 +182,9 @@ final class OwnedHostFullChainTests: XCTestCase {
         let mainRefused = OHAttachMetalLayerV1(token, UnsafeMutableRawPointer(bitPattern: address), 1280, 720)
         XCTAssertEqual(mainRefused, -9)
         guard mainRefused == -9 else { return }
+        // The renderer must establish opaque compositing, even when the caller
+        // supplies a layer with the opposite setting. Exclude this test setter.
+        layer.isOpaque = false
         ThreadCheckedMetalLayer.audit.reset()
         let attached = await onWorker {
             OHAttachMetalLayerV1(token, UnsafeMutableRawPointer(bitPattern: address), 1280, 720)
@@ -190,9 +193,11 @@ final class OwnedHostFullChainTests: XCTestCase {
         guard attached == 0 else { return }
         let layerAudit = ThreadCheckedMetalLayer.audit.snapshot()
         let requiredSettersObserved = layerAudit.setters & 127 == 127 && layerAudit.configurations >= 1
-        XCTAssertTrue(requiredSettersObserved)
+        XCTAssertTrue(requiredSettersObserved,
+                      "layer setters=\(layerAudit.setters), configurations=\(layerAudit.configurations)")
+        XCTAssertTrue(layer.isOpaque, "renderer must replace the initial nonopaque layer setting")
         XCTAssertEqual(layerAudit.offMain, 0)
-        guard requiredSettersObserved, layerAudit.offMain == 0 else { return }
+        guard requiredSettersObserved, layer.isOpaque, layerAudit.offMain == 0 else { return }
         var renderer = OHRendererStatusV1()
         XCTAssertEqual(OHReadRendererStatusV1(token, &renderer, MemoryLayout<OHRendererStatusV1>.size), 0)
         XCTAssertEqual(renderer.attachment, 2)
