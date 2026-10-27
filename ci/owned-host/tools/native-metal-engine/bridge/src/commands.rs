@@ -201,6 +201,28 @@ impl CommandEncoder {
             if let Some(e) = &self.error {
                 return Err(e.clone());
             }
+            // Discard is observable on later reads as initialized zero, not
+            // retained attachment bytes. Materialize that state in stream
+            // order. Ordinary Store passes need no additional native pass.
+            let discarded_depth = depth.map(|d| -> Result<_> {
+                let format = d.view.texture.native()?.descriptor().format;
+                let depth = format.has_depth_aspect() && discard(d.depth_store_op)?;
+                let stencil = format.has_stencil_aspect() && discard(d.stencil_store_op)?;
+                let view = d.view.native()?;
+                Ok((depth || stencil).then(|| r::DepthAttachment {
+                    view,
+                    clear_depth: depth.then_some(0.),
+                    clear_stencil: stencil.then_some(0),
+                }))
+            }).transpose()?.flatten();
+            let discard_recorder = if colors.iter().flatten().any(|c| c.store_op == StoreOp::Discard) || discarded_depth.is_some() {
+                let discarded_colors = colors.iter().map(|c| {
+                    c.as_ref().filter(|c| c.store_op == StoreOp::Discard).map(|c| -> Result<_> {
+                        Ok(r::ColorAttachment { view: c.view.native()?, clear: Some(types::Color::TRANSPARENT) })
+                    }).transpose()
+                }).collect::<Result<Vec<_>>>()?;
+                Some(Box::new(self.owner.borrow().gpu.render_recorder(&discarded_colors, discarded_depth, &[]).map_err(convert::err)?))
+            } else { None };
             let resolves = colors
                 .iter()
                 .map(|c| {
@@ -215,9 +237,10 @@ impl CommandEncoder {
                 .map(|c| {
                     c.as_ref()
                         .map(|c| {
-                            if c.depth_slice.is_some() || c.store_op != StoreOp::Store {
+                            discard(c.store_op)?;
+                            if c.depth_slice.is_some() {
                                 return Err(Error::Unsupported(
-                                    "3D color attachment/discard store",
+                                    "3D color attachment",
                                 ));
                             }
                             Ok(r::ColorAttachment {
@@ -256,6 +279,7 @@ impl CommandEncoder {
                 .borrow()
                 .gpu
                 .render_recorder(&colors, depth, &resolves)
+                .map(|recorder| (recorder, discard_recorder))
                 .map_err(convert::err)
         })();
         for c in colors.iter().flatten() {
@@ -267,17 +291,18 @@ impl CommandEncoder {
         if let Some(d) = depth {
             self.dependency(Dependency::Texture(d.view.clone()));
         }
-        let recorder = match result {
-            Ok(r) => Some(r),
+        let (recorder, discard_recorder) = match result {
+            Ok((r, discarded)) => (Some(r), discarded),
             Err(e) => {
                 self.failed(e);
-                None
+                (None, None)
             }
         };
         counters::add(&counters::count::render_passes, 1);
         RenderPass {
             encoder: self,
             recorder,
+            discard_recorder,
         }
     }
     pub fn begin_compute_pass<'e>(&'e mut self, _label: &str) -> ComputePass<'e> {
@@ -310,6 +335,13 @@ fn load(op: LoadOp) -> Result<bool> {
         LoadOp::Load => Ok(false),
         LoadOp::Clear => Ok(true),
         _ => Err(Error::Invalid("attachment load operation".into())),
+    }
+}
+fn discard(op: StoreOp) -> Result<bool> {
+    match op {
+        StoreOp::Store => Ok(false),
+        StoreOp::Discard => Ok(true),
+        _ => Err(Error::Invalid("attachment store operation".into())),
     }
 }
 fn color_aspect(a: TextureAspect) -> Result<()> {
@@ -348,6 +380,7 @@ fn layout(
 pub struct RenderPass<'e> {
     encoder: &'e mut CommandEncoder,
     recorder: Option<r::PassRecorder<Platform>>,
+    discard_recorder: Option<Box<r::PassRecorder<Platform>>>,
 }
 impl RenderPass<'_> {
     fn record(&mut self, f: impl FnOnce(&mut r::PassRecorder<Platform>) -> Result<()>) {
@@ -435,6 +468,9 @@ impl Drop for RenderPass<'_> {
         if let Some(r) = self.recorder.take() {
             self.encoder
                 .encode(|e| e.render_recorded(&r).map(|_| ()).map_err(convert::err));
+            if let Some(discarded) = self.discard_recorder.take() {
+                self.encoder.encode(|e| e.render_recorded(&discarded).map(|_| ()).map_err(convert::err));
+            }
         }
     }
 }

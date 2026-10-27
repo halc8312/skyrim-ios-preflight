@@ -778,8 +778,8 @@
       "sha256": "677a1ded05fce18044818db390c41592280644c9733c291addfdea309c9a0d8d"
     },
     "skyrim-recomp-web/crates/xenos-render/tests/present_native.rs": {
-      "bytes": 3248,
-      "sha256": "4027c6569ca562be761e248016e1d12f5fe8c869e288710b4bddf57e7af6bdfa"
+      "bytes": 6571,
+      "sha256": "1e9ba4a7d16fad559df8cbf87b72fc0f0c986d4f40a598798b2ce4071f89e415"
     },
     "skyrim-recomp-web/crates/xenos-render/tests/vertex_ranges_native.rs": {
       "bytes": 18035,
@@ -1310,8 +1310,8 @@
       "sha256": "33ebe2ab01460560ff7e146f5d4f1092ab5aac7bcf655716ab7fe439751f75e5"
     },
     "tools/ios-owned-game-host/sdk-test/tests/GraphicsPresentationTests.swift": {
-      "bytes": 11114,
-      "sha256": "a692c083d9d9121e2fe59e8fdd0141b4eb72aa870117cec48c060e189f665507"
+      "bytes": 11217,
+      "sha256": "7501b5d12b12d66787ee2f36481ebbcd641625f630c6f150500504ae04f72c23"
     },
     "tools/ios-owned-game-host/sdk-test/tests/MobileControlsTests.swift": {
       "bytes": 18697,
@@ -1550,20 +1550,20 @@
       "sha256": "46fb45560bb03d506585f7d962f4516029d3d04e0276a27089630bdaf2c4b255"
     },
     "tools/native-metal-engine/bridge/src/api.rs": {
-      "bytes": 11392,
-      "sha256": "9761e43f78a3cc3529b5c308fa31d40fcbed58bb152f18664fa4cf2213575c9e"
+      "bytes": 11462,
+      "sha256": "4810b79146f591d7f06fb5351187d63e55857b9e731cc9646636bb4481ad8c3a"
     },
     "tools/native-metal-engine/bridge/src/commands.rs": {
-      "bytes": 25729,
-      "sha256": "73dbfe3ec973491e2363a4066438ba32dd54d59f0c8abae99cde632c16a5c3bf"
+      "bytes": 27846,
+      "sha256": "f9a92475b8f5c41f62458892da5bd72fd45383c703b491437e92f15a75cbf37c"
     },
     "tools/native-metal-engine/bridge/src/convert.rs": {
       "bytes": 26162,
       "sha256": "6095af543bd46b3a5e477fcdfb565cc5498140a2aaf7c7cafa1ed5b30a44e96e"
     },
     "tools/native-metal-engine/bridge/src/device.rs": {
-      "bytes": 12852,
-      "sha256": "f80d92412f2e275c90bb5c2c38ffcf0ec3897aa8b69b8fdadebb4f316567a515"
+      "bytes": 13138,
+      "sha256": "9a08bcc5262ebdc89c4afb73716c0baad4c4296588be284fcd2932b22a44baca"
     },
     "tools/native-metal-engine/bridge/src/lib.rs": {
       "bytes": 5576,
@@ -1590,8 +1590,8 @@
       "sha256": "29da31f3c13a8fc5966d231499027850c4282a248f2f759dda70407c29cc6979"
     },
     "tools/native-metal-engine/bridge/tests/compat.rs": {
-      "bytes": 8512,
-      "sha256": "d9b75eb56b48a31b04aaf10bbac574eb3de96f88c1e44dcb2f615f12089a20f3"
+      "bytes": 13820,
+      "sha256": "0b8db9e78f639d9bc81fbda26ff4c1a84283230b42cae6a6c6e074f99bc0fb53"
     },
     "tools/native-metal-engine/fixtures/constants.rs": {
       "bytes": 1936,
@@ -1738,8 +1738,8 @@
       "sha256": "b4838d88f340ad2f6337fe949f4a4bea36946b6a7af7fb97f3f60103485ce917"
     },
     "tools/native-metal-engine/gpu-hal/src/texture.rs": {
-      "bytes": 37176,
-      "sha256": "7e68e0a809d2c1325636b0303fe3460010442499edea5cf594aa7a9536bd42b7"
+      "bytes": 38325,
+      "sha256": "61a5358b3fb281298b27132358e2a045b098b5bdf0f8426f6a17addaee4dec06"
     },
     "tools/native-metal-engine/gpu-hal/src/timeline.rs": {
       "bytes": 5063,
@@ -1778,8 +1778,8 @@
       "sha256": "99eee914240b225fbfc9d508df7e2dc8051434b20b9d703421a87fc6f18f742f"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/depth_only.rs": {
-      "bytes": 6732,
-      "sha256": "a5904500ebac46d5e8efe2b85e59ab8313fa5d78d4ffe378ebae6d78a2e8ecd5"
+      "bytes": 8781,
+      "sha256": "2fc60db3f78f2513aec61c40b917ca63f8b9e36c858cbc70900a0466f5083a57"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/edram.rs": {
       "bytes": 45937,

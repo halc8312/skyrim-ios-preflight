@@ -368,7 +368,11 @@ impl Adapter {
                 };
             }
             let gpu = NativeGpu::open_with_config(native::Config {
-                adapter_limits: d.required_limits.is_some(),
+                // No explicit requirements must not invent desktop default
+                // limits that the selected iOS/Simulator adapter cannot meet.
+                // Explicit requirements were checked above; expose actual
+                // adapter limits in both paths, with only requested features.
+                adapter_limits: true,
                 validation: std::env::var_os("SKYRIM_NATIVE_VALIDATION").is_some(),
                 optional_texture_features: requested,
                 ..Default::default()

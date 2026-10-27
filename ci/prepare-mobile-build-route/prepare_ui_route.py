@@ -18,7 +18,7 @@ NOT_BEFORE = datetime(2026, 10, 23, 22, 30, tzinfo=timezone.utc)  # 2026-10-24 0
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 BOOTSTRAP_PINS = {
     "ci/prepare-fix-build-route/prepare_route.py": "a8c087b7cd8a0ea10925d226adbe813cca8a9b928ddd79c20cd2adeff8bfb7ce",
-    "ci/prepare-fix-build-route/reference-pins.json": "db6806a00ac3ef0af18961d0d04bfbb13e850305501746c16778b224ce0eef18",
+    "ci/prepare-fix-build-route/reference-pins.json": "4ece087ad09021d056f7ab2a1e91683f140147ef1f5ad6c165b5137ef8839e53",
     "ci/run-bounded-command.py": "f7391d02a43dc5dc97ea7f017cd5e502c70b7a4f06b4ce05a9e4972b49a890dd",
 }
 INPUT_PINS = {
@@ -34,7 +34,7 @@ INPUT_PINS = {
     "sdk-test/tests/MobileControlsTests.swift": "9c1bd7b322b00e0faba222b56d6f2c28c9d8f2bc915be8364074e6b1ed082d40",
     "src/alpha_coverage_probe.rs": "b95c96f882ef3502f11668a353cb107e29835152dec6ed63e4dcb10b76cce678",
     "native/GraphicsPresentationProbe.h": "6e7f24e1cba0d370f32eaa6a7b3c902fbe7d084902207a8db027438d3b175104",
-    "sdk-test/tests/GraphicsPresentationTests.swift": "a692c083d9d9121e2fe59e8fdd0141b4eb72aa870117cec48c060e189f665507",
+    "sdk-test/tests/GraphicsPresentationTests.swift": "7501b5d12b12d66787ee2f36481ebbcd641625f630c6f150500504ae04f72c23",
 }
 KERNEL_PINS = {
     "lib.rs": "6751fbbdbabd662a2cc68c043b6c6a0280d6241d478c015d0274c0d69bdbdfcd",

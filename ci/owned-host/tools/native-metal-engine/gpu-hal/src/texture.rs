@@ -1,6 +1,7 @@
 //! Owned textures with explicit subresource state and eager zeroing. Depth and
 //! multisampled images initialize through clear-only render passes; transfers
-//! stay restricted to single-sampled color until aspect-copy contracts exist.
+//! allow single-sampled color and complete Depth32Float mip/layer copies.
+//! Depth buffer transfers and combined depth/stencil copies remain unsupported.
 use super::*;
 use types::{
     Extent3d, Origin3d, TexelCopyBufferLayout as Layout, TextureDimension as Dim,
@@ -279,7 +280,9 @@ impl<B: Backend> Gpu<B> {
         let d = &desc;
         let l = &self.owner.limits;
         let depth = d.format.is_depth_stencil_format();
-        let allowed = if depth {
+        let allowed = if d.format == Format::Depth32Float {
+            T::RESOURCE | T::DEPTH_STENCIL_READ | T::DEPTH_STENCIL_WRITE | T::COPY_SRC | T::COPY_DST
+        } else if depth {
             T::RESOURCE | T::DEPTH_STENCIL_READ | T::DEPTH_STENCIL_WRITE
         } else {
             T::COPY_SRC | T::COPY_DST | T::RESOURCE | T::COLOR_TARGET
@@ -767,7 +770,11 @@ fn regions<B: Backend>(
                     z: if is_3d { origin.z } else { 0 },
                     ..origin
                 },
-                aspect: hal::FormatAspects::COLOR,
+                aspect: if texture.0.desc.format == Format::Depth32Float {
+                    hal::FormatAspects::DEPTH
+                } else {
+                    hal::FormatAspects::COLOR
+                },
             },
             size: hal::CopyExtent {
                 width: size.width,
@@ -986,8 +993,21 @@ impl<B: Backend> Encoder<B> {
         dst_origin: Origin3d,
         size: Extent3d,
     ) -> Result<()> {
-        src.check_color_copy()?;
-        dst.check_color_copy()?;
+        for (texture, mip, origin) in [(src, src_mip, src_origin), (dst, dst_mip, dst_origin)] {
+            if texture.0.desc.format == Format::Depth32Float {
+                let full = texture.mip_size(mip)?;
+                // A depth blit copies complete 2D subresources. Array layers
+                // and differing mip numbers are allowed, partial XY is not.
+                if texture.0.desc.sample_count != 1 || texture.0.desc.dimension != Dim::D2
+                    || origin.x != 0 || origin.y != 0
+                    || size.width != full.width || size.height != full.height
+                {
+                    return Err(Error::Rejected("depth copy requires complete single-sampled subresources"));
+                }
+            } else {
+                texture.check_color_copy()?;
+            }
+        }
         self.check_texture(src, T::COPY_SRC)?;
         self.check_texture(dst, T::COPY_DST)?;
         src.check_region(src_mip, src_origin, size)?;

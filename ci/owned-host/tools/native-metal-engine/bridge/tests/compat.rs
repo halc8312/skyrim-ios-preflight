@@ -10,6 +10,34 @@ fn device() -> Device {
         .block_on(adapter.request_device(&DeviceDescriptor::default()))
         .unwrap()
 }
+
+#[test]
+fn default_device_uses_selected_adapter_limits_and_explicit_requirements_still_refuse() {
+    let instance = Instance::new().unwrap();
+    let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions::default())).unwrap();
+    let actual = adapter.limits();
+    for required_limits in [None, Some(actual)] {
+        let d = instance.block_on(adapter.request_device(&DeviceDescriptor {
+            required_limits, ..Default::default()
+        })).unwrap();
+        let selected = d.limits();
+        assert_eq!(selected.maxTextureDimension2D, actual.maxTextureDimension2D);
+        assert_eq!(selected.maxStorageBuffersPerShaderStage, actual.maxStorageBuffersPerShaderStage);
+        assert_eq!(selected.maxBufferSize, actual.maxBufferSize);
+        assert_eq!(selected.minUniformBufferOffsetAlignment, actual.minUniformBufferOffsetAlignment);
+        assert!(d.features().is_empty());
+    }
+    assert!(actual.maxTextureDimension2D < u32::MAX - 1);
+    let excessive = DeviceDescriptor { required_limits: Some(Limits {
+        maxTextureDimension2D: actual.maxTextureDimension2D + 1,
+        ..Default::default()
+    }), ..Default::default() };
+    assert!(matches!(instance.block_on(adapter.request_device(&excessive)), Err(Error::RequestDevice(_))));
+    let unsupported = [FeatureName(u32::MAX)];
+    assert!(matches!(instance.block_on(adapter.request_device(&DeviceDescriptor {
+        required_features: &unsupported, ..Default::default()
+    })), Err(Error::RequestDevice(_))));
+}
 fn buffer(d: &Device, size: u64, usage: BufferUsage, mapped: bool) -> Buffer {
     d.create_buffer(&BufferDescriptor {
         label: "boundary oracle",
@@ -69,6 +97,75 @@ fn abandoned_mapping_does_not_strand_buffer_or_cancel_next_mapping() {
     assert_eq!(bytes, [3; 16]);
     b.unmap();
     assert_eq!(d.error_count(), 0);
+}
+
+#[test]
+fn discard_zeroes_only_selected_attachment_without_erasing_stored_sibling() {
+    let d = device();
+    let make = || d.create_texture(&TextureDescriptor {
+        size: extent(2, 2, 1), format: TextureFormat::RGBA8Unorm,
+        usage: TextureUsage::RenderAttachment | TextureUsage::CopySrc,
+        ..Default::default()
+    });
+    let discarded = make();
+    let kept = make();
+    let dv = discarded.create_view(None);
+    let kv = kept.create_view(None);
+    let mut a = RenderPassColorAttachment::clear(&dv, Color { r: 1., g: 0., b: 0., a: 1. });
+    a.store_op = StoreOp::Discard;
+    let b = RenderPassColorAttachment::clear(&kv, Color { r: 0., g: 1., b: 0., a: 1. });
+    let out = buffer(&d, 1024, BufferUsage::MapRead | BufferUsage::CopyDst, false);
+    let mut e = d.create_command_encoder("discard and store independent attachments");
+    e.begin_render_pass("mixed stores", &[Some(a), Some(b)], None).end();
+    for (t, offset) in [(&discarded, 0), (&kept, 512)] {
+        e.copy_texture_to_buffer(&TexelCopyTextureInfo::whole(t),
+            &TexelCopyBufferInfo { buffer: &out, offset, bytes_per_row: 256, rows_per_image: None }, extent(2, 2, 1));
+    }
+    d.queue().submit([e.finish("discard result")]);
+    let actual = read(&d, &out);
+    for row in [0, 256] {
+        assert_eq!(&actual[row..row + 8], &[0; 8]);
+        assert_eq!(&actual[row + 512..row + 520], &[0, 255, 0, 255, 0, 255, 0, 255]);
+    }
+}
+
+#[test]
+fn depth_store_and_discard_have_distinct_values_for_later_gpu_reads() {
+    let d = device();
+    let depth = d.create_texture(&TextureDescriptor {
+        size: extent(2, 2, 1), format: TextureFormat::Depth32Float,
+        usage: TextureUsage::RenderAttachment | TextureUsage::TextureBinding,
+        ..Default::default()
+    });
+    let view = depth.create_view(None);
+    let output = buffer(&d, 16, BufferUsage::Storage | BufferUsage::CopySrc, false);
+    let readback = buffer(&d, 16, BufferUsage::MapRead | BufferUsage::CopyDst, false);
+    let shader = d.create_shader_module_wgsl("depth discard readback", r#"
+@group(0) @binding(0) var depth:texture_depth_2d;
+@group(0) @binding(1) var<storage,read_write> out:array<u32>;
+@compute @workgroup_size(1) fn main(@builtin(global_invocation_id) id:vec3u) {
+    out[id.y*2u+id.x]=bitcast<u32>(textureLoad(depth,vec2i(id.xy),0));
+}"#);
+    let pipeline = d.create_compute_pipeline(&ComputePipelineDescriptor {
+        label: "depth discard", layout: None, stage: ProgrammableStage::new(&shader, "main"),
+    });
+    let group = d.create_bind_group("depth read", &pipeline.get_bind_group_layout(0), &[
+        BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&view) },
+        BindGroupEntry { binding: 1, resource: BindingResource::Buffer { buffer: &output, offset: 0, size: Some(16) } },
+    ]);
+    for (store, expected) in [(StoreOp::Store, 0.625f32), (StoreOp::Discard, 0f32), (StoreOp::Store, 0.625f32)] {
+        let mut e = d.create_command_encoder("depth store sequence");
+        e.begin_render_pass("depth clear/store", &[], Some(&RenderPassDepthStencilAttachment {
+            view: &view, depth_load_op: LoadOp::Clear, depth_store_op: store, depth_clear_value: 0.625,
+            depth_read_only: false, stencil_load_op: LoadOp::Undefined, stencil_store_op: StoreOp::Undefined,
+            stencil_clear_value: 0, stencil_read_only: false,
+        })).end();
+        let mut pass = e.begin_compute_pass("sample after discard");
+        pass.set_pipeline(&pipeline); pass.set_bind_group(0, &group, &[]); pass.dispatch_workgroups(2, 2, 1); pass.end();
+        e.copy_buffer_to_buffer(&output, 0, &readback, 0, 16);
+        d.queue().submit([e.finish("depth store result")]);
+        assert_eq!(read(&d, &readback), expected.to_bits().to_le_bytes().repeat(4));
+    }
 }
 
 #[test]

@@ -41,10 +41,10 @@ final class GraphicsPresentationTests: XCTestCase {
         XCTAssertEqual(result.1.backend, 5)
         XCTAssertEqual(result.1.checks, 15)
         XCTAssertEqual(result.1.rendered_cases, 3)
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        attachment.name = "Native-Metal-surface-oracle"
-        attachment.lifetime = .keepAlways
-        add(attachment)
+        // This is an app-hosted unit test, not an XCUITest UI runner.
+        // XCUIScreen cannot capture here; UIKit drawing also cannot prove the
+        // compositor's Metal contents. Retain the actual queue/presentation
+        // assertions above and report their scope without a substitute image.
         print("PUBLIC_NATIVE_SURFACE_RESULT \(result.0) \(result.1.checks) \(result.1.rendered_cases)")
     }
     private enum Comparison: Sendable, Equatable {

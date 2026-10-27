@@ -293,7 +293,8 @@ pub struct BufferDescriptor<'a> {
 pub struct DeviceDescriptor<'a> {
     pub label: &'a str,
     pub required_features: &'a [FeatureName],
-    /// `None` takes the WebGPU defaults; use [`Adapter::limits`] to ask for everything.
+    /// Optional minimum requirements, checked against the selected adapter.
+    /// The native bridge exposes that adapter's limits even when this is `None`.
     pub required_limits: Option<Limits>,
 }
 

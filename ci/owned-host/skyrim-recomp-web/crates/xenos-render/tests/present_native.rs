@@ -4,6 +4,67 @@
 
 mod common;
 
+// The iOS SDK's authored workloads must also pass on the selected backend
+// before an app build. No game input, Apple execution or timing claim here.
+#[cfg(all(feature = "public-probes", feature = "metal-shaders"))]
+mod public_probe_regressions {
+    use gpu_webgpu::*;
+    use xenos_render::{backend_probe, frame_probe, sampled_probe, target_fixtures};
+    use backend_probe::Backend;
+    fn device(frame_limits: bool) -> Device {
+        let instance = Instance::new().unwrap();
+        let adapter = instance.block_on(instance.request_adapter(&RequestAdapterOptions::default())).unwrap();
+        let descriptor = if frame_limits { frame_probe::device_descriptor(&adapter).unwrap() }
+            else { DeviceDescriptor::default() };
+        instance.block_on(adapter.request_device(&descriptor)).unwrap()
+    }
+    fn pixels(actual: &[u8], expected: &[u8], tolerance: u8, case: u32) {
+        assert_eq!(actual.len(), expected.len(), "case {case}");
+        let mismatch = actual.iter().zip(expected).position(|(a, b)| a.abs_diff(*b) > tolerance);
+        assert_eq!(mismatch, None, "case {case} mismatch {:?}", mismatch.map(|i| (i, actual[i], expected[i])));
+    }
+    #[test]
+    fn presentation_filters_and_constants_match_independent_oracles() {
+        let report = xenos_render::native::run_public_presentation_probe().unwrap();
+        assert_eq!((report.checks, report.rendered_cases), (255, 6));
+        let mut backend = backend_probe::WebGpuBackend::new(device(false));
+        let batches = backend_probe::batches();
+        assert_eq!(batches.len(), 6);
+        for batch in batches.iter().chain(batches.iter().rev()) {
+            backend.prepare(batch).unwrap();
+            let (actual, _) = backend.run(batch).unwrap();
+            assert_eq!(actual, batch.expected, "constant records {}", batch.records);
+        }
+    }
+    #[test]
+    fn authored_buffer_and_sampled_frames_match_independent_pixels() {
+        let host = frame_probe::WebGpuFrames::new(device(true)).unwrap();
+        let fixtures = frame_probe::fixtures();
+        assert_eq!(fixtures.len(), 9);
+        for f in fixtures.iter().chain(fixtures.iter().rev()) {
+            pixels(&host.render(&f.frame).unwrap(), &f.expected, f.tolerance, f.id);
+        }
+        let host = frame_probe::WebGpuFrames::new_sampled(device(true)).unwrap();
+        let fixtures = sampled_probe::fixtures();
+        assert_eq!(fixtures.len(), 15);
+        for f in fixtures.iter().chain(fixtures.iter().rev()) {
+            pixels(&host.render_sampled(&f.frame).unwrap(), &f.expected, f.tolerance, f.id);
+        }
+    }
+    #[test]
+    fn authored_target_frames_preserve_depth_versions_and_both_allocation_policies() {
+        let fixtures = target_fixtures::fixtures();
+        assert_eq!(fixtures.len(), 16);
+        for reuse in [false, true] {
+            let host = frame_probe::WebGpuFrames::new_sampled(device(true)).unwrap();
+            for f in fixtures.iter().chain(fixtures.iter().rev()) {
+                let rendered = if reuse { host.render_targets_reusing(&f.frame) } else { host.render_targets(&f.frame) };
+                pixels(&rendered.unwrap_or_else(|e| panic!("target {} reuse={reuse}: {e}", f.id)), &f.expected, f.tolerance, f.id);
+            }
+        }
+    }
+}
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

@@ -93,7 +93,7 @@ fn genuine_fragmentless_pipeline_writes_depth_and_matches_borrowed_and_recorded_
                 sample_count: 1,
                 dimension: D::D2,
                 format: F::Depth32Float,
-                usage: T::DEPTH_STENCIL_WRITE | T::RESOURCE,
+                usage: T::DEPTH_STENCIL_WRITE | T::RESOURCE | T::COPY_SRC,
             },
         )
         .unwrap();
@@ -107,6 +107,15 @@ fn genuine_fragmentless_pipeline_writes_depth_and_matches_borrowed_and_recorded_
             }],
         )
         .unwrap();
+    let copied = gpu.create_texture("depth mip/layer copy", TextureDescriptor {
+        size: Extent3d { width: 8, height: 8, depth_or_array_layers: 2 },
+        mip_levels: 2, sample_count: 1, dimension: D::D2, format: F::Depth32Float,
+        usage: T::RESOURCE | T::DEPTH_STENCIL_WRITE | T::COPY_DST | T::COPY_SRC,
+    }).unwrap();
+    let copied_view = gpu.texture_view(&copied, V::D2, 1..2, 1..2).unwrap();
+    let copied_group = gpu.bind_group(&gl, &[Entry { binding: 0, resource: Resource::Texture(&copied_view) }]).unwrap();
+    let untouched_view = gpu.texture_view(&copied, V::D2, 1..2, 0..1).unwrap();
+    let untouched_group = gpu.bind_group(&gl, &[Entry { binding: 0, resource: Resource::Texture(&untouched_view) }]).unwrap();
     let color = gpu
         .create_texture(
             "depth sample",
@@ -124,7 +133,8 @@ fn genuine_fragmentless_pipeline_writes_depth_and_matches_borrowed_and_recorded_
     let out = gpu
         .create_buffer("depth pixels", 1024, U::MAP_READ | U::COPY_DST)
         .unwrap();
-    for recorded in [false, true] {
+    for (recorded, use_copy, untouched) in [(false, false, false), (true, false, false),
+        (false, true, false), (true, true, false), (true, true, true)] {
         let attachment = Some(DepthAttachment {
             view: &dv,
             clear_depth: Some(1.),
@@ -156,8 +166,22 @@ fn genuine_fragmentless_pipeline_writes_depth_and_matches_borrowed_and_recorded_
             )
             .unwrap();
         }
+        if use_copy {
+            // All rejected attempts precede the valid copy on the SAME encoder.
+            // They must neither mutate the destination nor poison valid work.
+            assert!(e.copy_texture(&depth, 0, Origin3d::ZERO, &copied, 1,
+                Origin3d { x: 0, y: 0, z: 1 }, Extent3d { width: 2, ..size }).is_err());
+            assert!(e.copy_texture(&depth, 0, Origin3d::ZERO, &copied, 0,
+                Origin3d::ZERO, size).is_err());
+            assert!(e.copy_texture(&copied, 1, Origin3d::ZERO, &copied, 1,
+                Origin3d { x: 0, y: 0, z: 1 }, size).is_err());
+            assert!(e.copy_texture_to_buffer(&depth, 0, Origin3d::ZERO, size, &out,
+                L { offset: 0, bytes_per_row: Some(256), rows_per_image: Some(4) }).is_err());
+            e.copy_texture(&depth, 0, Origin3d::ZERO, &copied, 1,
+                Origin3d { x: 0, y: 0, z: 1 }, size).unwrap();
+        }
         let groups = [BoundGroup {
-            group: &group,
+            group: if untouched { &untouched_group } else if use_copy { &copied_group } else { &group },
             dynamic_offsets: &[],
         }];
         e.render(
@@ -194,6 +218,10 @@ fn genuine_fragmentless_pipeline_writes_depth_and_matches_borrowed_and_recorded_
         gpu.submit(vec![e.finish().unwrap()]).unwrap();
         let bytes = gpu.read_buffer(&out, 0..1024, DEADLINE).unwrap();
         for row in bytes.chunks(256) {
+            if untouched {
+                assert_eq!(&row[..16], &[0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255]);
+                continue;
+            }
             assert_eq!(
                 &row[..16],
                 &[
