@@ -1,4 +1,4 @@
-name: iOS source-only preflight
+name: Skyrim PC AOT native probe (branch only)
 
 on:
   workflow_dispatch:
@@ -9,27 +9,27 @@ permissions:
 jobs:
   apple-sdk-preflight:
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - name: Check out only the build harness
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Build source-only iOS libraries and diagnostic app
-        run: bash ci/run-ios-preflight.sh
-      - name: Retain unsigned diagnostic artifacts
+      - name: Validate isolated source and fixtures
+        working-directory: pc-aot
+        run: |
+          python3 scripts/check-public-tree.py
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Compile and link iPhoneOS ARM64 native probe
+        run: bash pc-aot/scripts/build-ios.sh unsigned
+      - name: Retain private unsigned probe and diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ios-source-only-diagnostic
+          name: skyrim-pc-aot-unsigned-probe
           path: |
-            out/ios-synthetic/libskyrim_guest.a
-            out/ios-probe/SkyrimProbe-0.2.0-unsigned.ipa
-            out/ios-probe/libxenos_probe_bridge.a
-            out/ios-probe/runtime-exports.txt
-            out/native-tests/*.log
-            out/ios-simulator/*.log
-            out/ios-simulator/*.png
-            out/ios-simulator/*.xcresult
+            pc-aot/local/ci/*/artifacts/*
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7

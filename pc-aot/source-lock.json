@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "audited_on": "2026-11-12",
+  "recommended_foundation": "skydream",
+  "ios_gameplay_verified": false,
+  "sources": [
+    {
+      "name": "skydream",
+      "url": "https://github.com/meizfl/skydream.git",
+      "path": "vendor/skydream",
+      "revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+      "tree": "751ef9fedf94716668a68fe08e239802d785a7f5",
+      "branch_at_audit": "main",
+      "latest_release_tag": "2026-11-09-desktop",
+      "latest_release_tag_revision": "55a9dc3d4d3fb40377ad5ce0d6cb74e65ab2c377",
+      "release_binary_correspondence": "Not verified; binary archives were not downloaded. Published Mac/Windows CI runs use earlier source revisions.",
+      "license": "GPL-3.0-only for original Skydream contributions; inherited runtime/recompiler permission unresolved; third-party licenses separate",
+      "generation_inputs": ["TESV_unpacked.exe"],
+      "legacy_dll_inputs_required": [],
+      "python_requirements": {"capstone": "5.0.9", "pefile": "2024.8.26"},
+      "documented_input_sha1": "67a597df3bb8c5db94b9032f8179d29631b1145d",
+      "documented_input_sha1_status": "Upstream README exercised TESV hash; not a verified local input allowlist. write_inputs.py labels the unpacked generation input TESV.exe.",
+      "upstream_claimed_parent": "Skyrim_Android 0.30.6"
+    },
+    {
+      "name": "Skyrim_Android",
+      "url": "https://github.com/ttom795/Skyrim_Android.git",
+      "path": "vendor/Skyrim_Android",
+      "revision": "4cd7686a9a4d801a4176afbdae062a2cbecbb2bb",
+      "tree": "ced8ac5653354c13f633291bf4f259329e7c9026",
+      "branch_at_audit": "main",
+      "latest_release_tag": "0.30.15",
+      "latest_release_tag_revision": "4cd7686a9a4d801a4176afbdae062a2cbecbb2bb",
+      "release_binary_correspondence": "Not verified; source differs from 0.30.6 by README only, build.gradle still declares 0.21, source rejects packed SteamStub despite newer release notes.",
+      "license": "No top-level runtime/recompiler license grant found; bundled SDL2 and DXVK retain separate licenses",
+      "generation_inputs": ["TESV_unpacked.exe", "d3dx9_42.dll", "binkw32.dll", "X3DAudio1_7.dll"],
+      "python_requirements": {"capstone": "5.0.9", "pefile": "2024.8.26"},
+      "optional_differential_test_requirement": {"unicorn": "2.0.1.post1"},
+      "documented_game_version": "TESV 1.9.32.0.8 (2011 Steam)",
+      "documented_original_sha1_prefix": "f39aeceb"
+    }
+  ],
+  "research_only_dependencies": [
+    {
+      "name": "MoltenVK",
+      "url": "https://github.com/KhronosGroup/MoltenVK",
+      "revision": "5189f8de86ec365860f63bf1da736815cfaea5cd",
+      "branch_at_audit": "main",
+      "license": "Apache-2.0; external components retain their own notices",
+      "source_downloaded": false,
+      "built": false,
+      "role": "Candidate Vulkan-to-Metal implementation for an iPhoneOS build; not yet integrated",
+      "spirv_cross_revision": "aa217aeb6c9f0ace7a0ab233b28807edf45eb165",
+      "upstream_ios_deployment_target": "15.0",
+      "upstream_library_ci_minimum_xcode": "15.0.1",
+      "device_toolchain_requirement": "Use Xcode/iPhoneOS SDK supporting the actual iPhone 17 Pro Max and installed iOS; the upstream library minimum alone is insufficient.",
+      "maintenance_status": "Current README says Khronos-deprecated and community-maintained best effort; still recommended there for iOS and Intel Macs.",
+      "required_review": "Resolve full ExternalRevisions dependency/configuration lock and test DXVK feature/format/shader parity on physical iPhone before adoption."
+    }
+  ],
+  "generation_fidelity_settings_to_validate": {"LIFT_MEMORDER": "1", "LIFT_TSO": "1", "LB_STRICT_ORDER": "ON", "LB_GEN_JOBS": "2"},
+  "game_inputs": "Not included; preserve original and unpacked identities independently under private storage.",
+  "dependency_downloads": "No additional packages installed; upstream source clones include their tracked third-party source.",
+  "audit": "docs/SOURCE_AUDIT.md"
+}

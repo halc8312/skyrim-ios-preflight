@@ -254,3 +254,19 @@ workflows:
       - out/owned-host/gpu-framework/*.txt
       - out/owned-host/gpu-framework/*-export-policy/*.json
       - out/owned-host/gpu-framework/*-export-policy/*.txt
+  skyrim-pc-aot-probe-unsigned:
+    name: Skyrim 2011 PC AOT - native probe compile only
+    instance_type: mac_mini_m2
+    max_build_duration: 15
+    environment:
+      xcode: "26.6"
+    # Manual-only, private, no original or generated game inputs.
+    scripts:
+      - name: Validate and build independent PC AOT probe
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR/pc-aot"
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          bash scripts/build-ios.sh unsigned
+    artifacts:
+      - pc-aot/local/ci/*/artifacts/*
