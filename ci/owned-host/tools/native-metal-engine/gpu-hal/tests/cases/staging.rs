@@ -149,6 +149,10 @@ fn warmed_upload_pool_has_bounded_native_allocations_and_releases_idle_budget() 
         .unwrap();
     for round in 0..30u8 {
         let size = if round < 2 { 64 } else { 128 };
+        // Metal execution completion can precede HAL fence observation.
+        // Force that distinction instead of depending on the host timing.
+        #[cfg(target_vendor = "apple")]
+        gpu.delay_fence_observation(Some(gpu.verified_serial()));
         gpu.write_buffer(&dst, 0, &vec![round; size]).unwrap();
         let mut e = gpu.encoder().unwrap();
         e.copy_buffer(&dst, 0, &out, 0, size as u64).unwrap();
@@ -157,6 +161,22 @@ fn warmed_upload_pool_has_bounded_native_allocations_and_releases_idle_budget() 
             gpu.read_buffer(&out, 0..size as u64, DEADLINE).unwrap(),
             vec![round; size]
         );
+        #[cfg(target_vendor = "apple")]
+        {
+            assert!(gpu.in_flight_count() > 0);
+            assert_eq!(gpu.staging_stats().retained_buffers, 0);
+            gpu.delay_fence_observation(None);
+        }
+        // Readback proves the bytes, not that upload memory is reusable.
+        // Keep the exact allocation/reuse assertions after bounded retirement.
+        let deadline = std::time::Instant::now() + DEADLINE;
+        while gpu.in_flight_count() != 0 && std::time::Instant::now() < deadline {
+            gpu.poll().unwrap();
+            if gpu.in_flight_count() != 0 {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+        assert_eq!(gpu.in_flight_count(), 0, "upload retirement deadline");
         let stats = gpu.staging_stats();
         assert_eq!(stats.created, if round < 2 { 1 } else { 2 });
         assert_eq!(stats.retained_buffers, 1);

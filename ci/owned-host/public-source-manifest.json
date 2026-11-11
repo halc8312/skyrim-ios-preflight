@@ -1850,8 +1850,8 @@
       "sha256": "8c0f50e706361776201b134aca89214fef57e36611d699a9dc105a3eff9149fd"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/staging.rs": {
-      "bytes": 9683,
-      "sha256": "391e3c383595acf630978117c63724ae42488db43a5a833e726c5fc921172abc"
+      "bytes": 10705,
+      "sha256": "84ccae89df3dda90a5efaa9a23472c0ea9b92d202ccabc2d92ff56e9ad848709"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/store_kernel.rs": {
       "bytes": 12938,
