@@ -128,6 +128,33 @@ class TranslationTests(unittest.TestCase):
                 translation.write_plan({"replace": True}, run)
             self.assertEqual(json.loads(manifest.read_text()), {"preserve": True})
 
+    def directory_symlink_or_skip(self, link, target):
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"directory symlinks unavailable: {error}")
+
+    def test_output_accepts_symlink_alias_of_workspace_root(self):
+        canonical = self.directory / "workspace"
+        canonical.mkdir()
+        alias = self.directory / "workspace-alias"
+        self.directory_symlink_or_skip(alias, canonical)
+        with patch.object(translation, "ROOT", alias):
+            manifest = translation.write_plan({"alias": True}, alias / "private" / "run")
+        self.assertEqual(manifest, canonical.resolve() / "private" / "run" / "translation-plan.json")
+        self.assertEqual(json.loads(manifest.read_text()), {"alias": True})
+
+    def test_output_rejects_private_directory_symlink_escape(self):
+        workspace = self.directory / "workspace"
+        outside = self.directory / "outside"
+        workspace.mkdir()
+        outside.mkdir()
+        self.directory_symlink_or_skip(workspace / "private", outside)
+        with patch.object(translation, "ROOT", workspace):
+            with self.assertRaises(ValueError):
+                translation.write_plan({}, workspace / "private" / "run")
+        self.assertFalse((outside / "run").exists())
+
     def test_no_inputs_returns_blocked_manifest_and_exit_two(self):
         plan = translation.make_plan()
         for reason in ("missing_original", "missing_unpacked", "missing_provenance_recipe", "exact_iphoneos_sdk_not_supplied"):

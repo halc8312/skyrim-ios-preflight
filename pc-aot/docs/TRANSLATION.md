@@ -24,7 +24,7 @@ The recipe is a UTF-8 JSON record of the actual independently performed preparat
 
 The deterministic contract digest covers translator revision, profile digest, separate input SHA-256s, recipe digest, target and fidelity settings. The manifest additionally preserves separate input paths, SHA-1s, PE metadata, version-resource results, current interpreter/dependency state and blocker details. It contains private information and must not be committed.
 
-After the reviewed-profile and dependency gates pass, a future staging step must create a fresh pinned-source copy under the run's `work/skydream/`, copy the approved unpacked input to `inputs/TESV_unpacked.exe`, and reverify identities. The exact **planned**, unexecuted command from `work/skydream/` is:
+After the reviewed-profile and dependency gates pass, a future staging step must use `git archive` at the pinned revision to create a fresh canonical-source tree under the run's `work/skydream/`, copy the approved unpacked input to `inputs/TESV_unpacked.exe`, and reverify identities. Do not filesystem-copy a Windows CRLF checkout into the POSIX shell pipeline. The exact **planned**, unexecuted command from `work/skydream/` is:
 
 ```sh
 env LIFT_MEMORDER=1 LIFT_TSO=1 DISCOVER_JOBS=2 sh tools/regen_gen.sh ../../inputs
@@ -37,3 +37,5 @@ Negative and provenance tests use synthetic PE fixtures only:
 ```powershell
 py -3.12 -m unittest discover -s tests -p test_translation.py -v
 ```
+
+Local result on 2026-11-12: all 10 tests passed. Real no-input plans are preserved under `local/translation/audit-no-inputs-20261112/` and `audit-wsl-no-inputs-20261112[-v2]/`; WSL explicitly returned exit 2. The first WSL source check timed out; the retained retry identified the pinned SHA but a dirty checkout under WSL Git because the Windows checkout uses CRLF. No vendor files were rewritten to hide that mismatch. Missing private inputs, unreviewed profile and missing pinned Python packages independently block generation.

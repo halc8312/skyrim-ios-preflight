@@ -20,8 +20,10 @@ jobs:
       - name: Validate isolated source and fixtures
         working-directory: pc-aot
         run: |
-          python3 scripts/check-public-tree.py
-          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          set -euo pipefail
+          mkdir -p local/ci/preflight/artifacts
+          python3 scripts/check-public-tree.py 2>&1 | tee local/ci/preflight/artifacts/source-check.log
+          python3 -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee local/ci/preflight/artifacts/tests.log
       - name: Compile and link iPhoneOS ARM64 native probe
         run: bash pc-aot/scripts/build-ios.sh unsigned
       - name: Retain private unsigned probe and diagnostics

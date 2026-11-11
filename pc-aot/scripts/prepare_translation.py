@@ -174,18 +174,24 @@ def make_plan(original=None, unpacked=None, recipe=None, sdk=None):
             "contract_sha256": digest(contract), "contract": contract,
             "original": original_record, "unpacked": unpacked_record, "provenance_recipe": recipe_record,
             "translator": translator, "dependencies": deps,
+            "planned_source_materialization": {"method": "git archive of pinned revision; preserve canonical repository line endings",
+                "argv": ["git", "-C", str(ROOT / source["path"]), "archive", "--format=tar", source["revision"]],
+                "destination_relative_to_run": "work/skydream", "executed": False},
             "planned_regeneration": {"cwd_relative_to_run": "work/skydream", "environment": FLAGS,
                 "argv": ["sh", "tools/regen_gen.sh", "../../inputs"],
                 "command": "env LIFT_MEMORDER=1 LIFT_TSO=1 DISCOVER_JOBS=2 sh tools/regen_gen.sh ../../inputs",
                 "input_relative_to_run": "inputs/TESV_unpacked.exe", "outputs_relative_to_run": ["work/skydream/analysis", "work/skydream/gen"],
-                "prerequisite": "Create a fresh isolated copy of the pinned translator; copy the approved unpacked input, verify hashes again, and run under the preflighted Python/POSIX environment."},
+                "prerequisite": "Materialize the pinned translator with git archive (canonical line endings); copy the approved unpacked input, verify hashes again, and run under the preflighted Python/POSIX environment."},
             "executed": False, "staged_inputs": False,
             "ios_build": {"status": "not_implemented", "requires": ["iPhoneOS dependency closure", "SDK verification on Mac", "native application integration", "device fidelity tests"]}}
 
 
 def write_plan(plan, output):
     output = output.resolve()
-    allowed = [ROOT / name for name in ("local", "private", "generated")]
+    root = ROOT.resolve()
+    # Canonicalize root aliases (e.g. macOS /var -> /private/var), but do not
+    # resolve the allowed children: a private-directory symlink must not widen scope.
+    allowed = [root / name for name in ("local", "private", "generated")]
     if not any(output != base and output.is_relative_to(base) for base in allowed):
         raise ValueError("output must be a new directory under workspace local/, private/ or generated/")
     output.mkdir(parents=True, exist_ok=False)
