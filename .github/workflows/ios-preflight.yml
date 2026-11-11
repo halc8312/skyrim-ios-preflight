@@ -9,7 +9,7 @@ permissions:
 jobs:
   apple-sdk-preflight:
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
@@ -35,7 +35,7 @@ jobs:
           retention-days: 7
       - name: Execute separate native macOS and iOS Simulator checks
         run: bash pc-aot/scripts/test-probe-simulator.sh
-        timeout-minutes: 11
+        timeout-minutes: 20
       - name: Retain private unsigned probe and diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

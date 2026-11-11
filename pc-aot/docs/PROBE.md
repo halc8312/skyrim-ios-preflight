@@ -49,7 +49,7 @@ Additional implementation references: Apple's [document picker](https://develope
 
 On the Windows host, MSVC 19.43 x64 builds the portable C core with `/W4 /WX`, and CTest checks bounds, integer overflow, zero-filled sparse pages, high-offset roundtrips, committed-page capacity, and release. The POSIX implementation is also compiled with the preinstalled WSL C compiler using `-std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror` and runs the same test. The initial MSVC compile rejected `strcpy` under the warnings-as-errors policy; fixed-size stage formatting was changed to `snprintf`, after which the build passed.
 
-Observed on 2026-11-12: Windows CTest **1/1 passed**; WSL POSIX test **passed**, OS page size 4,096 bytes, three-page probe touch 12,288 bytes. `/usr/bin/time -v` reported 1,576 KiB maximum resident set size for that host test. This is not an iPhone measurement. Info.plist/shared-scheme XML parse and 37 unique/resolved project object references passed a local static check; a real Xcode project/build check remains pending.
+Observed on 2026-11-12: Windows CTest **1/1 passed**; WSL POSIX test **passed**, OS page size 4,096 bytes, three-page probe touch 12,288 bytes. `/usr/bin/time -v` reported 1,576 KiB maximum resident set size for that host test. This is not an iPhone measurement. Info.plist/shared-scheme XML parse and project object references passed a local static check; the current project including the UI-test target has also built successfully in Xcode.
 
 ```sh
 cmake -S . -B local/build/native
@@ -57,7 +57,9 @@ cmake --build local/build/native --config Release
 ctest --test-dir local/build/native -C Release --output-on-failure
 ```
 
-The earlier app baseline at commit `c764be0` has since passed an unsigned Apple build in GitHub Actions run `43071698303` with Xcode 26.6/iPhoneOS 26.5 (including the explicit CoreGraphics link fix). This confirms that baseline's compilation/linking, not installation, execution, signing or device behavior. New simulator-test/accessibility/UUID changes require their own Apple build. **No Apple code executes on this Windows host, and no physical iPhone result is recorded here.** Source/API review and XML syntax checks are not Apple SDK compilation. Before any iPhone claim, build/link with Xcode and record at least:
+The app at commit `27cafaa7e43b120f9c44030f720d60665bf955de` passed unsigned iPhoneOS ARM64 compilation/linking, product checks and dSYM UUID matching in [GitHub Actions run 43072800930](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/43072800930), with Xcode 26.6/iPhoneOS 26.5. Its separate ARM64 iOS 26.5 Simulator UI test passed in 63.911 seconds (one test, zero failures). Preserved screenshots show the initial Metal triangle and changed movement/yaw restored after process relaunch. The VA text attachment reports `VA PASS`, reservation 4,294,967,296 bytes, page 16,384 bytes, touched 49,152 bytes, released. The separate native macOS ARM64 C test also passed with 16 KiB pages. The raw artifact, exact UUIDs and evidence paths are in [STATUS](STATUS.md). The simulator's available-memory query returned zero; it is not a physical-device RAM measurement.
+
+The earlier successful build and both original CI failures remain retained. **No Apple code executes on this Windows host, and no physical iPhone result is recorded here.** The unsigned device app is not installable. Files-provider import, Share Sheet export, audible sound, real audio interruptions and long-duration behavior still require execution checks. Before any iPhone claim, sign/install the verified device build and record at least:
 
 1. Signed device launch, exact build/OS, visible Metal triangle and working touch state.
 2. VA baseline result, page size, touched bytes, and before/after memory values; repeat after background/foreground.

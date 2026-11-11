@@ -66,7 +66,7 @@ Failure logs/manifests are also retained. Do not interpret a leftover candidate 
 
 ## Future generated-input cache contract
 
-There is **no generated game input, translation pipeline, cache restore, or private upload in either workflow**. A future, separately authorized translation stage must keep raw inputs, derived C/data, and cache objects under ignored private storage. Reuse must be content-addressed and verified against a manifest containing:
+There is **no generated game input, translation pipeline, cache restore, or private upload in either workflow**. A future translation stage using the user's verified purchased inputs must keep raw inputs, derived C/data, and cache objects under ignored private storage. Reuse must be content-addressed and verified against a manifest containing:
 
 1. SHA-256 of every original executable/library/data input, version/edition, and the exact permitted input set; no original paths, user names, or bytes in public metadata.
 2. Translator source commit and executable hash; every analysis/translation option; patch/import-ABI schema versions; ordered inputs and deterministic seed, if any.
@@ -79,6 +79,8 @@ The cache key is SHA-256 over a versioned, canonical JSON encoding of these inpu
 
 Actual cloud result (2026-11-12): [GitHub Actions run 43071698303](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/43071698303) passed unsigned iPhoneOS ARM64 compile/link, product checks and dSYM UUID matching at source `c764be0f8fdce122151ac45ab5187abbbc3a15d7`. The existing private repository runs this independent tree under `pc-aot/`; no new service account or signing credentials were created. The branch-only workflow uses the [documented macos-26 ARM64 image](https://github.com/actions/runner-images/blob/macos-26-arm64/20261102.0473/images/macos/macos-26-arm64-Readme.md) and `DEVELOPER_DIR=/Applications/Xcode_26.6.app/Contents/Developer`. Original downloaded output hashes and earlier failures are recorded in STATUS.md. This result is an unsigned diagnostic app, not an installable IPA, simulator execution or physical-device/gameplay validation.
 
+The subsequent [run 43072800930](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/43072800930) at source `27cafaa7e43b120f9c44030f720d60665bf955de` passed the updated iPhoneOS app build and, separately, the native macOS ARM64 C test and iOS 26.5 ARM64 Simulator UI test (one test, zero failures, 63.911 seconds). Raw XCTest results, app-log text attachments and screenshots were downloaded, the original ZIP digest and device artifacts were verified, and triangle geometry/state recovery were visually inspected. Simulator VA reservation passed with three 16 KiB pages touched. Neither result is physical-device or gameplay evidence. No additional build is required for documentation-only changes; later timeout/artifact-retention changes are distinguished from this tested app revision.
+
 These checks require only existing tools and do not run cloud builds:
 
 ```powershell
@@ -87,4 +89,4 @@ py -3.12 scripts/check-public-tree.py
 wsl -d Ubuntu-24.04 -- bash -n /mnt/f/SkyrimIOS/scripts/build-ios.sh
 ```
 
-The tests use explicitly synthetic Mach-O/profile fixtures to exercise rejection of wrong architecture/platform/deployment target, malformed signatures, dSYM/SDK mismatches, foreign app payloads, wrong/expired signing profiles, and forced Git additions of ignored private files. They verify manifest hashes and failure retention. YAML parsing uses already-installed PyYAML when present and otherwise reports a skip; the build scripts themselves use Python's standard library. Remaining validation: an authorized real macOS compile/link, real ad hoc archive/export with existing signing material, and registered-device installation and measurement. No Windows test substitutes for those checks.
+The tests use explicitly synthetic Mach-O/profile fixtures to exercise rejection of wrong architecture/platform/deployment target, malformed signatures, dSYM/SDK mismatches, foreign app payloads, wrong/expired signing profiles, and forced Git additions of ignored private files. They verify manifest hashes and failure retention. YAML parsing uses already-installed PyYAML when present and otherwise reports a skip; the build scripts themselves use Python's standard library. The full Python suite ran 29 tests on macOS: 28 passed and the optional PyYAML check skipped (that YAML check passed on Windows). Remaining validation: real ad hoc archive/export with existing signing material, registered-device installation, Files-provider import/log export, audible audio and device measurements. Codemagic configuration is prepared but has not itself executed; the verified cloud runs used the existing private GitHub Actions environment.

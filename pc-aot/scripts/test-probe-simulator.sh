@@ -4,7 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/local/simulator/run-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$OUT"
+exec 3>&1 4>&2
 exec > >(tee "$OUT/runner.log") 2>&1
+RUNNER_TEE_PID=$!
 SIMULATOR_UDID=""
 CORE_PASSED=false
 UI_PASSED=false
@@ -12,6 +14,9 @@ export OUT CORE_PASSED UI_PASSED
 finish() {
   result=$?
   trap - EXIT
+  # Once preservation starts, finish the bounded operations instead of losing
+  # evidence to a second soft cancellation signal. A hard runner kill is final.
+  trap '' INT TERM
   set +e
   if [ -n "$SIMULATOR_UDID" ]; then
     python3 "$ROOT/scripts/run-bounded.py" 20 xcrun simctl io "$SIMULATOR_UDID" screenshot "$OUT/final-simulator-screen.png"
@@ -27,6 +32,13 @@ finish() {
     mkdir -p "$OUT/attachments"
     python3 "$ROOT/scripts/run-bounded.py" 30 xcrun xcresulttool export attachments --path "$OUT/ProbeUITests.xcresult" --output-path "$OUT/attachments" > "$OUT/attachment-export.log" 2>&1
   fi
+  printf 'Simulator evidence retained at %s\n' "$OUT"
+  # Process-substitution tee is asynchronous and not covered by pipefail. Close
+  # its input, wait for the log to flush, and propagate a logging failure.
+  exec 1>&3 2>&4 3>&- 4>&-
+  wait "$RUNNER_TEE_PID"
+  log_result=$?
+  if [ "$log_result" -ne 0 ] && [ "$result" -eq 0 ]; then result=3; fi
   export CORE_PASSED UI_PASSED
   python3 - "$result" <<'PY'
 import json, os, pathlib, platform, sys
@@ -50,7 +62,6 @@ for filename, key in [('source-commit.txt', 'git_commit'), ('xcode-version.txt',
 PY
   scope_result=$?
   if [ "$scope_result" -ne 0 ] && [ "$result" -eq 0 ]; then result=3; fi
-  printf 'Simulator evidence retained at %s\n' "$OUT"
   exit "$result"
 }
 trap finish EXIT
@@ -84,7 +95,9 @@ PY
 if ! xcrun simctl list devices booted --json | python3 -c 'import json,sys; wanted=sys.argv[1]; data=json.load(sys.stdin); sys.exit(0 if any(d["udid"] == wanted for v in data["devices"].values() for d in v) else 1)' "$SIMULATOR_UDID"; then
   python3 "$ROOT/scripts/run-bounded.py" 30 xcrun simctl boot "$SIMULATOR_UDID"
 fi
-python3 "$ROOT/scripts/run-bounded.py" 180 xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+# The verified cold boot took about six minutes; allow ten before preserving
+# failure evidence. The UI command separately has a six-minute deadline.
+python3 "$ROOT/scripts/run-bounded.py" 600 xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 
 # Exercise the same portable implementation as native macOS ARM64, separately.
 xcrun --sdk macosx clang -arch arm64 -std=c11 -Wall -Wextra -Werror \
