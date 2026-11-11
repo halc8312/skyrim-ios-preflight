@@ -41,7 +41,7 @@ Windows/WSLのテストはiPhoneの結果ではありません。ゲスト領域
 
 `ios/SkyrimProbe.xcodeproj` / scheme `SkyrimProbe` はUIKit・Metal・AVFoundationを使う小規模検証アプリです。ゲームruntimeと外部ライブラリーは含みません。タッチ・描画・音声・Filesからのコピー・検証状態の保存／読込・中断／再開・ログ共有・4 GiB疎メモリーを調べます。検証状態の保存をSkyrimのセーブ成功とは扱いません。
 
-署名なしとAd Hocを分けた `codemagic.yaml` を用意しています。macOS ARM64・Xcode **26.6 (17F113)**・iPhoneOS SDKを要求し、2並列でビルドします。
+署名なしとAd Hocを分けた `codemagic.yaml` を用意しています。macOS ARM64・Xcode **26.6 (17F113)**・iPhoneOS SDKを要求し、2並列でビルドします。既存の非公開GitHub CIでも署名なしiPhoneOS ARM64ビルド・リンクを実行し、成功した原成果物をローカルへ取得・照合済みです。各ソース版の結果はSTATUSに記録します。
 
 ```bash
 bash scripts/build-ios.sh unsigned

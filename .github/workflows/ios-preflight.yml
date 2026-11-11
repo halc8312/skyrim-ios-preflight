@@ -26,6 +26,8 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee local/ci/preflight/artifacts/tests.log
       - name: Compile and link iPhoneOS ARM64 native probe
         run: bash pc-aot/scripts/build-ios.sh unsigned
+      - name: Execute separate native macOS and iOS Simulator checks
+        run: bash pc-aot/scripts/test-probe-simulator.sh
       - name: Retain private unsigned probe and diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -33,5 +35,11 @@ jobs:
           name: skyrim-pc-aot-unsigned-probe
           path: |
             pc-aot/local/ci/*/artifacts/*
+            pc-aot/local/simulator/*/*.log
+            pc-aot/local/simulator/*/*.txt
+            pc-aot/local/simulator/*/scope.json
+            pc-aot/local/simulator/*/*.png
+            pc-aot/local/simulator/*/ProbeUITests.xcresult
+            pc-aot/local/simulator/*/attachments/**
           if-no-files-found: error
           retention-days: 7

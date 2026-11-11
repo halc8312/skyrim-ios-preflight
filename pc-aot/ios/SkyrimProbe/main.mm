@@ -5,6 +5,8 @@
 #import <TargetConditionals.h>
 #import <os/proc.h>
 #import <mach/mach.h>
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 #import <simd/simd.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
@@ -31,6 +33,29 @@ struct CopyBudget {
     std::unique_ptr<unsigned char[]> buffer{new (std::nothrow) unsigned char[CopyBufferSize]};
 };
 static NSString *PosixFailure(NSString *stage) { return [NSString stringWithFormat:@"%@: errno %d", stage, errno]; }
+
+// Build provenance, not a device/user identifier. Read the actual loaded main image.
+static NSString *MainExecutableUUID(void) {
+    const struct mach_header *header = _dyld_get_image_header(0);
+    if (!header || header->magic != MH_MAGIC_64) return @"unavailable (not Mach-O 64)";
+    const struct mach_header_64 *header64 = (const struct mach_header_64 *)header;
+    size_t length = header64->sizeofcmds;
+    if (length > 1024 * 1024 || header64->ncmds > length / sizeof(struct load_command)) return @"unavailable (invalid command bounds)";
+    const unsigned char *commands = (const unsigned char *)(header64 + 1);
+    size_t offset = 0;
+    for (uint32_t i = 0; i < header64->ncmds; ++i) {
+        if (offset > length || length - offset < sizeof(struct load_command)) return @"unavailable (truncated command)";
+        const struct load_command *command = (const struct load_command *)(commands + offset);
+        if (command->cmdsize < sizeof(*command) || command->cmdsize > length - offset || command->cmdsize % 8) return @"unavailable (invalid command size)";
+        if (command->cmd == LC_UUID) {
+            if (command->cmdsize < sizeof(struct uuid_command)) return @"unavailable (truncated UUID)";
+            const struct uuid_command *uuidCommand = (const struct uuid_command *)command;
+            return [[NSUUID alloc] initWithUUIDBytes:uuidCommand->uuid].UUIDString;
+        }
+        offset += command->cmdsize;
+    }
+    return @"unavailable (LC_UUID absent)";
+}
 
 // openat + O_NOFOLLOW on every child prevents symlink traversal, including races
 // between enumeration and opening. Destinations are exclusively created under a UUID.
@@ -140,10 +165,13 @@ static bool CopyFD(int source, int destination, unsigned depth, CopyBudget &budg
     self.logURL = [self path:[NSString stringWithFormat:@"session-%@.log", NSUUID.UUID.UUIDString]];
     [[NSData data] writeToURL:self.logURL options:NSDataWritingWithoutOverwriting error:&setupError];
     self.output = [UITextView new]; self.output.editable = NO; self.output.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
+    self.output.accessibilityIdentifier = @"probe.log";
     UILabel *title = [UILabel new]; title.text = @"Skyrim iOS feasibility probe"; title.font = [UIFont boldSystemFontOfSize:21]; title.adjustsFontSizeToFitWidth = YES;
     UILabel *disclaimer = [UILabel new]; disclaimer.text = @"DIAGNOSTIC ONLY • No Skyrim runtime/gameplay\nDrag left: move triangle • Drag right: rotate view state"; disclaimer.numberOfLines = 0; disclaimer.font = [UIFont systemFontOfSize:12];
     self.stateLabel = [UILabel new]; self.stateLabel.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
+    self.stateLabel.accessibilityIdentifier = @"probe.state";
     self.metalView = [[MTKView alloc] initWithFrame:CGRectZero device:MTLCreateSystemDefaultDevice()];
+    self.metalView.isAccessibilityElement = YES; self.metalView.accessibilityIdentifier = @"probe.viewport"; self.metalView.accessibilityLabel = @"Metal probe viewport";
     self.metalView.clearColor = MTLClearColorMake(0.025, 0.04, 0.08, 1); self.metalView.delegate = self;
     self.metalView.preferredFramesPerSecond = 60;
     [self.metalView.heightAnchor constraintEqualToConstant:190].active = YES;
@@ -174,7 +202,7 @@ static bool CopyFD(int source, int destination, unsigned depth, CopyBudget &budg
 }
 - (UIStackView *)buttons:(NSArray<NSString *> *)names actions:(NSArray<NSString *> *)actions {
     NSMutableArray *buttons = [NSMutableArray array];
-    for (NSUInteger i = 0; i < names.count; ++i) { UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem]; [b setTitle:names[i] forState:UIControlStateNormal]; b.titleLabel.font = [UIFont systemFontOfSize:13]; [b addTarget:self action:NSSelectorFromString(actions[i]) forControlEvents:UIControlEventTouchUpInside]; [buttons addObject:b]; }
+    for (NSUInteger i = 0; i < names.count; ++i) { UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem]; [b setTitle:names[i] forState:UIControlStateNormal]; b.accessibilityIdentifier = [@"probe.button." stringByAppendingString:actions[i]]; b.titleLabel.font = [UIFont systemFontOfSize:13]; [b addTarget:self action:NSSelectorFromString(actions[i]) forControlEvents:UIControlEventTouchUpInside]; [buttons addObject:b]; }
     UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:buttons]; row.distribution = UIStackViewDistributionFillEqually; return row;
 }
 - (void)setupMetal {
@@ -207,6 +235,7 @@ static bool CopyFD(int source, int destination, unsigned depth, CopyBudget &budg
 }
 - (void)refreshState { self.stateLabel.text = [NSString stringWithFormat:@"Probe state x %.2f  y %.2f  yaw %.2f", self.moveX, self.moveY, self.yaw]; }
 - (void)info {
+    [self log:[NSString stringWithFormat:@"Main executable Mach-O UUID=%@", MainExecutableUUID()]];
     task_vm_info_data_t vm = {}; mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
     kern_return_t kr = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &count);
     struct utsname hardware = {}; BOOL hardwareOK = uname(&hardware) == 0;

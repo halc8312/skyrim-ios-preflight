@@ -14,7 +14,7 @@ xcodebuild -project ios/SkyrimProbe.xcodeproj -scheme SkyrimProbe \
 
 This unsigned build checks compilation/linking only. For a device build, use a locally configured signing team and provisioning profile, and set `PROBE_BUNDLE_ID` to a bundle identifier the team owns (default `org.skyrimios.probe`). Do not commit signing material or device identifiers. `CURRENT_PROJECT_VERSION` and `MARKETING_VERSION` are configurable build settings; preserve issued build records.
 
-The project also allows an ARM64 simulator build, labeled `SIMULATOR (not device evidence)` at runtime. It does not support an Intel simulator by default. There is no XCTest target; the shared scheme's empty test action is not a substitute for native-core or device checks.
+The project also allows an ARM64 simulator build, labeled `SIMULATOR (not device evidence)` at runtime. It does not support an Intel simulator by default. The original `SkyrimProbe` scheme retains its app build semantics and empty test action. A separate optional `SkyrimProbeUITests` scheme builds the Objective-C XCTest UI smoke target described below.
 
 ## What the app measures
 
@@ -23,7 +23,7 @@ The project also allows an ARM64 simulator build, labeled `SIMULATOR (not device
 - The report distinguishes reserved virtual bytes from touched bytes. On a 16 KiB page device the three-page touch is 48 KiB; on a 4 KiB host it is 12 KiB. Touched bytes are **not** the app's complete physical footprint. Before/after reports separately query `TASK_VM_INFO.phys_footprint` and `os_proc_available_memory`; they are snapshots, not a peak-memory sampler. Metal, UIKit, audio, page tables, and the rest of the app have additional physical costs. Reserve/commit failures remain visible with the failing stage and OS error. A release failure is also explicit.
 - **Tone** schedules a 250 ms, 440 Hz tone through AVAudioEngine. The ambient session respects the silent switch. Audibility must be confirmed on the phone. Interruptions/backgrounding stop audio; the next tap explicitly resumes it. Media-service reset recreates the engine.
 - **Save/Load** uses bounded, versioned `probe-state.json`, written with Foundation atomic replacement. It persists triangle translation/rotation only and rejects invalid types, nonfinite values, and values outside bounds. It is not a Skyrim save.
-- App/build, device model/hardware class, OS, target, thermal state, available memory and footprint are logged. No unique device identifier is collected. Renderer and audio are paused when inactive; probe state is saved on background entry and renderer resumes when active.
+- App/build, device model/hardware class, OS, target, thermal state, available memory and footprint are logged. The actual loaded main executable's Mach-O `LC_UUID` is read through dyld with bounded load-command traversal and logged to match a session to its compiled binary/dSYM; unavailable or malformed metadata is explicitly reported. The UUID identifies the executable build, not the user or device. No unique device identifier is collected. Renderer and audio are paused when inactive; probe state is saved on background entry and renderer resumes when active.
 
 ## Input copying and evidence
 
@@ -57,7 +57,7 @@ cmake --build local/build/native --config Release
 ctest --test-dir local/build/native -C Release --output-on-failure
 ```
 
-**Apple source is uncompiled and untested on this Windows host.** Source/API review and XML syntax checks are not Apple SDK compilation. Before any iPhone claim, build/link with Xcode and record at least:
+The earlier app baseline at commit `c764be0` has since passed an unsigned Apple build in GitHub Actions run `43071698303` with Xcode 26.6/iPhoneOS 26.5 (including the explicit CoreGraphics link fix). This confirms that baseline's compilation/linking, not installation, execution, signing or device behavior. New simulator-test/accessibility/UUID changes require their own Apple build. **No Apple code executes on this Windows host, and no physical iPhone result is recorded here.** Source/API review and XML syntax checks are not Apple SDK compilation. Before any iPhone claim, build/link with Xcode and record at least:
 
 1. Signed device launch, exact build/OS, visible Metal triangle and working touch state.
 2. VA baseline result, page size, touched bytes, and before/after memory values; repeat after background/foreground.
@@ -67,3 +67,11 @@ ctest --test-dir local/build/native -C Release --output-on-failure
 6. Background/foreground and forced termination: renderer resumes, log persists, previous-run marker is qualified correctly, Share Sheet exports readable logs.
 
 Keep signed app/archive/dSYM, compiler logs, failure logs and device results under ignored private paths. None of these checks would by itself demonstrate translated Skyrim code, Windows API compatibility, game loading, or gameplay.
+
+## Optional ARM64 Simulator smoke run
+
+Run `bash scripts/test-probe-simulator.sh` on an ARM64 Mac already configured with Xcode 26.6, an available iOS 26.5 runtime and an existing `iPhone 17 Pro Max` simulator. The script refuses missing/mismatched prerequisites and downloads no runtime, creates no simulator, and changes no signing setup. It boots only the selected simulator, compiles/runs the portable C test as macOS ARM64, then executes the separate `SkyrimProbeUITests` scheme with signing disabled.
+
+The UI test launches the real app, checks viewport presence and Metal pipeline readiness, verifies a real pan changes movement/yaw state, checks save/change/load recovery and persistence across process relaunch, requires a visible VA PASS or explicit VA FAIL result, checks tone scheduling, and exercises Home/background/reactivation. It also validates an actual executable UUID is logged. Screenshots and app-log text are attached to XCTest results. Viewport/pipeline assertions do not perform image-based geometry validation; inspect the captured screenshots. Tone scheduling does not verify audibility. A visible VA failure satisfies the diagnostic UI assertion but does **not** count as a successful memory reservation.
+
+Every run retains a unique `local/simulator/run-<UTC>-<pid>/` with raw runner/compiler/test logs, separate DerivedData, `.xcresult`, exported attachments when supported, a final simulator screenshot, and `scope.json`. The scope records simulator-only status, host/core/UI outcomes and explicit exclusions for device/gameplay/audio proof. A test/build failure keeps evidence and returns a nonzero exit code. Screenshot/attachment export is best effort; screenshots remain inside `.xcresult` even if standalone export fails. The simulator is not erased or deleted afterward.

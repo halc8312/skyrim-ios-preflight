@@ -77,6 +77,8 @@ The cache key is SHA-256 over a versioned, canonical JSON encoding of these inpu
 
 ## Local checks and remaining validation
 
+Actual cloud result (2026-11-12): [GitHub Actions run 43071698303](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/43071698303) passed unsigned iPhoneOS ARM64 compile/link, product checks and dSYM UUID matching at source `c764be0f8fdce122151ac45ab5187abbbc3a15d7`. The existing private repository runs this independent tree under `pc-aot/`; no new service account or signing credentials were created. The branch-only workflow uses the [documented macos-26 ARM64 image](https://github.com/actions/runner-images/blob/macos-26-arm64/20261102.0473/images/macos/macos-26-arm64-Readme.md) and `DEVELOPER_DIR=/Applications/Xcode_26.6.app/Contents/Developer`. Original downloaded output hashes and earlier failures are recorded in STATUS.md. This result is an unsigned diagnostic app, not an installable IPA, simulator execution or physical-device/gameplay validation.
+
 These checks require only existing tools and do not run cloud builds:
 
 ```powershell
