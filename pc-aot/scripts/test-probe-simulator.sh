@@ -14,11 +14,18 @@ finish() {
   trap - EXIT
   set +e
   if [ -n "$SIMULATOR_UDID" ]; then
-    xcrun simctl io "$SIMULATOR_UDID" screenshot "$OUT/final-simulator-screen.png"
+    python3 "$ROOT/scripts/run-bounded.py" 20 xcrun simctl io "$SIMULATOR_UDID" screenshot "$OUT/final-simulator-screen.png"
+    CONTAINER="$(python3 "$ROOT/scripts/run-bounded.py" 20 xcrun simctl get_app_container "$SIMULATOR_UDID" org.skyrimios.probe data 2>/dev/null)"
+    if [ -n "$CONTAINER" ] && [ -d "$CONTAINER/Library/Application Support/SkyrimProbe" ]; then
+      mkdir -p "$OUT/app-logs"
+      for app_log in "$CONTAINER/Library/Application Support/SkyrimProbe"/session-*.log; do
+        if [ -f "$app_log" ] && [ ! -L "$app_log" ]; then cp "$app_log" "$OUT/app-logs/"; fi
+      done
+    fi
   fi
   if [ -d "$OUT/ProbeUITests.xcresult" ]; then
     mkdir -p "$OUT/attachments"
-    xcrun xcresulttool export attachments --path "$OUT/ProbeUITests.xcresult" --output-path "$OUT/attachments" > "$OUT/attachment-export.log" 2>&1
+    python3 "$ROOT/scripts/run-bounded.py" 30 xcrun xcresulttool export attachments --path "$OUT/ProbeUITests.xcresult" --output-path "$OUT/attachments" > "$OUT/attachment-export.log" 2>&1
   fi
   export CORE_PASSED UI_PASSED
   python3 - "$result" <<'PY'
@@ -75,9 +82,9 @@ PY
 )"
 # Boot only the selected installed simulator; a prebooted device needs no mutation.
 if ! xcrun simctl list devices booted --json | python3 -c 'import json,sys; wanted=sys.argv[1]; data=json.load(sys.stdin); sys.exit(0 if any(d["udid"] == wanted for v in data["devices"].values() for d in v) else 1)' "$SIMULATOR_UDID"; then
-  xcrun simctl boot "$SIMULATOR_UDID"
+  python3 "$ROOT/scripts/run-bounded.py" 30 xcrun simctl boot "$SIMULATOR_UDID"
 fi
-xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+python3 "$ROOT/scripts/run-bounded.py" 180 xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 
 # Exercise the same portable implementation as native macOS ARM64, separately.
 xcrun --sdk macosx clang -arch arm64 -std=c11 -Wall -Wextra -Werror \
@@ -86,7 +93,7 @@ xcrun --sdk macosx clang -arch arm64 -std=c11 -Wall -Wextra -Werror \
 "$OUT/test_guest_memory" 2>&1 | tee "$OUT/native-test.log"
 CORE_PASSED=true
 
-xcodebuild test -project "$ROOT/ios/SkyrimProbe.xcodeproj" -scheme SkyrimProbeUITests \
+python3 "$ROOT/scripts/run-bounded.py" 360 xcodebuild test -project "$ROOT/ios/SkyrimProbe.xcodeproj" -scheme SkyrimProbeUITests \
   -configuration Debug -sdk iphonesimulator -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
   -jobs 2 -destination-timeout 60 -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
   -derivedDataPath "$OUT/DerivedData" -resultBundlePath "$OUT/ProbeUITests.xcresult" \
