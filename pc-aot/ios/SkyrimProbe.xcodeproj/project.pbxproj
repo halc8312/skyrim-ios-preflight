@@ -13,6 +13,7 @@
   A00000000000000000000007 = {isa = PBXBuildFile; fileRef = B00000000000000000000007; };
   A00000000000000000000008 = {isa = PBXBuildFile; fileRef = B00000000000000000000008; };
   A00000000000000000000009 = {isa = PBXBuildFile; fileRef = B00000000000000000000009; };
+  A0000000000000000000000A = {isa = PBXBuildFile; fileRef = B0000000000000000000000D; };
   B00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
   B00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = ProbeShaders.metal; sourceTree = "<group>"; };
   B00000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = guest_memory.c; sourceTree = "<group>"; };
@@ -25,13 +26,14 @@
   B0000000000000000000000A = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
   B0000000000000000000000B = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = guest_memory.h; sourceTree = "<group>"; };
   B0000000000000000000000C = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SkyrimProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+  B0000000000000000000000D = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
   C00000000000000000000001 = {isa = PBXGroup; children = (C00000000000000000000002, C00000000000000000000003, C00000000000000000000004, C00000000000000000000005); sourceTree = "<group>"; };
   C00000000000000000000002 = {isa = PBXGroup; children = (B00000000000000000000001, B00000000000000000000002, B0000000000000000000000A); path = SkyrimProbe; sourceTree = "<group>"; };
   C00000000000000000000003 = {isa = PBXGroup; children = (B00000000000000000000003, B0000000000000000000000B); path = ../native; sourceTree = "<group>"; };
-  C00000000000000000000004 = {isa = PBXGroup; children = (B00000000000000000000004, B00000000000000000000005, B00000000000000000000006, B00000000000000000000007, B00000000000000000000008, B00000000000000000000009); name = Frameworks; sourceTree = "<group>"; };
+  C00000000000000000000004 = {isa = PBXGroup; children = (B00000000000000000000004, B00000000000000000000005, B00000000000000000000006, B00000000000000000000007, B00000000000000000000008, B00000000000000000000009, B0000000000000000000000D); name = Frameworks; sourceTree = "<group>"; };
   C00000000000000000000005 = {isa = PBXGroup; children = (B0000000000000000000000C); name = Products; sourceTree = "<group>"; };
   D00000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001, A00000000000000000000002, A00000000000000000000003); runOnlyForDeploymentPostprocessing = 0; };
-  D00000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000004, A00000000000000000000005, A00000000000000000000006, A00000000000000000000007, A00000000000000000000008, A00000000000000000000009); runOnlyForDeploymentPostprocessing = 0; };
+  D00000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000004, A00000000000000000000005, A00000000000000000000006, A00000000000000000000007, A00000000000000000000008, A00000000000000000000009, A0000000000000000000000A); runOnlyForDeploymentPostprocessing = 0; };
   D00000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
   E00000000000000000000001 = {isa = PBXNativeTarget; buildConfigurationList = F00000000000000000000002; buildPhases = (D00000000000000000000001, D00000000000000000000002, D00000000000000000000003); buildRules = (); dependencies = (); name = SkyrimProbe; productName = SkyrimProbe; productReference = B0000000000000000000000C; productType = "com.apple.product-type.application"; };
   E00000000000000000000002 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1600; TargetAttributes = {E00000000000000000000001 = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = F00000000000000000000001; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = C00000000000000000000001; productRefGroup = C00000000000000000000005; projectDirPath = ""; projectRoot = ""; targets = (E00000000000000000000001); };
