@@ -158,7 +158,7 @@ fn reservation_cannot_be_stolen_by_other_encoders_or_queue_prefix_uploads() {
     .unwrap();
     let s = gpu.submit(vec![a.finish().unwrap()]).unwrap();
     gpu.wait(s, DEADLINE).unwrap();
-    gpu.poll().unwrap();
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.staging_stats().resident_bytes, 0);
     gpu.write_buffer_ordered(&mut b, &dst, 0, &[8; 4]).unwrap();
     drop(b);
@@ -195,7 +195,7 @@ fn reserved_snapshots_follow_real_retirement_and_quarantine_on_unknown_submit() 
     assert_eq!(gpu.staging_stats().resident_bytes, 64);
     gpu.delay_fence_observation(None);
     gpu.wait(s, DEADLINE).unwrap();
-    gpu.poll().unwrap();
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.staging_stats().retained_buffers, 1);
     let mut e = gpu.encoder().unwrap();
     let mut token = gpu.reserve_ordered_upload(&mut e, 64).unwrap();

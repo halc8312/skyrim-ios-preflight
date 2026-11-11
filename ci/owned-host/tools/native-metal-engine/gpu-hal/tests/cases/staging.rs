@@ -53,6 +53,7 @@ fn complete_initialized_uploads_preserve_every_byte_generation_and_failure_atomi
     let s = gpu.submit(vec![e.finish().unwrap()]).unwrap();
     gpu.wait(s, DEADLINE).unwrap();
     assert_eq!(gpu.read_buffer(&out, 0..1096, DEADLINE).unwrap(), expected);
+    super::retire_all(&mut gpu);
     // Reusing a larger retired staging slot must not leak its tail to a new
     // exact-size destination; ordinary partial writes still see zero elsewhere.
     let small = gpu
@@ -105,7 +106,7 @@ fn upload_pool_waits_for_observed_retirement_and_never_copies_old_bucket_tail() 
     );
     gpu.delay_fence_observation(None);
     gpu.wait(serial, DEADLINE).unwrap();
-    gpu.poll().unwrap();
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.staging_stats().retained_buffers, 1);
     // The sole cached lease is the first (A5) allocation. A short upload must
     // not copy its old A5 tail over the destination's current 3C tail.
@@ -118,6 +119,7 @@ fn upload_pool_waits_for_observed_retirement_and_never_copies_old_bucket_tail() 
     assert_eq!(&bytes[512..1024], &[0x3C; 512]);
     assert_eq!(&bytes[1024..1280], &[0x7E; 256]);
     assert_eq!(&bytes[1280..], &[0x3C; 256]);
+    super::retire_all(&mut gpu);
     let stats = gpu.staging_stats();
     assert_eq!(
         (stats.created, stats.reused, stats.retained_buffers),
@@ -126,7 +128,7 @@ fn upload_pool_waits_for_observed_retirement_and_never_copies_old_bucket_tail() 
     gpu.trim_staging_pool();
     drop(dst);
     drop(out);
-    gpu.poll().unwrap();
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.live_buffer_count(), 0);
     assert_eq!(gpu.native_counters().buffers.read(), 0);
     drop(gpu);
@@ -169,14 +171,7 @@ fn warmed_upload_pool_has_bounded_native_allocations_and_releases_idle_budget() 
         }
         // Readback proves the bytes, not that upload memory is reusable.
         // Keep the exact allocation/reuse assertions after bounded retirement.
-        let deadline = std::time::Instant::now() + DEADLINE;
-        while gpu.in_flight_count() != 0 && std::time::Instant::now() < deadline {
-            gpu.poll().unwrap();
-            if gpu.in_flight_count() != 0 {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-        }
-        assert_eq!(gpu.in_flight_count(), 0, "upload retirement deadline");
+        super::retire_all(&mut gpu);
         let stats = gpu.staging_stats();
         assert_eq!(stats.created, if round < 2 { 1 } else { 2 });
         assert_eq!(stats.retained_buffers, 1);
@@ -254,7 +249,7 @@ fn upload_buckets_never_reject_an_exact_fit_or_pin_a_large_idle_lease_for_a_tiny
     gpu.write_buffer(&dst, 0, &[1; 4096]).unwrap();
     let serial = gpu.submit(vec![]).unwrap();
     gpu.wait(serial, DEADLINE).unwrap();
-    gpu.poll().unwrap();
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.staging_stats().retained_bytes, 4096);
     gpu.write_buffer(&dst, 0, &[2; 4]).unwrap();
     gpu.write_buffer(&dst, 0, &[3; 4096]).unwrap();

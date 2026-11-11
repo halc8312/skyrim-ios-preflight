@@ -295,6 +295,7 @@ fn compute_batch_preflights_all_and_keeps_order_hazards_offsets_and_lifetimes() 
         &got[48..64],
         &(0..16u32).map(|x| 4 * x + 93).collect::<Vec<_>>()
     );
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.native_counters().compute_pipelines.read(), 0);
     drop(foreign_p);
     drop(other);

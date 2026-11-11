@@ -236,6 +236,7 @@ struct Params{scale:u32,add:u32,pad0:u32,pad1:u32}
         .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
         .collect();
     assert_eq!(words, [38, 67, 97, 128, 62, 111, 161, 212]);
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.native_counters().compute_pipelines.read(), 0);
     drop(gpu);
     finish(before);

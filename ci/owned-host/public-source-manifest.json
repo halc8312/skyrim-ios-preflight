@@ -1754,12 +1754,12 @@
       "sha256": "b51cf5be368e28425f521aa84498ae6608f2d2513f4c9b74d0633bda3064571c"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/compute.rs": {
-      "bytes": 7376,
-      "sha256": "ad9637fddd05f8eed2c7de727e62062626ccb76d460321740075ec55899a5551"
+      "bytes": 7409,
+      "sha256": "e27fb53415030c53ae32f741737779b1f650d8bec9a44f24796760c8fd20d51a"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/compute_batch.rs": {
-      "bytes": 8701,
-      "sha256": "38773691c2e4111b8df011dfce8bf17749154d38d7fb28b24044958380acf41c"
+      "bytes": 8734,
+      "sha256": "f4faaf5ba598ba41016761703c316743a733e933cd1a2e7644e2b77128c1b0fd"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/constant_frame.rs": {
       "bytes": 19947,
@@ -1814,28 +1814,28 @@
       "sha256": "1059ccd545d722d6389c6fbf1b8e31016997aff62b1959870842dcb740b13dd4"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/ordered_upload.rs": {
-      "bytes": 11628,
-      "sha256": "cfb61896b01ccb2630b280ba533ad730fbd5eca5a40b5d1c07dbd9af1aa6386d"
+      "bytes": 11710,
+      "sha256": "82d8afa15f93c92099aa5cdda0333023ab9e13a5309978aa2e27292e3faa076f"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/parity.rs": {
       "bytes": 10106,
       "sha256": "417ae0db04f1e3ca975e5f2f9dee58c522218ebdf6efb81879c5001823b83dca"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/pipeline.rs": {
-      "bytes": 6366,
-      "sha256": "d640f209b678747c4b877b067b1c92665edc022329a13a865937841a0d58e9e2"
+      "bytes": 6399,
+      "sha256": "74a2617711dc328c5a55887e74c5f9fd0ea872cd1c3710004d0784ab1064239f"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/presentation.rs": {
       "bytes": 8802,
       "sha256": "05a7d9414b35bc87bfb414a2cbfa4a0b7189927193fbb0800c77fde0d4363a9f"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/recorder.rs": {
-      "bytes": 15113,
-      "sha256": "087526596056d11662837aa810edf36bf130a2efa5463a0a27a7076aadc89d52"
+      "bytes": 15137,
+      "sha256": "03de64ad4b09149fbe1c778ff8c16e94a129c0af099c69d46500479f25f92a47"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/reservation.rs": {
-      "bytes": 11511,
-      "sha256": "9a02ca70d7d608f1ca1436ae4f4fbda0df416690735a82968ef589aa72b89af7"
+      "bytes": 11527,
+      "sha256": "6445de3ea00b99207f5cbbdd6fdfc0a1bfd5572509ba3161b8447cb35468d1d2"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/resolve_cache.rs": {
       "bytes": 14186,
@@ -1850,8 +1850,8 @@
       "sha256": "8c0f50e706361776201b134aca89214fef57e36611d699a9dc105a3eff9149fd"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/staging.rs": {
-      "bytes": 10705,
-      "sha256": "84ccae89df3dda90a5efaa9a23472c0ea9b92d202ccabc2d92ff56e9ad848709"
+      "bytes": 10438,
+      "sha256": "c154aad05c2ab2a99e544971be05fb5d9cdcd584e3906cc617323c270f753242"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/store_kernel.rs": {
       "bytes": 12938,
@@ -1866,8 +1866,8 @@
       "sha256": "28969c3174c3db8245f8401174216c87a3b41c52cdb4255e9cfa7d548d58425e"
     },
     "tools/native-metal-engine/gpu-hal/tests/transfers.rs": {
-      "bytes": 105525,
-      "sha256": "85b4cba51cb5c41b2f09d6f802142532b50e60de6f334f282ae5a2c601a630e9"
+      "bytes": 106213,
+      "sha256": "0ca4fc1ec3dcc381ba891ceac9fbe7872731ec871dd62756a347847c642c5dfc"
     },
     "tools/native-metal-engine/vendor/naga-29.0.3/.cargo/config.toml": {
       "bytes": 39,

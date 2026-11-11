@@ -59,7 +59,7 @@ fn ordered_staging_belongs_to_its_encoder_not_an_unrelated_earlier_submit() {
     let b = gpu.encoder().unwrap();
     let s = gpu.submit(vec![b.finish().unwrap()]).unwrap();
     gpu.wait(s, DEADLINE).unwrap();
-    gpu.poll().unwrap();
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.staging_stats().resident_bytes, 4);
     assert_eq!(gpu.staging_stats().retained_buffers, 0);
     // A is still unsubmitted. Trimming/reusing the prefix pool cannot free A's lease.
@@ -70,6 +70,7 @@ fn ordered_staging_belongs_to_its_encoder_not_an_unrelated_earlier_submit() {
         gpu.read_buffer(&out, 0..4, DEADLINE).unwrap(),
         7u32.to_le_bytes()
     );
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.staging_stats().resident_bytes, 4);
     assert_eq!(gpu.staging_stats().retained_buffers, 1);
     let reused = gpu.staging_stats().reused;
@@ -129,7 +130,7 @@ fn ordered_upload_budget_abandonment_retirement_and_unknown_submission_preserve_
     assert_eq!(gpu.staging_stats().resident_bytes, 8);
     gpu.delay_fence_observation(None);
     gpu.wait(s, DEADLINE).unwrap();
-    gpu.poll().unwrap();
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.staging_stats().resident_bytes, 0);
     let mut e = gpu.encoder().unwrap();
     gpu.write_buffer_ordered(&mut e, &dst, 0, &[4; 8]).unwrap();
@@ -261,6 +262,7 @@ fn ordered_reserved_capacity_bounds_pool_buckets_and_skips_unreclaimable_flights
     gpu.write_buffer(&dst, 0, &[1; 16]).unwrap();
     let serial = gpu.submit(vec![]).unwrap();
     gpu.wait(serial, DEADLINE).unwrap();
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.staging_stats().retained_bytes, 16);
     let mut e = gpu.encoder().unwrap();
     gpu.write_buffer_ordered(&mut e, &dst, 0, &[2; 8]).unwrap();

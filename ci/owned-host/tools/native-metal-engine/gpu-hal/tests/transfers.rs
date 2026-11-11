@@ -83,6 +83,19 @@ fn finish(before: usize) {
     );
 }
 
+// Lifetime/pool assertions need actual retirement, not just execution success.
+// Do not use this with deliberately delayed fences or failed/unknown work.
+fn retire_all(gpu: &mut Gpu<Platform>) {
+    let deadline = std::time::Instant::now() + DEADLINE;
+    while gpu.in_flight_count() != 0 && std::time::Instant::now() < deadline {
+        gpu.poll().unwrap();
+        if gpu.in_flight_count() != 0 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    assert_eq!(gpu.in_flight_count(), 0, "resource retirement deadline");
+}
+
 fn open() -> Gpu<Platform> {
     open_config(Config::default())
 }
@@ -135,7 +148,7 @@ fn uploads_recorded_after_commands_are_ordered_before_them_and_resources_survive
     );
     drop(first);
     drop(second);
-    gpu.poll().unwrap();
+    retire_all(&mut gpu);
     assert_eq!(gpu.live_buffer_count(), 0);
     drop(gpu);
     finish(before);
@@ -231,7 +244,7 @@ fn repeated_upload_drop_and_retirement_does_not_retain_native_buffers() {
             vec![round as u8; 1024]
         );
         drop(dst);
-        gpu.poll().unwrap();
+        retire_all(&mut gpu);
         assert_eq!(
             gpu.live_buffer_count(),
             0,
@@ -362,7 +375,7 @@ fn compute_dependencies_and_layouts_survive_drop_and_invalid_binding_is_rejected
         expected
     );
     drop(readback);
-    gpu.poll().unwrap();
+    retire_all(&mut gpu);
     assert_eq!(gpu.live_buffer_count(), 0);
     drop(gpu);
     finish(before);
@@ -466,7 +479,7 @@ fn production_constant_kernel_matches_an_independent_integer_oracle_on_native_ba
         drop(changed);
         drop(output);
         drop(readback);
-        gpu.poll().unwrap();
+        retire_all(&mut gpu);
         assert_eq!(gpu.live_buffer_count(), 0);
     }
     drop(pipeline);
@@ -501,16 +514,18 @@ fn bounded_uploads_and_native_pool_reuse_have_independent_hal_counters() {
         [0x22; 64]
     );
     drop(buffer);
-    gpu.poll().unwrap();
+    retire_all(&mut gpu);
     assert_eq!(gpu.native_counters().buffers.read(), 0);
     // Warm up one explicit empty submission and the pool, then repeat identical
     // work. HAL allocations must stay flat rather than leak one per submit.
     let s = gpu.submit(vec![]).unwrap();
     gpu.wait(s, DEADLINE).unwrap();
+    retire_all(&mut gpu);
     let created = gpu.encoder_stats().0;
     for _ in 0..100 {
         let s = gpu.submit(vec![]).unwrap();
         gpu.wait(s, DEADLINE).unwrap();
+        retire_all(&mut gpu);
     }
     assert_eq!(gpu.encoder_stats().0, created);
     assert!(gpu.encoder_stats().1 >= 100);
@@ -549,7 +564,7 @@ fn intra_encoder_read_after_write_and_write_after_write_are_synchronized() {
     drop(b);
     drop(c);
     drop(out);
-    gpu.poll().unwrap();
+    retire_all(&mut gpu);
     gpu.trim_encoder_pool();
     assert_eq!(gpu.native_counters().buffers.read(), 0);
     assert_eq!(gpu.native_counters().command_encoders.read(), 0);
@@ -669,6 +684,7 @@ fn closed_encoder_failure_and_all_unsubmitted_drop_paths_are_safe() {
     drop(encoder.finish().unwrap());
     let s = gpu.submit(vec![]).unwrap();
     gpu.wait(s, DEADLINE).unwrap();
+    retire_all(&mut gpu);
     gpu.trim_encoder_pool();
     assert_eq!(gpu.native_counters().buffers.read(), 0);
     assert_eq!(gpu.native_counters().command_encoders.read(), 0);
@@ -818,7 +834,7 @@ fn textures_preserve_mips_layers_copy_order_and_row_padding() {
             expected
         );
     }
-    gpu.poll().unwrap();
+    retire_all(&mut gpu);
     assert_eq!(gpu.native_counters().texture_memory.read(), 0);
     assert_eq!(gpu.native_counters().texture_views.read(), 0);
     // The documented immutable 1 MiB zero source remains session-owned.
@@ -935,7 +951,7 @@ fn volume_and_one_dimensional_textures_are_zeroed_and_copied_without_layer_confu
             }
         }
     }
-    gpu.poll().unwrap();
+    retire_all(&mut gpu);
     assert_eq!(gpu.native_counters().texture_memory.read(), 0);
     drop(gpu);
     finish(before);
@@ -1303,7 +1319,7 @@ struct VertexOut { @builtin(position) position:vec4f, @location(0) uv:vec2f }
         }
     }
     drop(readback);
-    gpu.poll().unwrap();
+    retire_all(&mut gpu);
     gpu.trim_encoder_pool();
     let c = gpu.native_counters();
     assert_eq!(c.texture_memory.read(), 0);
@@ -1605,7 +1621,7 @@ fn four_command_batches_share_one_fixup_encoder_under_a_six_encoder_budget() {
     assert!(gpu.encoder_stats().0 <= 6);
     drop(src);
     drop(targets);
-    gpu.poll().unwrap();
+    retire_all(&mut gpu);
     gpu.trim_encoder_pool();
     assert_eq!(gpu.native_counters().buffers.read(), 0);
     assert_eq!(gpu.native_counters().command_encoders.read(), 0);
@@ -1650,6 +1666,7 @@ fn cube_views_require_the_parent_cube_flag_and_valid_layer_shape() {
     }
     let s = gpu.submit(vec![]).unwrap();
     gpu.wait(s, DEADLINE).unwrap();
+    retire_all(&mut gpu);
     assert_eq!(gpu.native_counters().texture_memory.read(), 0);
     drop(gpu);
     finish(before);

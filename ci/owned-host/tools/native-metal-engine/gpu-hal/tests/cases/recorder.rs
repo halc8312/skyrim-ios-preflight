@@ -383,7 +383,7 @@ fn recorder_release_and_failed_reset_drop_old_ownership_but_not_encoded_work() {
     let mut record = gpu.render_recorder(&[attachment()], None, &[]).unwrap();
     let serial = gpu.submit(vec![]).unwrap();
     gpu.wait(serial, DEADLINE).unwrap();
-    gpu.poll().unwrap();
+    super::retire_all(&mut gpu);
     let baseline_buffers = gpu.native_counters().buffers.read();
     for invalid_reset in [false, true] {
         let u = gpu
@@ -411,7 +411,7 @@ fn recorder_release_and_failed_reset_drop_old_ownership_but_not_encoded_work() {
         record.set_group(0, &group, &[]).unwrap();
         let serial = gpu.submit(vec![]).unwrap();
         gpu.wait(serial, DEADLINE).unwrap();
-        gpu.poll().unwrap();
+        super::retire_all(&mut gpu);
         drop(group);
         drop(u);
         assert_eq!(gpu.native_counters().buffers.read(), baseline_buffers + 1);
@@ -460,7 +460,7 @@ fn recorder_release_and_failed_reset_drop_old_ownership_but_not_encoded_work() {
             assert_eq!(pixel, &[0, 255, 0, 255]);
         }
     }
-    gpu.poll().unwrap();
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.native_counters().texture_views.read(), 0);
     drop(gpu);
     super::finish(before);

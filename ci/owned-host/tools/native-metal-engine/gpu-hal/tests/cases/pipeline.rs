@@ -191,6 +191,7 @@ fn shared_normalized_pipeline_cache_keys_real_shaders_entries_and_preserves_evic
             ]
         );
     }
+    super::retire_all(&mut gpu);
     assert_eq!(gpu.native_counters().render_pipelines.read(), 0);
     drop(gpu);
     finish(before);
