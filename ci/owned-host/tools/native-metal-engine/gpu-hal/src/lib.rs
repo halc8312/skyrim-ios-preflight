@@ -136,6 +136,7 @@ impl Default for Config {
 #[derive(Default)]
 struct Faults {
     fence_cap: Cell<Option<Serial>>,
+    completion_cap: Cell<Option<Serial>>,
     completion_failure: Cell<Option<Serial>>,
     submit_failure: Cell<bool>,
     submit_panic: Cell<bool>,
@@ -1049,6 +1050,11 @@ impl<B: Backend> Gpu<B> {
                 flight.retire = fence_value >= flight.serial;
                 continue;
             }
+            // Test-only delay of execution evidence, distinct from retirement.
+            #[cfg(feature = "fault-injection")]
+            if self.owner.faults.completion_cap.get().is_some_and(|cap| flight.serial > cap) {
+                continue;
+            }
             let mut terminal = true;
             let mut error = None;
             for command in &mut flight.commands {
@@ -1192,6 +1198,13 @@ impl<B: Backend> Gpu<B> {
     /// remains independently observable; this does not delay GPU execution.
     pub fn delay_fence_observation(&self, cap: Option<Serial>) {
         self.owner.faults.fence_cap.set(cap);
+    }
+    /// Delay new execution observations on every backend. Unlike the fence cap,
+    /// this can hold Metal waits pending even after native commands finish.
+    /// Already verified serials remain successful; lifting it still requires
+    /// actual backend completion and cannot manufacture execution success.
+    pub fn delay_completion_observation(&self, cap: Option<Serial>) {
+        self.owner.faults.completion_cap.set(cap);
     }
     pub fn fail_completion(&self, serial: Serial) {
         self.owner.faults.completion_failure.set(Some(serial));

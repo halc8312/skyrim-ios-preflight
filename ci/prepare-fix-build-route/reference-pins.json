@@ -4,9 +4,9 @@
   "files": {
     "ci/run-ios-owned-host-preflight.sh": "bb490f30819f9d8138f59daf84f87d394c2af98d902885c3f8ac4172875a3462",
     "ci/run-ios-owned-host-tests.sh": "adec1754b3a720c205329e37144d37092e309633031392e95fa51530a7089f60",
-    "ci/prepare-owned-host-kit.py": "a92156d3613a26f0aaf27f7887d7e49457706581f569766cdcb6b0a189891c05",
+    "ci/prepare-owned-host-kit.py": "35d03159ba7b1e73b516781a83dd45e5bc3a5bda95543b7f21e47f3c843effc3",
     "ci/owned-host/source-allowlist.txt": "f721de77fb81291a70c1dbd7e87a26d914da41c1268e1843228c03cab7c93f73",
-    "ci/owned-host/public-source-manifest.json": "5f0608c03b87694d791adf9f45766f171b5d7bc1b0985f363e2c23464a31c498",
+    "ci/owned-host/public-source-manifest.json": "63e0e05d0b9af6ab35339a66653b52dd479e3def3a497dcb261e7e22f110c87a",
     "ci/gpu-framework/build_frameworks.sh": "e6c93c1090e68fef469932a6eee8a5603367e4ad8aa4555c243529ee6a2d10af",
     "ci/build-owned-host-fixture.sh": "5859d59fb50fe1d741ce2112d82998bb8aadb9da3d52b97e43f2a7edda6d0f53",
     "ci/package-owned-host-ipa.py": "dc5ae0fe6f66d9e2efe317363b01a56fff0ed48d16cb08ea6770b08e48c11dc3",

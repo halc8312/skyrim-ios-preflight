@@ -435,9 +435,12 @@ fn guest_store_writeback_timeout_cannot_invoke_cpu_commit_or_clear_gpu_newer() {
     );
     let pending = memory.gpu_newer_pages();
     let mut calls = 0;
-    gpu.delay_fence_observation(Some(0));
+    let verified_before = gpu.verified_serial();
+    // A fence cap only delays retirement on Metal. Hold execution evidence
+    // explicitly so a fast host cannot turn this timeout test into success.
+    gpu.delay_completion_observation(Some(verified_before));
     assert!(matches!(
-        memory.writeback(&mut gpu, &pending, Duration::from_millis(5), |_, _| {
+        memory.writeback(&mut gpu, &pending, Duration::from_millis(50), |_, _| {
             calls += 1;
             true
         }),
@@ -445,7 +448,8 @@ fn guest_store_writeback_timeout_cannot_invoke_cpu_commit_or_clear_gpu_newer() {
     ));
     assert_eq!(calls, 0);
     assert_eq!(memory.gpu_newer_pages(), pending);
-    gpu.delay_fence_observation(None);
+    assert_eq!(gpu.verified_serial(), verified_before);
+    gpu.delay_completion_observation(None);
     let mut cpu: BTreeMap<_, _> = initial.into_iter().map(|p| (p.address, p)).collect();
     model_writeback(&mut memory, &mut gpu, &mut cpu);
     drop(gpu);

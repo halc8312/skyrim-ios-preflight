@@ -1670,8 +1670,8 @@
       "sha256": "dea63fb3c20aded4289980c5003fb3014432ad2caf186c5212e1106a19755e69"
     },
     "tools/native-metal-engine/gpu-hal/src/lib.rs": {
-      "bytes": 49499,
-      "sha256": "27336c62f5a7857d6279f2306980833ba7223710ef8dfde93280e0cce1ab7c5f"
+      "bytes": 50256,
+      "sha256": "ec613fdb17347d1f47ce705eb7227667ae1a3498d6ebcab33b653964edb91fb6"
     },
     "tools/native-metal-engine/gpu-hal/src/ordered_upload.rs": {
       "bytes": 5356,
@@ -1806,8 +1806,8 @@
       "sha256": "3caa179580c2e301f0142b86e9910dca0cad9624c592b947b2c48399acc81d76"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/guest_store.rs": {
-      "bytes": 24687,
-      "sha256": "0df4119a8d7824f4a675f6e25fc5c81d170a58ee2ec89f12e5243a2c486c317e"
+      "bytes": 24970,
+      "sha256": "cdd3fb4362fd881c0ff2848e6386df25bd8bcf81e0434dee69a62951ee2e0e5c"
     },
     "tools/native-metal-engine/gpu-hal/tests/cases/guest_texture.rs": {
       "bytes": 20664,
