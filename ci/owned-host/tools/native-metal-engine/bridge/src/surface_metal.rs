@@ -138,6 +138,15 @@ impl SurfaceFrame {
     /// The native host uses this whole-frame submission instead of separately
     /// committing render work and later manufacturing another present commit.
     pub fn present_with(self, commands: CommandBuffer) -> Result<()> {
+        self.present_with_pacing(commands, None)
+    }
+    /// `present_with`, keeping the previously presented frame on screen for at
+    /// least `minimum` (see the native surface's `present_commands_paced`).
+    pub fn present_with_pacing(
+        self,
+        commands: CommandBuffer,
+        minimum: Option<Duration>,
+    ) -> Result<()> {
         let copies = staging::take_copies();
         let prepared = commands::submission_commands(
             &self.device.owner,
@@ -160,7 +169,7 @@ impl SurfaceFrame {
             c.prefix_bytes = 0;
             all.extend(commands);
             c.serial = if current {
-                surface.present_commands(&mut c.gpu, self.frame, all)
+                surface.present_commands_paced(&mut c.gpu, self.frame, all, minimum)
             } else {
                 surface.retire_frame_commands(&mut c.gpu, self.frame, all)
             }

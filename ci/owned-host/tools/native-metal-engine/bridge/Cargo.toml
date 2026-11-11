@@ -9,6 +9,8 @@ publish = false
 
 [patch.crates-io]
 naga = { path = "../vendor/naga-29.0.3" }
+# Pinned upstream HAL; the Metal backend compiles guest MSL with safe (IEEE) math.
+wgpu-hal = { path = "../vendor/wgpu-hal-29.0.3" }
 
 [dependencies]
 skyrim-native-gpu = { path = "../gpu-hal", features = ["metal-fixed-sample-mask"] }

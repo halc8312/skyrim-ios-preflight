@@ -233,3 +233,32 @@ Source-backed comparisons and the migration rationale are recorded in
 5-star source, current Theft4/MCLA, GLUE 5, Muguet, NFS MW and GoldenPad were
 surveyed; only architecture/algorithm ideas were adopted, without transplanting
 title-specific hooks or treating other projects' FPS as Skyrim evidence.
+
+## Play-quality changes (2026-11-11, unverified on a physical iPhone)
+
+These address frame-time instability, hitches and unintended transparency. All
+were type-checked for `aarch64-apple-ios` and exercised by the portable suites
+on a software Vulkan device; none has run on Apple hardware yet.
+
+- Guest shaders are compiled with safe (IEEE) Metal math. The vendored
+  `wgpu-hal` 29.0.3 differs from upstream only in `src/metal/device.rs`, which
+  sets `MTLMathMode::Safe` and precise math functions. Metal's default fast math
+  assumes NaN/Inf never occur and removes the Shader Model 3 `0 * Inf == 0`
+  guards the translator emits, so affected pixels failed the alpha test.
+- `NtReadFile` marks the destination pages written after the read as well as
+  before it. The renderer consumes a mark before reading a page, so a mark set
+  only before a slow read could be consumed while the page still held old bytes.
+- Guest threads and the renderer thread run at the user-interactive QoS class.
+- The executor asks the driver whether earlier submissions finished only when
+  the answer can change its decision, instead of twice before every command.
+- Backpressure waits yield and nap for 100 microseconds before falling back to
+  one-millisecond sleeps.
+- The live device's resident-memory refusal thresholds are 3 GiB of textures and
+  1 GiB of buffers instead of the 512 MiB fixture bounds, which the texture
+  cache and supersampled EDRAM targets could exceed (a fatal renderer stop).
+- Frames are presented with `presentDrawable:afterMinimumDuration:` once the
+  title's swap cadence is established (`PresentPacer`), so a frame that finishes
+  early no longer shortens the previous frame's time on screen.
+
+Not addressed: pipelines are still compiled synchronously on first use, so a
+shader combination seen for the first time can still cost a frame or more.

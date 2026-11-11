@@ -271,6 +271,20 @@ pub struct AdapterInfo {
     pub vendor_id: u32,
     pub device_id: u32,
 }
+/// Resident-memory ceilings of the live renderer's device. The HAL defaults (512 MiB each)
+/// are development bounds sized for conformance fixtures; exceeding one rejects the allocation,
+/// which the checked game renderer treats as fatal. The game's own budgets sit above them: the
+/// texture cache alone may hold 512 MiB plus a 256 MiB reuse pool before it evicts, next to
+/// supersampled 4x MSAA EDRAM targets (133 MiB per colour target at 3840x2160), and the guest
+/// memory mirror may grow to the console's whole 512 MiB next to the index and constant rings.
+/// These are refusal thresholds, not reservations: nothing is allocated up front.
+fn live_config() -> native::Config {
+    native::Config {
+        max_resident_texture_bytes: 3 << 30,
+        max_resident_buffer_bytes: 1 << 30,
+        ..Default::default()
+    }
+}
 impl Instance {
     pub fn new() -> Result<Self> {
         Ok(Self)
@@ -288,7 +302,7 @@ impl Instance {
                 | types::Features::FLOAT32_FILTERABLE
                 | types::Features::TEXTURE_FORMAT_16BIT_NORM
                 | types::Features::DEPTH32FLOAT_STENCIL8,
-            ..Default::default()
+            ..live_config()
         };
         let result = NativeGpu::open_with_config(config)
             .map_err(convert::err)
@@ -375,7 +389,7 @@ impl Adapter {
                 adapter_limits: true,
                 validation: std::env::var_os("SKYRIM_NATIVE_VALIDATION").is_some(),
                 optional_texture_features: requested,
-                ..Default::default()
+                ..live_config()
             })
             .map_err(convert::err)?;
             if gpu.adapter_info != self.info || !gpu.features().contains(requested) {

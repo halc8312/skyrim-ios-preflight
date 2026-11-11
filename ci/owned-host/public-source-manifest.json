@@ -7,15 +7,15 @@
   "public_source_only": true,
   "sdk_compile_verified_at_freeze": false,
   "sdk_files_included": false,
-  "file_count": 632,
+  "file_count": 716,
   "source_files": {
     "skyrim-recomp-web/Cargo.lock": {
-      "bytes": 27225,
-      "sha256": "ac57aac577d52f538c4f5206bc61d59bd30239f3a897a40aeaa0ab7fcfb6baa1"
+      "bytes": 27082,
+      "sha256": "3b2b10ad8bf4b173bb0c689e1b8a486d1fb97a523518ce87cce7cf1f765b4abb"
     },
     "skyrim-recomp-web/Cargo.toml": {
-      "bytes": 2221,
-      "sha256": "f97dfb97ebb3c1e1ca0b8583fe763da1d1106df1a77bed4db967aa114000878d"
+      "bytes": 2382,
+      "sha256": "f5348e8baea72ba494318bf515098458c8ee44fef1ad4a4bd8f83465bf0d5a9c"
     },
     "skyrim-recomp-web/cpp/ppc_context.h": {
       "bytes": 33121,
@@ -278,8 +278,8 @@
       "sha256": "38b22e34d1b00399c380f690e17da097aec04bb0b5efa5a38523db52b56349c0"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/xboxkrnl/io.rs": {
-      "bytes": 21026,
-      "sha256": "8497dd5110f7aae21cef69584b41ad3023a13f89c76c8dff5213ef8d00e062d1"
+      "bytes": 21457,
+      "sha256": "9a2b572ddbe7dae7778714e5e0f91f058c25d41a888db9c06408c8682e5304a1"
     },
     "skyrim-recomp-web/crates/kernel-hle/src/xboxkrnl/ldi.rs": {
       "bytes": 6300,
@@ -394,8 +394,8 @@
       "sha256": "ff2cf880eb540f81a4227eb1415c692bd21bda31c615b57a441955407cb2b11a"
     },
     "skyrim-recomp-web/crates/runtime-core/src/thread.rs": {
-      "bytes": 10621,
-      "sha256": "b64da2e7486691684091c33d3e22d944cb4e171e07d7e6b7c020a06995f3d330"
+      "bytes": 11653,
+      "sha256": "f962c2bf3c023b62fb66bbc691c521b182f5176ad25f35d97a239066b2855a7d"
     },
     "skyrim-recomp-web/crates/runtime-core/src/timebase.rs": {
       "bytes": 1819,
@@ -578,8 +578,8 @@
       "sha256": "2b0ebd6f4f8217e598246d05f3e0d0fecfc2070d783e94df9508ff7213f00a0d"
     },
     "skyrim-recomp-web/crates/xenos-render/src/executor.rs": {
-      "bytes": 106923,
-      "sha256": "be4530e2f58851accb74111e4afea4fb82f1b476d3464d5b96ff77f7d629366b"
+      "bytes": 108562,
+      "sha256": "59c1968523701a082758d7f54332fcb140631f8ef771c524db35d8cfb0a15db9"
     },
     "skyrim-recomp-web/crates/xenos-render/src/extent.rs": {
       "bytes": 12458,
@@ -614,8 +614,8 @@
       "sha256": "0dda4ec4fbcd7f86bb7f7778c9e96b7866d28994e76fcdb595a78f83abd49d49"
     },
     "skyrim-recomp-web/crates/xenos-render/src/native.rs": {
-      "bytes": 45285,
-      "sha256": "0d0ebdced09425c88e2cf0e58ff0c064c10a0f776ee3dfcf55dbe118223a9135"
+      "bytes": 46306,
+      "sha256": "67a8590ca6e7f05c2b1457b45d5d9bbb45e88ce319807629aed3f90c3cf822a0"
     },
     "skyrim-recomp-web/crates/xenos-render/src/native_coverage.rs": {
       "bytes": 5158,
@@ -698,8 +698,8 @@
       "sha256": "61c9fdaca08f5d50ace2f1421b7363c99ac93b75b2874e2d6318f5c26017f868"
     },
     "skyrim-recomp-web/crates/xenos-render/src/settings.rs": {
-      "bytes": 13852,
-      "sha256": "43b4795b0e2d06fde535605dccac8f82e26617a4a7646512620a872cb200b8f0"
+      "bytes": 25896,
+      "sha256": "3622197535200274cdfad944c17f07f3c6f2c4d73524786ed9544edf0531c543"
     },
     "skyrim-recomp-web/crates/xenos-render/src/shaders.rs": {
       "bytes": 3940,
@@ -1042,24 +1042,24 @@
       "sha256": "fb566ebd6019888be0844921ae88062f67d83c40fc1e12ca3e9be9f2acdfd661"
     },
     "source-allowlist.txt": {
-      "bytes": 37079,
-      "sha256": "19fc70dc8c030132baecb9f0fe719fdd41eafd81702d1a74904183969e9a99a7"
+      "bytes": 43004,
+      "sha256": "f721de77fb81291a70c1dbd7e87a26d914da41c1268e1843228c03cab7c93f73"
     },
     "tools/ios-owned-game-host/AUDIO.md": {
       "bytes": 9670,
       "sha256": "26259cc3d5d052690d1fcbba30464f6f304b1a0f3136256ed27ce36b501a91ce"
     },
     "tools/ios-owned-game-host/Cargo.lock": {
-      "bytes": 31022,
-      "sha256": "81cbf2f2b729d83f0d8e9b1085baeb4c91f3f3c86f26438f5f8e2fa5f9def532"
+      "bytes": 30879,
+      "sha256": "a100acbfc729f5225bddfab7934e3863298d6cead2a6a63f883a64460cc333ff"
     },
     "tools/ios-owned-game-host/Cargo.toml": {
-      "bytes": 1585,
-      "sha256": "41c827f163de19bda7c28896796d0ba7c27ccf623ef9a939682748750975f5f6"
+      "bytes": 1738,
+      "sha256": "d2728eb2e538cb1f0e173141c11ab4d3bf4d7e16c86a09859b9a5d48e48d8627"
     },
     "tools/ios-owned-game-host/README.md": {
-      "bytes": 15561,
-      "sha256": "bf7932adbfc31b7c42d66e9676e296701a20ecbdbe4acf2f7742b27183ef148e"
+      "bytes": 17422,
+      "sha256": "e44d2e672a93a0625e029d787bb86ba1c123326ff864e73068ca5a54f3989f12"
     },
     "tools/ios-owned-game-host/app/DeviceAudioCommands.swift": {
       "bytes": 5191,
@@ -1542,12 +1542,12 @@
       "sha256": "bba63dd5389d007f0c22418bf23b33c2967edd0fb1b63ed7b30e1a94db713b53"
     },
     "tools/native-metal-engine/bridge/Cargo.lock": {
-      "bytes": 22420,
-      "sha256": "190e4e44a981a386404e003f46a4e1370362fb4b6baa8bc0d76c73fa411e015c"
+      "bytes": 22277,
+      "sha256": "8f15ce197c76623b36c4dfc2884aeb79be3b9a4e56802ba628550a679aaa8aa9"
     },
     "tools/native-metal-engine/bridge/Cargo.toml": {
-      "bytes": 543,
-      "sha256": "46fb45560bb03d506585f7d962f4516029d3d04e0276a27089630bdaf2c4b255"
+      "bytes": 678,
+      "sha256": "63e2b9c43cea240d821f20d2ebce62b82ed0fa02de44b2b72be0777c37b41c47"
     },
     "tools/native-metal-engine/bridge/src/api.rs": {
       "bytes": 11462,
@@ -1562,28 +1562,28 @@
       "sha256": "6095af543bd46b3a5e477fcdfb565cc5498140a2aaf7c7cafa1ed5b30a44e96e"
     },
     "tools/native-metal-engine/bridge/src/device.rs": {
-      "bytes": 13138,
-      "sha256": "9a08bcc5262ebdc89c4afb73716c0baad4c4296588be284fcd2932b22a44baca"
+      "bytes": 13964,
+      "sha256": "7e2dad6b9fe8a0291aa55cfcec827393b634e30e2c1dde85bc4c7f9baffc8bc6"
     },
     "tools/native-metal-engine/bridge/src/lib.rs": {
       "bytes": 5576,
       "sha256": "a1070ee7d46d3eb6746136e355da1ccc2819a9cb1da87def8d5b096df3db93d3"
     },
     "tools/native-metal-engine/bridge/src/pending.rs": {
-      "bytes": 2150,
-      "sha256": "d15412b98353cb7401c0b249b67d26f67505751dbfcc7d79eb12e0badb3bbb48"
+      "bytes": 2171,
+      "sha256": "4deb1b3848d699da0ab747242f03017b10e621ad3124919492880a659200d6b4"
     },
     "tools/native-metal-engine/bridge/src/resources.rs": {
       "bytes": 33457,
       "sha256": "8c2587c797fa18f0915904c45c63b524a0f03f5d3bdcb76532d99910c6dc4c10"
     },
     "tools/native-metal-engine/bridge/src/surface.rs": {
-      "bytes": 3058,
-      "sha256": "463be9e9ab0f8f61b055ca350401c03bcc181291a2039bbffe7c055c21952f80"
+      "bytes": 3275,
+      "sha256": "f459ee1d553b7b4f07f247437fd2e5e4536a31e64faba4036a822b0ee81f45e7"
     },
     "tools/native-metal-engine/bridge/src/surface_metal.rs": {
-      "bytes": 7040,
-      "sha256": "8dcb7512f39e28b97d60526df31f6f462817f1f3210cb18448bee825ac28eef4"
+      "bytes": 7403,
+      "sha256": "af0ffa059d1aee022343340e4bade8989357fc0828b54664bfa1e1dc65f771ed"
     },
     "tools/native-metal-engine/bridge/src/timing.rs": {
       "bytes": 471,
@@ -1598,12 +1598,12 @@
       "sha256": "8077f94c41b84732b36a31768c751bf9d34aec1552002bd6012a4211d1ced0af"
     },
     "tools/native-metal-engine/gpu-hal/Cargo.lock": {
-      "bytes": 22281,
-      "sha256": "e0528ce9ffa70ff26c3cb02545a9a009c135fb1661ac80c79135b3ec3880b587"
+      "bytes": 22138,
+      "sha256": "02c0ed53e8bc1f6f4c9a060b701df41b01461e5afc7334ad78c7c1ae55e84260"
     },
     "tools/native-metal-engine/gpu-hal/Cargo.toml": {
-      "bytes": 2288,
-      "sha256": "5b73a39faa7ca049f2756dff1bfc461b7a438c23f395b28dc4b7962e67678c7b"
+      "bytes": 2421,
+      "sha256": "cc523ba1711e67a803c7f552b81d501b5a6fe69ba050ed0c1be2f9a0a0e99b92"
     },
     "tools/native-metal-engine/gpu-hal/src/backend.rs": {
       "bytes": 3102,
@@ -1670,8 +1670,8 @@
       "sha256": "dea63fb3c20aded4289980c5003fb3014432ad2caf186c5212e1106a19755e69"
     },
     "tools/native-metal-engine/gpu-hal/src/lib.rs": {
-      "bytes": 48568,
-      "sha256": "ba1d562291416dad4c2ee4e0a466ed7e571e8cfb4ba0378dd0869a295ed6d652"
+      "bytes": 49499,
+      "sha256": "27336c62f5a7857d6279f2306980833ba7223710ef8dfde93280e0cce1ab7c5f"
     },
     "tools/native-metal-engine/gpu-hal/src/ordered_upload.rs": {
       "bytes": 5356,
@@ -1726,16 +1726,16 @@
       "sha256": "7571b3c46a2bb202de07690a56be87fadf0171e0e80cfe420a53151d9e1c989e"
     },
     "tools/native-metal-engine/gpu-hal/src/staging.rs": {
-      "bytes": 6110,
-      "sha256": "f716a3e9f961f1ea7e9b7757eb8da1620590cf06da8f83c895af22a240b95bd6"
+      "bytes": 6127,
+      "sha256": "124656a6e6d6994128e6d8c3378e58e1f97247b2233d2a3fbc2b31b2a32e661d"
     },
     "tools/native-metal-engine/gpu-hal/src/surface.rs": {
       "bytes": 3183,
       "sha256": "d29476ef93cdf0657b17c1091abc01981e6bbd4b463680e169bf4687d2f337e9"
     },
     "tools/native-metal-engine/gpu-hal/src/surface/metal.rs": {
-      "bytes": 9635,
-      "sha256": "b4838d88f340ad2f6337fe949f4a4bea36946b6a7af7fb97f3f60103485ce917"
+      "bytes": 10710,
+      "sha256": "5f309ffecf9e075ebec9a3acd9984d620a200f55cfcde3229bef5da405633e8d"
     },
     "tools/native-metal-engine/gpu-hal/src/texture.rs": {
       "bytes": 38325,
@@ -2500,6 +2500,342 @@
     "tools/native-metal-engine/vendor/naga-29.0.3/src/valid/type.rs": {
       "bytes": 41484,
       "sha256": "33340df1ab43bb68264cf7a3e27b59b79345bf4ac204ad62307d1f3be87de65d"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/.cargo_vcs_info.json": {
+      "bytes": 102,
+      "sha256": "242c71223face240198fa225433f6312b9c6f6d1970e97f4e8ac5ab1fda27ef0"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/Cargo.lock": {
+      "bytes": 63660,
+      "sha256": "2e5fb2b8069f725ca8f9f98209de98354056d55e9a288f203be448e3dde7c23d"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/Cargo.toml": {
+      "bytes": 11516,
+      "sha256": "c832b132eb40c89920282a2fb7947bb392e2a8a150371b8047232fd14829f6d6"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/Cargo.toml.orig": {
+      "bytes": 12115,
+      "sha256": "7818730cd1d532d6f3461f33839036de2212abfc4164c7fcec7c885c0cb24666"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/LICENSE.APACHE": {
+      "bytes": 10173,
+      "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/LICENSE.MIT": {
+      "bytes": 1078,
+      "sha256": "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/README.md": {
+      "bytes": 5292,
+      "sha256": "cf9e84804a635e4a8a9fefc596be9da6bf7354dde0d105e27d56a12cb20dd8e3"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/build.rs": {
+      "bytes": 1695,
+      "sha256": "92e5ba25cb39fb1eb568ffc84e417d5f272a52a4f7128488c42c26f1f0428a7e"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/examples/halmark/main.rs": {
+      "bytes": 33639,
+      "sha256": "5e15f976385e0487520dc1083487a81c86d71e56ddd67861f391e7f282dce41b"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/examples/halmark/shader.wgsl": {
+      "bytes": 1154,
+      "sha256": "26c256ec36d6f0e9a1647431ca772766bee4382d64eaa718ba7b488dcfb6bcca"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/examples/raw-gles.em.html": {
+      "bytes": 431,
+      "sha256": "70fbe68394a1a4522192de1dcfaf7d399f60d7bdf5de70b708f9bb0417427546"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/examples/raw-gles.rs": {
+      "bytes": 14421,
+      "sha256": "84f6a40d746fb1ce4ca10748c901352e918db5ffb246d7f98c07be32738c67f0"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/examples/ray-traced-triangle/main.rs": {
+      "bytes": 44448,
+      "sha256": "c1940324fab4a5dda401d2589c57cd96e0f2fb9b24541d37fdaa2ca9ebceaaaa"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/examples/ray-traced-triangle/shader.wgsl": {
+      "bytes": 1303,
+      "sha256": "90a66ffa57a642fd806a5b3c96347448158cd562d8951b5afd067bfd0b3d1e98"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/auxil/dxgi/conv.rs": {
+      "bytes": 12476,
+      "sha256": "3ca856c93916c0be714924ff077aa1f366be5557cc164210154d252e7e49fb77"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/auxil/dxgi/exception.rs": {
+      "bytes": 3526,
+      "sha256": "0eafc977390cf76b6ab92697a60de05b8fd61fbad5f3d3ea0649d6e93777e1bc"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/auxil/dxgi/factory.rs": {
+      "bytes": 6216,
+      "sha256": "81e479e550a09127384d8080e43d5f5bae8e8dda6082fe41a87bea8f872eb0f1"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/auxil/dxgi/mod.rs": {
+      "bytes": 94,
+      "sha256": "e6c5cc3b73bb97742135d6f35308c42f0822304764978fb8dabb0e848863352a"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/auxil/dxgi/name.rs": {
+      "bytes": 829,
+      "sha256": "ff942da0da1a497ee4d2be21604f7ba9fae963588105b3d1f63aae1a0c536e82"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/auxil/dxgi/result.rs": {
+      "bytes": 1060,
+      "sha256": "ae8317767376c2d011d7562b37a99e14d72f2c8e37b107cd5e15e601c9abba8a"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/auxil/dxgi/time.rs": {
+      "bytes": 3783,
+      "sha256": "b6911800be3873cbe277b2534b3839c6f005f3d9a09341aace4752e207d584a2"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/auxil/mod.rs": {
+      "bytes": 8239,
+      "sha256": "d9011bf41c410fe78edea5b78bf6ad466389bd8b8b0414463abc52c41a4e0568"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/auxil/renderdoc.rs": {
+      "bytes": 4709,
+      "sha256": "94898f747476e269b2910d42e769f2bbb6be0cb466ad92f9d381f55799d2756e"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/adapter.rs": {
+      "bytes": 62160,
+      "sha256": "8c5b102f8a46c87b5e1ff7ce11a189bbab3a0cf1a77494a532c6ef6b28be2da7"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/command.rs": {
+      "bytes": 71952,
+      "sha256": "25077f265d52ef4b7bff47c60d8bff5b5e74f7a1a5be0dde96c54f173fff35c7"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/conv.rs": {
+      "bytes": 18555,
+      "sha256": "ea726af5bd4d8757ff97dc1f2da90df4fb7e43c38db5bab1c89d2c95bd3bcd07"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/dcomp.rs": {
+      "bytes": 3988,
+      "sha256": "053068fbd393a4b8610c7070a72e5887f0fe09b61d35d2be806083d800b48b08"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/descriptor.rs": {
+      "bytes": 10216,
+      "sha256": "ccd4feb6bd3e0a0ffc26142f8a81fca26180d0f50146b6eb2f670cbc89ea7064"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/device.rs": {
+      "bytes": 109386,
+      "sha256": "77db671eb1302646d1ff9f257413858bc23038578ecc36e0fe3c3a26b0e696dc"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/device_creation.rs": {
+      "bytes": 6775,
+      "sha256": "fbaf9487c63f936e3556ea6376d9b41b072c700aa69303f67ea20012ad61a54a"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/instance.rs": {
+      "bytes": 7649,
+      "sha256": "bfcc7234eb1dfaa7d39caf25039f86d78968af286fb749d663334f81b210d4b7"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/mod.rs": {
+      "bytes": 56372,
+      "sha256": "4f750d4eefc71bd6f63675caa7e5ac83a1850d70975c1f0b08ec76eb21d5ea87"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/pipeline_desc.rs": {
+      "bytes": 14709,
+      "sha256": "631c72108f6735debe9f7059e22574ad50b11aca4dc0ca804e6d89b1373d19ff"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/sampler.rs": {
+      "bytes": 9682,
+      "sha256": "d18d243efe4fa667dbab5b75b5b91d47de94d441976d9f44a46a2b49ba38473d"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/shader_compilation.rs": {
+      "bytes": 13681,
+      "sha256": "72eacf50c1e1f0d6c8511b5c43ba7b854f7dc153f71b4928d23cbf1895f4347a"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/suballocation.rs": {
+      "bytes": 21421,
+      "sha256": "3abbde338015079fe366c5b76bd155b2c41b31ea5b44b7a67ad42f2c43545239"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/types.rs": {
+      "bytes": 1205,
+      "sha256": "3fc7619fc09303eb3c936d4ded6889f94ce9e8b9aa62742ce900baa1b1e1cca7"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dx12/view.rs": {
+      "bytes": 15265,
+      "sha256": "79b3f7331d9795e60f9b53023cbf0df46c3a05b1e8bd5c7bcca8acdd235b124f"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dynamic/adapter.rs": {
+      "bytes": 2441,
+      "sha256": "10e0662dc5ab2b360e59650f139dbfafe4a07ef06fdcc620d1682a468895fcc6"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dynamic/command.rs": {
+      "bytes": 24513,
+      "sha256": "dc48b10de4d50617cffb09eb48b3ea14f4cb51091c5ca0384775aeb9a9e547d3"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dynamic/device.rs": {
+      "bytes": 20582,
+      "sha256": "fd0a17bbb1da13ce4fb1f7bc61d7d9b3c41354a0af5dc0fed236ab0cc98b3535"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dynamic/instance.rs": {
+      "bytes": 2243,
+      "sha256": "7b515c201e1ca24f24439544dbfa1d19ea1412a4f89bd803e009aed13b021e55"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dynamic/mod.rs": {
+      "bytes": 8298,
+      "sha256": "2577d3aef6441f5b42b427d80ba3cf7fee2a97b2fc12335a1fba383e8a79a9b2"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dynamic/queue.rs": {
+      "bytes": 1831,
+      "sha256": "d76abb4797e90253386d24584f186dbe1909e772560156b2e891fa043cfefbdc"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/dynamic/surface.rs": {
+      "bytes": 2122,
+      "sha256": "a7b67292ead4c2f3978b4ba17e6a83d94fd80db81b2afbf1aa18da9d392b54b2"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/adapter.rs": {
+      "bytes": 56453,
+      "sha256": "d8b603eec4e36290e773f4ed5132275a1a545c7e71ef56db3dc5597229c42289"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/command.rs": {
+      "bytes": 48352,
+      "sha256": "540ba2e0b3136eb96e3b2925644cc37c276883c6324596cf25c4759ce4314e8f"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/conv.rs": {
+      "bytes": 20236,
+      "sha256": "1013e1e48bc6b5b0df60a026251b97653528b112600eb3f8d4e905dbf791d897"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/device.rs": {
+      "bytes": 65146,
+      "sha256": "7ad87896ba806fcce14ea63d8900e3262b3ac36d3861c3569de9f8576e3b76d9"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/egl.rs": {
+      "bytes": 53462,
+      "sha256": "dfb87469e85c8ea20dac1a38277601245c306cca81f2eedab7d7232735481edd"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/emscripten.rs": {
+      "bytes": 983,
+      "sha256": "316d2bb6f2a4bb126dbe68a223f7393399080d116b61c39504454acdf4f9cfaf"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/fence.rs": {
+      "bytes": 4790,
+      "sha256": "a2e7b6abd2fd4a438de90b9f58452c64cd8bba83999c90fd6390e3db128b9c6c"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/mod.rs": {
+      "bytes": 33293,
+      "sha256": "e77d3eace2be5e38b0f1ce0d7640b5e3dd5dabce1f1e516d497929998fe14e1a"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/queue.rs": {
+      "bytes": 87381,
+      "sha256": "7a953694d3f6fb422f27d27caf884f4976e7bfeebd31471ae3570cba746ab66d"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/shaders/clear.frag": {
+      "bytes": 182,
+      "sha256": "9133ed8ed97d3641fbb6b5f5ea894a3554c629ccc1b80a5fc9221d7293aa1954"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/shaders/clear.vert": {
+      "bytes": 209,
+      "sha256": "a543768725f4121ff2e9e1fb5b00644931e9d6f2f946c0ef01968afb5a135abd"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/shaders/srgb_present.frag": {
+      "bytes": 515,
+      "sha256": "dd9a43c339a2fa4ccf7f6a1854c6f400cabf271a7d5e9230768e9f39d47f3ff5"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/shaders/srgb_present.vert": {
+      "bytes": 402,
+      "sha256": "6e85d489403d80b81cc94790730bb53b309dfc5eeede8f1ea3412a660f31d357"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/web.rs": {
+      "bytes": 16567,
+      "sha256": "6189e4a60192d3f42dbaeaab17ab4f0af1e02e61e880461493c780e6c631c8df"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/gles/wgl.rs": {
+      "bytes": 30253,
+      "sha256": "ab40302f187a3353d1d1788dfc609f5aebfcd1fe4c62fd55190b2a1ea5761613"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/lib.rs": {
+      "bytes": 106952,
+      "sha256": "2effd334c7421e774d91d5e2fec56ec58c44ec4693867707def2b3a2b3e126a4"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/metal/adapter.rs": {
+      "bytes": 71112,
+      "sha256": "6da21d590125e601015862dd2a66e4dae2fdd5e35d80624dd2c6cca52099d9bf"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/metal/command.rs": {
+      "bytes": 76832,
+      "sha256": "49b3dd48ea241ac66738854b9e76a77ba2863fdc9fe1aaa936e1bc16e5d79e52"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/metal/conv.rs": {
+      "bytes": 18799,
+      "sha256": "287a1517356c87e98eb5339f2b76074216b0c303f117352618ac117989c9c73b"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/metal/device.rs": {
+      "bytes": 90249,
+      "sha256": "bbeaf9e41d1d6c08858d2d688eac98ebd44fa6866452740ea339dcfafe94db67"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/metal/library_from_metallib.rs": {
+      "bytes": 1734,
+      "sha256": "4484f4d622c39fac5038cd0bb9ea76eccaf12619b31ec231e2f34415bb72c386"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/metal/mod.rs": {
+      "bytes": 36555,
+      "sha256": "16aaa879cf85bf853243bbdaa815b6087cff2ebfe72a2d7e6d08acac4fe906ad"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/metal/surface.rs": {
+      "bytes": 7581,
+      "sha256": "748c5349bb68319d433ed2d7c2c27055e632f27196acfdfa857b279d8ed7bae2"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/metal/time.rs": {
+      "bytes": 1005,
+      "sha256": "c32d69f30e846dfcc0e39e01097fb80df63b2bebb6586143bb62494999850246"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/noop/buffer.rs": {
+      "bytes": 3442,
+      "sha256": "b5edc5e2c52287dfbd4f619e36097ac233041eb9ab287b889b6ee477d740fa09"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/noop/command.rs": {
+      "bytes": 9544,
+      "sha256": "033c9d8f2af6457fe0edd66197dbe1903b3dc298f6981120ea1836c0eca641d4"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/noop/mod.rs": {
+      "bytes": 17298,
+      "sha256": "f6ac82499c791e7f7f8049f755cdd189180d96b0be1425cddd9d0e82d7dd2814"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/validation_canary.rs": {
+      "bytes": 1255,
+      "sha256": "2e8f84e5f85671b3e55ddd410476171c762e34cbea315b37921cbb6ff18bfb4f"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/vulkan/adapter.rs": {
+      "bytes": 145806,
+      "sha256": "238342c4523796175e87754da4652d60b5437b8d2cf0f8bb01ae6582bfaf89bb"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/vulkan/command.rs": {
+      "bytes": 51337,
+      "sha256": "65586beb28db45edf4d5169eceb77ffa42af1383be4498736c22bfd0df647ab0"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/vulkan/conv.rs": {
+      "bytes": 42312,
+      "sha256": "237289e3a9403a194482559d9f361c7758e35c61bc916283c2fa7d79081b15fc"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/vulkan/device.rs": {
+      "bytes": 111014,
+      "sha256": "7d72923762700aed073922f80d1bd510009c6249d8861cd30d9998c794eb7e27"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/vulkan/drm.rs": {
+      "bytes": 6208,
+      "sha256": "45f7bf1dd854688a65261e4674d80f90c997b193a162fd2ae658acf4e2003552"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/vulkan/instance.rs": {
+      "bytes": 41309,
+      "sha256": "47f70778e9952c2d933d84b3ad94df37fb48f699a413d0be7e2cb869adcf410c"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/vulkan/mod.rs": {
+      "bytes": 53361,
+      "sha256": "ac7d98c27f339e3a79763044776c7e5b04037e56fbffd823227dad0da80086ce"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/vulkan/sampler.rs": {
+      "bytes": 6953,
+      "sha256": "f65729d6df5cce681b7756b3e48074017f0c7f42da69ca55e26cc723cd14ad59"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/vulkan/semaphore_list.rs": {
+      "bytes": 6617,
+      "sha256": "6e548d810d75daf5ed31b6e520ece32c8ef97e4b66926c17f0d4317f355802e5"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/vulkan/swapchain/mod.rs": {
+      "bytes": 4177,
+      "sha256": "d547df4f2b91bf133a3d2793fb7b532c65f96e8e5975382d4868115bc06e1c92"
+    },
+    "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/src/vulkan/swapchain/native.rs": {
+      "bytes": 36655,
+      "sha256": "56a35a8604006d5fb092e4cf40e621032a91fe7ef6ca5091e4e0f8ef12d83193"
     },
     "tools/windows-ios-guest-probe/audit_private_guest_symbols.py": {
       "bytes": 24331,

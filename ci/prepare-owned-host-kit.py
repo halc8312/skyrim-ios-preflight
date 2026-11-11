@@ -8,8 +8,8 @@ import sys
 import tomllib
 
 MANIFEST = "source-allowlist.txt"
-ALLOWLIST_SHA256 = "19fc70dc8c030132baecb9f0fe719fdd41eafd81702d1a74904183969e9a99a7"
-SOURCE_MANIFEST_SHA256 = "4dc2ec754adda1ebb37f6f75cabeb752818a0cbbc515aebecf55ab8d2169d6eb"
+ALLOWLIST_SHA256 = "f721de77fb81291a70c1dbd7e87a26d914da41c1268e1843228c03cab7c93f73"
+SOURCE_MANIFEST_SHA256 = "dbbb49305723306947753a6d73c02a6b7d7ab98a62d3ed9499f2464ab4728a99"
 MEMBERS = ["crates/" + name for name in
            ("d3d-hle", "gpu-webgpu", "kernel-hle", "runtime-core", "vfs",
             "xenos-edram", "xenos-gfx", "xenos-render", "xenos-shader", "xenos-state",
@@ -23,7 +23,8 @@ def allowed_source_root(name):
                                 "tools/ios-owned-game-host/", "tools/ios-signed-image-policy/",
                                 "tools/windows-ios-guest-probe/owned-guest-abi/",
                                 "tools/native-metal-engine/bridge/", "tools/native-metal-engine/gpu-hal/",
-                                "tools/native-metal-engine/vendor/naga-29.0.3/")))
+                                "tools/native-metal-engine/vendor/naga-29.0.3/",
+                                "tools/native-metal-engine/vendor/wgpu-hal-29.0.3/")))
 
 
 def prepare(root, output):

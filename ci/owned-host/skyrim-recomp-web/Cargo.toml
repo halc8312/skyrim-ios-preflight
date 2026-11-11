@@ -72,3 +72,5 @@ debug = "line-tables-only"
 [patch.crates-io]
 # Same reviewed Naga29 SampleMask fix as the standalone native backend.
 naga = { path = "../tools/native-metal-engine/vendor/naga-29.0.3" }
+# Pinned upstream HAL; the Metal backend compiles guest MSL with safe (IEEE) math.
+wgpu-hal = { path = "../tools/native-metal-engine/vendor/wgpu-hal-29.0.3" }

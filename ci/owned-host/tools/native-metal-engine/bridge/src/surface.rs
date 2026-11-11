@@ -107,4 +107,11 @@ impl SurfaceFrame {
     pub fn present_with(self, _commands: CommandBuffer) -> Result<()> {
         Err(Error::Unsupported("Metal surface on a non-Apple platform"))
     }
+    pub fn present_with_pacing(
+        self,
+        _commands: CommandBuffer,
+        _minimum: Option<Duration>,
+    ) -> Result<()> {
+        Err(Error::Unsupported("Metal surface on a non-Apple platform"))
+    }
 }

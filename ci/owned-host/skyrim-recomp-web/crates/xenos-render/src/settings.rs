@@ -175,6 +175,252 @@ impl PresentAdmission {
     }
 }
 
+/// How long the frame on screen should stay there before the next one may replace it, learned
+/// from the title's own cadence.
+///
+/// The title paces itself on its 60 Hz vertical blank (Skyrim swaps every second one), but each
+/// frame reaches the display a few milliseconds earlier or later than the last. Shown at the next
+/// refresh, a 30 Hz title on a 120 Hz panel then alternates 25 ms and 41.7 ms frames instead of
+/// holding 33.3 ms, which reads as judder although no frame was late. Giving the display a
+/// minimum duration just under the title's interval turns each early frame back into an on-time
+/// one. It never delays a frame that arrives on time or late.
+///
+/// The interval is the lower quartile of recent swap intervals, snapped down to whole vertical
+/// blanks: a scene alternating between two rates is paced at the faster one, so pacing cannot
+/// lower the frame rate. Irregular cadences (loading, menus that free-run) are not paced.
+#[derive(Debug)]
+pub(crate) struct PresentPacer {
+    /// The title's vertical blank period: its swap intervals are multiples of it.
+    source_period: Duration,
+    intervals: [Duration; Self::WINDOW],
+    filled: usize,
+    cursor: usize,
+    last: Option<Duration>,
+    /// Earliest time the frame presented last can have reached the screen.
+    shown: Duration,
+    /// Swaps still to present unpaced after the title outran the pacing.
+    unpaced: usize,
+}
+impl PresentPacer {
+    const WINDOW: usize = 12;
+    /// Fewer samples do not establish a cadence.
+    const MINIMUM_SAMPLES: usize = 8;
+    /// A gap this long is a stall or a loading screen, not a cadence sample.
+    const STALL: Duration = Duration::from_millis(250);
+    /// Kept clear of the refresh the frame is meant for (half a 120 Hz refresh is 4.2 ms).
+    const MARGIN: Duration = Duration::from_millis(4);
+
+    pub fn new(source_period: Duration) -> Self {
+        Self {
+            source_period,
+            intervals: [Duration::ZERO; Self::WINDOW],
+            filled: 0,
+            cursor: 0,
+            last: None,
+            shown: Duration::ZERO,
+            unpaced: 0,
+        }
+    }
+
+    fn forget(&mut self) {
+        self.filled = 0;
+        self.cursor = 0;
+    }
+
+    /// Whole vertical blanks per swap at the title's faster recent rate, if it has one.
+    fn cadence(&self) -> Option<u32> {
+        if self.filled < Self::MINIMUM_SAMPLES || self.source_period.is_zero() {
+            return None;
+        }
+        let mut sorted = self.intervals;
+        let sorted = &mut sorted[..self.filled];
+        sorted.sort_unstable();
+        let (low, high) = (sorted[sorted.len() / 4], sorted[sorted.len() * 3 / 4]);
+        // Two adjacent rates (two and three blanks) still pace; anything wider is not a cadence.
+        if high.as_secs_f64() > low.as_secs_f64() * 1.75 {
+            return None;
+        }
+        let blanks = (low.as_secs_f64() / self.source_period.as_secs_f64() + 0.3).floor();
+        // Up to four blanks (15 Hz at the console's 60): slower titles gain nothing from it.
+        (1.0..=4.0).contains(&blanks).then_some(blanks as u32)
+    }
+
+    /// Call once per presented swap with a monotonic time. Returns the minimum time the frame
+    /// before this one should stay on screen, or `None` to present at the next refresh.
+    pub fn minimum(&mut self, now: Duration) -> Option<Duration> {
+        match self.last.replace(now) {
+            Some(last) if now >= last && now - last < Self::STALL => {
+                self.intervals[self.cursor] = now - last;
+                self.cursor = (self.cursor + 1) % Self::WINDOW;
+                self.filled = (self.filled + 1).min(Self::WINDOW);
+            }
+            // The first swap, a stall, or a clock that went backwards: start over.
+            _ => {
+                self.forget();
+                self.unpaced = 0;
+                self.shown = now;
+                return None;
+            }
+        }
+        let mut minimum = if self.unpaced > 0 {
+            self.unpaced -= 1;
+            None
+        } else {
+            self.cadence().map(|blanks| self.source_period * blanks - Self::MARGIN)
+        };
+        if let Some(duration) = minimum {
+            // Frames queued behind the minimum mean the title now runs faster than it did when
+            // the cadence was learned (a 30 Hz scene became a 60 Hz menu). Holding on would
+            // throttle it to the old rate and keep measuring that rate: let go and relearn.
+            let queued = (self.shown + duration).saturating_sub(now);
+            if queued > duration {
+                self.forget();
+                self.unpaced = Self::WINDOW;
+                minimum = None;
+            }
+        }
+        self.shown = now.max(self.shown + minimum.unwrap_or(Duration::ZERO));
+        minimum
+    }
+}
+
+#[cfg(test)]
+mod pacer_tests {
+    use super::*;
+    const BLANK: Duration = Duration::from_nanos(16_666_667);
+    fn ms(value: f64) -> Duration {
+        Duration::from_secs_f64(value / 1000.0)
+    }
+    /// Feeds swaps at the given intervals and returns the minimum chosen for each.
+    fn run(pacer: &mut PresentPacer, start: &mut Duration, intervals: &[f64]) -> Vec<Option<Duration>> {
+        intervals
+            .iter()
+            .map(|&interval| {
+                *start += ms(interval);
+                pacer.minimum(*start)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_steady_title_is_held_just_under_its_own_interval_once_established() {
+        let mut pacer = PresentPacer::new(BLANK);
+        let mut now = Duration::from_secs(1);
+        assert_eq!(pacer.minimum(now), None, "the first swap has no predecessor");
+        // 30 Hz with the few milliseconds of jitter that cause the judder.
+        let jitter = [33.3, 29.0, 38.0, 31.0, 35.5, 33.0, 30.0, 36.5, 33.3, 28.5, 38.0, 33.3, 31.0, 35.0];
+        let chosen = run(&mut pacer, &mut now, &jitter);
+        assert!(chosen[..7].iter().all(Option::is_none), "no pacing before a cadence is established");
+        let expected = BLANK * 2 - PresentPacer::MARGIN;
+        assert!(chosen[7..].iter().all(|&d| d == Some(expected)), "{chosen:?}");
+        // Below the title's interval (never delays an on-time frame) and above the refresh
+        // before it on 60 Hz and 120 Hz panels alike (an early frame waits for its own slot).
+        assert!(expected < BLANK * 2 && expected > BLANK * 2 - BLANK / 2);
+    }
+
+    #[test]
+    fn other_console_rates_snap_to_their_own_blank_count() {
+        for (interval, blanks) in [(16.7, 1), (33.3, 2), (50.0, 3), (66.7, 4)] {
+            let mut pacer = PresentPacer::new(BLANK);
+            let mut now = Duration::from_secs(1);
+            pacer.minimum(now);
+            let chosen = run(&mut pacer, &mut now, &[interval; 12]);
+            assert_eq!(chosen[11], Some(BLANK * blanks - PresentPacer::MARGIN), "{interval} ms");
+        }
+        // Slower than four blanks, and rates between blank counts that free-run faster than the
+        // next slower console rate, are left alone or paced at the faster count: never slowed.
+        for (interval, expected) in [(100.0, None), (25.0, Some(BLANK - PresentPacer::MARGIN))] {
+            let mut pacer = PresentPacer::new(BLANK);
+            let mut now = Duration::from_secs(1);
+            pacer.minimum(now);
+            assert_eq!(run(&mut pacer, &mut now, &[interval; 12])[11], expected, "{interval} ms");
+        }
+    }
+
+    #[test]
+    fn a_scene_alternating_between_two_rates_is_paced_at_the_faster_one() {
+        let mut pacer = PresentPacer::new(BLANK);
+        let mut now = Duration::from_secs(1);
+        pacer.minimum(now);
+        let mixed = [33.3, 50.0, 33.3, 50.0, 50.0, 33.3, 33.3, 50.0, 50.0, 33.3, 50.0, 33.3];
+        assert_eq!(run(&mut pacer, &mut now, &mixed)[11], Some(BLANK * 2 - PresentPacer::MARGIN));
+    }
+
+    #[test]
+    fn irregular_cadences_and_stalls_are_not_paced() {
+        let mut pacer = PresentPacer::new(BLANK);
+        let mut now = Duration::from_secs(1);
+        pacer.minimum(now);
+        let loading = [16.0, 120.0, 40.0, 17.0, 90.0, 33.0, 18.0, 150.0, 16.0, 70.0, 20.0, 110.0];
+        assert!(run(&mut pacer, &mut now, &loading).iter().all(Option::is_none));
+        // An established cadence is forgotten across a stall and learned again from scratch.
+        let mut pacer = PresentPacer::new(BLANK);
+        pacer.minimum(now);
+        assert!(run(&mut pacer, &mut now, &[33.3; 12])[11].is_some());
+        assert_eq!(run(&mut pacer, &mut now, &[900.0]), [None]);
+        let again = run(&mut pacer, &mut now, &[33.3; 9]);
+        assert!(again[..7].iter().all(Option::is_none) && again[8].is_some(), "{again:?}");
+        // A clock that goes backwards restarts rather than producing a huge interval.
+        assert_eq!(pacer.minimum(now - ms(5.0)), None);
+        assert_eq!(PresentPacer::new(Duration::ZERO).cadence(), None);
+    }
+
+    #[test]
+    fn a_title_that_speeds_up_is_released_instead_of_held_at_the_old_rate() {
+        let mut pacer = PresentPacer::new(BLANK);
+        let mut now = Duration::from_secs(1);
+        pacer.minimum(now);
+        assert!(run(&mut pacer, &mut now, &[33.3; 12])[11].is_some());
+        // The title switches to 60 Hz. Its frames queue behind the 30 Hz minimum for a few
+        // swaps at most; then pacing lets go for a whole window and relearns the new rate.
+        let fast = run(&mut pacer, &mut now, &[16.7; 40]);
+        let released = fast.iter().position(Option::is_none).expect("pacing must let go");
+        assert!(released <= 4, "held the old rate for {released} swaps");
+        assert!(fast[released..released + PresentPacer::WINDOW].iter().all(Option::is_none));
+        assert_eq!(fast[39], Some(BLANK - PresentPacer::MARGIN), "relearned at the new rate");
+        // Having relearned, the faster cadence is never queued behind its own minimum again.
+        assert!(fast[released + PresentPacer::WINDOW + 1..].iter().all(Option::is_some));
+    }
+
+    #[test]
+    fn the_minimum_never_delays_a_frame_that_arrives_on_time() {
+        // Display model: a frame is shown at the first refresh at or after both its arrival
+        // and the previous frame's presentation plus the minimum.
+        for refresh in [1000.0 / 60.0, 1000.0 / 120.0] {
+            let mut pacer = PresentPacer::new(BLANK);
+            let mut now = Duration::from_secs(1);
+            pacer.minimum(now);
+            let tick = |t: f64| (t / refresh).ceil() * refresh;
+            let mut previous = tick(now.as_secs_f64() * 1000.0);
+            // The same frames shown at the next refresh, with no minimum.
+            let mut previous_unpaced = previous;
+            let (mut unpaced_short, mut paced_short, mut paced_late) = (0, 0, 0);
+            for step in 0..600 {
+                // Every other frame misses its refresh by 2 ms; the frame after it is on time.
+                // Unpaced, that alternates long and short frames on a panel with spare slots.
+                let interval = 33.3333 + [2.0, -2.0][step % 2];
+                now += ms(interval);
+                let arrival = now.as_secs_f64() * 1000.0;
+                let minimum = pacer.minimum(now).map_or(0.0, |d| d.as_secs_f64() * 1000.0);
+                let unpaced = tick(arrival);
+                let shown = tick(arrival.max(previous + minimum - 1e-6));
+                if step > 20 {
+                    unpaced_short += u32::from(unpaced - previous_unpaced < 30.0);
+                    paced_short += u32::from(shown - previous < 30.0);
+                    // Never later than the slot one title interval after the previous frame.
+                    paced_late += u32::from(shown > unpaced.max(previous + 33.3334) + 1e-6);
+                }
+                previous = shown;
+                previous_unpaced = unpaced;
+            }
+            assert_eq!((paced_short, paced_late), (0, 0), "{refresh} ms refresh");
+            if refresh < 10.0 {
+                assert!(unpaced_short > 0, "the model must reproduce the judder being fixed");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -59,6 +59,7 @@ impl<T> std::fmt::Debug for Pending<T> {
 }
 pub(crate) fn block<T>(pending: Pending<Result<T>>) -> Result<T> {
     let deadline = Instant::now() + Duration::from_secs(15);
+    let mut backoff = native::Backoff::default();
     loop {
         if let Some(r) = pending.try_take() {
             return r;
@@ -66,6 +67,6 @@ pub(crate) fn block<T>(pending: Pending<Result<T>>) -> Result<T> {
         if Instant::now() >= deadline {
             return Err(Error::WorkDone("native completion deadline".into()));
         }
-        std::thread::sleep(Duration::from_millis(1));
+        backoff.pause();
     }
 }

@@ -27,6 +27,7 @@ impl<B: Backend> Gpu<B> {
         let deadline = Instant::now()
             .checked_add(self.owner.config.backpressure_timeout)
             .ok_or(Error::Rejected("staging deadline overflow"))?;
+        let mut backoff = Backoff::default();
         loop {
             match self.try_take_upload(size, lease_ceiling) {
                 Err(e @ Error::Rejected("staging buffer budget" | "buffer object budget"))
@@ -48,7 +49,7 @@ impl<B: Backend> Gpu<B> {
                     if Instant::now() >= deadline {
                         return Err(e);
                     }
-                    std::thread::sleep(Duration::from_millis(1));
+                    backoff.pause();
                 }
                 result => return result,
             }

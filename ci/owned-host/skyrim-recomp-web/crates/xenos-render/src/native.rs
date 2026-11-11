@@ -16,7 +16,11 @@ pub use performance::NativePerformanceSnapshot;
 
 pub use crate::presentation_probe::{PresentationProbe, PresentationProbeError, run_public_presentation_probe};
 use crate::renderer::{Renderer, TargetsFactory, wanted_features};
-use crate::settings::{PresentAdmission, PresentationSettings, SettingsControl, SettingsSnapshot};
+use crate::settings::{PresentAdmission, PresentPacer, PresentationSettings, SettingsControl, SettingsSnapshot};
+
+/// The console's vertical blank period, which titles pace their swaps on (the host leaves the
+/// kernel's vblank interrupt at the hardware's 60 Hz).
+const GUEST_VBLANK_PERIOD: Duration = Duration::from_nanos(1_000_000_000 / 60);
 use crate::{PhysicalMemory, RendererHandle};
 
 #[derive(Debug, Clone, Default)]
@@ -129,7 +133,10 @@ impl Presentation {
         device: &Device,
         presenter: &crate::present::Presenter,
         settings: PresentationSettings,
+        minimum: Option<Duration>,
     ) -> bool {
+        #[cfg(not(feature = "native-metal"))]
+        let _ = minimum;
         let (width, height) = self.window.size();
         let size = settings.output_size(width, height, self.max_dimension);
         if size.0 == 0 || size.1 == 0 {
@@ -172,7 +179,7 @@ impl Presentation {
         let result = {
             let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::PresentCall);
             #[cfg(feature="native-metal")]
-            { frame.present_with(commands) }
+            { frame.present_with_pacing(commands, minimum) }
             #[cfg(not(feature="native-metal"))]
             { frame.present() }
         };
@@ -402,6 +409,13 @@ fn spawn_renderer(
     let diagnostics = NativeDiagnostics::default();
     let progress = diagnostics.clone();
     std::thread::Builder::new().name("renderer".into()).spawn(move || {
+        // The renderer executes every guest draw and presents every frame: schedule it like
+        // the guest threads that wait for it (see runtime-core's `set_interactive_priority`).
+        #[cfg(target_vendor = "apple")]
+        {
+            // SAFETY: changes only the calling thread's scheduling class.
+            let _ = unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0) };
+        }
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             run(&renderer, memory, &options, targets, &progress, &mut ready, checked)
         }));
@@ -577,6 +591,7 @@ fn run(
     let mut report_draws = renderer.executor.stats.draws;
     let mut last_decoded_frame = 0;
     let mut presentation_admission = PresentAdmission::default();
+    let mut presentation_pacer = PresentPacer::new(GUEST_VBLANK_PERIOD);
     let mut frame_stability = frame_stability::FrameStability::default();
     let mut source_cursor = 0;
     let mut iteration_max_ms = 0u64;
@@ -618,7 +633,8 @@ fn run(
                 if presentation_admission.admit(presentation_clock.elapsed(), requested.settings.frame_limit()) {
                     if p.causal.is_none() { p.causal = r.executor.causal.clone(); }
                     let present_started = std::time::Instant::now();
-                    let success = p.present(&r.device, &r.presenter, requested.settings);
+                    let minimum = presentation_pacer.minimum(present_started.duration_since(presentation_clock));
+                    let success = p.present(&r.device, &r.presenter, requested.settings, minimum);
                     let present_finished = std::time::Instant::now();
                     frame_stability.present(
                         present_started.duration_since(presentation_clock),

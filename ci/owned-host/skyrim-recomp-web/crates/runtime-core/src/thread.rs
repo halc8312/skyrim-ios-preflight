@@ -220,12 +220,30 @@ pub fn set_thread_start_hook(hook: fn()) {
     let _ = THREAD_START_HOOK.set(hook);
 }
 
+/// Marks the calling thread as latency-critical interactive work.
+///
+/// Threads created without a quality-of-service class run at Darwin's default priority: the
+/// performance controller ramps their core frequency slowly after each wake-up, their timers
+/// are coalesced by milliseconds, and ordinary system work preempts them. A game's frame is
+/// made of many short bursts separated by waits (vblank, fences, locks), which is the worst
+/// case for that policy and shows as an unstable frame time. The user-interactive class is the
+/// one Apple documents for work the user is waiting on every frame. Does nothing elsewhere;
+/// a refused request leaves the thread as it was.
+pub fn set_interactive_priority() {
+    #[cfg(target_vendor = "apple")]
+    {
+        // SAFETY: changes only the calling thread's scheduling class; no pointers involved.
+        let _ = unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0) };
+    }
+}
+
 /// Spawns the host thread that will run a guest thread.
 pub fn spawn_host_thread<F>(name: String, f: F) -> std::io::Result<std::thread::JoinHandle<()>>
 where
     F: FnOnce() + Send + 'static,
 {
     std::thread::Builder::new().name(name).stack_size(HOST_STACK_SIZE).spawn(move || {
+        set_interactive_priority();
         if let Some(hook) = THREAD_START_HOOK.get() {
             hook();
         }

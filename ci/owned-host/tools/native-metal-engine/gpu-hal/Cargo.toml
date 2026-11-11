@@ -13,6 +13,8 @@ license = "MIT OR Apache-2.0"
 # Pinned upstream source plus a scoped, tested SPIR-V SampleMask correction.
 # Does not alter the registry, live renderer, Naga validation, or Metal writer.
 naga = { path = "../vendor/naga-29.0.3" }
+# Pinned upstream HAL; the Metal backend compiles guest MSL with safe (IEEE) math.
+wgpu-hal = { path = "../vendor/wgpu-hal-29.0.3" }
 
 [features]
 fault-injection = ["wgpu-types/counters"]

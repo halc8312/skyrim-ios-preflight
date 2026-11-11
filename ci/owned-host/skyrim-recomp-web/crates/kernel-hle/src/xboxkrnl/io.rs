@@ -214,6 +214,11 @@ fn NtReadFile(c: &mut Call) -> u64 {
         let dest = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
         result = f.read_at(dest, offset + off as u64).map(|n| done + n as u64);
     });
+    // Mark again once the bytes are in place. The renderer consumes a page's mark before it
+    // reads the page, so a mark set only before a slow read can be consumed while the page
+    // still holds its old contents (a neighbouring resource on the same page is enough to make
+    // the renderer look), leaving the GPU copy stale until the page happens to be written again.
+    runtime_core::dirty::mark(buffer, length);
     let (s, n) = match result {
         Ok(0) if length > 0 => (status::END_OF_FILE, 0),
         Ok(n) => (status::SUCCESS, n as u32),

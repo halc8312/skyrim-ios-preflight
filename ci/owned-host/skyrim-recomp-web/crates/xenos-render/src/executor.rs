@@ -67,6 +67,8 @@ const HANDHELD_LOAD_RATE: u64 = 16 << 20;
 /// growth following upload volume. `--render-debug upload-cap=MIB` overrides it (0: no cap).
 const UPLOAD_BUDGET: u64 = 256 << 20;
 const HANDHELD_UPLOAD_BUDGET: u64 = 32 << 20;
+/// Submissions with uploads kept unretired at most before the driver is asked about them.
+const MAX_UNRETIRED_UPLOADS: usize = 64;
 
 const SYSTEM_SIZE: u64 = std::mem::size_of::<SystemConstants>() as u64;
 
@@ -361,6 +363,8 @@ pub struct Executor {
     frames_in_flight: std::collections::VecDeque<Pending<gpu_webgpu::Result<()>>>,
     /// Submissions not yet known to be finished on the GPU, with the bytes uploaded before each.
     uploads_in_flight: std::collections::VecDeque<(Pending<gpu_webgpu::Result<()>>, u64)>,
+    /// Sum of the bytes in `uploads_in_flight`.
+    uploads_in_flight_bytes: u64,
     /// `gpu_webgpu::counters::upload_bytes()` at the last submission.
     uploaded_at_submit: u64,
     /// Most bytes uploaded and not yet known to have reached the GPU (see `uploads_over_budget`).
@@ -586,6 +590,7 @@ impl Executor {
             texture_groups: FxHashMap::default(),
             frames_in_flight: Default::default(),
             uploads_in_flight: Default::default(),
+            uploads_in_flight_bytes: 0,
             uploaded_at_submit: gpu_webgpu::counters::upload_bytes(),
             upload_budget: match crate::debug::UPLOAD_CAP_MIB.load(std::sync::atomic::Ordering::Relaxed) {
                 0 => u64::MAX,
@@ -747,12 +752,20 @@ impl Executor {
         // Frames the GPU hasn't finished: past MAX_FRAMES_IN_FLIGHT, wait. Nothing else stops
         // the renderer running ahead of a slower GPU, and every queued frame keeps its uploads
         // and released resources alive until the GPU is done with it (out of memory follows).
-        while self.frames_in_flight.front().is_some_and(|f| f.is_ready()) {
-            if let Some(Err(e)) = self.frames_in_flight.pop_front().and_then(|f| f.try_take()) {
-                log::warn!("renderer: waiting for a frame failed: {e}");
+        //
+        // This runs before every command (thousands per frame), and asking whether a frame has
+        // finished polls the driver (a fence read and a status query per command buffer in
+        // flight). Finished frames only ever shorten the queue, so the driver is asked only once
+        // the queue is long enough for the answer to change the result.
+        let frame_limit = crate::debug::MAX_FRAMES_IN_FLIGHT.load(std::sync::atomic::Ordering::Relaxed);
+        if self.frames_in_flight.len() > frame_limit {
+            while self.frames_in_flight.front().is_some_and(|f| f.is_ready()) {
+                if let Some(Err(e)) = self.frames_in_flight.pop_front().and_then(|f| f.try_take()) {
+                    log::warn!("renderer: waiting for a frame failed: {e}");
+                }
             }
         }
-        if self.frames_in_flight.len() > crate::debug::MAX_FRAMES_IN_FLIGHT.load(std::sync::atomic::Ordering::Relaxed) {
+        if self.frames_in_flight.len() > frame_limit {
             self.stats.gpu_frame_limit_polls = self.stats.gpu_frame_limit_polls.saturating_add(1);
             profile_operation!(self, DriverPoll, self.device.poll());
             return profile_busy_result!(self, profile_started, true);
@@ -783,11 +796,14 @@ impl Executor {
         let before = self.uploads_in_flight.len();
         let bytes = profile_operation!(self, UploadQueueWalk, {
             while self.uploads_in_flight.front().is_some_and(|(f, _)| f.is_ready()) {
-                if let Some(Err(e)) = self.uploads_in_flight.pop_front().and_then(|(f, _)| f.try_take()) {
-                    log::warn!("renderer: waiting for uploads failed: {e}");
+                if let Some((f, bytes)) = self.uploads_in_flight.pop_front() {
+                    self.uploads_in_flight_bytes -= bytes;
+                    if let Some(Err(e)) = f.try_take() {
+                        log::warn!("renderer: waiting for uploads failed: {e}");
+                    }
                 }
             }
-            self.uploads_in_flight.iter().map(|(_, bytes)| bytes).sum::<u64>()
+            self.uploads_in_flight_bytes
         });
         #[cfg(feature = "cpu-profile")]
         self.cpu_profile.upload_queue(before, self.uploads_in_flight.len());
@@ -798,9 +814,17 @@ impl Executor {
     /// finished: then the renderer waits (between commands) until enough of them have. Uploads
     /// not submitted yet are submitted first, so that they're waited for too.
     fn uploads_over_budget(&mut self) -> bool {
-        let mut in_flight = self.retire_uploads();
         let pending = gpu_webgpu::counters::upload_bytes() - self.uploaded_at_submit;
         let waiting = std::mem::take(&mut self.upload_waiting);
+        // Retiring finished submissions polls the driver and can only lower the total: within
+        // the budget before retiring is within it after (this is asked before every command).
+        // The queue itself stays short: it is retired at each frame end as well.
+        if self.uploads_in_flight_bytes + pending <= self.upload_budget
+            && self.uploads_in_flight.len() < MAX_UNRETIRED_UPLOADS
+        {
+            return false;
+        }
+        let mut in_flight = self.retire_uploads();
         if in_flight + pending <= self.upload_budget {
             return false;
         }
@@ -826,6 +850,10 @@ impl Executor {
     pub(crate) fn end_frame_before_present(&mut self) {
         let _phase = crate::causal::Guard::enter(&self.causal, crate::causal::Stage::FrameEnd);
         self.flush_reason(1);
+        // Once per frame, not per command (see `busy`): lets the device release what finished
+        // submissions held (staging memory, encoders) and keeps the upload queue short.
+        self.retire_uploads();
+        self.device.poll();
         // Sets with fallbacks are made again (their textures may load now); the others are
         // revalidated when reused (`TextureCache::touch`).
         let frame = self.frame;
@@ -909,6 +937,7 @@ impl Executor {
                     crate::causal::DetailGuard::enter(&self.causal, crate::causal::Detail::CompletionRegistration);
                 let done = self.device.queue().on_submitted_work_done();
                 self.uploads_in_flight.push_back((done, uploaded - self.uploaded_at_submit));
+                self.uploads_in_flight_bytes += uploaded - self.uploaded_at_submit;
                 self.uploaded_at_submit = uploaded;
             }
         }

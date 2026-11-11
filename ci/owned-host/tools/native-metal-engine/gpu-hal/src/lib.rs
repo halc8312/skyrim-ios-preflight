@@ -55,6 +55,28 @@ type Result<T> = std::result::Result<T, Error>;
 fn backend_error(error: impl std::fmt::Debug) -> Error {
     Error::Backend(format!("{error:?}"))
 }
+/// Pause between polls while waiting for the GPU to retire work.
+///
+/// Work usually retires within microseconds of a wait starting, but a fixed
+/// one-millisecond sleep made every wait cost at least that (several times more
+/// where the OS coalesces timers), which the frame loop saw as a stall. Yield
+/// first, then nap briefly, and only fall back to millisecond sleeps for waits
+/// that are genuinely long, so a stuck GPU still does not burn a core.
+#[derive(Default)]
+pub struct Backoff(u32);
+impl Backoff {
+    pub fn pause(&mut self) {
+        match self.0 {
+            0..32 => {
+                std::hint::spin_loop();
+                std::thread::yield_now();
+            }
+            32..96 => std::thread::sleep(Duration::from_micros(100)),
+            _ => std::thread::sleep(Duration::from_millis(1)),
+        }
+        self.0 = self.0.saturating_add(1);
+    }
+}
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 fn id() -> Result<u64> {
     NEXT_ID
@@ -742,6 +764,7 @@ impl<B: Backend> Gpu<B> {
         let deadline = Instant::now()
             .checked_add(self.owner.config.backpressure_timeout)
             .ok_or(Error::Rejected("deadline overflow"))?;
+        let mut backoff = Backoff::default();
         loop {
             match Encoder::new(self.owner.clone()) {
                 Err(Error::Rejected("native encoder budget")) if !self.flights.is_empty() => {
@@ -753,7 +776,7 @@ impl<B: Backend> Gpu<B> {
                                 .map_or(self.verified_serial(), |f| f.serial),
                         ));
                     }
-                    std::thread::sleep(Duration::from_millis(1));
+                    backoff.pause();
                 }
                 result => return result,
             }
@@ -815,6 +838,7 @@ impl<B: Backend> Gpu<B> {
         let deadline = Instant::now()
             .checked_add(self.owner.config.backpressure_timeout)
             .ok_or(Error::Rejected("deadline overflow"))?;
+        let mut backoff = Backoff::default();
         while self.flights.len() >= self.owner.config.max_in_flight {
             self.poll()?;
             if self.flights.len() < self.owner.config.max_in_flight {
@@ -825,7 +849,7 @@ impl<B: Backend> Gpu<B> {
                     .owner
                     .fail_next("backpressure retirement deadline".into()));
             }
-            std::thread::sleep(Duration::from_millis(1));
+            backoff.pause();
         }
         let needs_fixups = B::FIXUP_BARRIERS
             && (self.pending.is_some()
@@ -843,7 +867,7 @@ impl<B: Backend> Gpu<B> {
                         if Instant::now() >= deadline {
                             return Err(self.owner.fail_next("encoder retirement deadline".into()));
                         }
-                        std::thread::sleep(Duration::from_millis(1));
+                        backoff.pause();
                     }
                     Err(e) => return Err(e),
                 }
@@ -1084,6 +1108,7 @@ impl<B: Backend> Gpu<B> {
         let deadline = Instant::now()
             .checked_add(timeout)
             .ok_or(Error::Rejected("deadline overflow"))?;
+        let mut backoff = Backoff::default();
         loop {
             let _ = self.poll();
             if self.timeline.borrow().status(serial)? {
@@ -1092,7 +1117,7 @@ impl<B: Backend> Gpu<B> {
             if Instant::now() >= deadline {
                 return Err(Error::Timeout(serial));
             }
-            std::thread::sleep(Duration::from_millis(1));
+            backoff.pause();
         }
     }
     pub fn read_buffer(

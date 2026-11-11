@@ -102,7 +102,17 @@ impl MetalSurface {
     /// Its retained watch is the very same Metal command buffer; no extra copy,
     /// queue, empty commit or CPU wait is introduced by the facade.
     pub fn present_commands(&mut self,gpu:&mut Gpu<Platform>,frame:MetalFrame,commands:Vec<Commands<Platform>>)->Result<Serial>{
-        self.submit_frame_commands(gpu,frame,commands,true)
+        self.submit_frame_commands(gpu,frame,commands,true,None)
+    }
+    /// As present_commands, but the frame shown before this one stays on screen
+    /// for at least `minimum` (Metal schedules against that frame's ACTUAL
+    /// presentation time). A frame that finished early then no longer shortens
+    /// its predecessor's interval, which is what makes a steady 30 Hz title
+    /// judder on a 60/120 Hz panel. None or zero presents at the next refresh.
+    /// No CPU wait is added: scheduling stays inside the watched command buffer.
+    pub fn present_commands_paced(&mut self,gpu:&mut Gpu<Platform>,frame:MetalFrame,commands:Vec<Commands<Platform>>,minimum:Option<Duration>)->Result<Serial>{
+        if minimum.is_some_and(|d|d>Duration::from_millis(250)){return Err(Error::Rejected("presentation minimum duration"));}
+        self.submit_frame_commands(gpu,frame,commands,true,minimum)
     }
     pub fn accepts(&self, frame:&MetalFrame)->Result<bool>{
         self.owner.healthy()?;
@@ -112,9 +122,9 @@ impl MetalSurface {
     /// Keep already recorded resource writes ordered on resize, retaining the
     /// obsolete drawable until completion without presenting it to the window.
     pub fn retire_frame_commands(&mut self,gpu:&mut Gpu<Platform>,frame:MetalFrame,commands:Vec<Commands<Platform>>)->Result<Serial>{
-        self.submit_frame_commands(gpu,frame,commands,false)
+        self.submit_frame_commands(gpu,frame,commands,false,None)
     }
-    fn submit_frame_commands(&mut self,gpu:&mut Gpu<Platform>,frame:MetalFrame,mut commands:Vec<Commands<Platform>>,present:bool)->Result<Serial>{
+    fn submit_frame_commands(&mut self,gpu:&mut Gpu<Platform>,frame:MetalFrame,mut commands:Vec<Commands<Platform>>,present:bool,minimum:Option<Duration>)->Result<Serial>{
         self.owner.healthy()?;
         if !Rc::ptr_eq(&self.owner,&gpu.owner)||!Rc::ptr_eq(&self.owner,&frame.owner)||(present&&!self.state.accepts(frame.epoch)){return Err(Error::Rejected("stale/cross-device drawable"));}
         if commands.iter().any(|c|!Rc::ptr_eq(&self.owner,&c.owner)||c.submitted)
@@ -123,7 +133,12 @@ impl MetalSurface {
         }
         let last=commands.last_mut().ok_or(Error::Rejected("empty drawable submission"))?;
         let hold_id=id()?;
-        if present { last.watch.presentDrawable(&frame.drawable); }
+        if present {
+            match minimum.filter(|d|!d.is_zero()) {
+                Some(d)=>last.watch.presentDrawable_afterMinimumDuration(&frame.drawable,d.as_secs_f64()),
+                None=>last.watch.presentDrawable(&frame.drawable),
+            }
+        }
         last.holds.insert(hold_id,Rc::new(frame.drawable));
         gpu.submit(commands)
     }
