@@ -44,7 +44,13 @@ for item in lock['patches']:
 PY
 
 bash ios/dependencies/build-dependencies.sh
-bash ios/dependencies/check-metal-alias.sh "$RUN/metal-alias"
+# Keep this required gate, but collect independent app compiler failures in the
+# same paid-minute run instead of stopping before its build can start.
+METAL_CHECK_STATUS=0
+bash ios/dependencies/check-metal-alias.sh "$RUN/metal-alias" || METAL_CHECK_STATUS=$?
+if (( METAL_CHECK_STATUS != 0 )); then
+  echo "Metal checks failed ($METAL_CHECK_STATUS); building host only to collect independent errors." >&2
+fi
 # The runtime adapter verifies its own upstream anchors. Apply it to pristine
 # upstream, then apply the CPU ABI patches to the staged runtime only.
 python3 ios/runtime-port/prepare_runtime.py --source "$ROOT/vendor/skydream" --output "$RUN/overlay/runtime"
@@ -63,6 +69,10 @@ cmake -S ios/runtime-port -B "$RUN/build" -G 'Unix Makefiles' \
   "-DSKYRIM_IOS_BINDING_SOURCES=$ROOT/ios/private-abi/pc_guest_host.c" \
   -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
 cmake --build "$RUN/build" --parallel 2 -- -k
+if (( METAL_CHECK_STATUS != 0 )); then
+  echo 'Required Metal checks failed; no host package or success result will be published.' >&2
+  exit "$METAL_CHECK_STATUS"
+fi
 APP="$RUN/build/SkyrimIOS.app"
 test -s "$APP/SkyrimIOS"
 xcrun lipo "$APP/SkyrimIOS" -verify_arch arm64

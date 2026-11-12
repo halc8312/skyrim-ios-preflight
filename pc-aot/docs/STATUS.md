@@ -12,6 +12,8 @@
 
 - [6回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5ee029679c85ac0af2a68)／公開cloud commit `ec032691f4ac07f233f4acc113d342ce9f259e52` は約29分のMac割当待ち後、4分01秒で停止。修正版MoltenVKのARM64/iPhoneOSビルドは成功したが、Macで動かす自作検証ツールにworkflowの`IPHONEOS_DEPLOYMENT_TARGET`が漏れ、iOS対象としてリンクされて起動時にsignal 9になった。原ログは`local/codemagic-title6/`。検証ツールのconfigure/buildだけiOS環境を外し、macOS SDK／targetを明示して、実行前にMach-O platform MACOSを確認する修正を追加。Metalコンパイラーの実検証は未完了。
 
+- [7回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5f58d9679c85ac0af2d92)／公開cloud commit `d3ef516c1fb641191d9abed8b8216d97d9010e1c` は4分42秒。修正済みMoltenVKとMac検証ツールをビルドし、Mach-O `platform MACOS`とツール起動を確認。不足していた公式Metal Toolchainも導入されたが、検証コマンドの`-std=ios-metal3.1`が無効で停止した。実コンパイラーが列挙した`-std=metal3.1`へ訂正。原ログは`local/codemagic-title7/`。次回は3件すべての検証とアプリのコンパイルを同じ実行で採取するが、検証失敗時はIPA用ホストと成功結果を出さず失敗を維持する。
+
 ## 2026-11-12 夜の実機タイトル到達作業
 
 - `codex/ios-title-milestone`で、固定アドレスのnative置換を使わず元のguest処理を残す診断経路を実装中。未承認の入力profileを互換性承認済みにはしていない。

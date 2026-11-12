@@ -25,8 +25,13 @@ if ! xcrun --sdk iphoneos metal --version > "$OUT/metal-toolchain.log" 2>&1; the
   xcodebuild -downloadComponent metalToolchain
   xcrun --sdk iphoneos metal --version > "$OUT/metal-toolchain.log" 2>&1
 fi
+fixture_failed=0
 for name in color-first depth-first distinct-bindings; do
-  "$OUT/build/sampler-alias" "$OUT/fixtures/$name.spv" "$OUT/fixtures/$name.metal"
-  xcrun --sdk iphoneos metal -std=ios-metal3.1 -c "$OUT/fixtures/$name.metal" -o "$OUT/fixtures/$name.air"
+  if "$OUT/build/sampler-alias" "$OUT/fixtures/$name.spv" "$OUT/fixtures/$name.metal"; then
+    xcrun --sdk iphoneos metal -std=metal3.1 -c "$OUT/fixtures/$name.metal" -o "$OUT/fixtures/$name.air" || fixture_failed=1
+  else
+    fixture_failed=1
+  fi
 done
+(( fixture_failed == 0 )) || { echo 'Required Metal shader checks failed.' >&2; exit 1; }
 echo 'METAL_ALIAS_FIXTURE: 3 real iPhoneOS shader compilations passed; game rendering unverified'
