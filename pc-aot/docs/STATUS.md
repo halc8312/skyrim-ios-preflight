@@ -13,6 +13,8 @@
 - 2回目 `6af5a1789679c85ac0af0a5b`／公開cloud commit `7d65f484dd4399ed8b55a299b63659af977a5b3f` は5分17秒。SDL/FFmpeg/vkd3d/MoltenVKのビルド後、`lipo -verify_arch`の引数順で停止。原ログは`local/codemagic-title2/`。引数を入力ファイル→`-verify_arch arm64`へ修正し、アプリコンパイルは独立したエラーも一度に採取するよう`make -k`を指定。
 - 3回目 `6af5a56f9679c85ac0af0bdb`／公開cloud commit `eca3e393aedcc3d30a38ea9a0dd38aaabcef034b` は4分42秒。全依存のビルド・ARM64確認後、SDK外のSDL2 prefixをCMakeが再root化し、package発見に失敗。実インストール先をログで確認してexact config path＋`NO_CMAKE_FIND_ROOT_PATH`へ修正。同じroot-only検索の最小再現は修正前exit1、修正後exit0。原ログは`local/codemagic-title3/`。ゲーム由来C・入力・署名鍵は送信していない。
 
+- 4回目 `6af5a9a19679c85ac0af0d5d`／公開cloud commit `d51d761a1bb55388681e3e22d77ed2906017a688` は6分01秒。SDL2検索・全DXVKコンパイルは通過。runtimeを98%まで進めて独立エラーを採取し、失敗はdesktop debugの`LB_BISECT`撮影処理によるiOS禁止`system()`の1件のみ。iOS overlayでは同機能を要求した時だけ明示エラーへ変更し、通常描画を維持。原ログは`local/codemagic-title4/`。直前の無料枠は使用100/500分、subscription未有効。
+
 ## 確認済み
 
 - 残る固定置換7関数とmotion4関数を静的監査した。物理schedulerは11 blocks／50命令で呼出しがなく、次の限定比較対象にできる。他のmotion4関数は195 blocks／1,616命令、109呼出し（動的29、TLS import4を含む）があり、オブジェクト状態・呼出先の比較は未完了。5箇所のclock読取は上流の期待数に一致したが、動作の一致を意味しない。

@@ -139,6 +139,16 @@ def patch_bridge(s: str) -> str:
         ('    { extern void hud_screen_present(IDirect3DDevice9 *); hud_screen_present(d); }', "HUD present"),
     ):
         s = replace_once(s, fragment, "#ifndef SKYRIM_IOS_GUEST_DIAGNOSTIC\n" + fragment + "\n#endif", label)
+    # The optional desktop bisect capture invokes ImageMagick through system(),
+    # which the iPhoneOS SDK forbids. Keep unsupported capture explicit; normal
+    # rendering never requests LB_BISECT and does not take this branch.
+    s = replace_once(s,
+        '        char cmd[256];\n'
+        '        snprintf(cmd, sizeof cmd, "import -window root %s/skip_%03d.png",\n'
+        '                 getenv("LB_BISECT_DIR") ? getenv("LB_BISECT_DIR") : ".", k / 2);\n'
+        '        if (system(cmd)) {}',
+        '        rt_fatal("LB_BISECT desktop screen capture is unavailable on iOS");',
+        "unsupported desktop screenshot command")
     marker = "    platform_present_hook();"
     if s.count(marker) != 2:
         raise ValueError("bridge: expected device and swapchain present hooks")
