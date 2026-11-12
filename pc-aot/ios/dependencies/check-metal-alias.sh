@@ -8,9 +8,23 @@ CROSS="$WORK/sources/SPIRV-Cross-ios-samplerfix"
 OUT="${1:?fresh output directory required}"
 mkdir "$OUT"
 python3 "$ROOT/tests/graphics_alias_fixture.py" "$OUT/fixtures"
-cmake -S "$ROOT/tests/metal-alias" -B "$OUT/build" -DCMAKE_BUILD_TYPE=Release \
+# This executable runs on the build Mac, not on the phone. The workflow's
+# IPHONEOS_DEPLOYMENT_TARGET otherwise makes Apple clang silently select iOS.
+env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT cmake \
+  -S "$ROOT/tests/metal-alias" -B "$OUT/build" -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_SYSTEM_NAME=Darwin -DCMAKE_OSX_SYSROOT=macosx \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 -DCMAKE_OSX_ARCHITECTURES=arm64 \
   "-DSPIRV_CROSS_SOURCE=$CROSS"
-cmake --build "$OUT/build" --parallel 2 --target sampler-alias
+env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT cmake \
+  --build "$OUT/build" --parallel 2 --target sampler-alias
+xcrun vtool -show-build "$OUT/build/sampler-alias" | tee "$OUT/host-platform.txt"
+grep -q 'platform MACOS' "$OUT/host-platform.txt"
+# Xcode may supply the Metal compiler as a separate official component.
+if ! xcrun --sdk iphoneos metal --version > "$OUT/metal-toolchain.log" 2>&1; then
+  cat "$OUT/metal-toolchain.log"
+  xcodebuild -downloadComponent metalToolchain
+  xcrun --sdk iphoneos metal --version > "$OUT/metal-toolchain.log" 2>&1
+fi
 for name in color-first depth-first distinct-bindings; do
   "$OUT/build/sampler-alias" "$OUT/fixtures/$name.spv" "$OUT/fixtures/$name.metal"
   xcrun --sdk iphoneos metal -std=ios-metal3.1 -c "$OUT/fixtures/$name.metal" -o "$OUT/fixtures/$name.air"
