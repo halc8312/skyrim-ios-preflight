@@ -270,3 +270,29 @@ workflows:
           bash scripts/build-ios.sh unsigned
     artifacts:
       - pc-aot/local/ci/*/artifacts/*
+# Append this manual workflow under workflows in the existing private harness.
+  pc2011-title-host:
+    name: Skyrim PC 2011 original-guest iPhoneOS host
+    instance_type: mac_mini_m2
+    max_build_duration: 65
+    environment:
+      xcode: "26.6"
+      vars:
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+        JOBS: "2"
+    cache:
+      cache_paths:
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies
+    scripts:
+      - name: Prepare public iPhoneOS build tools
+        script: |
+          set -euo pipefail
+          brew install bison make cmake
+      - name: Build public SDL DXVK Metal runtime without game inputs
+        script: |
+          set -euo pipefail
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix make)/libexec/gnubin:$PATH"
+          bash pc-aot/scripts/build-title-host.sh
+    artifacts:
+      - pc-aot/local/title-host/*/artifacts/*
+      - pc-aot/local/ios-dependencies/logs/*/*.log

@@ -46,6 +46,13 @@
           "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
           "purpose": "Keep F3DAudio in the runtime source list when experimental SKSE compatibility is disabled",
           "validation": "tests/test_desktop_audio_sources.py; baseline omission reproduced, five CMake source-property configurations checked; no runtime compile or iPhoneOS link"
+        },
+        {
+          "path": "patches/skydream/0005-call-flags.patch",
+          "sha256": "46e851fbc3a01ee44615a1f85b3e40713704eb5221609a2c1aabfd973ac28434",
+          "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+          "purpose": "Carry guest arithmetic flags across translated calls in the CPU context instead of resetting them per function",
+          "validation": "tests/test_call_flags.py; eight synthetic actual-lifter/native-x86 comparisons, baseline fails and patched passes for both entry modes; iOS execution not yet verified"
         }
       ],
       "documented_input_sha1": "67a597df3bb8c5db94b9032f8179d29631b1145d",
