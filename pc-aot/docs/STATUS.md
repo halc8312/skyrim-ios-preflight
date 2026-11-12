@@ -1,6 +1,6 @@
 # 開発状況
 
-2026-11-12。**2011版をインストールし、日本語1.9.31.0と英語1.9.32.0を独立保存済み**です。英語版の元exeは上流のSHA-1識別prefixと一致します。独立コピーの静的展開は完了しましたが、展開後のハッシュは上流記載と異なり、互換性は未承認です。ゲームを含まない検証アプリのiPhoneOS ARM64ビルドとSimulator操作検査は成功済みです。**Skyrimは未起動。インストール可能なIPAは未作成。実機未検証。**
+2026-11-12。**2011 Steam英語版の元処理90,390関数をARM64へ変換・リンクし、iPhoneOS用公開ホストの実SDKビルドも成功。PC内で未署名IPAを組み立て済み**です。新PCアプリIDは`org.skyrimios.pc2011`。既存Xbox版とは別アプリです。**署名用プロファイル作成はApple Developerの本人ログイン待ち。iPhoneへ未導入、ゲーム未実行、動くタイトル／メニューは未確認。**
 
 ## 2026-11-12 夜の実機タイトル到達作業
 
@@ -14,6 +14,10 @@
 - 3回目 `6af5a56f9679c85ac0af0bdb`／公開cloud commit `eca3e393aedcc3d30a38ea9a0dd38aaabcef034b` は4分42秒。全依存のビルド・ARM64確認後、SDK外のSDL2 prefixをCMakeが再root化し、package発見に失敗。実インストール先をログで確認してexact config path＋`NO_CMAKE_FIND_ROOT_PATH`へ修正。同じroot-only検索の最小再現は修正前exit1、修正後exit0。原ログは`local/codemagic-title3/`。ゲーム由来C・入力・署名鍵は送信していない。
 
 - 4回目 `6af5a9a19679c85ac0af0d5d`／公開cloud commit `d51d761a1bb55388681e3e22d77ed2906017a688` は6分01秒。SDL2検索・全DXVKコンパイルは通過。runtimeを98%まで進めて独立エラーを採取し、失敗はdesktop debugの`LB_BISECT`撮影処理によるiOS禁止`system()`の1件のみ。iOS overlayでは同機能を要求した時だけ明示エラーへ変更し、通常描画を維持。原ログは`local/codemagic-title4/`。直前の無料枠は使用100/500分、subscription未有効。
+
+- [5回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5adb89679c85ac0af0f0c)／公開cloud commit `6d6bf479fbb2ba4cb21d07ba4d26e42da842a18f` は8分21秒で成功。Xcode26.6、SDK26.5、ARM64/iPhoneOS/minOS18.0。全依存、DXVK、runtime、Objective-C入口、callback adapterをコンパイル・リンク。public host ZIP SHA256 `11f930ed9c59b36f98afbd9681912d77f88f20b7d3c4cbafb4e127f27ffe7f74`、host Mach-O12,194,488 bytes／SHA256 `8707a2d789ae749b8b4ccf1654f943782a23e5c3be2a27db2da9c2717926d097`。原成果物は`local/codemagic-title5/`。
+- SDK側`x86.h`と`PcGuestABI.h`はローカルprivate側とLF正規化後に一致。`rt_table.h`の全文一致検査は失敗したが、差は既にレビューしたhost側の一度だけ代入する`g_modules`宣言のconst解除だけと確認。FnEntry/FnModuleの定義は同じで、private frameworkのstrict-link import集合に`g_modules`はない。追加のprivate再コンパイルは不要。
+- `private/title-delivery-20261112/SkyrimIOS-PC2011-build1-unsigned.ipa`をローカル生成。SHA256 `c9c3331c72904d978339048582a2090d9389c2534fe7b758363fc4bffb70973d`、4ファイル。全ZIP CRC、2つのARM64/iPhoneOS18.0イメージの未署名構造・署名余白・terminal LINKEDIT・app identityを既存署名器の検証で確認。署名鍵は開いていない。Appleログイン画面とUSB未接続を確認して本人操作待ち。
 
 ## 確認済み
 
@@ -84,9 +88,9 @@
 
 ## 現在の障害と次の操作
 
-1. **公開ホストの実SDKビルド。** SDL・FFmpeg・vkd3d・MoltenVKのiPhoneOS ARM64ビルドは成功。作成済みSDL2 packageの検索不備を修正し、次は実アプリのコンパイル／リンクを確認する。上の過去記録の未実装項目と現在の実装済み項目は区別する。
+1. **公開ホストとPC内組み立ては完了。** 上記5回目の成功成果物を固定し、これを再ビルドせず署名へ進める。ゲーム側のprivate frameworkを含むIPAはPC内だけに置いている。
 2. **実機署名と接続。** `org.skyrimios.pc2011`専用のmemory profileが未作成。既存有料開発者証明書を再利用するPC内署名・転送手順は準備済み。Apple Developerの本人ログインと、完成後のUSB接続が必要。既存Xbox版のアプリ・セーブ・署名済みIPAは保持。
 3. **実行時の正しさ。** 元のguest処理を残す経路で90,390関数のARM64生成／リンクは完了したが、ゲーム未実行。入力は互換承認済みではなく、510変換拒否候補、既知の動的呼出し先、Win32代替API、x87／SSE、ARM64メモリー順序、D3D9互換には実行時の未知が残る。固定アドレスの未検証置換は使用しない。
 4. **到達条件。** 実機で所有データを読み、ゲーム自身の動くタイトル／メニューを確認する。firstPresentやprobe・Simulatorの成功だけでは達成としない。新規ゲーム、セーブ／ロード、操作性、音声、性能はさらに後続。
 
-クラウドへ送るのは公開ホストだけ。PC内のprivate frameworkと組み合わせて署名し、別アプリとしてiPhoneへ渡す。インストール可能なIPAと実機タイトルは現時点で未完成。
+クラウドへ送るのは公開ホストだけ。PC内のprivate frameworkと組み合わせて署名し、別アプリとしてiPhoneへ渡す。未署名IPAは完成。署名・iPhoneへの導入・実機タイトルは未完了。
