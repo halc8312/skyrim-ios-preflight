@@ -39,6 +39,13 @@
           "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
           "purpose": "Recover bounded negative-index destination candidates after local predecessor checks; retain unresolved status and preserve zero-based table/range metadata",
           "validation": "tests/test_discovery_negative_tables.py; synthetic joins, clobbers, input bounds and serial/parallel checks; not complete target resolution or game proof"
+        },
+        {
+          "path": "patches/skydream/0004-preserve-native-audio-source.patch",
+          "sha256": "24e8e69260880dc5c5fd9b6d6ca35e405c9cde5ad3898ea59695a9b15254cee4",
+          "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+          "purpose": "Keep F3DAudio in the runtime source list when experimental SKSE compatibility is disabled",
+          "validation": "tests/test_desktop_audio_sources.py; baseline omission reproduced, five CMake source-property configurations checked; no runtime compile or iPhoneOS link"
         }
       ],
       "documented_input_sha1": "67a597df3bb8c5db94b9032f8179d29631b1145d",

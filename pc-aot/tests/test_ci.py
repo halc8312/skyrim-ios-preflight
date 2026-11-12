@@ -102,7 +102,13 @@ class SafetyTests(unittest.TestCase):
             path.write_bytes(difference("runtime/x86.h"))
             self.assertEqual(safety.check_file(rel, path), [])
             self.assertTrue(safety.check_file("outside.patch", path))
+            path.write_bytes(difference("desktop/CMakeLists.txt", "set(SKYDREAM_SKSE OFF)"))
+            self.assertEqual(safety.check_file(rel, path), [])
             for payload in (difference("private/input.exe"), difference("../runtime/x86.h"),
+                            difference("desktop/private/CMakeLists.txt"),
+                            difference("desktop/../CMakeLists.txt"),
+                            difference("desktop/other.cmake"),
+                            difference("desktop/CMakeLists.txt", "void sub_00401000(void) {}"),
                             difference("runtime/x86.h", "void sub_00401000(void) {}"),
                             difference("runtime/x86.h", prefix="GIT binary patch\nliteral 44\n")):
                 path.write_bytes(payload)

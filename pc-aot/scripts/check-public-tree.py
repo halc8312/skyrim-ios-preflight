@@ -38,7 +38,9 @@ def check_patch(relative: PurePosixPath, source: str) -> list[str]:
         errors.append("missing or unsupported patch headers")
     for before, after in headers:
         target = PurePosixPath(after)
-        if before != after or target.is_absolute() or ".." in target.parts or not target.parts or target.parts[0] not in {"runtime", "tools"} or target.suffix not in {".c", ".h", ".cpp", ".py"}:
+        source_target = bool(target.parts) and target.parts[0] in {"runtime", "tools"} and target.suffix in {".c", ".h", ".cpp", ".py"}
+        build_target = after == "desktop/CMakeLists.txt"
+        if before != after or target.is_absolute() or ".." in target.parts or not (source_target or build_target):
             errors.append("patch target is not approved upstream source")
         if f"--- a/{before}\n+++ b/{after}\n" not in source:
             errors.append("patch file headers do not match target")

@@ -4,6 +4,8 @@
 
 ## 確認済み
 
+- 残る固定置換7関数とmotion4関数を静的監査した。物理schedulerは11 blocks／50命令で呼出しがなく、次の限定比較対象にできる。他のmotion4関数は195 blocks／1,616命令、109呼出し（動的29、TLS import4を含む）があり、オブジェクト状態・呼出先の比較は未完了。5箇所のclock読取は上流の期待数に一致したが、動作の一致を意味しない。
+- 上流のSKSE無効時に、CMakeがruntimeのsource一覧を置き換えてF3DAudioを落とす問題を再現し、第4パッチで保持するよう修正。元のcommand区間を使うCMake検査2件・5設定で確認した。合成の空sourceを用いたtarget属性の検査であり、音声処理の実行やiPhoneOSリンクではない。誤混入検査はこのCMakeファイルだけを追加許可し、関連13検査がWindowsで成功。
 - 負のindexから候補を回収する第3パッチを実装。12合成検査と独立した20＋8＋1検査、実入力の2関数限定解析を通過。分岐先候補8件は既知blockと一致し、元のtables／rangesは維持する。全流入経路の完全性は証明できないため未解決の表示は残す。閉じたPE mmapを参照した原失敗も保存し、入力バイトを保持する方法へ修正した。
 - メモリー転送2処理／CRC3処理を、元の補助処理16個を含む計21関数だけ診断用に変換・実行。WSLで20,000比較が成功し、終了0、最終1,639件の入力／ソース照合に不一致なし。元exeを起動した結果でも、ARM64／実機の結果でもない。最初の7関数診断は未解決targetで停止し、原失敗を保持。追加した14着地点は算術flagsを読まないことも独立確認した。
 - その停止を調べた結果、非空tableでも負のindex側を見落とす2箇所が判明。既存の1,053箇所に加え、**既知の未解決は計1,055 unique sites**。元の全体解析JSONを上書きした数ではなく、限定監査による補足。第3パッチはこの別のCMP/JB/NEG規則までは解決していない。
@@ -35,6 +37,9 @@
 
 ## 証拠
 
+- `private/analysis/remaining-overrides-20261112-01/audit.json` が7置換のABI／呼出し／global監査（SHA-256 `ba4805deb9b2396fcb357c1834883da37c32ba02c4685ae690315c0f5e3e8a97`）。`remaining-physics-20261112-01/findings.json` が4 motion関数の結果（SHA-256 `62898c29d3107d0d8cd6c7343d6333d1646e3e6b03d220bc26fdb061df1bc074`）。新たなゲーム由来コードの生成・実行はしていない。
+- `local/tests/desktop-audio-source-20261112/baseline-evidence/` に音声source欠落の原失敗とCMake属性／ログを保存。第4パッチSHA-256は `24e8e69260880dc5c5fd9b6d6ca35e405c9cde5ad3898ea59695a9b15254cee4`。既存の文字列・primitive成功結果は変更しておらず、診断時の固定パッチ構成もそのまま保持する。
+- `local/translation/english-pair-four-patches-20261112/translation-plan.json` で4パッチの実ハッシュが一致。残るblockerは互換profile未承認、`executed:false`。ゲーム全体の生成や追加のAppleビルドはしていない。
 - `private/analysis/negative-table-real-probe-20261112/` が閉じたmmap参照の原失敗、`negative-table-real-probe-v2-20261112/` が修正後の2関数解析と12検査ログ。独立検査は `local/tests/negative-roots-independent-*`。第3パッチSHA-256は `21f610a0af715992a6b16b2adcacd0924e4d020cc7c7cd6c88beabc9338668e3`。
 - `private/diagnostics/five-primitives-reviewed-20261112-01/` が未解決target `F53AE4` の原失敗、`five-primitives-reviewed-20261112-02/report.json` が20,000比較の成功と1,639照合。生成CのSHA-256は `50f5f3c2e900cab5704a846085d5466be14b662c3f82fef2b5f8075eead7aa7e`、保存したrunnerは `53ac73449d05b2bdce994ad138f287f100be513a375237a36150f65f3500c99e`。全生成物・コンパイラー中間物・stderr/stdoutを非公開で保持。
 - `private/analysis/primitive-contracts-20261112-04/audit.json` が21関数の入力／block／呼出・table監査（SHA-256 `7d9be136d7f3a89f1d42b3d693f66631a5154234680807e8cf618c7e873feafd`）。旧01〜03も保存。`backward-memmove-cfg-20261112/` にNEG分岐の原因、算術flagsの限定確認、誤った途中説明を訂正する `flags-correction.json`、1,055箇所の補足記録。詳細と再現手順は [TRANSLATION](TRANSLATION.md)。
@@ -66,7 +71,7 @@
 
 ## 現在の障害と次の操作
 
-1. **展開候補の互換性。** 文字列4処理、メモリー転送／CRC5処理の有限比較は成功したが、全体ハッシュとの差・残る固定置換7関数／物理4関数と参照globalsは未確認。次は残る固定契約の限定監査を進める。汎用discovery側にはCMP/JB/NEGの負index規則が残り、既知未解決1,055箇所は完全な網羅性の評価ではない。profileを安易に承認せず、失敗を診断可能なまま保つ。
+1. **展開候補の互換性。** 文字列4処理、メモリー転送／CRC5処理の有限比較は成功したが、全体ハッシュとの差・残る固定置換7関数／物理4関数の振舞いは未確認。静的監査を終えた小さなschedulerについて、10 globalsとstack/x87状態を限定した比較を次に進める。汎用discovery側にはCMP/JB/NEGの負index規則が残り、既知未解決1,055箇所は完全な網羅性の評価ではない。profileを安易に承認せず、失敗を診断可能なまま保つ。
 2. **変換器の正しさ。** AF欠落を修正し、合成比較は成功。guest callをまたぐflags、x87拡張精度、MXCSR、atomic／ARM64順序などは未解決。固定位置を使うゲーム全体の生成はprofile審査まで行わず、対象関数の限定比較を次に進める。
 3. **クラウド環境。** Codemagicの利用設定は未確認。ブラウザー操作は現在URLを確実に識別できないという自動安全確認により停止し、以後は既知のGitHub APIでCI結果を取得した。既存の非公開GitHub CIで署名なしコンパイル／リンクと別枠のSimulator検査は完了。新しい有料サービス・課金契約・署名資格情報は追加していない。
 4. **実機署名の不足。** iOSバージョン・Developer Modeは回答待ち。今回のbundle IDに合うAd Hoc profile、登録済みUDID、既存distribution証明書が未確認。既存GitHub repositoryのActions secret／variableはAPIで各0件を確認（組織・environment・Codemagic全体の設定不存在は意味しない）。鍵やtokenをチャットへ貼らない。CIのsecret管理とApple/Codemagic画面で設定する。
