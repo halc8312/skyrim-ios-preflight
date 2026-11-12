@@ -1,0 +1,113 @@
+diff --git a/runtime/x86.h b/runtime/x86.h
+--- a/runtime/x86.h
++++ b/runtime/x86.h
+@@ -59,7 +59,10 @@
+ #define MF32(a) (*(f32u *)(MEM + (uint32_t)(a)))
+ #define MF64(a) (*(f64u *)(MEM + (uint32_t)(a)))
+ 
+-typedef struct { uint32_t cf, zf, sf, of, pf; } Flags;
++/* AF is updated only where architecturally defined. Logic/shift/multiply
++ * operations with undefined AF do not promise a value. Flags remain function
++ * locals: the existing SPILL/RELOAD design does not preserve them across calls. */
++typedef struct { uint32_t cf, zf, sf, of, pf, af; } Flags;
+ 
+ static inline uint32_t par8(uint32_t r) { return !__builtin_parity(r & 0xFF); }
+ 
+@@ -67,31 +70,31 @@
+ static inline T add##N(T a, T b, Flags *f) {                                      \
+     T r = (T)(a + b);                                                             \
+     f->cf = r < a; f->zf = r == 0; f->sf = (ST)r < 0;                             \
+-    f->of = ((~(a ^ b) & (a ^ r)) >> (N - 1)) & 1; f->pf = par8(r); return r; }   \
++    f->of = ((~(a ^ b) & (a ^ r)) >> (N - 1)) & 1; f->af = ((a ^ b ^ r) >> 4) & 1; f->pf = par8(r); return r; }   \
+ static inline T adc##N(T a, T b, Flags *f) {                                      \
+     T c = (T)f->cf; T r = (T)(a + b + c);                                         \
+     f->cf = c ? (r <= a) : (r < a); f->zf = r == 0; f->sf = (ST)r < 0;            \
+-    f->of = ((~(a ^ b) & (a ^ r)) >> (N - 1)) & 1; f->pf = par8(r); return r; }   \
++    f->of = ((~(a ^ b) & (a ^ r)) >> (N - 1)) & 1; f->af = ((a ^ b ^ r) >> 4) & 1; f->pf = par8(r); return r; }   \
+ static inline T sub##N(T a, T b, Flags *f) {                                      \
+     T r = (T)(a - b);                                                             \
+     f->cf = a < b; f->zf = r == 0; f->sf = (ST)r < 0;                             \
+-    f->of = (((a ^ b) & (a ^ r)) >> (N - 1)) & 1; f->pf = par8(r); return r; }    \
++    f->of = (((a ^ b) & (a ^ r)) >> (N - 1)) & 1; f->af = ((a ^ b ^ r) >> 4) & 1; f->pf = par8(r); return r; }    \
+ static inline T sbb##N(T a, T b, Flags *f) {                                      \
+     T c = (T)f->cf; T r = (T)(a - b - c);                                         \
+     f->cf = c ? (a <= b) : (a < b); f->zf = r == 0; f->sf = (ST)r < 0;            \
+-    f->of = (((a ^ b) & (a ^ r)) >> (N - 1)) & 1; f->pf = par8(r); return r; }    \
++    f->of = (((a ^ b) & (a ^ r)) >> (N - 1)) & 1; f->af = ((a ^ b ^ r) >> 4) & 1; f->pf = par8(r); return r; }    \
+ static inline T logic##N(T r, Flags *f) {                                         \
+     f->cf = 0; f->of = 0; f->zf = r == 0; f->sf = (ST)r < 0; f->pf = par8(r);     \
+     return r; }                                                                   \
+ static inline T inc##N(T a, Flags *f) {                                           \
+     T r = (T)(a + 1); f->zf = r == 0; f->sf = (ST)r < 0;                          \
+-    f->of = r == (T)((T)1 << (N - 1)); f->pf = par8(r); return r; }               \
++    f->of = r == (T)((T)1 << (N - 1)); f->af = ((a ^ r) >> 4) & 1; f->pf = par8(r); return r; }               \
+ static inline T dec##N(T a, Flags *f) {                                           \
+     T r = (T)(a - 1); f->zf = r == 0; f->sf = (ST)r < 0;                          \
+-    f->of = a == (T)((T)1 << (N - 1)); f->pf = par8(r); return r; }               \
++    f->of = a == (T)((T)1 << (N - 1)); f->af = ((a ^ r) >> 4) & 1; f->pf = par8(r); return r; }               \
+ static inline T neg##N(T a, Flags *f) {                                           \
+     T r = (T)(0 - a); f->cf = a != 0; f->zf = r == 0; f->sf = (ST)r < 0;          \
+-    f->of = a == (T)((T)1 << (N - 1)); f->pf = par8(r); return r; }               \
++    f->of = a == (T)((T)1 << (N - 1)); f->af = ((a ^ r) >> 4) & 1; f->pf = par8(r); return r; }               \
+ static inline T shl##N(T a, uint32_t n, Flags *f) {                               \
+     n &= 31; if (!n) return a;                                                    \
+     T r = n >= N ? 0 : (T)(a << n);                                               \
+diff --git a/tools/lift.py b/tools/lift.py
+--- a/tools/lift.py
++++ b/tools/lift.py
+@@ -533,15 +533,15 @@
+         elif mn == "std":
+             e("c->df = 1;")
+         elif mn == "sahf":
+-            e("{ uint32_t h_ = (eax >> 8) & 0xFF; f.cf = h_ & 1; f.pf = (h_ >> 2) & 1; f.zf = (h_ >> 6) & 1; "
++            e("{ uint32_t h_ = (eax >> 8) & 0xFF; f.cf = h_ & 1; f.pf = (h_ >> 2) & 1; f.af = (h_ >> 4) & 1; f.zf = (h_ >> 6) & 1; "
+               "f.sf = (h_ >> 7) & 1; }")
+         elif mn == "lahf":
+-            e(self.reg_set("ah", "(f.cf | 2 | (f.pf << 2) | (f.zf << 6) | (f.sf << 7))"))
++            e(self.reg_set("ah", "(f.cf | 2 | (f.pf << 2) | (f.af << 4) | (f.zf << 6) | (f.sf << 7))"))
+         elif mn == "pushfd":
+-            e("esp -= 4; M32(esp) = f.cf | 2 | (f.pf << 2) | (f.zf << 6) | (f.sf << 7) | (c->df << 10) | "
++            e("esp -= 4; M32(esp) = f.cf | 2 | (f.pf << 2) | (f.af << 4) | (f.zf << 6) | (f.sf << 7) | (c->df << 10) | "
+               "(f.of << 11) | 0x200 | c->eflags_hi;")
+         elif mn == "popfd":
+-            e("{ uint32_t v_ = M32(esp); esp += 4; f.cf = v_ & 1; f.pf = (v_ >> 2) & 1; f.zf = (v_ >> 6) & 1; "
++            e("{ uint32_t v_ = M32(esp); esp += 4; f.cf = v_ & 1; f.pf = (v_ >> 2) & 1; f.af = (v_ >> 4) & 1; f.zf = (v_ >> 6) & 1; "
+               "f.sf = (v_ >> 7) & 1; c->df = (v_ >> 10) & 1; f.of = (v_ >> 11) & 1; "
+               "c->eflags_hi = v_ & 0x00200000u; }")
+         elif mn == "cpuid":
+@@ -737,7 +737,7 @@
+                 e("if (%s) ST(0) = %s;" % (cond, s))
+             elif reg in (5, 6):
+                 e("{ double a_ = ST(0), b_ = %s; if (a_ != a_ || b_ != b_) { f.zf = f.pf = f.cf = 1; } "
+-                  "else { f.zf = a_ == b_; f.pf = 0; f.cf = a_ < b_; } f.of = f.sf = 0; }" % s)
++                  "else { f.zf = a_ == b_; f.pf = 0; f.cf = a_ < b_; } f.of = f.sf = f.af = 0; }" % s)
+             else:
+                 raise Unsupported("db %02x" % modrm)
+         elif op == 0xDC:
+@@ -776,7 +776,7 @@
+                 e(self.reg_set("ax", "fstatus(c)"))
+             elif reg in (5, 6):
+                 e("{ double a_ = ST(0), b_ = %s; if (a_ != a_ || b_ != b_) { f.zf = f.pf = f.cf = 1; } "
+-                  "else { f.zf = a_ == b_; f.pf = 0; f.cf = a_ < b_; } f.of = f.sf = 0; fpop(c); }" % s)
++                  "else { f.zf = a_ == b_; f.pf = 0; f.cf = a_ < b_; } f.of = f.sf = f.af = 0; fpop(c); }" % s)
+             elif reg == 0:
+                 e("fpop(c);")
+             else:
+@@ -932,7 +932,7 @@
+         elif mn in ("comisd", "ucomisd"):
+             src = ("%s.d[0]" % self.xmm(i, ops[1])) if isx(ops[1]) else "MF64(%s)" % self.addr(i, ops[1])
+             e("{ double a_ = %s.d[0], b_ = %s; if (a_ != a_ || b_ != b_) { f.zf = f.pf = f.cf = 1; } "
+-              "else { f.zf = a_ == b_; f.pf = 0; f.cf = a_ < b_; } f.of = f.sf = 0; }" % (self.xmm(i, ops[0]), src))
++              "else { f.zf = a_ == b_; f.pf = 0; f.cf = a_ < b_; } f.of = f.sf = f.af = 0; }" % (self.xmm(i, ops[0]), src))
+         elif mn in ("stmxcsr", "ldmxcsr"):
+             a = self.addr(i, ops[0])
+             e("M32(%s) = c->mxcsr;" % a if mn == "stmxcsr" else "c->mxcsr = M32(%s);" % a)
+@@ -1048,7 +1048,7 @@
+         elif mn in ("comiss", "ucomiss"):
+             src = ("%s.f[0]" % self.xmm(i, ops[1])) if isx(ops[1]) else "MF32(%s)" % self.addr(i, ops[1])
+             e("{ float a_ = %s.f[0], b_ = %s; if (a_ != a_ || b_ != b_) { f.zf = f.pf = f.cf = 1; } "
+-              "else { f.zf = a_ == b_; f.pf = 0; f.cf = a_ < b_; } f.of = f.sf = 0; }" % (self.xmm(i, ops[0]), src))
++              "else { f.zf = a_ == b_; f.pf = 0; f.cf = a_ < b_; } f.of = f.sf = f.af = 0; }" % (self.xmm(i, ops[0]), src))
+         elif mn.startswith("cmp") and mn[-2:] in ("ps", "pd", "ss", "sd") and mn[3:-2] in CMP_PRED:
+             x = self.xmm(i, ops[0])
+             kind = mn[-2:]

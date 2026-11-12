@@ -92,6 +92,22 @@ class ProfileTests(unittest.TestCase):
 
 
 class SafetyTests(unittest.TestCase):
+    def test_source_patches_reject_binary_game_and_foreign_targets(self):
+        def difference(target, addition="uint32_t af;", prefix=""):
+            return (f"diff --git a/{target} b/{target}\n--- a/{target}\n+++ b/{target}\n"
+                    f"@@ -1 +1 @@\n-old\n+{addition}\n{prefix}").encode()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "change.patch"
+            rel = "patches/skydream/0001-fixture.patch"
+            path.write_bytes(difference("runtime/x86.h"))
+            self.assertEqual(safety.check_file(rel, path), [])
+            self.assertTrue(safety.check_file("outside.patch", path))
+            for payload in (difference("private/input.exe"), difference("../runtime/x86.h"),
+                            difference("runtime/x86.h", "void sub_00401000(void) {}"),
+                            difference("runtime/x86.h", prefix="GIT binary patch\nliteral 44\n")):
+                path.write_bytes(payload)
+                self.assertTrue(safety.check_file(rel, path))
+
     def test_game_renaming_and_generated_source_fail(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

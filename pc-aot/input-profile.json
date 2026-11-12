@@ -4,5 +4,5 @@
   "translator_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
   "expected_pe": {"machine": "0x014c", "bits": 32, "image_base": "0x400000"},
   "reviewed_unpacked": null,
-  "explanation": "No locally verified complete unpacked hash/layout is available. The upstream README SHA-1 and original SHA-1 prefix are evidence only, not an approved input profile. Generation remains blocked until a source-reviewed profile records sha1, sha256, entry_rva, sections_sha256 and review_evidence for this translator revision. Do not populate from filename/version alone."
+  "explanation": "The English original and static-unpacked candidate have separate verified local hashes/layout/provenance, but the candidate differs from upstream's documented unpacked hash and fixed-address contracts remain unreviewed. Generic discovery and isolated diagnostic comparisons do not approve a game build. Generation remains blocked until a source-reviewed profile records sha1, sha256, entry_rva, sections_sha256 and review_evidence for this translator revision and pinned patch contract. Do not populate from filename/version alone."
 }

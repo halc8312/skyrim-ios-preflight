@@ -15,7 +15,7 @@ PRIVATE_PARTS = {"local", "private", "generated", "vendor", "build", "artifacts"
 SOURCE_SUFFIXES = {".md", ".txt", ".json", ".yaml", ".yml", ".py", ".sh", ".ps1",
                    ".c", ".h", ".cc", ".cpp", ".hpp", ".m", ".mm", ".metal",
                    ".plist", ".pbxproj", ".xcscheme", ".xcworkspacedata", ".xcconfig",
-                   ".cmake", ".in", ".example", ".toml", ".csv", ".tsv"}
+                   ".cmake", ".in", ".example", ".toml", ".csv", ".tsv", ".patch"}
 ROOT_NAMES = {".gitignore", ".gitattributes", "LICENSE", "NOTICE", "CMakeLists.txt"}
 FORBIDDEN_SUFFIXES = {".exe", ".dll", ".bsa", ".ba2", ".esm", ".esp", ".esl",
                       ".ess", ".skse", ".nif", ".dds", ".hkx", ".pex", ".fuz",
@@ -26,6 +26,28 @@ GENERATED_PATTERNS = (
     re.compile(r"\b(?:loc|sub|dword|byte|word|qword)_[0-9a-fA-F]{6,}\b"),
     re.compile(r"(?im)^\s*(?://|/\*|#)\s*(?:automatically )?generated (?:from|by) (?:tesv|skyrim|ghidra|ida|retdec|reccmp)"),
 )
+
+
+def check_patch(relative: PurePosixPath, source: str) -> list[str]:
+    """Permit reviewed source diffs, not binary/game payloads hidden as patches."""
+    errors = []
+    if relative.parts[:2] != ("patches", "skydream"):
+        errors.append("patch outside reviewed source patch directory")
+    headers = re.findall(r"(?m)^diff --git a/(\S+) b/(\S+)$", source)
+    if not headers or len(headers) != len(re.findall(r"(?m)^diff --git ", source)):
+        errors.append("missing or unsupported patch headers")
+    for before, after in headers:
+        target = PurePosixPath(after)
+        if before != after or target.is_absolute() or ".." in target.parts or not target.parts or target.parts[0] not in {"runtime", "tools"} or target.suffix not in {".c", ".h", ".cpp", ".py"}:
+            errors.append("patch target is not approved upstream source")
+        if f"--- a/{before}\n+++ b/{after}\n" not in source:
+            errors.append("patch file headers do not match target")
+    if re.search(r"(?m)^(GIT binary patch|Binary files |literal [0-9]+|delta [0-9]+)", source):
+        errors.append("binary patch payload")
+    body = "\n".join(line[1:] if line[:1] in {"+", "-", " "} else line for line in source.splitlines())
+    if any(pattern.search(body) for pattern in GENERATED_PATTERNS):
+        errors.append("possible generated/decompiled game source in patch")
+    return errors
 
 
 def check_file(relative: str, path: Path) -> list[str]:
@@ -55,6 +77,8 @@ def check_file(relative: str, path: Path) -> list[str]:
         return errors + ["not UTF-8 source text"]
     if re.search(r"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----", source):
         errors.append("private-key marker")
+    if rel.suffix.lower() == ".patch":
+        errors.extend(check_patch(rel, source.replace("\r\n", "\n")))
     if rel.suffix.lower() in {".c", ".h", ".cc", ".cpp", ".hpp", ".m", ".mm"}:
         if any(pattern.search(source) for pattern in GENERATED_PATTERNS):
             errors.append("possible generated/decompiled game source")

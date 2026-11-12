@@ -11,7 +11,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import struct
@@ -87,10 +87,25 @@ def translator_state(source):
     path = ROOT / source["path"]
     result = {"path": str(path), "required_revision": source["revision"]}
     try:
-        head = subprocess.run(["git", "-C", str(path), "rev-parse", "HEAD"], check=True,
+        git = shutil.which("git")
+        if not git:
+            raise FileNotFoundError("git executable unavailable")
+        result["git"] = {"executable": git,
+                         "version": subprocess.run([git, "--version"], check=True, capture_output=True,
+                                                   text=True, timeout=10).stdout.strip(),
+                         "status_config_overrides": {"core.autocrlf": "true"},
+                         "optional_locks": False,
+                         "normalization": "Git text CRLF-to-LF normalization; attributes and binary detection retained"}
+        head = subprocess.run([git, "-C", str(path), "rev-parse", "HEAD"], check=True,
                               capture_output=True, text=True, timeout=10).stdout.strip()
         result["actual_revision"] = head
-        dirty = subprocess.run(["git", "-C", str(path), "status", "--porcelain", "--untracked-files=all"],
+        # Windows and WSL can share a CRLF checkout but have different global
+        # Git configuration. Apply the same text normalization to this read only;
+        # never rewrite the checkout, index, or repository configuration. Git
+        # still reports staged/content/untracked changes and honors -text files.
+        # Generation uses git archive of the exact pin, not worktree bytes.
+        dirty = subprocess.run([git, "-c", "core.autocrlf=true", "-C", str(path),
+                                "status", "--porcelain", "--untracked-files=all"],
                                check=True, capture_output=True, text=True, timeout=30,
                                env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"}).stdout.strip()
         result.update(actual_revision=head, clean=not dirty,
@@ -119,11 +134,83 @@ def validate_profile(record, profile, revision):
     return problems
 
 
+def verify_patches(source, blockers):
+    """Verify declared patch identities only; applicability is checked when staging."""
+    declared = source.get("patches", [])
+    if not isinstance(declared, list):
+        blockers.append("translator_patches_must_be_an_ordered_list")
+        return []
+    root = ROOT.resolve()
+    allowed = root / "patches" / "skydream"
+    records = []
+    for index, entry in enumerate(declared):
+        identity = {key: entry.get(key) for key in ("path", "sha256", "base_revision")} if isinstance(entry, dict) else {}
+        record = {"index": index, "identity": identity, "verified": False,
+                  "applicability": "not_checked", "executed": False}
+        records.append(record)
+        errors = []
+        if not all(isinstance(identity.get(key), str) and identity[key] for key in ("path", "sha256", "base_revision")):
+            errors.append("invalid_identity")
+        else:
+            if not re.fullmatch(r"[0-9a-f]{64}", identity["sha256"]):
+                errors.append("invalid_sha256")
+            if identity["base_revision"] != source["revision"]:
+                errors.append("base_revision_mismatch")
+            relative = PurePosixPath(identity["path"])
+            if (relative.is_absolute() or relative.parts[:2] != ("patches", "skydream")
+                    or len(relative.parts) < 3 or ".." in relative.parts
+                    or "\\" in identity["path"] or ":" in identity["path"]
+                    or relative.as_posix() != identity["path"]):
+                errors.append("path_outside_patch_scope")
+            else:
+                candidate = root / relative
+                try:
+                    # Do not resolve the allowed directory: its symlink must not
+                    # expand scope. Reject file symlinks as well as directory escapes.
+                    resolved = candidate.resolve()
+                    if not resolved.is_relative_to(allowed) or candidate.is_symlink():
+                        errors.append("path_outside_patch_scope")
+                    elif not candidate.is_file():
+                        errors.append("missing_or_nonregular_file")
+                    else:
+                        record["resolved_path"] = str(resolved)
+                        record["actual_sha256"] = hashes(resolved)["sha256"]
+                        if record["actual_sha256"] != identity["sha256"]:
+                            errors.append("sha256_mismatch")
+                except (OSError, RuntimeError) as error:
+                    errors.append("unreadable_file")
+                    record["error"] = type(error).__name__
+        record["errors"] = errors
+        record["verified"] = not errors
+        blockers.extend(f"translator_patch_{index}_{error}" for error in errors)
+    return records
+
+
+def planned_patches(records):
+    """Check/apply sequentially in an isolated archive, never in the vendor repo."""
+    ready = bool(records) and all(record["verified"] for record in records)
+    commands = []
+    if ready:
+        # Without a local repository, git apply can inherit the outer workspace
+        # repository and silently skip paths beneath an unrelated cwd prefix.
+        git = ["git", "-c", "core.autocrlf=false"]
+        commands.append({"operation": "initialize_isolated_archive", "argv": [*git, "init", "--quiet"]})
+        for record in records:
+            for operation, options in (("check", ["--check"]), ("apply", [])):
+                commands.append({"operation": operation, "patch_index": record["index"],
+                                 "argv": [*git, "apply", *options, "--", record["resolved_path"]]})
+    return {"cwd_relative_to_run": "work/skydream", "commands": commands,
+            "executed": False, "identity_verified": ready if records else True,
+            "applicability": "not_checked" if records else "not_applicable",
+            "prerequisite": "Fresh canonical git archive only; reverify patch hashes, stop on any failed command, and check then apply each patch in declared order."}
+
+
 def make_plan(original=None, unpacked=None, recipe=None, sdk=None):
     source = next(s for s in json.loads((ROOT / "source-lock.json").read_text(encoding="utf-8"))["sources"] if s["name"] == "skydream")
     profile_path = ROOT / "input-profile.json"
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
     blockers = []
+    patches = verify_patches(source, blockers)
     original_record = inspect_input(original, "original", blockers)
     unpacked_record = inspect_input(unpacked, "unpacked", blockers)
     if original and unpacked and original.is_file() and unpacked.is_file() and original.samefile(unpacked):
@@ -169,19 +256,23 @@ def make_plan(original=None, unpacked=None, recipe=None, sdk=None):
                 "provenance_recipe_sha256": (recipe_record or {}).get("sha256"),
                 "generation_environment": FLAGS, "compile_options": COMPILE,
                 "target": {"platform": "iphoneos", "architecture": "arm64", "sdk": sdk, "sdk_verified": False}}
+    if patches:
+        contract["translator_patches"] = [{**record["identity"], "actual_sha256": record.get("actual_sha256")}
+                                          for record in patches]
     return {"schema_version": 1, "created_utc": datetime.now(timezone.utc).isoformat(),
             "status": "blocked" if blockers else "plan_ready", "blockers": blockers,
             "contract_sha256": digest(contract), "contract": contract,
             "original": original_record, "unpacked": unpacked_record, "provenance_recipe": recipe_record,
-            "translator": translator, "dependencies": deps,
+            "translator": translator, "dependencies": deps, "patch_verification": patches,
+            "planned_patches": planned_patches(patches),
             "planned_source_materialization": {"method": "git archive of pinned revision; preserve canonical repository line endings",
-                "argv": ["git", "-C", str(ROOT / source["path"]), "archive", "--format=tar", source["revision"]],
+                "argv": ["git", "-c", "core.autocrlf=false", "-C", str(ROOT / source["path"]), "archive", "--format=tar", source["revision"]],
                 "destination_relative_to_run": "work/skydream", "executed": False},
             "planned_regeneration": {"cwd_relative_to_run": "work/skydream", "environment": FLAGS,
                 "argv": ["sh", "tools/regen_gen.sh", "../../inputs"],
                 "command": "env LIFT_MEMORDER=1 LIFT_TSO=1 DISCOVER_JOBS=2 sh tools/regen_gen.sh ../../inputs",
                 "input_relative_to_run": "inputs/TESV_unpacked.exe", "outputs_relative_to_run": ["work/skydream/analysis", "work/skydream/gen"],
-                "prerequisite": "Materialize the pinned translator with git archive (canonical line endings); copy the approved unpacked input, verify hashes again, and run under the preflighted Python/POSIX environment."},
+                "prerequisite": "Materialize the pinned translator with git archive (canonical line endings); complete planned_patches in order, copy the approved unpacked input, verify hashes again, and run under the preflighted Python/POSIX environment."},
             "executed": False, "staged_inputs": False,
             "ios_build": {"status": "not_implemented", "requires": ["iPhoneOS dependency closure", "SDK verification on Mac", "native application integration", "device fidelity tests"]}}
 

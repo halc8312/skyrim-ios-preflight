@@ -1,0 +1,12 @@
+diff --git a/tools/discover.py b/tools/discover.py
+--- a/tools/discover.py
++++ b/tools/discover.py
+@@ -222,6 +222,8 @@
+                             continue  # bounded table: index may never be this value
+                         targets.append(t)
+                     jump_tables[i.address] = targets
++                    if not targets:
++                        indirect_jumps.append(i.address)  # No inferred destination: still unresolved.
+                     jt_ranges.append((tbl, tbl + 4 * k))
+                     for t in targets:
+                         if t not in leaders:
