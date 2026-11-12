@@ -2,19 +2,25 @@
 
 2026-11-13。**PC版build1は実機で元処理90,390関数をロードして実行し、PresentとBethesda動画のデコードまで到達しました。本人は音声と入力反応を確認しましたが、映像は左上に縮小され、ほぼ黒く、ロード途中で進まなくなりました。** 新PCアプリIDは`org.skyrimios.pc2011`、表示名は`SkyrimIOS`。既存Xbox版とは別アプリです。所有ゲームデータ26ファイル／5,909,061,966 bytesは読み戻しSHA256照合済み。**正しいタイトル描画とゲームプレイは未確認です。**
 
+**現在：build2の実機上書き更新とデータ保持確認が完了。本人へ表示・New Gameの再確認を依頼済みです。**
+
 ## 2026-11-13 build2 描画・画面処理の修正
 
 - 実機2実行のログを`private/iphone-display-20261113-012319/`へ回収。論理956×440に対しMetal drawableは2868×1320。ゼロ余白時にPresentの出力矩形をnullへ変える処理が、DXVKに論理サイズを選ばせていた。通常のPresentには原点0でも実ピクセル矩形を渡すよう修正。
 - 黒画面のログには`shadowSmplr`未宣言によるMetalシェーダー／パイプライン生成失敗がある。[MoltenVK #2768](https://github.com/KhronosGroup/MoltenVK/issues/2768)と一致。固定SPIRV-Crossのcombined-image aliasで既存texture参照に対応するsampler参照も生成する修正を追加。ゲーム由来シェーダーの文字列置換は行わない。
 - 自作SPIR-Vの正順alias・逆順aliasで、実際の固定コンパイラーの修正前欠落／修正後定義を確認。別bindingの対照は出力不変。Windows側の実コンパイラー比較結果は`local/ios-render-repro/fixtures/`。同じ3件をiPhoneOS Metalコンパイラーで検証する工程を次回の一括ビルドに含める。
 - ロード時は別スレッドのPresentが止まり、mainはSleepを繰り返していた。UIKitのrunloop処理をmainのSleep／PeekMessageでも行い、workerの入力処理はSDLキューの取り出しだけにする。drawable照会もmainで更新した値をworkerへ渡す。Present内部の停止位置は未確定なので5段階の進捗とUI pump時刻を記録する。
-- descriptor pool枯渇警告は動的割当へ進んでおり、RAM不足や停止原因とは断定しない。この挙動を隠す変更はしていない。build2のMacビルド・署名・実機確認はまだ未完了。
+- descriptor pool枯渇警告は動的割当へ進んでおり、RAM不足や停止原因とは断定しない。この挙動を隠す変更はしていない。build2の実機表示／ロード改善は本人の再確認待ち。Macビルド・署名・更新の結果は以下に記載。
 
 - [6回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5ee029679c85ac0af2a68)／公開cloud commit `ec032691f4ac07f233f4acc113d342ce9f259e52` は約29分のMac割当待ち後、4分01秒で停止。修正版MoltenVKのARM64/iPhoneOSビルドは成功したが、Macで動かす自作検証ツールにworkflowの`IPHONEOS_DEPLOYMENT_TARGET`が漏れ、iOS対象としてリンクされて起動時にsignal 9になった。原ログは`local/codemagic-title6/`。検証ツールのconfigure/buildだけiOS環境を外し、macOS SDK／targetを明示して、実行前にMach-O platform MACOSを確認する修正を追加。Metalコンパイラーの実検証は未完了。
 
 - [7回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5f58d9679c85ac0af2d92)／公開cloud commit `d3ef516c1fb641191d9abed8b8216d97d9010e1c` は4分42秒。修正済みMoltenVKとMac検証ツールをビルドし、Mach-O `platform MACOS`とツール起動を確認。不足していた公式Metal Toolchainも導入されたが、検証コマンドの`-std=ios-metal3.1`が無効で停止した。実コンパイラーが列挙した`-std=metal3.1`へ訂正。原ログは`local/codemagic-title7/`。次回は3件すべての検証とアプリのコンパイルを同じ実行で採取するが、検証失敗時はIPA用ホストと成功結果を出さず失敗を維持する。
 
 - [8回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5fc879679c85ac0af304d)／公開cloud commit `21b7a0554b11b5351868057a2724c70399b65aa8` は7分44秒。アプリ本体の全コンパイル・リンクは成功したが、Metal検証は公式toolchainのダウンロード後、実シェーダー検証へ進む前にstatus1で停止。再probeのstderrが非公開の一時ログだけに入り、正確な停止理由は未確定。原ログは`local/codemagic-title8/`。`--version`を判定条件から外し、実際の3シェーダーのコンパイル結果と出力ファイルで判定するよう修正。toolchain欠落が明示された場合だけ公式downloadを1回試し、その終了値と全コンパイラーログを保存する。検証失敗時のホスト配布停止は維持する。
+
+- [9回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af605e99679c85ac0af33b5)／公開cloud commit `a754d98afe7479f3c5582ab1f4d7eb5e3627fd2c` は6分57秒で成功。公式Metal Toolchain導入後、正順alias・逆順alias・別bindingの3件が実iPhoneOS Metalコンパイラーでstatus0、AIR生成まで成功。ホストはARM64／iPhoneOS18.0／SDK26.5。`x86.h`・`PcGuestABI.h`・`rt_table.h`は導入済みbuild1のSDK成果物とLF正規化後に全文一致。原ログ・3検証・ホストは`local/codemagic-title9/`へ保持。public host ZIP SHA256 `458cc129129ad5fc8a1ae9d19a4aebd4ffd778b2d08cec92aca54ba7e23bb791`。実ゲーム映像の検証ではない。
+- PC内で既存private frameworkと組み合わせ、build2未署名IPA SHA256 `e344735022b42f1b52c0595d54d55f0310851b9854be10beace8f7fbcb6aea5c`を生成。署名済みIPAは`private/title-signing-20261112/SkyrimIOS-PC2011-build2-signed.ipa`、SHA256 `ad75fbe7fa8722d49fac91ce28d7d528e3f86c6e58608eb71bb65882ade251a0`。既存profileのApple chain／端末／App ID、2イメージ／39,765コードページ／4resourceを検証し、一時平文鍵の除去も確認。
+- USBの既存信頼で`Upgrade`が100%完了し、同じPCアプリID／Teamでbuild1→2を確認。`private/iphone-pre-build2-20261113/snapshot.json`と`private/iphone-post-build2-20261113/snapshot.json`で、ゲーム26ファイルの名前／サイズ5,909,061,966 bytesと、設定3ファイル2,927 bytesのSHA256が完全一致。6 GB全体の再コピー／再ハッシュは行っていない。本人へPC版「SkyrimIOS」の全画面表示とNew Gameの進行確認を依頼済み。結果は未受領。
 
 ## 2026-11-12 夜の実機タイトル到達作業
 
@@ -108,9 +114,9 @@
 
 ## 現在の障害と次の操作
 
-1. **署名・インストール・データ転送は完了。** 上記5回目の成功成果物を再利用し、追加Macビルドは行っていない。ゲーム側のprivate frameworkを含むIPAはPC内だけに置いている。
-2. **実機初回起動。** 全データの転送・読み戻し照合まで完了し、本人にPC版「SkyrimIOS」を1回開いて表示状況を報告するよう依頼した。結果とPC内で回収するアプリログを確認する。既存Xbox版のアプリ・セーブ・署名済みIPAは保持。
-3. **実行時の正しさ。** 元のguest処理を残す経路で90,390関数のARM64生成／リンクは完了したが、ゲーム未実行。入力は互換承認済みではなく、510変換拒否候補、既知の動的呼出し先、Win32代替API、x87／SSE、ARM64メモリー順序、D3D9互換には実行時の未知が残る。固定アドレスの未検証置換は使用しない。
-4. **到達条件。** 実機で所有データを読み、ゲーム自身の動くタイトル／メニューを確認する。firstPresentやprobe・Simulatorの成功だけでは達成としない。新規ゲーム、セーブ／ロード、操作性、音声、性能はさらに後続。
+1. **build1は実機で実行済み。** 音声・入力とPresent/Bethesda動画デコードを確認したが、描画の縮小・黒画面・ロード停止があり、正常な動的タイトル／ゲームプレイの到達とは扱わない。元のIPAと所有データを保持している。
+2. **build2更新済み。** 実ピクセル出力矩形、sampler alias生成、main上のUIKitイベント処理を修正。9回目で実Metalコンパイル3件とアプリ本体が成功し、PC内で署名後に実機を更新した。追加ビルドは不要。
+3. **端末データ保持を確認済み。** 本人の保存・終了・USB再接続の確認を受け、既存の信頼でUpgrade。アプリID・Team・build2と前後のゲーム一覧／設定を照合済み。本人の再実行後に必要なログを回収する。
+4. **残る未知。** ロード停止は実機再検証が必要。CPU変換、動的呼出し、Win32代替API、x87／SSE、ARM64メモリー順序、D3D9互換にも未知は残る。新規ゲーム、保存／読込、性能は後続確認。実機の正しい映像が出るまで成功とはしない。
 
-クラウドへ送るのは公開ホストだけ。PC内のprivate frameworkと組み合わせて署名し、別アプリとしてiPhoneへ渡す。署名済みIPA・実機インストール・全データの転送照合は完了。実機タイトルの確認を進めている。
+クラウドへ送るのは公開ホストと自作検証だけ。ゲーム由来framework・入力・秘密鍵はPC内に保持する。既存Xbox版のアプリとデータは変更しない。

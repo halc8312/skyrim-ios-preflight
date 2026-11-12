@@ -19,8 +19,8 @@ env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT cmake \
   --build "$OUT/build" --parallel 2 --target sampler-alias
 xcrun vtool -show-build "$OUT/build/sampler-alias" | tee "$OUT/host-platform.txt"
 grep -q 'platform MACOS' "$OUT/host-platform.txt"
-# Readiness is determined by a real compile, not a version probe. Some Xcode
-# component launchers return a failure for --version even after installation.
+# Readiness is determined by a real compile. A version probe does not prove
+# that the optional component can compile the actual iPhoneOS shaders.
 compile_fixture() {
   local name="$1" attempt="$2" status=0
   local log="$OUT/$name-$attempt.log"
