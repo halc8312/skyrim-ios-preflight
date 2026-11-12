@@ -1,6 +1,14 @@
 # 開発状況
 
-2026-11-12。**2011 Steam英語版の元処理90,390関数をARM64へ変換・リンクし、iPhoneOS用公開ホストの実SDKビルドも成功。PC内で未署名IPAを組み立て済み**です。新PCアプリIDは`org.skyrimios.pc2011`。既存Xbox版とは別アプリです。**署名用プロファイル作成はApple Developerの本人ログイン待ち。iPhoneへ未導入、ゲーム未実行、動くタイトル／メニューは未確認。**
+2026-11-13。**PC版build1は実機で元処理90,390関数をロードして実行し、PresentとBethesda動画のデコードまで到達しました。本人は音声と入力反応を確認しましたが、映像は左上に縮小され、ほぼ黒く、ロード途中で進まなくなりました。** 新PCアプリIDは`org.skyrimios.pc2011`、表示名は`SkyrimIOS`。既存Xbox版とは別アプリです。所有ゲームデータ26ファイル／5,909,061,966 bytesは読み戻しSHA256照合済み。**正しいタイトル描画とゲームプレイは未確認です。**
+
+## 2026-11-13 build2 描画・画面処理の修正
+
+- 実機2実行のログを`private/iphone-display-20261113-012319/`へ回収。論理956×440に対しMetal drawableは2868×1320。ゼロ余白時にPresentの出力矩形をnullへ変える処理が、DXVKに論理サイズを選ばせていた。通常のPresentには原点0でも実ピクセル矩形を渡すよう修正。
+- 黒画面のログには`shadowSmplr`未宣言によるMetalシェーダー／パイプライン生成失敗がある。[MoltenVK #2768](https://github.com/KhronosGroup/MoltenVK/issues/2768)と一致。固定SPIRV-Crossのcombined-image aliasで既存texture参照に対応するsampler参照も生成する修正を追加。ゲーム由来シェーダーの文字列置換は行わない。
+- 自作SPIR-Vの正順alias・逆順aliasで、実際の固定コンパイラーの修正前欠落／修正後定義を確認。別bindingの対照は出力不変。Windows側の実コンパイラー比較結果は`local/ios-render-repro/fixtures/`。同じ3件をiPhoneOS Metalコンパイラーで検証する工程を次回の一括ビルドに含める。
+- ロード時は別スレッドのPresentが止まり、mainはSleepを繰り返していた。UIKitのrunloop処理をmainのSleep／PeekMessageでも行い、workerの入力処理はSDLキューの取り出しだけにする。drawable照会もmainで更新した値をworkerへ渡す。Present内部の停止位置は未確定なので5段階の進捗とUI pump時刻を記録する。
+- descriptor pool枯渇警告は動的割当へ進んでおり、RAM不足や停止原因とは断定しない。この挙動を隠す変更はしていない。build2のMacビルド・署名・実機確認はまだ未完了。
 
 ## 2026-11-12 夜の実機タイトル到達作業
 
@@ -18,6 +26,12 @@
 - [5回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5adb89679c85ac0af0f0c)／公開cloud commit `6d6bf479fbb2ba4cb21d07ba4d26e42da842a18f` は8分21秒で成功。Xcode26.6、SDK26.5、ARM64/iPhoneOS/minOS18.0。全依存、DXVK、runtime、Objective-C入口、callback adapterをコンパイル・リンク。public host ZIP SHA256 `11f930ed9c59b36f98afbd9681912d77f88f20b7d3c4cbafb4e127f27ffe7f74`、host Mach-O12,194,488 bytes／SHA256 `8707a2d789ae749b8b4ccf1654f943782a23e5c3be2a27db2da9c2717926d097`。原成果物は`local/codemagic-title5/`。
 - SDK側`x86.h`と`PcGuestABI.h`はローカルprivate側とLF正規化後に一致。`rt_table.h`の全文一致検査は失敗したが、差は既にレビューしたhost側の一度だけ代入する`g_modules`宣言のconst解除だけと確認。FnEntry/FnModuleの定義は同じで、private frameworkのstrict-link import集合に`g_modules`はない。追加のprivate再コンパイルは不要。
 - `private/title-delivery-20261112/SkyrimIOS-PC2011-build1-unsigned.ipa`をローカル生成。SHA256 `c9c3331c72904d978339048582a2090d9389c2534fe7b758363fc4bffb70973d`、4ファイル。全ZIP CRC、2つのARM64/iPhoneOS18.0イメージの未署名構造・署名余白・terminal LINKEDIT・app identityを既存署名器の検証で確認。署名鍵は開いていない。Appleログイン画面とUSB未接続を確認して本人操作待ち。
+
+## 2026-11-13 実機導入
+
+- 本人ログインと発行直前の承認を受け、PC版専用App IDとDevelopment profileを作成。既存証明書1枚と登録済みiPhone1台だけを対象に、Extended Virtual Addressing／Increased Memory Limit／Increased Debugging Memory Limitを付与。Appleの署名チェーン、CMSと内部DERの一致、証明書・端末・App ID・有効期限・権限の完全一致をPC内で検証。
+- 既存の保護済み鍵をPC内で使い、2つのARM64イメージ・39,761コードページ・4リソースの署名と再構成を検証。署名済みIPAは`private/title-signing-20261112/SkyrimIOS-PC2011-build1-signed.ipa`、SHA256 `7ea6f152a3bfc68ec7b08481263623e1680555e5eb2f8572b8cb45c3721333c2`。原IPAとゲーム入力は保持。秘密鍵・ゲーム由来コードはクラウドへ送信していない。
+- 既存USB信頼だけで新PCアプリをInstallし、100%終了とインストール後のBundle ID・build・Team IDを確認。Xbox版へのUpgradeや削除は行っていない。アプリを開く前に所有データを転送し、全26ファイル／5,909,061,966 bytesの読み戻しSHA256照合が成功。入力PEも期待SHA256に一致。本人に「SkyrimIOS」の初回起動と表示状況を依頼済み。
 
 ## 確認済み
 
@@ -88,9 +102,9 @@
 
 ## 現在の障害と次の操作
 
-1. **公開ホストとPC内組み立ては完了。** 上記5回目の成功成果物を固定し、これを再ビルドせず署名へ進める。ゲーム側のprivate frameworkを含むIPAはPC内だけに置いている。
-2. **実機署名と接続。** `org.skyrimios.pc2011`専用のmemory profileが未作成。既存有料開発者証明書を再利用するPC内署名・転送手順は準備済み。Apple Developerの本人ログインと、完成後のUSB接続が必要。既存Xbox版のアプリ・セーブ・署名済みIPAは保持。
+1. **署名・インストール・データ転送は完了。** 上記5回目の成功成果物を再利用し、追加Macビルドは行っていない。ゲーム側のprivate frameworkを含むIPAはPC内だけに置いている。
+2. **実機初回起動。** 全データの転送・読み戻し照合まで完了し、本人にPC版「SkyrimIOS」を1回開いて表示状況を報告するよう依頼した。結果とPC内で回収するアプリログを確認する。既存Xbox版のアプリ・セーブ・署名済みIPAは保持。
 3. **実行時の正しさ。** 元のguest処理を残す経路で90,390関数のARM64生成／リンクは完了したが、ゲーム未実行。入力は互換承認済みではなく、510変換拒否候補、既知の動的呼出し先、Win32代替API、x87／SSE、ARM64メモリー順序、D3D9互換には実行時の未知が残る。固定アドレスの未検証置換は使用しない。
 4. **到達条件。** 実機で所有データを読み、ゲーム自身の動くタイトル／メニューを確認する。firstPresentやprobe・Simulatorの成功だけでは達成としない。新規ゲーム、セーブ／ロード、操作性、音声、性能はさらに後続。
 
-クラウドへ送るのは公開ホストだけ。PC内のprivate frameworkと組み合わせて署名し、別アプリとしてiPhoneへ渡す。未署名IPAは完成。署名・iPhoneへの導入・実機タイトルは未完了。
+クラウドへ送るのは公開ホストだけ。PC内のprivate frameworkと組み合わせて署名し、別アプリとしてiPhoneへ渡す。署名済みIPA・実機インストール・全データの転送照合は完了。実機タイトルの確認を進めている。

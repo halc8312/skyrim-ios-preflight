@@ -24,6 +24,9 @@ EXPECTED = {
     "skyrim_shims.c": "3b1955df82fcd791e907ced07dfd8365d89f417f705d9f51e39f4fb04d1bd9c7",
     "touch.cpp": "ada0d43ab81ba5a37580004ec8e59835b4aa617baf6a9cae98276374b96fe027",
     "input.c": "d0c549822ae87ab22009b60854ca84fc15c69151e8fd5063bd9fe56c1b38f193",
+    "kernel32.c": "c6360da8a234421feac620c5db529d7a488ff6fc16747a0ad275f6dc987a0dfc",
+    "user32.c": "e4970ef14067b9779415a6872895b57f007c904f69682a1e395b1d96b61ef335",
+    "dispatch.c": "17c9508a10b2174a7efc24b26f94de0f6c9ce58eee9fa966fe74b68140ba7ac0",
 }
 
 
@@ -114,6 +117,16 @@ def patch_platform(s: str) -> str:
         '        rt_fatal("invalid iOS window/drawable dimensions");\n'
         '    LOG("iOS drawable: %dx%d, logical window: %dx%d", drawable_w, drawable_h, w, h);\n'
         '    skyrim_ios_stage("vulkan-window-ready");', "Vulkan window validation")
+    s = replace_once(s, '    skyrim_ios_stage("vulkan-window-ready");',
+        '    skyrim_ios_set_window(g_window);\n'
+        '    skyrim_ios_stage("vulkan-window-ready");', "main-thread window registration")
+    s = replace_once(s, '    while (SDL_PollEvent(&e)) {',
+        '    /* UIKit pumping belongs to the main thread even when Present moves\n'
+        '     * to the guest loading/render thread. PeepEvents only drains the\n'
+        '     * thread-safe SDL queue and never runs a worker CFRunLoop. */\n'
+        '    skyrim_ios_pump_events();\n'
+        '    while (SDL_PeepEvents(&e, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT) > 0) {',
+        "main-thread UIKit event ownership")
     s = replace_once(s,
         '#if defined(GAME_SKYRIM) && defined(SKYDREAM_MOBILE)\n',
         '#if defined(GAME_SKYRIM) && defined(SKYDREAM_MOBILE) && !defined(SKYRIM_IOS_GUEST_DIAGNOSTIC)\n',
@@ -133,6 +146,16 @@ def patch_bridge(s: str) -> str:
     s = mobile_conditions(s)
     s = replace_once(s, '#include <SDL2/SDL_vulkan.h>',
         '#include <SDL2/SDL_vulkan.h>\n#include "ios_runtime.h"', "bridge include")
+    drawable = '    SDL_Vulkan_GetDrawableSize((SDL_Window *)platform_window(), &ww, &wh);'
+    if s.count(drawable) != 2:
+        raise ValueError("bridge: expected two drawable size queries")
+    s = s.replace(drawable, '    skyrim_ios_drawable_size(&ww, &wh);')
+    dest = ' : (vr.left || vr.top) ? &vr : nullptr;'
+    if s.count(dest) != 2:
+        raise ValueError("bridge: expected two physical destination selections")
+    # Zero-offset is still a physical-pixel destination on a Retina drawable.
+    # Passing null asks DXVK to substitute the smaller logical window size.
+    s = s.replace(dest, ' : &vr;')
     for fragment, label in (
         ('    if (SUCCEEDED(hr)) { extern void hud_screen_device(IDirect3DDevice9 *); hud_screen_device(dev); }', "HUD device setup"),
         ('    { extern void hud_screen_reset(void); hud_screen_reset(); }', "HUD reset"),
@@ -153,7 +176,35 @@ def patch_bridge(s: str) -> str:
     if s.count(marker) != 2:
         raise ValueError("bridge: expected device and swapchain present hooks")
     s = s.replace(marker, "    skyrim_ios_present_result((int32_t)hr);\n" + marker)
+    s = replace_once(s, '    touch_draw(d);',
+        '    skyrim_ios_present_phase(1);\n    touch_draw(d);', "overlay phase")
+    s = s.replace('    RECT vr = view_rect();',
+        '    skyrim_ios_present_phase(2);\n    RECT vr = view_rect();')
+    for call in ('    HRESULT hr = d->Present(', '    HRESULT hr = s->Present('):
+        s = replace_once(s, call, '    skyrim_ios_present_phase(3);\n' + call, "driver present phase")
+    s = s.replace('    skyrim_ios_present_result((int32_t)hr);',
+        '    skyrim_ios_present_phase(4);\n    skyrim_ios_present_result((int32_t)hr);')
+    s = s.replace(marker, marker + '\n    skyrim_ios_present_phase(5);')
     return s
+
+
+def patch_main_pump(s: str) -> str:
+    s = replace_once(s, '#include "rt.h"',
+        '#include "rt.h"\n#include "ios_runtime.h"', "main pump include")
+    if 'SHIM(Sleep) {' in s:
+        return replace_once(s, 'SHIM(Sleep) {',
+            'SHIM(Sleep) {\n    skyrim_ios_pump_events();', "UIKit servicing during guest sleep")
+    return replace_once(s, 'SHIM(PeekMessageA) {',
+        'SHIM(PeekMessageA) {\n    skyrim_ios_pump_events();', "UIKit servicing in guest message loop")
+
+
+def patch_dispatch(s: str) -> str:
+    s = replace_once(s, '#include "rt.h"',
+        '#include "rt.h"\n#include "ios_runtime.h"', "watchdog include")
+    return replace_once(s,
+        '            LOG("watchdog %ds: frames %d%s", tick * 5, f, f == lastf ? " (no new frames)" : "");',
+        '            LOG("watchdog %ds: frames %d%s", tick * 5, f, f == lastf ? " (no new frames)" : "");\n'
+        '            skyrim_ios_watchdog();', "present-stage watchdog")
 
 
 def patch_shader(s: str) -> str:
@@ -191,6 +242,9 @@ PATCHERS = {
     "skyrim_shims.c": mobile_conditions,
     "touch.cpp": mobile_conditions,
     "input.c": mobile_conditions,
+    "kernel32.c": patch_main_pump,
+    "user32.c": patch_main_pump,
+    "dispatch.c": patch_dispatch,
 }
 
 

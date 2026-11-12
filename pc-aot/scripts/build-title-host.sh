@@ -44,6 +44,7 @@ for item in lock['patches']:
 PY
 
 bash ios/dependencies/build-dependencies.sh
+bash ios/dependencies/check-metal-alias.sh "$RUN/metal-alias"
 # The runtime adapter verifies its own upstream anchors. Apply it to pristine
 # upstream, then apply the CPU ABI patches to the staged runtime only.
 python3 ios/runtime-port/prepare_runtime.py --source "$ROOT/vendor/skydream" --output "$RUN/overlay/runtime"

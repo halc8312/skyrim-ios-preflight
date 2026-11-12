@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 [[ "$(uname -s)" == Darwin ]] || { echo 'Requires macOS and the Apple iPhoneOS SDK.' >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies}"
+WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-displayfix}"
 PREFIX="$WORK/prefix"
 DEPLOYMENT="${IPHONEOS_DEPLOYMENT_TARGET:-18.0}"
 JOBS="${JOBS:-2}"
@@ -44,13 +44,26 @@ preserve_failure() {
   exit "$result"
 }
 trap preserve_failure EXIT
-CONFIG="SDL-5d249570393f7a37e037abf22cd6012a4cc56a71 FFmpeg-db69d06eeeab4f46da15030a80d539efb4503ca8 MoltenVK-458870543b9bcf6b0edd6f90aaa776707b310d96 vkd3d-2.0 ios-$DEPLOYMENT $(xcodebuild -version) $(xcrun --sdk iphoneos --show-sdk-version) $(shasum -a 256 "$0" | cut -d' ' -f1)"
+BASE_CONFIG="SDL-5d249570393f7a37e037abf22cd6012a4cc56a71 FFmpeg-db69d06eeeab4f46da15030a80d539efb4503ca8 MoltenVK-458870543b9bcf6b0edd6f90aaa776707b310d96 vkd3d-2.0 ios-$DEPLOYMENT $(xcodebuild -version) $(xcrun --sdk iphoneos --show-sdk-version)"
+CONFIG="$BASE_CONFIG $(shasum -a 256 "$0" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_spirv_cross.py" | cut -d' ' -f1)"
 KEY="$(printf '%s' "$CONFIG" | shasum -a 256 | cut -d' ' -f1)"
 if [[ -f "$WORK/configuration.sha256" && "$(cat "$WORK/configuration.sha256")" != "$KEY" ]]; then
   echo 'Dependency configuration changed; use a new SKYRIM_IOS_DEPS_ROOT to preserve previous build evidence.' >&2
   exit 2
 fi
 printf '%s\n' "$KEY" > "$WORK/configuration.sha256"
+
+# Preserve the prior prefix. Only reuse unchanged libraries when its complete
+# build-configuration key (including SDK and original script) matches exactly.
+OLD_WORK="$ROOT/local/ios-dependencies"
+OLD_KEY="$(printf '%s' "$BASE_CONFIG 65e19eb11f760c5c9ea9b84414bbb315c09fe8dd7abbb6b76a50863c66d08b0f" | shasum -a 256 | cut -d' ' -f1)"
+if [[ ! -f "$WORK/reused-unchanged.done" && -f "$OLD_WORK/configuration.sha256" && "$(cat "$OLD_WORK/configuration.sha256")" == "$OLD_KEY" && -f "$OLD_WORK/build/moltenvk.done" ]]; then
+  cp -R "$OLD_WORK/prefix/." "$PREFIX/"
+  for dep in sdl ffmpeg vkd3d; do
+    [[ -f "$OLD_WORK/build/$dep.done" ]] && cp "$OLD_WORK/build/$dep.done" "$WORK/build/$dep.done"
+  done
+  touch "$WORK/reused-unchanged.done"
+fi
 
 checkout() {
   local name="$1" url="$2" ref="$3" expected="$4" dir="$WORK/sources/$1"
@@ -137,9 +150,19 @@ if [[ ! -f "$WORK/build/vkd3d.done" ]]; then
 fi
 
 if [[ ! -f "$WORK/build/moltenvk.done" ]]; then
+  CROSS="$WORK/sources/SPIRV-Cross-ios-samplerfix"
+  if [[ ! -d "$CROSS/.git" ]]; then
+    git init "$CROSS"
+    git -C "$CROSS" remote add origin https://github.com/KhronosGroup/SPIRV-Cross.git
+    git -C "$CROSS" fetch --depth=1 origin 0a88b2d5c08708d45692b7096a0a84e7bfae366c
+    git -C "$CROSS" checkout --detach FETCH_HEAD
+  fi
+  [[ "$(git -C "$CROSS" rev-parse HEAD)" == 0a88b2d5c08708d45692b7096a0a84e7bfae366c ]]
+  # This named build-only checkout is intentionally patched; vendor stays intact.
+  python3 "$ROOT/ios/dependencies/patch_spirv_cross.py" "$CROSS/spirv_msl.cpp" --in-place
   (
     cd "$WORK/sources/MoltenVK"
-    ./fetchDependencies --ios --keep-cache
+    ./fetchDependencies --ios --keep-cache --spirv-cross-root "$CROSS"
     # Upstream's make wrapper converts command-line variables to C macros;
     # use xcodebuild directly so signing/SDK/deployment are real build settings.
     xcodebuild build -project MoltenVKPackaging.xcodeproj -scheme 'MoltenVK Package (iOS only)' \
