@@ -14,6 +14,8 @@
 
 - [7回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5f58d9679c85ac0af2d92)／公開cloud commit `d3ef516c1fb641191d9abed8b8216d97d9010e1c` は4分42秒。修正済みMoltenVKとMac検証ツールをビルドし、Mach-O `platform MACOS`とツール起動を確認。不足していた公式Metal Toolchainも導入されたが、検証コマンドの`-std=ios-metal3.1`が無効で停止した。実コンパイラーが列挙した`-std=metal3.1`へ訂正。原ログは`local/codemagic-title7/`。次回は3件すべての検証とアプリのコンパイルを同じ実行で採取するが、検証失敗時はIPA用ホストと成功結果を出さず失敗を維持する。
 
+- [8回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5fc879679c85ac0af304d)／公開cloud commit `21b7a0554b11b5351868057a2724c70399b65aa8` は7分44秒。アプリ本体の全コンパイル・リンクは成功したが、Metal検証は公式toolchainのダウンロード後、実シェーダー検証へ進む前にstatus1で停止。再probeのstderrが非公開の一時ログだけに入り、正確な停止理由は未確定。原ログは`local/codemagic-title8/`。`--version`を判定条件から外し、実際の3シェーダーのコンパイル結果と出力ファイルで判定するよう修正。toolchain欠落が明示された場合だけ公式downloadを1回試し、その終了値と全コンパイラーログを保存する。検証失敗時のホスト配布停止は維持する。
+
 ## 2026-11-12 夜の実機タイトル到達作業
 
 - `codex/ios-title-milestone`で、固定アドレスのnative置換を使わず元のguest処理を残す診断経路を実装中。未承認の入力profileを互換性承認済みにはしていない。

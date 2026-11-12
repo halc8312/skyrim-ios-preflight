@@ -48,6 +48,17 @@ bash ios/dependencies/build-dependencies.sh
 # same paid-minute run instead of stopping before its build can start.
 METAL_CHECK_STATUS=0
 bash ios/dependencies/check-metal-alias.sh "$RUN/metal-alias" || METAL_CHECK_STATUS=$?
+# Preserve the actual toolchain/compiler diagnostics on success and failure.
+# Only authored fixtures and text logs are included, not CMake object files.
+python3 - "$RUN/metal-alias" "$RUN/artifacts/metal-alias-checks.zip" <<'PYMETAL'
+from pathlib import Path
+import sys, zipfile
+source, output = map(Path, sys.argv[1:])
+with zipfile.ZipFile(output, 'x', zipfile.ZIP_DEFLATED) as archive:
+    for path in sorted(source.rglob('*')):
+        if path.is_file() and not path.is_symlink() and 'build' not in path.relative_to(source).parts:
+            archive.write(path, path.relative_to(source).as_posix())
+PYMETAL
 if (( METAL_CHECK_STATUS != 0 )); then
   echo "Metal checks failed ($METAL_CHECK_STATUS); building host only to collect independent errors." >&2
 fi

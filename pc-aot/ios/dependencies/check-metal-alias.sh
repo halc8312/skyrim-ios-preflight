@@ -19,16 +19,40 @@ env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT cmake \
   --build "$OUT/build" --parallel 2 --target sampler-alias
 xcrun vtool -show-build "$OUT/build/sampler-alias" | tee "$OUT/host-platform.txt"
 grep -q 'platform MACOS' "$OUT/host-platform.txt"
-# Xcode may supply the Metal compiler as a separate official component.
-if ! xcrun --sdk iphoneos metal --version > "$OUT/metal-toolchain.log" 2>&1; then
-  cat "$OUT/metal-toolchain.log"
-  xcodebuild -downloadComponent metalToolchain
-  xcrun --sdk iphoneos metal --version > "$OUT/metal-toolchain.log" 2>&1
-fi
+# Readiness is determined by a real compile, not a version probe. Some Xcode
+# component launchers return a failure for --version even after installation.
+compile_fixture() {
+  local name="$1" attempt="$2" status=0
+  local log="$OUT/$name-$attempt.log"
+  xcrun --sdk iphoneos metal -std=metal3.1 -c "$OUT/fixtures/$name.metal" \
+    -o "$OUT/fixtures/$name.air" > "$log" 2>&1 || status=$?
+  cat "$log"
+  echo "METAL_COMPILE fixture=$name attempt=$attempt status=$status"
+  if (( status == 0 )); then
+    test -s "$OUT/fixtures/$name.air" || return 1
+  fi
+  return "$status"
+}
 fixture_failed=0
+component_attempted=0
 for name in color-first depth-first distinct-bindings; do
-  if "$OUT/build/sampler-alias" "$OUT/fixtures/$name.spv" "$OUT/fixtures/$name.metal"; then
-    xcrun --sdk iphoneos metal -std=metal3.1 -c "$OUT/fixtures/$name.metal" -o "$OUT/fixtures/$name.air" || fixture_failed=1
+  if ! "$OUT/build/sampler-alias" "$OUT/fixtures/$name.spv" "$OUT/fixtures/$name.metal"; then
+    echo "METAL_TRANSLATION fixture=$name failed" >&2
+    fixture_failed=1
+    continue
+  fi
+  if compile_fixture "$name" initial; then
+    continue
+  fi
+  # A single official component installation is allowed only for the explicit
+  # missing-toolchain error. Shader errors are never hidden by an install/retry.
+  if (( component_attempted == 0 )) && grep -Fq 'missing Metal Toolchain' "$OUT/$name-initial.log"; then
+    component_attempted=1
+    download_status=0
+    xcodebuild -downloadComponent metalToolchain > "$OUT/metal-toolchain.log" 2>&1 || download_status=$?
+    cat "$OUT/metal-toolchain.log"
+    echo "METAL_COMPONENT download_status=$download_status"
+    compile_fixture "$name" after-component || fixture_failed=1
   else
     fixture_failed=1
   fi
