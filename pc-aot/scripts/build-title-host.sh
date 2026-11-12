@@ -61,10 +61,10 @@ cmake -S ios/runtime-port -B "$RUN/build" -G 'Unix Makefiles' \
   "-DSKYRIM_IOS_RUNTIME_OVERLAY_DIR=$RUN/overlay/runtime" \
   "-DSKYRIM_IOS_BINDING_SOURCES=$ROOT/ios/private-abi/pc_guest_host.c" \
   -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
-cmake --build "$RUN/build" --parallel 2
+cmake --build "$RUN/build" --parallel 2 -- -k
 APP="$RUN/build/SkyrimIOS.app"
 test -s "$APP/SkyrimIOS"
-xcrun lipo -verify_arch arm64 "$APP/SkyrimIOS"
+xcrun lipo "$APP/SkyrimIOS" -verify_arch arm64
 xcrun vtool -show-build "$APP/SkyrimIOS" | tee "$RUN/artifacts/platform.txt"
 grep -q 'platform IOS' "$RUN/artifacts/platform.txt"
 xcrun otool -L "$APP/SkyrimIOS" > "$RUN/artifacts/linked-libraries.txt"

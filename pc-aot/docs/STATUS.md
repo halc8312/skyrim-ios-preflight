@@ -6,9 +6,11 @@
 
 - `codex/ios-title-milestone`で、固定アドレスのnative置換を使わず元のguest処理を残す診断経路を実装中。未承認の入力profileを互換性承認済みにはしていない。
 - 第5パッチで関数間のCPU flags保持を修正。小さな実リフター／native x86比較8ケースは、両入口方式とも修正前失敗・修正後成功。
-- 所有英語入力から90,390関数／512分割のC生成が448秒で完了。510候補は変換拒否として記録。元入力は不変。ARM64 iPhone向けコンパイル中で、まだ実行はしていない。
+- 所有英語入力から90,390関数／512分割のC生成が448秒で完了。510候補は変換拒否として記録。元入力は不変。514 translation unitsのARM64コンパイルと未解決symbol禁止のリンクが成功。`private/title-20261112-01/arm64-ios/result.json`に記録。未署名frameworkは150,660,464 bytes、SHA256 `721bf7684148623c0cfc6c676935c3123eaf14925128e300489744228dc69665`。まだゲームは実行していない。
 - 公開iOS runtime、SDL2＋DXVK＋MoltenVK等の依存、private frameworkとのcallback ABIを用意。ゲームコードと入力はPC内で作り、クラウドは公開ホストだけをSDKビルドする。
-- 最小確認は公開ソース混入検査、overlayアンカー、共有CPUヘッダー、ABIアダプタのARM64コンパイル。Mac本ビルド、署名、実機タイトル描画は未完了。
+- 最小確認は公開ソース混入検査、overlayアンカー、共有CPUヘッダー、ABIアダプタのARM64コンパイル。private frameworkのARM64/iPhoneOS18.0構造、署名用余白、署名前内容のbindingを既存ローカル検証器で確認。Mac本ビルド、署名、実機タイトル描画は未完了。
+- Codemagicの既存認証・無料枠でPC版のmanual workflowを追加。初回 `6af59d9e9679c85ac0af08de` は2分50秒、vkd3d 2.0の `--without-metal` によるObjective-C条件の未初期化で失敗。原ログは`local/codemagic-title1/`に保持。公式configureの分岐を確認し、実iPhoneOS SDKのMetal/Objective-C検出を有効にする修正だけを加えた。
+- 修正後のCodemagic build `6af5a1789679c85ac0af0a5b`、公開cloud commit `7d65f484dd4399ed8b55a299b63659af977a5b3f` を1回起動済み。ゲーム由来C・入力・署名鍵は送信していない。新PCアプリIDは`org.skyrimios.pc2011`。Appleログインと専用のmemory profile作成、USB接続は未完了。
 
 ## 確認済み
 

@@ -155,6 +155,6 @@ fi
 
 for name in SDL2 SDL2main avformat avcodec avutil swresample swscale vkd3d-shader MoltenVK; do
   [[ -s "$PREFIX/lib/lib$name.a" ]] || { echo "Missing static archive: $name" >&2; exit 1; }
-  xcrun lipo -verify_arch arm64 "$PREFIX/lib/lib$name.a"
+  xcrun lipo "$PREFIX/lib/lib$name.a" -verify_arch arm64
 done
 printf 'Prepared iPhoneOS dependencies: %s\n' "$PREFIX"

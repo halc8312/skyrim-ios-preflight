@@ -20,7 +20,7 @@ ROOT=Path(__file__).resolve().parents[1]
 LLVM=Path(r"C:\Program Files\LLVM\bin")
 DARWIN=Path(r"F:\Theft4\skyrim-ios-lab\tools\windows-ios-guest-probe\zig-public-headers\lib\libc\include\any-darwin-any")
 ABI=ROOT / "ios/private-abi"
-SYSTEM_SYMBOLS=set("acos asin atan atan2 ceil cos cosh exp exp2 floor fmod frexp ldexp log log10 log2 nearbyint pow remainder round sin sinh sqrt tan tanh trunc memcpy memmove memset memcmp setjmp _setjmp abort __stack_chk_fail __stack_chk_guard".split())
+SYSTEM_SYMBOLS=set("acos asin atan atan2 ceil cos cosh exp exp2 fabs floor fmod frexp ldexp log log10 log2 nearbyint nearbyintf pow remainder round sin sinh sqrt sqrtf tan tanh trunc memcpy memmove memset memcmp setjmp _setjmp abort __stack_chk_fail __stack_chk_guard".split())
 
 def digest(p):
     with Path(p).open("rb") as f:

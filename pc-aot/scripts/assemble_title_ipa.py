@@ -61,6 +61,9 @@ def main():
         raise ValueError("Public-host identity mismatch")
     info["PcGuestExpectedInputSHA256"] = a.input_sha256
     info["LSSupportsGameMode"] = True
+    info["MinimumOSVersion"] = "18.0"
+    info["CFBundleSupportedPlatforms"] = ["iPhoneOS"]
+    info["UIDeviceFamily"] = [1, 2]
     records["Info.plist"] = (plistlib.dumps(info), 0o644)
     for name in ("SkyrimGuest", "Info.plist"):
         records["Frameworks/SkyrimGuest.framework/" + name] = (
