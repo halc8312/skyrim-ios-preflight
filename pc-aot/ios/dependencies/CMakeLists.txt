@@ -14,7 +14,11 @@ get_filename_component(_root "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 set(SKYRIM_IOS_DEPS_PREFIX "${_root}/local/ios-dependencies/prefix" CACHE PATH "Prepared iPhoneOS static dependencies")
 set(SKYDREAM_SOURCE_DIR "${_root}/vendor/skydream" CACHE PATH "Public Skydream source checkout")
 
-find_package(SDL2 CONFIG REQUIRED GLOBAL PATHS "${SKYRIM_IOS_DEPS_PREFIX}" NO_DEFAULT_PATH)
+# This is an already-built iPhoneOS prefix outside the SDK. Do not re-root
+# its absolute path below the SDK as CMake's iOS search defaults would do.
+find_package(SDL2 CONFIG REQUIRED GLOBAL
+  PATHS "${SKYRIM_IOS_DEPS_PREFIX}/lib/cmake/SDL2"
+  NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 if(NOT TARGET SDL2::SDL2-static OR NOT TARGET SDL2::SDL2main)
   message(FATAL_ERROR "The dependency prefix must provide static SDL2 and its UIKit SDL2main entry point")
 endif()

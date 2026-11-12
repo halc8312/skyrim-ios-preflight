@@ -10,7 +10,8 @@
 - 公開iOS runtime、SDL2＋DXVK＋MoltenVK等の依存、private frameworkとのcallback ABIを用意。ゲームコードと入力はPC内で作り、クラウドは公開ホストだけをSDKビルドする。
 - 最小確認は公開ソース混入検査、overlayアンカー、共有CPUヘッダー、ABIアダプタのARM64コンパイル。private frameworkのARM64/iPhoneOS18.0構造、署名用余白、署名前内容のbindingを既存ローカル検証器で確認。Mac本ビルド、署名、実機タイトル描画は未完了。
 - Codemagicの既存認証・無料枠でPC版のmanual workflowを追加。初回 `6af59d9e9679c85ac0af08de` は2分50秒、vkd3d 2.0の `--without-metal` によるObjective-C条件の未初期化で失敗。原ログは`local/codemagic-title1/`に保持。公式configureの分岐を確認し、実iPhoneOS SDKのMetal/Objective-C検出を有効にする修正だけを加えた。
-- 修正後のCodemagic build `6af5a1789679c85ac0af0a5b`、公開cloud commit `7d65f484dd4399ed8b55a299b63659af977a5b3f` を1回起動済み。ゲーム由来C・入力・署名鍵は送信していない。新PCアプリIDは`org.skyrimios.pc2011`。Appleログインと専用のmemory profile作成、USB接続は未完了。
+- 2回目 `6af5a1789679c85ac0af0a5b`／公開cloud commit `7d65f484dd4399ed8b55a299b63659af977a5b3f` は5分17秒。SDL/FFmpeg/vkd3d/MoltenVKのビルド後、`lipo -verify_arch`の引数順で停止。原ログは`local/codemagic-title2/`。引数を入力ファイル→`-verify_arch arm64`へ修正し、アプリコンパイルは独立したエラーも一度に採取するよう`make -k`を指定。
+- 3回目 `6af5a56f9679c85ac0af0bdb`／公開cloud commit `eca3e393aedcc3d30a38ea9a0dd38aaabcef034b` は4分42秒。全依存のビルド・ARM64確認後、SDK外のSDL2 prefixをCMakeが再root化し、package発見に失敗。実インストール先をログで確認してexact config path＋`NO_CMAKE_FIND_ROOT_PATH`へ修正。同じroot-only検索の最小再現は修正前exit1、修正後exit0。原ログは`local/codemagic-title3/`。ゲーム由来C・入力・署名鍵は送信していない。
 
 ## 確認済み
 
@@ -81,10 +82,9 @@
 
 ## 現在の障害と次の操作
 
-1. **展開候補の互換性。** 文字列4処理、メモリー転送／CRC5処理の有限比較は成功したが、全体ハッシュとの差・残る固定置換7関数／物理4関数の振舞いは未確認。静的監査を終えた小さなschedulerについて、10 globalsとstack/x87状態を限定した比較を次に進める。汎用discovery側にはCMP/JB/NEGの負index規則が残り、既知未解決1,055箇所は完全な網羅性の評価ではない。profileを安易に承認せず、失敗を診断可能なまま保つ。
-2. **変換器の正しさ。** AF欠落を修正し、合成比較は成功。guest callをまたぐflags、x87拡張精度、MXCSR、atomic／ARM64順序などは未解決。固定位置を使うゲーム全体の生成はprofile審査まで行わず、対象関数の限定比較を次に進める。
-3. **クラウド環境。** Codemagicの利用設定は未確認。ブラウザー操作は現在URLを確実に識別できないという自動安全確認により停止し、以後は既知のGitHub APIでCI結果を取得した。既存の非公開GitHub CIで署名なしコンパイル／リンクと別枠のSimulator検査は完了。新しい有料サービス・課金契約・署名資格情報は追加していない。
-4. **実機署名の不足。** iOSバージョン・Developer Modeは回答待ち。今回のbundle IDに合うAd Hoc profile、登録済みUDID、既存distribution証明書が未確認。既存GitHub repositoryのActions secret／variableはAPIで各0件を確認（組織・environment・Codemagic全体の設定不存在は意味しない）。鍵やtokenをチャットへ貼らない。CIのsecret管理とApple/Codemagic画面で設定する。
-5. **ゲーム統合は後続。** D3D9/DXVK/MoltenVK・shader互換、iPhoneOS依存、メモリー順序／浮動小数点、重要API未実装とライセンス由来の課題が残る。タイトル・新規ゲーム・移動／戦闘・本来のセーブ／ロード・継続性能は全て未確認。
+1. **公開ホストの実SDKビルド。** SDL・FFmpeg・vkd3d・MoltenVKのiPhoneOS ARM64ビルドは成功。作成済みSDL2 packageの検索不備を修正し、次は実アプリのコンパイル／リンクを確認する。上の過去記録の未実装項目と現在の実装済み項目は区別する。
+2. **実機署名と接続。** `org.skyrimios.pc2011`専用のmemory profileが未作成。既存有料開発者証明書を再利用するPC内署名・転送手順は準備済み。Apple Developerの本人ログインと、完成後のUSB接続が必要。既存Xbox版のアプリ・セーブ・署名済みIPAは保持。
+3. **実行時の正しさ。** 元のguest処理を残す経路で90,390関数のARM64生成／リンクは完了したが、ゲーム未実行。入力は互換承認済みではなく、510変換拒否候補、既知の動的呼出し先、Win32代替API、x87／SSE、ARM64メモリー順序、D3D9互換には実行時の未知が残る。固定アドレスの未検証置換は使用しない。
+4. **到達条件。** 実機で所有データを読み、ゲーム自身の動くタイトル／メニューを確認する。firstPresentやprobe・Simulatorの成功だけでは達成としない。新規ゲーム、セーブ／ロード、操作性、音声、性能はさらに後続。
 
-次に実機へ渡すべきものは署名・対象端末照合済みの `SkyrimProbe` IPAです。現在そのIPAはありません。準備できた時点で、入れるファイル・操作・返すログを一組で案内します。
+クラウドへ送るのは公開ホストだけ。PC内のprivate frameworkと組み合わせて署名し、別アプリとしてiPhoneへ渡す。インストール可能なIPAと実機タイトルは現時点で未完成。
