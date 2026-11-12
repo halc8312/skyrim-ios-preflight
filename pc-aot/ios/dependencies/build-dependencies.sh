@@ -115,12 +115,16 @@ if [[ ! -f "$WORK/build/vkd3d.done" ]]; then
   (
     cd "$WORK/build/vkd3d"
     export PERL5LIB="$WORK/sources/JSON-4.10/lib${PERL5LIB:+:$PERL5LIB}"
-    export CPPFLAGS="-I$WORK/sources/Vulkan-Headers-1.3.228/include -I$WORK/sources/SPIRV-Headers-6efe5ae6b7c6ad29da3f2cc3f164b9c3d72b78b1/include"
+    export CPPFLAGS="-target arm64-apple-ios${DEPLOYMENT} -isysroot $SDK -I$WORK/sources/Vulkan-Headers-1.3.228/include -I$WORK/sources/SPIRV-Headers-6efe5ae6b7c6ad29da3f2cc3f164b9c3d72b78b1/include"
     export CC AR RANLIB
+    export OBJC="$CC" OBJCFLAGS="$FLAGS"
     export CFLAGS="$FLAGS" LDFLAGS="$FLAGS" SONAME_LIBVULKAN=libMoltenVK.dylib
+    # vkd3d 2.0 configure.ac initializes am__fastdepOBJC only inside its Metal
+    # probe. --without-metal skips both branches and breaks configure itself.
+    # Keep the real SDK probe enabled; only libvkd3d-shader is built below.
     WIDL=no "$WORK/sources/vkd3d-2.0/configure" --host=aarch64-apple-darwin --prefix="$PREFIX" \
       --enable-static --disable-shared --disable-doxygen-doc --disable-demos --disable-tests \
-      --without-xcb --without-ncurses --without-opengl --without-metal --without-spirv-tools
+      --without-xcb --without-ncurses --without-opengl --without-spirv-tools
     # A direct library target bypasses Automake's all -> BUILT_SOURCES ordering.
     "$BUILD_MAKE" -j"$JOBS" include/private/vkd3d_version.h include/private/spirv_grammar.h \
       libs/vkd3d-shader/hlsl.tab.h libs/vkd3d-shader/preproc.tab.h
