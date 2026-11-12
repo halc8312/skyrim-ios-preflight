@@ -10,5 +10,5 @@
 *.plist text eol=lf
 *.pbxproj text eol=lf
 *.xcscheme text eol=lf
-# Preserve canonical patch hashes and unified-diff blank context markers.
-*.patch text eol=lf whitespace=-blank-at-eol
+# Preserve canonical patch hashes and unified-diff blank context, including at EOF.
+*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof

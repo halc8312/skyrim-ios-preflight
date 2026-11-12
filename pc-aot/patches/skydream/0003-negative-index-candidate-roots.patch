@@ -1,0 +1,143 @@
+diff --git a/tools/discover.py b/tools/discover.py
+--- a/tools/discover.py
++++ b/tools/discover.py
+@@ -26,6 +26,11 @@
+ EXE = sys.argv[1]
+ OUT = sys.argv[2]
+ NEW_BASE = int(sys.argv[3], 16) if len(sys.argv) > 3 else None
++
++# Retain actual file bytes: pefile may close its internal mmap while mapping.
++# Candidate-root checks must not trust advertised sizes or loader zero fill.
++with open(EXE, "rb") as raw_input:
++    RAW_IMAGE = raw_input.read()
+ 
+ pe, BASE, img = peimg.load(EXE, NEW_BASE)
+ EXPORTS = peimg.exports(pe, BASE)
+@@ -141,6 +146,118 @@
+             bt = p.operands[1].mem.disp & 0xFFFFFFFF
+             return max(img[bt - BASE + j] for j in range(n)) + 1
+     return None
++
++
++def negative_table_candidate_roots(start, seen_insn):
++    """Augment roots for one locally guarded negative-index pattern, never resolve it.
++
++    This runs after local exploration, so predecessor traversal order cannot
++    establish a bound. External/unknown entries cannot be disproved here: the
++    dispatch remains unresolved even on success. The ordinary zero-based
++    jump_tables and jt_ranges representations must not contain these slots.
++    """
++    if NEW_BASE is not None:
++        return set()  # Rebased mappings require separate relocation-aware backing proof.
++    instructions = {a: decode(a) for a in seen_insn}
++    incoming = {}
++    previous = {a + i.size: i for a, i in instructions.items()}
++
++    def edge(target, source, kind):
++        incoming.setdefault(target, set()).add((source, kind))
++
++    for a, i in instructions.items():
++        if i.id == x86.X86_INS_CALL:
++            if i.operands[0].type == x86.X86_OP_IMM:
++                edge(i.operands[0].imm & 0xFFFFFFFF, a, "call")
++            if not noreturn_call(i.operands[0]):
++                edge(a + i.size, a, "fallthrough")
++        elif x86.X86_GRP_JUMP in i.groups:
++            if i.operands[0].type == x86.X86_OP_IMM:
++                edge(i.operands[0].imm & 0xFFFFFFFF, a, "taken")
++            else:
++                for target in jump_tables.get(a, ()):
++                    edge(target, a, "indirect")
++            if i.id != x86.X86_INS_JMP:
++                edge(a + i.size, a, "fallthrough")
++        elif x86.X86_GRP_RET not in i.groups and i.id not in (x86.X86_INS_INT3, x86.X86_INS_HLT):
++            edge(a + i.size, a, "fallthrough")
++
++    entries = {start, BASE + pe.OPTIONAL_HEADER.AddressOfEntryPoint} | set(EXPORTS.values()) | TAIL_STARTS
++
++    def file_backed(lo, hi, execute=False):
++        if not BASE <= lo < hi <= BASE + len(img):
++            return False
++        owners = [s for s in pe.sections if lo < BASE + s.VirtualAddress + max(s.Misc_VirtualSize, s.SizeOfRawData)
++                  and BASE + s.VirtualAddress < hi]
++        if len(owners) != 1:
++            return False  # An overlapping image does not give an unambiguous owner.
++        section = owners[0]
++        begin = BASE + section.VirtualAddress
++        end = begin + min(section.Misc_VirtualSize, section.SizeOfRawData)
++        raw = section.PointerToRawData + lo - begin
++        if (not begin <= lo < hi <= end or not section.Characteristics & 0x40000000
++                or (execute and not section.Characteristics & 0x20000000)
++                or not 0 <= raw < raw + hi - lo <= len(RAW_IMAGE)):
++            return False
++        # Do not confuse advertised/raw sizes or loader zero fill with file bytes.
++        return bytes(img[lo - BASE:hi - BASE]) == RAW_IMAGE[raw:raw + hi - lo]
++
++    roots = set()
++    for site, dispatch in instructions.items():
++        if dispatch.id != x86.X86_INS_JMP or dispatch.addr_size != 4 or len(dispatch.operands) != 1:
++            continue
++        operand = dispatch.operands[0]
++        if operand.type != x86.X86_OP_MEM or operand.size != 4:
++            continue
++        mem = operand.mem
++        if mem.base or not mem.index or mem.scale != 4 or mem.segment:
++            continue
++        # Only a directly adjacent full-width SUB/JB can establish this fact.
++        # No flag or register writes/calls can intervene; a jump to JB bypasses SUB.
++        shapes = []
++        for predecessor, kind in incoming.get(site, ()):
++            branch = instructions.get(predecessor)
++            sub = previous.get(predecessor)
++            if kind != "taken" or not branch or branch.id != x86.X86_INS_JB or not sub or sub.id != x86.X86_INS_SUB:
++                continue
++            if len(sub.operands) != 2:
++                continue
++            left, right = sub.operands
++            if (left.type == x86.X86_OP_REG and left.size == 4 and left.reg == mem.index
++                    and right.type == x86.X86_OP_IMM and 1 <= right.imm <= 32):
++                shapes.append((branch, sub, right.imm))
++        if not shapes:
++            continue
++        # Even a rejected/partial inference is not a complete positive-index table.
++        if site not in indirect_jumps:
++            indirect_jumps.append(site)
++        if len(shapes) != 1:
++            continue
++        branch, sub, count = shapes[0]
++        if (site in entries or branch.address in entries
++                or incoming.get(site) != {(branch.address, "taken")}
++                or incoming.get(branch.address) != {(sub.address, "fallthrough")}):
++            continue
++        table = mem.disp & 0xFFFFFFFF
++        lo = table - 4 * count
++        # Reject table-address underflow/wrap and zero-filled/unmapped spans.
++        if lo < 0 or not file_backed(lo, table):
++            continue
++        targets = [u32(slot) for slot in range(lo, table, 4)]
++        valid = True
++        for target in targets:
++            if (not in_text(target) or not file_backed(target, target + 1, execute=True)
++                    or any(a < target < a + size for a, size in seen_insn.items())):
++                valid = False
++                break
++            decoded = decode(target)
++            if (not decoded or decoded.mnemonic in JUNK
++                    or not file_backed(target, target + decoded.size, execute=True)):
++                valid = False
++                break
++        if valid:
++            roots.update(targets)
++    return roots
+ 
+ 
+ def explore_function(start):
+@@ -252,6 +369,8 @@
+             blocks[cur]["targets"].update(targets)
+             if noncall:
+                 blocks[cur]["immediates"].update(targets)
++    # These are additional discovery roots, not proven machine CALL edges.
++    calls.update(negative_table_candidate_roots(start, seen_insn))
+     return blocks, calls
+ 
+ 

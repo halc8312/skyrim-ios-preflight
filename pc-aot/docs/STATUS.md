@@ -4,6 +4,9 @@
 
 ## 確認済み
 
+- 負のindexから候補を回収する第3パッチを実装。12合成検査と独立した20＋8＋1検査、実入力の2関数限定解析を通過。分岐先候補8件は既知blockと一致し、元のtables／rangesは維持する。全流入経路の完全性は証明できないため未解決の表示は残す。閉じたPE mmapを参照した原失敗も保存し、入力バイトを保持する方法へ修正した。
+- メモリー転送2処理／CRC3処理を、元の補助処理16個を含む計21関数だけ診断用に変換・実行。WSLで20,000比較が成功し、終了0、最終1,639件の入力／ソース照合に不一致なし。元exeを起動した結果でも、ARM64／実機の結果でもない。最初の7関数診断は未解決targetで停止し、原失敗を保持。追加した14着地点は算術flagsを読まないことも独立確認した。
+- その停止を調べた結果、非空tableでも負のindex側を見落とす2箇所が判明。既存の1,053箇所に加え、**既知の未解決は計1,055 unique sites**。元の全体解析JSONを上書きした数ではなく、限定監査による補足。第3パッチはこの別のCMP/JB/NEG規則までは解決していない。
 - Windows 10 Pro 19045 / PowerShell 7.6.5、Xeon E5-1620 v4（4C/8T）、RAM31.9 GiB。初回空きRAM6.2 GiB。F空き87.5 GiB、C空き8.3 GiB。大きな生成やビルドはFへ置き、2並列を上限にする。
 - WSL Ubuntu-24.04と `/mnt/f` を利用可能。Python3.12、Git、CMake、Ninja、VS2022 BuildTools、WSL GCC13.3が存在。WindowsにXcode/iPhoneOS SDKはない。
 - Steam本体 `C:\Program Files (x86)\Steam` をHKCU/HKLMで確認。libraryfolders登録先はC側と `F:\SteamLibrary`。
@@ -32,6 +35,10 @@
 
 ## 証拠
 
+- `private/analysis/negative-table-real-probe-20261112/` が閉じたmmap参照の原失敗、`negative-table-real-probe-v2-20261112/` が修正後の2関数解析と12検査ログ。独立検査は `local/tests/negative-roots-independent-*`。第3パッチSHA-256は `21f610a0af715992a6b16b2adcacd0924e4d020cc7c7cd6c88beabc9338668e3`。
+- `private/diagnostics/five-primitives-reviewed-20261112-01/` が未解決target `F53AE4` の原失敗、`five-primitives-reviewed-20261112-02/report.json` が20,000比較の成功と1,639照合。生成CのSHA-256は `50f5f3c2e900cab5704a846085d5466be14b662c3f82fef2b5f8075eead7aa7e`、保存したrunnerは `53ac73449d05b2bdce994ad138f287f100be513a375237a36150f65f3500c99e`。全生成物・コンパイラー中間物・stderr/stdoutを非公開で保持。
+- `private/analysis/primitive-contracts-20261112-04/audit.json` が21関数の入力／block／呼出・table監査（SHA-256 `7d9be136d7f3a89f1d42b3d693f66631a5154234680807e8cf618c7e873feafd`）。旧01〜03も保存。`backward-memmove-cfg-20261112/` にNEG分岐の原因、算術flagsの限定確認、誤った途中説明を訂正する `flags-correction.json`、1,055箇所の補足記録。詳細と再現手順は [TRANSLATION](TRANSLATION.md)。
+- `local/translation/english-pair-three-patches-v2-20261112/translation-plan.json` は最終3パッチを照合し、exit2、残るblockerは互換profile未承認だけ。プリフライト26検査、primitive wrapper9検査も成功。iOSアプリ・ビルド設定は今回変更せず、クラウド再ビルドは行っていない。
 - `local/environment-20261112-023341.json`: 実行環境・ツールと容量。
 - `local/inputs-20261112-023309.json`: Steam照会順、全確認パス、未検出、検査エラー0。exeがないためバージョン／サイズ／ハッシュは未取得であり、空値を既知の入力で埋めていない。
 - `local/inputs-recheck-20261112-154645.json` がインストール前の再確認、`local/inputs-installed-20261112-155938.json` が完了後の入力同定。別記録として保持。
@@ -59,7 +66,7 @@
 
 ## 現在の障害と次の操作
 
-1. **展開候補の互換性。** 英語1.9.32.0の元exeと展開候補は両ハッシュ・構造・手順を別記録にした。文字列4関数に限定した契約比較は成功したが、全体ハッシュとの差と残る固定関数／globalsは未解決。メモリー転送2箇所の空tableは、`SUB/JB`の分岐で生じる負のindexを解析器が追えていないことまで特定。次は全流入経路を考慮した汎用規則と合成比較を作り、メモリー／CRC等の限定比較へ進む。
+1. **展開候補の互換性。** 文字列4処理、メモリー転送／CRC5処理の有限比較は成功したが、全体ハッシュとの差・残る固定置換7関数／物理4関数と参照globalsは未確認。次は残る固定契約の限定監査を進める。汎用discovery側にはCMP/JB/NEGの負index規則が残り、既知未解決1,055箇所は完全な網羅性の評価ではない。profileを安易に承認せず、失敗を診断可能なまま保つ。
 2. **変換器の正しさ。** AF欠落を修正し、合成比較は成功。guest callをまたぐflags、x87拡張精度、MXCSR、atomic／ARM64順序などは未解決。固定位置を使うゲーム全体の生成はprofile審査まで行わず、対象関数の限定比較を次に進める。
 3. **クラウド環境。** Codemagicの利用設定は未確認。ブラウザー操作は現在URLを確実に識別できないという自動安全確認により停止し、以後は既知のGitHub APIでCI結果を取得した。既存の非公開GitHub CIで署名なしコンパイル／リンクと別枠のSimulator検査は完了。新しい有料サービス・課金契約・署名資格情報は追加していない。
 4. **実機署名の不足。** iOSバージョン・Developer Modeは回答待ち。今回のbundle IDに合うAd Hoc profile、登録済みUDID、既存distribution証明書が未確認。既存GitHub repositoryのActions secret／variableはAPIで各0件を確認（組織・environment・Codemagic全体の設定不存在は意味しない）。鍵やtokenをチャットへ貼らない。CIのsecret管理とApple/Codemagic画面で設定する。

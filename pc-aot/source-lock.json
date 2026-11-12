@@ -32,6 +32,13 @@
           "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
           "purpose": "Report empty inferred jump tables as unresolved; no target recovery or control-flow changes",
           "validation": "tests/test_discovery_empty_tables.py; baseline miss reproduced, patched serial/parallel diagnostics agree with unchanged graph"
+        },
+        {
+          "path": "patches/skydream/0003-negative-index-candidate-roots.patch",
+          "sha256": "21f610a0af715992a6b16b2adcacd0924e4d020cc7c7cd6c88beabc9338668e3",
+          "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+          "purpose": "Recover bounded negative-index destination candidates after local predecessor checks; retain unresolved status and preserve zero-based table/range metadata",
+          "validation": "tests/test_discovery_negative_tables.py; synthetic joins, clobbers, input bounds and serial/parallel checks; not complete target resolution or game proof"
         }
       ],
       "documented_input_sha1": "67a597df3bb8c5db94b9032f8179d29631b1145d",
