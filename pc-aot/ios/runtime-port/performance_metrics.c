@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "performance_metrics.h"
+#include <errno.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,7 +15,8 @@ static const uint64_t upper_ns[SKYRIM_PERF_BUCKET_COUNT] = {
 static const char *const names[SKYRIM_PERF_KIND_COUNT] = {
     "frame_gap", "present_host", "pacer", "hlsl",
     "graphics_pipeline", "compute_pipeline", "shader_module",
-    "graphics_compile_wait", "compute_compile_wait"
+    "graphics_compile_wait", "compute_compile_wait",
+    "read_file", "read_file_ex", "d3d_shader_create", "texture_load"
 };
 typedef struct PerfAtomic {
     _Atomic uint64_t buckets[SKYRIM_PERF_BUCKET_COUNT];
@@ -24,7 +26,10 @@ static PerfAtomic counters[SKYRIM_PERF_KIND_COUNT];
 
 uint64_t skyrim_perf_now_ns(void) {
     struct timespec now;
-    if (clock_gettime(CLOCK_MONOTONIC, &now)) return 0;
+    const int saved_errno = errno;
+    const int result = clock_gettime(CLOCK_MONOTONIC, &now);
+    errno = saved_errno;
+    if (result) return 0;
     return (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
 }
 
@@ -87,7 +92,8 @@ void skyrim_perf_log_window(void) {
             (unsigned long long)end_ns, (unsigned long long)window_ns,
             names[kind], (unsigned long long)count, (unsigned long long)w.total_ns,
             (unsigned long long)w.max_ns,
-            kind >= SKYRIM_PERF_HLSL && kind <= SKYRIM_PERF_SHADER_MODULE,
+            (kind >= SKYRIM_PERF_HLSL && kind <= SKYRIM_PERF_SHADER_MODULE) ||
+                (kind >= SKYRIM_PERF_READ_FILE && kind <= SKYRIM_PERF_TEXTURE_LOAD),
             (unsigned long long)w.failures, (unsigned long long)w.sleep_calls);
         if (used < 0 || (size_t)used >= sizeof(line)) continue;
         for (unsigned i = 0; i < SKYRIM_PERF_BUCKET_COUNT; ++i) {

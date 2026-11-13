@@ -88,3 +88,15 @@ build4の公開sourceとprivate guestのローカル検証が完了。build3の�
 **追加調査と残る制約。** Win32待機shimとDXVKのsubmission待機は既にcondition variableを使用。BSAの読込みもfd共有＋preadを実装済みで、単にpolling／毎回openだとは扱えない。一方、D3D9のresource readback／Lock時にはGPU使用中のデータを待つ経路と`waitIdle`のspinが残る。待機の除去やコピー省略は古いデータを見せる恐れがあり、今回は変更していない。compiler worker数の制限、GPU vendor偽装による全shader先行生成、fence削減も、実機での頻度・負荷根拠なしには採用しない。
 
 [DXVK公式の開発者向け説明](https://github.com/doitsujin/dxvk/wiki/Developer-guidelines)も、初使用直前のshader生成がstallを起こすと説明している。ただしこれは新しいDXVK／D3D11向け資料であり、現行の固定D3D9＋MoltenVKへそのまま適用した証拠ではない。今回の採用根拠は固定コードのロック範囲と独立gate比較。初めて遭遇するeffectのHLSL／Metal生成、GPU負荷、熱による速度低下までは解消していない。
+
+## 部分逆コンパイルによる候補選定と計測の追加
+
+本人の「進めて」を受け、既存discovery／生成Cと元PEを使い18関数・316 blocks・2,125命令を限定解析した。候補をshader準備、texture準備、read submissionの3系統に絞り、擬似コード、TLS／global、入力所有権、callbackと失敗時の副作用、置換条件を`private/analysis/stutter-paths-20261113-01/CANDIDATES.md`へ保存。私有の関数対応表・逆アセンブルはPC内だけで保持する。元入力とdiscoveryは期待SHA256に一致し、ゲーム由来生成C／frameworkは変更していない。
+
+- shaderには既存のキー検索／作成済みguardがあり、重複cacheを追加する根拠はまだない。初回のD3D shader生成はHLSLを通らない経路もある。一部のHLSL routineは直接の呼出元が不明で、実行頻度は未測定。全shaderを毎frame再コンパイルしているとは判断しない。
+- textureはstreamの全読込み、条件付きのmip選択／再コピー、hostのdecode／uploadを分ける必要がある。元のmip policyを消す変更は画質を変えるため採らない。
+- `ReadFileEx`のhost実装は同期`pread`後にAPCをqueueへ入れる。API呼出中の待ちは存在し得るが、ゲームworkerか描画threadかは静的情報だけでは不明。非同期化には要求threadでのcallback、fd/handle再利用、buffer／OVERLAPPED寿命、取消／終了、alertable waitの起床までが必要で、今夜の候補へ未検証のworkerは入れていない。
+
+**追加計測。** `read_file`は既存ReadFileのread／pread部分、`read_file_ex`は既存read-exのpread部分（WriteFileExは対象外）、`d3d_shader_create`は実CreateVertexShader/CreatePixelShader呼出し、`texture_load`は実D3DXのmemory/file texture作成を測る。textureのfile版はhostの読込みも含むが、guestのstream読込み／mip-copyは含まない。API間・下層pipeline計測と時間が重なるため合算しない。複数threadのhost時間であってGPU時間や描画thread停止の証明ではない。失敗数はsyscall／HRESULTの失敗で、すべてのWin32やゲーム上の異常を意味しない。既存の5秒reportにだけ出力し、固定atomic配列、各区間の2回の時計読取りを使用する。errnoは時計成功・失敗のどちらでも保持。
+
+**検証。** 実際のpublic shim／bridgeへ計測を加え、計測行だけを除くと元sourceへ全文復元できることを確認。ReadFile／ReadFileEx／WriteFileEx／APC drainの実関数を自作I/Oで動かし、成功・partial・EOF・失敗・64bit offset・共有fd位置・event・遅延callback・errnoの結果を旧新版で比較。3検査は通常／ASan/UBSan双方を通過。変更したclockと新分類を含め、既存histogramの80,000並行記録・stage照合を含む3検査も通過した。これは実iPhoneの速度やI/O並行動作の検証ではない。Macの一括buildにも追加fixtureを含める。新private compileやMacジョブは実行していない。

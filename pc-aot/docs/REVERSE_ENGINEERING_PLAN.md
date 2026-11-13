@@ -2,7 +2,7 @@
 
 2026年11月13日。目的は、平均FPSの向上に加え、操作中に画面が長く止まる回数を減らすこと。既に動いている静的再コンパイル版を基準とし、時間を使っている関数を少数ずつ読み解き、同じ結果を出すARM64向けの実装へ置き換える。
 
-この文書は次の実装計画。今回新たにゲーム関数を置換したり、Macビルドを開始したりはしていない。サブエージェントと定期自動送信は使用しない。
+端末なしでできる最初の解析を実施し、3系統の候補と置換条件まで整理した。ゲーム関数の本番置換と新Macビルドはまだ行っていない。サブエージェントと定期自動送信は使用しない。
 
 ## 現在地と今回の範囲
 
@@ -37,6 +37,22 @@
 - 既存APIへ置き換えられる範囲と、ゲームの状態に依存して残す範囲。
 
 成果物はPC内の候補一覧と読みやすくした擬似コード。今夜の実機結果が来る前でも、この静的な切り分けは進められる。重い処理の断定と本番置換の選定は、次の計測結果と結び付ける。
+
+### 最初の解析結果
+
+90,390関数の既存生成Cから直接参照を索引化し、候補周辺の18関数・2,125命令を元PEで照合した。索引は間接呼出しと未生成候補を網羅しない。シェーダーimportへの4つの直接呼出箇所は元の命令境界でも確認した。住所・擬似コード・依存globalなどの詳細はPC内の`private/analysis/stutter-paths-20261113-01/CANDIDATES.md`に保存している。
+
+| 候補 | 確認できたこと | 置換・改善へ進む条件 |
+| --- | --- | --- |
+| シェーダー準備 | 一部にはキー検索と作成済みshaderの再利用が既にある。HLSLを通さず、bytecodeから初使用時にD3D shaderを作る別経路もある | HLSL・D3D作成・pipeline作成のどこが長いかを分ける。先行準備ではbytecodeの所有コピー、device世代、元の公開順を維持する |
+| テクスチャの準備 | stream全体の読込み、条件付きmip選択とコピー、D3DXのdecode/uploadという段階がある | 長い段階を特定する。copyを省くなら選択mip・format・pitch・元bufferの寿命を維持する |
+| 非同期ファイル読込み | 現shimは`ReadFileEx`内で`pread`を完了させてからAPCを予約する。callbackは後の`SleepEx`で呼ぶ | 呼出元の待ち時間が実際に大きいことを測る。workerへ移す前に同じ要求threadへの通知、fdとbuffer寿命、終了・取消・再入を設計する |
+
+HLSLの一部にはTLS・共有global・include callbackの副作用がある。直接の呼出元を見つけられなかった関数もあり、「ソースがあるから現在のgameplayで重い」とは扱わない。素材読み込みがゲームのworker上なら、その待ち時間がそのまま描画threadの停止になるとも限らない。
+
+次の一括build4へ、固定histogramの`read_file`／`read_file_ex`／`d3d_shader_create`／`texture_load`を追加した。元APIの引数・順序・戻り値とAPC処理は維持し、ゲーム関数や非同期I/Oの実行方式は変更していない。計測はshader名・path・guest address・素材を記録しない。これらは重なるhost処理時間なので合算せず、既存のframe間隔と合わせて候補を選ぶ。詳細な呼出元ringは引き続き必要時だけ追加する。
+
+API契約の確認：[MicrosoftのReadFileEx](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfileex)では、完了までbuffer／OVERLAPPEDを有効に保ち、要求threadがalertable waitに入った時にcallbackを届ける。[D3DXCompileShader](https://learn.microsoft.com/en-us/windows/win32/direct3d9/d3dxcompileshader)ではmacro、include、entry、profile、flagsと複数の出力を扱う。本文だけのcacheや、guest callbackの無条件なworker実行ではこの契約を保てない。
 
 ## 2 実機で停止の種類を判定する
 

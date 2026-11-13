@@ -19,6 +19,8 @@ EXPECTED = {
     "platform_sdl.c": "0c991520a8ab9fffc1cb76e22f03fa05d020926ea9c952a6e30a43af4dc01842",
     "d3d9_bridge.cpp": "2cb0991887f72ec89d1e618035cdd08e7d956a5f2f4f139fcdf80154e32de91f",
     "d3dx_shader.cpp": "4593e3cad0bd38ee7866d1f715f0df0e189e8716179c9aba70e96b8b6e96a496",
+    "d3d9_bridge_gen.cpp": "575127d0fce5620a92b40ecd828bad87f3adbcadbabe1f4e2a080dcd90458419",
+    "d3dx_native.cpp": "8aac049c9bb24b138b5ade384e867ff0a2ff3941edf7323dd295e11aa97c1146",
     "shims.c": "7478c4f7ee7b9e75e3ec17acba5825b5f594a7966cfa747155252b935131c6f0",
     "prof.c": "2c0910c1620e844d47e2e1d2d1910091245f062144ce3253159e9f4e10f12c0c",
     "skyrim_shims.c": "3b1955df82fcd791e907ced07dfd8365d89f417f705d9f51e39f4fb04d1bd9c7",
@@ -233,6 +235,58 @@ def patch_main_pump(s: str) -> str:
         'SHIM(PeekMessageA) {\n    skyrim_ios_pump_events();', "UIKit servicing in guest message loop")
 
 
+def patch_asset_reads(s: str) -> str:
+    # Observe the existing syscall only. APC dispatch, file positions, guest
+    # buffers and error mapping remain unchanged; this does not make I/O async.
+    s = '#include "performance_metrics.h"\n' + s
+    old = ('    ssize_t r;\n'
+           '    if (ov) r = pread(f->fd, MEM + buf, n, (off_t)M32(ov + 8) | ((off_t)M32(ov + 12) << 32));\n'
+           '    else if (f->shared) { r = pread(f->fd, MEM + buf, n, f->pos); if (r > 0) f->pos += r; }\n'
+           '    else r = read(f->fd, MEM + buf, n);')
+    s = replace_once(s, old,
+        '    const uint64_t ios_started = skyrim_perf_now_ns();\n' + old + '\n'
+        '    skyrim_perf_end(SKYRIM_PERF_READ_FILE, ios_started, r < 0);', 'synchronous read timing')
+    old = '    ssize_t r = write ? pwrite(f->fd, MEM + buf, n, off) : pread(f->fd, MEM + buf, n, off);'
+    return replace_once(s, old,
+        '    const uint64_t ios_started = write ? 0 : skyrim_perf_now_ns();\n' + old + '\n'
+        '    if (!write) skyrim_perf_end(SKYRIM_PERF_READ_FILE_EX, ios_started, r < 0);',
+        'read-ex syscall timing')
+
+
+def patch_shader_creation(s: str) -> str:
+    s = '#include "performance_metrics.h"\n' + s
+    for method in ('CreateVertexShader', 'CreatePixelShader'):
+        old = f'    auto r = bridge_call(self, &IDirect3DDevice9::{method}, GPTR(ARG(1)), &out1);'
+        s = replace_once(s, old,
+            '    const uint64_t ios_started = skyrim_perf_now_ns();\n' + old + '\n'
+            '    skyrim_perf_end(SKYRIM_PERF_D3D_SHADER_CREATE, ios_started, (int32_t)r < 0);',
+            f'{method} host timing')
+    return s
+
+
+def patch_texture_loading(s: str) -> str:
+    s = '#include "performance_metrics.h"\n' + s
+    old = ('  HRESULT hr = load_texture((IDirect3DDevice9 *)com_host(ARG(0)), GPTR(ARG(1)),\n'
+           '                            ARG(2), type, &out, 0);')
+    s = replace_once(s, old,
+        '  const uint64_t ios_started = skyrim_perf_now_ns();\n' + old + '\n'
+        '  skyrim_perf_end(SKYRIM_PERF_TEXTURE_LOAD, ios_started, FAILED(hr));',
+        'memory texture host timing')
+    # The file variant includes its own host read before decode/upload. It is
+    # not an extra guest ReadFile call and must not be summed as exclusive time.
+    s = replace_once(s, '  auto bytes = read_file(ARG(1));',
+        '  const uint64_t ios_started = skyrim_perf_now_ns();\n'
+        '  auto bytes = read_file(ARG(1));', 'file texture timing start')
+    old = '                   ARG(5), (D3DFORMAT)ARG(6), (D3DPOOL)ARG(7), ARG(8), ARG(10));'
+    return replace_once(s, old, old + '\n'
+        '  skyrim_perf_end(SKYRIM_PERF_TEXTURE_LOAD, ios_started, FAILED(hr));',
+        'file texture timing end')
+
+
+def patch_kernel(s: str) -> str:
+    return patch_main_pump(patch_asset_reads(s))
+
+
 def patch_dispatch(s: str) -> str:
     s = replace_once(s, '#include "rt.h"',
         '#include "rt.h"\n#include "ios_runtime.h"', "watchdog include")
@@ -315,12 +369,14 @@ PATCHERS = {
     "platform_sdl.c": patch_platform,
     "d3d9_bridge.cpp": patch_bridge,
     "d3dx_shader.cpp": patch_shader,
+    "d3d9_bridge_gen.cpp": patch_shader_creation,
+    "d3dx_native.cpp": patch_texture_loading,
     "shims.c": patch_shims,
     "prof.c": patch_prof,
     "skyrim_shims.c": patch_preferences,
     "touch.cpp": mobile_conditions,
     "input.c": patch_input,
-    "kernel32.c": patch_main_pump,
+    "kernel32.c": patch_kernel,
     "user32.c": patch_main_pump,
     "dispatch.c": patch_dispatch,
 }
