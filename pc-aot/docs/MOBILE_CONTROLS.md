@@ -38,6 +38,7 @@ FPSの追加上限なし／24／30／40／60は即時反映する。待ち時間
 
 - Linux上の実C検査：入力の合成、短いタップ、指を離したときの解除、Retina／タッチ頻度によらない視点速度、同時読み書き、F5解除、温度ポリシー、FPS変更と長い停止後の再開。
 - Python 5件：固定上流の実コードへ適用し、物理パッド、両Present、現在のINIを維持する経路、CPU ABIの不変、変更されたアンカーの拒否を確認。
-- UIKitのコンパイル、実機の同時タッチ・メニュー・保存確認・画質反映・温度／FPS比較は別途必要。上記のPC検査で実機合格とは扱わない。
+- Codemagic build11でUIKitを含むARM64／iPhoneOSのコンパイル・リンクが成功。自作3シェーダーの実Metalコンパイルも成功。既存private guestと共有するCPUヘッダー3ファイルはbuild2と一致する。
+- 実機の同時タッチ・メニュー・保存確認・画質反映・温度／FPS比較は別途必要。上記のPC／SDK検査で実機合格とは扱わない。
 
 参照：[SDLのwindow情報API](https://wiki.libsdl.org/SDL2/SDL_GetWindowWMInfo)、[Appleの熱状態API](https://developer.apple.com/documentation/foundation/processinfo/thermalstate-swift.property)。

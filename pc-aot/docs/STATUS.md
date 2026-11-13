@@ -2,7 +2,19 @@
 
 2026-11-13。**PC版build2でゲームプレイまで進めたと本人から報告を受領しました。** build1の縮小・黒画面・ロード停止を修正した後の実機結果です。新PCアプリIDは`org.skyrimios.pc2011`、表示名は`SkyrimIOS`。既存Xbox版とは別アプリです。元処理90,390関数を静的変換した構成を維持しています。所有ゲームデータ26ファイル／5,909,061,966 bytesは読み戻しSHA256照合済み。全編の互換性や長時間安定性を保証するものではありません。
 
-**現在：実機の操作不足・発熱の報告を基にbuild3を実装中。** 視点ドラッグ、完全なタッチゲームパッド、操作設定、画質設定、FPS上限、クイックセーブ入力を追加。PC上の入力コア検証と固定上流へのパッチ検査は通過。build3のApple SDKビルド／実機検証はまだ実施していません。詳細は[MOBILE_CONTROLS](MOBILE_CONTROLS.md)。
+**現在：操作・画質設定を追加したbuild3のビルド・PC内の署名が完了し、USB接続待ち。** 視点ドラッグ、完全なタッチゲームパッド、操作設定、画質設定、FPS上限、クイックセーブ入力を追加。実機での操作感・保存・画質反映・温度／FPS改善は未確認です。詳細は[MOBILE_CONTROLS](MOBILE_CONTROLS.md)。
+
+## 2026-11-13 build3 モバイル操作と設定
+
+- ゲーム画面の空き領域での視点操作、十字キー、左右トリガー／ショルダー、L3/R3、START/BACKを追加。感度・上下反転・ボタンサイズ／不透明度・ドラッグでの配置保存を実装。物理パッドの入力経路を維持する。
+- UIKitの操作画面に移し、毎フレームのD3D9 state block Capture/Applyと操作パッドの描画を取り除いた。固定SDLの`setSDLWindow:`がMetal用root viewを交換することをソースで確認し、新しいviewへ操作画面を付け直す処理も追加した。
+- 5画質プリセットと個別設定、即時反映する24/30/40/60 FPS上限、任意の高温時抑制を追加。初回は現在の画質と追加FPS制限なしを維持。通常の詳細APIログを停止し、5秒ごとの粗い性能診断を残す。実機での効率改善量は未測定。
+- クイック保存は実際のF5入力と`.ess`ファイル更新の検出。実行状態全体のステートセーブは未実装で、ゲーム側がF5を受理するかも実機確認が必要。
+- 実C入力／時間制御の検査をGCCの警告エラー化とASan/UBSanで通過。固定上流への実パッチとCPU ABI不変を含むPython 5件も通過。
+- [Codemagic build10](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af669d810a05158d81237dd)は4分34秒で成功。SDL root view対応を加えた[最終build11](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af66c4410a05158d812386a)も4分39秒で成功。最終公開commitは`0239ba2b7becbddc73a6914c95425d34be8a0295`。追加ビルドは行わない。
+- `local/codemagic-title11/`にホスト／原ログ／Metal検証を保存。iPhoneOS18.0／SDK26.5の実コンパイル・リンクと、自作3シェーダーのMetalコンパイル／AIR生成が成功。`x86.h`・`PcGuestABI.h`・`rt_table.h`はbuild2とLF正規化後に全文一致。public host ZIP SHA256 `fd1d29fbdad33e6c9b7c5e14897a03d8b911b208e97aa9a453d9e64d7e48756b`。
+- 既存private guestをPC内だけで組み合わせ、未署名IPA SHA256 `609f139cf4173cb9e8b809b10a3ca75d8da9a865811fece5625d557c990c27dd`を生成。署名済みIPAは`private/title-signing-20261112/SkyrimIOS-PC2011-build3-signed.ipa`、SHA256 `0323d9ef55bff936c0ebadcef26c004b47bdd03a2138bc47a925006bf4c5017e`。2イメージ／39,781コードページ／4resourceの暗号検証、既存profileのApple chain／端末／App IDの一致を確認。OSによるインストール時の署名受理は未確認。
+- 直近のUSB検出は0台。実機更新・新機能の実機確認は未実施。本人が保存・終了・USB接続・ロック解除を確認したら、`private/title-signing-20261112/snapshot_pc_build3.py`でプロフィールだけを保護し、同フォルダーの`phone_pc_build3.py install`でUpgradeする。元のゲーム26ファイルは再コピーせず、前後のプロフィール内容とゲームの名前／サイズを比較する。
 
 ## 2026-11-13 build2 描画・画面処理の修正
 
