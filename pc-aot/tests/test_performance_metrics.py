@@ -30,16 +30,20 @@ class PerformanceTests(unittest.TestCase):
             subprocess.run(command, check=True, timeout=60)
             result = subprocess.run([str(binary)], check=True, text=True, capture_output=True, timeout=15)
             self.assertIn("concurrent_drain=PASS", result.stdout)
-            self.assertEqual(result.stderr.count("IOS_TIMING"), 1)
+            self.assertEqual(result.stderr.count("IOS_TIMING"), 2)
             self.assertIn("kind=pacer samples=1", result.stderr)
             self.assertIn("sleep_calls=8", result.stderr)
+            wait_line = next(line for line in result.stderr.splitlines() if "kind=graphics_compile_wait" in line)
+            self.assertIn("samples=1", wait_line)
+            self.assertIn("total_ns=120000000", wait_line)
+            self.assertIn("failures_known=0", wait_line)
 
     def test_real_adapter_preserves_every_api_argument_and_failure_branch(self):
         for name in adapter.EXPECTED:
             if not name.endswith(("dxvk_graphics.cpp", "dxvk_compute.cpp", "dxvk_shader.cpp")):
                 continue
             old = (SOURCE / name).read_text(encoding="utf-8")
-            new = adapter.adapt(name, old)
+            new = adapter.adapt_timing(name, old)
             # Reverse the timing wrapper, not the rest of the source. Full byte
             # equality after this reversal proves no other pipeline behavior changed.
             import re

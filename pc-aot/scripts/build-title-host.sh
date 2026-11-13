@@ -54,6 +54,7 @@ PY
   python3 -m unittest discover -s tests -p 'test_shadow_ranges.py' -v
   python3 -m unittest discover -s tests -p 'test_performance_metrics.py' -v
   python3 -m unittest discover -s tests -p 'test_pipeline_cache.py' -v
+  python3 -m unittest discover -s tests -p 'test_pipeline_locking.py' -v
 )
 
 bash ios/dependencies/build-dependencies.sh

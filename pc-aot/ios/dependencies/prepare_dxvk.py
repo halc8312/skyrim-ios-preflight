@@ -12,6 +12,8 @@ from pathlib import Path
 EXPECTED = {
     "src/dxvk/dxvk_graphics.cpp": "dc35eb99f52d3dc4ea3e033fbe55c4a06faae8201c3424bf552aefcbc4e509ca",
     "src/dxvk/dxvk_compute.cpp": "2515fefb8ae4acee0fe9ba6fd3a36eda8664fa9bcbb15784a83b39763c26ee0e",
+    "src/dxvk/dxvk_graphics.h": "f2fb63084bd9757262c641c6e4e20a4a5ff223edacc4ef23eae2d486725ddf88",
+    "src/dxvk/dxvk_compute.h": "41ae5eabc882bbd58918905838bfe7b5e0b9f7551fe482ddfa740e68529b4148",
     "src/dxvk/dxvk_shader.cpp": "8d6c02908f7b217039bf7d80e8ac5317bf8a827dfc54d29a88a5414103d05063",
     "src/dxvk/dxvk_pipecache.cpp": "a7d0a391aa19fa8f560487843b9a2d83e492c87a710914f76c4807640829e070",
     "src/dxvk/dxvk_pipecache.h": "b0dd5f8120da50e0426e1c84b13e9e169fc9088b50e1fc906f12c2ca0f72caeb",
@@ -25,7 +27,123 @@ def once(text: str, old: str, new: str) -> str:
     return text.replace(old, new, 1)
 
 
+def adapt_pipeline_locking(name: str, text: str) -> str:
+    """Keep ready lookups independent of compilation of another state variant.
+
+    Writers take compileMutex before the short instance-list lock. Readers only
+    take the latter. Pipeline construction remains serialized per shader set;
+    no missing draw is skipped and no extra compiler worker is introduced.
+    """
+    graphics = "dxvk_graphics." in name
+    kind = "Graphics" if graphics else "Compute"
+    if name.endswith(".h"):
+        anchor = f"    std::vector<Dxvk{kind}PipelineInstance> m_pipelines;"
+        return once(text, anchor, anchor + "\n"
+            "    // Slow compiler calls never hold the instance-list spinlock.\n"
+            "    dxvk::mutex m_compileMutex;")
+    cls = f"Dxvk{kind}Pipeline"
+    state = f"const Dxvk{kind}PipelineStateInfo& state"
+    args = "state"
+    if graphics:
+        state += ",\n    const DxvkRenderPass*                renderPass"
+        args += ", renderPass"
+    # The exact source hash is checked before this adapter is applied. Restrict
+    # replacement to these three methods; findInstance and GPU creation stay intact.
+    begin = text.index(f"  VkPipeline {cls}::getPipelineHandle(")
+    end = text.index(f"  {cls}Instance* {cls}::findInstance(", begin)
+    wait_kind = "SKYRIM_PERF_" + kind.upper() + "_COMPILE_WAIT"
+    compile_lock = f"""    std::unique_lock<dxvk::mutex> compileLock(m_compileMutex, std::defer_lock);
+    if (!compileLock.try_lock()) {{
+      const uint64_t waitStarted = skyrim_perf_now_ns();
+      compileLock.lock();
+      skyrim_perf_end({wait_kind}, waitStarted, 0);
+    }}
+"""
+    validate = ""
+    if graphics:
+        validate = """    if (!this->validatePipelineState(state))
+      return nullptr;
+
+"""
+    cache_args = "state, renderPass->format()" if graphics else "state"
+    methods = f"""  VkPipeline {cls}::getPipelineHandle(
+    {state}) {{
+    {{ std::lock_guard<sync::Spinlock> lock(m_mutex);
+      if (auto* instance = this->findInstance({args}))
+        return instance->pipeline();
+    }}
+
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    {{
+{compile_lock}
+      {{ std::lock_guard<sync::Spinlock> lock(m_mutex);
+        if (auto* instance = this->findInstance({args}))
+          return instance->pipeline();
+      }}
+      auto* instance = this->createInstance({args});
+      if (!instance)
+        return VK_NULL_HANDLE;
+      // compileLock prevents vector growth until this handle has been copied.
+      // The state-cache callback below may itself overlap another insertion.
+      pipeline = instance->pipeline();
+    }}
+    this->writePipelineStateToCache({cache_args});
+    return pipeline;
+  }}
+
+
+  void {cls}::compilePipeline(
+    {state}) {{
+    {{ std::lock_guard<sync::Spinlock> lock(m_mutex);
+      if (this->findInstance({args}))
+        return;
+    }}
+{compile_lock}
+    {{ std::lock_guard<sync::Spinlock> lock(m_mutex);
+      if (this->findInstance({args}))
+        return;
+    }}
+    this->createInstance({args});
+  }}
+
+
+  {cls}Instance* {cls}::createInstance(
+    {state}) {{
+    // Caller owns compileMutex; only publication takes the instance-list lock.
+{validate}    VkPipeline newPipelineHandle = this->createPipeline({args});
+
+    std::lock_guard<sync::Spinlock> lock(m_mutex);
+    m_pipeMgr->m_num{kind}Pipelines += 1;
+    return &m_pipelines.emplace_back({args}, newPipelineHandle);
+  }}
+
+
+"""
+    return text[:begin] + methods + text[end:]
+
+
+def adapt_timing(name: str, text: str) -> str:
+    text = '#include "performance_metrics.h"\n' + text
+    if name.endswith("dxvk_shader.cpp"):
+        call = "m_vkd->vkCreateShaderModule(m_vkd->device(), &info, nullptr, &m_stage.module)"
+        kind = "SKYRIM_PERF_SHADER_MODULE"
+    else:
+        graphics = name.endswith("dxvk_graphics.cpp")
+        call = ("m_vkd->vkCreate" + ("Graphics" if graphics else "Compute") + "Pipelines(m_vkd->device(),\n"
+                "          m_pipeMgr->m_cache->handle(), 1, &info, nullptr, &pipeline)")
+        kind = "SKYRIM_PERF_GRAPHICS_PIPELINE" if graphics else "SKYRIM_PERF_COMPUTE_PIPELINE"
+    dirty = "" if name.endswith("dxvk_shader.cpp") else "    if (iosResult == VK_SUCCESS) m_pipeMgr->m_cache->compiled();\n"
+    return once(text, "    if (" + call + " != VK_SUCCESS)",
+        "    const uint64_t iosStarted = skyrim_perf_now_ns();\n"
+        "    const VkResult iosResult = " + call + ";\n"
+        "    skyrim_perf_end(" + kind + ", iosStarted, iosResult != VK_SUCCESS);\n"
+        + dirty +
+        "    if (iosResult != VK_SUCCESS)")
+
+
 def adapt(name: str, text: str) -> str:
+    if name.endswith(("dxvk_graphics.h", "dxvk_compute.h")):
+        return adapt_pipeline_locking(name, text)
     if name.endswith("dxvk_pipemanager.cpp"):
         return once(text, "new DxvkPipelineCache(device->vkd())",
             "new DxvkPipelineCache(device->vkd(), device->adapter()->deviceProperties())")
@@ -53,22 +171,9 @@ namespace dxvk {
   DxvkPipelineCache::~DxvkPipelineCache() = default;
 }
 '''
-    text = '#include "performance_metrics.h"\n' + text
-    if name.endswith("dxvk_shader.cpp"):
-        call = "m_vkd->vkCreateShaderModule(m_vkd->device(), &info, nullptr, &m_stage.module)"
-        kind = "SKYRIM_PERF_SHADER_MODULE"
-    else:
-        graphics = name.endswith("dxvk_graphics.cpp")
-        call = ("m_vkd->vkCreate" + ("Graphics" if graphics else "Compute") + "Pipelines(m_vkd->device(),\n"
-                "          m_pipeMgr->m_cache->handle(), 1, &info, nullptr, &pipeline)")
-        kind = "SKYRIM_PERF_GRAPHICS_PIPELINE" if graphics else "SKYRIM_PERF_COMPUTE_PIPELINE"
-    dirty = "" if name.endswith("dxvk_shader.cpp") else "    if (iosResult == VK_SUCCESS) m_pipeMgr->m_cache->compiled();\n"
-    return once(text, "    if (" + call + " != VK_SUCCESS)",
-        "    const uint64_t iosStarted = skyrim_perf_now_ns();\n"
-        "    const VkResult iosResult = " + call + ";\n"
-        "    skyrim_perf_end(" + kind + ", iosStarted, iosResult != VK_SUCCESS);\n"
-        + dirty +
-        "    if (iosResult != VK_SUCCESS)")
+    if name.endswith(("dxvk_graphics.cpp", "dxvk_compute.cpp")):
+        text = adapt_pipeline_locking(name, text)
+    return adapt_timing(name, text)
 
 
 def prepare(source: Path) -> dict[str, bytes]:

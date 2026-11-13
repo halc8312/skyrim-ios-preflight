@@ -1,6 +1,6 @@
 # PC版の性能改善作業 — 2026-11-13
 
-ユーザーは20〜21時ごろまで実機を接続できない。画質やゲームの結果を維持し、処理量を減らせる変更を比較して採用する。サブエージェントなし。私有ゲームコード・素材・ログ・署名はPC内のみ。旧build2/3と元ゲーム・セーブを保持。Macビルドは20時以降に検証済み変更を一度まとめる。21時以降は新規の長い実験を始めず、実績と残りをまとめて継続設定を停止する。
+ユーザーは20〜21時ごろまで実機を接続できない。画質やゲームの結果を維持し、処理量を減らせる変更を比較して採用する。サブエージェントなし。私有ゲームコード・素材・ログ・署名はPC内のみ。旧build2/3と元ゲーム・セーブを保持。Macビルドは20時以降に検証済み変更を一度まとめる。21時以降は新規の長い実験を始めない。14時台の本人指示で`skyrim-metal`の自動送信を削除し、瞬間的なカクつき対策をgoalで管理する方式へ変更した。定期送信は再作成しない。
 
 ## 現在の基準
 
@@ -43,7 +43,7 @@ build4の公開sourceとprivate guestのローカル検証が完了。build3の�
 1. ユーザーから「時間があるので他にも進めたい」と追加指示あり。下記の未着手候補を調査し、元結果を保てる変更だけを比較して採用する。完了した検査やprivate compileを根拠なく繰り返さない。端末のFPS・発熱・場面ごとのstall計測が必要な点は残る。
 2. 20:00以降、内蔵ブラウザでCodemagicのFree残時間／他ジョブ／最新commitの既存実行を確認して、`pc2011-title-host`を1回だけ実行。ordered store／shadow range／時間分布／pipeline cacheの公開fixtureを同Macで実行する。Mac/Simulatorを実iPhone合格と混同しない。
 3. 公開host build4を入手し、共有ABI照合後に上記新private frameworkとPC内で組み立て、既存profile/DPAPI手順で署名。assemblerの入力exeは同じ`private/discovery/basepin-english-1932-20261112-01/inputs/candidate.exe`、SHA256 `d97eb0cc0ceef0923d2234d42b382c0d033853356528b271bc043542b1f5e605`。
-4. 本人が保存・終了・USB・ロック解除したらプロフィールのみ最小保護して2/3→4をUpgrade。ゲーム26ファイルは再コピーしない。未接続なら一度だけ準備を案内し、待ち続けて再質問しない。21:00には`skyrim-metal` heartbeatを停止する。
+4. 本人が保存・終了・USB・ロック解除したらプロフィールのみ最小保護して2/3→4をUpgrade。ゲーム26ファイルは再コピーしない。未接続なら一度だけ準備を案内し、待ち続けて再質問しない。`skyrim-metal` heartbeatは本人指示で既に削除済み。
 
 ## 追加調査の結果（14時台）
 
@@ -61,10 +61,30 @@ build4の公開sourceとprivate guestのローカル検証が完了。build3の�
 
 `IOS_TIMING schema=1`は5秒を目安にまとめ、`end_ns`と`window_ns`で実際の集計時刻・長さを示す（初回windowは0＝不明）。各binの上限nsは`0,1000000,2000000,4000000,8000000,12000000,16666667,20000000,25000000,33333334,40000000,50000000,66666667,100000000,166666667,250000000,500000000,1000000000,2000000000,UINT64_MAX`。最後は2秒超。binから求めたpercentileは範囲／上限値であり、正確な1フレームのp95ではない。
 
-`frame_gap`は成功Present間隔で、backgroundを跨ぐ値は除外。`present_host`はPresent内のhost時間。`pacer`は追加cap処理のhost時間と`nanosleep`呼出数で、UIKit処理時間も含む。残り4種類はHLSL／graphics pipeline／compute pipeline／shader moduleの実API作成処理。pipelineの再利用回数・実cache miss・GPU時間は測っていない。`failures_known=0`の種類について失敗0とは判断しない。atomicの読取境界をまたぐ記録があるため`approximate_window=1`とし、隣接windowを含めて評価する。5秒内の同時増加だけで因果関係を確定しない。
+`frame_gap`は成功Present間隔で、backgroundを跨ぐ値は除外。`present_host`はPresent内のhost時間。`pacer`は追加cap処理のhost時間と`nanosleep`呼出数で、UIKit処理時間も含む。HLSL／graphics pipeline／compute pipeline／shader moduleの4種類は実API作成処理。追加の`graphics_compile_wait`／`compute_compile_wait`は同じshader組合せの生成mutexを即時取得できなかった時の待機時間。描画要求と先行コンパイルworkerの両方を含み、ゲームの描画スレッドだけの停止時間ではない。準備済みhitにはこの追加時計読取り／histogram更新はない。pipelineの再利用回数・実cache miss・GPU時間は測っていない。`failures_known=0`の種類について失敗0とは判断しない。atomicの読取境界をまたぐ記録があるため`approximate_window=1`とし、隣接windowを含めて評価する。5秒内の同時増加だけで因果関係を確定しない。
 
 `IOS_PIPE_CACHE event=create offered_bytes=...`はdriverへ渡したbyte数で、命中数／受理済み数ではない。`event=checkpoint stored=1`は今回のファイル保存成功。実機確認は「同一save・同一画質」で初回→ホームへ戻り数秒待つ→完全終了→再起動を比較する。メモリー全体のステート保存やゲームのセーブを置き換える処理ではない。
 
 参照：[Clangのmemory builtins](https://clang.llvm.org/docs/LanguageExtensions.html#memory-builtins)。固定サイズのcompiler builtinと通常のCライブラリー呼出しは区別し、実コンパイラーの出力で確認する。
 
 順序の検討：[Armのacquire/release実例](https://learn.arm.com/learning-paths/servers-and-cloud-computing/memory_consistency/examples/)、[LLVM Atomic Guide](https://llvm.org/docs/Atomics.html)。これらは現在の全guest変換の正しさを保証する資料ではない。
+
+## 瞬間的なカクつき：準備済みpipelineまで待たせるロックを分離
+
+固定DXVKの`DxvkGraphicsPipeline`／`DxvkComputePipeline`は、instanceリスト検索とdriverへのpipeline生成を同じ`sync::Spinlock`の中で行っていた。state cacheのworkerが別state variantを生成している間も、同じshader組合せの準備済みvariantを描画側が取り出せない。Spinlockは200回の確認ごとにyieldし続けるため、長いcompiler処理にもCPU側の競合が続く。これはコードで確認した停止経路であり、現在の実機stallの主因と断定したものではない。
+
+`prepare_dxvk.py`に以下を統合した。vendor、CPU変換、private guest、VulkanのAPI引数や生成コードは変更しない。
+
+- instanceの検索／追加だけを短い既存spinlockで守る。準備済みhitは従来どおりこのlock一つでhandleを返す。
+- 未準備の場合だけ別の`dxvk::mutex`（nativeでは`std::mutex`）で生成を直列化し、取得後に再検索する。同じshader組合せのcompiler数は増やさず、同じstate／render passの二重生成も防ぐ。ロック順は生成mutex→リストlockだけ。リストlockを保持したまま生成mutexを待たない。
+- driver呼出し中はリストlockを保持しない。失敗したnull handleのキャッシュ、graphicsの不正state拒否、counter、state cacheへ追加する条件を維持する。初回の未準備pipelineは完成するまで待ち、描画を省略しない。
+- 新instanceのhandleを生成mutex内で値としてコピーしてからstate cacheへ通知する。通知中に他の生成でvectorが拡張されても、元instanceへのpointerを後から読まない。
+- 競合した生成mutexの待機だけを固定histogramへ記録。コンパイル自体の時間とは区別する。
+
+**検証結果。** `test_pipeline_locking.py`は実際の旧／新4メソッド、実instanceクラス、実Spinlockを使い、compilerだけを自作fixtureに置き換える。別stateのコンパイルをgateで止めると、旧graphics／computeは準備済みhitも止まり、新版はgate解除前に返せた。未準備要求は待ち続け、同state同時要求の生成回数は1のまま。不正state、API失敗、例外後の再試行、render passの区別、callback中のvector拡張、graphics／computeそれぞれ16,000並行lookupを通過。通常実行とASan/UBSanの両方で成功。これは自作compiler条件下の停止解消で、MetalやゲームのFPS測定ではない。
+
+実DXVKの5 translation unit（graphics／compute／pipeline manager／shader／pipeline cache）は実ヘッダー付きWSL syntax compileを通過。新stageは`local/performance-20261113/dxvk-locking-01`。新しい時間分類と既存wrapperのAPI引数不変、stage固定照合も検証した。Macの一括ビルドにもこのfixtureを追加した。private guestの再compileは不要。
+
+**追加調査と残る制約。** Win32待機shimとDXVKのsubmission待機は既にcondition variableを使用。BSAの読込みもfd共有＋preadを実装済みで、単にpolling／毎回openだとは扱えない。一方、D3D9のresource readback／Lock時にはGPU使用中のデータを待つ経路と`waitIdle`のspinが残る。待機の除去やコピー省略は古いデータを見せる恐れがあり、今回は変更していない。compiler worker数の制限、GPU vendor偽装による全shader先行生成、fence削減も、実機での頻度・負荷根拠なしには採用しない。
+
+[DXVK公式の開発者向け説明](https://github.com/doitsujin/dxvk/wiki/Developer-guidelines)も、初使用直前のshader生成がstallを起こすと説明している。ただしこれは新しいDXVK／D3D11向け資料であり、現行の固定D3D9＋MoltenVKへそのまま適用した証拠ではない。今回の採用根拠は固定コードのロック範囲と独立gate比較。初めて遭遇するeffectのHLSL／Metal生成、GPU負荷、熱による速度低下までは解消していない。

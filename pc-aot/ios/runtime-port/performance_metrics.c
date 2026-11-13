@@ -13,7 +13,8 @@ static const uint64_t upper_ns[SKYRIM_PERF_BUCKET_COUNT] = {
 };
 static const char *const names[SKYRIM_PERF_KIND_COUNT] = {
     "frame_gap", "present_host", "pacer", "hlsl",
-    "graphics_pipeline", "compute_pipeline", "shader_module"
+    "graphics_pipeline", "compute_pipeline", "shader_module",
+    "graphics_compile_wait", "compute_compile_wait"
 };
 typedef struct PerfAtomic {
     _Atomic uint64_t buckets[SKYRIM_PERF_BUCKET_COUNT];
@@ -85,7 +86,8 @@ void skyrim_perf_log_window(void) {
             "IOS_TIMING schema=1 approximate_window=1 end_ns=%llu window_ns=%llu kind=%s samples=%llu total_ns=%llu max_ns=%llu failures_known=%u failures=%llu sleep_calls=%llu bins=",
             (unsigned long long)end_ns, (unsigned long long)window_ns,
             names[kind], (unsigned long long)count, (unsigned long long)w.total_ns,
-            (unsigned long long)w.max_ns, kind >= SKYRIM_PERF_HLSL,
+            (unsigned long long)w.max_ns,
+            kind >= SKYRIM_PERF_HLSL && kind <= SKYRIM_PERF_SHADER_MODULE,
             (unsigned long long)w.failures, (unsigned long long)w.sleep_calls);
         if (used < 0 || (size_t)used >= sizeof(line)) continue;
         for (unsigned i = 0; i < SKYRIM_PERF_BUCKET_COUNT; ++i) {

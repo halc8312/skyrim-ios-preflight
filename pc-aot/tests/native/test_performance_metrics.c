@@ -56,6 +56,7 @@ int main(void) {
     assert(samples == 80000 && total == 80000 * UINT64_C(1234567));
     assert(failures == 20000 && sleeps == 240000);
     skyrim_perf_record(SKYRIM_PERF_PACER, 33000000, 0, 8);
+    skyrim_perf_record(SKYRIM_PERF_GRAPHICS_COMPILE_WAIT, 120000000, 0, 0);
     skyrim_perf_log_window();
     puts("performance_histogram_boundaries_and_concurrent_drain=PASS");
     return 0;
