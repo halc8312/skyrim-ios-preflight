@@ -243,6 +243,11 @@ def patch_dispatch(s: str) -> str:
 
 
 def patch_shader(s: str) -> str:
+    s = '#include "performance_metrics.h"\n' + s
+    s = replace_once(s, '  int status = compile_hlsl(&info, &code, &messages);',
+        '  const uint64_t ios_started = skyrim_perf_now_ns();\n'
+        '  int status = compile_hlsl(&info, &code, &messages);\n'
+        '  skyrim_perf_end(SKYRIM_PERF_HLSL, ios_started, status < 0);', 'HLSL host timing')
     start = s.index("static void init_compiler() {")
     end = s.index("\nstruct Constant {", start)
     return s[:start] + '''static void init_compiler() {

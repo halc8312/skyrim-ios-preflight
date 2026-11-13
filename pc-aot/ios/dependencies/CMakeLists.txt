@@ -51,7 +51,14 @@ endforeach()
 
 # Keep the patched public DXVK source list authoritative without editing vendor
 # or producing an embedded dylib. Its checked-in SPIR-V headers need no shader tool.
-set(_dxvk "${SKYDREAM_SOURCE_DIR}/third_party/dxvk")
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(_dxvk "${CMAKE_CURRENT_BINARY_DIR}/public-dxvk")
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/prepare_dxvk.py"
+  --source "${SKYDREAM_SOURCE_DIR}/third_party/dxvk" --output "${_dxvk}"
+  RESULT_VARIABLE _dxvk_prepare_result)
+if(NOT _dxvk_prepare_result EQUAL 0)
+  message(FATAL_ERROR "Pinned public DXVK adapter preparation failed")
+endif()
 file(READ "${_dxvk}/CMakeLists.txt" _dxvk_cmake)
 string(REGEX MATCH "add_library\\(dxvk_d3d9 SHARED[^)]*\\)" _declaration "${_dxvk_cmake}")
 if(NOT _declaration)
@@ -62,6 +69,24 @@ string(REGEX REPLACE "\\)$" "" _sources "${_sources}")
 separate_arguments(_sources UNIX_COMMAND "${_sources}")
 list(TRANSFORM _sources PREPEND "${_dxvk}/")
 add_library(dxvk_d3d9 STATIC ${_sources})
+target_sources(dxvk_d3d9 PRIVATE "${CMAKE_CURRENT_LIST_DIR}/pipeline_cache.cpp")
+target_include_directories(dxvk_d3d9 PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
+# Invalidate serialized driver data after translator, shader-adapter, SDK/compiler
+# or dependency changes. GPU/driver UUID and running OS are checked at runtime.
+set(_cache_identity "v1;${CMAKE_CXX_COMPILER_VERSION};${CMAKE_OSX_SYSROOT};${CMAKE_OSX_DEPLOYMENT_TARGET}")
+foreach(_input source-lock.json ios/dependencies/build-dependencies.sh
+    ios/dependencies/patch_spirv_cross.py ios/dependencies/prepare_dxvk.py
+    ios/dependencies/pipeline_cache.h ios/dependencies/pipeline_cache.cpp
+    ios/runtime-port/prepare_runtime.py)
+  file(SHA256 "${_root}/${_input}" _cache_input_sha)
+  string(APPEND _cache_identity ";${_cache_input_sha}")
+endforeach()
+string(SHA256 _cache_namespace "${_cache_identity}")
+target_compile_definitions(dxvk_d3d9 PRIVATE "SKYRIM_PIPELINE_CACHE_NAMESPACE=\"${_cache_namespace}\"")
+add_library(skyrim_performance STATIC "${_root}/ios/runtime-port/performance_metrics.c")
+target_compile_features(skyrim_performance PRIVATE c_std_11)
+target_compile_options(skyrim_performance PRIVATE -O2)
+target_include_directories(skyrim_performance PUBLIC "${_root}/ios/runtime-port")
 set_target_properties(dxvk_d3d9 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(dxvk_d3d9 PUBLIC cxx_std_17)
 target_include_directories(dxvk_d3d9 PRIVATE "${_dxvk}/generated"
@@ -77,7 +102,7 @@ target_compile_options(dxvk_d3d9 PRIVATE -O2
   "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstdint>"
   "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstring>"
   -Wno-deprecated-declarations -fvisibility=default)
-target_link_libraries(dxvk_d3d9 PUBLIC SDL2::SDL2-static Threads::Threads)
+target_link_libraries(dxvk_d3d9 PUBLIC SDL2::SDL2-static Threads::Threads skyrim_performance)
 
 add_library(skyrim_ios_dependencies INTERFACE)
 target_link_libraries(skyrim_ios_dependencies INTERFACE dxvk_d3d9

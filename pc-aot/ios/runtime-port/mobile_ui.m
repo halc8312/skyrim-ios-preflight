@@ -3,6 +3,7 @@
  * guest addresses, process snapshots or original installation edits. */
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <dispatch/dispatch.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
 #include <math.h>
@@ -11,12 +12,48 @@
 #include "mobile_ui.h"
 #include "mobile_core.h"
 #include "ios_runtime.h"
+#include "performance_metrics.h"
+#include "pipeline_cache_control.h"
 
 static NSMutableDictionary *settings;
 static NSDictionary *startup;
 static NSString *profilePath;
 static __weak UIWindow *hostWindow;
 static uint64_t frameCount;
+static UIBackgroundTaskIdentifier cacheBackgroundTask = UIBackgroundTaskInvalid;
+static uint64_t cacheCheckpointTicket;
+static BOOL cacheCheckpointQueued;
+
+static void finishCacheCheckpoint(uint64_t ticket, BOOL cancel) {
+    if (cancel) skyrim_pipeline_checkpoint_cancel(ticket);
+    if (ticket != cacheCheckpointTicket) return;
+    UIBackgroundTaskIdentifier task = cacheBackgroundTask;
+    cacheBackgroundTask = UIBackgroundTaskInvalid;
+    cacheCheckpointQueued = NO;
+    if (task != UIBackgroundTaskInvalid) [UIApplication.sharedApplication endBackgroundTask:task];
+}
+
+static void preparePipelineCacheCheckpoint(void) {
+    if (cacheBackgroundTask != UIBackgroundTaskInvalid) return;
+    const uint64_t ticket = skyrim_pipeline_checkpoint_begin();
+    cacheCheckpointTicket = ticket;
+    cacheBackgroundTask = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"Pipeline cache" expirationHandler:^{
+        finishCacheCheckpoint(ticket, YES);
+    }];
+    if (cacheBackgroundTask == UIBackgroundTaskInvalid) {
+        skyrim_pipeline_checkpoint_cancel(ticket); return;
+    }
+}
+
+static void checkpointPipelineCache(void) {
+    if (cacheBackgroundTask == UIBackgroundTaskInvalid || cacheCheckpointQueued) return;
+    cacheCheckpointQueued = YES;
+    const uint64_t ticket = cacheCheckpointTicket;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        skyrim_pipeline_checkpoint_save(ticket);
+        dispatch_async(dispatch_get_main_queue(), ^{ finishCacheCheckpoint(ticket, NO); });
+    });
+}
 static int renderWidth, renderHeight;
 static unsigned iniCount;
 static NSTimeInterval mobileTime(void) { return (double)skyrim_mobile_now()/1e9; }
@@ -335,6 +372,8 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
         self.notice=[UILabel new]; self.notice.font=[UIFont systemFontOfSize:13 weight:UIFontWeightMedium]; self.notice.textColor=UIColor.whiteColor;
         self.notice.backgroundColor=[UIColor colorWithWhite:0 alpha:.8]; self.notice.textAlignment=NSTextAlignmentCenter; self.notice.numberOfLines=2; self.notice.hidden=YES; [self addSubview:self.notice];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(resignActive:) name:UIApplicationWillResignActiveNotification object:nil];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(becomeActive:) name:UIApplicationDidBecomeActiveNotification object:nil];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(enterBackground:) name:UIApplicationDidEnterBackgroundNotification object:nil];
     }
     return self;
 }
@@ -360,7 +399,9 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     self.notice.frame=CGRectMake(area.origin.x+area.size.width*.22,CGRectGetMaxY(area)-64,area.size.width*.56,52);
 }
 - (void)message:(NSString *)text {self.notice.text=text;self.noticeUntil=mobileTime()+7;self.notice.hidden=NO;}
-- (void)resignActive:(NSNotification *)note { [self clearInput]; }
+- (void)resignActive:(NSNotification *)note { [self clearInput]; skyrim_ios_metrics_active(0); preparePipelineCacheCheckpoint(); }
+- (void)becomeActive:(NSNotification *)note { finishCacheCheckpoint(cacheCheckpointTicket, YES); skyrim_ios_metrics_active(1); }
+- (void)enterBackground:(NSNotification *)note { checkpointPipelineCache(); }
 - (void)clearInput {
     self.lookFinger=nil;
     for (SKPadControl *c in self.controls) {c.finger=nil;c.stick=CGPointZero;[c setNeedsDisplay];}
@@ -474,6 +515,7 @@ void skyrim_mobile_tick(void) {
         skyrim_ios_take_frame_metrics(&count,&total,&maximum,&interval);
         double average=lastLog ? (frames-logFrames)/(now-lastLog) : 0;
         fprintf(stderr,"IOS_PERF frames=%llu fps=%.2f cap=%u thermal=%ld present_host_avg_ms=%.2f present_host_max_ms=%.2f frame_gap_max_ms=%.2f\n",(unsigned long long)frames,average,cap,(long)thermal,count ? (double)total/count/1e6 : 0,(double)maximum/1e6,(double)interval/1e6);lastLog=now;logFrames=frames;
+        skyrim_perf_log_window();
     }
     if(overlay.saveDeadline && now-lastSaveCheck>=1) {
         NSDictionary *current=[overlay saveFiles];lastSaveCheck=now;

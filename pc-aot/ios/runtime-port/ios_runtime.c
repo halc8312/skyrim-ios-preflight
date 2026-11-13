@@ -2,6 +2,7 @@
 #include "ios_runtime.h"
 #include "mobile_core.h"
 #include "mobile_ui.h"
+#include "performance_metrics.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -20,6 +21,19 @@ static unsigned present_phase;
 static unsigned present_on_main;
 static unsigned pumping; /* main-thread-only reentrancy guard */
 static uint64_t driver_count, driver_total, driver_max, interval_max, last_frame;
+/* Only diagnostic state is protected. No rendering or event work runs while
+ * locked. The first frame after resuming is not a multi-minute frame stall. */
+static pthread_mutex_t frame_metrics_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int metrics_active = 1;
+static uint64_t metrics_epoch;
+
+void skyrim_ios_metrics_active(int active) {
+    pthread_mutex_lock(&frame_metrics_mutex);
+    metrics_active = !!active;
+    last_frame = 0;
+    __atomic_add_fetch(&metrics_epoch, 1, __ATOMIC_RELAXED);
+    pthread_mutex_unlock(&frame_metrics_mutex);
+}
 
 static void atomic_max(uint64_t *target, uint64_t value) {
     uint64_t old = __atomic_load_n(target, __ATOMIC_RELAXED);
@@ -72,13 +86,15 @@ void skyrim_ios_drawable_size(int *width, int *height) {
 
 void skyrim_ios_present_phase(unsigned phase) {
     static _Thread_local uint64_t entered;
+    static _Thread_local uint64_t entered_epoch;
     uint64_t now = monotonic_ns();
-    if (phase == 3) entered = now;
-    if (phase == 4 && entered) {
+    if (phase == 3) { entered = now; entered_epoch = __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED); }
+    if (phase == 4 && entered && entered_epoch == __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED)) {
         uint64_t elapsed = now - entered;
         __atomic_add_fetch(&driver_count, 1, __ATOMIC_RELAXED);
         __atomic_add_fetch(&driver_total, elapsed, __ATOMIC_RELAXED);
         atomic_max(&driver_max, elapsed); entered = 0;
+        skyrim_perf_record(SKYRIM_PERF_PRESENT_HOST, elapsed, 0, 0);
     }
     __atomic_store_n(&present_on_main, !!pthread_main_np(), __ATOMIC_RELAXED);
     __atomic_store_n(&last_phase_ns, monotonic_ns(), __ATOMIC_RELAXED);
@@ -98,15 +114,20 @@ void skyrim_ios_pace_frame(void) {
     /* A loading thread may own Present temporarily. Do not share an unsafe
      * clock, replay missed frames or busy-spin. Keep UIKit alive while waiting. */
     static _Thread_local SkyrimFrameClock clock;
-    uint64_t deadline = skyrim_mobile_frame_deadline(&clock, monotonic_ns(), skyrim_mobile_fps_limit());
+    uint64_t started = monotonic_ns(), sleeps = 0;
+    uint64_t epoch = __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED);
+    uint64_t deadline = skyrim_mobile_frame_deadline(&clock, started, skyrim_mobile_fps_limit());
     for (;;) {
         uint64_t now = monotonic_ns();
         if (now >= deadline) break;
         uint64_t remaining = deadline - now;
         struct timespec pause = {0, (long)(remaining > 4000000 ? 4000000 : remaining)};
         nanosleep(&pause, NULL);
+        ++sleeps;
         skyrim_ios_pump_events();
     }
+    if (epoch == __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED))
+        skyrim_perf_record(SKYRIM_PERF_PACER, monotonic_ns() - started, 0, sleeps);
 }
 
 void skyrim_ios_watchdog(void) {
@@ -138,9 +159,17 @@ void skyrim_ios_present_result(int32_t result) {
         return;
     }
     __atomic_store_n(&last_error, 0, __ATOMIC_RELAXED);
-    uint64_t now = monotonic_ns();
-    uint64_t before = __atomic_exchange_n(&last_frame, now, __ATOMIC_RELAXED);
-    if (before && now >= before) atomic_max(&interval_max, now - before);
+    pthread_mutex_lock(&frame_metrics_mutex);
+    uint64_t now = monotonic_ns(), gap = 0;
+    if (metrics_active) {
+        if (last_frame && now >= last_frame) gap = now - last_frame;
+        last_frame = now;
+    }
+    pthread_mutex_unlock(&frame_metrics_mutex);
+    if (gap) {
+        atomic_max(&interval_max, gap);
+        skyrim_perf_record(SKYRIM_PERF_FRAME_GAP, gap, 0, 0);
+    }
     skyrim_mobile_frame();
     if (__atomic_add_fetch(&successful_presents, 1, __ATOMIC_RELAXED) == 1)
         skyrim_ios_stage("first-successful-present-title-not-verified");

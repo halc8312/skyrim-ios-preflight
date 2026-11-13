@@ -1,0 +1,227 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#include "pipeline_cache.h"
+#include "pipeline_cache_control.h"
+#include "performance_metrics.h"
+#include <algorithm>
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
+#include <pthread.h>
+#include <sys/stat.h>
+#include <sys/utsname.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+namespace {
+constexpr size_t maxPayload = 64 * 1024 * 1024;
+constexpr size_t headerSize = 32;
+/* Process-lifetime registry: never destroy its mutex during static teardown
+ * while an optional UIKit checkpoint worker may still be completing. */
+struct RegistryMutex {
+    pthread_mutex_t value = PTHREAD_MUTEX_INITIALIZER;
+    void lock() { pthread_mutex_lock(&value); }
+    void unlock() { pthread_mutex_unlock(&value); }
+} registryMutex;
+skyrim::PipelineCache *registryHead;
+std::atomic<uint64_t> issuedTicket{0}, cancelledThrough{0};
+bool cancelled(uint64_t ticket) {
+    return !ticket || ticket <= cancelledThrough.load(std::memory_order_relaxed);
+}
+uint64_t readLE(const uint8_t *p, unsigned size) {
+    uint64_t value = 0;
+    for (unsigned i = 0; i < size; ++i) value |= uint64_t(p[i]) << (8 * i);
+    return value;
+}
+void writeLE(uint8_t *p, uint64_t value, unsigned size) {
+    for (unsigned i = 0; i < size; ++i) p[i] = uint8_t(value >> (8 * i));
+}
+/* Accidental corruption checksum, not a signature or trust assertion. The full
+ * identity and Vulkan header are compared as well; a filename hash is not a key. */
+uint64_t checksum(const void *data, size_t size) {
+    uint64_t h = UINT64_C(14695981039346656037);
+    const auto *p = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < size; ++i) { h ^= p[i]; h *= UINT64_C(1099511628211); }
+    return h;
+}
+struct File {
+    int fd;
+    explicit File(int value) : fd(value) {}
+    ~File() { if (fd >= 0) close(fd); }
+};
+bool readExact(int fd, void *data, size_t bytes) {
+    auto *p = static_cast<uint8_t*>(data);
+    while (bytes) {
+        ssize_t n = read(fd, p, bytes);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return false;
+        p += n; bytes -= size_t(n);
+    }
+    return true;
+}
+bool writeExact(int fd, const void *data, size_t bytes, uint64_t ticket) {
+    auto *p = static_cast<const uint8_t*>(data);
+    while (bytes && !cancelled(ticket)) {
+        ssize_t n = write(fd, p, std::min(bytes, size_t(1024 * 1024)));
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return false;
+        p += n; bytes -= size_t(n);
+    }
+    return !bytes && !cancelled(ticket);
+}
+}
+
+namespace skyrim {
+PipelineCache::PipelineCache(VkDevice device, PFN_vkCreatePipelineCache create,
+    PFN_vkGetPipelineCacheData getData, PFN_vkDestroyPipelineCache destroy,
+    const VkPhysicalDeviceProperties& properties, const char *directory,
+    const char *sourceNamespace)
+    : device_(device), getData_(getData), destroy_(destroy), properties_(properties) {
+    std::vector<uint8_t> initial;
+    try {
+        struct utsname os{};
+        struct stat root{};
+        if (directory && directory[0] == '/' && sourceNamespace && *sourceNamespace &&
+            !lstat(directory, &root) && S_ISDIR(root.st_mode) && !uname(&os)) {
+            char gpu[128];
+            int n = snprintf(gpu, sizeof(gpu), "%08x:%08x:%08x:%08x:",
+                properties.vendorID, properties.deviceID, properties.driverVersion, properties.apiVersion);
+            for (unsigned i = 0; i < VK_UUID_SIZE; ++i)
+                n += snprintf(gpu + n, sizeof(gpu) - size_t(n), "%02x", properties.pipelineCacheUUID[i]);
+            identity_ = std::string(sourceNamespace) + "|" + gpu + "|" + os.sysname + "|" +
+                os.release + "|" + os.version + "|" + os.machine;
+            if (identity_.size() <= 2048) {
+                // One published file plus one bounded pending file per app.
+                // A different GPU/build is a cold miss, not another disk copy.
+                path_ = std::string(directory) + "/pipeline-v1.cache";
+                initial = load();
+            }
+        }
+    } catch (...) { path_.clear(); initial.clear(); }
+    VkPipelineCacheCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    // flags=0 retains the driver's internal synchronization.
+    info.initialDataSize = initial.size();
+    info.pInitialData = initial.empty() ? nullptr : initial.data();
+    result_ = create(device_, &info, nullptr, &handle_);
+    const size_t offered = initial.size();
+    bool retry = result_ != VK_SUCCESS && !initial.empty();
+    if (retry) {
+        handle_ = VK_NULL_HANDLE;
+        info.initialDataSize = 0; info.pInitialData = nullptr;
+        result_ = create(device_, &info, nullptr, &handle_);
+    }
+    fprintf(stderr, "IOS_PIPE_CACHE event=create offered_bytes=%zu empty_retry=%u result=%d hit_count_unknown=1\n",
+        offered, unsigned(retry), int(result_));
+    if (result_ == VK_SUCCESS) {
+        std::lock_guard<RegistryMutex> lock(registryMutex);
+        next_ = registryHead; registryHead = this; registered_ = true;
+    }
+}
+
+PipelineCache::~PipelineCache() {
+    {
+        // A checkpoint cannot outlive its Vulkan cache/device. Pipeline compile
+        // itself never takes this registry lock and is not serialized here.
+        std::lock_guard<RegistryMutex> lock(registryMutex);
+        if (registered_) {
+            auto **p = &registryHead;
+            while (*p && *p != this) p = &(*p)->next_;
+            if (*p) *p = next_;
+        }
+    }
+    if (result_ == VK_SUCCESS) destroy_(device_, handle_, nullptr);
+}
+
+bool PipelineCache::validPayload(const std::vector<uint8_t>& bytes) const {
+    // The pinned MoltenVK emits a 32-byte V1 header and at least the EOF word.
+    return bytes.size() >= 36 && bytes.size() <= maxPayload &&
+        readLE(bytes.data(), 4) == 32 &&
+        readLE(bytes.data() + 4, 4) == VK_PIPELINE_CACHE_HEADER_VERSION_ONE &&
+        readLE(bytes.data() + 8, 4) == properties_.vendorID &&
+        readLE(bytes.data() + 12, 4) == properties_.deviceID &&
+        !memcmp(bytes.data() + 16, properties_.pipelineCacheUUID, VK_UUID_SIZE);
+}
+
+std::vector<uint8_t> PipelineCache::load() const {
+    if (path_.empty()) return {};
+    File file(open(path_.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+    struct stat st{};
+    uint8_t h[headerSize];
+    if (file.fd < 0 || fstat(file.fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size < static_cast<off_t>(headerSize) ||
+        st.st_size > static_cast<off_t>(headerSize + 2048 + maxPayload) ||
+        !readExact(file.fd, h, sizeof(h)) || memcmp(h, "SKPC0001", 8)) return {};
+    uint64_t keyBytes = readLE(h + 8, 8), payloadBytes = readLE(h + 16, 8);
+    if (keyBytes != identity_.size() || payloadBytes < 36 || payloadBytes > maxPayload ||
+        uint64_t(st.st_size) != headerSize + keyBytes + payloadBytes) return {};
+    std::string key(size_t(keyBytes), '\0');
+    if (!readExact(file.fd, key.data(), key.size()) || key != identity_) return {};
+    std::vector<uint8_t> bytes(static_cast<size_t>(payloadBytes));
+    if (!readExact(file.fd, bytes.data(), bytes.size()) || !validPayload(bytes) ||
+        readLE(h + 24, 8) != checksum(bytes.data(), bytes.size())) return {};
+    return bytes;
+}
+
+bool PipelineCache::save(const std::vector<uint8_t>& bytes, uint64_t ticket) const {
+    if (path_.empty() || !validPayload(bytes) || cancelled(ticket)) return false;
+    std::string temporary = path_ + ".pending";
+    // Checkpoints are serialized in this process. Remove only our unpublished
+    // pending name left by an interrupted earlier checkpoint, never the old cache.
+    if (unlink(temporary.c_str()) && errno != ENOENT) return false;
+    File file(open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
+    if (file.fd < 0) return false;
+    uint8_t header[headerSize]{};
+    memcpy(header, "SKPC0001", 8);
+    writeLE(header + 8, identity_.size(), 8);
+    writeLE(header + 16, bytes.size(), 8);
+    writeLE(header + 24, checksum(bytes.data(), bytes.size()), 8);
+    bool ok = writeExact(file.fd, header, sizeof(header), ticket) &&
+        writeExact(file.fd, identity_.data(), identity_.size(), ticket) &&
+        writeExact(file.fd, bytes.data(), bytes.size(), ticket) && !fsync(file.fd) && !cancelled(ticket);
+    int closeResult = close(file.fd); file.fd = -1;
+    ok = ok && !closeResult && !cancelled(ticket);
+    if (ok) ok = !rename(temporary.c_str(), path_.c_str());
+    if (!ok) unlink(temporary.c_str());
+    return ok;
+}
+
+void PipelineCache::checkpoint(uint64_t ticket) {
+    uint64_t generation = generation_.load(std::memory_order_relaxed);
+    if (path_.empty() || generation == savedGeneration_ || cancelled(ticket)) return;
+    uint64_t started = skyrim_perf_now_ns();
+    size_t size = 0;
+    VkResult result = getData_(device_, handle_, &size, nullptr);
+    if (result != VK_SUCCESS || size < 36 || size > maxPayload || cancelled(ticket)) return;
+    std::vector<uint8_t> bytes(size);
+    result = getData_(device_, handle_, &size, bytes.data());
+    if (result != VK_SUCCESS || size > bytes.size() || cancelled(ticket)) return;
+    bytes.resize(size);
+    bool stored = save(bytes, ticket);
+    if (stored) savedGeneration_ = generation; // concurrent new compiles stay dirty
+    fprintf(stderr, "IOS_PIPE_CACHE event=checkpoint bytes=%zu stored=%u elapsed_ns=%llu\n",
+        size, unsigned(stored), static_cast<unsigned long long>(skyrim_perf_now_ns() - started));
+}
+
+void PipelineCache::checkpointAll(uint64_t ticket) {
+    if (cancelled(ticket)) return;
+    std::lock_guard<RegistryMutex> lock(registryMutex);
+    for (auto *p = registryHead; p && !cancelled(ticket); p = p->next_) {
+        try { p->checkpoint(ticket); }
+        catch (...) { fprintf(stderr, "IOS_PIPE_CACHE event=checkpoint skipped=1\n"); }
+    }
+}
+}
+
+extern "C" uint64_t skyrim_pipeline_checkpoint_begin(void) {
+    uint64_t ticket = issuedTicket.fetch_add(1, std::memory_order_relaxed) + 1;
+    skyrim_pipeline_checkpoint_cancel(ticket - 1);
+    return ticket;
+}
+extern "C" void skyrim_pipeline_checkpoint_cancel(uint64_t ticket) {
+    uint64_t old = cancelledThrough.load(std::memory_order_relaxed);
+    while (old < ticket && !cancelledThrough.compare_exchange_weak(old, ticket, std::memory_order_relaxed)) {}
+}
+extern "C" void skyrim_pipeline_checkpoint_save(uint64_t ticket) {
+    skyrim::PipelineCache::checkpointAll(ticket);
+}

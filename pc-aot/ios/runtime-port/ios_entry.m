@@ -138,6 +138,7 @@ int SDL_main(int argc, char **argv) {
         set_default("LB_LOG", skyrim_mobile_verbose() ? "1" : "0");
         set_default("DXVK_LOG_PATH", cache.fileSystemRepresentation);
         set_default("DXVK_STATE_CACHE_PATH", cache.fileSystemRepresentation);
+        set_default("SKYRIM_VK_PIPELINE_CACHE_PATH", cache.fileSystemRepresentation);
         set_default("SKYDREAM_VSYNC", "1");
         fprintf(stderr, "Game input: %s\nProfile: %s\n", game.fileSystemRepresentation,
                 profile.fileSystemRepresentation);

@@ -9,6 +9,8 @@
 - 2/4バイト書き込みhelperの不要なstack退避を取り除くパッチを採用。実iOS ARM64コンパイラー出力でrelease atomic／barrierを保ったまま命令を削減。旧／新各524,288ケースのbyte比較も通過した。物理iPhoneの性能測定は未実施。
 - D3D9の永続テクスチャ更新／解放で、全objectの走査を対象objectの範囲検索へ変更。実コードの旧／新で内容・順序・ロック・寿命を比較し、ASan/UBSanも通過。局所ベンチでは探索時間が減ったが、ゲームでの呼出頻度やFPS改善量は未知。
 - SIMD固定長コピーの別案は実機械語が同一だったため棄却。heap bitmapは即時fitで遅くなる比較結果から棄却し、原実装を維持。memory fence・物理処理・画質設定を削って速度を出す変更は行っていない。
+- 追加調査でDXVKのVulkan pipeline cacheが起動間で保存されていないことを確認し、OS/GPU/変換器の一致を確認した保存・再利用を公開hostに追加。既存のDXVK state cacheは維持。保存はbackground時のworkerのみで、破損や中断された書き込みが旧cacheを壊さないようにし、読込不適合時の空cache起動を残す。実C++による自作driver検査とASan/UBSanを通過。実Metal／UIKit／iPhone上の効果は未確認。
+- frame間隔・Present・FPS cap待機とsleep回数・shader/pipeline作成時間の固定histogramを追加。毎frameのファイル出力やallocationをせず5秒ごとにまとめる。現状の引っ掛かりがcompiler由来かを次の実機ログで判断するためで、GPU時間やcache hitを測ったとは扱わない。公開DXVKの変更5 unitは実ヘッダー付きWSL syntax compileを通過した。
 - private guestを同じ入力から再生成し、90,390関数・未対応510件・生成515ファイルの内容と共有ABIが基準と一致。新helperを含めた514 unitのローカルARM64 compile/linkもexit0で完了。コンパイラー／フラグ／17個のsystem importは同じで、unsigned binaryは150,660,464→149,123,672 bytesへ縮小。FPS改善率としては扱わない。
 - 新frameworkと署名前bindingは`private/title-performance-20261113-01/arm64-ios/`に保持。SHA256は[比較記録](PERFORMANCE_WORK.md)に記載。rootの性能コードcommitは`7f12ae5`、公開ミラーは`a78312c2ba1236baa84eada9f69a0f7f3a50f8ef`として既存branchへpush・remote照合済み。新しいMacビルド・署名・実機更新はまだ行っていない。20時以降の一括ビルドまでは新しい根拠なく検査を繰り返さない。
 
