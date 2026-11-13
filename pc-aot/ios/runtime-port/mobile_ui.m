@@ -21,7 +21,7 @@ static NSDictionary *startup;
 static NSString *profilePath;
 static __weak UIWindow *hostWindow;
 static uint64_t frameCount;
-static UIBackgroundTaskIdentifier cacheBackgroundTask = UIBackgroundTaskInvalid;
+static UIBackgroundTaskIdentifier cacheBackgroundTask;
 static uint64_t cacheCheckpointTicket;
 static BOOL cacheCheckpointQueued;
 
@@ -96,6 +96,10 @@ static NSArray<NSDictionary *> *graphicsRows(void) {
 }
 void skyrim_mobile_initialize(const char *profile) {
     NSCAssert(NSThread.isMainThread, @"mobile startup must run on main");
+    /* UIKit exports this value; it is not a C constant initializer. Set it on
+     * the main thread before creating the overlay and its lifecycle observers. */
+    static dispatch_once_t cacheInitialization;
+    dispatch_once(&cacheInitialization, ^{ cacheBackgroundTask = UIBackgroundTaskInvalid; });
     profilePath = [NSString stringWithUTF8String:profile];
     id saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
     settings = [NSMutableDictionary dictionary];
