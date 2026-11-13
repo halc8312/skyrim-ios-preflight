@@ -26,20 +26,22 @@ WSL x86_64 GCC -O2でのshadow局所比較（7ペアの中央値、1objectにつ
 
 ## 実行状況
 
-build4として準備中。build3の操作・画質・FPS上限は継承し、画質は自動で変更しない。新しいクラウドビルドは未起動。
+build4の公開sourceとprivate guestのローカル検証が完了。build3の操作・画質・FPS上限は継承し、画質は自動で変更しない。新しいクラウドビルドは未起動。
 
-- `private/title-performance-20261113-01`でprivate guest再生成完了（378.83秒）。90,390関数・未対応510件は基準と同じ。生成515ファイルと共有ABIヘッダーは基準とbyte単位一致。原入力のハッシュ不変。新helperを含めた514 unitのWindows→iOS ARM64 compile/linkを2並列で実行中（exec session72512）。終了前の結果を成功扱いしない。
+- `private/title-performance-20261113-01`でprivate guest再生成完了（378.83秒）。90,390関数・未対応510件は基準と同じ。生成515ファイルと共有ABIヘッダーは基準とbyte単位一致。原入力のハッシュ不変。新helperを含めた514 unitのWindows→iOS ARM64 compile/linkはexit0で完了（旧exec session72512は終了済み）。コンパイラー・全フラグ・共有CPU ABI・17個のsystem importは基準と同じ。コンパイルを再実行しない。
+- 新frameworkは`private/title-performance-20261113-01/arm64-ios/SkyrimGuest.framework`、unsigned SHA256 `dedd20f0e42d4c24b10f7f10b193b5987c4bd45a069ac34e8cc263efe7c86d48`。150,660,464→149,123,672 bytes（1,536,792 bytes減）、実`__text`は142,685,512→141,170,928 bytes。データ領域のサイズは同じ。コードサイズ削減は測定事実で、FPSや発熱改善量ではない。
+- 既存のハッシュ固定済みpolicyで、新frameworkから署名前の`arm64-ios/signing-content-binding.json`を独立生成済み。manifest SHA256 `1da3244849c8d83538c2fb06a6e15e82e81f5b112424adfa6f10708baaee46be`。署名の際はこの新guestと新manifestを使い、元build2/3の値を流用しない。
 - 最終public runtimeの実shadow比較、TSO helper比較、Windows ARM64出力比較を通過。heap棄却後の最終shadow検査（heap原文不変も検証）、WSLのpatch contract 8件、公開source混入checkも通過。host runtime→CPU patch→binding宣言のステージ適用も確認済み。ただし以前の`local/performance-20261113/host-overlay`は棄却heap候補を含む実験stageであり製品に使わない。クラウドは最終public scriptから毎回新規stageを生成する。
 - Mac用の新fixture実行ではworkflowの`IPHONEOS_DEPLOYMENT_TARGET`をsubshell内で外し、`SDKROOT`をmacOSに指定。Mac用test binaryへのiOS環境混入を防ぐ。shell構文確認済み。実Macでの新fixtureは一括ビルド時に確認する。
 - `Info.plist.in`とassemblerはbuild4を要求。private signing/install/snapshot helperは`private/title-signing-20261112/*_build4.py`として準備済み。旧build3 helper/IPAは保持。署名・端末操作はまだ行っていない。
+- 性能sourceはroot `7f12ae5425497281393c35f5a0905263125b6034`、公開ミラーは`a78312c2ba1236baa84eada9f69a0f7f3a50f8ef`として既存branchへpushし、remote読み戻しを照合済み。対象10ファイルのGit blobは両repoで全文一致。後続の結果記録commitはコードを変えない。legacy Xbox CIには変更なし。通常pushがMacジョブを開始しないことを既存設定で確認済み。
 
 ## 次の作業
 
-1. 進行中private compile/linkを完了確認し、最終heap不変・shadow test・公開ソースcheckを確認。必要なものだけを再実行する。
-2. docs/STATUSを更新、rootでcommit。既存公開ミラー`local/prior-preflight/pc-aot/`へ公開sourceだけを反映して同既存branchへpush。Codemagicは手動onlyで、ここでは起動しない。
-3. 20:00以降、内蔵ブラウザでCodemagicのFree残時間／他ジョブ／既存commit実行を確認して、`pc2011-title-host`を1回だけ実行。新しい公的fixture2種を同Macで実行する工程を追加している。Mac/Simulatorを実iPhone合格と混同しない。
-4. 公開host build4を入手し、共有ABI照合後に新private frameworkとPC内で組み立て、既存profile/DPAPI手順で署名。新private guestに一致する独立manifestが必要で、旧guestのhashを使い回さない。
-5. 本人が保存・終了・USB・ロック解除したらprofileのみ最小保護して2/3→4をUpgrade。ゲーム26ファイルは再コピーしない。未接続なら一度だけ準備を案内し、待ち続けて再質問しない。21:00には`skyrim-metal` heartbeatを停止する。
+1. 追加の根拠・変更がなければ、完了した検査やprivate compileを繰り返さず20時まで待つ。端末のFPS・発熱・場面ごとのstall計測が次の判断材料。
+2. 20:00以降、内蔵ブラウザでCodemagicのFree残時間／他ジョブ／最新commitの既存実行を確認して、`pc2011-title-host`を1回だけ実行。新しい公開fixture2種を同Macで実行する工程を追加している。Mac/Simulatorを実iPhone合格と混同しない。
+3. 公開host build4を入手し、共有ABI照合後に上記新private frameworkとPC内で組み立て、既存profile/DPAPI手順で署名。assemblerの入力exeは同じ`private/discovery/basepin-english-1932-20261112-01/inputs/candidate.exe`、SHA256 `d97eb0cc0ceef0923d2234d42b382c0d033853356528b271bc043542b1f5e605`。
+4. 本人が保存・終了・USB・ロック解除したらプロフィールのみ最小保護して2/3→4をUpgrade。ゲーム26ファイルは再コピーしない。未接続なら一度だけ準備を案内し、待ち続けて再質問しない。21:00には`skyrim-metal` heartbeatを停止する。
 
 参照：[Clangのmemory builtins](https://clang.llvm.org/docs/LanguageExtensions.html#memory-builtins)。固定サイズのcompiler builtinと通常のCライブラリー呼出しは区別し、実コンパイラーの出力で確認する。
 
