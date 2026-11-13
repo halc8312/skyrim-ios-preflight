@@ -201,6 +201,25 @@ def patch_bridge(s: str) -> str:
     s = s.replace('    skyrim_ios_present_result((int32_t)hr);',
         '    skyrim_ios_present_phase(4);\n    skyrim_ios_present_result((int32_t)hr);')
     s = s.replace(marker, marker + '\n    skyrim_ios_present_phase(5);')
+    # The key is already ordered by (object, subresource). Preserve upload
+    # order, lock scope and callbacks while visiting only this object's range.
+    s = replace_once(s,
+        '        for (auto &kv : g_persist)\n'
+        '            if (kv.first.first == obj && !g_shadows.count(kv.first)) todo.push_back({MEM + kv.second.guest, kv.second.upload});',
+        '        for (auto it = g_persist.lower_bound({obj, 0});\n'
+        '             it != g_persist.end() && it->first.first == obj; ++it)\n'
+        '            if (!g_shadows.count(it->first)) todo.push_back({MEM + it->second.guest, it->second.upload});',
+        "persistent upload object range")
+    s = replace_once(s,
+        '    for (auto it = g_persist.begin(); it != g_persist.end();) {\n'
+        '        if (it->first.first == obj) { gfree(it->second.guest); it = g_persist.erase(it); }\n'
+        '        else ++it;\n'
+        '    }',
+        '    for (auto it = g_persist.lower_bound({obj, 0});\n'
+        '         it != g_persist.end() && it->first.first == obj;) {\n'
+        '        gfree(it->second.guest);\n'
+        '        it = g_persist.erase(it);\n'
+        '    }', "persistent release object range")
     return s
 
 

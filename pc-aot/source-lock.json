@@ -53,6 +53,13 @@
           "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
           "purpose": "Carry guest arithmetic flags across translated calls in the CPU context instead of resetting them per function",
           "validation": "tests/test_call_flags.py; eight synthetic actual-lifter/native-x86 comparisons, baseline fails and patched passes for both entry modes; iOS execution not yet verified"
+        },
+        {
+          "path": "patches/skydream/0006-inline-ordered-stores.patch",
+          "sha256": "a60bc19fa0c0e487c5d3e28af4ffd50cdd625102dcd5cea86ce1442665d7da1b",
+          "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+          "purpose": "Avoid address-escaping stack spills in strict ordered 16/32-bit store helpers while preserving aligned release atomics and unaligned release fences",
+          "validation": "tests/test_ordered_stores.py; 524288 byte-oracle cases per old/new helper; real iOS ARM64 assembly retains atomics/fences with no stack spill; physical iPhone effect unmeasured"
         }
       ],
       "documented_input_sha1": "67a597df3bb8c5db94b9032f8179d29631b1145d",

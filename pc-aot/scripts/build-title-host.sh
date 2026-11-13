@@ -43,6 +43,17 @@ for item in lock['patches']:
     subprocess.run(['git','-C',str(source),'apply',str(patch)],check=True)
 PY
 
+# These public fixtures execute the changed helpers/texture bridge on this ARM Mac.
+# They do not contain the game or imply physical iPhone gameplay/performance.
+(
+  # The workflow exports an iPhone deployment target for the app. Native test
+  # executables must instead link against macOS and run on the build machine.
+  unset IPHONEOS_DEPLOYMENT_TARGET
+  export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+  python3 -m unittest discover -s tests -p 'test_ordered_stores.py' -v
+  python3 -m unittest discover -s tests -p 'test_shadow_ranges.py' -v
+)
+
 bash ios/dependencies/build-dependencies.sh
 # Keep this required gate, but collect independent app compiler failures in the
 # same paid-minute run instead of stopping before its build can start.
@@ -66,7 +77,7 @@ fi
 # upstream, then apply the CPU ABI patches to the staged runtime only.
 python3 ios/runtime-port/prepare_runtime.py --source "$ROOT/vendor/skydream" --output "$RUN/overlay/runtime"
 git -C "$RUN/overlay" init -q
-for patch in patches/skydream/0001-auxiliary-carry.patch patches/skydream/0005-call-flags.patch; do
+for patch in patches/skydream/0001-auxiliary-carry.patch patches/skydream/0005-call-flags.patch patches/skydream/0006-inline-ordered-stores.patch; do
   git -C "$RUN/overlay" apply --include='runtime/*' "$ROOT/$patch"
 done
 python3 ios/private-abi/prepare_private_abi.py "$RUN/overlay"
