@@ -2,6 +2,8 @@
 
 **2026-11-14 build5準備。** 本人から「ビルドして。このあとiPhoneのほうにも」と実行指示を受領。これにより直前までのgo待ちは解除し、検証済み追加変更を一度の公開hostビルドへまとめる。旧IPA・private guest・セーブを保持し、署名後のUSB更新前に保存・終了状態を確認する。ビルド／インストールの結果と実機性能はまだ未確認。
 
+Codemagic build14（公開`0308342`）は2分6秒で失敗。APC自作fixtureの`memmove`計数マクロがApple SDKのfortifyマクロと衝突した。fixtureの計測区間だけpush/undef/popし、実memmove呼出しのSDK保護は保持する。SDK相当の既存マクロを持つ旧新版の再現条件も加え、関連3検査は通常とASan/UBSanで合格。本番コード・画質・CPU ABIは変更せず、修正版のMac再検証へ進む。
+
 **2026-11-14、追加5件の後にさらに2件を実装。** 同じD3D9 shaderの同時要求を待ち合わせ、自作8同時要求のコンパイルを8→1回へ削減。別shaderやhot cacheは進行し、失敗後の再試行・再入も保持する。読み込み完了通知は固定長ringにし、64件時の詰め直し32,256byte→0。PC自作負荷の通知処理は約11〜51％短縮した。通常／ASan/UBSan、関連検査、実3 translation unitのsyntax検査とCPU ABI不変を確認。次回実機用に`d3d_shader_wait`診断を追加した。初回shaderの単独コンパイルと同期I/Oは残り、iPhoneの改善量は未確認。[根拠と制限](PERFORMANCE_WORK.md)を参照。**go待ちを継続し、アプリ／クラウドビルド・更新は行っていない。**
 
 **2026-11-14、前回の3件に追加して5件を採用。** CTAB定数表の事前確保、ステレオ音声route、等倍point画像変換、BC1 palette出力、描画更新queueの小配列化。PC自作負荷の代表条件でそれぞれ約21/62/49/30/52％の対象処理時間削減を確認した。空queue等の小さな追加負担やNaN符号比較の制限も記録。通常/ASan/UBSan、関連検査、実5 translation unitのsyntax確認を通過。実機FPS・発熱・カクつき改善は未確認で、署名済みbuild4には未収録。[追加5件の根拠](PERFORMANCE_WORK.md)を参照。**goまでアプリ／クラウドビルドしない方針は継続。**

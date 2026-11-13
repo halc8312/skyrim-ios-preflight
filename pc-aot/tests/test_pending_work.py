@@ -76,10 +76,17 @@ class PendingWorkTests(unittest.TestCase):
 
     def test_actual_apc_fifo_wrap_recursion_full_boundary_and_tls(self):
         for patched in (False, True):
-            with self.subTest(patched=patched), tempfile.TemporaryDirectory(prefix='apc-work-') as tmp:
-                output = self.run_fixture(Path(tmp), 'apc', apc_fixture(patched), patched)
-                self.assertIn('semantics=PASS', output)
-                self.assertIn(f'shifted_bytes={0 if patched else 32256}', output)
+            for sdk_macro in (False, True):
+                with self.subTest(patched=patched, sdk_macro=sdk_macro), tempfile.TemporaryDirectory(prefix='apc-work-') as tmp:
+                    source = apc_fixture(patched)
+                    if sdk_macro:
+                        source = source.replace('static void *count_move(',
+                            '#undef memmove\n#define memmove(...) __builtin_memmove(__VA_ARGS__)\nstatic void *count_move(', 1)
+                        source = source.replace('#pragma pop_macro("memmove")',
+                            '#pragma pop_macro("memmove")\n#ifndef memmove\n#error SDK macro was not restored\n#endif', 1)
+                    output = self.run_fixture(Path(tmp), 'apc', source, patched)
+                    self.assertIn('semantics=PASS', output)
+                    self.assertIn(f'shifted_bytes={0 if patched else 32256}', output)
 
     def test_actual_shader_same_key_different_keys_failure_reentry_and_lifetime(self):
         for patched in (False, True):

@@ -36,10 +36,14 @@ static ssize_t fake_io(int fd,const void *buf,size_t n,off_t off) {
 #define pread fake_io
 #define pwrite fake_io
 static void *count_move(void *d,const void *s,size_t n) { shifted+=n;return memmove(d,s,n); }
+/* Apple SDK fortify may define memmove. Instrument only the extracted APC
+ * calls; count_move above retains the SDK implementation and its checks. */
+#pragma push_macro("memmove")
+#undef memmove
 #define memmove count_move
 static uint32_t rt_invoke(CPU*,uint32_t,unsigned,uint32_t*);
 /* ACTUAL_APC */
-#undef memmove
+#pragma pop_macro("memmove")
 
 static void enqueue(CPU *c,uint32_t id,int writing,unsigned bytes) {
     c->args[0]=7;c->args[1]=128;c->args[2]=bytes;c->args[3]=256;c->args[4]=id;
