@@ -10,6 +10,9 @@ import hashlib
 from pathlib import Path
 
 EXPECTED = {
+    "src/dxvk/dxvk_memory.cpp": "1432d9264ecd19159ef02af2de8767b31e19fa65d7e0653d16957ef2fd241631",
+    "src/dxvk/dxvk_memory.h": "4aeee77488305734c8b559ec6c53309b048f47b197ad4532b36b5a7e3ccb57e4",
+    "src/dxvk/dxvk_state_cache.cpp": "5b0942b71353c1731710f40a6f9573c8371c4cad65c661598aef06771b87026d",
     "src/dxvk/dxvk_graphics.cpp": "dc35eb99f52d3dc4ea3e033fbe55c4a06faae8201c3424bf552aefcbc4e509ca",
     "src/dxvk/dxvk_compute.cpp": "2515fefb8ae4acee0fe9ba6fd3a36eda8664fa9bcbb15784a83b39763c26ee0e",
     "src/dxvk/dxvk_graphics.h": "f2fb63084bd9757262c641c6e4e20a4a5ff223edacc4ef23eae2d486725ddf88",
@@ -25,6 +28,125 @@ def once(text: str, old: str, new: str) -> str:
     if text.count(old) != 1:
         raise ValueError("DXVK adapter anchor changed")
     return text.replace(old, new, 1)
+
+
+def adapt_memory(name: str, text: str) -> str:
+    if name.endswith('.h'):
+        text = once(text, '    ~DxvkMemoryChunk();', '''    ~DxvkMemoryChunk();
+
+    bool iosEmpty() const {
+      return m_freeList.size() == 1 && m_freeList[0].offset == 0
+          && m_freeList[0].length == m_memory.memSize;
+    }
+    VkDeviceSize iosSize() const { return m_memory.memSize; }
+    bool iosSamePool(const DxvkMemoryChunk& other) const {
+      return m_memory.memFlags == other.m_memory.memFlags
+          && m_memory.priority == other.m_memory.priority;
+    }''')
+        return once(text, '    DxvkMemory tryAlloc(', '''    uint64_t m_iosBudgetPressureUntil = 0;
+    uint64_t m_iosNextWarningTrim = 0;
+    void iosTrimEmptyChunks(bool all);
+    VkDeviceSize iosPoolSize(DxvkMemoryType* type, VkDeviceSize minimum);
+
+    DxvkMemory tryAlloc(''')
+    text = '#include "device_policy.h"\n#include "performance_metrics.h"\n' + text
+    text = once(text, '    // Try to allocate from a memory type which supports the given flags exactly',
+        '''    const uint64_t iosNow = skyrim_perf_now_ns();
+    if (skyrim_device_memory_pressure(iosNow) && iosNow >= m_iosNextWarningTrim) {
+      iosTrimEmptyChunks(true);
+      m_iosNextWarningTrim = iosNow <= UINT64_MAX - 100000000ull ? iosNow + 100000000ull : UINT64_MAX;
+    }
+
+    // Try to allocate from a memory type which supports the given flags exactly''')
+    text = once(text, '''    // This call is technically not thread-safe, but it
+    // doesn't need to be since we don't free chunks''',
+        '''    // Pool retirement holds the allocator mutex. Allocator destruction
+    // occurs only after all resource slices have ended their lifetimes.''')
+    text = once(text, '    if (size >= type->chunkSize || dedAllocInfo) {',
+        '    if (size >= type->chunkSize || align > type->chunkSize || dedAllocInfo) {')
+    text = once(text, '''        for (uint32_t i = 0; i < 6 && (type->chunkSize >> i) >= size && !devMem.memHandle; i++)
+          devMem = tryAllocDeviceMemory(type, flags, type->chunkSize >> i, priority, nullptr);''',
+        '''        const VkDeviceSize minimum = dxvk::align(size, align);
+        const VkDeviceSize poolSize = iosPoolSize(type, minimum);
+        for (uint32_t i = 0; i < 6 && (poolSize >> i) >= minimum && !devMem.memHandle; i++)
+          devMem = tryAllocDeviceMemory(type, flags, poolSize >> i, priority, nullptr);''')
+    text = once(text, '    chunk->free(offset, length);', '''    chunk->free(offset, length);
+    // Memory slices are released by DXVK after their resource lifetime ends.
+    // A whole empty block has no live slice; never free partly occupied blocks.
+    if (chunk->iosEmpty()) {
+      const uint64_t now = skyrim_perf_now_ns();
+      iosTrimEmptyChunks(skyrim_device_memory_pressure(now)
+          || (m_iosBudgetPressureUntil && now < m_iosBudgetPressureUntil));
+    }''')
+    marker = '  VkDeviceSize DxvkMemoryAllocator::pickChunkSize(uint32_t memTypeId) const {'
+    methods = '''  void DxvkMemoryAllocator::iosTrimEmptyChunks(bool all) {
+    // Caller holds m_mutex. A chunk destructor updates the same heap statistics.
+    for (uint32_t t = 0; t < m_memProps.memoryTypeCount; ++t) {
+      auto& chunks = m_memTypes[t].chunks;
+      for (size_t i = 0; i < chunks.size();) {
+        if (!chunks[i]->iosEmpty()) { ++i; continue; }
+        bool duplicate = false;
+        if (!all) {
+          for (size_t j = 0; j < chunks.size(); ++j)
+            if (j != i && chunks[j]->iosEmpty() && chunks[j]->iosSamePool(*chunks[i])
+                && (chunks[j]->iosSize() > chunks[i]->iosSize()
+                    || (chunks[j]->iosSize() == chunks[i]->iosSize() && j < i))) {
+              duplicate = true; break;
+            }
+        }
+        if (all || duplicate) {
+          const VkDeviceSize bytes = chunks[i]->iosSize();
+          chunks.erase(chunks.begin() + i);
+          skyrim_device_record_reclaimed(bytes);
+        } else {
+          ++i; // Retain the largest warm block for each flags/priority bucket.
+        }
+      }
+    }
+  }
+
+  VkDeviceSize DxvkMemoryAllocator::iosPoolSize(DxvkMemoryType* type, VkDeviceSize minimum) {
+    const bool hasBudget = bool(m_device->extensions().extMemoryBudget);
+    VkDeviceSize budget = 0, usage = 0;
+    if (hasBudget) {
+      const auto heaps = m_device->adapter()->getMemoryHeapInfo();
+      budget = heaps.heaps[type->heapId].memoryBudget;
+      usage = heaps.heaps[type->heapId].memoryAllocated;
+    }
+    uint64_t available = 0;
+    const bool known = skyrim_device_platform_headroom(&available) != 0;
+    const uint64_t now = skyrim_perf_now_ns();
+    const bool warning = skyrim_device_memory_pressure(now) != 0;
+    VkDeviceSize size = skyrim_device_pool_size(type->chunkSize, minimum,
+        budget, usage, hasBudget, available, known, warning);
+    if (size < type->chunkSize || warning) {
+      m_iosBudgetPressureUntil = now <= UINT64_MAX - 2000000000ull ? now + 2000000000ull : UINT64_MAX;
+      iosTrimEmptyChunks(true);
+    } else {
+      m_iosBudgetPressureUntil = 0;
+    }
+    skyrim_device_record_pool(type->chunkSize, size);
+    // The driver still decides required allocation success. A stale/advisory
+    // estimate cannot discard a draw or create a new hard allocation failure.
+    return size;
+  }
+
+
+'''
+    return once(text, marker, methods + marker)
+
+
+def adapt_workers(text: str) -> str:
+    text = '#include "device_policy.h"\n' + text
+    text = once(text, 'uint32_t numCpuCores = dxvk::thread::hardware_concurrency();',
+        'uint32_t numCpuCores = skyrim_device_compiler_cpus(dxvk::thread::hardware_concurrency());')
+    text = once(text, '    env::setThreadName("dxvk-shader");',
+        '    env::setThreadName("dxvk-shader");\n    skyrim_device_platform_work_role(SKYRIM_WORK_COMPILER);')
+    text = once(text, '      compilePipelines(item);',
+        '      skyrim_device_platform_work_role(SKYRIM_WORK_COMPILER);\n      compilePipelines(item);')
+    text = once(text, '    env::setThreadName("dxvk-writer");',
+        '    env::setThreadName("dxvk-writer");\n    skyrim_device_platform_work_role(SKYRIM_WORK_CACHE_WRITER);')
+    return text
 
 
 def adapt_pipeline_locking(name: str, text: str) -> str:
@@ -142,6 +264,10 @@ def adapt_timing(name: str, text: str) -> str:
 
 
 def adapt(name: str, text: str) -> str:
+    if name.endswith(("dxvk_memory.cpp", "dxvk_memory.h")):
+        return adapt_memory(name, text)
+    if name.endswith("dxvk_state_cache.cpp"):
+        return adapt_workers(text)
     if name.endswith(("dxvk_graphics.h", "dxvk_compute.h")):
         return adapt_pipeline_locking(name, text)
     if name.endswith("dxvk_pipemanager.cpp"):

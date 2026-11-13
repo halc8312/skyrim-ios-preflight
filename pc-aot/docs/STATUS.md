@@ -8,6 +8,8 @@
 
 17時台の追加指示で、音声submixの全枠64回走査を、同じstage／slot順の対象列挙へ変更。132種類の自作PCM／音声構成で実mix関数の出力・callback・解放結果が旧版と一致し、ASan/UBSanも通過した。毎import更新する診断slotも128byte間隔へ分離し、記録頻度を減らさず並行writerの競合を低減。2変更とも公開hostだけで、ゲームの画質・精度・CPU ABI・private guestは変更しない。テクスチャ行コピーの一括化は64KiBの局所比較で約18％悪化したため採らず、元処理へ戻した。実機FPS・発熱・音声出力の改善は未確認。根拠と原数値は[比較記録](PERFORMANCE_WORK.md)末尾に記載。
 
+端末性能への適応は[現状調査と実装状況](HARDWARE_ADAPTATION_AUDIT.md)へ整理。19時台の追加指示で、能力情報とユーザー設定の分離、先読みcompilerのCPU数／熱・電力別QoS、実DXVK allocatorの動的pool sizingと空chunk回収、FPS待機のevent化をbuild4候補へ実装。実allocatorと自作driverの寿命・再利用・失敗・32,000並行allocation、policyの80,000並行更新、待機途中復帰の検査を通常／ASan/UBSanで通過。変更DXVK2unitは実ヘッダーでsyntax compile済み。画質・解像度・FPS選択、guest ABI、private guestは不変。Apple実行と実機のFPS・発熱改善は未確認で、guestの優先度互換／CPU数上限／メモリ報告値、GPU経路全体の更新は残る。新Macジョブ・端末更新はまだ行っていない。
+
 ## 2026-11-13 build4 結果を維持する性能改善
 
 - 2/4バイト書き込みhelperの不要なstack退避を取り除くパッチを採用。実iOS ARM64コンパイラー出力でrelease atomic／barrierを保ったまま命令を削減。旧／新各524,288ケースのbyte比較も通過した。物理iPhoneの性能測定は未実施。

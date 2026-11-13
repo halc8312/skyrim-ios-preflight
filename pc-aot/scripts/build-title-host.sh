@@ -58,6 +58,7 @@ PY
   python3 -m unittest discover -s tests -p 'test_watchdog_layout.py' -v
   python3 -m unittest discover -s tests -p 'test_pipeline_cache.py' -v
   python3 -m unittest discover -s tests -p 'test_pipeline_locking.py' -v
+  python3 -m unittest discover -s tests -p 'test_device*.py' -v
 )
 
 bash ios/dependencies/build-dependencies.sh

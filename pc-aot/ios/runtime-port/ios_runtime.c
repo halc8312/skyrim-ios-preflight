@@ -3,6 +3,7 @@
 #include "mobile_core.h"
 #include "mobile_ui.h"
 #include "performance_metrics.h"
+#include "device_policy.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -121,9 +122,7 @@ void skyrim_ios_pace_frame(void) {
         uint64_t now = monotonic_ns();
         if (now >= deadline) break;
         uint64_t remaining = deadline - now;
-        struct timespec pause = {0, (long)(remaining > 4000000 ? 4000000 : remaining)};
-        nanosleep(&pause, NULL);
-        ++sleeps;
+        sleeps += skyrim_device_platform_wait(remaining);
         skyrim_ios_pump_events();
     }
     if (epoch == __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED))

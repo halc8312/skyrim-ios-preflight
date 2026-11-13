@@ -14,6 +14,7 @@
 #include "ios_runtime.h"
 #include "performance_metrics.h"
 #include "pipeline_cache_control.h"
+#include "device_policy.h"
 
 static NSMutableDictionary *settings;
 static NSDictionary *startup;
@@ -516,6 +517,8 @@ void skyrim_mobile_tick(void) {
         double average=lastLog ? (frames-logFrames)/(now-lastLog) : 0;
         fprintf(stderr,"IOS_PERF frames=%llu fps=%.2f cap=%u thermal=%ld present_host_avg_ms=%.2f present_host_max_ms=%.2f frame_gap_max_ms=%.2f\n",(unsigned long long)frames,average,cap,(long)thermal,count ? (double)total/count/1e6 : 0,(double)maximum/1e6,(double)interval/1e6);lastLog=now;logFrames=frames;
         skyrim_perf_log_window();
+        skyrim_device_platform_refresh();
+        skyrim_device_platform_log();
     }
     if(overlay.saveDeadline && now-lastSaveCheck>=1) {
         NSDictionary *current=[overlay saveFiles];lastSaveCheck=now;

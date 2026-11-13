@@ -120,3 +120,13 @@ build4の公開sourceとprivate guestのローカル検証が完了。build3の�
 **採用しなかった案。** 2D／cube／volume textureの連続行をまとめてmemcpyする案も比較した。4,096自作layoutでbyte／padding／slice／alias順序／lock失敗の結果が一致し、ASan/UBSanと実D3DX translation unitのsyntax compileは通った。4KiBや大きなcopyでは短縮したが、256byte×256行＝64KiBでは中央値2,767.6→3,258.2nsと約18％遅かった。iPhoneでの頻度・効果が分からないため、x86に合わせた恣意的な閾値は追加せず、productionの3つのcopy loopを元どおりにした。候補・fixtureは同local directoryの`texture-candidate/`、候補を含む旧stageは`runtime/`に保持。**この旧stageを製品に使わない。** `final-runtime/`は候補を除外した確認stageで、クラウドは最終public adapterから新規stageを作る。
 
 最終adapterの15入力pin・変更2fixture・既存asset計測／mobile overlayを合わせた10検査を通過し、共有CPUヘッダー不変も確認。Mac scriptの構文、公開source検査、diff検査を通過。新Macジョブ・署名・端末更新はこの追加作業では行っていない。
+
+## 19時台：端末能力に合わせるhost処理
+
+[端末適応の調査と実装状況](HARDWARE_ADAPTATION_AUDIT.md)の冒頭に仕様と未完了項目を記載。`device_policy.c/.h`は画質設定を持たない純C policy、`device_platform.m`はAppleの能力取得・notification・QoS・event待機を担当する。起動時の`IOS_DEVICE`、5秒の`IOS_DEVICE_STATE`にCPU数、thermal、低電力、headroom、回収した空poolのbytes、縮小pool数を記録する。headroomは現在の余裕でありRAMの固定上限ではなく、回収量もアプリ全体の常駐RAMが同量減ったという実測ではない。
+
+新しい採用処理は、DXVKの先読みworkerの起動時CPU数とjob境界QoS、driver budgetとアプリ残余を参照した新規pool sizing、完全に空のchunkの回収、FPS追加cap中のevent待機。既存の画像、使用中のresource、guestのCPU ABI／原ゲーム／private guestを変更しない。古いstageを再利用せず、公開adapterから`local/performance-20261113/device-adaptation-01/dxvk`へ新規stageし、`dxvk_memory.cpp`と`dxvk_state_cache.cpp`全体を実依存ヘッダーでsyntax compileした（両方exit0）。
+
+`test_device_memory.py`はallocatorの本物のheader／implementationを省略せず、自作adapterとVulkan driverに接続する。保持中のsliceがある間はpoolが残り、最後のsliceが終了してからだけ解放されること、mapped byteが保持されること、priority／flags別bucket、移動所有権、過大alignment、driver／mapping拒否、32,000並行allocationを確認。`test_device_policy.py`は純C policyの境界と80,000並行更新、および実pacerのevent復帰／中断／epoch変更を確認。4検査は通常とASan/UBSanで合格。追加したApple event待機fixture1件はWSLで明示skipし、一括Mac buildで実行予定。既存の3計測・5操作overlay検査も通過。局所テストは実GPUの完了やiPhoneの改善証明ではない。
+
+低優先度の先読みworkerが同じpipelineの必須描画と競合する時の待ち、回収後の再確保頻度は実機で確認する。メモリ警告中の全走査を100msで抑え、通常は最大の空poolを一つ再利用するため、単に全cacheを毎frame削除する方式にはしていない。`sleep_calls`は実`nanosleep`だけで、Core Foundationのevent待機・OS wake-up全体は含まない。新しい計測を旧Xbox版の数値と合算しない。

@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include "ios_runtime.h"
 #include "mobile_ui.h"
+#include "device_policy.h"
 #include "PcGuestABI.h"
 
 __attribute__((noreturn)) static void startup_failure(NSString *message) {
@@ -123,6 +124,7 @@ int SDL_main(int argc, char **argv) {
         if (![NSThread isMainThread]) startup_failure(@"SDL UIKit entry did not run on the main thread");
         begin_log();
         skyrim_ios_stage("sdl-application-entry");
+        skyrim_device_platform_initialize();
         NSURL *game = directory(NSDocumentDirectory, @"Skyrim");
         NSURL *profile = directory(NSApplicationSupportDirectory, @"SkyrimIOS/Profile");
         NSURL *cache = directory(NSCachesDirectory, @"SkyrimIOS/DXVK");

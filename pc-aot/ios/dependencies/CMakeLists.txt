@@ -83,9 +83,11 @@ foreach(_input source-lock.json ios/dependencies/build-dependencies.sh
 endforeach()
 string(SHA256 _cache_namespace "${_cache_identity}")
 target_compile_definitions(dxvk_d3d9 PRIVATE "SKYRIM_PIPELINE_CACHE_NAMESPACE=\"${_cache_namespace}\"")
-add_library(skyrim_performance STATIC "${_root}/ios/runtime-port/performance_metrics.c")
+enable_language(OBJC)
+add_library(skyrim_performance STATIC "${_root}/ios/runtime-port/performance_metrics.c"
+  "${_root}/ios/runtime-port/device_policy.c" "${_root}/ios/runtime-port/device_platform.m")
 target_compile_features(skyrim_performance PRIVATE c_std_11)
-target_compile_options(skyrim_performance PRIVATE -O2)
+target_compile_options(skyrim_performance PRIVATE -O2 "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>")
 target_include_directories(skyrim_performance PUBLIC "${_root}/ios/runtime-port")
 set_target_properties(dxvk_d3d9 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(dxvk_d3d9 PUBLIC cxx_std_17)
