@@ -6,6 +6,8 @@
 
 次のゲーム側最適化は[部分逆コンパイルとカクつき改善計画](REVERSE_ENGINEERING_PLAN.md)に整理。18関数を元命令で確認し、シェーダー準備、テクスチャ転送、同期的に実行される`ReadFileEx`の3系統を候補化。PC内に擬似コードと寿命・TLS・callbackを含む置換条件を保存した。対応する4種類のhost時間計測をbuild4へ追加し、実shimの結果／APC比較とASan/UBSanを通過。候補関数の本番置換、実機での主因判定はまだ行っていない。
 
+17時台の追加指示で、音声submixの全枠64回走査を、同じstage／slot順の対象列挙へ変更。132種類の自作PCM／音声構成で実mix関数の出力・callback・解放結果が旧版と一致し、ASan/UBSanも通過した。毎import更新する診断slotも128byte間隔へ分離し、記録頻度を減らさず並行writerの競合を低減。2変更とも公開hostだけで、ゲームの画質・精度・CPU ABI・private guestは変更しない。テクスチャ行コピーの一括化は64KiBの局所比較で約18％悪化したため採らず、元処理へ戻した。実機FPS・発熱・音声出力の改善は未確認。根拠と原数値は[比較記録](PERFORMANCE_WORK.md)末尾に記載。
+
 ## 2026-11-13 build4 結果を維持する性能改善
 
 - 2/4バイト書き込みhelperの不要なstack退避を取り除くパッチを採用。実iOS ARM64コンパイラー出力でrelease atomic／barrierを保ったまま命令を削減。旧／新各524,288ケースのbyte比較も通過した。物理iPhoneの性能測定は未実施。

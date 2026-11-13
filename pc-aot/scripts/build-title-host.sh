@@ -54,6 +54,8 @@ PY
   python3 -m unittest discover -s tests -p 'test_shadow_ranges.py' -v
   python3 -m unittest discover -s tests -p 'test_performance_metrics.py' -v
   python3 -m unittest discover -s tests -p 'test_asset_timing.py' -v
+  python3 -m unittest discover -s tests -p 'test_audio_submix.py' -v
+  python3 -m unittest discover -s tests -p 'test_watchdog_layout.py' -v
   python3 -m unittest discover -s tests -p 'test_pipeline_cache.py' -v
   python3 -m unittest discover -s tests -p 'test_pipeline_locking.py' -v
 )

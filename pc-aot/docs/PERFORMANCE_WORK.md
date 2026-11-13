@@ -15,6 +15,8 @@
 2. **D3D9永続テクスチャ管理の走査縮小**：`shadow_flush`と`shadow_forget`を`lower_bound({obj,0})`から同objectの範囲だけ走査する。callback順序、ロック、所有権、upload条件は維持。実際の旧／新shadowコードで、内容・subresource順（UINT32_MAXを含む）・lock中の除外・再入callback・解放順・無関係object・並行flushを比較し、ASan/UBSanも通過。flushの呼出し元は`UpdateTexture`／`UpdateSurface`であり、全drawごとに同処理が走ると仮定しない。
 3. **Vulkan pipeline cacheの保存・再利用**：既存のDXVK state cacheは維持し、それとは別にMoltenVKのpipeline cacheへ前回保存したデータを渡す。保存はアプリが背景へ移った時のutility workerだけ。通常の描画中にファイル保存／cache全体のシリアライズを行わない。GPU・driver・OS・公開変換器の版を照合し、破損・不一致・容量超過なら空cacheで開始する。詳しい根拠と制限は下記。実iPhoneの再コンパイル時間やFPS改善は未測定。
 4. **固定サイズの時間分布計測**：5秒ごとの既存FPSログに、frame間隔・Present内部のhost時間・追加FPS待機・HLSL／graphics pipeline／compute pipeline／shader module作成の分布を追加。histogramの集計は固定配列とatomicだけで、毎frameのログやallocationはない。frame間隔と復帰時のリセットだけは短い専用mutexで整合させ、その中で描画・UIKit処理は呼ばない。FPS上限のsleep回数も分離して記録する。GPU実行時間やCPU使用率として扱わない。
+5. **音声submixの対象探索縮小**：各passで64stage×1,024voice枠を走査する処理を、同一mutex内の安定bucket列挙へ置換。stage昇順と同stage内の元slot順を維持し、実際の音声計算・callback・解放順は変えない。毎pass再構築するため古いvoice graphを再利用せず、heap allocationも追加しない。
+6. **診断slotのwriter分離**：毎importで更新するthread別記録を128byte間隔へ配置。記録本体・頻度・dispatchの挙動はそのまま。64slotのstatic領域がx86_64で3,072→8,192 bytesになる。並行書込みのfalse sharingを減らす目的で、診断そのものやgame synchronizationを削除しない。
 
 WSL x86_64 GCC -O2でのshadow局所比較（7ペアの中央値、1objectにつき4subresource、実guest変換を別スレッドで実行中）：16objectでは約436→246ns、256objectでは約6,075→245ns、4,096objectでは約181,665→301ns。大量の無関係なmap要素を省けた実験であり、実ゲームでのobject数・呼出頻度・upload量を測った結果ではない。原数値は`local/performance-20261113/runtime/benchmark.json`。
 
@@ -100,3 +102,21 @@ build4の公開sourceとprivate guestのローカル検証が完了。build3の�
 **追加計測。** `read_file`は既存ReadFileのread／pread部分、`read_file_ex`は既存read-exのpread部分（WriteFileExは対象外）、`d3d_shader_create`は実CreateVertexShader/CreatePixelShader呼出し、`texture_load`は実D3DXのmemory/file texture作成を測る。textureのfile版はhostの読込みも含むが、guestのstream読込み／mip-copyは含まない。API間・下層pipeline計測と時間が重なるため合算しない。複数threadのhost時間であってGPU時間や描画thread停止の証明ではない。失敗数はsyscall／HRESULTの失敗で、すべてのWin32やゲーム上の異常を意味しない。既存の5秒reportにだけ出力し、固定atomic配列、各区間の2回の時計読取りを使用する。errnoは時計成功・失敗のどちらでも保持。
 
 **検証。** 実際のpublic shim／bridgeへ計測を加え、計測行だけを除くと元sourceへ全文復元できることを確認。ReadFile／ReadFileEx／WriteFileEx／APC drainの実関数を自作I/Oで動かし、成功・partial・EOF・失敗・64bit offset・共有fd位置・event・遅延callback・errnoの結果を旧新版で比較。3検査は通常／ASan/UBSan双方を通過。変更したclockと新分類を含め、既存histogramの80,000並行記録・stage照合を含む3検査も通過した。これは実iPhoneの速度やI/O並行動作の検証ではない。Macの一括buildにも追加fixtureを含める。新private compileやMacジョブは実行していない。
+
+## 17時台の追加軽量化：音声探索と診断記録の競合
+
+**音声。** 固定public `xaudio2.c`のengine passは、10msを単位として動き、submix段階で毎回64×1,024のvoice slotを調べていた。採用変更はhead／tail／nextの固定配列をstack上に作り、全slotを一度走査してstage別の列を作る。各stageの列を元slot順に辿る。対象選別は1,024回＋実際のsubmix数となり、追加stackはintが4byteのhostで4,608 bytes。voiceの種類／stage／dead／sendの変更とこの走査は既存mutexで保護され、途中の`route`はaccumulation bufferだけを書き換える。callbackは元と同じlock外で実行される。毎pass、そのcallbackの後に列を作るため、直前の変更・破棄を反映する。古いPCM、過去のgraph、処理済みvoiceはcacheしない。
+
+[MicrosoftのCreateSubmixVoice仕様](https://learn.microsoft.com/en-us/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2-createsubmixvoice)はProcessingStageの順序を定める。今回の変更ではさらに同stage内の旧slot順も厳密に保ち、浮動小数点加算の順序を変えない。音源数制限・チャンネル削減・resampling品質変更はない。現runtimeの既存音声機能すべてを新たに実装したわけではない。
+
+`test_audio_submix.py`は固定sourceから実際のPCM読取り・補間・route・engine_passを抽出し、著作ゲーム素材を含まない132構成で旧新版を比較する。空slot、全1,024slot、stage境界／範囲外、1〜8ch、明示／既定send matrix、複数submix接続、buffer loop／完了、callbackによる変更・破棄を含む。PCM出力、accumulation buffer、route／callback順、解放後のslot状態をbyte／数値比較。通常とASan/UBSanを通過した。変更部以外のデコーダー・計算式・mutex・callback・cleanupは全文不変も確認。実iPhoneから音を出した検証ではない。
+
+**診断記録。** `dispatch.c`の64slotは各threadのimport呼出しで書き換わり、旧構造はx86_64で48byteのため隣接threadの書込みが同一cache lineに入り得る。structを128byte境界・間隔へ配置し、同じmemberに同じ値を同じ頻度で記録する。外部ABIやguest memoryではなく、このCファイル内のstatic診断領域だけが対象。全sourceを比較するとalignment指定以外に差がない。8threadの実record関数で各field・登録slot・unsigned wrapを比較し、通常／ASan/UBSanを通過。元のWD_MAX超過時の共有slot方式や、watchdog reader側の非atomicな観測方式を修正・検証したとは扱わない。
+
+**局所測定。** WSL x86_64 GCC -O2、自作workload、順番を交替した7ペア。音声の対象選別部分はsubmix 0／1／8／64／256／1,024個の全条件で軽減し、旧約37.9〜62.8μs、新約0.36〜3.21μs。これはrouteを短い自作処理へ置き換えて探索差を測ったもので、mixer全体の速度倍率でもiPhoneのFPS改善率でもない。診断writerは2〜8threadの最初の比較で、全call数当たりwall time中央値が約8.74→2.17ns、7.12→1.98ns、4.87→1.14ns。同時に別の自作sanitizerが走っていたため単独でも確認し、並列条件の短縮は継続したが1threadには大きな揺れが出た。そこで同一許可CPU上の2,000万call×7ペアで確認し、1threadは約4.425→4.392nsとほぼ同等。hostの他作業は制御しておらず、実機のCPU率・温度・FPSの証明にはしない。
+
+原数値は`local/performance-20261113/work-reduction-01/benchmark.json`、`watchdog-benchmark.json`、`watchdog-benchmark-solo.json`、`watchdog-single-pinned.json`。実際の`xaudio2.c`／`dispatch.c`全translation unitも既存publicヘッダーでWSL syntax compileを通過。private guestの再生成は不要。公開の2fixtureは夜の一括Mac buildにも含める。
+
+**採用しなかった案。** 2D／cube／volume textureの連続行をまとめてmemcpyする案も比較した。4,096自作layoutでbyte／padding／slice／alias順序／lock失敗の結果が一致し、ASan/UBSanと実D3DX translation unitのsyntax compileは通った。4KiBや大きなcopyでは短縮したが、256byte×256行＝64KiBでは中央値2,767.6→3,258.2nsと約18％遅かった。iPhoneでの頻度・効果が分からないため、x86に合わせた恣意的な閾値は追加せず、productionの3つのcopy loopを元どおりにした。候補・fixtureは同local directoryの`texture-candidate/`、候補を含む旧stageは`runtime/`に保持。**この旧stageを製品に使わない。** `final-runtime/`は候補を除外した確認stageで、クラウドは最終public adapterから新規stageを作る。
+
+最終adapterの15入力pin・変更2fixture・既存asset計測／mobile overlayを合わせた10検査を通過し、共有CPUヘッダー不変も確認。Mac scriptの構文、公開source検査、diff検査を通過。新Macジョブ・署名・端末更新はこの追加作業では行っていない。

@@ -29,6 +29,7 @@ EXPECTED = {
     "kernel32.c": "c6360da8a234421feac620c5db529d7a488ff6fc16747a0ad275f6dc987a0dfc",
     "user32.c": "e4970ef14067b9779415a6872895b57f007c904f69682a1e395b1d96b61ef335",
     "dispatch.c": "17c9508a10b2174a7efc24b26f94de0f6c9ce58eee9fa966fe74b68140ba7ac0",
+    "xaudio2.c": "91f0e31e583b8e03d1ecf35632fba2cd24abb42f986c3c796aa879d711bdfc42",
 }
 
 
@@ -288,12 +289,21 @@ def patch_kernel(s: str) -> str:
 
 
 def patch_dispatch(s: str) -> str:
+    # Every import updates its thread's diagnostic slot. Separate neighboring
+    # writers without altering recording frequency, fields or dispatch itself.
+    s = patch_watchdog_layout(s)
     s = replace_once(s, '#include "rt.h"',
         '#include "rt.h"\n#include "ios_runtime.h"', "watchdog include")
     return replace_once(s,
         '            LOG("watchdog %ds: frames %d%s", tick * 5, f, f == lastf ? " (no new frames)" : "");',
         '            LOG("watchdog %ds: frames %d%s", tick * 5, f, f == lastf ? " (no new frames)" : "");\n'
         '            skyrim_ios_watchdog();', "present-stage watchdog")
+
+
+def patch_watchdog_layout(s: str) -> str:
+    old = 'static struct { const char *name; uint32_t ret; volatile uint32_t calls; uint32_t tid, gtid, esi, ebx, esp; pthread_t th; } g_wd[WD_MAX];'
+    new = 'static struct __attribute__((aligned(128))) { const char *name; uint32_t ret; volatile uint32_t calls; uint32_t tid, gtid, esi, ebx, esp; pthread_t th; } g_wd[WD_MAX];'
+    return replace_once(s, old, new, "separate frequently written watchdog slots")
 
 
 def patch_shader(s: str) -> str:
@@ -364,6 +374,40 @@ def patch_preferences(s: str) -> str:
     return s
 
 
+def patch_audio_submix(s: str) -> str:
+    # The entire span stays under the existing mixer mutex. route() only writes
+    # accumulation buffers; no callbacks or voice graph mutations occur here.
+    old = '''    /* submixes in processing-stage order, then the master */
+    for (int stage = 0; stage < 64; stage++)
+        for (int i = 0; i < MAX_VOICES; i++) {
+            Voice *v = g_voices[i];
+            if (!v || v->dead || v->kind != V_SUBMIX || v->stage != stage) continue;
+            route(v, v->acc, frames);
+        }
+'''
+    new = '''    /* Stable stage buckets: same stage order and original slot order,
+     * without scanning all voice slots 64 times under the mixer mutex.
+     * Rebuild every pass, after callbacks, so no cached graph can go stale. */
+    int stage_head[64], stage_tail[64], stage_next[MAX_VOICES];
+    for (int stage = 0; stage < 64; stage++) stage_head[stage] = -1;
+    for (int i = 0; i < MAX_VOICES; i++) {
+        Voice *v = g_voices[i];
+        if (!v || v->dead || v->kind != V_SUBMIX || (unsigned)v->stage >= 64) continue;
+        int stage = v->stage;
+        stage_next[i] = -1;
+        if (stage_head[stage] < 0) stage_head[stage] = i;
+        else stage_next[stage_tail[stage]] = i;
+        stage_tail[stage] = i;
+    }
+    for (int stage = 0; stage < 64; stage++)
+        for (int i = stage_head[stage]; i >= 0; i = stage_next[i]) {
+            Voice *v = g_voices[i];
+            route(v, v->acc, frames);
+        }
+'''
+    return replace_once(s, old, new, "stable audio submix stage traversal")
+
+
 PATCHERS = {
     "main.c": patch_main,
     "platform_sdl.c": patch_platform,
@@ -379,6 +423,7 @@ PATCHERS = {
     "kernel32.c": patch_kernel,
     "user32.c": patch_main_pump,
     "dispatch.c": patch_dispatch,
+    "xaudio2.c": patch_audio_submix,
 }
 
 
