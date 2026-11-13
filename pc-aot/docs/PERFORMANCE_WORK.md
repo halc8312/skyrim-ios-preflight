@@ -136,3 +136,13 @@ build4の公開sourceとprivate guestのローカル検証が完了。build3の�
 Codemagic build12（`6af6edd005c8b21ba24ef3d5`、公開commit `08f80fdd0c233c5e60321f28c2f652eb5f2ef8ed`）は7分10秒で終了。自作fixtureは18件成功、Windows専用ARM機械語検査1件skip。Apple専用のevent待機／QoS実行も成功した。Metal Toolchainが最初は無かったが、既定の公式component導入後、3つの自作shaderの実iPhoneOS compileが成功した。依存ライブラリもcompileできたが、アプリ側では`mobile_ui.m:24`の`UIBackgroundTaskInvalid`がCのコンパイル時定数ではないため失敗し、IPAは生成されていない。
 
 修正はstatic変数の値を`skyrim_mobile_initialize`内の`dispatch_once`で設定するもの。SDLのmain threadの入口から呼ばれ、game runtime／overlay作成より前に完了する。再度initializeが呼ばれても進行中のbackground taskを上書きせず、保存workerのticket・取消・終了処理は変更しない。全ログで他のapp compile errorがないことを確認し、無変更での再実行はしていない。回収ZIP SHA256は`421a0f7864628ccd4f97f80b0928c1f7f05b3e1aeef23def6cb8cd667d8a1d13`。原ZIPとbuild.logは`local/codemagic-title12/`。修正版のSDKビルド／署名／実機確認は未完了。
+
+### 修正版build13の成功とbuild4署名
+
+公開commit `951b8d52360277c467c89bd4365ca6d99e91643c`を[Codemagic build13](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af6f17205c8b21ba24ef53c)で一度実行し、4分54秒で成功。18検査成功／既定のWindows専用1件skip、Metal自作3件、iPhoneOS18.0／SDK26.5の本体compile/linkを確認した。新機能を追加して再ビルドすることはしない。公開host SHA256 `aba89d90f41dc93f5a4888de1edc7fa55dd1c1d2f0f951fca97f0b4c7a3f6864`、Metal検証ZIP `9bc44da157f71c53c5acf722ace4b6f1ef3b8ddbd9c4192cb2bb4311aec1df87`、原ログZIP `618caf8fa4bcb8b27aebb379f3907948f0ad0f8b6f6bd0b296ff3928ae440247`。すべて`local/codemagic-title13/`へ回収した。
+
+`x86.h`と`PcGuestABI.h`は新private guestのコンパイル入力に一致。`rt_table.h`は元のconst宣言からhostのlate binding用宣言への既存1行差を厳密に確認し、同じhost宣言がbuild11から不変であることも照合した。構造体・関数ABIの変更はない。元入力と新frameworkの期待hashを照合してPC内で組み立て、unsigned IPA SHA256は`358d72768e8f5114a9c503c5fac7607aeab6ed6385ce3af729110a08f86dc645`。
+
+既存のprofile／DPAPI署名手順により`private/title-signing-20261112/SkyrimIOS-PC2011-build4-signed.ipa`を生成。SHA256は`d32aa66981cc893f4c986c9f473a44c37ee88b238e181b6468b5a91de17c8750`。2イメージ／39,412コードページ／4resourceを暗号検証し、profileのApple chain・既存端末／App ID・メモリ拡張3権限も検証。旧IPA・private guest・ゲーム入力・セーブは保持した。インストールはまだ行っておらず、OS受理・実際のFPS／発熱／音声／描画・cache保存は未確認。
+
+実機更新は本人の保存・完全終了・USB接続・ロック解除後、`snapshot_pc_build4.py`でプロフィールだけを保護し、`phone_pc_build4.py install`でUpgradeする。ゲーム26ファイルは再転送せず、前後の一覧／セーブを照合する。最初は同じsave／同じ画質／同じFPS上限で静止・カメラ・魔法／攻撃を試す。cache比較はその後ホームに戻りしばらく待ってから完全終了し、再起動して同じ条件を使う。新しい計測で初回生成、生成lock待ち、readback／I/O、メモリ回収後の再確保を分け、体感だけから原因や改善倍率を断定しない。

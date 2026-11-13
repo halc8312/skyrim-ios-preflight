@@ -19,7 +19,7 @@
 
 **残る課題：** Win32 priority／affinityの互換実装、guestのCPU数・メモリ報告値、真の全job共通予算、GPU別の描画経路、120Hz超60FPSの時間進行確認、hotspotの限定AOT置換は別の未完了項目。特に低優先度の先読み中に必須描画が同じpipelineを待つ場合の実機待ち時間を測る。今回のQoS変更だけでカクつきが必ず減るとは判定しない。
 
-**20時のApple側確認：** Codemagic build12で追加の5検査がすべて成功。実CFRunLoopの入力による復帰、workerの期限待機、pthread QoSのUtility／Background切替を確認できた。UIKit lifecycle・実Metal cache保存・実機性能の確認とは別である。アプリ本体は`mobile_ui.m`の非定数static initializerによりコンパイルが停止した。初期化をmain threadの起動時へ移し、修正版のSDKビルド待ち。
+**20時のApple側確認：** Codemagic build12で追加の5検査がすべて成功。実CFRunLoopの入力による復帰、workerの期限待機、pthread QoSのUtility／Background切替を確認できた。アプリ本体は`mobile_ui.m`の非定数static initializerで停止したが、初期化をmain threadの起動時へ移した修正版build13はSDK compile/linkも成功した。共有ABIの照合とbuild4のローカル署名も完了。UIKit lifecycle・実Metal cache保存・実機性能の確認は残る。既存profileの3メモリ権限は検証済みだが、実際にアプリへ割り当て可能な量やRAM消費を測ったという意味ではない。
 
 実装時の一次資料：[AppleのQoS](https://developer.apple.com/documentation/apple-silicon/tuning-your-code-s-performance-for-apple-silicon)、[アプリ残余メモリ](https://developer.apple.com/documentation/os/os_proc_available_memory)、[Core Foundationのevent待機](<https://developer.apple.com/documentation/corefoundation/cfrunloopruninmode(_:_:_:)> )。診断には使用率100％や全RAM消費を合格基準として追加しない。
 

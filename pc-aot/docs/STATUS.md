@@ -2,7 +2,7 @@
 
 2026-11-13。**PC版build2でゲームプレイまで進めたと本人から報告を受領しました。** build1の縮小・黒画面・ロード停止を修正した後の実機結果です。新PCアプリIDは`org.skyrimios.pc2011`、表示名は`SkyrimIOS`。既存Xbox版とは別アプリです。元処理90,390関数を静的変換した構成を維持しています。所有ゲームデータ26ファイル／5,909,061,966 bytesは読み戻しSHA256照合済み。全編の互換性や長時間安定性を保証するものではありません。
 
-**現在：build3は署名済み・未導入で、同じ操作機能に性能改善を加えたbuild4を準備中。** 本人は20〜21時ごろ帰宅予定。クラウドビルドは20時以降に一度まとめます。視点ドラッグ、完全なタッチゲームパッド、操作設定、画質設定、FPS上限、クイックセーブ入力を継承。実機での操作感・保存・画質反映・温度／FPS改善は未確認です。詳細は[MOBILE_CONTROLS](MOBILE_CONTROLS.md)と[性能改善の比較記録](PERFORMANCE_WORK.md)。
+**現在：性能改善・端末能力への対応・モバイル操作を含むbuild4が署名済み。実機更新待ち。** [Codemagic build13](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af6f17205c8b21ba24ef53c)は4分54秒で成功し、共有ABIの照合とPC内での組み立て／署名検証を完了した。旧IPAは保持。20:28時点でインストールは未実施で、本人へ保存・アプリ終了・USB接続・ロック解除を依頼済み。視点ドラッグ、完全なタッチゲームパッド、操作設定、画質設定、FPS上限、クイックセーブ入力を継承。実機での操作感・保存・画質反映・温度／FPS改善は未確認です。詳細は[MOBILE_CONTROLS](MOBILE_CONTROLS.md)と[性能改善の比較記録](PERFORMANCE_WORK.md)。
 
 次のゲーム側最適化は[部分逆コンパイルとカクつき改善計画](REVERSE_ENGINEERING_PLAN.md)に整理。18関数を元命令で確認し、シェーダー準備、テクスチャ転送、同期的に実行される`ReadFileEx`の3系統を候補化。PC内に擬似コードと寿命・TLS・callbackを含む置換条件を保存した。対応する4種類のhost時間計測をbuild4へ追加し、実shimの結果／APC比較とASan/UBSanを通過。候補関数の本番置換、実機での主因判定はまだ行っていない。
 
@@ -10,7 +10,9 @@
 
 端末性能への適応は[現状調査と実装状況](HARDWARE_ADAPTATION_AUDIT.md)へ整理。19時台の追加指示で、能力情報とユーザー設定の分離、先読みcompilerのCPU数／熱・電力別QoS、実DXVK allocatorの動的pool sizingと空chunk回収、FPS待機のevent化をbuild4候補へ実装。実allocatorと自作driverの寿命・再利用・失敗・32,000並行allocation、policyの80,000並行更新、待機途中復帰の検査を通常／ASan/UBSanで通過。変更DXVK2unitは実ヘッダーでsyntax compile済み。画質・解像度・FPS選択、guest ABI、private guestは不変。実機のFPS・発熱改善は未確認で、guestの優先度互換／CPU数上限／メモリ報告値、GPU経路全体の更新は残る。
 
-20時の[Codemagic build12](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af6edd005c8b21ba24ef3d5)は公開commit `08f80fdd0c233c5e60321f28c2f652eb5f2ef8ed`を実行し、7分10秒で失敗。ARM Macでは18検査が成功し、Windows専用の機械語検査1件は既定どおりskip。Appleの実run loop起床／QoS変更も成功し、自作3シェーダーはiPhoneOS Metalコンパイルを通過した。最後のアプリコンパイルで`UIBackgroundTaskInvalid`をCのstatic initializerに使用した1件が失敗したため、main threadの起動処理で一度だけ初期化し、overlayの通知登録前に完了させる形へ訂正。原ログは`local/codemagic-title12/`へ保存。修正版のSDKビルド、署名、端末更新は未完了。
+20時の[Codemagic build12](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af6edd005c8b21ba24ef3d5)は公開commit `08f80fdd0c233c5e60321f28c2f652eb5f2ef8ed`を実行し、7分10秒で失敗。ARM Macでは18検査が成功し、Windows専用の機械語検査1件は既定どおりskip。Appleの実run loop起床／QoS変更も成功し、自作3シェーダーはiPhoneOS Metalコンパイルを通過した。最後のアプリコンパイルで`UIBackgroundTaskInvalid`をCのstatic initializerに使用した1件が失敗したため、main threadの起動処理で一度だけ初期化し、overlayの通知登録前に完了させる形へ訂正。原ログは`local/codemagic-title12/`へ保存。
+
+修正版build13の公開commitは`951b8d52360277c467c89bd4365ca6d99e91643c`（rootコードは`446050b8589c39dc77110c86d73d1cf51d896379`）。18検査＋Metal3件の成功とiPhoneOS18.0／SDK26.5のcompile/linkを確認。新private guestとの`x86.h`・`PcGuestABI.h`一致、`rt_table.h`は既存late binding宣言の差だけであることをbuild11とも照合した。署名済みIPAは`private/title-signing-20261112/SkyrimIOS-PC2011-build4-signed.ipa`、SHA256 `d32aa66981cc893f4c986c9f473a44c37ee88b238e181b6468b5a91de17c8750`。2イメージ／39,412コードページ／4resourceの暗号検証と、既存profileのApple chain／App ID／対象端末／3メモリ権限を検証。OSのインストール受理、ゲーム実行、FPS／発熱改善は未確認。追加のクラウドビルドは行わない。
 
 ## 2026-11-13 build4 結果を維持する性能改善
 
