@@ -53,7 +53,9 @@ list(FILTER runtime_sources EXCLUDE REGEX "/(modules|embedded_image|embedded_smo
 list(FILTER runtime_sources EXCLUDE REGEX "/skse_[^/]*\\.c$")
 add_library(skyrim_ios_runtime STATIC ${runtime_sources}
     "${SKYDREAM_SOURCE_DIR}/third_party/f3daudio/F3DAudio.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/ios_runtime.c")
+    "${CMAKE_CURRENT_SOURCE_DIR}/ios_runtime.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/mobile_core.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/mobile_ui.m")
 target_include_directories(skyrim_ios_runtime PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}" "${SKYRIM_IOS_RUNTIME_OVERLAY_DIR}"
     "${SKYRIM_IOS_BINDING_INCLUDE_DIR}"
@@ -62,6 +64,7 @@ target_compile_definitions(skyrim_ios_runtime PRIVATE GAME_SKYRIM DXVK_NATIVE
     SKYRIM_IOS=1 SKYDREAM_MOBILE=1 SKYRIM_IOS_GUEST_DIAGNOSTIC=1
     SDL_MAIN_HANDLED _FILE_OFFSET_BITS=64)
 target_compile_options(skyrim_ios_runtime PRIVATE -O2 -fno-strict-aliasing -fwrapv -fsigned-char
+    "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>"
     -include "${CMAKE_CURRENT_SOURCE_DIR}/ios_build_contract.h")
 target_link_libraries(skyrim_ios_runtime PUBLIC skyrim_ios_dependencies)
 

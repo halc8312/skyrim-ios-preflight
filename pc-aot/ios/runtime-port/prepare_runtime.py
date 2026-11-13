@@ -46,7 +46,7 @@ def mobile_conditions(text: str) -> str:
 
 def patch_main(s: str) -> str:
     s = replace_once(s, '#include <SDL2/SDL.h>',
-        '#include <SDL2/SDL.h>\n#include "ios_runtime.h"\n#include "PcGuestABI.h"', "main includes")
+        '#include <SDL2/SDL.h>\n#include "ios_runtime.h"\n#include "mobile_ui.h"\n#include "PcGuestABI.h"', "main includes")
     s = replace_once(s, "int main(int argc, char **argv) {",
         "int skyrim_ios_runtime_main(int argc, char **argv) {\n"
         '    skyrim_ios_stage("runtime-start");', "main entry")
@@ -86,13 +86,15 @@ def patch_main(s: str) -> str:
         '#ifndef __ANDROID__\n        extern void bridge_scaled_mode',
         '#if !defined(__ANDROID__) && !defined(SKYRIM_IOS)\n        extern void bridge_scaled_mode',
         "mobile initial size")
+    s = replace_once(s, '        skyrim_seed_prefs(w, h);',
+        '        skyrim_mobile_render_size(&w, &h);\n        skyrim_seed_prefs(w, h);', "selected render size")
     return s
 
 
 def patch_platform(s: str) -> str:
     s = mobile_conditions(s)
     s = replace_once(s, '#include <SDL2/SDL.h>',
-        '#include <SDL2/SDL.h>\n#include <SDL2/SDL_vulkan.h>\n#include "ios_runtime.h"', "platform includes")
+        '#include <SDL2/SDL.h>\n#include <SDL2/SDL_vulkan.h>\n#include "ios_runtime.h"\n#include "mobile_core.h"', "platform includes")
     s = replace_once(s,
         '    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");',
         '    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");\n'
@@ -139,6 +141,19 @@ def patch_platform(s: str) -> str:
     s = replace_once(s,
         '        last = v;\n    }\n}',
         '        last = v;\n    }\n#endif\n}', "fixed TLS canary end")
+    s = replace_once(s,
+        '        extern void touch_handle_event(const SDL_Event *e);\n        touch_handle_event(&e);',
+        '        /* UIKit owns touch input; do not also feed the legacy pad. */', "native touch ownership")
+    s = replace_once(s,
+        '    if (!g_nscript || g_padonly) { if (n) *n = nk; return ks; }',
+        '    /* A real held keyboard state, used by both DirectInput paths.\n'
+        '     * Synthetic SDL events alone do not change SDL_GetKeyboardState. */\n'
+        '    static _Thread_local Uint8 mobile_keys[SDL_NUM_SCANCODES];\n'
+        '    memset(mobile_keys, 0, sizeof mobile_keys);\n'
+        '    memcpy(mobile_keys, ks, nk < SDL_NUM_SCANCODES ? nk : SDL_NUM_SCANCODES);\n'
+        '    if (skyrim_mobile_f5_down()) mobile_keys[SDL_SCANCODE_F5] = 1;\n'
+        '    ks = mobile_keys; nk = SDL_NUM_SCANCODES;\n'
+        '    if (!g_nscript || g_padonly) { if (n) *n = nk; return ks; }', "quicksave keyboard state")
     return s
 
 
@@ -177,11 +192,12 @@ def patch_bridge(s: str) -> str:
         raise ValueError("bridge: expected device and swapchain present hooks")
     s = s.replace(marker, "    skyrim_ios_present_result((int32_t)hr);\n" + marker)
     s = replace_once(s, '    touch_draw(d);',
-        '    skyrim_ios_present_phase(1);\n    touch_draw(d);', "overlay phase")
+        '    /* Controls are native UIKit views; no D3D state capture or overlay draw. */\n'
+        '    skyrim_ios_present_phase(1);', "native overlay replaces D3D overlay")
     s = s.replace('    RECT vr = view_rect();',
         '    skyrim_ios_present_phase(2);\n    RECT vr = view_rect();')
     for call in ('    HRESULT hr = d->Present(', '    HRESULT hr = s->Present('):
-        s = replace_once(s, call, '    skyrim_ios_present_phase(3);\n' + call, "driver present phase")
+        s = replace_once(s, call, '    skyrim_ios_pace_frame();\n    skyrim_ios_present_phase(3);\n' + call, "driver present phase")
     s = s.replace('    skyrim_ios_present_result((int32_t)hr);',
         '    skyrim_ios_present_phase(4);\n    skyrim_ios_present_result((int32_t)hr);')
     s = s.replace(marker, marker + '\n    skyrim_ios_present_phase(5);')
@@ -232,6 +248,44 @@ def patch_prof(s: str) -> str:
     return s.replace("#ifdef GAME_SKYRIM", "#if defined(GAME_SKYRIM) && !defined(SKYRIM_IOS_GUEST_DIAGNOSTIC)")
 
 
+def patch_input(s: str) -> str:
+    s = mobile_conditions(s)
+    s = replace_once(s, '#include "rt.h"', '#include "rt.h"\n#include "mobile_core.h"', "native pad include")
+    s = replace_once(s,
+        '        b |= g_virt.buttons | skip_tap();\n'
+        '        if (g_virt.lt) lt = g_virt.lt;\n'
+        '        if (g_virt.rt) rt = g_virt.rt;\n'
+        '        if (g_virt.lx || g_virt.ly) { lx = g_virt.lx; ly = g_virt.ly; }\n'
+        '        if (g_virt.rx || g_virt.ry) { rx = g_virt.rx; ry = g_virt.ry; }',
+        '        SkyrimMobilePad native = skyrim_mobile_pad();\n'
+        '        b |= native.buttons | skip_tap();\n'
+        '        if (native.lt) lt = native.lt;\n'
+        '        if (native.rt) rt = native.rt;\n'
+        '        if (native.lx || native.ly) { lx = native.lx; ly = native.ly; }\n'
+        '        if (native.rx || native.ry) { rx = native.rx; ry = native.ry; }',
+        "thread-safe native input snapshot")
+    return s
+
+
+def patch_preferences(s: str) -> str:
+    s = mobile_conditions(s)
+    s = replace_once(s, '#include "rt.h"', '#include "rt.h"\n#include "mobile_ui.h"', "mobile preferences include")
+    s = replace_once(s, '    if (existing) return;',
+        '    if (existing && !skyrim_mobile_graphics_changed()) return;', "retain existing preferences")
+    s = replace_once(s, '    char v[16];\n    snprintf(v, sizeof v, "%d", w);',
+        '    if (!existing) {\n    char v[16];\n    snprintf(v, sizeof v, "%d", w);', "only seed absent size")
+    s = replace_once(s, '    ini_set(f, "Display", "bFull Screen", "1");',
+        '    ini_set(f, "Display", "bFull Screen", "1");\n    }', "preserve existing size")
+    s = replace_once(s,
+        '    ini_save(f);\n    pthread_mutex_unlock(&g_ini_lock);\n    LOG("seeded %s (low preset, %dx%d)", host, w, h);',
+        '    const char *section, *key, *value;\n'
+        '    for (unsigned i = 0; skyrim_mobile_ini(i, &section, &key, &value); ++i)\n'
+        '        ini_set(f, section, key, value);\n'
+        '    ini_save(f);\n    pthread_mutex_unlock(&g_ini_lock);\n'
+        '    LOG("configured app profile %s (%dx%d)", host, w, h);', "explicit selected graphics overrides")
+    return s
+
+
 PATCHERS = {
     "main.c": patch_main,
     "platform_sdl.c": patch_platform,
@@ -239,9 +293,9 @@ PATCHERS = {
     "d3dx_shader.cpp": patch_shader,
     "shims.c": patch_shims,
     "prof.c": patch_prof,
-    "skyrim_shims.c": mobile_conditions,
+    "skyrim_shims.c": patch_preferences,
     "touch.cpp": mobile_conditions,
-    "input.c": mobile_conditions,
+    "input.c": patch_input,
     "kernel32.c": patch_main_pump,
     "user32.c": patch_main_pump,
     "dispatch.c": patch_dispatch,

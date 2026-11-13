@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "ios_runtime.h"
+#include "mobile_core.h"
+#include "mobile_ui.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -17,6 +19,13 @@ static uint64_t last_phase_ns;
 static unsigned present_phase;
 static unsigned present_on_main;
 static unsigned pumping; /* main-thread-only reentrancy guard */
+static uint64_t driver_count, driver_total, driver_max, interval_max, last_frame;
+
+static void atomic_max(uint64_t *target, uint64_t value) {
+    uint64_t old = __atomic_load_n(target, __ATOMIC_RELAXED);
+    while (value > old && !__atomic_compare_exchange_n(target, &old, value, 1,
+                                                       __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
+}
 
 static uint64_t monotonic_ns(void) {
     struct timespec now;
@@ -39,6 +48,7 @@ void skyrim_ios_set_window(void *window) {
     if (!pthread_main_np()) { fprintf(stderr, "FATAL UIKit window off main thread\n"); abort(); }
     ui_window = window;
     update_drawable();
+    skyrim_mobile_install(window);
 }
 
 void skyrim_ios_pump_events(void) {
@@ -50,6 +60,7 @@ void skyrim_ios_pump_events(void) {
     __atomic_store_n(&last_pump_ns, now, __ATOMIC_RELAXED);
     SDL_PumpEvents();
     update_drawable();
+    skyrim_mobile_tick();
     pumping = 0;
 }
 
@@ -60,9 +71,42 @@ void skyrim_ios_drawable_size(int *width, int *height) {
 }
 
 void skyrim_ios_present_phase(unsigned phase) {
+    static _Thread_local uint64_t entered;
+    uint64_t now = monotonic_ns();
+    if (phase == 3) entered = now;
+    if (phase == 4 && entered) {
+        uint64_t elapsed = now - entered;
+        __atomic_add_fetch(&driver_count, 1, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&driver_total, elapsed, __ATOMIC_RELAXED);
+        atomic_max(&driver_max, elapsed); entered = 0;
+    }
     __atomic_store_n(&present_on_main, !!pthread_main_np(), __ATOMIC_RELAXED);
     __atomic_store_n(&last_phase_ns, monotonic_ns(), __ATOMIC_RELAXED);
     __atomic_store_n(&present_phase, phase, __ATOMIC_RELAXED);
+}
+
+void skyrim_ios_take_frame_metrics(uint64_t *count, uint64_t *total, uint64_t *maximum, uint64_t *interval) {
+    /* Coarse counters can straddle the boundary by one concurrent Present.
+     * They measure host time inside Present, not GPU execution time. */
+    *count = __atomic_exchange_n(&driver_count, 0, __ATOMIC_RELAXED);
+    *total = __atomic_exchange_n(&driver_total, 0, __ATOMIC_RELAXED);
+    *maximum = __atomic_exchange_n(&driver_max, 0, __ATOMIC_RELAXED);
+    *interval = __atomic_exchange_n(&interval_max, 0, __ATOMIC_RELAXED);
+}
+
+void skyrim_ios_pace_frame(void) {
+    /* A loading thread may own Present temporarily. Do not share an unsafe
+     * clock, replay missed frames or busy-spin. Keep UIKit alive while waiting. */
+    static _Thread_local SkyrimFrameClock clock;
+    uint64_t deadline = skyrim_mobile_frame_deadline(&clock, monotonic_ns(), skyrim_mobile_fps_limit());
+    for (;;) {
+        uint64_t now = monotonic_ns();
+        if (now >= deadline) break;
+        uint64_t remaining = deadline - now;
+        struct timespec pause = {0, (long)(remaining > 4000000 ? 4000000 : remaining)};
+        nanosleep(&pause, NULL);
+        skyrim_ios_pump_events();
+    }
 }
 
 void skyrim_ios_watchdog(void) {
@@ -94,6 +138,10 @@ void skyrim_ios_present_result(int32_t result) {
         return;
     }
     __atomic_store_n(&last_error, 0, __ATOMIC_RELAXED);
+    uint64_t now = monotonic_ns();
+    uint64_t before = __atomic_exchange_n(&last_frame, now, __ATOMIC_RELAXED);
+    if (before && now >= before) atomic_max(&interval_max, now - before);
+    skyrim_mobile_frame();
     if (__atomic_add_fetch(&successful_presents, 1, __ATOMIC_RELAXED) == 1)
         skyrim_ios_stage("first-successful-present-title-not-verified");
 }

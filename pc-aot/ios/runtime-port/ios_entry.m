@@ -14,6 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "ios_runtime.h"
+#include "mobile_ui.h"
 #include "PcGuestABI.h"
 
 __attribute__((noreturn)) static void startup_failure(NSString *message) {
@@ -50,7 +51,7 @@ static void begin_log(void) {
     setvbuf(stderr, NULL, _IOLBF, 0);
     setvbuf(stdout, NULL, _IOLBF, 0);
     NSLog(@"SkyrimIOS log: %s", path);
-    fprintf(stderr, "SkyrimIOS original-guest diagnostic; title/playability not yet verified\n");
+    fprintf(stderr, "SkyrimIOS PC2011 build3 mobile controls; session gameplay requires observation\n");
 }
 
 static void set_default(const char *name, const char *value) {
@@ -125,6 +126,7 @@ int SDL_main(int argc, char **argv) {
         NSURL *game = directory(NSDocumentDirectory, @"Skyrim");
         NSURL *profile = directory(NSApplicationSupportDirectory, @"SkyrimIOS/Profile");
         NSURL *cache = directory(NSCachesDirectory, @"SkyrimIOS/DXVK");
+        skyrim_mobile_initialize(profile.fileSystemRepresentation);
         verify_guest_input(game);
         NSURL *framework = [NSBundle.mainBundle.privateFrameworksURL
                              URLByAppendingPathComponent:@"SkyrimGuest.framework/SkyrimGuest"];
@@ -133,7 +135,7 @@ int SDL_main(int argc, char **argv) {
         if (pc_guest_open(framework.fileSystemRepresentation) != 0)
             startup_failure(@"Private guest framework binding failed; see preceding diagnostics");
         skyrim_ios_stage("private-guest-bound");
-        set_default("LB_LOG", "1");
+        set_default("LB_LOG", skyrim_mobile_verbose() ? "1" : "0");
         set_default("DXVK_LOG_PATH", cache.fileSystemRepresentation);
         set_default("DXVK_STATE_CACHE_PATH", cache.fileSystemRepresentation);
         set_default("SKYDREAM_VSYNC", "1");
