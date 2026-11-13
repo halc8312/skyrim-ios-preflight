@@ -2,6 +2,7 @@
  * Native controls are outside the D3D9 render pass. No game-memory hooks,
  * guest addresses, process snapshots or original installation edits. */
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
 #include <math.h>
@@ -14,6 +15,7 @@
 static NSMutableDictionary *settings;
 static NSDictionary *startup;
 static NSString *profilePath;
+static __weak UIWindow *hostWindow;
 static uint64_t frameCount;
 static int renderWidth, renderHeight;
 static unsigned iniCount;
@@ -435,6 +437,7 @@ void skyrim_mobile_install(void *window) {
         fprintf(stderr,"FATAL Cannot attach native touch controls: %s\n",SDL_GetError());abort();
     }
     UIWindow *native=info.info.uikit.window;
+    hostWindow=native;
     UIView *root=native.rootViewController.view;
     if(!root) {fprintf(stderr,"FATAL SDL UIKit root view missing\n");abort();}
     overlay=[[SKOverlay alloc] initWithFrame:root.bounds];[root addSubview:overlay];
@@ -443,8 +446,15 @@ void skyrim_mobile_install(void *window) {
 void skyrim_mobile_tick(void) {
     if(!overlay || !NSThread.isMainThread) return;
     @autoreleasepool {
-    /* SDL can add its Metal view after window creation. Restore overlay order
-     * only then, not a D3D state block/capture/draw for every game frame. */
+    /* SDL 2.32 replaces rootViewController.view when creating its Metal view
+     * (SDL_uikitview.setSDLWindow). Reattach to that new view, not the detached
+     * initial SDL view. Never derive the window from an already detached pad. */
+    UIView *current=hostWindow.rootViewController.view;
+    if(current && overlay.superview!=current) {
+        [overlay clearInput];[overlay removeFromSuperview];
+        overlay.frame=current.bounds;[current addSubview:overlay];[overlay setNeedsLayout];
+    }
+    /* No state capture/draw through the game's graphics pipeline. */
     if(overlay.superview.subviews.lastObject!=overlay) [overlay.superview bringSubviewToFront:overlay];
     static uint64_t lastFrames,logFrames;static NSTimeInterval lastTime,lastLog,lastSaveCheck;
     NSTimeInterval now=mobileTime();
