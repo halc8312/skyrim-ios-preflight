@@ -1,6 +1,16 @@
 # PC版の性能改善作業 — 2026-11-13
 
-**更新 2026-11-14：最新の本人指示が優先。明示的な「go」までアプリ／クラウドビルドは開始しない。** 以下の20時以降の実行予定は11月13日の履歴であり、新しい実行許可ではない。署名済みbuild4は保持。追加作業はPC内の公開コード・自作fixtureの検証のみ。
+**更新 2026-11-14：本人の「ビルドして」でgo待ちを解除し、build5を実機へ更新済み。** 以下の未ビルド・未導入表記は各作業時点の履歴。新buildのゲーム実行やFPS改善量はまだ未確認。追加のクラウドジョブは起動しない。
+
+## build5のApple検証・署名・USB更新
+
+最初のCodemagic build14（`0308342`）は2分6秒でAPC fixtureのApple SDK `memmove`マクロ衝突により停止。本番処理は変更せず、計数区間だけmacroをpush/undef/popするよう修正。既存macroがある旧新版の再現条件も通常／ASan/UBSanで通過した。
+
+修正版[Codemagic build15](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af76bd490e83b09c4f9effe)（公開`b757c2bd991745638b87c544c1b3df6625c84674`）は8分40秒で成功。Macの36検査中34件成功、Windows専用cross-compilerと任意のhost FFmpeg実decoder検査2件は既定skip。実decoderのローカル比較結果をApple上で再実行したとは扱わない。Appleの実event/QoS、GPU resource待機、APC、shader同時要求等の検査を通過。Metal Toolchainを公式componentで導入した後、自作shader3件のiPhoneOS compileも成功。本体はarm64／iOS最低18.0／SDK26.5でcompile/linkした。
+
+公開host SHA256 `9e229974bd627339bec9931669cd353f0ee528b55c20e459e935a0cb2182edd9`。`x86.h`と`PcGuestABI.h`はprivate guestのcompile contractに一致し、`rt_table.h`は既存late binding宣言の1行差だけでbuild13と同一。private guestの再コンパイルは不要だった。PC内で組み立てたunsigned IPA SHA256 `5e604ad3ce0eabc316a40d34eecf60b1f35da30dcc2f6876d1f9b5ece05cfce5`、署名済みSHA256 `c8f048e1d75fdfd22182405c18a826983899af8702d17caaa21b22136f24aec5`。2イメージ／39,413コードページ／4resourceと既存profileのApple chain・App ID・対象端末・3メモリ権限を検証した。
+
+USB接続を再確認後、本人が保存・終了したbuild2をbuild5へUpgrade。前後のゲーム26ファイルの名前／サイズ（5,909,061,966 bytes）と、プロフィール6ファイルのSHA256（9,715,471 bytes）が一致。ゲームの全byteを今回再読み戻したという意味ではない。成果物／原ログは`local/codemagic-title15/`、プロフィールは`private/title-build5-before/`と`private/title-build5-after/`。原ゲーム、旧IPA、private guestは不変。OSのインストール受理は確認したが、ゲーム動作・画質・音声・FPS・発熱・初回cache保存の実機評価は本人の次回試遊待ち。
 
 ## 2026-11-14：シェーダーの重複準備と読み込み完了通知
 

@@ -1,5 +1,11 @@
 # 開発状況
 
+**最新：2026-11-14、PC版build5をiPhoneへ導入済み。** Codemagic build15（公開`b757c2bd991745638b87c544c1b3df6625c84674`）は8分40秒で成功。Macの34検査が成功し、Windows専用ARM検査と任意のhost FFmpeg検査2件は既定skip（各ローカル検証は別途完了）、Metalの自作3件も実コンパイルを通過。共有ABIを照合して既存private guestとPC内で組み立て、署名の2イメージ／39,413コードページ／4resourceと既存profileを検証した。本人の保存・終了・USB再接続後、build2→5をUpgrade。ゲーム26ファイル／5,909,061,966 bytesの名前・サイズと、プロフィール6ファイル／9,715,471 bytesのSHA256が更新前後で一致。新buildのゲーム実行・操作・FPS／発熱改善はまだ未確認。
+
+署名済みIPA：`private/title-signing-20261112/SkyrimIOS-PC2011-build5-signed.ipa`、SHA256 `c8f048e1d75fdfd22182405c18a826983899af8702d17caaa21b22136f24aec5`。公開成果物と実行記録は`local/codemagic-title15/`、更新前後のプロフィールは`private/title-build5-before/`・`private/title-build5-after/`。旧IPA、原ゲーム、private guestは保持。次は同じセーブ／画質で静止・カメラ・魔法／攻撃を比較し、FPSと瞬間停止、音声、透明表示、温度、タッチ操作を確認する。
+
+## 以下は作業履歴（当時のgo待ち・未導入表記を含む）
+
 **2026-11-14 build5準備。** 本人から「ビルドして。このあとiPhoneのほうにも」と実行指示を受領。これにより直前までのgo待ちは解除し、検証済み追加変更を一度の公開hostビルドへまとめる。旧IPA・private guest・セーブを保持し、署名後のUSB更新前に保存・終了状態を確認する。ビルド／インストールの結果と実機性能はまだ未確認。
 
 Codemagic build14（公開`0308342`）は2分6秒で失敗。APC自作fixtureの`memmove`計数マクロがApple SDKのfortifyマクロと衝突した。fixtureの計測区間だけpush/undef/popし、実memmove呼出しのSDK保護は保持する。SDK相当の既存マクロを持つ旧新版の再現条件も加え、関連3検査は通常とASan/UBSanで合格。本番コード・画質・CPU ABIは変更せず、修正版のMac再検証へ進む。
