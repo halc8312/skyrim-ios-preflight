@@ -1,0 +1,76 @@
+// Public iOS host adaptation; included in the staged dxvk_resource.cpp.
+#include <new>
+#include "performance_metrics.h"
+
+namespace dxvk {
+  // Keep the original resource layout and access counters. No resource pointer
+  // is retained by this fixed-size, process-lifetime wait table.
+  std::atomic<uint32_t> g_iosResourceWaiters = { 0 };
+
+  namespace {
+    struct alignas(128) ResourceWaitBucket {
+      dxvk::mutex mutex;
+      dxvk::condition_variable condition;
+      std::atomic<uint32_t> waiters = { 0 };
+    };
+    struct ResourceWaitTable { ResourceWaitBucket buckets[64]; };
+
+    ResourceWaitBucket& resourceWaitBucket(const void *resource) {
+      // Placement construction registers no destructor: late driver/resource
+      // teardown cannot encounter a destroyed condition variable. No heap
+      // allocation and no per-resource mutex/condition-variable storage.
+      alignas(ResourceWaitTable) static unsigned char storage[sizeof(ResourceWaitTable)];
+      static ResourceWaitTable *table = new (storage) ResourceWaitTable;
+      uintptr_t key = reinterpret_cast<uintptr_t>(resource) >> 4;
+      return table->buckets[(key ^ (key >> 6)) & 63];
+    }
+
+    struct ResourceWaitRegistration {
+      ResourceWaitBucket& bucket;
+      explicit ResourceWaitRegistration(ResourceWaitBucket& value) : bucket(value) {
+        ++bucket.waiters;
+        ++g_iosResourceWaiters;
+      }
+      ~ResourceWaitRegistration() {
+        --g_iosResourceWaiters;
+        --bucket.waiters;
+      }
+    };
+  }
+
+  void iosNotifyResourceWaiters(const DxvkResource *resource) {
+    auto& bucket = resourceWaitBucket(resource);
+    if (!bucket.waiters.load()) return;
+    std::lock_guard<dxvk::mutex> lock(bucket.mutex);
+    if (bucket.waiters.load()) bucket.condition.notify_all();
+  }
+
+  void DxvkResource::iosWaitIdle(DxvkAccess access) const {
+    // Give an already-finishing submission a short chance before parking.
+    // The bound matches DXVK's existing small spinlock, not its unbounded
+    // resource polling loop (50,000 probes between scheduler yields).
+    for (uint32_t i = 0; i < 200; ++i) {
+      if (!isInUse(access)) return;
+#if defined(DXVK_ARCH_X86)
+      _mm_pause();
+#elif defined(__aarch64__) || defined(__arm__)
+      __asm__ volatile("yield");
+#endif
+    }
+    const uint64_t started = skyrim_perf_now_ns();
+    {
+      auto& bucket = resourceWaitBucket(this);
+      std::unique_lock<dxvk::mutex> lock(bucket.mutex);
+      ResourceWaitRegistration registration(bucket);
+      // Registration, predicate loads, release decrement and notifier's waiter
+      // load are seq_cst. A release which sees zero registered waiters precedes
+      // our predicate, so that predicate sees completion. Otherwise notification
+      // takes this same mutex, bridging predicate evaluation and atomic unlock/
+      // wait. Spurious wakes and hash collisions always recheck this resource.
+      bucket.condition.wait(lock, [this, access] { return !isInUse(access); });
+    }
+    // Outside the bucket lock. Host event-wait path, not GPU execution time or
+    // a count of kernel sleeps (completion may race the predicate).
+    skyrim_perf_end(SKYRIM_PERF_RESOURCE_WAIT, started, 0);
+  }
+}

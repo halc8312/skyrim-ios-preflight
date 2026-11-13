@@ -55,9 +55,16 @@ PY
   python3 -m unittest discover -s tests -p 'test_performance_metrics.py' -v
   python3 -m unittest discover -s tests -p 'test_asset_timing.py' -v
   python3 -m unittest discover -s tests -p 'test_audio_submix.py' -v
+  python3 -m unittest discover -s tests -p 'test_xwma_buffer.py' -v
+  python3 -m unittest discover -s tests -p 'test_constant_scratch.py' -v
+  python3 -m unittest discover -s tests -p 'test_dds_layout.py' -v
+  python3 -m unittest discover -s tests -p 'test_directory_index.py' -v
+  python3 -m unittest discover -s tests -p 'test_additional_work.py' -v
   python3 -m unittest discover -s tests -p 'test_watchdog_layout.py' -v
   python3 -m unittest discover -s tests -p 'test_pipeline_cache.py' -v
   python3 -m unittest discover -s tests -p 'test_pipeline_locking.py' -v
+  python3 -m unittest discover -s tests -p 'test_pending_work.py' -v
+  python3 -m unittest discover -s tests -p 'test_resource_wait.py' -v
   python3 -m unittest discover -s tests -p 'test_device*.py' -v
 )
 

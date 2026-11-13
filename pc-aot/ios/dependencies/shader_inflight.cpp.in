@@ -1,0 +1,60 @@
+    // Hot modules use exactly the existing lookup. Coordinate only cold keys;
+    // unrelated shaders never wait for this compilation or share its failure.
+    std::shared_ptr<IosShaderFlight> ownedFlight;
+    {
+      std::unique_lock<dxvk::mutex> lock(m_mutex);
+      for (;;) {
+        auto entry = m_modules.find(lookupKey);
+        if (entry != m_modules.end()) {
+          *pShaderModule = entry->second;
+          return;
+        }
+        auto active = m_iosCompiling.find(lookupKey);
+        if (active != m_iosCompiling.end()) {
+          auto flight = active->second; // outlives erase and map rehash
+          if (flight->owner == std::this_thread::get_id())
+            break; // same-thread reentry follows the original compile path
+          const uint64_t waitStarted = skyrim_perf_now_ns();
+          flight->ready.wait(lock, [&] { return flight->complete; });
+          skyrim_perf_end(SKYRIM_PERF_D3D_SHADER_WAIT, waitStarted, 0);
+          // A failed owner never caches an error. This caller retries using its
+          // own module/input, just as an independent original request would.
+          continue;
+        }
+        try {
+          auto flight = std::make_shared<IosShaderFlight>();
+          m_iosCompiling.emplace(lookupKey, flight);
+          ownedFlight = std::move(flight);
+        } catch (const std::bad_alloc&) {
+          // Optional coordination must not introduce an allocation failure.
+          // The original compilation and publication still run normally.
+        }
+        break;
+      }
+    }
+
+    auto finishFlight = [&] {
+      if (!ownedFlight) return;
+      {
+        std::lock_guard<dxvk::mutex> lock(m_mutex);
+        m_iosCompiling.erase(lookupKey);
+        ownedFlight->complete = true;
+      }
+      ownedFlight->ready.notify_all();
+    };
+    try {
+      *pShaderModule = D3D9CommonShader(
+        pDevice, ShaderStage, lookupKey,
+        pDxbcModuleInfo, pShaderBytecode,
+        info, &module);
+      {
+        std::unique_lock<dxvk::mutex> lock(m_mutex);
+        auto status = m_modules.insert({ lookupKey, *pShaderModule });
+        if (!status.second)
+          *pShaderModule = status.first->second;
+      }
+    } catch (...) {
+      finishFlight();
+      throw;
+    }
+    finishFlight();

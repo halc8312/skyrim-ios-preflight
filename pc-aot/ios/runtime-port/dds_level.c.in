@@ -1,0 +1,41 @@
+int skyrim_ios_dds_cube_level(const NativeD3DXImage *i, size_t bytes, uint32_t face,
+                          uint32_t level, size_t *offset, uint32_t *width,
+                          uint32_t *height, uint32_t *depth, uint32_t *pitch,
+                          uint32_t *rows) {
+  // The existing 2D/volume entry point stays byte-for-byte unchanged. The cube
+  // caller uses it for the first face too, preserving its partial-file return.
+  if (face == 0)
+    return native_d3dx_dds_level(i, bytes, face, level, offset, width, height, depth, pitch, rows);
+  if (!i || i->file_format != 4 || level >= i->mips ||
+      face >= (i->type == 5 ? 6u : 1u))
+    return 0;
+  size_t at = i->data_offset, within = 0;
+  uint64_t wanted_size = 0;
+  uint32_t wanted_w = 0, wanted_h = 0, wanted_d = 0, wanted_p = 0, wanted_r = 0;
+  // Every cube face has the same mip layout. Validate and compute that layout
+  // once; still accept a partial first face when its requested mip is present.
+  for (uint32_t l = 0; l < i->mips; l++) {
+    uint32_t w = i->width >> l, h = i->height >> l, d = i->depth >> l;
+    if (!w) w = 1;
+    if (!h) h = 1;
+    if (!d) d = 1;
+    uint32_t p = i->block_bytes ? ((w + 3) / 4) * i->block_bytes : w * i->pixel_bytes,
+             r = i->block_bytes ? (h + 3) / 4 : h;
+    if (l == 0 && i->base_pitch) p = i->base_pitch;
+    uint64_t size = (uint64_t)p * r * d;
+    if (at > bytes || size > bytes - at) return 0;
+    if (l == level) {
+      within = at - i->data_offset; wanted_size = size;
+      wanted_w = w; wanted_h = h; wanted_d = d; wanted_p = p; wanted_r = r;
+    }
+    at += (size_t)size;
+  }
+  const size_t face_bytes = at - i->data_offset;
+  if (face_bytes > (bytes - i->data_offset) / face) return 0;
+  const size_t face_start = i->data_offset + face_bytes * face;
+  if (within > bytes - face_start || wanted_size > bytes - face_start - within) return 0;
+  *offset = face_start + within;
+  *width = wanted_w; *height = wanted_h; *depth = wanted_d;
+  *pitch = wanted_p; *rows = wanted_r;
+  return 1;
+}

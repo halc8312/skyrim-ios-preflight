@@ -26,6 +26,7 @@ SHADOW_PREFIX=r'''
 #include <map>
 #include <mutex>
 #include <functional>
+#include <new>
 #include <thread>
 #include <algorithm>
 #include <chrono>

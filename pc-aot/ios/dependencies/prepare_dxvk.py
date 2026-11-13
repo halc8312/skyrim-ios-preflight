@@ -10,6 +10,10 @@ import hashlib
 from pathlib import Path
 
 EXPECTED = {
+    "src/d3d9/d3d9_shader.cpp": "40e72c614732f25b99ba298fa3a3fd3dfec2cbbb771e05f4b6821b5478d166b4",
+    "src/d3d9/d3d9_shader.h": "0817969cc9b551287a87a8cbe66e209535c15e39551528388a6a9f442fd9ad9d",
+    "src/dxvk/dxvk_resource.h": "1dc5c873dc7207534ccd0201b2ab3509fcf0c3d71a86bbbfeb46cf700760b835",
+    "src/dxvk/dxvk_resource.cpp": "bcb6bc7f6a37a32ae257e1d18cd1b33f8da00b02fe1c3e12b30a5386823a6bf4",
     "src/dxvk/dxvk_memory.cpp": "1432d9264ecd19159ef02af2de8767b31e19fa65d7e0653d16957ef2fd241631",
     "src/dxvk/dxvk_memory.h": "4aeee77488305734c8b559ec6c53309b048f47b197ad4532b36b5a7e3ccb57e4",
     "src/dxvk/dxvk_state_cache.cpp": "5b0942b71353c1731710f40a6f9573c8371c4cad65c661598aef06771b87026d",
@@ -263,7 +267,47 @@ def adapt_timing(name: str, text: str) -> str:
         "    if (iosResult != VK_SUCCESS)")
 
 
+def adapt_resource_wait(name: str, text: str) -> str:
+    if name.endswith('.cpp'):
+        return text + '\n' + (Path(__file__).parent / 'resource_wait.cpp.in').read_text(encoding='utf-8')
+    text = once(text, '  enum class DxvkAccess {', '''  class DxvkResource;
+  extern std::atomic<uint32_t> g_iosResourceWaiters;
+  void iosNotifyResourceWaiters(const DxvkResource *resource);
+
+  enum class DxvkAccess {''')
+    text = once(text, '          : m_useCountW) -= 1;', '''          : m_useCountW) -= 1;
+        if (g_iosResourceWaiters.load() && !isInUse(access)) iosNotifyResourceWaiters(this);''')
+    text = once(text, '''      sync::spin(50000, [this, access] {
+        return !isInUse(access);
+      });''', '''      if (isInUse(access)) iosWaitIdle(access);''')
+    return once(text, '    std::atomic<uint32_t> m_useCountR = { 0u };',
+                '    void iosWaitIdle(DxvkAccess access) const;\n\n    std::atomic<uint32_t> m_useCountR = { 0u };')
+
+
+def adapt_shader_inflight(name: str, text: str) -> str:
+    if name.endswith('.h'):
+        text = once(text, '#include <array>',
+            '#include <array>\n#include <memory>\n#include <thread>\n#include <new>')
+        return once(text, '      DxvkHash, DxvkEq> m_modules;', '''      DxvkHash, DxvkEq> m_modules;
+
+    struct IosShaderFlight {
+      dxvk::condition_variable ready;
+      std::thread::id owner = std::this_thread::get_id();
+      bool complete = false; // all access under m_mutex
+    };
+    std::unordered_map<DxvkShaderKey, std::shared_ptr<IosShaderFlight>,
+      DxvkHash, DxvkEq> m_iosCompiling;''')
+    start = text.index('    // Use the shader\'s unique key for the lookup')
+    end = text.index('\n  }\n\n}', start)
+    replacement = (Path(__file__).parent / 'shader_inflight.cpp.in').read_text(encoding='utf-8')
+    return '#include "performance_metrics.h"\n' + text[:start] + replacement.rstrip('\n') + text[end:]
+
+
 def adapt(name: str, text: str) -> str:
+    if name.endswith(('d3d9_shader.cpp', 'd3d9_shader.h')):
+        return adapt_shader_inflight(name, text)
+    if name.endswith(('dxvk_resource.h', 'dxvk_resource.cpp')):
+        return adapt_resource_wait(name, text)
     if name.endswith(("dxvk_memory.cpp", "dxvk_memory.h")):
         return adapt_memory(name, text)
     if name.endswith("dxvk_state_cache.cpp"):

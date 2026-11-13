@@ -21,6 +21,9 @@ EXPECTED = {
     "d3dx_shader.cpp": "4593e3cad0bd38ee7866d1f715f0df0e189e8716179c9aba70e96b8b6e96a496",
     "d3d9_bridge_gen.cpp": "575127d0fce5620a92b40ecd828bad87f3adbcadbabe1f4e2a080dcd90458419",
     "d3dx_native.cpp": "8aac049c9bb24b138b5ade384e867ff0a2ff3941edf7323dd295e11aa97c1146",
+    "d3dx_image.c": "d2ccab42393299a8a851e684903120507fc672b557bc0d0166e4e0cb90622b4f",
+    "d3dx_surface.cpp": "bddcd59dc98890391ba941bba4db53ec377c30039f76a99ca93f7fdf5a61266f",
+    "d3d9_bcemu.cpp": "1fd6626f3015e117b5694e664c1a6c18d97072efdc56210d4f81ec5f109301ea",
     "shims.c": "7478c4f7ee7b9e75e3ec17acba5825b5f594a7966cfa747155252b935131c6f0",
     "prof.c": "2c0910c1620e844d47e2e1d2d1910091245f062144ce3253159e9f4e10f12c0c",
     "skyrim_shims.c": "3b1955df82fcd791e907ced07dfd8365d89f417f705d9f51e39f4fb04d1bd9c7",
@@ -30,6 +33,7 @@ EXPECTED = {
     "user32.c": "e4970ef14067b9779415a6872895b57f007c904f69682a1e395b1d96b61ef335",
     "dispatch.c": "17c9508a10b2174a7efc24b26f94de0f6c9ce58eee9fa966fe74b68140ba7ac0",
     "xaudio2.c": "91f0e31e583b8e03d1ecf35632fba2cd24abb42f986c3c796aa879d711bdfc42",
+    "xwma.c": "5c0bd198d43e71bbdb52d7499bda7dceac4b4bb7219c59b48b9541c5756a7b20",
 }
 
 
@@ -223,7 +227,31 @@ def patch_bridge(s: str) -> str:
         '        gfree(it->second.guest);\n'
         '        it = g_persist.erase(it);\n'
         '    }', "persistent release object range")
-    return s
+    return patch_shadow_queue(s)
+
+
+def patch_shadow_queue(s: str) -> str:
+    s = '#include <new>\n' + s
+    s = replace_once(s,
+        '    std::vector<std::pair<const uint8_t *, std::function<void(const uint8_t *)>>> todo;',
+        '''    using Upload = std::pair<const uint8_t *, std::function<void(const uint8_t *)>>;
+    struct Pending {
+        alignas(Upload) unsigned char storage[8 * sizeof(Upload)];
+        size_t used = 0;
+        std::vector<Upload> overflow;
+        Upload *at(size_t n) { return std::launder(reinterpret_cast<Upload *>(storage + n * sizeof(Upload))); }
+        ~Pending() { for (size_t n = 0; n < used; ++n) at(n)->~Upload(); }
+        void append(const uint8_t *bytes, const std::function<void(const uint8_t *)> &upload) {
+            if (used < 8) { new (storage + used * sizeof(Upload)) Upload(bytes, upload); ++used; }
+            else overflow.emplace_back(bytes, upload);
+        }
+    } todo;''', 'small pending uploads without vector growth')
+    s = replace_once(s,
+        'todo.push_back({MEM + it->second.guest, it->second.upload});',
+        'todo.append(MEM + it->second.guest, it->second.upload);', 'retain callbacks before unlock')
+    return replace_once(s, '    for (auto &t : todo) t.second(t.first);',
+        '    for (size_t n = 0; n < todo.used; ++n) todo.at(n)->second(todo.at(n)->first);\n'
+        '    for (auto &t : todo.overflow) t.second(t.first);', 'ordered callbacks outside lock')
 
 
 def patch_main_pump(s: str) -> str:
@@ -284,8 +312,57 @@ def patch_texture_loading(s: str) -> str:
         'file texture timing end')
 
 
+def patch_dds_layout(s: str) -> str:
+    start = s.index('uint8_t *native_d3dx_decode_rgba(')
+    return '#include "ios_dds_layout.h"\n' + s[:start] + (Path(__file__).parent / 'dds_level.c.in').read_text(encoding='utf-8') + '\n' + s[start:]
+
+
+def patch_native_textures(s: str) -> str:
+    s = '#include "ios_dds_layout.h"\n' + s
+    s = replace_once(s, 'native_d3dx_dds_level(&i, bytes, face, l,',
+                     'skyrim_ios_dds_cube_level(&i, bytes, face, l,', 'cube-only repeated layout reduction')
+    return patch_texture_loading(s)
+
+
 def patch_kernel(s: str) -> str:
-    return patch_main_pump(patch_asset_reads(s))
+    return patch_main_pump(patch_asset_reads(patch_apc_queue(patch_directory_index(s))))
+
+
+def patch_apc_queue(s: str) -> str:
+    s = replace_once(s, 'static __thread int t_napc;',
+        'static __thread int t_napc;\nstatic __thread unsigned t_apc_head;',
+        'per-thread completion queue head')
+    s = replace_once(s, '    t_apc[t_napc++] = (Apc){fn, err, (uint32_t)r, ov};',
+        '    t_apc[(t_apc_head + (unsigned)t_napc) & 63u] = (Apc){fn, err, (uint32_t)r, ov};\n'
+        '    ++t_napc;', 'append completion without shifting pending entries')
+    return replace_once(s, '''        Apc a = t_apc[0];
+        memmove(t_apc, t_apc + 1, --t_napc * sizeof(Apc));''', '''        Apc a = t_apc[t_apc_head];
+        t_apc_head = (t_apc_head + 1u) & 63u;
+        --t_napc;''', 'remove before callback, preserving recursive APC delivery')
+
+
+def patch_directory_index(s: str) -> str:
+    old = 'typedef struct { char dir[1024]; time_t mtime; long mtime_ns; char *names; size_t len; } DirCache;'
+    new = '''typedef struct { uint32_t offset, length; } DirNameIndex;
+typedef struct { char dir[1024]; time_t mtime; long mtime_ns; char *names; size_t len;
+                 DirNameIndex *index; size_t index_count; } DirCache;'''
+    s = replace_once(s, old, new + '\n' +
+        (Path(__file__).parent / 'directory_index.c.in').read_text(encoding='utf-8'), 'length-only directory index')
+    s = replace_once(s, '        free(dc->names);',
+        '        free(dc->index); dc->index = NULL; dc->index_count = 0;\n        free(dc->names);',
+        'retire directory index with its listing')
+    s = replace_once(s, '        if (!dc->names) dc->names = calloc(1, 1);',
+        '        if (!dc->names) dc->names = calloc(1, 1);\n        dir_index_build(dc);', 'index complete immutable listing')
+    return replace_once(s, '''    for (size_t o = 0; o < dc->len; o += strlen(dc->names + o) + 1)
+        if (!strcasecmp(dc->names + o, comp)) {
+            snprintf(comp, compsz, "%s", dc->names + o);
+            hit = 1;
+            break;
+        }''', '''    const char *found = dir_index_find(dc, comp);
+    if (found) {
+        snprintf(comp, compsz, "%s", found);
+        hit = 1;
+    }''', 'lookup only compatible name lengths')
 
 
 def patch_dispatch(s: str) -> str:
@@ -306,7 +383,40 @@ def patch_watchdog_layout(s: str) -> str:
     return replace_once(s, old, new, "separate frequently written watchdog slots")
 
 
+def patch_constant_scratch(s: str) -> str:
+    # One matrix (four float4 registers) fits on the calling thread's stack.
+    # Build only the typed payload actually consumed by set_registers.
+    s = replace_once(s, '''  std::vector<float> values(v->count * 4, 0);
+  std::vector<int> ints(v->count * 4, 0);''', '''  const unsigned lanes = v->count * 4;
+  float local_values[16];
+  int local_ints[16];
+  const bool float_payload = v->set == 2;
+  std::vector<float> large_values(lanes > 16 && float_payload ? lanes : 0, 0);
+  std::vector<int> large_ints(lanes > 16 && !float_payload ? lanes : 0, 0);
+  float *values = lanes > 16 ? large_values.data() : local_values;
+  int *ints = lanes > 16 ? large_ints.data() : local_ints;
+  if (lanes <= 16) {
+    if (float_payload) std::fill_n(values, lanes, 0.0f);
+    else std::fill_n(ints, lanes, 0);
+  }''', 'small constant scratch without heap allocation')
+    s = replace_once(s, '        if (index >= values.size())',
+                     '        if (index >= lanes)', 'same constant scratch bounds')
+    s = replace_once(s, '''        values[index] = (float)value;
+        ints[index] = v->set == 0 ? value != 0 : (int)value;''',
+        '''        if (float_payload) values[index] = (float)value;
+        else ints[index] = v->set == 0 ? value != 0 : (int)value;''',
+        'omit the unconsumed constant representation')
+    return replace_once(s,
+        '      v->set == 2 ? (const void *)values.data() : (const void *)ints.data(),',
+        '      v->set == 2 ? (const void *)values : (const void *)ints,',
+        'same synchronous typed constant payload')
+
+
 def patch_shader(s: str) -> str:
+    s = replace_once(s, '      for (unsigned i = 0; i < constants; i++) {',
+        '      t.constants.reserve(constants);\n      for (unsigned i = 0; i < constants; i++) {',
+        'bounded CTAB capacity known before insertion')
+    s = patch_constant_scratch(s)
     s = '#include "performance_metrics.h"\n' + s
     s = replace_once(s, '  int status = compile_hlsl(&info, &code, &messages);',
         '  const uint64_t ios_started = skyrim_perf_now_ns();\n'
@@ -408,13 +518,135 @@ def patch_audio_submix(s: str) -> str:
     return replace_once(s, old, new, "stable audio submix stage traversal")
 
 
+def patch_xwma_buffer(s: str) -> str:
+    # Decode, resampling, packet/PTS order and caller ownership stay unchanged.
+    # Capacity belongs only to this synchronous decode call, not to a voice.
+    s = replace_once(s, '#include <limits.h>', '#include <limits.h>\n#include <errno.h>',
+                     "xWMA optional allocation errno preservation")
+    s = replace_once(s,
+        'static int receive_pcm(XWmaDecoder *d, int16_t **pcm, uint32_t *frames) {',
+        '''static int receive_pcm(XWmaDecoder *d, int16_t **pcm, uint32_t *frames,
+                       size_t *capacity_bytes, size_t *extent_bytes, size_t spare_limit) {''',
+        "xWMA local capacity arguments")
+    s = replace_once(s,
+        '''        int16_t *next = realloc(*pcm, samples * sizeof(int16_t));
+        if (!next && samples) return -1;
+        *pcm = next;
+        uint8_t *out = (uint8_t *)(next + (size_t)*frames * d->channels);''',
+        '''        size_t needed = samples * sizeof(int16_t);
+        if (needed > *capacity_bytes) {
+            /* Amortize frame appends only when more input packets remain,
+             * with at most 64 KiB of speculative capacity. Never let this
+             * turn an exact-fit success into a memory-pressure failure. */
+            size_t spare = *capacity_bytes < spare_limit ? *capacity_bytes : spare_limit;
+            size_t reserved = needed <= SIZE_MAX - spare ? needed + spare : needed;
+            const int allocation_errno = errno;
+            int16_t *next = realloc(*pcm, reserved);
+            if (!next && reserved != needed) {
+                reserved = needed;
+                errno = allocation_errno;
+                next = realloc(*pcm, needed);
+            }
+            if (!next) return -1;
+            *pcm = next;
+            *capacity_bytes = reserved;
+        }
+        *extent_bytes = needed;
+        uint8_t *out = (uint8_t *)(*pcm + (size_t)*frames * d->channels);''',
+        "xWMA bounded amortized allocation")
+    s = replace_once(s, '    int rc = 0;\n    for (size_t offset',
+        '    int rc = 0;\n    size_t capacity_bytes = 0, extent_bytes = 0;\n    for (size_t offset',
+        "xWMA per-call capacity")
+    s = replace_once(s,
+        'if (rc < 0 || (rc = receive_pcm(d, pcm, frames)) < 0) break;',
+        'if (rc < 0 || (rc = receive_pcm(d, pcm, frames, &capacity_bytes, &extent_bytes,\n'
+        '                                        size < bytes - offset ? 65536 : 0)) < 0) break;',
+        "xWMA reserve only for remaining input packets")
+    s = replace_once(s, 'if (rc >= 0) rc = receive_pcm(d, pcm, frames);',
+        'if (rc >= 0) rc = receive_pcm(d, pcm, frames, &capacity_bytes, &extent_bytes, 0);',
+        "xWMA flush without speculative allocation")
+    return replace_once(s,
+        '    if (rc < 0) { free(*pcm); *pcm = NULL; *frames = 0; xwma_reset(d); }\n    return rc;',
+        '''    if (rc < 0) { free(*pcm); *pcm = NULL; *frames = 0; xwma_reset(d); }
+    else if (extent_bytes && capacity_bytes > extent_bytes) {
+        /* Restore the final extent requested by the original decoder before
+         * the caller queues PCM. A failed shrink leaves valid owned samples. */
+        const int allocation_errno = errno;
+        int16_t *trimmed = realloc(*pcm, extent_bytes);
+        errno = allocation_errno;
+        if (trimmed) *pcm = trimmed;
+    }
+    return rc;''', "xWMA return exact final extent")
+
+
+def patch_audio(s: str) -> str:
+    s = '#include "performance_metrics.h"\n' + patch_audio_route(patch_audio_submix(s))
+    helper = '''static int ios_decode_xwma(XWmaDecoder *decoder, const uint8_t *data, size_t bytes,
+                           unsigned packets, int end, int16_t **pcm, uint32_t *frames) {
+    const uint64_t started = skyrim_perf_now_ns();
+    int result = xwma_decode(decoder, data, bytes, packets, end, pcm, frames);
+    skyrim_perf_end(SKYRIM_PERF_XWMA_DECODE, started, result < 0);
+    return result;
+}
+'''
+    s = replace_once(s, 'SHIM(xs_SubmitSourceBuffer) {', helper + 'SHIM(xs_SubmitSourceBuffer) {',
+                     "xWMA timing helper")
+    return replace_once(s, 'if (xwma_decode(v->wma, MEM + x->data, x->bytes, packets,',
+                        'if (ios_decode_xwma(v->wma, MEM + x->data, x->bytes, packets,',
+                        "observe synchronous xWMA decode inside existing audio lock")
+
+
+def patch_audio_route(s: str) -> str:
+    # Preserve every multiply/add, including the initial +0 and zero weights.
+    # No sparse mixing: zero times NaN/Inf must still participate.
+    marker = '        for (int f = 0; f < frames; f++)\n            for (int dc = 0; dc < d->in_ch; dc++) {'
+    return replace_once(s, marker, '''        if (v->in_ch == 2 && d->in_ch == 2) {
+            for (int f = 0; f < frames; f++) {
+                float left = 0, right = 0;
+                left += m[0] * in[f * 2];
+                left += m[1] * in[f * 2 + 1];
+                d->acc[f * 2] += left;
+                right += m[2] * in[f * 2];
+                right += m[3] * in[f * 2 + 1];
+                d->acc[f * 2 + 1] += right;
+            }
+        } else
+''' + marker, 'stereo route with fixed strides and original arithmetic')
+
+
+def patch_surface_point(s: str) -> str:
+    return replace_once(s, '''    } else
+      for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {''', '''    } else if ((filter & 7) <= 2 && w == sw && h == sh) {
+      // Identity point sampling: every source coordinate is exactly (x,y).
+      // Keep the completed snapshot, color key and format packing unchanged.
+      for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+          pack((uint8_t *)lock.pBits + (size_t)y * lock.Pitch + x * dp,
+               desc.Format, &rgba[((size_t)y * sw + x) * 4]);
+    } else
+      for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {''', 'identity point sampling without per-pixel division')
+
+
+def patch_bc_palette(s: str) -> str:
+    marker = '// Decodes one 4x4 block into BGRA rows of `out` (pitch in bytes), clipped to w x h.'
+    helper = (Path(__file__).parent / 'bc1_palette.cpp.in').read_text(encoding='utf-8')
+    s = replace_once(s, marker, helper + '\n' + marker, 'packed BC1 palette')
+    return replace_once(s,
+        'void decode_block(D3DFORMAT f, const uint8_t *b, uint8_t *out, int pitch, int w, int h) {',
+        'void decode_block(D3DFORMAT f, const uint8_t *b, uint8_t *out, int pitch, int w, int h) {\n'
+        '    if (f == D3DFMT_DXT1) { ios_decode_bc1(b, out, pitch, w, h); return; }',
+        'BC1 needs no independent alpha plane')
+
+
 PATCHERS = {
     "main.c": patch_main,
     "platform_sdl.c": patch_platform,
     "d3d9_bridge.cpp": patch_bridge,
     "d3dx_shader.cpp": patch_shader,
     "d3d9_bridge_gen.cpp": patch_shader_creation,
-    "d3dx_native.cpp": patch_texture_loading,
+    "d3dx_native.cpp": patch_native_textures,
     "shims.c": patch_shims,
     "prof.c": patch_prof,
     "skyrim_shims.c": patch_preferences,
@@ -423,7 +655,11 @@ PATCHERS = {
     "kernel32.c": patch_kernel,
     "user32.c": patch_main_pump,
     "dispatch.c": patch_dispatch,
-    "xaudio2.c": patch_audio_submix,
+    "xaudio2.c": patch_audio,
+    "xwma.c": patch_xwma_buffer,
+    "d3dx_image.c": patch_dds_layout,
+    "d3dx_surface.cpp": patch_surface_point,
+    "d3d9_bcemu.cpp": patch_bc_palette,
 }
 
 

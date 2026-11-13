@@ -1,5 +1,129 @@
 # PC版の性能改善作業 — 2026-11-13
 
+**更新 2026-11-14：最新の本人指示が優先。明示的な「go」までアプリ／クラウドビルドは開始しない。** 以下の20時以降の実行予定は11月13日の履歴であり、新しい実行許可ではない。署名済みbuild4は保持。追加作業はPC内の公開コード・自作fixtureの検証のみ。
+
+## 2026-11-14：シェーダーの重複準備と読み込み完了通知
+
+追加5件の後、「やっていこう」に対して公開ホストの準備処理を追い、2件を実装した。実ゲーム由来のコードや新しいprivate guestは作っていない。比較基準は`737ee80`で、ここで変えた2経路はその時点では固定上流の処理のまま。
+
+**同じD3D9シェーダーの同時コンパイルを共有。** 固定DXVKの`D3D9ShaderModuleSet::GetShaderModule`は、cache miss後にmutexを外してコンパイルするため、同じkeyを複数threadが同時に要求すると全員がコンパイルし、登録時に重複を捨てていた。既存のstage＋SHA-1 keyと完成済みmoduleのcacheは維持し、未完成の同一keyだけを待ち合わせる。公開実methodを組み込んだ自作compiler fixtureでは、8同時要求のコンパイルが8→1回になった。異なるkey／stageと完成済みmoduleは、先行compilerを停止させたままでも処理できる。
+
+pending記録はmodule setごとに持ち、mutexで保護し、compiler呼出し中にmutexを保持しない。共有記録はmapのrehash／erase後もwaiterが保持し、完了・例外後に起こす。失敗はcacheせず、待機側は自分の入力で再試行する。同一threadから同じkeyへ再入した場合と、任意の待ち合わせ用確保に失敗した場合は元の独立コンパイルへ戻る。compiler失敗・全員失敗・登録時の例外・2つの確保失敗・再入・独立device/set・8thread×1,000要求を検査した。shader解析、stage／model検証、コンパイラー引数は変更していない。初めて見る単独shaderのコンパイルを消す変更ではなく、cold requestにはpending記録の確保が加わる。同一keyが失敗し続ける場合は各callerの再試行が直列になるため、待ち時間が常に短縮するとは主張しない。
+
+実機での出現を測るため、既存5秒単位の`IOS_TIMING`へ`d3d_shader_wait`を追加した。同一keyの完了を待った区間だけを計測し、hot cache hitには時計読み取りを追加しない。samplesは待ち区間数であり、失敗後の再待機は別区間。GPU時間／コンパイル回数／cache命中数ではない。`failures_known=0`を出し、待ちが終わったことをcompiler成功と取り違えない。既存の数値kindをずらさず末尾へ追加している。
+
+**完了通知の詰め直しを削減。** `ReadFileEx`／`WriteFileEx`の64件TLS queueは、先頭を取り出すたびに残りをmemmoveしていた。固定長ringにし、取り出し前のFIFO順、呼出しthread、callback実行前の件数減算、入れ子の通知、null callback、満杯時の元の失敗位置を維持した。64件を排出する際の詰め直しは2,016要素＝32,256byte→0。実際のread／write、OVERLAPPEDへの書込み、callbackへ渡す値は維持する。これはディスクI/Oの非同期化ではない。
+
+公開実shim＋自作I/OをLinux x86_64の1CPUに固定し、旧新の順を交替した7ペアで比較。1／4／16／64件単位の通知処理は、1callback当たり14.858→13.242、12.410→9.727、15.113→10.488、19.356→9.441nsの中央値だった。各runの400万callbackのchecksumはすべて一致。実ファイルI/O時間・実機FPS・発熱を表す数値ではない。原値と再現scriptは`local/performance-20261114/pending-work-01/benchmark.json`と`benchmark.py`。0〜64件、周回、再入中の追加、full queue失敗、4つの独立threadを通常／ASan/UBSanで検査した。
+
+**今回採用しなかった範囲。** `ReadFileEx`は依然同期preadであり、非同期化にはdescriptor／bufferの寿命とcaller-thread APC・取消の設計が必要。HLSLのinclude callbackはguest CPU/TLSへ戻るため、単純なworker移動・入力文字列だけのcacheを加えない。DXVKの`SetRenderState`は既に同値判定を持つ一方、その前にstate-block記録を行う。さらにbridgeで同値更新を省くと記録を欠落させ得るため追加しなかった。pipeline variant検索の新しいcacheも、この段階では実際の分布の根拠がなく追加していない。
+
+新規fixtureの通常／ASan/UBSan、既存I/O計測・pipeline lock・時間分布の関連検査を通過。実際にstageした`d3d9_shader.cpp`、そのheaderを利用する`d3d9_device.cpp`、全adapter適用後の`kernel32.c`を本物の公開headerでsyntax検査し成功。CPU ABI header不変と公開source検査も確認。次回Mac用のfixture一覧とcache namespace入力に追加したが、scriptは実行していない。署名済みbuild4へは未収録。アプリ／SDK／private guest／クラウドbuild、push、署名、実機更新は行っていない。
+
+## 2026-11-14：前回の3件に続く追加5件
+
+本人の「さらに5回」に対し、`a313b61`を比較基準として以下の5件を採用。公開hostのみを変更し、原ゲーム・private guest・共有CPU ABI・画質設定は維持。Linux x86_64の許可CPU1個に固定し、旧新の順を交替した7ペアの中央値を比較した。実ゲームの利用頻度、iPhone FPS／発熱／瞬間停止改善は未測定で、下記の割合を合算してゲーム全体の改善率にはしない。
+
+| 処理と自作条件 | 旧 → 新 | 削減 |
+|---|---|---|
+| CTAB定数表の構築、256定数 | 5.021 → 3.959µs | 約21％、定数vectorの確保9→1回 |
+| ステレオ音声route、480frame | 2.815 → 1.076µs | 約62％ |
+| 等倍point画像変換、512²、ARGB→ABGR | 2.637 → 1.347ms | 約49％ |
+| BC1の4×4 block展開 | 56.227 → 39.135ns | 約30％ |
+| shadow_flush、同objectの4subresource | 117.240 → 56.591ns | 約52％、作業queueの確保3→0回 |
+
+**CTAB。** `make_table`で4096件以下・descriptor領域内という既存検証を通った後、既知の件数を一度reserveする。type/default/name検証、要素順、guest buffer、解放／登録は維持。予約は最大196,608byteで、途中の不正typeを拒否するより前に容量を予約する点は変更の性質。0/1/4096件、入力途中切れ、不正count/offset/最後のtypeで結果と解放を比較。16件370.52→307.51ns、1024件20.808→17.855µs。256件を2万回構築した全newは200,001→40,001回で、map node等は残る。前回の定数転送用一時配列とは別の処理。
+
+**音声。** 2入力→2出力channelだけstrideと4つの乗算を明示。sum=+0、zero係数の乗算、加算順、volume/send順を維持し、左出力への加算後に右入力を読む。その他channel数は元loop。1〜8channel、既定／指定matrix、0〜513frame、欠損send/master/dead、signed zero/Inf/NaN、self-sendと1〜2floatずらした蓄積先を比較。有限値・Inf・signed zeroのbitは一致し、NaNはclassと件数を照合。最初の全byte比較では演算由来NaNの符号だけが異なったため、NaN符号／payloadのbit同一は主張しない（finiteの差は無視しない）。132構成の実engine_passはPCM全byte・callback・lock・voice寿命が一致した。非対象のmonoは2.357→2.382µs、6→2channelは5.101→5.138µsで、約1％の差を改善とは扱わない。
+
+**等倍画像変換。** 同寸法のpoint系filterでは、元の`min(sw-1,x*sw/w)`等は厳密にx/yになる。完成済みRGBA snapshotをそのまま元のpackへ渡し、pixelごとの座標除算を除去。format変換、color key、lock前の全画像展開、same-formatコピー、拡縮/linear filter、temporary surfaceや失敗処理を維持。15形式の組合せ×4filter×各API失敗経路、部分block、実際に一致するcolor key、等倍/拡縮、非zero原点を実関数＋自作surfaceで比較。64²は38.254→20.441µs、1024²は10.581→5.622ms。先に試したscratchゼロ初期化の省略は512²で約3.5％悪化、1024²で改善と安定せず棄却し、元vectorと初期化へ戻した。
+
+**BC1。** 元と同じrgb565展開、整数の/3・/2丸め、c0<=c1時の透明色を維持し、paletteを一度BGRA4byteへ並べてmemcpy出力。unaligned出力を許容し、DXT2〜5は元のalpha/color loopへ渡す。自作4096block×5形式×幅高さ-1〜5の1,003,520ケースで、padding/sentinelも含めbyte一致。透明selectorと赤endpointを独立期待値でも確認。CPUでBC1を展開する経路だけが対象で、Metalが圧縮textureを直接sampleする場合のGPU高速化ではない。
+
+**描画更新queue。** 最初の8件を呼出し内のaligned storageへ必要な分だけ構築し、9件目以降はvectorへspill。大きなstd::function capture自体の確保は残る。snapshotをmutex内で作り、同じ順でmutex外実行し、例外時は構築済み要素だけを破棄する。0/1/2/4/8/9/16/33件、lock中subresource除外、再入、callbackによるregistry破棄、1/5/9/12個目のcopy例外、既存の並行shadow fixtureを検証。1件39.108→22.485ns、8件185.365→100.313ns、16件330.198→281.259ns。空は8.777→10.120nsと約1.34ns増え、全条件で速いとは主張しない。inline部は8*sizeof(Upload)のstackを使う。最初のoptional配列案は空8.315→30.989ns、1件38.448→41.299nsへ悪化したため棄却した。
+
+新6fixtureは通常／ASan/UBSanで成功。関連する既存shadow、constant、音声timing observer、mobile/CPU ABI検査も成功。実shader/xaudio2/surface/bcemu/bridgeの5 translation unitを固定依存headerでWSL syntax検査し成功。新fixtureは次回Mac検証scriptに登録しただけで、Apple SDKによるcompileや物理iPhone上の音声・描画確認は未実施。
+
+原数値と実行scriptは`local/performance-20261114/five-gains-01/`。CTAB/BC1の採用値は`benchmark-initial-candidates.json`、修正版route/surface/uploadsは`benchmark-final-changed.json`。初期JSONのsurface/uploadsは棄却案なので製品効果へ混ぜない。fixtureはhash照合した実公開関数と自作buffer/deviceを使う。署名済みbuild4は保持し、アプリ/SDK/クラウドbuild、tag/push、署名、端末更新は行っていない。
+
+## 2026-11-14：比較で削減を確認した追加3件
+
+本人の「明確な効果のある積み重ねを3回できるまでは続けて」に対し、前回の`f11fba7`以降に以下の3件を採用した。ここで確認した効果は公開実処理の操作数・PC上の所要時間であり、実ゲームの出現頻度、実iPhoneのFPS／発熱／瞬間停止改善ではない。Linux x86_64の許可CPU1個へ固定し、旧新の順を交替した7ペアの中央値を用いた。原数値／再現script／途中で不採用にした比較は`local/performance-20261114/three-gains-01/`に保持。
+
+**1. 消費される型だけのシェーダー定数。** 前回はfloat／int両配列を作っていたが、`set_registers`が読むのはどちらか一方だけ。選択された型のゼロ初期化・数値変換・格納のみを行い、もう一方を作らない。16要素以下は前回の呼出し内配列を使い、大きな更新はvector 2個→1個。実際に渡す値、padding、register数、mutex、戻り値、guest ABIは維持。37,642ケースの実変換関数比較、独立した行列期待値、再入時の外側payload保持、512並行呼出しを通常／ASan/UBSanで再確認した。範囲外float→int等、上流に元からある未定義変換の全般的な修正を主張しない。以前の「両方の変換を維持」「大きい場合2個」という記録は前段の履歴であり、今回この点を更新した。
+
+比較基準は前回採用済みの小配列版`f11fba7`。1register scalarは96.17→86.37ns、4register matrixは139.65→135.35ns、5／16／256registerの条件は155.56→148.18、158.70→142.88、345.04→233.91ns。30万呼出しで大配列の確保60万→30万回、小配列は0回のまま。結果は`benchmark.json`のconstant項目。転送された結果を捨てたり更新を間引いたりする変更ではない。
+
+**2. キューブDDSの繰り返し計算。** 上流の`native_d3dx_dds_level`は要求面に到達するまで、それ以前の面の同じmipサイズを繰り返し計算していた。キューブ専用の`skyrim_ios_dds_cube_level`では最初の完全な面のレイアウトを一度だけ検証し、先行する面はchecked arithmeticで飛ばす。要求mipより後の未格納データを理由にfirst faceを誤って拒否しないよう、first faceは元関数へ渡す。データや画素には触れず、同じoffset・幅・高さ・深度・pitch・行数を返す。途中切れ・overflow境界・失敗時に出力を書き換えない性質も維持する。
+
+256組の自作metadataについて、2D／cube／volume、BC8/16byteと非圧縮、base pitch、最大15mip、全face／level、必要byteの直前／ちょうど／直後、SIZE_MAX付近、null／不正指定を旧新比較。8×4 BC1の独立したoffset期待値も確認した。通常／ASan/UBSanを通過。自作6面×4段の全level照会ではサイズ計算300→90回。最初の汎用置換案は通常2Dで約15％悪化したため不採用。最終版では元関数の本文と2D／volumeの2箇所の呼出しを全文維持し、cube生成の呼出し1箇所だけを別APIへ接続した。維持範囲はfixtureで確認している。
+
+最終の自作1024²／11mipでは、6面全照会が8,582.55→3,297.19ns（約62％短縮）。通常2Dは同じ元関数の別名同士の比較で289.99→291.39ns（約0.5％差）で、ここを高速化したとは扱わない。GPU転送・ファイル読込み・画像展開はこの時間に含まれない。最終比較は`dds-cube-only.json`。`benchmark.json`の初期DDS項目と`dds-refined.json`は不採用／途中候補で、製品に使わない。
+
+**3. Directory cacheの検索対象削減。** 名前が多数あるdirectoryでは、毎回すべてのNUL終端名を辿り、strlenとstrcasecmpを繰り返していた。既存の不変listingに`{offset,length}`の8byte索引を追加し、queryとbyte長が同じ名前だけを調べる。元のnames配列は並べ替えず、索引の同長要素は元offset順にするため、大小文字だけ違う複数名では元と同じ最初の候補が返る。判定は元のstrcasecmpのまま。Appleの[公開実装](https://raw.githubusercontent.com/apple-oss-distributions/Libc/main/string/FreeBSD/strcasecmp.c)と[iOS libcの仕様](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/strcasecmp.3.html)で、対応するbyteごとの比較・現在localeの利用を確認した。独自の小文字化やlocaleに依存した検索結果の保存はしない。
+
+mutex、各lookupでのstat、mtimeとnanosecond照合、明示forget、16slotの置換順を維持する。slot再利用時に古い索引も解放し、listing構築完了後に一度だけ索引を作る。32件未満、65,536件超、namesがUINT32_MAX超、追加malloc失敗では元の線形検索へ戻る。optional mallocがerrnoを変えないようにする。索引は最大512KiB／slot、16slot全部が上限なら8MiB追加で、namesの複製はない。今回の1,024件では約8KiB。既存listing確保失敗やmtimeを偽装された変更への上流の挙動を新たに解決したものではない。
+
+実directoryを使い、hit／miss／混在case／日本語・非ASCII byte、comp出力0〜12byte、mtime変更・明示forget、新規file、20directoryによるslot置換、索引確保失敗、4thread×1,000回を検査。自作同長のcase重複では索引を実際に作り最初の名前が返ること、上限超でfallbackすることも検査。通常／ASan/UBSanを通過。512件以上のlistingで100回の存在しない長さの照会は、旧5万回超のstrcasecmpが新0回になった。保存データ／ゲームの内容はfixtureに含めていない。
+
+2万回のhit／miss交互lookup（statを含む）の中央値は、16件1.288→1.243µs、128件2.085→1.190µs、1,024件11.329→1.200µs、4,096件47.769→1.410µs。同じ長さの名前だけを1,024件並べた条件でも11.674→6.103µsだった。初回cache構築は1,024件で約473→548µs、4,096件で約1,688→1,934µsと増え、頻繁に変わるdirectoryや一度しか調べない場合には利益を保証しない。値は`benchmark.json`のdirectory項目。実iPhone APFSやゲーム内のfile探索の計測ではない。
+
+3件とも固定公開sourceへのadapterとして適用し、上流を直接変更していない。実`d3dx_shader.cpp`／`d3dx_image.c`／`d3dx_native.cpp`／`kernel32.c`全translation unitを既存headerでsyntax検査した。新規DDS／directory fixtureは次回Mac検証scriptへ登録しただけで実行していない。公開pin検査・共有CPU header不変・公開source検査も確認。private guest・原ゲーム・セーブ・署名済みbuild4を保持し、アプリ／SDK／クラウドbuild・新署名・端末更新は行っていない。
+
+## 2026-11-14：シェーダー定数の小さな一時配列
+
+固定公開runtimeの`d3dx_shader.cpp`にある`set_value`は、scalar／vector／matrixをD3D9定数へ変換するたびに、floatとintのvectorを各一つ作り、両方をゼロで初期化していた。`patch_constant_scratch`で、16要素以下（float4 register 4個＝行列1個）の場合だけ呼出し内の固定配列へ変更した。float／int配列は計128byteで、thread共有やTLSに置かず再入時も別の領域になる。17要素以上は元と同じ2個のvectorで必要量を確保する。ゼロ初期化の範囲、両方の数値変換、guestからの読取り、index上限、転置・pointer array、deviceへの引数・戻り値、mutexの位置は変更していない。大きなconstant arrayの省略や精度削減はしない。
+
+実際の`Constant`／`Table`、handle解決、`set_registers`、`set_value`と全Set wrapperを、自作guest引数／同期device sinkへつないで旧新比較した。vertex／pixel、bool／int／float、4種類のclass、1〜4行／列、count 0／1／3／4／5／16／256、scalar即値／array／vector／matrix／転置／pointer array／raw、ゼロ余白・符号付きゼロ・部分入力、name／数値handle、null入力、欠損table／handle、device失敗を含む37,642ケース。戻り値・guest stack更新・API種別・register範囲・転送byteを比較し、旧新ともdigest `17909396858461555299`、device呼出し32,776回で一致。行列の正順・転置には独立した期待値もある。device callbackから再入した後も外側のpayloadが変わらず、2thread×256回も実recursive mutex下で成功した。正常範囲の入力が対象で、既存のfloatからintへの範囲外変換等の未定義動作を解決したとは扱わない。
+
+通常／ASan/UBSanを通過し、小さな呼出しの確保2→0回、大きな呼出しの確保2→2回を実operator newで計測した。固定public dependency headerを使った`d3dx_shader.cpp`全体のWSL syntax compileも成功。検査用include指定には最初`vkd3d_types.h`の探索先が欠けていたが、既存の固定vkd3d/includeを指定して解消した。新しいdependencyの導入やupstream変更ではない。
+
+Linux x86_64の許可CPU1個で30万呼出し×旧新交互7ペアを比較。実変換関数と自作device sinkを含む1呼出しの中央値は、1register scalarが112.32→95.04ns、1register vectorが128.64→115.40ns、4register matrixが165.69→139.12ns。各30万回のheap確保は60万→0回。大きな5／16／64／256register条件は各60万回の確保を維持し、時間は167.10→154.97、167.58→159.48、185.32→171.83、329.72→309.89nsだった。後者の短縮は実行コードの配置・最適化の影響も含み、allocation削減による効果とは説明しない。全条件は自作CPU負荷であり、実GPUの更新・実ゲーム頻度・iPhone FPSを測っていない。元数値と再現scriptは`local/performance-20261114/constant-scratch-01/benchmark.json`、実source検査は同directoryの`shader.syntax.log`へ保存。
+
+追加調査ではDXVKの`SetShaderConstants`／`UpdateStateConstants`も確認した。同値時のupload省略には、state blockの記録、使用register範囲、`d3d9FloatEmulation`のNaN補正、boolのbitfield更新を考慮する必要がある。全呼出しへ無条件のmemcmpを加える根拠となる重複頻度もまだないため、その変更は採用していない。既存のdirty state／描画命令／GPU同期を削っていない。
+
+公開adapterの16pin・共有CPU header・公開source検査を確認。新fixtureは将来の一括Mac検証scriptへ追加したが、scriptは実行していない。private guest・既存IPA・元ゲーム・セーブは不変。この変更は署名済みbuild4に未収録で、goまでアプリ／SDK／クラウドbuild・署名・実機更新を保留する。
+
+## 2026-11-14：GPU resource完了待ちのCPU消費削減
+
+固定DXVKの`DxvkResource::waitIdle`は、resourceの読み書きカウンターを繰り返し確認し、50,000回ごとにschedulerへ譲る方式だった。D3D9の`WaitForResource`は必要なflush／CS同期の後にこれを呼び、GPUの完了後にlifetime trackerがresourceをreleaseする。Appleの[CPU作業の効率的なスケジューリング](https://developer.apple.com/documentation/xcode/scheduling-cpu-work-efficiently)も、pollingを減らし通知を使う原則を説明している。実ゲームでの待機頻度は未測定で、この箇所がカクつきの主因だとは断定しない。
+
+採用候補は200回だけ短く確認し、まだ使用中ならcondition variableで休む方式。200は既存DXVK小規模spinlockの境界を使用し、機種別の測定済み最適値とは扱わない。resourceごとにmutexを増やさず、128byte境界の固定64bucketへaddressを割り当てる。tableはstatic領域へ一度だけ構築し、終了時destructorを登録しないため遅いdriver teardownとも衝突しない。heap確保・resource pointerの保存はなく、同じaddressが再利用されても古いresourceへの参照を持たない。resourceのmember／サイズ、元のacquire・release・loadのseq_cst順序、Readがread＋writeを待ちWriteがwriteだけを待つ規則は維持する。
+
+待機登録と条件確認を同じbucket mutex内で行い、完了側の通知もこのmutexを取得する。登録前に終わった場合は後の条件確認で完了を観測し、条件をfalseと読んだ直後に完了しても、通知がmutexを経由するためsleep開始との間で失われない。複数resourceのbucket衝突や余計な通知は元のカウンター条件を再確認する。release側は待機者がいない場合はglobal atomicの読取りだけで抜け、対象accessが未完了なら通知しない。待機者が別resourceにいる場合の追加負担も下記で比較した。
+
+既存の5秒診断に`IOS_TIMING kind=resource_wait`を追加。最初の200回の確認後から、bucket準備・lock・条件確認／待機・復帰までのhost wall timeを記録し、bucket lockを解放してから集計する。完了と競合して実際にはsleepしない呼出しも含む。GPU実行時間、kernel sleep回数、D3D9のflush／CS同期を含む全待ちではない。失敗を観測するAPIではないので`failures_known=0`。他のPresent等の計測と時間が重なるため合算しない。
+
+検証は本物の公開resourceクラス／implementationと自作の完了通知を使用。Read／Write／None、登録前の完了、false条件読取り直後の完了、同bucketの別resource、複数waiter／複数producer、データ可視性、同addressの128回再利用、旧新resourceサイズ一致を確認。通常とASan/UBSanを通過した。ThreadSanitizerは`unexpected memory mapping`で起動自体が失敗したため、race検査成功には数えない。実ヘッダーを使用した`dxvk_resource.cpp`、`dxvk_lifetime.cpp`、`d3d9_device.cpp`全体のWSL syntax検査も成功。追加分類を含むmetricsの境界・80,000並行記録／drain検査は通過した。実Metal／Apple condition variable／iPhoneのゲーム結果は未確認。
+
+局所比較はLinux x86_64で許可CPU2個に固定、旧新の順を交替した7ペア。完了側は自作threadでありGPUではない。下表は各ペアの1回当たり時間の中央値。thread生成・schedulerの影響を含むため、設定したsleep時間とwall timeは一致しない。完了後遅延はproducerがrelease直前に時刻を記録してからwaiterが戻るまでで、OSの純粋な起床時間ではない。
+
+| 自作負荷 | 旧→新 待機thread CPU時間 | 旧→新 完了後遅延 |
+| --- | --- | --- |
+| 50µs sleep ×64回 | 430.4→47.3µs | 0.59→40.46µs |
+| 2ms sleep ×16回 | 2.229→0.078ms | 0.68→70.13µs |
+| 10ms sleep ×8回 | 10.249→0.085ms | 1.26→74.03µs |
+
+2ms条件の全wall timeは2.268→2.304ms、10ms条件は10.306→10.326msで、CPU消費削減と復帰遅延の交換がある。待ちなしのacquire／release／waitIdle 300万回は15.38→14.86ns／回。別resourceを待つthreadがいる時は15.73→17.46ns／回で約1.74ns増える。最初のactive比較は二つのresourceがcache lineを共有していたため、最終比較は各128byte境界へ分離して再測定した。iPhoneのFPS・発熱改善率には換算しない。最終値は`local/performance-20261114/resource-wait-01/benchmark.json`と再現script、実source検査ログも同directoryに保持。
+
+次の実機確認では同じsave／画質／FPS上限で、`resource_wait`とframe gap／Presentの分布、魔法・攻撃時の引っ掛かりを確認する。待機が多くてもGPUそのものが速くなる変更ではなく、短い待ちに対する起床遅延やbucket競合は実機で判断する。新fixtureを将来の一括Mac検証へ組み込んだだけで、scriptは未実行。アプリ／SDK／クラウドbuild、private guest再生成、署名、実機更新は行っていない。既存の署名済みbuild4には含まれない。
+
+## 2026-11-14：同期音声展開の確保回数と観測
+
+固定公開runtimeの`xs_SubmitSourceBuffer`は、xWMA展開を音声mixerと共通の`g_lock`保持中に同期実行する。その中の`receive_pcm`は復号frameごとにPCMの`realloc`を呼ぶ。ロックを外すとvoice破棄・reset・queue変更との整合性が必要になるため、今回はロック／再生順を維持し、PCM出力bufferの確保だけを変更した。元ゲーム関数やprivate guestは変更していない。
+
+`prepare_runtime.py`で`xwma.c`をLF正規化SHA256で固定し、上流を編集せずstage時に適用する。decode呼出し内だけでcapacityを管理し、残り入力packetがある時のみ余裕を確保する。最大必要量を超える先行確保分は64KiBまで。先行確保が失敗したら旧版と同じ必要量で一度再試行し、任意の再試行／縮小がerrnoを変えないようにする。終了時は旧版の最終要求量へ縮小し、縮小失敗だけを理由に正常PCMを失敗扱いしない。callerの`free`所有権、decoder reservoir、packet/PTS順、resampler設定、音質、完了／reset／失敗時cleanupは維持する。
+
+初期案は1packet単位のstreamingで余計な確保を2回増やしたため、そのまま採用しなかった。残り入力がない時に先行確保をしない方式へ絞り、最終自作fixtureではstreaming部分の確保回数が旧新とも9,120回。全9,138 decodeケースでサンプル／戻り値／frame数／PTS／終了・reset／errnoが一致し、確保呼出しは18,290→10,824回。常にbufferを移動する自作allocatorではコピー9,866,388,768→2,840,088,164 bytes。これは強制移動時の処理量比較で、実mallocの移動頻度やゲームの処理時間ではない。1〜8ch、複数packet、zero-output、EOS後の再利用、codec失敗、確保・縮小失敗、frame数overflowを含む通常／ASan/UBSan検査を通過。
+
+実FFmpeg 6.1.1と一致するUbuntu公開development packageは`local/performance-20261114/xwma-01/headers`へ展開しただけで、OSへのpackageインストールはしていない。自作WMAv2 toneの1ch/22,050Hz/0.3秒、1ch/44,100Hz/3秒、2ch/48,000Hz/12秒について、一括／1packet streaming・EOS後再利用で旧版／新版とFFmpeg CLIの16bit PCMがbyte一致した。ゲーム音声、WMA Pro実stream、iPhoneの音声出力はこの検証の対象外。
+
+実C decoderを同一許可CPUへ固定し、順番を交替した7ペア×40回で比較。一括展開の確保回数は6→4、64→8、281→35回、streamingは6／64／281回のまま。最終12秒／2ch一括の中央値は旧6.709ms、新6.714msでほぼ同じ。短い条件やstreamingの時間は比較回ごとの揺れがあり、全体高速化を断定しない。採用候補の根拠はallocation／移動時copy操作の削減と意味の保存であり、実機のFPS・瞬間停止・発熱改善は未測定。原比較は同local directoryの`benchmark.json`（初期のPython込み計測）、`benchmark-c-pinned.json`（最終C計測）と再現scriptに保持。
+
+次回の原因識別用に`IOS_TIMING kind=xwma_decode`を追加した。既存の5秒histogram出力を使い、PCMやファイル名を出力しない。対象は呼出し内のhost wall timeで、mixer lock取得待ち、音声GPU/DSP時間、画面の停止時間ではない。従来のmutex位置・全引数・戻り値・errnoが変わらないことを実adapterから抽出したwrapperで確認し、ASan/UBSanも通過。共有metricsの境界・並行drain検査、実`xaudio2.c`全体の既存headerによるsyntax検査、CPU ABI不変・mobile overlay検査も通過した。
+
+新fixtureは次回のMac検証scriptへ加えたが、そのscriptは実行していない。FFmpeg実比較は明示的なhost開発環境がある時のみ実行し、未設定時はskipを成功と混同しない。アプリ／SDKビルド・新しいIPA・署名・端末更新は未実施。既存build4を上書きせず、この追加分は次回ビルド候補として保持する。
+
 ユーザーは20〜21時ごろまで実機を接続できない。画質やゲームの結果を維持し、処理量を減らせる変更を比較して採用する。サブエージェントなし。私有ゲームコード・素材・ログ・署名はPC内のみ。旧build2/3と元ゲーム・セーブを保持。Macビルドは20時以降に検証済み変更を一度まとめる。21時以降は新規の長い実験を始めない。14時台の本人指示で`skyrim-metal`の自動送信を削除し、瞬間的なカクつき対策をgoalで管理する方式へ変更した。定期送信は再作成しない。
 
 ## 現在の基準

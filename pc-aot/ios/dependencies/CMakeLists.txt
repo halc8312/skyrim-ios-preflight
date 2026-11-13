@@ -76,6 +76,7 @@ target_include_directories(dxvk_d3d9 PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
 set(_cache_identity "v1;${CMAKE_CXX_COMPILER_VERSION};${CMAKE_OSX_SYSROOT};${CMAKE_OSX_DEPLOYMENT_TARGET}")
 foreach(_input source-lock.json ios/dependencies/build-dependencies.sh
     ios/dependencies/patch_spirv_cross.py ios/dependencies/prepare_dxvk.py
+    ios/dependencies/shader_inflight.cpp.in
     ios/dependencies/pipeline_cache.h ios/dependencies/pipeline_cache.cpp
     ios/runtime-port/prepare_runtime.py)
   file(SHA256 "${_root}/${_input}" _cache_input_sha)
