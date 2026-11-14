@@ -285,6 +285,7 @@ workflows:
         - $CM_BUILD_DIR/pc-aot/local/ios-dependencies
         - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-displayfix
         - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-cachefix
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build6
     scripts:
       - name: Prepare public iPhoneOS build tools
         script: |
@@ -300,3 +301,4 @@ workflows:
       - pc-aot/local/ios-dependencies/logs/*/*.log
       - pc-aot/local/ios-dependencies-displayfix/logs/*/*.log
       - pc-aot/local/ios-dependencies-cachefix/logs/*/*.log
+      - pc-aot/local/ios-dependencies-build6/logs/*/*.log

@@ -3,7 +3,7 @@
 # compiler. This checks shader compilation, not an actual rendered game frame.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-cachefix}"
+WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-build6}"
 CROSS="$WORK/sources/SPIRV-Cross-ios-samplerfix"
 OUT="${1:?fresh output directory required}"
 mkdir "$OUT"
@@ -34,13 +34,14 @@ env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT \
   SKYRIM_MVK_CONVERTER_SOURCE="$MVK_CONVERTER" \
   python3 -m unittest discover -s "$ROOT/tests" -p test_mvk_library.py -v \
   2>&1 | tee "$OUT/mvk-library.log"
-# Missing pristine source is a failure in this gate, not a skipped inventory.
+# Verify the rejected lifecycle adapter cannot enter the shipped dependency.
+# Its original real-Metal failure remains in experiments/gpu_lifecycle_gate_test.py.
 MVK_CORE="$WORK/sources/MoltenVK/MoltenVK/MoltenVK"
 [[ -f "$MVK_CORE/GPUObjects/MVKQueue.mm" ]]
 env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT \
   SKYRIM_MVK_LIFECYCLE_SOURCE="$MVK_CORE" \
   SKYRIM_MVK_LIFECYCLE_PATCHED_SOURCE="$WORK/sources/MoltenVK-ios-cachefix/MoltenVK/MoltenVK" \
-  python3 -m unittest discover -s "$ROOT/tests" -p test_gpu_gate.py -v \
+  python3 -m unittest discover -s "$ROOT/tests" -p test_lifecycle_baseline.py -v \
   2>&1 | tee "$OUT/gpu-lifecycle.log"
 env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT \
   SKYRIM_MVK_GPU_SOURCE="$MVK_CORE/GPUObjects" \

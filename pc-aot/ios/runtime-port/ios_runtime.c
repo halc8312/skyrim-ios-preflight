@@ -4,7 +4,6 @@
 #include "mobile_ui.h"
 #include "performance_metrics.h"
 #include "device_policy.h"
-#include "gpu_gate.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -76,7 +75,6 @@ void skyrim_ios_pump_events(void) {
     pumping = 1;
     __atomic_store_n(&last_pump_ns, now, __ATOMIC_RELAXED);
     SDL_PumpEvents();
-    skyrim_gpu_wait_active();
     update_drawable();
     skyrim_mobile_tick();
     pumping = 0;

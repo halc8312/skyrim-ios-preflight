@@ -1,4 +1,8 @@
-"""Real bounded lifecycle admission and pinned native submission boundaries."""
+"""Rejected lifecycle candidate: build18 failed real Metal event dependencies.
+
+Kept as an explicit reproduction, excluded from the product and release suite.
+Do not weaken the failed assertion to admit this candidate.
+"""
 import importlib.util
 import os
 from pathlib import Path

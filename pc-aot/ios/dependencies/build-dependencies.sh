@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 [[ "$(uname -s)" == Darwin ]] || { echo 'Requires macOS and the Apple iPhoneOS SDK.' >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-cachefix}"
+WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-build6}"
 PREFIX="$WORK/prefix"
 DEPLOYMENT="${IPHONEOS_DEPLOYMENT_TARGET:-18.0}"
 JOBS="${JOBS:-2}"
@@ -46,7 +46,7 @@ preserve_failure() {
 }
 trap preserve_failure EXIT
 BASE_CONFIG="SDL-5d249570393f7a37e037abf22cd6012a4cc56a71 FFmpeg-db69d06eeeab4f46da15030a80d539efb4503ca8 MoltenVK-458870543b9bcf6b0edd6f90aaa776707b310d96 vkd3d-2.0 ios-$DEPLOYMENT $(xcodebuild -version) $(xcrun --sdk iphoneos --show-sdk-version)"
-CONFIG="$BASE_CONFIG $(shasum -a 256 "$0" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_spirv_cross.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_moltenvk.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_hot_cache.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/mvk_hot_cache.cpp.in" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compressed_copy.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_library.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_lifecycle.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compile_timing.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/runtime-port/performance_metrics.h" | cut -d' ' -f1)"
+CONFIG="$BASE_CONFIG $(shasum -a 256 "$0" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_spirv_cross.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_moltenvk.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_hot_cache.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/mvk_hot_cache.cpp.in" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compressed_copy.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_library.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/verify_lifecycle_baseline.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compile_timing.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/runtime-port/performance_metrics.h" | cut -d' ' -f1)"
 KEY="$(printf '%s' "$CONFIG" | shasum -a 256 | cut -d' ' -f1)"
 if [[ -f "$WORK/configuration.sha256" && "$(cat "$WORK/configuration.sha256")" != "$KEY" ]]; then
   echo 'Dependency configuration changed; use a new SKYRIM_IOS_DEPS_ROOT to preserve previous build evidence.' >&2
@@ -191,11 +191,7 @@ if set(changed)-{'MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConv
                 'MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm',
                 'MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.h',
                 'MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm',
-                'MoltenVK/MoltenVK/GPUObjects/MVKQueue.mm',
-                'MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm',
-                'MoltenVK/MoltenVK/GPUObjects/MVKImage.mm',
-                'MoltenVK/MoltenVK/GPUObjects/MVKSync.mm',
-                'MoltenVK/MoltenVK/Commands/MVKCommandBuffer.mm'}:
+                'MoltenVK/MoltenVK/GPUObjects/MVKSync.mm'}:
     raise SystemExit('Unreviewed changes in MoltenVK build stage')
 PYMVK
   python3 "$ROOT/ios/dependencies/patch_moltenvk.py" \
@@ -203,8 +199,9 @@ PYMVK
   python3 "$ROOT/ios/dependencies/patch_mvk_hot_cache.py" "$MVK/MoltenVK/MoltenVK/GPUObjects"
   python3 "$ROOT/ios/dependencies/patch_mvk_library.py" "$MVK/MoltenVK/MoltenVK/GPUObjects" \
     --pristine "$WORK/sources/MoltenVK/MoltenVK/MoltenVK/GPUObjects"
-  python3 "$ROOT/ios/dependencies/patch_mvk_lifecycle.py" "$MVK/MoltenVK/MoltenVK" \
-    --pristine "$WORK/sources/MoltenVK/MoltenVK/MoltenVK"
+  # The admission gate failed real Metal event-dependency validation. Keep
+  # original native submission methods and reject any cached gated variant.
+  python3 "$ROOT/ios/dependencies/verify_lifecycle_baseline.py" "$MVK/MoltenVK/MoltenVK"
   python3 "$ROOT/ios/dependencies/patch_mvk_compile_timing.py" "$MVK/MoltenVK/MoltenVK/GPUObjects" \
     --header "$ROOT/ios/runtime-port/performance_metrics.h"
   (
@@ -213,8 +210,8 @@ PYMVK
     # Upstream's make wrapper converts command-line variables to C macros;
     # use xcodebuild directly so signing/SDK/deployment are real build settings.
     # Only the app-linked static archive is needed. The upstream packaging
-    # scheme also links an unused dynamic framework, which cannot resolve this
-    # application's strong lifecycle hooks. Never weaken those hooks to bypass it.
+    # scheme also links an unused dynamic framework. The static archive keeps
+    # the application's strong performance-observation hooks.
     xcodebuild build -project MoltenVK/MoltenVK.xcodeproj -target MoltenVK-iOS-static \
       -configuration Release -sdk iphoneos -jobs "$JOBS" \
       CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
@@ -223,16 +220,20 @@ PYMVK
       'GCC_PREPROCESSOR_DEFINITIONS=$(inherited) MVK_HIDE_VULKAN_SYMBOLS=0'
     cp "$WORK/build/moltenvk-static/libMoltenVK.a" "$PREFIX/lib/"
     cp -pRL MoltenVK/include/. "$PREFIX/include/"
-    # Keep complete symbol evidence. The application resolves strong lifecycle
-    # hooks in gpu_gate_metal.m and timing hooks in performance_metrics.c.
+    # Keep complete symbol evidence. Only performance observations are added;
+    # the rejected lifecycle gate must not be linked into the dependency.
     xcrun nm -u "$PREFIX/lib/libMoltenVK.a" > "$RUN_LOG/moltenvk-undefined.txt"
-    for symbol in skyrim_gpu_commit_metal skyrim_gpu_submission_enter skyrim_gpu_submission_leave skyrim_perf_now_ns skyrim_perf_interval skyrim_perf_end; do
+    if grep -q '_skyrim_gpu_' "$RUN_LOG/moltenvk-undefined.txt"; then
+      echo 'Rejected lifecycle gate still referenced by MoltenVK.' >&2; exit 1
+    fi
+    for symbol in skyrim_perf_now_ns skyrim_perf_interval skyrim_perf_end; do
       grep -q "_$symbol" "$RUN_LOG/moltenvk-undefined.txt"
     done
   )
   touch "$WORK/build/moltenvk.done"
 fi
 
+python3 "$ROOT/ios/dependencies/verify_lifecycle_baseline.py" "$WORK/sources/MoltenVK-ios-cachefix/MoltenVK/MoltenVK"
 for name in SDL2 SDL2main avformat avcodec avutil swresample swscale vkd3d-shader MoltenVK; do
   [[ -s "$PREFIX/lib/lib$name.a" ]] || { echo "Missing static archive: $name" >&2; exit 1; }
   xcrun lipo "$PREFIX/lib/lib$name.a" -verify_arch arm64

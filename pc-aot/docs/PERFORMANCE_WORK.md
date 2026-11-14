@@ -1,5 +1,15 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-14 Mac build18：GPU休止gateを実機構テストで棄却
+
+[Codemagic build18](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af86f0990e83b09c4fa3754)（公開`26348ab`、Apple Clang21／Xcode26.6）で、既存のhost fixtureとMetal library fixtureは成功した。しかし実Metalのevent依存テストで、gateを閉じた後の`waitUntilScheduled`が5,005.529ms待ち、consumer／producerにerrorがないというassertが失敗した。未投入producerがgate復帰を待ち、既投入consumerがそのeventを待つ条件である。これを「すべてのiPhoneで同じ停止が起きる」とはしないが、普遍的に安全な休止処理という採用条件を満たさない。ARM64 app compile/linkは成功、必須検査が失敗したため配布packageは作らなかった。
+
+今回のbuild6から`patch_mvk_lifecycle.py`の適用、`gpu_gate.c`／`gpu_gate_metal.m`のlink、UIKitとevent pumpからの呼出を撤回した。元の固定MoltenVK submission4ファイルをbyte hashで検証する`verify_lifecycle_baseline.py`を追加し、旧stage／archive／最終appにgateが混入した場合は拒否する。既存performance activity観測と他の性能・UI・描画変更は保持。dependency stageは新規`ios-dependencies-build6`。private guest、CPU ABI、ゲームデータは不変。
+
+失敗を隠すためのassert削除／timeout延長は行わない。候補と同じ実Metalテストは`experiments/gpu_lifecycle_gate_test.py`で再現可能な形に保管し、本番から除いた候補の実行をrelease gateに要求しない。代わりに元submission4ファイルと未接続を確認する3検査を製品routeへ追加した。Clang18で関連21件中20成功・Apple専用1skip（3.749秒）、shell3本syntax成功。Metal shader compile／数値readbackを含む他の必須gateは維持し、次のMacで確認する。
+
+背景移行時のdevice lossは未解決として残す。将来の候補には、main-threadを待たせないquiescence、未投入producer／先行enqueue／別queue eventの依存解消、復帰と取消の寿命を含む設計が必要。今回の局所fixture成功やcompile成功をFPS・発熱・水中表示の改善と扱わない。失敗原文はRootの`local/codemagic-title18/build-step4-visible.log`。
+
 ## 2026-11-14 夜：派生Metal libraryの圧縮payload保持を削減
 
 固定MoltenVKではmacro派生libraryは再特殊化せず、serialized root cacheの要素でもない。各派生が親と同じ圧縮MSLをcopyして保持する必要がないため、`patch_mvk_library.py`で同期decompress中だけ親のimmutable payloadを参照する。生成したstringとMetal compilerの所有権は既存通り。rootはcache入出力と後続variant用のpayloadを保持し、wire format／shader／compile回数／map lock／失敗方針／期限／guest ABIは変えない。non-constなupstream codecをconst_castせず、固定codec headerの同一decoder式を使う。

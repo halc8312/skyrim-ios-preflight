@@ -121,6 +121,10 @@ if (( METAL_CHECK_STATUS != 0 )); then
 fi
 APP="$RUN/build/SkyrimIOS.app"
 test -s "$APP/SkyrimIOS"
+xcrun nm "$APP/SkyrimIOS" > "$RUN/app-symbols.txt"
+if grep -q '_skyrim_gpu_' "$RUN/app-symbols.txt"; then
+  echo 'Rejected lifecycle gate remains in the app; refusing package.' >&2; exit 1
+fi
 xcrun lipo "$APP/SkyrimIOS" -verify_arch arm64
 xcrun vtool -show-build "$APP/SkyrimIOS" | tee "$RUN/artifacts/platform.txt"
 grep -q 'platform IOS' "$RUN/artifacts/platform.txt"

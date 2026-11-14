@@ -11,7 +11,7 @@ if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
   message(FATAL_ERROR "Set CMAKE_OSX_ARCHITECTURES=arm64")
 endif()
 get_filename_component(_root "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
-set(SKYRIM_IOS_DEPS_PREFIX "${_root}/local/ios-dependencies-cachefix/prefix" CACHE PATH "Prepared iPhoneOS static dependencies")
+set(SKYRIM_IOS_DEPS_PREFIX "${_root}/local/ios-dependencies-build6/prefix" CACHE PATH "Prepared iPhoneOS static dependencies")
 set(SKYDREAM_SOURCE_DIR "${_root}/vendor/skydream" CACHE PATH "Public Skydream source checkout")
 
 # This is an already-built iPhoneOS prefix outside the SDK. Do not re-root
@@ -77,7 +77,7 @@ set(_cache_identity "v1;${CMAKE_CXX_COMPILER_VERSION};${CMAKE_OSX_SYSROOT};${CMA
 foreach(_input source-lock.json ios/dependencies/build-dependencies.sh
     ios/dependencies/patch_spirv_cross.py ios/dependencies/patch_moltenvk.py ios/dependencies/prepare_dxvk.py
     ios/dependencies/patch_mvk_hot_cache.py ios/dependencies/mvk_hot_cache.cpp.in
-    ios/dependencies/patch_mvk_compressed_copy.py ios/dependencies/patch_mvk_lifecycle.py
+    ios/dependencies/patch_mvk_compressed_copy.py ios/dependencies/verify_lifecycle_baseline.py
     ios/dependencies/patch_mvk_library.py ios/dependencies/patch_mvk_compile_timing.py
     ios/runtime-port/performance_metrics.h
     ios/dependencies/present_timing.py
@@ -91,8 +91,7 @@ string(SHA256 _cache_namespace "${_cache_identity}")
 target_compile_definitions(dxvk_d3d9 PRIVATE "SKYRIM_PIPELINE_CACHE_NAMESPACE=\"${_cache_namespace}\"")
 enable_language(OBJC)
 add_library(skyrim_performance STATIC "${_root}/ios/runtime-port/performance_metrics.c"
-  "${_root}/ios/runtime-port/device_policy.c" "${_root}/ios/runtime-port/device_platform.m"
-  "${_root}/ios/runtime-port/gpu_gate.c" "${_root}/ios/runtime-port/gpu_gate_metal.m")
+  "${_root}/ios/runtime-port/device_policy.c" "${_root}/ios/runtime-port/device_platform.m")
 target_compile_features(skyrim_performance PRIVATE c_std_11)
 target_compile_options(skyrim_performance PRIVATE -O2 "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>")
 target_include_directories(skyrim_performance PUBLIC "${_root}/ios/runtime-port")
