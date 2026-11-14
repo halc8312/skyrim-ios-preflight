@@ -1,5 +1,13 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-14 build6：Mac最終検証と端末更新を完了
+
+[Mac build20](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af873d290e83b09c4fa38fc)、公開commit `6e0f5bafc879aabbbaf73d36c526d664f8296396`で成功。実ログは`local/codemagic-title20/build.log`、個別Metal結果は同じ場所の`metal-alias-checks.zip`。34組のunit fixtureは計82件中80成功、2件はWindows固有cross-compilerと未構成host FFmpegの既定skip。Mac実行に必須の検査をskip扱いにはしていない。iPhoneOS Metal shader8件が全てcompileし、さらにMac GPUで実行時入力を使う20個のfast／safe数値を読戻して独立期待値と照合した。今回のcomponent導入後は最初の再compileで準備完了となった。
+
+元MoltenVK submission4ファイル、旧gateの非link、library寿命／圧縮payload共有／compile計測も成功。撤回したgateの失敗reproは残す。CPU／関数table／公開guest ABIの3headerは既存build5と同一であり、未変更private guestをPC内だけで組み込んだ。署名後に2images・39,426pages・4resourcesとprofileを確認し、本人の準備完了後に既存USB trustによる5→6のUpgradeを完了。ゲーム26ファイルの名前・サイズ、セーブと設定を含む11profileファイルのSHA256を前後照合した。旧game／IPAは保持。
+
+これは移植アプリの生成・署名・更新と自作描画fixtureの合格であり、更新版でのゲームプレイ、FPS、熱、水中や透過表示の改善証明ではない。ホーム復帰時のdevice lossも未解決。実機比較は同save／同画質を基本とし、初回shader生成とwarm再訪、魔法／視点操作、水中、UI操作を分けて確認する。Free枠の最終表示は193/500分（残307分）。今の更新のための追加Mac起動は不要。
+
 ## 2026-11-14 Mac build19：Metal Toolchain準備の有界待機
 
 休止gateを除いた公開`188afae`のMac検証で、元submission4ファイル、library／compile計測fixture、ARM64 app linkは成功。公式`xcodebuild -downloadComponent metalToolchain`のexit0直後にも最初のcompileがmissing Metal Toolchainを返し、その後の7個は全てexit0だった。全8個成功を要件としていたためpackage公開を拒否した。数値GPU20ケースはこの失敗より後なので未実行。rawは`local/codemagic-title19/build-step4-visible.log`。
