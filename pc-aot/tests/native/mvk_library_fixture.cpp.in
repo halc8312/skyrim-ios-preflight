@@ -115,7 +115,9 @@ static void ownershipCases() {
             assert(target._specializationVariants.empty() && target._owner==&owner && target._maySpecializeWithMacro);
             assert(handles==3 && a._mtlLibrary->refs==3);
             auto* assigned=key.get(target); assert(assigned!=first && assigned->value==33);
-            target=target; assert(key.get(target)==assigned);
+            // Exercise genuine self-assignment through an alias (Clang diagnoses target=target).
+            const MVKShaderLibrary& selfAlias=target;
+            target=selfAlias; assert(key.get(target)==assigned);
             // Assignment must copy the non-macro policy and discard former children.
             b._maySpecializeWithMacro=false;
             target=b;
