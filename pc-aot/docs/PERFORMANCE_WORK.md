@@ -1,5 +1,11 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-14 Mac build19：Metal Toolchain準備の有界待機
+
+休止gateを除いた公開`188afae`のMac検証で、元submission4ファイル、library／compile計測fixture、ARM64 app linkは成功。公式`xcodebuild -downloadComponent metalToolchain`のexit0直後にも最初のcompileがmissing Metal Toolchainを返し、その後の7個は全てexit0だった。全8個成功を要件としていたためpackage公開を拒否した。数値GPU20ケースはこの失敗より後なので未実行。rawは`local/codemagic-title19/build-step4-visible.log`。
+
+製品を変えず、コンポーネント導入後の実compileで、そのmissing応答だけ最大11試行／sleep合計20秒の待機を認める。別のshaderエラーと出力欠落は即座に失敗し、導入コマンドは1回、全試行の別logを保持する。実shell関数をそのまま使い、即準備完了／2回遅延／永続missing／shaderエラー／遅延後shaderエラー／成功exitだが出力なしの6状態を自作toolで検証した。2検査成功（0.348秒）。実Apple toolの再検証は次の一括Macに残す。完成条件・描画・private guest・署名ABIを変更していない。
+
 ## 2026-11-14 Mac build18：GPU休止gateを実機構テストで棄却
 
 [Codemagic build18](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af86f0990e83b09c4fa3754)（公開`26348ab`、Apple Clang21／Xcode26.6）で、既存のhost fixtureとMetal library fixtureは成功した。しかし実Metalのevent依存テストで、gateを閉じた後の`waitUntilScheduled`が5,005.529ms待ち、consumer／producerにerrorがないというassertが失敗した。未投入producerがgate復帰を待ち、既投入consumerがそのeventを待つ条件である。これを「すべてのiPhoneで同じ停止が起きる」とはしないが、普遍的に安全な休止処理という採用条件を満たさない。ARM64 app compile/linkは成功、必須検査が失敗したため配布packageは作らなかった。

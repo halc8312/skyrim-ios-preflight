@@ -76,6 +76,7 @@ PY
   python3 -m unittest discover -s tests -p 'test_device*.py' -v
   python3 -m unittest discover -s tests -p 'test_descriptor_capacity.py' -v
   python3 -m unittest discover -s tests -p 'test_mobile*.py' -v
+  python3 -m unittest discover -s tests -p 'test_metal_toolchain.py' -v
 )
 
 bash ios/dependencies/build-dependencies.sh

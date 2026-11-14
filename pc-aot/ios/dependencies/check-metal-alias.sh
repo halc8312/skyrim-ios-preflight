@@ -88,6 +88,23 @@ compile_fixture() {
   fi
   return "$status"
 }
+# Installation can finish before xcrun sees the mounted toolchain (observed
+# on build19). Retry only that exact missing-component result, at most 11
+# actual compiles with 20 seconds total sleep. Shader diagnostics fail at once.
+compile_after_component() {
+  local name="$1" attempt
+  for attempt in {1..11}; do
+    if compile_fixture "$name" "after-component-$attempt"; then
+      return 0
+    fi
+    if ! grep -Fq 'missing Metal Toolchain' "$OUT/$name-after-component-$attempt.log"; then
+      return 1
+    fi
+    (( attempt < 11 )) || return 1
+    sleep 2
+  done
+  return 1
+}
 fixture_failed=0
 component_attempted=0
 for name in "${fixtures[@]}"; do
@@ -107,7 +124,7 @@ for name in "${fixtures[@]}"; do
     xcodebuild -downloadComponent metalToolchain > "$OUT/metal-toolchain.log" 2>&1 || download_status=$?
     cat "$OUT/metal-toolchain.log"
     echo "METAL_COMPONENT download_status=$download_status"
-    compile_fixture "$name" after-component || fixture_failed=1
+    compile_after_component "$name" || fixture_failed=1
   else
     fixture_failed=1
   fi
