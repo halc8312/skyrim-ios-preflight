@@ -59,6 +59,31 @@ class DeviceMemoryTests(unittest.TestCase):
                      "    skyrim_device_platform_work_role(SKYRIM_WORK_CACHE_WRITER);\n"):
             # Preserve exact indentation when removing injected calls.
             restored="\n".join(x for x in restored.split("\n") if x+"\n" != line)
+        # Also reverse the independently exercised shader-tuple index change.
+        # Keep the whole-file equality check: no other queue/worker edits hide here.
+        indexing = [
+            ('    size_t numShaderTuples = 0;\n', ''),
+            ('        const bool firstShaderTuple = m_entryMap.find(entry.shaders) == m_entryMap.end();\n', ''),
+            ('        if (firstShaderTuple) {\n          ++numShaderTuples;\n'
+             '          mapShaderToPipeline(entry.shaders.vs,  entry.shaders);\n'
+             '          mapShaderToPipeline(entry.shaders.tcs, entry.shaders);\n'
+             '          mapShaderToPipeline(entry.shaders.tes, entry.shaders);\n'
+             '          mapShaderToPipeline(entry.shaders.gs,  entry.shaders);\n'
+             '          mapShaderToPipeline(entry.shaders.fs,  entry.shaders);\n'
+             '          mapShaderToPipeline(entry.shaders.cs,  entry.shaders);\n'
+             '        }',
+             '        mapShaderToPipeline(entry.shaders.vs,  entry.shaders);\n'
+             '        mapShaderToPipeline(entry.shaders.tcs, entry.shaders);\n'
+             '        mapShaderToPipeline(entry.shaders.tes, entry.shaders);\n'
+             '        mapShaderToPipeline(entry.shaders.gs,  entry.shaders);\n'
+             '        mapShaderToPipeline(entry.shaders.fs,  entry.shaders);\n'
+             '        mapShaderToPipeline(entry.shaders.cs,  entry.shaders);'),
+            ('    Logger::info(str::format("IOS_STATE_CACHE entries=", m_entries.size(),\n'
+             '      " shader_tuples=", numShaderTuples, " wakeup_links=", m_pipelineMap.size()));\n', ''),
+        ]
+        for added, original in indexing:
+            self.assertEqual(restored.count(added), 1)
+            restored = restored.replace(added, original)
         self.assertEqual(restored,old)
 
 

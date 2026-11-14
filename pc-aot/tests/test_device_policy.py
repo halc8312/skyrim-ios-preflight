@@ -113,8 +113,9 @@ int main(void) { @autoreleasepool {
             source.write_text('''#include <stdint.h>
 #include <assert.h>
 typedef struct { unsigned unused; } SkyrimFrameClock;
-enum { SKYRIM_PERF_PACER };
+#include "performance_metrics.h"
 static uint64_t metrics_epoch, now, target, slept, measured, remaining_seen;
+static uint64_t interval_start, interval_end;
 static unsigned waits, pumps, recorded, mode;
 static uint64_t monotonic_ns(void) { return now; }
 static unsigned skyrim_mobile_fps_limit(void) { return 60; }
@@ -128,24 +129,30 @@ static unsigned skyrim_device_platform_wait(uint64_t remaining) {
     now+=remaining; return mode ? 0 : 1;
 }
 static void skyrim_ios_pump_events(void) { ++pumps; }
-static void skyrim_perf_record(unsigned kind, uint64_t elapsed, int failed, uint64_t sleeps) {
-    assert(kind==SKYRIM_PERF_PACER && !failed); ++recorded; measured=elapsed; slept=sleeps;
+void skyrim_perf_interval(unsigned kind, uint64_t started, uint64_t ended, int failed, uint64_t sleeps) {
+    assert(kind==SKYRIM_PERF_PACER && !failed && ended>=started);
+    ++recorded; measured=ended-started; slept=sleeps;
+    interval_start=started; interval_end=ended;
 }
 ''' + pacer + '''
 int main(void) {
     target=1000000000; skyrim_ios_pace_frame();
     assert(waits==1 && pumps==1 && recorded==1 && slept==1 && measured==target);
+    assert(interval_start==0 && interval_end==target);
     mode=1; now=0; waits=pumps=recorded=0; skyrim_ios_pace_frame();
     assert(waits==2 && pumps==2 && recorded==1 && slept==0 && measured==target);
+    assert(interval_start==0 && interval_end==target);
     assert(remaining_seen==target-1);
     mode=2; now=0; waits=pumps=recorded=0; skyrim_ios_pace_frame();
     assert(waits==2 && pumps==2 && recorded==0);
     now=target+1; waits=recorded=0; skyrim_ios_pace_frame();
     assert(waits==0 && recorded==1 && measured==0);
+    assert(interval_start==target+1 && interval_end==target+1);
 }
 ''')
             binary = Path(tmp) / "pacer"
-            subprocess.run([cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(binary)], check=True, timeout=60)
+            subprocess.run([cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT/"ios/runtime-port"),
+                            str(source), "-o", str(binary)], check=True, timeout=60)
             subprocess.run([str(binary)], check=True, timeout=10)
 
 
