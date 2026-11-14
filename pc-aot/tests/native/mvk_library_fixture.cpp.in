@@ -1,0 +1,206 @@
+// Authored Metal boundary with injected pinned production methods.
+#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <cstring>
+#include <future>
+#include <iostream>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
+using namespace std;
+using namespace std::chrono_literals;
+using MVKConfigCompressionAlgorithm = int;
+const int MVK_CONFIG_COMPRESSION_ALGORITHM_NONE = 0;
+static size_t mvkCompress(const uint8_t* a, size_t n, uint8_t* b, size_t z, int) { if(n&&z) memcpy(b,a,min(n,z)); return min(n,z); }
+static size_t mvkDecompress(const uint8_t* a, size_t n, uint8_t* b, size_t z, int) { if(n&&z) memcpy(b,a,min(n,z)); return min(n,z); }
+@CODEC@
+namespace mvk { @TYPES@ }
+using namespace mvk;
+@MACRO@
+struct VkSpecializationMapEntry { uint32_t constantID, offset; size_t size; };
+struct VkSpecializationInfo { uint32_t mapEntryCount; const VkSpecializationMapEntry* pMapEntries; size_t dataSize; const void* pData; };
+static atomic<unsigned> handles{0}, compiles{0};
+struct FixtureHandle {
+    unsigned refs=1, owner; uint64_t value; size_t size;
+    FixtureHandle(unsigned o, uint64_t v, size_t s):owner(o),value(v),size(s) { ++handles; }
+    ~FixtureHandle() { --handles; }
+};
+static FixtureHandle* retain(FixtureHandle* p) { if(p) ++p->refs; return p; }
+static void release(FixtureHandle* p) { if(p && !--p->refs) delete p; }
+struct MVKVulkanAPIDeviceObject {
+    unsigned identity;
+    string source="authored shader bytes";
+    mutex lock; condition_variable changed;
+    uint64_t blocked=0, fail=0; unsigned entered=0; bool allowed=false;
+    explicit MVKVulkanAPIDeviceObject(unsigned id):identity(id) {}
+    void* getDevice() { static int device; return &device; }
+    void waitEntered(unsigned n) {
+        unique_lock<mutex> guard(lock);
+        assert(changed.wait_for(guard, 2s, [&]{ return entered>=n; }));
+    }
+    void allow() { lock_guard<mutex> guard(lock); allowed=true; changed.notify_all(); }
+};
+struct MVKBaseDeviceObject { void* _device; explicit MVKBaseDeviceObject(void* p):_device(p) {} virtual ~MVKBaseDeviceObject()=default; };
+class MVKShaderLibrary: public MVKBaseDeviceObject {
+public:
+    MVKVulkanAPIDeviceObject* _owner;
+    FixtureHandle* _mtlLibrary;
+    MVKCompressor<string> _compressedMSL;
+    SPIRVToMSLConversionResultInfo _shaderConversionResultInfo;
+    bool _maySpecializeWithMacro;
+    map<vector<pair<uint32_t,MVKShaderMacroValue>>, MVKShaderLibrary*> _specializationVariants;
+    mutex _specializationLock;
+    explicit MVKShaderLibrary(MVKVulkanAPIDeviceObject* owner): MVKBaseDeviceObject(owner->getDevice()), _owner(owner), _mtlLibrary(new FixtureHandle(owner->identity,0,0)), _maySpecializeWithMacro(true) {
+        _shaderConversionResultInfo.specializationMacros[7] = {};
+        _shaderConversionResultInfo.specializationMacros[9] = {};
+        string data=owner->source;
+        _compressedMSL.compress(data, MVK_CONFIG_COMPRESSION_ALGORITHM_NONE);
+    }
+    MVKShaderLibrary(MVKVulkanAPIDeviceObject*, const SPIRVToMSLConversionResultInfo&, const MVKCompressor<string>&, const vector<pair<uint32_t,MVKShaderMacroValue>>* = nullptr);
+    MVKShaderLibrary(const MVKShaderLibrary&);
+    MVKShaderLibrary& operator=(const MVKShaderLibrary&);
+    ~MVKShaderLibrary() override;
+    FixtureHandle* choose(const VkSpecializationInfo*);
+    void decompressMSL(string& output);
+    void decompressMSL(string& output, const MVKCompressor<string>& source);
+    struct Metrics { struct { unsigned mslDecompress=0; } shaderCompilation; } metrics;
+    uint64_t getPerformanceTimestamp() { return 1; }
+    Metrics& getPerformanceStats() { return metrics; }
+    void addPerformanceInterval(unsigned& counter, uint64_t started) { assert(started==1); ++counter; }
+    void compileLibrary(const string& text, const vector<pair<uint32_t,MVKShaderMacroValue>>* macros) {
+        assert(text==_owner->source);
+        ++compiles;
+        if (!macros) { _mtlLibrary=new FixtureHandle(_owner->identity,0,0); return; }
+        assert(!macros->empty());
+        auto val=macros->front().second;
+        if (val.value.ui64 == _owner->blocked) {
+            unique_lock<mutex> guard(_owner->lock);
+            ++_owner->entered; _owner->changed.notify_all();
+            assert(_owner->changed.wait_for(guard, 4s, [&]{ return _owner->allowed; }));
+        }
+        _mtlLibrary = val.value.ui64 == _owner->fail ? nullptr : new FixtureHandle(_owner->identity,val.value.ui64,val.size);
+    }
+};
+@METHODS@
+struct Input {
+    vector<uint64_t> values; vector<VkSpecializationMapEntry> entries;
+    Input(initializer_list<pair<uint32_t,uint64_t>> input) {
+        for(auto p:input) { entries.push_back({p.first, uint32_t(values.size()*8), 8}); values.push_back(p.second); }
+    }
+    FixtureHandle* get(MVKShaderLibrary& library) { VkSpecializationInfo s{uint32_t(entries.size()), entries.data(), values.size()*8, values.data()}; return library.choose(&s); }
+};
+static void ownershipCases() {
+    MVKVulkanAPIDeviceObject owner(1), rebound(2);
+    Input key{{7,33}}, different{{7,44}};
+    {
+        MVKShaderLibrary a(&owner);
+        auto* first=key.get(a); assert(first && first->owner==1);
+        assert(a.choose(nullptr)==a._mtlLibrary);
+        MVKShaderLibrary b(a);
+        assert(b._specializationVariants.empty() && b._mtlLibrary==a._mtlLibrary && a._mtlLibrary->refs==2);
+        b._owner=&rebound; // actual cache merge rebinds only this top-level owner.
+        assert(key.get(b)->owner==2 && key.get(b)!=first && key.get(a)==first);
+        {
+            MVKShaderLibrary target(&owner);
+            different.get(target); assert(handles==5);
+            target=a;
+            assert(target._specializationVariants.empty() && target._owner==&owner && target._maySpecializeWithMacro);
+            assert(handles==3 && a._mtlLibrary->refs==3);
+            auto* assigned=key.get(target); assert(assigned!=first && assigned->value==33);
+            target=target; assert(key.get(target)==assigned);
+            // Assignment must copy the non-macro policy and discard former children.
+            b._maySpecializeWithMacro=false;
+            target=b;
+            assert(!target._maySpecializeWithMacro && target._specializationVariants.empty());
+            assert(key.get(target)==target._mtlLibrary);
+        }
+        assert(a._mtlLibrary->refs==2);
+    }
+    assert(handles==0);
+    // A copied library survives destruction of the original with owned children.
+    auto original=make_unique<MVKShaderLibrary>(&owner); key.get(*original);
+    auto copy=make_unique<MVKShaderLibrary>(*original); original.reset();
+    assert(key.get(*copy)->value==33); copy.reset(); assert(handles==0);
+}
+static void keysAndFailures() {
+    MVKVulkanAPIDeviceObject owner(3); owner.fail=77;
+    {
+        MVKShaderLibrary lib(&owner);
+        Input normal{{7,33},{9,44}}, reversed{{9,44},{7,33}}, irrelevant{{12,2},{7,33},{9,44}};
+        assert(normal.get(lib)==reversed.get(lib) && normal.get(lib)==irrelevant.get(lib));
+        Input shortValue{{7,33},{9,44}}; shortValue.entries[0].size=1;
+        assert(shortValue.get(lib)!=normal.get(lib) && shortValue.get(lib)->size==1);
+        Input unused{{12,99}}; assert(unused.get(lib)==lib._mtlLibrary);
+        Input bad{{7,77}}; auto before=compiles.load();
+        assert(!bad.get(lib) && !bad.get(lib) && compiles==before+1);
+        auto copy=make_unique<MVKShaderLibrary>(lib); assert(!bad.get(*copy) && compiles==before+2);
+    }
+    assert(handles==0);
+}
+static void concurrentCases() {
+    MVKVulkanAPIDeviceObject owner(4); owner.blocked=333;
+    {
+        MVKShaderLibrary lib(&owner); Input warm{{7,22}}; auto* warmed=warm.get(lib);
+        constexpr unsigned count=8; vector<future<FixtureHandle*>> tasks;
+        for(unsigned i=0;i<count;++i) tasks.push_back(async(launch::async,[&]{ Input input{{7,333}}; return input.get(lib); }));
+        owner.waitEntered(count); // all misses can compile concurrently, outside the map mutex.
+        auto hit=async(launch::async,[&]{ Input input{{7,22}}; return input.get(lib); });
+        assert(hit.wait_for(1s)==future_status::ready && hit.get()==warmed);
+        auto other=async(launch::async,[&]{ Input input{{7,444}}; return input.get(lib); });
+        assert(other.wait_for(1s)==future_status::ready && other.get()->value==444);
+        owner.allow(); auto* published=tasks.front().get();
+        for(unsigned i=1;i<count;++i) assert(tasks[i].get()==published);
+        assert(lib._specializationVariants.size()==3 && handles==4);
+        vector<thread> readers;
+        for(unsigned i=0;i<8;++i) readers.emplace_back([&]{ Input input{{7,333}}; for(unsigned n=0;n<1000;++n) assert(input.get(lib)==published); });
+        for(auto& reader:readers) reader.join();
+    }
+    assert(handles==0);
+}
+#ifndef EXPECT_VARIANT_PAYLOAD_RETAINED
+#define EXPECT_VARIANT_PAYLOAD_RETAINED 0
+#endif
+static void payloadOwnershipCases() {
+    size_t largest=0;
+    for (size_t bytes: {size_t(0),size_t(1),size_t(21),size_t(16384),size_t(1024*1024)}) {
+        MVKVulkanAPIDeviceObject owner(10); owner.source=string(bytes, 'S');
+        {
+            MVKShaderLibrary lib(&owner);
+            auto before=lib._compressedMSL._compressed;
+            for (unsigned n=1; n<=16; ++n) { Input key{{7,n}}; assert(key.get(lib)->value==n); }
+            size_t retained=0;
+            for (const auto& child:lib._specializationVariants) {
+                assert(!child.second->_maySpecializeWithMacro);
+                assert(child.second->metrics.shaderCompilation.mslDecompress==1);
+                retained+=child.second->_compressedMSL._compressed.size();
+            }
+            assert(retained==bytes*16*EXPECT_VARIANT_PAYLOAD_RETAINED);
+            assert(lib._compressedMSL._compressed==before);
+            largest=max(largest,retained);
+            // Root restored from cache keeps its own compressed payload even
+            // after the temporary deserialized source has gone away.
+            unique_ptr<MVKShaderLibrary> imported;
+            {
+                auto temporary=lib._compressedMSL;
+                imported=make_unique<MVKShaderLibrary>(&owner,lib._shaderConversionResultInfo,temporary,nullptr);
+            }
+            assert(imported->_maySpecializeWithMacro && imported->_compressedMSL._compressed==before);
+            Input late{{7,19}}; assert(late.get(*imported)->value==19);
+        }
+        assert(handles==0);
+    }
+    cout << "largest_variant_payload_bytes=" << largest << " root_payload_preserved=PASS decode_bytes=PASS\n";
+}
+int main() {
+    ownershipCases(); keysAndFailures(); concurrentCases();
+    payloadOwnershipCases();
+    cout << "ownership=PASS parallel_publication=PASS failure_policy=PASS concurrent_hits=8000\n";
+}

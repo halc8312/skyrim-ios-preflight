@@ -1,0 +1,54 @@
+            // Experimental fragment; the production patch does not include it.
+            MVKShaderLibrary* variant = nullptr;
+            std::shared_ptr<PrototypeFlight> flight;
+            bool leader=false;
+            {
+                std::unique_lock<std::mutex> guard(_specializationLock);
+                auto entry=_specializationVariants.find(spec_list);
+                if (entry!=_specializationVariants.end()) {
+                    variant=entry->second;
+                } else {
+                    auto pending=_prototypeFlights.find(spec_list);
+                    if (pending==_prototypeFlights.end()) {
+                        flight=std::make_shared<PrototypeFlight>();
+                        _prototypeFlights.emplace(spec_list,flight);
+                        leader=true;
+                    } else if (!prototypeCompileDepth) {
+                        flight=pending->second;
+                        // Fixture-only: no production proof of the caller's
+                        // transitive locks or Apple compiler deadline yet.
+                        flight->changed.wait(guard,[&]{return flight->done;});
+                        if (flight->error) std::rethrow_exception(flight->error);
+                        variant=_specializationVariants.at(spec_list);
+                    }
+                }
+            }
+            if (!variant) {
+                try {
+                    PrototypeCompileScope compiling;
+                    std::unique_ptr<MVKShaderLibrary> candidate(new MVKShaderLibrary(_owner, _shaderConversionResultInfo, _compressedMSL, &spec_list));
+                    {
+                        std::lock_guard<std::mutex> guard(_specializationLock);
+                        auto published=_specializationVariants.emplace(spec_list,candidate.get());
+                        variant=published.first->second;
+                        if (published.second) candidate.release();
+                        if (leader) {
+                            _prototypeFlights.erase(spec_list);
+                            flight->done=true;
+                        }
+                    }
+                    if (leader) flight->changed.notify_all();
+                } catch (...) {
+                    if (leader) {
+                        {
+                            std::lock_guard<std::mutex> guard(_specializationLock);
+                            flight->error=std::current_exception();
+                            flight->done=true;
+                            _prototypeFlights.erase(spec_list);
+                        }
+                        flight->changed.notify_all();
+                    }
+                    throw;
+                }
+            }
+            lib=variant->_mtlLibrary;

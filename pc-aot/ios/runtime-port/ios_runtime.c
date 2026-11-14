@@ -4,6 +4,7 @@
 #include "mobile_ui.h"
 #include "performance_metrics.h"
 #include "device_policy.h"
+#include "gpu_gate.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -29,6 +30,7 @@ static int metrics_active = 1;
 static uint64_t metrics_epoch;
 
 void skyrim_ios_metrics_active(int active) {
+    skyrim_perf_activity(active);
     pthread_mutex_lock(&frame_metrics_mutex);
     metrics_active = !!active;
     last_frame = 0;
@@ -74,6 +76,7 @@ void skyrim_ios_pump_events(void) {
     pumping = 1;
     __atomic_store_n(&last_pump_ns, now, __ATOMIC_RELAXED);
     SDL_PumpEvents();
+    skyrim_gpu_wait_active();
     update_drawable();
     skyrim_mobile_tick();
     pumping = 0;
@@ -94,8 +97,9 @@ void skyrim_ios_present_phase(unsigned phase) {
         uint64_t elapsed = now - entered;
         __atomic_add_fetch(&driver_count, 1, __ATOMIC_RELAXED);
         __atomic_add_fetch(&driver_total, elapsed, __ATOMIC_RELAXED);
-        atomic_max(&driver_max, elapsed); entered = 0;
-        skyrim_perf_record(SKYRIM_PERF_PRESENT_HOST, elapsed, 0, 0);
+        atomic_max(&driver_max, elapsed);
+        skyrim_perf_interval(SKYRIM_PERF_PRESENT_HOST, entered, now, 0, 0);
+        entered = 0;
     }
     __atomic_store_n(&present_on_main, !!pthread_main_np(), __ATOMIC_RELAXED);
     __atomic_store_n(&last_phase_ns, monotonic_ns(), __ATOMIC_RELAXED);
@@ -126,7 +130,7 @@ void skyrim_ios_pace_frame(void) {
         skyrim_ios_pump_events();
     }
     if (epoch == __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED))
-        skyrim_perf_record(SKYRIM_PERF_PACER, monotonic_ns() - started, 0, sleeps);
+        skyrim_perf_interval(SKYRIM_PERF_PACER, started, monotonic_ns(), 0, sleeps);
 }
 
 void skyrim_ios_watchdog(void) {
@@ -167,7 +171,7 @@ void skyrim_ios_present_result(int32_t result) {
     pthread_mutex_unlock(&frame_metrics_mutex);
     if (gap) {
         atomic_max(&interval_max, gap);
-        skyrim_perf_record(SKYRIM_PERF_FRAME_GAP, gap, 0, 0);
+        skyrim_perf_interval(SKYRIM_PERF_FRAME_GAP, now - gap, now, 0, 0);
     }
     skyrim_mobile_frame();
     if (__atomic_add_fetch(&successful_presents, 1, __ATOMIC_RELAXED) == 1)

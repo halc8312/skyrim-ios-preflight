@@ -325,7 +325,57 @@ def patch_native_textures(s: str) -> str:
 
 
 def patch_kernel(s: str) -> str:
-    return patch_main_pump(patch_asset_reads(patch_apc_queue(patch_directory_index(s))))
+    return patch_main_pump(patch_file_writes(patch_asset_reads(patch_apc_queue(patch_directory_index(patch_waiter_membership(s))))))
+
+
+def patch_file_writes(s: str) -> str:
+    # Observe only; preserve the original write/close syscalls and all error,
+    # guest-output, APC, and file-position behavior. No implicit fsync or retry.
+    s = '#include "save_write_probe.h"\n' + s
+    s = replace_once(s,
+        'typedef struct { int fd; char path[1024]; int shared; off_t pos; } GFile;',
+        'typedef struct { int fd; char path[1024]; int shared; off_t pos; SkyrimSaveWriteProbe ios_write; } GFile;',
+        'host-only save candidate observation')
+    old = '    snprintf(f->path, sizeof f->path, "%s", host);'
+    s = replace_once(s, old, old + '\n    skyrim_save_write_init(&f->ios_write, f->path, sizeof f->path);',
+        'classify filename once without retaining another path')
+    old = '        r = write(f->fd, MEM + buf, n);'
+    s = replace_once(s, old,
+        '        const unsigned ios_save_candidate = f->ios_write.candidate;\n'
+        '        const uint64_t ios_write_started = skyrim_save_write_begin(&f->ios_write);\n' + old + '\n'
+        '        skyrim_save_write_end(ios_save_candidate, ios_write_started, r < 0, 0);',
+        'synchronous file write timing excludes stdout and stderr')
+    old = '    ssize_t r = write ? pwrite(f->fd, MEM + buf, n, off) : pread(f->fd, MEM + buf, n, off);'
+    s = replace_once(s, old,
+        '    const unsigned ios_save_candidate = write ? f->ios_write.candidate : 0;\n'
+        '    const uint64_t ios_write_started = write ? skyrim_save_write_begin(&f->ios_write) : 0;\n' + old + '\n'
+        '    if (write) skyrim_save_write_end(ios_save_candidate, ios_write_started, r < 0, 1);',
+        'write-ex syscall observation before unchanged APC handling')
+    old = '        if (!f->shared) close(f->fd);  /* shared BSA fds stay open */'
+    return replace_once(s, old, old + '\n        skyrim_save_write_close(&f->ios_write);',
+        'candidate handle elapsed interval, not serialization or durability')
+
+
+def patch_waiter_membership(s: str) -> str:
+    # Private host objects only. All accesses stay inside the original g_wlock.
+    # Saturation is sticky: an impossible-to-count object always takes the old
+    # scan, rather than risking a false zero and a missed notification.
+    s = replace_once(s, '    int refs;\n} Waitable;',
+        '    int refs;\n    uint32_t waiting_entries; /* protected by g_wlock */\n} Waitable;',
+        'wait set membership count on host waitable')
+    s = replace_once(s, 'static void wake_waiters(Waitable *w) {',
+        'static void wake_waiters(Waitable *w) {\n    if (!w->waiting_entries) return;',
+        'skip unrelated waiter scan only for a proven empty membership')
+    s = replace_once(s, '        g_waiters = me;\n        int timed_out = 0;',
+        '        g_waiters = me;\n'
+        '        for (uint32_t k = 0; k < n; ++k)\n'
+        '            if (w[k]->waiting_entries != UINT32_MAX) ++w[k]->waiting_entries;\n'
+        '        int timed_out = 0;', 'register before atomically releasing the wait mutex')
+    return replace_once(s, '        if (me->prev) me->prev->next = me->next; else g_waiters = me->next;',
+        '        for (uint32_t k = 0; k < n; ++k)\n'
+        '            if (w[k]->waiting_entries != UINT32_MAX) --w[k]->waiting_entries;\n'
+        '        if (me->prev) me->prev->next = me->next; else g_waiters = me->next;',
+        'unregister after every condition return while holding the same mutex')
 
 
 def patch_apc_queue(s: str) -> str:
@@ -579,8 +629,20 @@ def patch_xwma_buffer(s: str) -> str:
     return rc;''', "xWMA return exact final extent")
 
 
+def patch_audio_backpressure(s: str) -> str:
+    helper = (Path(__file__).parent / 'audio_backpressure.c.in').read_text(encoding='utf-8')
+    s = replace_once(s, 'static void *engine_main(void *arg) {',
+                     helper + '\nstatic void *engine_main(void *arg) {', 'bounded audio queue polling helper')
+    s = replace_once(s, '                usleep(1000);',
+                     '                usleep(ios_audio_backpressure_delay(q, frames, ios_audio_device_rate));',
+                     'only full queue polling uses the adaptive delay')
+    return replace_once(s, '        SDL_PauseAudioDevice(g_dev, 0);\n    }\n    pthread_t t;',
+                        '        ios_audio_device_samples = have.samples;\n        ios_audio_device_rate = have.freq;\n        SDL_PauseAudioDevice(g_dev, 0);\n    }\n    pthread_t t;',
+                        'publish negotiated buffer quantum before creating mixer thread')
+
+
 def patch_audio(s: str) -> str:
-    s = '#include "performance_metrics.h"\n' + patch_audio_route(patch_audio_submix(s))
+    s = '#include "performance_metrics.h"\n' + patch_audio_backpressure(patch_audio_route(patch_audio_submix(s)))
     helper = '''static int ios_decode_xwma(XWmaDecoder *decoder, const uint8_t *data, size_t bytes,
                            unsigned packets, int end, int16_t **pcm, uint32_t *frames) {
     const uint64_t started = skyrim_perf_now_ns();
@@ -624,6 +686,21 @@ def patch_surface_point(s: str) -> str:
         for (int x = 0; x < w; x++)
           pack((uint8_t *)lock.pBits + (size_t)y * lock.Pitch + x * dp,
                desc.Format, &rgba[((size_t)y * sw + x) * 4]);
+    } else if ((filter & 7) <= 2 && w <= 16384 && h <= 16384) {
+      // Exact floor(x * sw / w), advanced without a division per pixel.
+      // The existing input/output bounds keep all products and sums in range.
+      const int whole = sw / w, part = sw % w;
+      for (int y = 0; y < h; y++) {
+        const size_t row = (size_t)(y * sh / h) * sw;
+        int sx = 0, remainder = 0;
+        for (int x = 0; x < w; x++) {
+          pack((uint8_t *)lock.pBits + (size_t)y * lock.Pitch + x * dp,
+               desc.Format, &rgba[(row + sx) * 4]);
+          sx += whole;
+          remainder += part;
+          if (remainder >= w) { remainder -= w; ++sx; }
+        }
+      }
     } else
       for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {''', 'identity point sampling without per-pixel division')

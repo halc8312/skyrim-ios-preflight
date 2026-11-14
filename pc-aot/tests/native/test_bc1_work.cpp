@@ -13,7 +13,10 @@ static uint32_t random_word(){seed^=seed<<13;seed^=seed>>17;return seed^=seed<<5
 static void hash(const void*p,size_t n){for(size_t k=0;k<n;++k)digest=(digest^((const uint8_t*)p)[k])*1099511628211ull;}
 int main(int argc,char**argv){
     uint8_t blocks[4096][16],out[4096][160];for(auto&b:blocks)for(auto&v:b)v=(uint8_t)random_word();
-    if(argc>1){unsigned type=argc>2?(unsigned)strtoul(argv[2],nullptr,10):1;auto start=std::chrono::steady_clock::now();
+    if(argc>1){unsigned type=argc>2?(unsigned)strtoul(argv[2],nullptr,10):1;
+        // The timed decoder does not write row padding or the unused tail.
+        // Initialize both outside the timed region before hashing the output.
+        memset(out,0xa7,sizeof out);auto start=std::chrono::steady_clock::now();
         for(unsigned r=0;r<1000;++r)for(unsigned i=0;i<4096;++i)decode_block(D3DFMT_DXT1+(type-1)*0x01000000,blocks[i],out[i],20,4,4);
         double ns=std::chrono::duration<double,std::nano>(std::chrono::steady_clock::now()-start).count()/(1000*4096.);
         hash(out,sizeof out);printf("{\"ns\":%.6f,\"digest\":%llu}\n",ns,(unsigned long long)digest);return 0;}

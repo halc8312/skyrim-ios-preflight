@@ -1,0 +1,153 @@
+#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <set>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+#include "dxvk/dxvk_shader_key.h"
+
+namespace dxvk {
+/* ACTUAL_KEY */
+static const DxvkShaderKey g_nullShaderKey;
+class DxvkShader : public RcObject {
+    DxvkShaderKey key;
+public:
+    explicit DxvkShader(const DxvkShaderKey& k):key(k){}
+    DxvkShaderKey getShaderKey() const { return key; }
+};
+struct DxvkGraphicsPipelineShaders { Rc<DxvkShader> vs,tcs,tes,gs,fs; };
+struct DxvkComputePipelineShaders { Rc<DxvkShader> cs; };
+struct State { unsigned id; };
+struct Format { unsigned id; };
+struct DxvkStateCacheEntry { DxvkStateCacheKey shaders; State gpState,cpState; Format format; };
+struct Pass { unsigned id; };
+struct DxvkRenderPassPool {
+    Pass pass[8]{};
+    Pass* getRenderPass(Format f) { assert(f.id<8);pass[f.id].id=f.id;return &pass[f.id]; }
+};
+static DxvkStateCacheKey tuple(const DxvkGraphicsPipelineShaders& p) {
+    DxvkStateCacheKey k;
+    if(p.vs!=nullptr)k.vs=p.vs->getShaderKey();
+    if(p.tcs!=nullptr)k.tcs=p.tcs->getShaderKey();
+    if(p.tes!=nullptr)k.tes=p.tes->getShaderKey();
+    if(p.gs!=nullptr)k.gs=p.gs->getShaderKey();
+    if(p.fs!=nullptr)k.fs=p.fs->getShaderKey();
+    return k;
+}
+static std::string identity(const DxvkStateCacheKey& k) {
+    return k.vs.toString()+k.tcs.toString()+k.tes.toString()+k.gs.toString()+k.fs.toString()+k.cs.toString();
+}
+struct Ledger {
+    size_t attempts=0;
+    std::set<std::string> results,failures;
+};
+struct Pipeline {
+    std::string key;Ledger* ledger;
+    void compilePipeline(State state,Pass* pass=nullptr) {
+        ++ledger->attempts;
+        const std::string id=key+":"+std::to_string(state.id)+":"+std::to_string(pass?pass->id:99);
+        ledger->results.insert(id);
+        // Authored permanent failure represents the existing cached-null
+        // pipeline behavior; it must not become a success by removing repeats.
+        if(state.id==7)ledger->failures.insert(id);
+    }
+};
+struct DxvkPipelineManager {
+    Ledger ledger;
+    std::shared_ptr<Pipeline> createGraphicsPipeline(const DxvkGraphicsPipelineShaders& p) {
+        return std::make_shared<Pipeline>(Pipeline{identity(tuple(p)),&ledger});
+    }
+    std::shared_ptr<Pipeline> createComputePipeline(const DxvkComputePipelineShaders& p) {
+        DxvkStateCacheKey key;key.cs=p.cs->getShaderKey();
+        return std::make_shared<Pipeline>(Pipeline{identity(key),&ledger});
+    }
+};
+class DxvkStateCache {
+    struct WorkerItem { DxvkGraphicsPipelineShaders gp;DxvkComputePipelineShaders cp; };
+    DxvkPipelineManager* m_pipeManager;DxvkRenderPassPool* m_passManager;
+    std::vector<DxvkStateCacheEntry> m_entries;
+    dxvk::mutex m_entryLock,m_workerLock;
+    dxvk::condition_variable m_workerCond;
+    std::unordered_multimap<DxvkStateCacheKey,size_t,DxvkHash,DxvkEq> m_entryMap;
+    std::unordered_multimap<DxvkShaderKey,DxvkStateCacheKey,DxvkHash,DxvkEq> m_pipelineMap;
+    std::unordered_map<DxvkShaderKey,Rc<DxvkShader>,DxvkHash,DxvkEq> m_shaderMap;
+    std::queue<WorkerItem> m_workerQueue;
+    size_t numShaderTuples = 0;
+    DxvkShaderKey getShaderKey(const Rc<DxvkShader>& shader) const;
+    bool getShaderByKey(const DxvkShaderKey& key,Rc<DxvkShader>& shader) const;
+    void mapPipelineToEntry(const DxvkStateCacheKey& key,size_t entryId);
+    void mapShaderToPipeline(const DxvkShaderKey& shader,const DxvkStateCacheKey& key);
+    void compilePipelines(const WorkerItem& item);
+public:
+    DxvkStateCache(DxvkPipelineManager& p,DxvkRenderPassPool& r):m_pipeManager(&p),m_passManager(&r){}
+    void load(const DxvkStateCacheEntry& entry) {
+        /* ACTUAL_LOADING */
+    }
+    void registerShader(const Rc<DxvkShader>& shader);
+    size_t jobs() { std::lock_guard<dxvk::mutex> lock(m_workerLock);return m_workerQueue.size(); }
+    size_t entries() const { assert(m_entryMap.size()==m_entries.size());return m_entries.size(); }
+    size_t mappings() const { return m_pipelineMap.size(); }
+    size_t tuples() const { return numShaderTuples; }
+    void drain() {
+        for(;;){WorkerItem item;
+            {std::lock_guard<dxvk::mutex> lock(m_workerLock);if(m_workerQueue.empty())return;
+             item=m_workerQueue.front();m_workerQueue.pop();}
+            compilePipelines(item);
+        }
+    }
+};
+/* ACTUAL_METHODS */
+static DxvkShaderKey key(unsigned stage,unsigned id) {
+    return DxvkShaderKey(VkShaderStageFlagBits(1u<<stage),Sha1Hash::compute(id));
+}
+static void run(unsigned variants,bool concurrent,bool reverse) {
+    DxvkPipelineManager manager;DxvkRenderPassPool passes;DxvkStateCache cache(manager,passes);
+    std::vector<DxvkStateCacheKey> keys;
+    // Shared VS across several distinct tuples; 6-stage availability; compute.
+    for(unsigned group=0;group<6;++group){DxvkStateCacheKey k;
+        if(group<3){k.vs=key(0,1);k.fs=key(4,group+10);}
+        else if(group==3){k.vs=key(0,2);k.tcs=key(1,3);k.tes=key(2,4);k.gs=key(3,5);k.fs=key(4,6);}
+        else k.cs=key(5,group+20);
+        keys.push_back(k);
+    }
+    std::set<std::string> expected,failures;
+    std::vector<Rc<DxvkShader>> shaders;
+    std::set<std::string> registered;
+    for(const auto& k:keys){
+        for(const auto& s:{k.vs,k.tcs,k.tes,k.gs,k.fs,k.cs})
+            if(!s.eq(g_nullShaderKey)&&registered.insert(s.toString()).second)shaders.push_back(new DxvkShader(s));
+        for(unsigned n=0;n<variants;++n){unsigned id=reverse?variants-1-n:n;
+            cache.load({k,{id},{id},{id%8}});
+            auto item=identity(k)+":"+std::to_string(id)+":"+std::to_string(k.cs.eq(g_nullShaderKey)?id%8:99);
+            expected.insert(item);if(id==7)failures.insert(item);
+        }
+    }
+    assert(cache.entries()==6*variants);
+    assert(cache.tuples()==(PATCHED?6u:0u));
+    cache.registerShader(new DxvkShader(g_nullShaderKey));assert(cache.jobs()==0);
+    // No key is complete with only the shared VS, and a worker drain is empty.
+    cache.registerShader(shaders.front());cache.drain();assert(manager.ledger.attempts==0);
+    if(reverse)std::reverse(shaders.begin()+1,shaders.end());
+    if(concurrent){std::vector<std::thread> threads;
+        for(size_t i=1;i<shaders.size();++i)threads.emplace_back([&,i]{cache.registerShader(shaders[i]);});
+        for(auto& t:threads)t.join();
+    }else for(size_t i=1;i<shaders.size();++i)cache.registerShader(shaders[i]);
+    const size_t jobs=cache.jobs();
+    assert(jobs==6*(PATCHED?1:variants));
+    cache.drain();assert(manager.ledger.results==expected);assert(manager.ledger.failures==failures);
+    assert(manager.ledger.attempts==6*variants*(PATCHED?1:variants));
+    if(variants==16&&!reverse&&!concurrent)
+        printf("variants=%u entries=%zu mappings=%zu jobs=%zu visits=%zu unique=%zu\n",variants,cache.entries(),cache.mappings(),jobs,manager.ledger.attempts,expected.size());
+}
+}
+int main(){
+    for(unsigned n:{1u,2u,16u,128u})for(bool concurrent:{false,true})for(bool reverse:{false,true})dxvk::run(n,concurrent,reverse);
+    puts("all_states_and_failure_identity=PASS concurrent_registration=PASS empty_and_partial=PASS");
+}

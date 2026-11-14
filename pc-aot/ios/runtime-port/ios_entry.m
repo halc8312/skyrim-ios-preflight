@@ -52,7 +52,9 @@ static void begin_log(void) {
     setvbuf(stderr, NULL, _IOLBF, 0);
     setvbuf(stdout, NULL, _IOLBF, 0);
     NSLog(@"SkyrimIOS log: %s", path);
-    fprintf(stderr, "SkyrimIOS PC2011 build3 mobile controls; session gameplay requires observation\n");
+    NSString *build = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"];
+    fprintf(stderr, "SkyrimIOS PC2011 build=%s; session gameplay requires observation\n",
+            build.UTF8String ?: "unknown");
 }
 
 static void set_default(const char *name, const char *value) {

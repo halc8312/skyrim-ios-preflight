@@ -53,8 +53,15 @@ PY
   python3 -m unittest discover -s tests -p 'test_ordered_stores.py' -v
   python3 -m unittest discover -s tests -p 'test_shadow_ranges.py' -v
   python3 -m unittest discover -s tests -p 'test_performance_metrics.py' -v
+  python3 -m unittest discover -s tests -p 'test_performance_stalls.py' -v
+  python3 -m unittest discover -s tests -p 'test_save_write_probe.py' -v
+  python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
+  python3 -m unittest discover -s tests -p 'test_present_timing.py' -v
+  python3 -m unittest discover -s tests -p 'test_frame_timing_analysis.py' -v
   python3 -m unittest discover -s tests -p 'test_asset_timing.py' -v
   python3 -m unittest discover -s tests -p 'test_audio_submix.py' -v
+  python3 -m unittest discover -s tests -p 'test_audio_backpressure.py' -v
+  python3 -m unittest discover -s tests -p 'test_waiter_membership.py' -v
   python3 -m unittest discover -s tests -p 'test_xwma_buffer.py' -v
   python3 -m unittest discover -s tests -p 'test_constant_scratch.py' -v
   python3 -m unittest discover -s tests -p 'test_dds_layout.py' -v
@@ -63,9 +70,12 @@ PY
   python3 -m unittest discover -s tests -p 'test_watchdog_layout.py' -v
   python3 -m unittest discover -s tests -p 'test_pipeline_cache.py' -v
   python3 -m unittest discover -s tests -p 'test_pipeline_locking.py' -v
+  python3 -m unittest discover -s tests -p 'test_state_cache_work.py' -v
   python3 -m unittest discover -s tests -p 'test_pending_work.py' -v
   python3 -m unittest discover -s tests -p 'test_resource_wait.py' -v
   python3 -m unittest discover -s tests -p 'test_device*.py' -v
+  python3 -m unittest discover -s tests -p 'test_descriptor_capacity.py' -v
+  python3 -m unittest discover -s tests -p 'test_mobile*.py' -v
 )
 
 bash ios/dependencies/build-dependencies.sh

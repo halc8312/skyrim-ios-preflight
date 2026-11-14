@@ -32,6 +32,13 @@ int main(int argc, char **argv) {
             compiler.add_msl_resource_binding(binding);
         }
         auto msl = compiler.compile();
+        std::cout << "MSL_POLICY fp_fast_math_flags=" << compiler.get_fp_fast_math_flags(true) << '\n';
+        unsigned macro_count = 0;
+        auto constants = compiler.get_specialization_constants();
+        for (const auto& constant : constants)
+            macro_count += compiler.specialization_constant_is_macro(constant.constant_id);
+        std::cout << "MSL_SPECIALIZATION constants=" << constants.size()
+                  << " macros=" << macro_count << '\n';
         std::ofstream out(argv[2], std::ios::binary);
         out << msl;
         return out ? 0 : 2;

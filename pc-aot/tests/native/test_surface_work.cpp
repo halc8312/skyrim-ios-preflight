@@ -63,5 +63,25 @@ int main(int argc,char**argv){
         assert(!native_d3dx_surface_memory(&out,&dest,input.data(),D3DFMT_A8B8G8R8,144,&cropped,2,0));
         hash(out.bytes.data(),out.bytes.size());hash(&events,sizeof events);++cases;
     }
+    // Compare the actual converter against its original division path at
+    // odd ratios, thin dimensions, limits, and the deliberately retained
+    // fallback just beyond the new output bound. Hash padding and API order.
+    const unsigned shapes[][4]={{1,1,127,63},{127,63,1,1},{17,13,31,19},
+        {31,19,17,13},{16384,1,8191,2},{8191,2,16384,1},{1,16384,2,8191},
+        {2,8191,1,16384},{16384,1,16385,1},{1,16384,1,16385}};
+    for(const auto &shape:shapes){
+        unsigned sw=shape[0],sh=shape[1],w=shape[2],h=shape[3],pitch=sw*4+12;
+        std::vector<uint8_t> pixels((size_t)pitch*sh);
+        for(size_t k=0;k<pixels.size();++k)pixels[k]=(uint8_t)(k*131+37);
+        for(unsigned filter:{0u,1u,2u,0x10002u,3u})for(unsigned colorKey:{0u,0xae2ba825u}){
+            IDirect3DSurface9 scaled(w,h,D3DFMT_A8B8G8R8);RECT source{0,0,(LONG)sw,(LONG)sh};events=0;
+            HRESULT hr=native_d3dx_surface_memory(&scaled,nullptr,pixels.data(),D3DFMT_A8R8G8B8,pitch,&source,filter,colorKey);
+            assert(hr==0);hash(&hr,sizeof hr);hash(&events,sizeof events);hash(scaled.bytes.data(),scaled.bytes.size());++cases;
+        }
+    }
+    IDirect3DSurface9 alias(17,13,D3DFMT_A8B8G8R8);RECT aliasSource{0,0,13,7};events=0;
+    for(size_t k=0;k<alias.bytes.size();++k)alias.bytes[k]=(uint8_t)(k*23+9);
+    assert(!native_d3dx_surface_memory(&alias,nullptr,alias.bytes.data(),D3DFMT_A8R8G8B8,alias.pitch,&aliasSource,2,0));
+    hash(alias.bytes.data(),alias.bytes.size());hash(&events,sizeof events);++cases;
     printf("{\"cases\":%llu,\"digest\":%llu}\n",(unsigned long long)cases,(unsigned long long)digest);
 }

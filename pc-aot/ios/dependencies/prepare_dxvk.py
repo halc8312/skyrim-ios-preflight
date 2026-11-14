@@ -10,6 +10,18 @@ import hashlib
 from pathlib import Path
 
 EXPECTED = {
+    'src/vulkan/vulkan_presenter.cpp': 'fc91ecc01c03ce46620843acc18450d2a99e152467c778a1b3ab5e444ca51663',
+    'src/dxvk/dxvk_cmdlist.cpp': 'a4150f38f9c6139d4a4066c4a335f87880ba62bda6aaa2a2bd38d7b16c6f8e19',
+    'src/dxvk/dxvk_queue.cpp': '5750907e13a8294f3f27199e329a03220b39fbb122e64b832c8a2236221ae126',
+
+    "src/d3d9/d3d9_config.h": "e75608dc8754e9b81b88b9fd88880bdf6bf0067b2659a649c7ff621330c4e2e7",
+    "src/dxvk/dxvk_descriptor.h": "071b047b53e76d19b07bd0c16b5203c1a41f313d789bd8a724d09700d8f2db55",
+    "src/dxvk/dxvk_descriptor.cpp": "aa5de1ddb614506d880619b2ec9906453f6dd359616880d0d8ce98878b22033c",
+    "src/dxvk/dxvk_pipelayout.h": "a666ca205342a74c861c1db8f352e9cf697019c4aad664dcdcfbec613f013796",
+    "src/dxvk/dxvk_pipelayout.cpp": "0711068ff173c082df22ef0ba12fe385af25be0ef1159a71f015cbea34a49733",
+    "src/dxvk/dxvk_context.h": "6a40624cafcc09f654015273feddef05c824dde42361e1f9914683a134a9fc36",
+    "src/dxvk/dxvk_context.cpp": "c4614edda7f4cc4e6e221e9a9ce2f9ef4900ffb412a8333342ff627344a56213",
+
     "src/d3d9/d3d9_shader.cpp": "40e72c614732f25b99ba298fa3a3fd3dfec2cbbb771e05f4b6821b5478d166b4",
     "src/d3d9/d3d9_shader.h": "0817969cc9b551287a87a8cbe66e209535c15e39551528388a6a9f442fd9ad9d",
     "src/dxvk/dxvk_resource.h": "1dc5c873dc7207534ccd0201b2ab3509fcf0c3d71a86bbbfeb46cf700760b835",
@@ -27,6 +39,17 @@ EXPECTED = {
     "src/dxvk/dxvk_pipemanager.cpp": "7f6a912d006624cf5236eebeea3ef211664e380c4595f69e6e6efeac49cd0c8a",
 }
 
+
+# These fixed internal layouts use no dynamic UBOs and at most two combined
+# image samplers. A changed helper must be reviewed before this bound is used.
+META_DESCRIPTOR_BOUNDS = {
+    "src/dxvk/dxvk_meta_blit.cpp": "10074c278f5971bd4b2bc98da12df53736bfaf84eb910cd13ed24ef036ef95c1",
+    "src/dxvk/dxvk_meta_clear.cpp": "07b8107a2cfc1734d26632bc0814f45f97b847319261efa1fd55d2910ac6e077",
+    "src/dxvk/dxvk_meta_copy.cpp": "ab7cea34783677b7726590fa2974b4a62040a2f3eaa61961527bebceadd6c2fc",
+    "src/dxvk/dxvk_meta_mipgen.cpp": "98fa69e81a5673d8577b631063bb035f64f3e9acc532fb4dbb9e4d758f609324",
+    "src/dxvk/dxvk_meta_pack.cpp": "e2e8e47e809a58488113eb092b608ad3cc3c8d572b769a82156d4b5090ea4c8f",
+    "src/dxvk/dxvk_meta_resolve.cpp": "62274f749116a92d251dfb9a29173fbbf18cfabbe802a1ee6ace4a21fec6a806",
+}
 
 def once(text: str, old: str, new: str) -> str:
     if text.count(old) != 1:
@@ -150,6 +173,35 @@ def adapt_workers(text: str) -> str:
         '      skyrim_device_platform_work_role(SKYRIM_WORK_COMPILER);\n      compilePipelines(item);')
     text = once(text, '    env::setThreadName("dxvk-writer");',
         '    env::setThreadName("dxvk-writer");\n    skyrim_device_platform_work_role(SKYRIM_WORK_CACHE_WRITER);')
+    # A worker item already visits every state entry for its shader tuple.
+    # Registering the tuple once per entry makes N variants queue N jobs,
+    # each revisiting all N variants. Preserve every entry and its format;
+    # only the shader-to-tuple wakeup index needs one record per tuple.
+    text = once(text, '''        mapPipelineToEntry(entry.shaders, entryId);
+
+        mapShaderToPipeline(entry.shaders.vs,  entry.shaders);
+        mapShaderToPipeline(entry.shaders.tcs, entry.shaders);
+        mapShaderToPipeline(entry.shaders.tes, entry.shaders);
+        mapShaderToPipeline(entry.shaders.gs,  entry.shaders);
+        mapShaderToPipeline(entry.shaders.fs,  entry.shaders);
+        mapShaderToPipeline(entry.shaders.cs,  entry.shaders);''', '''        const bool firstShaderTuple = m_entryMap.find(entry.shaders) == m_entryMap.end();
+        mapPipelineToEntry(entry.shaders, entryId);
+
+        if (firstShaderTuple) {
+          ++numShaderTuples;
+          mapShaderToPipeline(entry.shaders.vs,  entry.shaders);
+          mapShaderToPipeline(entry.shaders.tcs, entry.shaders);
+          mapShaderToPipeline(entry.shaders.tes, entry.shaders);
+          mapShaderToPipeline(entry.shaders.gs,  entry.shaders);
+          mapShaderToPipeline(entry.shaders.fs,  entry.shaders);
+          mapShaderToPipeline(entry.shaders.cs,  entry.shaders);
+        }''')
+    text = once(text, '    uint32_t numInvalidEntries = 0;',
+        '    uint32_t numInvalidEntries = 0;\n    size_t numShaderTuples = 0;')
+    text = once(text, '      " valid state cache entries"));',
+        '      " valid state cache entries"));\n'
+        '    Logger::info(str::format("IOS_STATE_CACHE entries=", m_entries.size(),\n'
+        '      " shader_tuples=", numShaderTuples, " wakeup_links=", m_pipelineMap.size()));')
     return text
 
 
@@ -303,7 +355,85 @@ def adapt_shader_inflight(name: str, text: str) -> str:
     return '#include "performance_metrics.h"\n' + text[:start] + replacement.rstrip('\n') + text[end:]
 
 
+def adapt_descriptor_capacity(name: str, text: str) -> str:
+    if name.endswith('dxvk_descriptor.h'):
+        text = once(text, '      VkDescriptorSetLayout layout);', '''      VkDescriptorSetLayout layout,
+      uint32_t uniformDynamic, uint32_t combinedImages);''')
+        return once(text, '    VkDescriptorPool m_pool;', '''    VkDescriptorPool m_pool;
+    uint32_t m_iosDynamicCapacity = 0, m_iosImageCapacity = 0;
+    uint32_t m_iosDynamicUsed = 0, m_iosImageUsed = 0;''')
+    if name.endswith('dxvk_descriptor.cpp'):
+        text = once(text, '    VkDescriptorPoolCreateInfo info;', '''    // MoltenVK may individually allocate descriptors after a type pool is
+    // exhausted, while returning VK_SUCCESS. Roll over before those hot-path
+    // allocations. Keep the original capacities and GPU retirement ownership.
+    for (const auto& size : pools) {
+      if (size.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
+        m_iosDynamicCapacity = size.descriptorCount;
+      if (size.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+        m_iosImageCapacity = size.descriptorCount;
+    }
+
+    VkDescriptorPoolCreateInfo info;''')
+        text = once(text, '  VkDescriptorSet DxvkDescriptorPool::alloc(VkDescriptorSetLayout layout) {', '''  VkDescriptorSet DxvkDescriptorPool::alloc(VkDescriptorSetLayout layout,
+      uint32_t uniformDynamic, uint32_t combinedImages) {
+    if (uniformDynamic > m_iosDynamicCapacity - m_iosDynamicUsed
+     || combinedImages > m_iosImageCapacity - m_iosImageUsed)
+      return VK_NULL_HANDLE;''')
+        text = once(text, '    return set;', '''    m_iosDynamicUsed += uniformDynamic;
+    m_iosImageUsed += combinedImages;
+    return set;''')
+        return once(text, '''    m_vkd->vkResetDescriptorPool(
+      m_vkd->device(), m_pool, 0);''', '''    if (m_vkd->vkResetDescriptorPool(
+          m_vkd->device(), m_pool, 0) != VK_SUCCESS)
+      throw DxvkError("DxvkDescriptorPool: Failed to reset descriptor pool");
+    m_iosDynamicUsed = m_iosImageUsed = 0;''')
+    if name.endswith('dxvk_pipelayout.h'):
+        text = once(text, '    VkDescriptorSetLayout descriptorSetLayout() const {', '''    uint32_t iosDynamicDescriptors() const { return m_iosDynamicDescriptors; }
+    uint32_t iosCombinedImages() const { return m_iosCombinedImages; }
+
+    VkDescriptorSetLayout descriptorSetLayout() const {''')
+        return once(text, '    Flags<VkDescriptorType>         m_descriptorTypes;', '''    Flags<VkDescriptorType>         m_descriptorTypes;
+    uint32_t m_iosDynamicDescriptors = 0, m_iosCombinedImages = 0;''')
+    if name.endswith('dxvk_pipelayout.cpp'):
+        return once(text, '      bindings[i].pImmutableSamplers = nullptr;', '''      bindings[i].pImmutableSamplers = nullptr;
+      // Count the actual layout after static/dynamic conversion, once per
+      // layout. No per-draw map lookup or descriptor scan.
+      if (bindings[i].descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
+        m_iosDynamicDescriptors += bindings[i].descriptorCount;
+      if (bindings[i].descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+        m_iosCombinedImages += bindings[i].descriptorCount;''')
+    if name.endswith('dxvk_context.h'):
+        return once(text, '''    VkDescriptorSet allocateDescriptorSet(
+            VkDescriptorSetLayout     layout);''', '''    // Fixed meta layouts use 0 dynamic UBOs and <=2 combined samplers.
+    // Graphics/compute layouts pass their exact immutable counts explicitly.
+    VkDescriptorSet allocateDescriptorSet(
+            VkDescriptorSetLayout     layout,
+            uint32_t uniformDynamic = 0, uint32_t combinedImages = 2);''')
+    text = once(text, '      set = allocateDescriptorSet(layout->descriptorSetLayout());', '''      set = allocateDescriptorSet(layout->descriptorSetLayout(),
+        layout->iosDynamicDescriptors(), layout->iosCombinedImages());''')
+    text = once(text, '''  VkDescriptorSet DxvkContext::allocateDescriptorSet(
+          VkDescriptorSetLayout     layout) {''', '''  VkDescriptorSet DxvkContext::allocateDescriptorSet(
+          VkDescriptorSetLayout     layout,
+          uint32_t uniformDynamic, uint32_t combinedImages) {''')
+    if text.count('m_descPool->alloc(layout)') != 2:
+        raise ValueError('Descriptor pool retry calls changed')
+    return text.replace('m_descPool->alloc(layout)', 'm_descPool->alloc(layout, uniformDynamic, combinedImages)')
+
+
 def adapt(name: str, text: str) -> str:
+    if name.endswith(("vulkan_presenter.cpp", "dxvk_cmdlist.cpp", "dxvk_queue.cpp")):
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from present_timing import adapt as observe_present
+        return observe_present(name, text)
+    if name.endswith('d3d9_config.h'):
+        # Existing DXVK SM3 compatibility path: keep finite NRM/LOG boundary
+        # behavior instead of disabling water/fog/postprocessing. Explicit
+        # d3d9.floatEmulation overrides still work in the original options code.
+        return once(text, 'constexpr bool FloatEmulationByDefault = false;',
+            'constexpr bool FloatEmulationByDefault = true;')
+    if name.endswith(("dxvk_descriptor.h", "dxvk_descriptor.cpp", "dxvk_pipelayout.h", "dxvk_pipelayout.cpp", "dxvk_context.h", "dxvk_context.cpp")):
+        return adapt_descriptor_capacity(name, text)
     if name.endswith(('d3d9_shader.cpp', 'd3d9_shader.h')):
         return adapt_shader_inflight(name, text)
     if name.endswith(('dxvk_resource.h', 'dxvk_resource.cpp')):
@@ -348,6 +478,13 @@ namespace dxvk {
 
 def prepare(source: Path) -> dict[str, bytes]:
     replacements = {}
+    actual_meta = {p.relative_to(source).as_posix() for p in (source / "src/dxvk").glob("dxvk_meta*.cpp")}
+    if actual_meta != set(META_DESCRIPTOR_BOUNDS):
+        raise ValueError("Changed internal descriptor layout sources")
+    for name, expected in META_DESCRIPTOR_BOUNDS.items():
+        path = source / name
+        if path.is_symlink() or not path.is_file() or hashlib.sha256(path.read_text(encoding="utf-8").encode()).hexdigest() != expected:
+            raise ValueError("Changed internal descriptor bound: " + name)
     for name, expected in EXPECTED.items():
         path = source / name
         if path.is_symlink() or not path.is_file():

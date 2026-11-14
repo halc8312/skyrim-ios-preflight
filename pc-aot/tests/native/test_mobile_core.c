@@ -31,6 +31,26 @@ int main(void) {
     skyrim_mobile_camera(INFINITY,0,.02f,400,1,0,&x,&y);assert(!x&&!y);
     skyrim_mobile_camera(10,4,0,400,1,0,&x,&y);assert(!x&&!y);
     skyrim_mobile_camera(0,0,.02f,400,1,0,&x,&y);assert(!x&&!y);
+    /* Continuous 60/120/240 Hz delivery keeps exactly the original vector.
+     * A stationary finger no longer carries a full 80 ms turn. */
+    const uint64_t periods[]={4166667,8333333,16666667,33333333};
+    for(unsigned j=0;j<sizeof periods/sizeof periods[0];++j) {
+        skyrim_mobile_camera(10,4,.02f,400,1.5f,0,&x,&y);
+        uint64_t interval=periods[j]<8000000 ? 8000000 : periods[j]>34000000 ? 34000000 : periods[j];
+        uint64_t hold=interval+8000000;
+        skyrim_mobile_camera_age(x,y,0,periods[j],&a,&b);assert(a==x&&b==y);
+        skyrim_mobile_camera_age(x,y,periods[j],periods[j],&a,&b);assert(a==x&&b==y);
+        skyrim_mobile_camera_age(x,y,hold,periods[j],&a,&b);assert(a==x&&b==y);
+        skyrim_mobile_camera_age(x,y,hold+interval/2,periods[j],&a,&b);
+        assert(a>0&&a<x&&b<0&&b>y);
+        /* Above-deadzone speed halves, including a diagonal turn. */
+        float old=hypotf(x,y)/32767.0f-.27f,newv=hypotf(a,b)/32767.0f-.27f;
+        assert(fabsf(newv/old-.5f)<.001f);
+        skyrim_mobile_camera_age(x,y,hold+interval,periods[j],&a,&b);assert(!a&&!b);
+        skyrim_mobile_camera_age(x,y,UINT64_MAX,periods[j],&a,&b);assert(!a&&!b);
+    }
+    skyrim_mobile_camera_age(0,0,30000000,16666667,&a,&b);assert(!a&&!b);
+    skyrim_mobile_camera_age(1,-1,30000000,16666667,&a,&b);assert(a==1&&b==-1);
     skyrim_mobile_clear();
     skyrim_mobile_button(12,1);skyrim_mobile_button(0,1);skyrim_mobile_button(SKYRIM_PAD_RT,1);
     skyrim_mobile_move(.8f,0,.1f);skyrim_mobile_look(12,0,.02f,400,1.5f,0);

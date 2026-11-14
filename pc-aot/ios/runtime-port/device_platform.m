@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <time.h>
 #include "device_policy.h"
+#include "gpu_gate.h"
 #include "performance_metrics.h"
 
 static NSMutableArray *observers;
@@ -54,6 +55,17 @@ void skyrim_device_platform_initialize(void) {
     skyrim_device_initialize(&caps, &state);
     observers = [NSMutableArray new];
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+    id gpuPause = [center addObserverForName:UIApplicationWillResignActiveNotification object:nil
+        queue:nil usingBlock:^(NSNotification *note) {
+            (void)note; skyrim_perf_activity(0); skyrim_gpu_pause();
+        }];
+    id gpuResume = [center addObserverForName:UIApplicationDidBecomeActiveNotification object:nil
+        queue:nil usingBlock:^(NSNotification *note) {
+            (void)note; skyrim_gpu_resume(); skyrim_perf_activity(1);
+        }];
+    [observers addObject:gpuPause]; [observers addObject:gpuResume];
+    if (UIApplication.sharedApplication.applicationState == UIApplicationStateBackground)
+        skyrim_gpu_pause();
     for (NSNotificationName name in @[NSProcessInfoThermalStateDidChangeNotification,
         NSProcessInfoPowerStateDidChangeNotification, UIApplicationDidEnterBackgroundNotification,
         UIApplicationDidBecomeActiveNotification]) {

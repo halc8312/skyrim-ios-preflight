@@ -30,6 +30,10 @@ uint64_t skyrim_mobile_frame_deadline(SkyrimFrameClock *clock, uint64_t now, uns
 void skyrim_mobile_stick(float x, float y, float deadzone, int16_t *ox, int16_t *oy);
 void skyrim_mobile_camera(float dx, float dy, float seconds, float height,
                            float sensitivity, int invert, int16_t *ox, int16_t *oy);
+/* Fade a stationary finger's last velocity, without changing the deadzone.
+ * A fresh sample is unchanged; a lift/cancel still clears immediately. */
+void skyrim_mobile_camera_age(int16_t x, int16_t y, uint64_t age_ns,
+                              uint64_t sample_ns, int16_t *ox, int16_t *oy);
 #ifdef __cplusplus
 }
 #endif

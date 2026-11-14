@@ -33,7 +33,7 @@ class AssetTimingTests(unittest.TestCase):
         restored = (patched[:start] + patched[end:]).removeprefix('#include "performance_metrics.h"\n')
         restored = restored.replace('if (ios_decode_xwma(v->wma, MEM + x->data, x->bytes, packets,',
                                     'if (xwma_decode(v->wma, MEM + x->data, x->bytes, packets,', 1)
-        self.assertEqual(restored, adapter.patch_audio_route(adapter.patch_audio_submix(original)))
+        self.assertEqual(restored, adapter.patch_audio_backpressure(adapter.patch_audio_route(adapter.patch_audio_submix(original))))
         with tempfile.TemporaryDirectory(prefix='audio-timing-') as tmp:
             work = Path(tmp)
             source = work / 'audio.c'

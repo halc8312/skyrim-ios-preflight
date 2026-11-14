@@ -1,6 +1,51 @@
 # 開発状況
 
-**最新：2026-11-14、PC版build5をiPhoneへ導入済み。** Codemagic build15（公開`b757c2bd991745638b87c544c1b3df6625c84674`）は8分40秒で成功。Macの34検査が成功し、Windows専用ARM検査と任意のhost FFmpeg検査2件は既定skip（各ローカル検証は別途完了）、Metalの自作3件も実コンパイルを通過。共有ABIを照合して既存private guestとPC内で組み立て、署名の2イメージ／39,413コードページ／4resourceと既存profileを検証した。本人の保存・終了・USB再接続後、build2→5をUpgrade。ゲーム26ファイル／5,909,061,966 bytesの名前・サイズと、プロフィール6ファイル／9,715,471 bytesのSHA256が更新前後で一致。新buildのゲーム実行・操作・FPS／発熱改善はまだ未確認。
+**2026-11-14 夜：合意した3項目を一括build向けに整理。** 派生Metal libraryの不要な圧縮ソース保持を削減。自作16 variants×1 MiBで重複保持16 MiB→0、根のpayloadとdecoded bytesは一致。通常3検査とASan/UBSan3検査、各8,000並行cache hitを通過。内部heapは元のlock付き統計入口を確認したが取得待ちに上限がなく、全writer／寿命も未証明なので定期pollを接続せず、容量維持で安全な観測の接続条件を記録。[MOD管理の最小設計](MOD_MANAGEMENT_DESIGN.md)は完成、UI実装と実MOD導入は今回の対象外。ユーザーの「3までやったらビルドする？」「ではお願いします」により、以下の過去の新GO待ちを更新し、検証後の公開host一括Mac buildを1回実行する。現在の実機build5は保持。初回shader compile待ちの解消や実機FPS改善は未確認。
+
+**2026-11-14 夜：オートセーブ切替を実装し、SPO実ファイルを解析。** Settings → SavingへKeep current／Off／Onを追加。既定は維持で、次回起動時だけ4つの既存INI項目へ反映し、手動保存・timer・画質・FPSは変えない。実INI parser／writer／seederの自作fixtureを通常＋ASan/UBSanで検証し、既存mobile overlay 5件も成功。UIKit／実機動作・停止改善は未確認。本人のNexusログイン後、classic本体のみ1.6を正規取得し、所有masterと比較。依存は適合するが、677遮蔽marker以外に7個の物体追加、既存配置・照明・所有者等の差分があるため、元版をそのまま採用しない。取得物は隔離解析のみ。内部heapはdefault側も予約／commit分離まで確認し、live不足は未証明なので増量しない。[実施計画](FRIEND_OPTIMIZATION_PLAN.md)と[詳細](PERFORMANCE_WORK.md)へ保存。**新GOまでアプリ／private guest／クラウドbuild、push、署名、端末更新を行わない。**
+
+**2026-11-14 友人案の実施計画を作成し、保存の切り分けを実装。** write syscallとsave候補handle区間を既存の固定量診断へ追加。元のwrite／APC／errno／file位置を保持し、close中の寿命・4,000並行記録・通常／ASan/UBSan、関連25検査と実kernel32.cのsyntaxを確認した。SPOはclassic1.6の本体のみ版を特定したがNexus未ログインで本体未取得。内部heapは公式SKSEの2容量変更位置を固定入力と照合し、5入口／451命令位置の限定解析まで。pool使用量／全writer契約は未確認で、増量・置換はしない。[実施計画](FRIEND_OPTIMIZATION_PLAN.md)と[根拠](PERFORMANCE_WORK.md)へ保存。実機の改善は未確認、新GOまでbuild／push／署名／端末更新を保留。
+
+**2026-11-14 友人の提案を実装せず判別。** autosaveは保存時停止の切り分け、Skyrim Project Optimizationはclassic／対象室内の描画削減の比較候補。SKSE一式の移植やheap増量は必要性未証明で保留。既存build5 prefixの205観測でOS報告の追加メモリ余裕は最小約4.55GiB、pressure正値0だったが、内部pool不足は別に未確認。cap=30／60も実ログにあり、追加FPS上限と署名メモリ権限は既存。master一覧はSkyrim.esm／Update.esmだけなのでDLC／SE版を混ぜない。根拠・反証条件・将来の比較手順を[性能記録](PERFORMANCE_WORK.md)へ保存。docsだけを更新し、MOD・INI・コード・セーブ・build・端末には変更なし。
+
+**2026-11-14 Claude追加提案を固定source・一次資料と照合し、変換器改善を独立段階へ追加。** GPR local化・既知callの直接化・site別の間接call cacheは既存機能。新候補は証明した辺だけのflags生存解析／x87 stack静的化。D3D9のFPU設定未対応は既存build5ログにも警告があり、guest CWの保持と精度再現を分けて調査する。DXVK managed texture evictionは存在するがreadback／待ちの増加があり、未有効化。macro timeout後の再生成や通知hintも無条件の速度／寿命保証とはせず、契約と測定条件を[移行設計](NATIVE_MIGRATION.md)へ追記した。今回はdocsのみ、実機改善は未確認。新GOまでbuild／push／署名／更新は行わない。
+
+**2026-11-14 追加3件：限定解析と未接続の試作を完了。** texture viewは自作2,031条件で保持mip／payload一致（4K BC1の例で再コピー2,796,216 bytes→0）。同じmacro variantの同時初回生成は、公開実関数＋自作Metal境界で8→1、warm／別keyの進行・再入・失敗／例外も確認した。両試作は通常／ASan/UBSanを通過し、`experiments/`へ本番と分離して保存。完了待ちではconstructor／destructorとread以外の状態更新を追加確認したが、全寿命／通知の証明が不足するため置換は保留。**今回は本番最適化を3件追加したという意味ではない。** 実機FPS／画質改善は未確認で、新GOまでbuild／push／署名／端末更新を行わない。[全面逆コンパイル案の照合と段階移行](NATIVE_MIGRATION.md)、[具体結果](PERFORMANCE_WORK.md)を保存した。
+
+**2026-11-14 午後：①shader／素材、②texture、③I/O／完了待ちのgoalをローカルの採否・設計まで整理。** 元命令で21入口を追加確認し、所有権・TLS・完了通知をPC内へ保存。公開DXVKの先読み重複を一つ削減し、自作96 stateを全て残したままjob96→6、state訪問1,536→96を確認した。通常／ASan/UBSanと実DXVKのsyntax検査を通過。texture payload viewと別threadの通知待ち、非同期ReadFileExは条件付き設計として保持し、未確認のゲーム関数置換は行っていない。[具体設計](REVERSE_ENGINEERING_PLAN.md)と[比較範囲](PERFORMANCE_WORK.md)を参照。**実機改善は未確認。新GOまでbuild／push／署名／更新を行わず、端末build5を維持。**
+
+**2026-11-14 午後：画質を変えないCPU画像変換を1件追加。** point拡大縮小のpixel位置を厳密に保ち、pixelごとの整数除算を削減した。自作6条件の対象処理は約25〜60%短縮、旧新10,910ケースが通常／ASan/UBSanで一致し、実ヘッダーのsyntax検査も成功。実機FPS改善率ではない。CPU helperのinline追加とBC2/BC3展開の別案は、命令同一／速度悪化で採らなかった。新Metal patchのcache世代への直接反映も補完。比較・棄却理由は[性能記録](PERFORMANCE_WORK.md)へ保存。引き続き新GOまでアプリ／private guest／クラウドbuild、push、署名、端末更新は行っていない。
+
+**2026-11-14 午後：Metal初回生成の待ち分類と派生libraryの所有権修正を追加。** MSL／function特殊化／pipeline／GCD待ちを既存の固定量診断へ追加。copyされた派生libraryの二重所有を解消し、map検索／登録を短いlockで保護した。通常／ASan/UBSanの実関数fixture、並行登録・寿命、解析器を確認。重複cold compileは残り、実機FPS改善の証明ではない。Apple compile／UIKit／Metal実行は新GO後にまとめて確認する。詳細は[性能記録](PERFORMANCE_WORK.md)冒頭。アプリbuild・push・署名・更新はまだ行っていない。
+
+**Gemini 4 Argon／高の描画分析も取得済み。** 指定された既存アカウントで相談を実行した。提示した匿名集計から、下位Metal PSO生成、UIKit mainとguest mainの待ち、同一frame内のPSO待ち集中を優先仮説として挙げた。リポジトリ独立監査の結果ではない。Rootは固定MoltenVKの「別queueへ投入した後に呼出側が待つ」実装を確認し、QoSと待ち時間を分ける論点を追加。thread移動や先行PSO生成の条件不足を補正し、[計画](REVERSE_ENGINEERING_PLAN.md)へ保存した。実装・build・push・署名・端末更新は行っていない。
+
+**包括的なClaude分析も回答取得済み。** CPU変換／thread／描画／copy／I/O／音声の8候補と、限定逆コンパイルの3系統を[計画](REVERSE_ENGINEERING_PLAN.md)へ保存。現在は独立検証前の提案を既存対策と照合する段階。C上の操作数をARM命令数やFPSに読み替えず、restrict・退避削減・memory ordering変更は未採用。新しい実装・build・push・署名・端末更新は行っていない。
+
+**Claudeの2回目レビューは取得・照合済み。** 未導入gateのscope外commitは既に入場判定で覆われるため二重対策は不要。main-threadの推移的な待ち／再入、実Metal schedulingは未確認として残す。macro所有権の元コードは自作fixtureで不正参照を再現したが、現hostでmergeの実呼出しは見つかっておらず、実機カクつきの主因とはしない。この時点では次のエンジン全体の分析依頼は送信待ちだったが、その後回答を取得済み（冒頭参照）。[分析範囲](REVERSE_ENGINEERING_PLAN.md)へ保存。コード追加・build・push・署名・更新はこの追記では行っていない。
+
+**2026-11-14 Claudeレビュー追記。** Fable 5.2／高の初回回答を公開sourceで照合。未導入の休止gateにCPU依存待ちの循環を再現し、入場前へ移して通常／ASan/UBSanで確認した。実Metal event／先行enqueueの追加fixtureは準備まで。macro variantの所有権・並行アクセスにもsource上の問題候補があり、追加レビューは送信済み。詳細と採否は[性能記録](PERFORMANCE_WORK.md)冒頭。実機改善・Apple compileは未確認で、新しいGOまでbuild／push／署名／更新は行わない。
+
+**2026-11-14 09時台：ログの4課題へ対応する次回候補を整理。** descriptor超過の個別確保、cache取得待ちの既存候補を維持し、Presentの停止を画像取得／queue present・submit／fence／結果公開待ちの5項目へ分ける計測を追加。バックグラウンド送信拒否には、MoltenVKの7 commit箇所と2 submission scopeを対象とする休止gateを実装した。通常時のGPU完了待ちや描画省略は加えない。対象15検査とASan/UBSan、DXVK実3unitのsyntaxは成功。実Metal1検査はLinuxでskipし、次回Macで必須化した。Apple compile・UIKit／実機復帰・FPS改善は未確認。詳細は[性能記録](PERFORMANCE_WORK.md)冒頭。新しいGOが出るまでbuild／push／署名／端末更新を行わず、元game／save／build5を保持。
+
+
+**09時の実機ログで優先順位を更新。** 約4.44GBのログから18範囲と先頭約17分の性能記録を回収。抽出範囲は描画用descriptor追加確保の警告がほぼ全体を占め、pipeline生成最大約572ms／生成待ち約368ms、100ms超のframe間隔122回も確認した（ロード等を含む）。回収範囲のthermal／memory警告は0。末尾のdevice lostはbackground送信拒否で、キャッシュ保存12.27MBは成功。全量回収ではなく、正確な場面と因果は未確定。詳細と次の優先順位は[比較記録](PERFORMANCE_WORK.md)冒頭に保存。夜間候補はローカルcommit `caaea07`まで検証・保存し、新ビルドや端末更新は行っていない。
+
+**最新：2026-11-14、build5の試遊結果を受けて次回候補を改善中。** 本人から「60 FPSも出た」「以前より発熱は減った」と報告。ただし長時間の熱、カメラ操作、負荷時の瞬間停止、水中の茶色表示は残る。これは体感・表示値の報告で、同条件の実機ベンチではない。朝に既存USB信頼でbuild5ログを一部回収し、その後は本人の外出に合わせて読み取りを停止。本人の次のgoまでアプリ／private guest／クラウドのbuild、push、署名、インストールを行わない。自作fixtureのhostコンパイルとローカル解析だけを進める。自動送信・サブエージェントなし。
+
+今回の候補は、①記号中心の操作ボタンとEnglish既定／Languageから日本語、②タッチ周期に合わせた視点入力の減衰、③実ログで大量発生していたdescriptor pool超過時の小オブジェクト確保を避ける切替、④既存DXSOのfloat互換演算を有効化する水描画修正候補、⑤50ms以上の停止を同じ時刻軸で比較する固定量の診断とローカル解析、⑥音声queueの余剰量に合わせた待機、⑦対象waiterがいない通知の全体走査省略。自作負荷では音声待機2,936→1,430回、無関係な待機entry比較128,000→0回。通常／ASan/UBSanの対象検査を通過。private水関連48シェーダーはPC内でSPIR-V→MSLまで変換できたが、実Metal実行と水中表示の修正は未確認。詳しい比較値・制約は[性能改善の比較記録](PERFORMANCE_WORK.md)の今回分に保存。
+
+追加の組合せ27検査も成功。水中候補はMetal fast/safe両modeの実数値が未確認のため、次回Macで実行時入力の自作20件のpixel readbackを行う検証を準備した（Apple compile・実行はまだ行っていない）。旧BC1 benchmarkの未初期化paddingを測定用コードだけで修正し、再比較を性能記録へ追記。元のゲーム／描画コードはこの訂正で変更していない。
+
+MoltenVKにも2件追加。dynamic/discrete descriptorの誤ったcache一致を上流修正で解消（自作12,288組合せで誤一致3,340→0）。さらにcold compileを1件に保ちながら、準備済みlibraryの取得とsnapshotをcompile待ちから分離した。実関数＋自作待ち境界の通常／ASan/UBSanで重複compile・公開／保存競合・失敗時を検査した。実Metal／iPhone効果は未確認。次回go用に新しい依存build stageと古いcacheを区別する設定まで準備済み。
+
+圧縮shaderのcache復元でも、実コンストラクターの余分な引数copyを削減し、保持用payload copyを3→1回にした。所有内容・呼出元の破棄後の寿命を通常／ASan/UBSanで確認。条件によって遅くなったmacro特殊化判定の追加案は採らず、結果だけ保存した。ここまで引き続きbuild・push・署名・端末更新はしていない。
+
+8時台にはMetal functionへ渡す変換結果の引数copyも省き、memberの所有copyとretain順を維持した。実metadata型の16条件、実cache containerの513設定＋並行lookupをWindows Clang／Linux GCC＋ASan/UBSanで確認。Mac検査の標準ライブラリ依存の誤判定を防ぐ計数修正も行った。次の初回compile対策は[部分解析の計画](REVERSE_ENGINEERING_PLAN.md)へ整理。ゲーム関数の追加置換・Metal 4への変更は未実装で、次回の実機計測を根拠に選ぶ。
+
+**以下のbuild5導入記録は変更していない。** 新候補は署名済みbuild5には含まれない。
+
+**最新：2026-11-14、PC版build5をiPhoneへ導入済み。** Codemagic build15（公開`b757c2bd991745638b87c544c1b3df6625c84674`）は8分40秒で成功。Macの34検査が成功し、Windows専用ARM検査と任意のhost FFmpeg検査2件は既定skip（各ローカル検証は別途完了）、Metalの自作3件も実コンパイルを通過。共有ABIを照合して既存private guestとPC内で組み立て、署名の2イメージ／39,413コードページ／4resourceと既存profileを検証した。本人の保存・終了・USB再接続後、build2→5をUpgrade。ゲーム26ファイル／5,909,061,966 bytesの名前・サイズと、プロフィール6ファイル／9,715,471 bytesのSHA256が更新前後で一致。導入時点では新buildのゲーム実行・操作・FPS／発熱改善は未確認だった。試遊報告は上の最新欄を参照。
 
 署名済みIPA：`private/title-signing-20261112/SkyrimIOS-PC2011-build5-signed.ipa`、SHA256 `c8f048e1d75fdfd22182405c18a826983899af8702d17caaa21b22136f24aec5`。公開成果物と実行記録は`local/codemagic-title15/`、更新前後のプロフィールは`private/title-build5-before/`・`private/title-build5-after/`。旧IPA、原ゲーム、private guestは保持。次は同じセーブ／画質で静止・カメラ・魔法／攻撃を比較し、FPSと瞬間停止、音声、透明表示、温度、タッチ操作を確認する。
 

@@ -1,0 +1,61 @@
+#include <cassert>
+#include <cstdint>
+#include <limits>
+#include <vector>
+#include <cstdio>
+#include "performance_metrics.h"
+using VkResult=int;
+constexpr int VK_NOT_READY=1, VK_SUCCESS=0, VK_SUBOPTIMAL_KHR=1000001003;
+constexpr int VK_NULL_HANDLE=0, VK_STRUCTURE_TYPE_PRESENT_INFO_KHR=123;
+constexpr int VK_PRESENT_MODE_FIFO_KHR=2, VK_PRESENT_MODE_FIFO_RELAXED_KHR=3;
+struct VkPresentInfoKHR { int sType; void *pNext; uint32_t waitSemaphoreCount; int *pWaitSemaphores;
+    uint32_t swapchainCount;int *pSwapchains;uint32_t *pImageIndices;int *pResults; };
+struct Observation {unsigned kind;int failed;};
+static std::vector<Observation> observations;
+uint64_t skyrim_perf_now_ns() {return 123;}
+void skyrim_perf_end(unsigned kind,uint64_t start,int failed) {assert(start==123);observations.push_back({kind,failed});}
+struct Driver {
+    int acquireResult=0,presentResult=0;unsigned acquisitions=0,presents=0;
+    int device() {return 41;}
+    int vkAcquireNextImageKHR(int device,int swap,uint64_t timeout,int sem,int fence,uint32_t *index) {
+        assert(device==41 && swap==51 && timeout==UINT64_MAX && (sem==61 || sem==71) && fence==0);
+        ++acquisitions;*index=9;return acquireResult;
+    }
+    int vkQueuePresentKHR(int queue,VkPresentInfoKHR *info) {
+        assert(queue==42 && info->sType==123 && !info->pNext && info->waitSemaphoreCount==1);
+        assert(*info->pWaitSemaphores==62 && info->swapchainCount==1 && *info->pSwapchains==51);
+        assert(*info->pImageIndices==9 && !info->pResults);++presents;return presentResult;
+    }
+};
+struct PresenterSync {int acquire,present;};
+struct Limiter {unsigned calls=0;bool vsync=false;void delay(bool v) {++calls;vsync=v;}};
+struct Presenter {
+    Driver *m_vkd;struct {int queue=42;} m_device; int m_swapchain=51;
+    std::vector<PresenterSync> m_semaphores{{61,62},{71,72}};
+    uint32_t m_frameIndex=0,m_imageIndex=0;int m_acquireStatus=VK_NOT_READY;
+    struct {int presentMode=2;} m_info;Limiter m_fpsLimiter;
+    explicit Presenter(Driver *d):m_vkd(d) {}
+    VkResult acquireNextImage(PresenterSync&,uint32_t&);
+    VkResult presentImage();
+};
+/* ACTUAL_METHODS */
+int main() {
+    for(int result: {VK_SUCCESS,VK_SUBOPTIMAL_KHR,-4,2}) {
+        Driver d;d.acquireResult=result;Presenter p(&d);PresenterSync sync{};uint32_t index=777;
+        observations.clear();assert(p.acquireNextImage(sync,index)==result);
+        assert(sync.acquire==61 && d.acquisitions==1 && observations.size()==1);
+        assert(observations[0].kind==SKYRIM_PERF_IMAGE_ACQUIRE && observations[0].failed==(result<0));
+        assert(index==((result==0 || result==VK_SUBOPTIMAL_KHR)?9u:777u));
+        assert(p.acquireNextImage(sync,index)==result && d.acquisitions==1); /* No extra acquisition. */
+    }
+    for(int result: {VK_SUCCESS,VK_SUBOPTIMAL_KHR,-4}) {
+        Driver d;d.presentResult=result;d.acquireResult=-7;Presenter p(&d);p.m_imageIndex=9;
+        observations.clear();assert(p.presentImage()==result && d.presents==1);
+        assert(observations[0].kind==SKYRIM_PERF_QUEUE_PRESENT && observations[0].failed==(result<0));
+        if(result<0) {assert(d.acquisitions==0 && p.m_frameIndex==0 && p.m_fpsLimiter.calls==0);}
+        else {assert(d.acquisitions==1 && p.m_frameIndex==1 && p.m_acquireStatus==-7);
+            assert(p.m_fpsLimiter.calls==1 && p.m_fpsLimiter.vsync);
+            assert(observations.size()==2 && observations[1].kind==SKYRIM_PERF_IMAGE_ACQUIRE && observations[1].failed);}
+    }
+    puts("PRESENT_TIMING exact_calls_results=PASS");
+}

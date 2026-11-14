@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include "mobile_ui.h"
 #include "mobile_core.h"
+#include "autosave_preferences.h"
 #include "ios_runtime.h"
 #include "performance_metrics.h"
 #include "pipeline_cache_control.h"
@@ -63,6 +64,11 @@ static double value(NSString *key, double fallback) {
     id number = settings[key];
     return [number isKindOfClass:NSNumber.class] && isfinite([number doubleValue]) ? [number doubleValue] : fallback;
 }
+/* UI language is explicit and independent of device/game language. Missing or
+ * invalid values use English, including upgrades from Japanese-only builds. */
+static NSString *L(NSString *english, NSString *japanese) {
+    return value(@"language", 0) == 1 ? japanese : english;
+}
 static double clamp(double x, double lo, double hi) { return fmin(hi, fmax(lo, x)); }
 static void persist(void) {
     [NSUserDefaults.standardUserDefaults setObject:settings forKey:@"mobile-settings-v1"];
@@ -81,17 +87,17 @@ static void integerINI(const char *section, const char *key, double v) {
 /* The explicit selection whitelist is shared with the settings screen. */
 static NSArray<NSDictionary *> *graphicsRows(void) {
     return @[
-      @{@"key":@"resolution", @"title":@"描画の高さ", @"values":@[@0,@360,@540,@720,@900,@1080,@2160], @"labels":@[@"維持",@"360p",@"540p",@"720p",@"900p",@"1080p",@"画面の実ピクセル数"]},
-      @{@"key":@"texture", @"title":@"テクスチャ", @"values":@[@-1,@2,@1,@0], @"labels":@[@"維持",@"低",@"中",@"元の解像度"]},
-      @{@"key":@"anisotropy", @"title":@"異方性フィルター", @"values":@[@-1,@1,@2,@4,@8,@16]},
-      @{@"key":@"fxaa", @"title":@"FXAA", @"values":@[@-1,@0,@1], @"labels":@[@"維持",@"オフ",@"オン"]},
-      @{@"key":@"msaa", @"title":@"MSAA", @"values":@[@-1,@0,@2,@4,@8], @"labels":@[@"維持",@"オフ",@"2×",@"4×",@"8×"]},
-      @{@"key":@"shadow", @"title":@"影の解像度", @"values":@[@-1,@512,@1024,@2048,@4096]},
-      @{@"key":@"shadowDistance", @"title":@"影の距離", @"values":@[@-1,@1500,@2000,@3000,@6000,@8000]},
-      @{@"key":@"grass", @"title":@"草の表示距離", @"values":@[@-1,@0,@1000,@3000,@6000,@9000]},
-      @{@"key":@"objects", @"title":@"物体の表示距離倍率", @"values":@[@-1,@2.5,@5,@8,@12,@15]},
-      @{@"key":@"water", @"title":@"水面への風景反射", @"values":@[@-1,@0,@1], @"labels":@[@"維持",@"省略",@"表示"]},
-      @{@"key":@"decals", @"title":@"血痕・着弾跡", @"values":@[@-1,@0,@1], @"labels":@[@"維持",@"オフ",@"オン"]}
+      @{@"key":@"resolution", @"title":L(@"Render height", @"描画の高さ"), @"values":@[@0,@360,@540,@720,@900,@1080,@2160], @"labels":@[L(@"Keep current", @"維持"),@"360p",@"540p",@"720p",@"900p",@"1080p",L(@"Native pixels", @"画面の実ピクセル数")]},
+      @{@"key":@"texture", @"title":L(@"Textures", @"テクスチャ"), @"values":@[@-1,@2,@1,@0], @"labels":@[L(@"Keep current", @"維持"),L(@"Low", @"低"),L(@"Medium", @"中"),L(@"Original resolution", @"元の解像度")]},
+      @{@"key":@"anisotropy", @"title":L(@"Anisotropic filtering", @"異方性フィルター"), @"values":@[@-1,@1,@2,@4,@8,@16]},
+      @{@"key":@"fxaa", @"title":@"FXAA", @"values":@[@-1,@0,@1], @"labels":@[L(@"Keep current", @"維持"),L(@"Off", @"オフ"),L(@"On", @"オン")]},
+      @{@"key":@"msaa", @"title":@"MSAA", @"values":@[@-1,@0,@2,@4,@8], @"labels":@[L(@"Keep current", @"維持"),L(@"Off", @"オフ"),@"2×",@"4×",@"8×"]},
+      @{@"key":@"shadow", @"title":L(@"Shadow resolution", @"影の解像度"), @"values":@[@-1,@512,@1024,@2048,@4096]},
+      @{@"key":@"shadowDistance", @"title":L(@"Shadow distance", @"影の距離"), @"values":@[@-1,@1500,@2000,@3000,@6000,@8000]},
+      @{@"key":@"grass", @"title":L(@"Grass distance", @"草の表示距離"), @"values":@[@-1,@0,@1000,@3000,@6000,@9000]},
+      @{@"key":@"objects", @"title":L(@"Object distance multiplier", @"物体の表示距離倍率"), @"values":@[@-1,@2.5,@5,@8,@12,@15]},
+      @{@"key":@"water", @"title":L(@"Landscape reflections on water", @"水面への風景反射"), @"values":@[@-1,@0,@1], @"labels":@[L(@"Keep current", @"維持"),L(@"Off", @"省略"),L(@"On", @"表示")]},
+      @{@"key":@"decals", @"title":L(@"Decals", @"血痕・着弾跡"), @"values":@[@-1,@0,@1], @"labels":@[L(@"Keep current", @"維持"),L(@"Off", @"オフ"),L(@"On", @"オン")]}
     ];
 }
 void skyrim_mobile_initialize(const char *profile) {
@@ -111,8 +117,14 @@ void skyrim_mobile_initialize(const char *profile) {
         if (choice && ![row[@"values"] containsObject:choice]) [settings removeObjectForKey:row[@"key"]];
     }
     if (![@[@0,@24,@30,@40,@60] containsObject:@(value(@"fps",0))]) [settings removeObjectForKey:@"fps"];
+    if (![@[@0,@1] containsObject:@(value(@"language",0))]) [settings removeObjectForKey:@"language"];
+    if (![@[@-1,@0,@1] containsObject:@(value(@"autosave",-1))]) [settings removeObjectForKey:@"autosave"];
     persist(); startup = [settings copy];
     iniCount = 0;
+    const char *section, *key, *setting;
+    const double autosave = startup[@"autosave"] ? [startup[@"autosave"] doubleValue] : -1;
+    for (unsigned i = 0; skyrim_autosave_ini(autosave, i, &section, &key, &setting); ++i)
+        integerINI(section, key, setting[0] == '1');
     struct { const char *option, *section, *key; int integer; } map[] = {
         {"texture","Display","iTexMipMapSkip",1}, {"anisotropy","Display","iMaxAnisotropy",1},
         {"fxaa","Display","bFXAAEnabled",1}, {"msaa","Display","iMultiSample",1},
@@ -175,6 +187,7 @@ static SKOverlay *overlay;
 @interface SKPadControl : UIView
 @property(nonatomic) NSInteger code;
 @property(nonatomic,copy) NSString *caption;
+@property(nonatomic,strong) UIImage *symbol;
 @property(nonatomic,strong) UITouch *finger;
 @property(nonatomic) BOOL editing;
 @property(nonatomic) CGPoint stick;
@@ -199,6 +212,7 @@ static SKOverlay *overlay;
 - (void)openSettings;
 - (void)beginLayout;
 - (void)endLayout;
+- (void)refreshLanguage;
 @end
 
 @implementation SKPadControl
@@ -222,10 +236,19 @@ static SKOverlay *overlay;
         [[UIColor colorWithWhite:0.85 alpha:0.65] setFill];
         [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(center.x-size/2,center.y-size/2,size,size)] fill];
     } else {
+        const CGFloat badgeHeight=14;
+        CGFloat side=MIN(self.bounds.size.width,self.bounds.size.height)*.48;
+        if(self.symbol) {
+            CGSize size=self.symbol.size;
+            CGFloat scale=side/MAX(size.width,size.height);
+            CGRect dst=CGRectMake((self.bounds.size.width-size.width*scale)/2,
+                (self.bounds.size.height-badgeHeight-size.height*scale)/2+2,size.width*scale,size.height*scale);
+            [self.symbol drawInRect:dst];
+        }
         NSMutableParagraphStyle *style=[NSMutableParagraphStyle new]; style.alignment=NSTextAlignmentCenter;
-        NSDictionary *attrs=@{NSFontAttributeName:[UIFont systemFontOfSize:MAX(9,MIN(13,self.bounds.size.height*.23)) weight:UIFontWeightSemibold],NSForegroundColorAttributeName:UIColor.whiteColor,NSParagraphStyleAttributeName:style};
-        CGSize text=[self.caption boundingRectWithSize:CGSizeMake(self.bounds.size.width-4,100) options:NSStringDrawingUsesLineFragmentOrigin attributes:attrs context:nil].size;
-        [self.caption drawInRect:CGRectMake(2,(self.bounds.size.height-text.height)/2,self.bounds.size.width-4,text.height) withAttributes:attrs];
+        NSDictionary *attrs=@{NSFontAttributeName:[UIFont systemFontOfSize:self.symbol ? 10 : 18 weight:UIFontWeightSemibold],NSForegroundColorAttributeName:UIColor.whiteColor,NSParagraphStyleAttributeName:style};
+        CGFloat y=self.symbol ? self.bounds.size.height-badgeHeight-3 : (self.bounds.size.height-22)/2;
+        [self.caption drawInRect:CGRectMake(2,y,self.bounds.size.width-4,22) withAttributes:attrs];
     }
 }
 - (void)updateStick:(UITouch *)touch {
@@ -257,59 +280,65 @@ static SKOverlay *overlay;
 
 @interface SKSettings : UITableViewController
 @end
-static NSArray *presets(void) { return @[@"最軽量",@"パフォーマンス",@"バランス",@"高画質",@"最高画質"]; }
+static NSArray *presets(void) { return @[L(@"Minimal", @"最軽量"),L(@"Performance", @"パフォーマンス"),L(@"Balanced", @"バランス"),L(@"High", @"高画質"),L(@"Ultra", @"最高画質")]; }
 static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     NSUInteger i=[row[@"values"] indexOfObject:choice];
     if (i!=NSNotFound && row[@"labels"]) return row[@"labels"][i];
-    if (choice.doubleValue < 0) return @"維持";
+    if (choice.doubleValue < 0) return L(@"Keep current", @"維持");
     return choice.stringValue;
 }
 @implementation SKSettings
 - (void)viewDidLoad {
-    [super viewDidLoad]; self.title=@"SkyrimIOS 設定";
-    self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"完了" style:UIBarButtonItemStyleDone target:self action:@selector(close)];
+    [super viewDidLoad]; self.title=L(@"SkyrimIOS Settings", @"SkyrimIOS 設定");
+    self.tableView.estimatedRowHeight=56; self.tableView.rowHeight=UITableViewAutomaticDimension;
+    self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:L(@"Done", @"完了") style:UIBarButtonItemStyleDone target:self action:@selector(close)];
 }
 - (void)close { [overlay clearInput]; [self dismissViewControllerAnimated:YES completion:nil]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 4; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 6; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
-    return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+1 : 2;
+    return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+1 : section==3 ? 2 : 1;
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
-    return @[@"フレームレートと発熱",@"タッチ操作",@"画質 — 次回起動から反映",@"ボタン配置"][section];
+    return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),@"Language"][section];
 }
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
-    if (section==0) return @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。";
-    if (section==1) return @"ボタン以外をドラッグして視点移動。十字キーとLB／RBでメニュー移動、LT／RTで左右の手を操作します。";
-    if (section==2) return @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。";
-    if (section==3) return @"設定画面だけではゲームは一時停止しません。先にシステムメニューを開いてください。クイックセーブはゲームのF5入力を送り、保存ファイルの更新を確認します。実行状態を丸ごと復元するステートセーブではありません。";
+    if (section==0) return L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。");
+    if (section==1) return L(@"Drag outside the buttons to look. Use the arrows and LB / RB to navigate menus, and LT / RT for the left and right hands.", @"ボタン以外をドラッグして視点移動。十字キーとLB／RBでメニュー移動、LT／RTで左右の手を操作します。");
+    if (section==2) return L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。");
+    if (section==3) return L(@"These settings do not pause the game. Open the game system menu first. Quick save sends F5 and checks for a changed save file; it is not an emulator save state.", @"設定画面だけではゲームは一時停止しません。先にシステムメニューを開いてください。クイックセーブはゲームのF5入力を送り、保存ファイルの更新を確認します。実行状態を丸ごと復元するステートセーブではありません。");
+    if (section==4) return L(@"Save in the game, then fully close and reopen the app to apply. Off disables saves on pause, travel, waiting and rest; save manually while it is off. Keep current preserves the current values, including a previous Off choice. The game menu can still change them during play.", @"ゲーム内で保存し、アプリを完全終了して開き直すと反映します。オフではメニュー・移動・待機・休息時の自動保存を止めるため、手動で保存してください。「維持」は以前のオフも含めた現在値を保ちます。プレイ中はゲーム内設定からも変更できます。");
+    if (section==5) return L(@"Changes the app controls and settings only. Game text and audio keep their current language.", @"操作画面と設定だけの言語を変更します。ゲーム本体の字幕・音声は変わりません。");
     return nil;
 }
 - (NSDictionary *)row:(NSIndexPath *)p {
     if (p.section==0) return @[
-       @{@"key":@"fps",@"title":@"FPS上限",@"values":@[@0,@24,@30,@40,@60],@"labels":@[@"追加制限なし",@"24",@"30",@"40",@"60"]},
-       @{@"key":@"thermal",@"title":@"高温時の自動抑制",@"values":@[@0,@1],@"labels":@[@"オフ",@"オン"]},
-       @{@"key":@"hud",@"title":@"FPS・発熱状態の表示",@"values":@[@0,@1],@"labels":@[@"オフ",@"オン"],@"default":@1},
-       @{@"key":@"verbose",@"title":@"詳細診断ログ",@"values":@[@0,@1],@"labels":@[@"オフ（通常）",@"オン（調査用）"]}
+       @{@"key":@"fps",@"title":L(@"FPS limit", @"FPS上限"),@"values":@[@0,@24,@30,@40,@60],@"labels":@[L(@"No additional limit", @"追加制限なし"),@"24",@"30",@"40",@"60"]},
+       @{@"key":@"thermal",@"title":L(@"Thermal protection", @"高温時の自動抑制"),@"values":@[@0,@1],@"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")]},
+       @{@"key":@"hud",@"title":L(@"Show FPS & thermal state", @"FPS・発熱状態の表示"),@"values":@[@0,@1],@"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")],@"default":@1},
+       @{@"key":@"verbose",@"title":L(@"Detailed diagnostics", @"詳細診断ログ"),@"values":@[@0,@1],@"labels":@[L(@"Off (normal)", @"オフ（通常）"),L(@"On (diagnostics)", @"オン（調査用）")]}
     ][p.row];
     if (p.section==1) return @[
-       @{@"key":@"sensitivity",@"title":@"視点感度",@"values":@[@.25,@.5,@.75,@1,@1.5,@2,@3,@4],@"default":@1.5},
-       @{@"key":@"invert",@"title":@"視点の上下反転",@"values":@[@0,@1],@"labels":@[@"オフ",@"オン"]},
-       @{@"key":@"deadzone",@"title":@"移動スティックの遊び",@"values":@[@0,@.05,@.10,@.15,@.2,@.3],@"default":@.1},
-       @{@"key":@"size",@"title":@"ボタンの大きさ",@"values":@[@.8,@1,@1.2,@1.4],@"default":@1},
-       @{@"key":@"opacity",@"title":@"ボタンの不透明度",@"values":@[@.25,@.4,@.6,@.8,@1],@"default":@.8}
+       @{@"key":@"sensitivity",@"title":L(@"Look sensitivity", @"視点感度"),@"values":@[@.25,@.5,@.75,@1,@1.5,@2,@3,@4],@"default":@1.5},
+       @{@"key":@"invert",@"title":L(@"Invert vertical look", @"視点の上下反転"),@"values":@[@0,@1],@"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")]},
+       @{@"key":@"deadzone",@"title":L(@"Movement deadzone", @"移動スティックの遊び"),@"values":@[@0,@.05,@.10,@.15,@.2,@.3],@"default":@.1},
+       @{@"key":@"size",@"title":L(@"Control size", @"ボタンの大きさ"),@"values":@[@.8,@1,@1.2,@1.4],@"default":@1},
+       @{@"key":@"opacity",@"title":L(@"Control opacity", @"ボタンの不透明度"),@"values":@[@.25,@.4,@.6,@.8,@1],@"default":@.8}
     ][p.row];
+    if (p.section==4) return @{@"key":@"autosave",@"title":L(@"Autosave", @"オートセーブ"),@"values":@[@-1,@0,@1],@"labels":@[L(@"Keep current", @"現在の設定を維持"),L(@"Off", @"オフ"),L(@"On", @"オン")],@"default":@-1};
+    if (p.section==5) return @{@"key":@"language",@"title":@"Language",@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]};
     if (p.section==2 && p.row) return graphicsRows()[p.row-1];
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)p {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
+    cell.textLabel.numberOfLines=2; cell.detailTextLabel.font=[UIFont systemFontOfSize:14];
     NSDictionary *r=[self row:p];
     if (r) {
         cell.textLabel.text=r[@"title"];
         NSNumber *choice=settings[r[@"key"]] ?: r[@"default"] ?: (p.section==2 ? [r[@"values"] firstObject] : @0);
         cell.detailTextLabel.text=choiceLabel(r,choice);
-    } else if(p.section==2) {cell.textLabel.text=@"画質プリセット";cell.detailTextLabel.text=@"選択";}
-    else cell.textLabel.text=p.row ? @"配置を初期状態に戻す" : @"ボタンをドラッグして配置";
+    } else if(p.section==2) {cell.textLabel.text=L(@"Graphics preset", @"画質プリセット");cell.detailTextLabel.text=L(@"Choose", @"選択");}
+    else cell.textLabel.text=p.row ? L(@"Reset control layout", @"配置を初期状態に戻す") : L(@"Edit control layout", @"ボタンをドラッグして配置");
     cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     return cell;
 }
@@ -320,16 +349,16 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
         {900,0,8,1,2,2048,6000,6000,12,1,1},{2160,0,16,0,4,4096,8000,9000,15,1,1}};
     NSArray *rows=graphicsRows();
     for (NSUInteger i=0;i<rows.count;++i) settings[rows[i][@"key"]]=@(v[p][i]);
-    persist(); [self.tableView reloadData]; [overlay message:@"画質を保存しました。次回起動から反映します"];
+    persist(); [self.tableView reloadData]; [overlay message:L(@"Graphics saved. Applies after restart.", @"画質を保存しました。次回起動から反映します")];
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)p {
     [table deselectRowAtIndexPath:p animated:YES];
     if (p.section==3 && !p.row) {
         [self dismissViewControllerAnimated:YES completion:^{[overlay beginLayout];}]; return;
     }
-    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:p.section==3 ? @"ボタン配置を戻しますか？" : (p.section==2 && !p.row ? @"画質プリセット" : [self row:p][@"title"]) message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:p.section==3 ? L(@"Reset control layout?", @"ボタン配置を戻しますか？") : (p.section==2 && !p.row ? L(@"Graphics preset", @"画質プリセット") : [self row:p][@"title"]) message:nil preferredStyle:UIAlertControllerStyleActionSheet];
     if (p.section==3) {
-        [sheet addAction:[UIAlertAction actionWithTitle:@"配置をリセット" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
+        [sheet addAction:[UIAlertAction actionWithTitle:L(@"Reset layout", @"配置をリセット") style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
             [overlay.positions removeAllObjects]; [NSUserDefaults.standardUserDefaults removeObjectForKey:@"mobile-layout-v1"]; [overlay setNeedsLayout];
         }]];
     } else if (p.section==2 && !p.row) {
@@ -337,10 +366,14 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     } else {
         NSDictionary *row=[self row:p];
         for (NSNumber *choice in row[@"values"]) [sheet addAction:[UIAlertAction actionWithTitle:choiceLabel(row,choice) style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
-            settings[row[@"key"]]=choice; persist(); [overlay setNeedsLayout]; [table reloadData];
+            settings[row[@"key"]]=choice; persist(); [overlay refreshLanguage]; [overlay setNeedsLayout];
+            if ([row[@"key"] isEqualToString:@"autosave"])
+                [overlay message:L(@"Autosave setting saved. Applies after restart.", @"自動保存の設定を保存しました。次回起動から反映します")];
+            self.title=L(@"SkyrimIOS Settings", @"SkyrimIOS 設定");
+            self.navigationItem.rightBarButtonItem.title=L(@"Done", @"完了"); [table reloadData];
         }]];
     }
-    [sheet addAction:[UIAlertAction actionWithTitle:@"キャンセル" style:UIAlertActionStyleCancel handler:nil]];
+    [sheet addAction:[UIAlertAction actionWithTitle:L(@"Cancel", @"キャンセル") style:UIAlertActionStyleCancel handler:nil]];
     sheet.popoverPresentationController.sourceView=[table cellForRowAtIndexPath:p];
     sheet.popoverPresentationController.sourceRect=[table cellForRowAtIndexPath:p].bounds;
     [self presentViewController:sheet animated:YES completion:nil];
@@ -348,12 +381,24 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 @end
 
 @implementation SKOverlay
-- (UIButton *)utility:(NSString *)title action:(SEL)action {
+- (UIButton *)utility:(NSString *)symbol label:(NSString *)label action:(SEL)action {
     UIButton *b=[UIButton buttonWithType:UIButtonTypeSystem];
-    [b setTitle:title forState:UIControlStateNormal]; [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    b.titleLabel.font=[UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    [b setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
+    b.tintColor=UIColor.whiteColor; b.accessibilityLabel=label;
     b.backgroundColor=[UIColor colorWithWhite:.1 alpha:.75]; b.layer.cornerRadius=10;
     [b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside]; [self addSubview:b]; return b;
+}
+- (void)refreshLanguage {
+    NSArray *labels=@[L(@"Up",@"上"),L(@"Down",@"下"),L(@"Left",@"左"),L(@"Right",@"右"),
+        L(@"System menu",@"システムメニュー"),L(@"Wait",@"待機"),L(@"Sneak",@"隠密"),L(@"Change view",@"視点切替"),
+        L(@"Sprint / previous tab",@"走る／前のタブ"),L(@"Shout / next tab",@"シャウト／次のタブ"),@"",@"",
+        L(@"Use / confirm",@"使う／決定"),L(@"Menu / back",@"メニュー／戻る"),L(@"Draw / sheathe weapon",@"武器を構える／しまう"),
+        L(@"Jump",@"ジャンプ"),L(@"Left hand / block",@"左手／防御"),L(@"Right hand / attack",@"右手／攻撃"),L(@"Move",@"移動")];
+    for(SKPadControl *c in self.controls) c.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",labels[c.code],c.caption];
+    self.settingsButton.accessibilityLabel=self.editing ? L(@"Finish layout",@"配置完了") : L(@"Settings",@"設定");
+    [self.settingsButton setImage:[UIImage systemImageNamed:self.editing ? @"checkmark" : @"gearshape"] forState:UIControlStateNormal];
+    self.saveButton.accessibilityLabel=L(@"Quick save",@"クイック保存");
+    self.keyboardButton.accessibilityLabel=L(@"Keyboard",@"文字入力");
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
@@ -362,16 +407,21 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
         self.controls=[NSMutableArray array]; self.positions=[NSMutableDictionary dictionary];
         id saved=[NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-layout-v1"];
         if ([saved isKindOfClass:NSDictionary.class]) [self.positions addEntriesFromDictionary:saved];
-        NSArray *captions=@[@"↑",@"↓",@"←",@"→",@"システム\nSTART",@"待機\nBACK",@"隠密\nL3",@"視点\nR3",@"走る\nLB",@"シャウト\nRB",@"",@"",@"使う／決定\nA",@"メニュー／戻る\nB",@"武器\nX",@"ジャンプ\nY",@"左手／防御\nLT",@"右手／攻撃\nRT",@"移動"];
+        NSArray *captions=@[@"↑",@"↓",@"←",@"→",@"START",@"BACK",@"L3",@"R3",@"LB",@"RB",@"",@"",@"A",@"B",@"X",@"Y",@"LT",@"RT",@""];
+        NSArray *symbols=@[@"arrowtriangle.up.fill",@"arrowtriangle.down.fill",@"arrowtriangle.left.fill",@"arrowtriangle.right.fill",
+            @"line.3.horizontal",@"clock",@"figure.walk",@"eye",@"figure.run",@"waveform",@"",@"",
+            @"hand.tap",@"arrow.uturn.backward",@"shield.lefthalf.filled",@"arrow.up",@"hand.raised",@"scope",@""];
         for (NSInteger i=0;i<captions.count;++i) {
             if (i==10 || i==11) continue;
-            SKPadControl *c=[[SKPadControl alloc] initWithFrame:CGRectZero]; c.code=i; c.caption=captions[i]; c.accessibilityLabel=[captions[i] stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+            SKPadControl *c=[[SKPadControl alloc] initWithFrame:CGRectZero]; c.code=i; c.caption=captions[i];
+            if([symbols[i] length]) c.symbol=[[UIImage systemImageNamed:symbols[i]] imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
             UIPanGestureRecognizer *pan=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(moveControl:)]; pan.enabled=NO; [c addGestureRecognizer:pan];
             [self.controls addObject:c]; [self addSubview:c];
         }
-        self.settingsButton=[self utility:@"設定" action:@selector(openSettings)];
-        self.saveButton=[self utility:@"クイック保存" action:@selector(quicksave)];
-        self.keyboardButton=[self utility:@"文字入力" action:@selector(keyboard)];
+        self.settingsButton=[self utility:@"gearshape" label:L(@"Settings", @"設定") action:@selector(openSettings)];
+        self.saveButton=[self utility:@"square.and.arrow.down" label:L(@"Quick save", @"クイック保存") action:@selector(quicksave)];
+        self.keyboardButton=[self utility:@"keyboard" label:L(@"Keyboard", @"文字入力") action:@selector(keyboard)];
+        [self refreshLanguage];
         self.hud=[UILabel new]; self.hud.font=[UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightMedium];
         self.hud.textColor=UIColor.whiteColor; self.hud.backgroundColor=[UIColor colorWithWhite:0 alpha:.5]; self.hud.layer.cornerRadius=5; self.hud.clipsToBounds=YES; [self addSubview:self.hud];
         self.notice=[UILabel new]; self.notice.font=[UIFont systemFontOfSize:13 weight:UIFontWeightMedium]; self.notice.textColor=UIColor.whiteColor;
@@ -397,10 +447,10 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
         c.frame=CGRectMake(cx-w/2,cy-h/2,w,h); c.alpha=self.editing ? 1 : clamp(value(@"opacity",.8),.25,1); [c setNeedsDisplay];
     }
     CGFloat y=area.origin.y+5;
-    self.saveButton.frame=CGRectMake(area.origin.x+6,y,96,36);
-    self.keyboardButton.frame=CGRectMake(area.origin.x+108,y,76,36);
-    self.settingsButton.frame=CGRectMake(CGRectGetMaxX(area)-70,y,66,36);
-    self.hud.frame=CGRectMake(area.origin.x+6,y+42,210,22);
+    self.saveButton.frame=CGRectMake(area.origin.x+6,y,44,44);
+    self.keyboardButton.frame=CGRectMake(area.origin.x+58,y,44,44);
+    self.settingsButton.frame=CGRectMake(CGRectGetMaxX(area)-50,y,44,44);
+    self.hud.frame=CGRectMake(area.origin.x+6,y+50,230,22);
     self.notice.frame=CGRectMake(area.origin.x+area.size.width*.22,CGRectGetMaxY(area)-64,area.size.width*.56,52);
 }
 - (void)message:(NSString *)text {self.notice.text=text;self.noticeUntil=mobileTime()+7;self.notice.hidden=NO;}
@@ -419,6 +469,10 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     if (self.editing || !self.lookFinger || ![touches containsObject:self.lookFinger]) return;
     CGPoint p=[self.lookFinger locationInView:self]; NSTimeInterval t=self.lookFinger.timestamp;
+    /* Repeated/predicted timestamps cannot replace a valid velocity with zero.
+     * Use the displacement across the delivered batch; do not replay coalesced
+     * samples as fresh input after a game-thread stall. */
+    if(t<=self.lookTime) return;
     skyrim_mobile_look(p.x-self.lookPoint.x,p.y-self.lookPoint.y,t-self.lookTime,self.bounds.size.height,clamp(value(@"sensitivity",1.5),.25,4),value(@"invert",0)!=0);
     self.lookPoint=p;self.lookTime=t;
 }
@@ -439,17 +493,17 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 - (void)beginLayout {
     [self clearInput]; self.editing=YES;
     for(SKPadControl *c in self.controls) {c.editing=YES;c.gestureRecognizers.firstObject.enabled=YES;}
-    [self.settingsButton setTitle:@"配置完了" forState:UIControlStateNormal];
+    [self refreshLanguage];
     self.saveButton.enabled=self.keyboardButton.enabled=NO;
-    [self message:@"ボタンと移動スティックをドラッグ。右上の「配置完了」で保存"];
+    [self message:L(@"Drag controls to reposition. Tap the checkmark at the top right to save.", @"ボタンと移動スティックをドラッグ。右上のチェックマークで保存")];
     [self setNeedsLayout];
 }
 - (void)endLayout {
     self.editing=NO;[self clearInput];
     for(SKPadControl *c in self.controls) {c.editing=NO;c.gestureRecognizers.firstObject.enabled=NO;}
     [NSUserDefaults.standardUserDefaults setObject:self.positions forKey:@"mobile-layout-v1"];
-    [self.settingsButton setTitle:@"設定" forState:UIControlStateNormal];self.saveButton.enabled=self.keyboardButton.enabled=YES;
-    [self message:@"ボタン配置を保存しました"];[self setNeedsLayout];
+    [self refreshLanguage];self.saveButton.enabled=self.keyboardButton.enabled=YES;
+    [self message:L(@"Control layout saved.", @"ボタン配置を保存しました")];[self setNeedsLayout];
 }
 - (void)moveControl:(UIPanGestureRecognizer *)pan {
     if(!self.editing) return;
@@ -472,7 +526,7 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 - (void)quicksave {
     [self clearInput];self.saveBaseline=[self saveFiles];self.saveDeadline=mobileTime()+12;
-    skyrim_mobile_quicksave_key();[self message:@"クイックセーブ（F5）を送信。保存ファイルの更新を確認中"];
+    skyrim_mobile_quicksave_key();[self message:L(@"Quick save (F5) sent. Checking for a changed save file.", @"クイックセーブ（F5）を送信。保存ファイルの更新を確認中")];
 }
 @end
 
@@ -487,7 +541,7 @@ void skyrim_mobile_install(void *window) {
     UIView *root=native.rootViewController.view;
     if(!root) {fprintf(stderr,"FATAL SDL UIKit root view missing\n");abort();}
     overlay=[[SKOverlay alloc] initWithFrame:root.bounds];[root addSubview:overlay];
-    [overlay message:@"空いている場所をドラッグして視点移動。右上の設定で感度・配置・画質を変更"];
+    [overlay message:L(@"Drag an empty area to look. Open the gear for sensitivity, layout and graphics.", @"空いている場所をドラッグして視点移動。右上の設定で感度・配置・画質を変更")];
 }
 void skyrim_mobile_tick(void) {
     if(!overlay || !NSThread.isMainThread) return;
@@ -510,10 +564,10 @@ void skyrim_mobile_tick(void) {
     lastFrames=frames;lastTime=now;
     NSProcessInfoThermalState thermal=NSProcessInfo.processInfo.thermalState;
     skyrim_mobile_set_thermal((unsigned)thermal);
-    NSArray *names=@[@"通常",@"温かい",@"高温",@"非常に高温"];
+    NSArray *names=@[L(@"Nominal", @"通常"),L(@"Fair", @"温かい"),L(@"Serious", @"高温"),L(@"Critical", @"非常に高温")];
     unsigned cap=skyrim_mobile_fps_limit();
     overlay.hud.hidden=value(@"hud",1)==0;
-    overlay.hud.text=[NSString stringWithFormat:@" %.1f FPS  %@  上限%@",fps,names[MIN((NSUInteger)thermal,3)],cap ? @(cap).stringValue : @"—"];
+    overlay.hud.text=[NSString stringWithFormat:L(@" %.1f FPS  %@  Cap %@", @" %.1f FPS  %@  上限%@"),fps,names[MIN((NSUInteger)thermal,3)],cap ? @(cap).stringValue : @"—"];
     overlay.notice.hidden=now>overlay.noticeUntil;
     if(now-lastLog>=5) {
         uint64_t count,total,maximum,interval;
@@ -530,9 +584,9 @@ void skyrim_mobile_tick(void) {
         for(NSString *name in current)
             if([current[name][1] unsignedLongLongValue]>0 && ![current[name] isEqual:overlay.saveBaseline[name]]) updated=YES;
         if(updated) {
-            [overlay message:@"クイックセーブのファイル更新を確認しました"];overlay.saveDeadline=0;
+            [overlay message:L(@"Quick save file update confirmed.", @"クイックセーブのファイル更新を確認しました")];overlay.saveDeadline=0;
         } else if(now>=overlay.saveDeadline) {
-            [overlay message:@"保存は未確認です。システム → SYSTEM → SAVEから保存してください"];overlay.saveDeadline=0;
+            [overlay message:L(@"Save not confirmed. Open the game menu, then SYSTEM → SAVE.", @"保存は未確認です。システム → SYSTEM → SAVEから保存してください")];overlay.saveDeadline=0;
         }
     }
     }

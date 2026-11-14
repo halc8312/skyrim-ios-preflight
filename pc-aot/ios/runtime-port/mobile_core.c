@@ -8,7 +8,7 @@
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static SkyrimMobilePad pad;
 static uint32_t held;
-static uint64_t tap_until[18], look_until, f5_until;
+static uint64_t tap_until[18], look_time, look_interval, f5_until;
 static unsigned limit, thermal;
 static int guard;
 
@@ -55,6 +55,27 @@ void skyrim_mobile_button(unsigned index, int down) {
     } else held &= ~(1u << index);
     pthread_mutex_unlock(&lock);
 }
+void skyrim_mobile_camera_age(int16_t x, int16_t y, uint64_t age_ns,
+                             uint64_t sample_ns, int16_t *ox, int16_t *oy) {
+    /* UIKit may batch events. Keep one event interval plus 8 ms of jitter
+     * allowance, then fade the velocity over one interval. Bound that interval
+     * to 8--34 ms so 30 Hz delivery stays steady without extending a stale
+     * turn indefinitely after a slow frame. */
+    uint64_t interval = sample_ns < UINT64_C(8000000) ? UINT64_C(8000000) : sample_ns;
+    if (interval > UINT64_C(34000000)) interval = UINT64_C(34000000);
+    const uint64_t hold = interval + UINT64_C(8000000);
+    if (age_ns <= hold) { *ox=x; *oy=y; return; }
+    if (age_ns >= hold + interval) { *ox=*oy=0; return; }
+    float length=hypotf((float)x,(float)y);
+    if (length < 1) { *ox=*oy=0; return; }
+    /* Fade the velocity above the compensated deadzone, not the entire stick
+     * vector: scaling that vector would cross the game's deadzone abruptly. */
+    float gain=(float)(hold+interval-age_ns)/(float)interval;
+    float velocity=fmaxf(0,(length/32767.0f-.27f)/.73f);
+    float amount=fminf(length,(.27f+.73f*velocity*gain)*32767.0f);
+    *ox=(int16_t)lroundf((float)x/length*amount);
+    *oy=(int16_t)lroundf((float)y/length*amount);
+}
 void skyrim_mobile_move(float x, float y, float deadzone) {
     int16_t ax, ay;
     skyrim_mobile_stick(x, y, deadzone, &ax, &ay);
@@ -67,18 +88,20 @@ void skyrim_mobile_look(float dx, float dy, float seconds, float height, float s
     skyrim_mobile_camera(dx, dy, seconds, height, sensitivity, invert, &ax, &ay);
     pthread_mutex_lock(&lock);
     pad.rx = ax; pad.ry = ay;
-    look_until = skyrim_mobile_now() + UINT64_C(80000000);
+    look_time = skyrim_mobile_now();
+    look_interval = isfinite(seconds) && seconds > 0 && seconds <= .5f
+        ? (uint64_t)((double)seconds * 1e9) : 0;
     pthread_mutex_unlock(&lock);
 }
 void skyrim_mobile_look_end(void) {
     pthread_mutex_lock(&lock);
-    pad.rx = pad.ry = 0; look_until = 0;
+    pad.rx = pad.ry = 0; look_time = look_interval = 0;
     pthread_mutex_unlock(&lock);
 }
 void skyrim_mobile_clear(void) {
     pthread_mutex_lock(&lock);
     memset(&pad, 0, sizeof pad); memset(tap_until, 0, sizeof tap_until);
-    held = 0; look_until = f5_until = 0;
+    held = 0; look_time = look_interval = f5_until = 0;
     pthread_mutex_unlock(&lock);
 }
 SkyrimMobilePad skyrim_mobile_pad(void) {
@@ -90,7 +113,9 @@ SkyrimMobilePad skyrim_mobile_pad(void) {
     result.buttons = (uint16_t)buttons;
     result.lt = buttons & (1u << SKYRIM_PAD_LT) ? 255 : 0;
     result.rt = buttons & (1u << SKYRIM_PAD_RT) ? 255 : 0;
-    if (look_until <= now) result.rx = result.ry = 0;
+    if (!look_time || now < look_time) result.rx = result.ry = 0;
+    else skyrim_mobile_camera_age(result.rx, result.ry, now-look_time,
+                                  look_interval, &result.rx, &result.ry);
     pthread_mutex_unlock(&lock);
     return result;
 }
