@@ -8,6 +8,7 @@ extern "C" {
 enum { SKYRIM_GAME_ENGLISH, SKYRIM_GAME_JAPANESE };
 enum { SKYRIM_GAME_PACK_READY, SKYRIM_GAME_PACK_MISSING,
        SKYRIM_GAME_PACK_INCOMPLETE, SKYRIM_GAME_PACK_UNSUPPORTED };
+enum { SKYRIM_GAME_INI_PROFILE, SKYRIM_GAME_INI_DEFAULT };
 typedef struct {
     unsigned text_status, voices_status;
 } SkyrimGameLanguagePacks;
@@ -23,6 +24,12 @@ typedef struct {
 void skyrim_game_language_probe(const char *game_directory, SkyrimGameLanguagePacks *packs);
 SkyrimGameLanguage skyrim_game_language_select(unsigned text, unsigned voices,
                                                SkyrimGameLanguagePacks packs);
+/* Resolve before writing: the guest requests Skyrim.INI with this exact case.
+ * Prefer that existing file, otherwise reuse a single case-insensitive match.
+ * Return 1 for an existing regular file, 0 for absent (canonical path output),
+ * -1 for errors/ambiguous aliases. Never rename, delete or write here. */
+int skyrim_game_language_ini_path(const char *directory, unsigned kind,
+                                 char *path, size_t capacity);
 /* Transform only the app profile's language keys. Caller owns returned malloc
  * buffer and must publish it atomically before guest threads start. NULL means
  * invalid/oversized input or allocation failure; it is never partial success. */

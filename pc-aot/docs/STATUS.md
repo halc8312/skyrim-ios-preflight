@@ -1,8 +1,18 @@
 # 開発状況
 
-**2026-11-15：設定からゲームの文字／音声を独立に切り替えるbuild10候補を実装。** アプリUIのLanguageとは分離し、英語既定・ゲーム側は次回起動のみ反映。未設定の更新では既存profileを変更せず、選択時もapp-owned Skyrim.iniの3項目だけを編集し、他archiveを保持する。所有日本語データは別名で追加する非公開packとして準備し、元exe／master／英語Data／saveを上書きしない。起動時は小さい完了markerとファイルサイズだけを確認し、音声archive全読込み・コピー・毎frame判定は追加しない。
+**2026-11-16：build10の日本語設定が反映されない報告を受け、既存INIの大小文字不一致を修正中。** 固定ゲームが要求する`Skyrim.INI`に対し、設定画面は別名の`Skyrim.ini`へ書いていた。過去の実端末profileは大文字拡張子を使用し、両ファイル共存時はruntimeのexact-path優先によって古い英語設定を読む。旧fixtureは小文字のファイルしか作らず、この条件を検査できていなかった。canonical名を優先し、なければ単一の既存case variantを再利用するresolverへ変更し、不要な方のファイルは削除しない。WindowsではなくLinuxのcase-sensitive FS上で、実runtimeのpath／INI readerを使って旧挙動の再現と修正後の日本語反映を確認した。build11としてApple検証・署名・配布を準備中。現端末の最新ログ／選択内容はUSB再接続待ちで、今回の報告すべてをこの原因と断定せず、実機の表示・音声は未確認。
 
-所有日本語音声の32kHz mono profileでは既存xWMA設定が不一致だったため限定修正し、2つの低bitrate profileの再利用時noise stateもリセットする。アプリと同じFFmpeg7.1.1で、全保有formatを層別抽出した130音声（JP72／EN58）が独立CLI出力・分割入力・繰り返し再生で一致。公開audio4検査、native ASan/UBSan、言語C fixture、既存mobile6検査・namespace5検査を通過。**新機能のMac build・署名・端末導入・実機の日本語表示／会話／負荷確認はまだ未完了。** build9は引き続き非公開更新ページで取得可能。詳細と性能上の限界はPERFORMANCE_WORK.md先頭。
+**2026-11-16：日本語の文字・音声packをiPhoneへ転送し、全内容とセーブ保全を確認。** 本人の保存・終了・USB接続・ロック解除後、登録端末／既存信頼／既設build10を確認。アプリの再インストールは不要だった。13ファイル／1,275,035,768 bytesを所有データから追加し、最終配置先の全SHA読み戻しと文字・音声の完了markerを検証した。転送前後のバックアップでsave8ファイルとINI1ファイル、計26,890,378 bytesが全て一致。元英語Data・exe・master・saveの上書きは行っていない。
+
+実端末AFCはhardlinkを非対応（status15）として拒否したため、旧helperと失敗logを保持し、固定Japanese名だけへの明示guarded-renameを別版で追加。既存宛先・親・stagingの直前確認と最終readbackを行い、旧25＋追加10のoffline検査が全成功した。renameと宛先不在確認の組合せはatomic no-replaceではなく、本人のapp終了と単一writerを前提にしている。途中転送済みのpayloadは再送せず利用し、READYは全payload確認後に公開。証拠はignored `private/title-update-build10-20261115-transfer01/`に保持。**転送とpack完全性は確認済み。実機での日本語表示・会話・負荷は本人による次回起動確認待ち。** Settings → LanguageでGame text／Game voicesを日本語へ選び、完全終了・再起動して反映する。
+
+**2026-11-15：言語切替入りbuild10のMac検証・署名・非公開OTA配布が完了。** Settings → LanguageでアプリUI／ゲームのテキスト／ゲームの音声を独立にEnglish・日本語から選ぶ。英語既定で、ゲーム側は完全終了・次回起動のみ反映。未設定の更新では既存profileを変更せず、選択時もapp-owned Skyrim.iniの3項目だけを編集し、他archiveを保持する。所有日本語データは別名で追加する非公開packとして準備し、元exe／master／英語Data／saveを上書きしない。起動時は小さい完了markerとファイルサイズだけを確認し、音声archive全読込み・コピー・毎frame判定は追加しない。
+
+所有日本語音声の32kHz mono profileでは既存xWMA設定が不一致だったため限定修正し、2つの低bitrate profileの再利用時noise stateもリセットする。アプリと同じFFmpeg7.1.1で、全保有formatを層別抽出した130音声（JP72／EN58）が独立CLI出力・分割入力・繰り返し再生で一致。公開audio4検査、native ASan/UBSan、言語C fixture、既存mobile6検査・namespace5検査を通過。これはiPhoneでの再生・性能同等性を証明しない。
+
+[Mac build26](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af9c2e090e83b09c4fa98ed)は公開`8e4b7aaa860a9ecb925e29dfd7dcee6fec04b1a4`で成功（5分35秒）。39組／102検査中99成功・環境依存3skip、言語の実C／Foundation起動処理、native音声設定／reset、iPhoneOS shader8件、実Mac GPU20ケースreadbackを確認した。Macの任意FFmpeg decode fixtureはskipであり、別途PCの同一pin検証と区別する。先行build25はfixtureのstrict POSIX指定でO_NOFOLLOWが宣言されず失敗、fixtureだけGNU C11に修正し原logを保持。build24と共有ABI3 headerは一致、526件の既存warningも件数・分類とも同じで、新規warningは確認されなかった。
+
+署名済みIPAは58,687,734 bytes、SHA256 `093a61e5d75491549165f31683288644026195d082e54643a4e1279252776ec4`。署名2 images／39,431 pages／4 resourcesと、profileのApple chain・AppID・登録端末一致を検証。Tailscaleの他routeと旧build9を保持し、更新ページをbuild10へ切替え、HTTPS manifest・全IPA hash一致・認証なし404を確認した。無料枠は213→214→220/500（残280分）、subscription未有効。**iPhoneは未接続のため、約1.28GBの日本語pack転送、端末更新、実機の日本語表示／会話／負荷確認は未完了。** データ未導入時は英語へ戻る。build10はbuild9の性能修正も含むが、実機効果は未確認。詳細はPERFORMANCE_WORK.md先頭。
 
 **2026-11-15：build9のMac検証・署名・非公開OTA配布が完了。** [Mac build24](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af9b9e990e83b09c4fa9593)は公開`781647ae34b2b8e4d354af066fe9ad47f8ad29b1`で成功（6分31秒）。37組／98検査中96成功・環境依存2skip、iPhoneOS shader8件compile、実Mac GPU20ケースreadbackが成功。3共有ABI headerはbuild8と一致。既存private guestをPC内で組み込み、同じ登録端末profileで署名・暗号検証。IPAは58,680,866 bytes、SHA256 `59fe29fac1b613313c03e886b1bd03a9984900de7a509e2f16d06356aa87644b`。2 images／39,431 pages／4 resources、profileのApple chain・AppID・端末一致も検証した。
 

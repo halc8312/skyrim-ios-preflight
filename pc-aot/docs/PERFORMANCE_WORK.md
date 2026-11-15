@@ -1,5 +1,21 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-16 build10の言語設定と実game INIの大小文字不一致
+
+本人は設定から日本語を選択して完全再起動しても英語だったと報告。code／過去の端末profileを追跡すると、固定ゲームの要求名は`Skyrim.INI`である一方、Foundation側は`Skyrim.ini`へ書いていた。実runtimeの`resolve_ci`はexact存在を優先するため、case-sensitive FSで両者があると大文字側の旧英語設定を読む。今回の転送前backupも小文字INIはmissingで、取得したINI1ファイルはSkyrimPrefs.iniだった。save8ファイルの前後一致は維持されるが、この限定backupを大文字Skyrim.INIの取得証拠とは扱わない。
+
+修正は起動時の設定ファイル解決だけ。canonical名が存在すれば同ファイルへ、なければ単一のcase-insensitive既存名へatomic更新し、どちらも無ければcanonical名を作る。canonicalがなく複数の別case名がある曖昧状態やsymlink／非regular fileはエラー。古い小文字ファイルの自動削除・改名やgame Dataの更新は行わない。default INIの大小文字差も同じ原則で読み取る。変更する値は従来どおり言語・fontconfig・音声archiveの3項目で、他のprofile設定を保持する。
+
+自作の`Skyrim.INI`（英語）と`Skyrim.ini`（日本語）を実際に共存させ、固定runtimeの`resolve_ci`／`rt_host_path`／`ini_get`／`ini_find`を使うfixtureで旧挙動を再現した。同じreaderが修正後に日本語を読むこと、英語へ戻せること、他設定と未使用aliasを保持すること、単一mixed-case／曖昧aliases／symlink／directory拒否を確認する。case-insensitive volumeでは共存検査を明示skipし、WSLのLinux FSで実行する。Foundationの起動fixtureも実canonical名へ変更した。build11のMac検証・配布と、現端末の最新設定／ログ照合・実表示確認はこれから行う。
+
+## 2026-11-16 日本語packのUSB導入と保全確認
+
+本人の転送指示と保存・完全終了・USB接続・ロック解除確認を受け、登録端末の既存build10へ日本語packを追加した。前後のread-only backupでsave8／INI1、26,890,378 bytesの全SHA一致を確認。アプリ再インストール・起動・profile編集は行っていない。pack全13ファイル／1,275,035,768 bytesは最終配置先から読み戻してmanifestと照合し、文字・音声のREADYを最後に公開。転送済みpackの完全性と、実機での日本語描画・会話・性能は区別する。後者は次回起動後に本人が確認する。
+
+初期helperのhardlink公開はVendDocuments／VendContainerともAFC status15（非対応）。全payloadはstagingに残り、元Dataへの上書きは0だった。専用probeの自作tiny fileでAFC renameが既存宛先を置換する事実を確認し、atomic no-replaceと誤認しない。別版`upload_pack_v2.py`では既定hardlinkを保ち、明示的なguarded-renameのみ許可。固定Japanese allowlist・親／case／symlink・staging metadata・公開直前の宛先不在を確認し、rename後のsource消失とmetadata保持、最終SHA readbackを要求する。別writerが不在確認とrenameの間に書く競合は原子的に排除できないので、本人のapp終了・単一PC uploader lockを前提にする。例外時の自動切替・自動rename再試行はしない。旧25＋追加10検査が成功し、最初のsmall payloadで実端末の動作を確認してから全体を再開した。
+
+再開時のnew_bytesは完了marker分の134 bytesのみで、約1.28GBのpayload再転送は不要だった。失敗log・probe・旧helper・前後backup・最終manifestはignored private内に保存。最終helper SHA256は`5f5e1f987f4c971d5e3258ffdc34fec19c5a67e822e601c273206af08b5d83de`、pack manifest SHA256は`cfb4caa08a431327675bb16ce1d50c20e14af345a9efdefd40ac1ce0aa41e63e`。新buildや画質・性能設定の変更は行っていない。
+
 ## 2026-11-15 ゲーム言語の起動時選択と、日本語音声の限定修正
 
 本人は日本語テキスト・音声を希望し、負荷が大きい場合は英語音声を許容。SettingsのLanguageにApp language／Game text／Game voicesを設け、個別にEnglish／日本語を選ぶ。ゲーム言語の選択はguest thread起動前の一度だけで、プレイ中の判定・archiveコピー・シェーダーcache削除を追加しない。日本語／英語の切替自体はshader cache identityを変更しない。ただし本更新のaudio adapter変更は既存の保守的identityに含まれるため、アプリ更新直後はcacheの再準備があり得る。この互換判定を今回の言語機能に混ぜて緩和しない。
@@ -12,7 +28,15 @@
 
 アプリpinと同じFFmpeg7.1.1（`db69d06eeeab4f46da15030a80d539efb4503ca8`）を無料ローカル環境に最小構成でbuild。自作公開fixture4検査と、全保有formatを層別抽出した130音声（日本語72／英語58）の独立CLI PCM・分割入力・EOS再利用比較が成功した。PCの再生成中央値は日本語0.351ms／stereo0.361ms、通常英語mono flush0.0043ms。host側x86 asmは無効で、これをiPhoneの時間やゼロ負荷の証拠にはしない。全音声の全量再生・ゲームによる異種圧縮format間のsample-rate変更・iPhone AudioUnitでの再生は未検証。実機の字幕・会話・口形・本／メニュー・発熱を確認して採用する。
 
-言語の実C fixtureはpack破損／不足／symlink、英語へ戻すこと、既存sectionと追加archive保持、BOM、512個の自作入力をASan/UBSan付きで確認。Foundationの実startup関数fixtureと新audio fixtureをMac buildへ追加した。既存mobile6検査・namespace5検査も成功。新機能のApple SDK build・署名・端末配布はこの記録時点では未完了。
+言語の実C fixtureはpack破損／不足／symlink、英語へ戻すこと、既存sectionと追加archive保持、BOM、512個の自作入力をASan/UBSan付きで確認。Foundationの実startup関数fixtureと新audio fixtureをMac buildへ追加した。既存mobile6検査・namespace5検査も成功。
+
+### build10のApple検証・署名と残作業
+
+公開`8e4b7aaa860a9ecb925e29dfd7dcee6fec04b1a4`のMac build26は5分35秒で成功。39組102検査のうち99成功・環境依存3skipで、実C言語変換とObjective-C／Foundation起動時profile更新、native音声設定／resetを通過した。Macの任意FFmpeg decode fixtureはskipなので、上記のPCでの固定7.1.1検証と分ける。iPhoneOS shader8出力、実Mac GPU readback20ケースも成功。最初のbuild25はstrict POSIXを指定したC fixtureだけがO_NOFOLLOW未宣言で失敗し、GNU C11へ戻した後に再実行した。製品のsymlink拒否は弱めていない。失敗原logも保持している。
+
+hostはbuild10／ARM64 iPhoneOS／min18.0／SDK26.5。3共有ABI headerはbuild24とLF正規化後一致し、既存private guestをPC内で再利用。compiler warning526件はbuild24と件数・分類が同じで、新規warningは確認されなかった。署名済みIPA58,687,734 bytes、SHA256 `093a61e5d75491549165f31683288644026195d082e54643a4e1279252776ec4`。2 images／39,431 pages／4 resourcesの暗号検証、profileのApple chain・AppID・登録端末一致を確認した。同じ非公開更新URLをbuild10へ切替え、HTTPS manifest／全転送hashと認証なし404を検査。他Tailscale routeと旧build9を保持し、新しいcloud実行は追加しない。無料枠は残280/500分。
+
+日本語packは13ファイル／1,275,035,768 bytes（payload11個と完了marker2個）。private uploaderの25検査が成功し、原data非上書き・部分転送再開・readback・marker最終公開を準備した。ただし実iPhoneのAFC hardlink動作と転送は未検証で、USB端末検出0のため端末書込みは行っていない。保存・終了・USB接続の本人確認待ち。pack導入後に設定から日本語を選び、完全終了・再起動して、字幕／メニュー／会話と同一経路のframe gap・発熱を確認する。実機未検証のため「日本語化で性能影響ゼロ」「音声全量互換」とは主張しない。
 
 ## 2026-11-15 残る停止の再分類と、未ビルドの待機修正
 

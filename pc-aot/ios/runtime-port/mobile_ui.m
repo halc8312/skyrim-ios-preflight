@@ -8,6 +8,7 @@
 #include <SDL2/SDL_syswm.h>
 #include <math.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "mobile_ui.h"
@@ -255,10 +256,17 @@ int skyrim_mobile_prepare_game_language(const char *gameDirectory) {
     }
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *folder = [profilePath stringByAppendingPathComponent:@"Documents/My Games/Skyrim"];
-    NSString *target = [folder stringByAppendingPathComponent:@"Skyrim.ini"];
-    BOOL exists = [fm fileExistsAtPath:target];
-    NSString *sourcePath = exists ? target :
-        [[NSString stringWithUTF8String:gameDirectory] stringByAppendingPathComponent:@"Skyrim_default.ini"];
+    char resolved[PATH_MAX];
+    int exists = skyrim_game_language_ini_path(folder.fileSystemRepresentation,
+        SKYRIM_GAME_INI_PROFILE, resolved, sizeof resolved);
+    if (exists < 0) return 0;
+    NSString *target = [NSString stringWithUTF8String:resolved];
+    NSString *sourcePath = target;
+    if (!exists) {
+        if (skyrim_game_language_ini_path(gameDirectory, SKYRIM_GAME_INI_DEFAULT,
+            resolved, sizeof resolved) != 1) return 0;
+        sourcePath = [NSString stringWithUTF8String:resolved];
+    }
     NSError *error = nil;
     NSDictionary *attributes = [fm attributesOfItemAtPath:sourcePath error:&error];
     if (!attributes || ![attributes[NSFileType] isEqual:NSFileTypeRegular] ||

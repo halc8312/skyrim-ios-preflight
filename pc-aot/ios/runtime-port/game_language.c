@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "game_language.h"
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -96,6 +97,37 @@ SkyrimGameLanguage skyrim_game_language_select(unsigned text, unsigned voices,
     state.text = state.requested_text && state.text_reason == SKYRIM_GAME_PACK_READY;
     state.voices = state.requested_voices && state.voices_reason == SKYRIM_GAME_PACK_READY;
     return state;
+}
+
+int skyrim_game_language_ini_path(const char *directory, unsigned kind,
+                                 char *path, size_t capacity) {
+    if (!directory || directory[0] != '/' || !path || !capacity || kind > SKYRIM_GAME_INI_DEFAULT)
+        return -1;
+    const char *name = kind == SKYRIM_GAME_INI_PROFILE ? "Skyrim.INI" : "Skyrim_default.ini";
+    int n = snprintf(path, capacity, "%s/%s", directory, name);
+    if (n < 0 || (size_t)n >= capacity) return -1;
+    struct stat st;
+    // Match the guest's exact-path-first resolve_ci behavior. Existing mixed
+    // case aliases must not cause us to write a second, unused profile file.
+    if (!lstat(path, &st)) return S_ISREG(st.st_mode) ? 1 : -1;
+    if (errno != ENOENT) return -1;
+    DIR *dir = opendir(directory);
+    if (!dir) return errno == ENOENT ? 0 : -1;
+    unsigned matches = 0;
+    int error = 0;
+    for (;;) {
+        errno = 0;
+        struct dirent *entry = readdir(dir);
+        if (!entry) { error = errno; break; }
+        if (strcasecmp(entry->d_name, name)) continue;
+        if (++matches > 1) break;
+        n = snprintf(path, capacity, "%s/%s", directory, entry->d_name);
+        if (n < 0 || (size_t)n >= capacity) { error = ENAMETOOLONG; break; }
+    }
+    if (closedir(dir)) error = errno;
+    if (error || matches > 1) return -1;
+    if (!matches) return 0;
+    return !lstat(path, &st) && S_ISREG(st.st_mode) ? 1 : -1;
 }
 
 static int equals(const char *s, size_t n, const char *literal) {
