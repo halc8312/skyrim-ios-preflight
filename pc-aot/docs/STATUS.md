@@ -4,6 +4,8 @@
 
 **build12のApple検証は進行中。** [Mac build28](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa2e8d90e83b09c4fac031)（公開`fc585a254fd0e95c94ac9cdf349f8ba4775e9e92`）は87秒で失敗した。Foundation送信fixtureが実clientをコンパイルした際、NSString型`hash`がNSObjectのNSUInteger型`hash`と衝突したためで、プロパティ名と全参照を`contentSHA256`へ修正した。通信形式は変更せず、原ログを`local/codemagic-title28/`に保持。Mac送受信・休止／復帰fixtureとiPhone動作は未検証で、build12はまだ配布していない。
 
+[Mac build29](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa309c90e83b09c4fac0e1)は検査開始前にこちらで取消。独立レビューでMetal fixtureの非保持registry pointerにARC寿命の不足が見つかり、fixture localに`objc_precise_lifetime`を付けて非同期処理の終了まで保持する修正を同じ検査へ含めるため。製品側の寿命設計を変更したものではない。
+
 **次の開発ゴール（本人承認、進行中）：①iPhone→本人PCの非公開診断送信、②ホーム移行・復帰の安定化、③シェーダーキャッシュ保存・再利用の安定化。** 診断は手動送信とし、今回・前回の起動の数値記録だけを許可表で抽出する。ゲームデータ・セーブ・rawログ・パスを送らず、受信側は既存OTAと独立させる。復帰は開始済みのGPU仕事とproducerの依存関係を保って退役させる方式を検証中で、以前失敗した低層submission gateは再導入しない。OSのメモリ回収による終了を完全に防げるとは扱わない。cacheではfsync割込みによる保存断念を再現し、取消・既存予算付き最大3回の再試行を実装、旧保存保持と次回回復を通常／ASan・UBSan／TSanで確認した。過去の実機保存未完了の原因がこの割込みだった証拠はない。新しいAppleビルド・非公開配布・iPhoneでの送受信／復帰確認はこれから。
 
 **2026-11-16：日本語設定の保存先を修正したbuild11を非公開OTAへ配布。** 固定ゲームが要求する`Skyrim.INI`に対し、build10の設定画面は別名の`Skyrim.ini`へ書いていた。過去の実端末profileは大文字拡張子を使用し、両ファイル共存時はruntimeのexact-path優先によって古い英語設定を読む。旧fixtureは小文字のファイルしか作らず、この条件を検査できていなかった。canonical名を優先し、なければ単一の既存case variantを再利用するresolverへ変更し、不要な方のファイルは削除しない。Linuxのcase-sensitive FS上で実runtimeのpath／INI readerを使い、旧挙動の再現・日本語反映・英語への復帰を通常／ASan・UBSanで確認した。毎frameの処理追加はない。

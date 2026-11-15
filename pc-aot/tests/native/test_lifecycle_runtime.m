@@ -97,7 +97,9 @@ int main(void) { @autoreleasepool {
         atomic_store(&drain_started, 0); atomic_store(&release_drain, 0);
         atomic_store(&ui_handled, 0); atomic_store(&drain_completed, 0);
         id<MTLEvent> event = shared ? [gpu newSharedEvent] : [gpu newEvent]; assert(event);
-        LifecycleFixtureDevice *d = [LifecycleFixtureDevice new];
+        // The registry holds a borrowed pointer until both worker threads join.
+        __attribute__((objc_precise_lifetime)) LifecycleFixtureDevice *d =
+            [LifecycleFixtureDevice new];
         d.consumer = [first commandBuffer]; d.producer = [second commandBuffer];
         [d.consumer encodeWaitForEvent:event value:1];
         id<MTLBlitCommandEncoder> encoder = [d.consumer blitCommandEncoder];
