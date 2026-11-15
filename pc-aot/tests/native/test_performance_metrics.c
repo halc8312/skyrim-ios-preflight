@@ -6,10 +6,18 @@
 #include <stdio.h>
 
 static _Atomic unsigned finished;
-static void *produce(void *unused) {
-    (void)unused;
-    for (unsigned n = 0; n < 20000; ++n)
+static void *produce(void *arg) {
+    uintptr_t index = (uintptr_t)arg;
+    assert(skyrim_perf_context_get().role == 0 && skyrim_perf_context_get().source == 0);
+    SkyrimPerfContext c = {1 + index / 2, 1 + index % 2, 0};
+    SkyrimPerfContext old = skyrim_perf_context_set(c);
+    for (unsigned n = 0; n < 20000; ++n) {
         skyrim_perf_record(SKYRIM_PERF_GRAPHICS_PIPELINE, 1234567, n % 4 == 0, 3);
+        skyrim_perf_record(SKYRIM_PERF_MVK_MSL_WAIT, 2345678, 0, 0);
+    }
+    assert(skyrim_perf_context_get().role == c.role);
+    skyrim_perf_context_set(old);
+    assert(skyrim_perf_context_get().role == 0);
     atomic_fetch_add(&finished, 1);
     return NULL;
 }
@@ -42,7 +50,7 @@ int main(void) {
     assert(skyrim_perf_now_ns() != 0);
 
     pthread_t threads[4];
-    for (unsigned i = 0; i < 4; ++i) assert(!pthread_create(&threads[i], NULL, produce, NULL));
+    for (unsigned i = 0; i < 4; ++i) assert(!pthread_create(&threads[i], NULL, produce, (void*)(uintptr_t)i));
     uint64_t samples = 0, total = 0, failures = 0, sleeps = 0;
     do {
         skyrim_perf_take(SKYRIM_PERF_GRAPHICS_PIPELINE, &w);
@@ -55,6 +63,15 @@ int main(void) {
     failures += w.failures; sleeps += w.sleep_calls;
     assert(samples == 80000 && total == 80000 * UINT64_C(1234567));
     assert(failures == 20000 && sleeps == 240000);
+    assert(skyrim_perf_context_get().role == 0);
+    skyrim_perf_take(SKYRIM_PERF_MVK_MSL_WAIT, &w);
+    assert(count(&w) == 80000);
+    for (unsigned role = 0; role < 3; ++role) for (unsigned source = 0; source < 4; ++source) {
+        SkyrimPerfContext c = {role, source, 0};
+        skyrim_perf_context_take(SKYRIM_PERF_MVK_MSL_WAIT, c, &w);
+        uint64_t expected = role && (source == 1 || source == 2) ? 20000 : 0;
+        assert(count(&w) == expected && w.total_ns == expected * UINT64_C(2345678));
+    }
     skyrim_perf_record(SKYRIM_PERF_PACER, 33000000, 0, 8);
     skyrim_perf_record(SKYRIM_PERF_GRAPHICS_COMPILE_WAIT, 120000000, 0, 0);
     skyrim_perf_log_window();

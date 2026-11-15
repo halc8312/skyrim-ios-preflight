@@ -230,12 +230,20 @@ def adapt_pipeline_locking(name: str, text: str) -> str:
     begin = text.index(f"  VkPipeline {cls}::getPipelineHandle(")
     end = text.index(f"  {cls}Instance* {cls}::findInstance(", begin)
     wait_kind = "SKYRIM_PERF_" + kind.upper() + "_COMPILE_WAIT"
-    compile_lock = f"""    std::unique_lock<dxvk::mutex> compileLock(m_compileMutex, std::defer_lock);
+    compile_lock = f"""    uint64_t waitStartedNs = 0, waitEndedNs = 0;
+    std::unique_lock<dxvk::mutex> compileLock(m_compileMutex, std::defer_lock);
     if (!compileLock.try_lock()) {{
       const uint64_t waitStarted = skyrim_perf_now_ns();
       compileLock.lock();
-      skyrim_perf_end({wait_kind}, waitStarted, 0);
+      waitStartedNs = waitStarted;
+      waitEndedNs = skyrim_perf_now_ns();
     }}
+    auto recordWait = [&](unsigned result) {{
+      if (!waitStartedNs) return;
+      SkyrimPerfContext context = skyrim_perf_context_get();
+      context.result = result;
+      skyrim_perf_interval_context({wait_kind}, waitStartedNs, waitEndedNs, 0, 0, context);
+    }};
 """
     validate = ""
     if graphics:
@@ -251,13 +259,19 @@ def adapt_pipeline_locking(name: str, text: str) -> str:
         return instance->pipeline();
     }}
 
+    SkyrimPerfContextScope iosRequest(SKYRIM_PERF_ROLE_DRAW, SKYRIM_PERF_CONTEXT_KEEP);
     VkPipeline pipeline = VK_NULL_HANDLE;
     {{
 {compile_lock}
+      bool ready = false;
       {{ std::lock_guard<sync::Spinlock> lock(m_mutex);
-        if (auto* instance = this->findInstance({args}))
-          return instance->pipeline();
+        if (auto* instance = this->findInstance({args})) {{
+          ready = true;
+          pipeline = instance->pipeline();
+        }}
       }}
+      if (ready) {{ recordWait(SKYRIM_PERF_WAIT_HIT); return pipeline; }}
+      recordWait(SKYRIM_PERF_WAIT_CREATE);
       auto* instance = this->createInstance({args});
       if (!instance)
         return VK_NULL_HANDLE;
@@ -276,11 +290,14 @@ def adapt_pipeline_locking(name: str, text: str) -> str:
       if (this->findInstance({args}))
         return;
     }}
+    SkyrimPerfContextScope iosRequest(SKYRIM_PERF_ROLE_PREFETCH, SKYRIM_PERF_CONTEXT_KEEP);
 {compile_lock}
+    bool ready;
     {{ std::lock_guard<sync::Spinlock> lock(m_mutex);
-      if (this->findInstance({args}))
-        return;
+      ready = this->findInstance({args}) != nullptr;
     }}
+    if (ready) {{ recordWait(SKYRIM_PERF_WAIT_HIT); return; }}
+    recordWait(SKYRIM_PERF_WAIT_CREATE);
     this->createInstance({args});
   }}
 

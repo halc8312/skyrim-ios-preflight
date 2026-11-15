@@ -12,8 +12,9 @@ PINS = {
     "MVKPipeline.h": "b0b85d75a31ee654d5b65ff7499f179bab14b985eb72f4482d3cb1a7fc7689b2",
     "MVKPipeline.mm": "4d8d6c9bbe639d8fa78a71802d5357f91ef15568964dd8e0d570ce4ba05790d2",
 }
-PATCHED_PINS = {"MVKPipeline.h": "6668c842747ae49abf678e418f198a499eaf5d92a50b4dd80c56cbd6a832b91f", "MVKPipeline.mm": "64f6cd3ca2a48c39af751d7fb174f1d809fc9d13a2d41dcb2a4f16dc90021821"}
-TEMPLATE_SHA256 = "4ada443f9f518c2d835f432c7ef6cb2990d35cf3a1e53729e7875da8838694ef"
+# Exact output pins include the numeric cold-lock wait observation.
+PATCHED_PINS = {'MVKPipeline.h': '6668c842747ae49abf678e418f198a499eaf5d92a50b4dd80c56cbd6a832b91f', 'MVKPipeline.mm': 'b78d437ae329f5bfd43b1ea5082f6ec476eed47bf1e9b6127bee8e1812c851c3'}
+TEMPLATE_SHA256 = "439b686b94181b5fc7f01c3e4ddeed21f999636b6af9e793cbd672e18e58cc15"
 TEMPLATE = Path(__file__).with_name("mvk_hot_cache.cpp.in")
 
 
@@ -36,7 +37,7 @@ def patched(name, raw):
     result = raw[:start]+template()+b"\n"+raw[end:]
     anchor = b"#include <sstream>"
     if result.count(anchor) != 1: raise ValueError("cache include anchor changed")
-    return result.replace(anchor, anchor+b"\n#include <memory>",1)
+    return result.replace(anchor, anchor+b'\n#include <memory>\n#include "skyrim_performance_metrics.h"',1)
 
 
 if __name__ == "__main__":

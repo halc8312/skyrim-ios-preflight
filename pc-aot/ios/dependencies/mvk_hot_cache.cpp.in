@@ -26,7 +26,12 @@ MVKShaderLibrary* MVKPipelineCache::getShaderLibrary(SPIRVToMSLConversionConfigu
     // Never acquire this while holding _shaderCacheLock. A cold compiler must
     // reacquire that short lock to publish, and another request may have filled
     // this same key while we were waiting here.
-    lock_guard<mutex> compileLock(_shaderCompileLock);
+    unique_lock<mutex> compileLock(_shaderCompileLock, defer_lock);
+    if (!compileLock.try_lock()) {
+        const uint64_t waitStarted = skyrim_perf_now_ns();
+        compileLock.lock();
+        skyrim_perf_end(SKYRIM_PERF_MVK_COLD_LOCK_WAIT, waitStarted, 0);
+    }
     {
         lock_guard<mutex> lock(_shaderCacheLock);
         MVKShaderLibrary* ready = slCache->findShaderLibrary(pContext, pShaderFeedback, startTime);

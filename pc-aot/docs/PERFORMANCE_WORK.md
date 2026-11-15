@@ -1,5 +1,164 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-15 USB不要のOTA更新を実機で確認
+
+ユーザーの希望により、既存開発者署名を保持したbuild6の非公開配布経路を準備。Tailscaleの既存アカウント／HTTPS設定を再利用し、PCのGUI起動後にNoStateからRunningへ復旧。既存proxyを保存し、SkyrimIOS専用のsubpathだけを追加した。Funnel／一般公開、署名鍵の移動、外部hostへのIPA upload、新規cloud build、再署名は行っていない。
+
+配布helperはscripts/serve_private_ota.pyとprivate_ota.html.in。127.0.0.1:8765のみでlistenし、Tailscale Serveが設定する同一利用者headerと256bit相当のランダムURL、24時間の期限を確認する。配布対象は固定IPA、manifest、案内pageと数値statusだけ。directory listing／任意file読出しはない。config／URL／IPAはignored private/以下。元IPA 58,670,330 bytesのSHA256を既存署名結果と照合し、HTTPS経由の全転送後にも一致を確認。アプリidentity、既存profileの期限／登録端末／メモリ3権限を確認した。HEAD、単一range、誤identity／誤URL／範囲外／期限切れを限定確認し、英語・日本語のmobile表示を実ブラウザで点検した。公開source検査も成功。
+
+**本人確認:** Tailscale接続後、最初のページ接続失敗は再確認で解消。Safariのpage表示に続き「インストールでき、起動・セーブも確認できた」と報告。現在と同じbuild6の無線上書きであり、性能改善のAB比較／端末内saveのbyte比較ではない。新しいcache診断・保存改善コードは未ビルドのまま。元ゲーム・既存IPA・署名資格情報を保持し、ゲームデータの再コピーやアプリ削除は行っていない。
+
+運用: private/ota/config.jsonを参照し、検証済みの新IPAへ更新するときはhash／build／期限を更新してhelperを再起動する。現在のhelperはexec session80531、元session61680は当方のpage調整時に停止済み。現configは翌日まで有効。Tailscale Serveの既存root proxyを削除・resetしない。停止するならSkyrimIOSのpathだけを無効にし、当方のhelperだけを止める。ネットワーク公開・build・署名を自動開始する仕組みは追加していない。
+
+## 2026-11-15 実装：background保存の限定retryと待ちの分類
+
+ユーザーの「このあとはどうする？実装？」を受け、上記相談の最初の範囲を実装した。公開host側だけの変更で、ゲーム入力／private guest／CPU ABI／画質／worker数／QoS／同期順序／cache形式を維持。Mac build、push、署名、端末操作は行っていない。
+
+**保存:** `ios/dependencies/pipeline_cache.cpp`はcheckpointごとに終了時1行を出す。取消・変更なし・pathなし・driver error・容量外・試行終了・I/O失敗・例外・invalid payloadを区別し、stage／attempts／VkResult／取得size／bytes／snapshot generation／saved generation／保存errno／elapsedを数値で残す。`checkpoint_all`は訪問cache数と取消を別に記録し、全cacheの保存成功という意味にはしない。UIKitはprepare／queue／finishを記録し、復帰取消・期限切れ・task取得失敗・重複投入なしを区別する。
+
+- data queryの`VK_INCOMPLETE`または成功だが36 bytes未満の場合だけ、fresh size queryから最大3試行。別driver error、上限超過、invalid header、書込み失敗はretryしない。64MiB payload上限は維持し、vector容量が足りないときは旧allocationを先に解放してから確保する。
+- 1秒は取得処理を次へ進める許可の予算。各call後・次のcall前・確保後・保存開始前に取消／予算を確認する。進行中driver call・fsyncを強制中断する機能でも、checkpoint全体を1秒以下にする保証でもない。sleep／foreground timer／WillTerminate待ちはない。
+- 成功した試行のsize query前に読んだgenerationだけを保存済みにする。後続compileをclean扱いしない。既存registry lockによるcache/device寿命保護とpending→fsync→close→rename、旧公開file保持を維持する。
+- checkpoint `outcome`: 0 stored、1 clean、2 no path、3 cancelled、4 driver error、5 size range、6 retry/予算終了、7 write failed、8 exception、9 invalid payload。`stage`: 0 start、1 size、2 data、3 pending除去、4 open、5 write、6 fsync、7 close、8 rename、9 done。`budget_expired`で予算終了を区別する。UIKit finish sourceは0完了／1復帰／2期限切れ。
+
+**分類計測:** `performance_metrics.*`に固定のTLSスコープと33個の固定histogramを追加。記録処理は追加heap確保・file I/O・待機なし。既存5秒集計時にアクティブな分類のみ`IOS_TIMING_CONTEXT`へ出す。既存`IOS_TIMING`のkind番号は維持し、cold lock waitだけ末尾へ追加。`IOS_STALL` schema2にはrole/source/resultを追加し、解析器は旧schema1も読む。分類histogramは総量の内訳であり、総量へ足さない。
+
+- role: 0 other/unknown、1 getPipelineHandle必須要求、2 compilePipeline先読み。既存ready hitはスコープを作る前に返るので、新しいclock／histogram／待機は加わらない。ネストや例外で元TLS状態へ戻す。
+- source: 0 unknown、1 root MSL source constructor、2圧縮root復元constructor、3 macro派生constructor。これはlibrary取得命中率ではなくMSL compile待ちの発生入口を表す。
+- DXVK compile mutex競合は元の待ち開始・取得時刻を保存し、list lockを解放した後にresultを付けて1回だけ記録。result 1は待ち後hit（cached null含む）、2は生成経路へ進む（生成成功の意味ではない）、0は未分類。無競合のready hitは記録しない。所有者交代や公開後追い越し時間はまだ計測しておらず、これだけで先読みが原因とは断定しない。
+- MoltenVK cold lockは同じ排他と1 cache 1 compilerを維持し、競合した取得待ちのみ記録。Metal dispatchは親の数値contextを値として渡し、共有GCD threadのTLSを書き換えず、元block完了後のcompiler objectへ新しくアクセスしない。既存のtimeout／遅延callback／failed library方針を維持する。
+- stall枠は4 frame＋12 workのまま。分類histogramはspan欠落と独立して件数を蓄積するが、有限span／dropped_busy／dropped_full、時間重複が因果を証明しない制限は残る。無根拠な完全帰属や改善率を出さない。
+
+**検証:** 自作Vulkan boundaryで競合1回→2試行成功、常時競合→3試行終了、short成功、取消後callなし、2回目容量超過、別errorの即終了、clock予算終了、例外1行、旧file／pending／成功試行generation／device lifetimeを確認。実DXVK lookup/publication fixtureはGraphics・Compute、hot-hit通過、同key1生成、null／例外／再入／8thread混在を保持し、要求roleと元contextへの復帰を確認。実MoltenVK constructor／cache／compiler waitを使うfixtureで並行publish・ready-hit／snapshot通過・復元／macroタグ・timeout／遅延callbackを確認。C recorderは80,000件の並行分類を混線なしで集計し、旧・新ログをparserで検証した。
+
+通常の該当suiteが成功し、追加のGCC13 ASan/UBSan 7検査も成功（43.802秒）。Clang18 sanitizer runtimeは未導入でlink不可だったため、依存追加はせず既存GCCで実行した。実DXVK graphics／compute／pipecacheの3 translation unitもClang18で構文検査成功。新しいshader lock algorithmは入れていない。TSanとApple SDK／UIKit／実Metalの実行検証は今回実施していない。開発途中の旧6列期待値・旧ログ行数期待値とPython bytecodeの古いpin参照は補正し、該当検査を再実行して成功した。
+
+**次:** GO後の一括Mac検証・更新で、同save／同画質／同じ経路の初回と再訪、background保存完了を挟む再起動を比較する。依存namespaceは公開header／patchを含むため今回もcold開始の可能性を明示し、warmなbuild6との単純比較をしない。root／復元／macroと必須／先読みの内訳を得て、必要なら所有者交代を追加観測してから優先gate・module分離を選ぶ。2ms polling、常時QoS昇格、device monitor削除、foreground保存、BinaryArchive、ゲーム側の逆コンパイル置換はこの変更に混ぜていない。局所検査の成功は実機stutter／FPS／発熱改善の証拠ではない。
+
+## 2026-11-15 Claude再回答：最初の実装範囲と残る補正
+
+相談内容を統合し、最初の対象を既存background checkpointの固定量理由記録・限定再試行、および描画待ちの分類に絞る。製品への接続、cloud build、push、端末更新はまだ行っていない。前のcache競合／gate／matchesの検証結果を再利用し、今回は新しいcompileやtestを繰り返していない。
+
+- **checkpoint案は説明と擬似コードを揃える。** 提示コードはdeadlineをraced判定後にしか調べず、size queryが予算を使い切って正常終了してもdata queryへ進み、正常data後も保存へ進む。cancelledも各driver呼出しの直前には検査していない。実装時は新しい試行・size query・確保後のdata queryを開始する前と、各callが戻った後で取消／予算を検査する。driver APIやfsyncの途中は強制中断できないので、1秒は新しい取得処理の開始許可の予算であり、全処理の実時間上限ではない。retryはdata側VK_INCOMPLETE／明示した短いpayloadに限定し最大3試行、他error・上限超過・書込み失敗は即終了。既存の旧file保持・pending cleanup・generation方針は維持する。
+- **診断の負荷と意味を固定する。** reportは固定長・noexceptで1試行ごとの大量出力を避け、checkpointの終了理由を1行、UIKit遷移／取消は別eventへ分ける。catch側の重複出力、stale errno、stage未設定、取得失敗と正当な小cacheの区別を確認する。既存parserのbytes/stored等と互換を保つかschemaを明示する。64MiBはpayload上限であり、vectorの再確保中のpeak memoryまで64MiB以内という意味ではない。
+- **背景処理も復帰との競合が残る。** Utility worker中のdriver取得／fsyncはresume直後に停止できず、registry／cache lockを介した待ちも残る。「backgroundだけなのでプレイへ影響しない」とは保証しない。WillTerminate待ちとforeground定期保存は初回変更から外す。
+- **2ms polling gateは製品採用を保留。** 必須側のmutex除去とvariantごとの絶対deadlineは改善だが、3workerが継続して待つ条件では設定上約1,500確認/秒になる。実起床や発熱増加を測った値ではないものの、電力の目標に照らして検証が必要。[Appleのtimer指針](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/EnergyGuide-iOS/MinimizeTimerUse.html)も同期用pollingの起床負荷を説明する。sleep_forの再開はscheduler次第でありD+SLICE／shutdown SLICE以内という実時間保証はしない。
+- **gateの新しい擬似コードにも重複計数がある。** 同variantで期限切れ後に、外側whileのmayStartとcompile mutex取得後のmayStartがそれぞれPREFETCH_YIELD_EXPIRED／expiredStreakを増やす。期限切れ記録1件という試験条件と一致しない。variant単位のexpired状態で一度だけ記録し、streakが複数worker間で何を数えるか明示する。atomicの順序は開始許可を定義できてもstd::mutexの公平性を保証せず、往復回数をworker数で抑えられるとはしない。
+- **macroが主体でもDXVK gateの対象外とは限らない。** macro生成はMoltenVKのcache cold lock外だが、上流DXVKのcompile mutexを保持したvkCreate*Pipelinesの内側で発生し得る。先読みmacroが必須要求を塞ぐなら先読み開始制御は候補。初回compile自体が消えるという意味ではなく、root／復元／macroだけでなく必須／先読みの組合せで判断する。device monitorは内側のspecialize／dispatch最大値だけから全取得箇所を除外できない。最初の追加計測で後回しにすることと、原因から排除することは分ける。
+
+初回計測は、MSL生成由来、必須／先読みの要求起点、DXVK待ち後のhit／compileと公開後の待ち、MoltenVK cold lock待ち、記録欠落の明示。TLSはscope終了時に前値を復元し、GCDへ必要な識別子だけscalarで伝播する。所有者情報の整合が取れないsampleはunknownに残す。既存ready-hitの追加処理を最小化する。観測した公開後待ちはscheduler等も含むので、そのままgateで削れる時間と呼ばない。
+
+実機での性能改善は未確認。最初の保存改善も、再現済みの失敗条件への対処と診断可能性の改善であり、現在の瞬間停止解消を保証するものではない。採用する変更は独立に検証し、次の一括buildは本人のgoに従う。
+
+## 2026-11-15 Claude初回回答を照合：保存競合を限定再現、優先gateはそのまま採用しない
+
+Geminiとの一致点は、DXVK単体の並行fixtureだけでは下層Metalでの待ちを証明できず、必須／先読みの起点とlibrary生成由来の計測を補うこと。Claudeの「cache保存がlock分割より効く」「同じlibraryなので改善上限は約66ms」は、要求keyと由来が未計測の現状では確定しない。保存を改善しても初遭遇・非保存のmacro派生の生成時間は残る。
+
+**保存競合:** 固定MVKPipelineCache::writeDataImplは、size queryで_dataSizeを設定した後、新libraryの公開でmarkDirtyが_dataSize=0にすると、data queryで容量0のmembufを使う。固定MVKStrings.hのmembuf／countbufと実writeDataImplを抽出し、自作数値payloadと、固定Cereal 51cbda5f30e56c801c07fe3d3aba5d7fb9e6cca4のBinaryOutputArchive::saveBinary本文を使う限定fixtureで確認した。通常40 bytesは成功、公開＋dirtyを2呼出し間に挟むとVK_INCOMPLETE=5／返却0 bytes、サイズqueryからやり直した44 bytesは成功。元bufferは変更されない。Cereal全体／実driver／iPhone実行ではなく、実メソッドの当該分岐と書出し境界の再現。公開一次資料は[Cereal固定版](https://github.com/USCiLab/cereal/blob/51cbda5f30e56c801c07fe3d3aba5d7fb9e6cca4/include/cereal/archives/binary.hpp)。
+
+アプリ側checkpointはgetData失敗時に自身のcheckpoint行を出さずreturnする。この競合の発生可能性は確かだが、既存4ログに当該MoltenVK書出しerror文やbytes=0のcheckpointは0件、checkpoint行は短い起動3の1件のみ。実機の保存欠落原因と同定したことにはならない。改善候補はlifecycle／取消／無変更／size取得／data取得／write／renameの固定数値理由と、取消・期限・サイズ上限を保つ有界再試行。再試行ごとにsize queryから行い、継続的な生成中に成功を保証しない。新しい取消理由をゲームの保存種別と混同しない。
+
+**ClaudeのPrio gate擬似コード:** 必須counterを残したまま、2秒を20msへ短縮した自作境界fixtureで4回のtimeout後に先読みが進むことを再現。元の定数ならwait_for予算は合計8秒相当で、compile mutex取得待ちは別。これは先読みの待ちであり、実機描画が8秒停止した測定ではない。RequiredScope destructorもp.mを取るため、別threadがp.mを保持した状態では退出できず、解放後に完了することを確認した。「必須側は待たない」とは呼べない。既に入った生成・下層lockに並ぶworker、timeoutで優先を放棄する条件と、新しいlock／通知／shutdown契約を明記する必要がある。
+
+**WAIT_THEN_HITの撤回条件にも注意:** 現行getPipelineHandleは最初のmiss後、compile mutexを取得できるまでreadyを再検索しない。workerが要求Aを公開後、別variant Bでmutexを取り直せば、必須Aは既に完成済みでもBを待たされ得て、最終分類はWAIT_THEN_HITになる。したがってWAIT_THEN_COMPILEがほぼ0という件数だけでgateの効果なしとは判定しない。待った時間、要求origin、待機中の公開と所有者交代を合わせる。実機でこの順序が起きた頻度は未測定。
+
+**終了通知とdevice monitor:** [AppleのapplicationWillTerminate資料](https://developer.apple.com/documentation/uikit/uiapplicationdelegate/applicationwillterminate(_:))ではbackground対応appの通常終了に通知が来る保証はない。既存checkpointは完了処理をmain queueへ戻すので、終了handlerで同じ完了を同期joinすると依存関係次第で期限まで詰まり得る。WillTerminate待ちを最初の保存改善には追加しない。MoltenVKの[上流0b90a53](https://github.com/KhronosGroup/MoltenVK/commit/0b90a53d76ccccab64fea71ecdb9554f941ecb4b)は内部MTLDeviceの生成／破棄競合に対するCTS修正としてmonitorを入れたことを確認。2021年の根拠であり現端末の必要性を独立に証明したわけではないが、今回無条件に除去する根拠もない。
+
+限定probeはlocal/performance-20261115/claude-review/probe.py（cache_probe.cpp／gate_probe.cpp）、WSL c++で2つともexit0。exec session30162は終了済み。製品変更・cloud build・push・署名・端末操作なし。
+
+両回答を統合した順序は、まず挙動不変の起点／wait後hit・compile／library由来／checkpoint理由計測と、独立した有界checkpoint retryを検討する。gateは修正した設計を別の実験として比較し、MoltenVK module間分離とsnapshot再設計はそれぞれ別段階に分ける。描画結果・必要な同期を保持し、コンパイル増加／先読み遅れ／初回起動時間も評価する。新しいクラウドbuildは開始していない。
+
+## 2026-11-15 Gemini再回答の設計レビュー：計測先行・変更を分離
+
+再回答は、PSOへのbinaryArchives追加だけでは前段のnewLibraryWithSource呼出が消えない点と、完成済みhitを長いcompile lockから分ける点を修正した。ただし提案をそのまま製品へ採用しない。追加の公開source読解と自作comparison probeのみを行い、製品コード・cloud build・push・署名・端末操作はなし。
+
+1. **Cold要求のキーに既存matchesを流用しない。** 固定SPIRVToMSLConversionConfiguration::matchesは、変換結果のoutIsUsedByShaderがtrueのinput/output/resourceだけを比較する。既存patch_moltenvk.pyの双方向修正はdynamicBufferDescriptorsとdiscreteDescriptorSetsに限定され、未変換config全体の同値比較にはしない。実headerと実patched比較関数を使い、input binding、output location、resource msl_bufferをそれぞれ変えた3自作ケースを確認。全て未変換では左右両方向matches=true、使用フラグを立てるとfalse。結果はlocal/performance-20261115/gemini-inflight-review/probe.pyで再現（WSL c++、exit0、元constructorのclass-memaccess warningあり）。これは変換器／GPU描画の実行ではなく、比較契約の反例。待機後にreadyを正しく再検索する提案なら直ちに誤shader返却とはならないが、別要求を不必要に待たせ、狙った分離を失う。厳密な事前入力キーを別定義するか、最初はmodule別cold lockだけに限定する。
+2. **macro生成は別経路。** MVKShaderModule::getMTLFunctionはpipelineCache->getShaderLibraryが返った後でlibrary->getMTLFunctionを呼ぶ。製品patch_mvk_library.pyのmacro candidate生成は_specializationLock外で行われ、cacheの_shaderCompileLockも既に解放されている。全macro生成が1本のcache compile lockで直列化されるという再回答の前提は誤り。root新規／cache読込／macro派生／競合による重複を識別しないまま、cacheロック分離が182件全ての長いMSL待ちに効くとはしない。
+3. **監視対象区間の外を上限推定しない。** getMTLFunctionのdevice monitor取得待ちは、その内側のspecialize計測開始より前。newLibrary等のGCD block内のmonitor待ちはdispatch_blockへ含まれるが、別の取得箇所の上限まで12.343ms／23.326msと確定できない。単発fence_waitの最大が短くても1フレーム内の複数待ちや未計測箇所は残る。各分類の独立した最大値を引いた約885msも、個別要求に紐付けて測った区間や純粋なcompiler CPU／XPC時間ではない。MSL完了待ち優先の判断と、未測定原因の完全除外を分ける。
+4. **holderの事後読みだけでは因果を確定しない。** try_lock失敗から獲得までに所有者はA→C→B等と交代し得る。獲得後のholder_req_idは解放済み0や自分を指し、別atomicのreq/originは不一致にもなり得る。所有世代と取得／解放の整合した記録、取得できない場合のunknown／複数owner扱いが必要。TLS scope終了時は0へ固定せず以前のcontextを復元する。request/originとGCDへのscalar伝播は方向として採用候補。
+5. **snapshotは独立の設計変更。** configはvectorやstringを持ち、値コピーはポインタだけの浅いコピーではない。vector要素への参照を保存すれば後の再配置で無効になり得る。immutableな公開libraryの寿命とVulkan外部同期が守られる前提ならlibrary pointer参照は候補だが、全entry収集のO(n)作業・確保・memory上限を数microsecondsや100%安全とは言わない。generation付き_dataSizeだけでなくサイズqueryとdata queryの間の増加、capacity、VK_INCOMPLETE、部分payloadの妥当性、allocation failure／取消を別途検証する。現markDirtyは_dataSize=0のみで世代counterは未実装。[vkGetPipelineCacheData仕様](https://docs.vulkan.org/refpages/latest/refpages/source/vkGetPipelineCacheData.html)と[destroyの外部同期](https://docs.vulkan.org/refpages/latest/refpages/source/vkDestroyPipelineCache.html)を確認した。
+6. **先読み譲歩は保証を弱めず設計する。** atomic urgent確認とtry_lockには競合窓があり、それだけで横取りを確実に防ぐとは言わない。再キュー＋urgent=0の即成立述語はlocal lock混雑時のbusy loopを作り得る。condition variableの通知漏れ、shutdown、worker用entryの寿命／index安定、再キュー上限とstarvationの扱いを明確にする。compiled・failed・deferredを混同しない。全shader workerを高QoSにする案は採らないが、実際のP/E配置やXPC CPU内訳は未測定。
+
+次の最小単位は(1)既存固定量計測へ要求origin／library生成由来／競合待ちの整合した識別を加える設計、(2)その結果を見てready-hitを保ったmodule間cold待ち分離を独立検証、(3)同module別configの合流やsnapshot保存の再設計は別段階、とする。コンパイル同時数が増えることによるサービス混雑・CPU／memory／熱の悪化も比較対象。新しいdevice buildは行っていない。再回答の必要な検証欄は途中で文章が途切れているため、試験仕様が完成したとは扱わない。Claudeの独立reviewへ渡せる具体的な論点を得た。
+
+## 2026-11-15 Gemini回答の一次資料・固定ソース照合（実装前）
+
+対象はbuild6公開commit `6e0f5bafc879aabbbaf73d36c526d664f8296396`の経路と固定MoltenVK `458870543b9bcf6b0edd6f90aaa776707b310d96`。元MVKPipeline.mmのSHA256はpatch入力pinと一致。回答全体を実証済みとして採用せず、公開コード・一次資料・回収済み数値を区別した。製品変更、cloud build、push、署名、端末操作はなし。
+
+- **採用価値のある指摘:** `mvk_hot_cache.cpp.in`のcold生成はVkPipelineCacheインスタンス単位の`_shaderCompileLock`で直列化される。プロセス全体で常に1個という意味ではない。現在のready-hitはこのcompile lockを取らず、同じmoduleでも別のcold生成中に利用できる。DXVK単体fixtureの独立shader組通過は、下層Metalまでの独立性を証明しない。
+- **保存内容:** 固定writeDataは変換設定・result metadata・圧縮MSLを保存し、readData→addShaderLibrary→constructorは解凍してnewMTLLibraryを呼ぶ。MTLLibrary／完成PSO／macro variantsをそのまま永続化しているわけではない。OS内cacheがこの呼出を短縮する可能性は残る。起動4は304,869 bytesを入力済みなので、保存完了logなしを「cacheが0 bytes」と言い換えない。
+- **device monitor:** getMTLFunctionはdeviceのObjective-C monitorを保持してfunction specialization完了を待つ。一方newLibraryWithSource側のmonitorは非同期API発行を囲み、完了待ち全体を必ず保持するわけではない。直接のmonitor取得待ちは現logで分離できず、影響は追加観測対象。
+
+起動4の既存集計を再利用した追加比較（時間は呼出・待機を含むhost spanで、純粋なcompiler CPU時間ではない）：
+
+| 計測 | 件数 | 最大ms | 100ms超 |
+| --- | ---: | ---: | ---: |
+| mvk_msl_wait | 524 | 901.934 | 182 |
+| mvk_specialize_wait | 6,475 | 23.326 | 0 |
+| mvk_pipeline_wait | 3,369 | 186.029 | 1 |
+| mvk_dispatch_wait | 10,368 | 4.340 | 0 |
+| mvk_dispatch_block | 10,368 | 12.343 | 0 |
+| image_acquire | 56,330 | 3.414 | 0 |
+| fence_wait | 310,037 | 44.520 | 0 |
+
+この差はMSL生成完了待ちと、それを必須描画へ伝える共有待ちを優先する根拠。device monitor取得待ち、未計測GPU区間、guest CPUを除外する証拠ではない。990ms gapの時間重なりは有力だが、thread role／要求依存関係がないため先読み起因の完全な因果鎖とは呼ばない。QoSによる連鎖待ちは候補であり、実際のEコア配置や969msの内訳を測定したことにはならない。
+
+[MoltenVK issue #2863](https://github.com/KhronosGroup/MoltenVK/issues/2863)は実在するが、現時点でopenの提案。別revision／M3 Pro／RPCS3で各1回の比較で、作者自身がCTSとcache保存中の並行生成を未検証と記載する。提案diffはmodule lock中にgetShaderLibrary→new MVKShaderLibraryを呼ぶため、現在の同module ready-hitをcold compile待ちに戻し得る。無修正のbackportを採用しない。lookup／publication／dirtyとserialized-sizeの整合、converter共有、merge／snapshot、同keyと異key、失敗・寿命の契約が必要。別module並列化のCPU負荷・peak memoryも未測定。
+
+**計測提案の補正:** `shaderLibraryFromCache`はfind成功で増えるが、ディスク復元由来と同セッション内作成済みlibraryを区別せず、完成PSO命中率ではない。`queue.mtlCommandBufferExecution`はcommit前のtimestampからcompletion callbackまでで、GPU実行だけの時間ではない。累積maxを5秒窓のmaxとして差分出力もしない。標準performance trackingはdeviceの`_perfLock`を使うため、常時有効化の負荷を無視しない。frame/work枠を増やしても欠落ゼロを保証せず、roleだけで因果を100%確定しない。GCD再利用threadには仕事単位のrole／依存IDと復元が必要。
+
+**保存区間の説明を明確化:** save_write_probeの区間はopenからではなく、最初に観測できたwrite開始からcloseまで。open前、openから初回write前、close後は含まず、write間のCPU処理・idle・並行処理は含み得る。serialization全体、manual／auto、thumbnail取得を特定できない。97件中64件に重なることを原因割合66%としたり、重複と欠落を無視して97-64-6を別原因件数としたりしない。thermal=0／headroom十分は今回の圧迫を支持しないが、全時点の周波数低下やguest heap不足を証明的に排除しない。pool回収／縮小counterは既に222観測全て0。
+
+[AppleのQoS資料](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/EnergyGuide-iOS/PrioritizeWorkWithQoS.html)は複数lock越しのpromotionの制限を示す。[Metal binary archive資料](https://developer.apple.com/documentation/metal/creating-binary-archives-from-device-built-pipeline-state-objects)はspecialized functionsの端末上保存にiOS18以降を要求し、OS更新によるbinary無効化も説明する。API要件は満たせる候補だが、現在のMSL生成待ちをどこまで省けるかは生成順・関数取得・descriptor接続を含む設計と実Metal比較が必要。PSO保存だけで902ms待ちが消えるとはしない。
+
+次はClaudeの独立reviewも合わせ、(1)最小のrole／要求依存・cache段階・欠落理由計測、(2)ready-hitを保持したcold共有待ちの縮小と必須要求優先、(3)描画を止めないsnapshot／保存条件、の順で候補を絞る。先読みyieldは開始済みcompiler callを中断しない。foreground checkpointはatomic renameだけではlatency安全や強制終了時の保存を保証しない。MTLBinaryArchiveは次段の候補に残す。
+
+## 2026-11-15 追記：録画前からの停止と先読みの待ち構造を追加確認
+
+本人より「録画前からかなり引っ掛かる」「地形やevent等を初めて読み込む時のように感じる」「初めてでなく時間経過後にもありそう」「まだ快適に遊べる段階ではない」と補足。録画の追加負荷があり得ることと、録画が発生に必須でないことを分ける。scene識別／cache key別hit／missは現logにないため、同じ対象の再生成・再読込みの実証とはしない。平均FPSの最大値ではなく、操作中の長いframe gapの頻度と長さを優先する。
+
+固定DXVKの`D3D9ShaderModuleSet`、`DxvkPipelineManager`、graphics instance一覧とadapterを確認。作成済み要素のlookup／保持は存在し、この経路に経過時間による削除は見つからない。shader組と描画state／render passが同じことを条件に再利用するので、「同じ場所を見た」だけでは同一pipelineだったと証明できない。他のtexture／game objectのstreaming寿命は別であり、全cacheが消えないという主張ではない。
+
+現行adapter後の実`getPipelineHandle`／`compilePipeline`／`createInstance`／`findInstance`と実instance classを、既存fixture generatorから取り出した。自作driverでvariant2のcompileをgateで止め、同shader組の未作成variant3、完成済みvariant1、独立shader組のvariant3を要求。Graphics／Computeの両方で、未作成variant3だけはdriverへ達せず待ち、完成済みhitと独立shader組はgate解除前に完了した。解除後は全handle一致、各variant作成1回。gateは250msの人工待ちであり、iPhoneの性能値ではない。4元入力の正規化SHA256はadapterのpinに一致。通常のbounded C++ compile／実行2種だけを行い、既存stress全体やprivate compileは繰り返していない。
+
+実機logのcompile-lock待ちが必須描画か先読み同士かを個々に識別するには、caller roleとkey別in-flight情報が必要。修正候補は、先読みが次のvariantを取る前に必須要求を優先する方法、または異なるstateの生成待ちを分ける方法。開始済みMetal compiler callを後から中断できるとはしない。後者はpipeline生成内部の可変状態・共有cache・同key二重作成・失敗／例外・解放／終了時の所有権を証明してから採用する。単にmutexを除く変更はしない。同じvariant自体の初回コンパイル時間は、この分離だけで消えるわけではない。
+
+新probeのsource／結果は`local/performance-20261115/pipeline-wait-probe/probe.py`／`result.json`。今回も製品変更・Mac build・push・署名・端末更新は0。本人はUSB取り外しを希望し、PCに保存済み4ログで続行できることを伝えた。端末通信は終了済み、直近1ログは次の接続時に終了状態を確認して回収する。
+
+## 2026-11-15 01:10：build6の実機stutter報告と終了済み4起動の解析
+
+本人は画質を変え、一部で画面録画も使ったと報告。「前より増えた」は比較仮説として保持し、録画だけのせいにも、build6の回帰確定にもしていない。現在のappは画面録画のオン／オフを記録していない。起動時のresolution overrideと項目数は残るが、全画質tuple・同じscene・録画有無は復元不能。`IOS_PERF`の平均FPSだけでは瞬間停止を評価しない。
+
+既存USB信頼のみでbuild6を確認。更新完了後5起動のcatalogを取得し、直近起動は新しい保存・終了確認待ちとした。それ以前の4ログは取得前後のsize／mtime／birthtime不変、計1,759,588 bytes。端末書込み・元game／save／IPA変更なし。Rootローカルの`private/iphone-build6-20261115-0102/collection-prior.json`、`analysis-01.json`〜`analysis-04.json`、`temporal-prior.json`に対応を保持。既存`analyze-frame-timing.py`を使用し、invalid／duplicate timing recordは各0。過去の約4.44GBログは再取得しない。
+
+| 起動 | 計測区間（約） | 起動時解像度override | 追加cap | 100ms超のframe gap | 最大gap |
+| --- | ---: | --- | --- | ---: | ---: |
+| 1 | 6分15秒 | 956×440 | 60 | 63 | 18.879秒 |
+| 2 | 3分45秒 | 782×360 | 60／0 | 10 | 0.926秒 |
+| 3 | 15秒 | 782×360 | 60／0 | 0 | 0.056秒 |
+| 4 | 19分03秒 | 956×440 | 60 | 100 | 7.187秒 |
+
+これはlogのmonotonic timing区間で、全てを操作中gameplayとは呼ばない。startup／menu／loadingを含み、解像度overrideはswapchain寸法や他の画質設定を表さない。区間境界にかかる5秒histogramはend時刻で分類した。起動4では0〜120秒に9、120〜600秒に64、それ以降にも27の100ms超gapがある。10分以降にも残るため「最初だけ待てば必ず解決」とは言えない。
+
+### 描画生成と待ち
+
+起動2は100ms超のsampled gap10件中9件がgraphics pipeline／compile-lock／Metal MSL生成のいずれかと重なった。起動4はsampled97件中64件（histogramの100件全てをsampledできてはいない）。起動4のsamplingはbusyで1件、固定容量で294件を落としており、重なりのないsampleも原因なしとは扱わない。各種のnested／並行時間は加算しない。
+
+起動4の約751.942秒からのgap990.256msでは、同threadのPresent973.729ms／submission待ち973.672ms、別threadのgraphics compile-lock待ちの区間和968.562ms／MSL待ちの区間和903.496msが重なる。約772.821秒にもgap369.107ms、同threadのsubmission待ち362.984msと別threadのcompile-lock待ち350.308msがある。別threadのoverlapだけで因果を断定しないが、描画側の実際の待ちも観測しており、必須描画に必要なpipelineの準備待ちが有力。`prepare_dxvk.py`では未作成variantがshader tuple単位のcompile mutexを取り、先読み側も同じmutexを使う。計測はmutex取得待ちと実vkCreateGraphicsPipelinesを分離している。旧build5からの待ち方の全回帰を証明したものではない。
+
+起動4のD3D shader-create自体は最大0.692ms、shader-moduleは1.746ms、ReadFileは7.56ms、ReadFileExは1.46ms。現ログからguest shader生成関数やread syscallを主犯として全面置換する優先度は低い。ただしguest側のscene準備／serializationなど未計測時間を除外したことにはならない。
+
+### cache・保存・温度
+
+- Vulkan cache入力は起動1〜3が0 bytes、起動3で304,869 bytesの保存成功（6.618ms）、起動4で同bytesをdriverへ渡した。cache hit数は不明。DXVK state cacheは別系統で、起動1は2,389 entries／679 shader tuples、起動4は2,706／701を読み、compiler workerは3。Vulkan cacheが全起動で壊れている、逆に十分warmである、のどちらとも断定しない。製品codeのcheckpointはbackground遷移時のみで、今回の起動1／2／4には完了記録がない。再利用が十分成立しない可能性は調査候補。強制終了・取消・未実行・取得失敗を現logだけで区別できない。
+- 起動4のsave候補handle区間は7回（最大539.730ms）。6回が338.031〜605.118msのsampled gapと重なる。write syscall406回は最大0.696ms、総和8.781msであり、file-writeだけで数百ms停止を説明できない。handle区間はidleを含み、保存前のserializationと後のdurabilityは含まない。manual／autoの判別もできない。autosaveを勝手に無効化せず、save-preparation側の候補として保持。
+- 起動4は222観測全てthermal=0／low_power=0／foreground=1／memory_warning=0。OSの追加headroomは最小4,013.326MiB（約3.92GiB）。pool回収・縮小counterも全観測0。これは内部guest heapの余裕や温度／GPU utilizationの直接測定ではない。起動1／2にはthermal=1もあるが2／3はない。今回の停止を重度thermal／OSメモリ圧迫だけで説明する証拠はない。
+- 前回のdescriptor pool不足に伴う大量warningは、今回の終了済み4ログで該当0。これは実際のlog側の改善であり、FPS改善率の証明ではない。復帰時GPU gateはbuild6から撤回済みなので今回の原因候補へ混ぜない。
+
+### 次の切り分けと制限
+
+まず直近1ログを終了確認後に回収し、録画していない同save／同画質の短い走行を必要になった時だけ比較する。修正候補は(1)cacheの保存／再利用を実際に成立させる経路と理由の計測、(2)必須variantが先読み中の別variantを待つ経路の分離／優先制御、(3)保存準備区間。threadを闇雲に増やす、未完成描画を飛ばす、syncを外す変更は採らない。今回変更されたfloat互換経路もcold compileのkey／生成コストを調べる対象だが、因果未確認のまま描画修正を戻さない。画質・scene・録画・cache状態が異なるため、build5の部分prefixとbuild6の全logから回帰率や改善率を計算しない。新しい製品実装／テスト／Mac build／push／署名／端末更新は行っていない。
+
 ## 2026-11-14 build6：Mac最終検証と端末更新を完了
 
 [Mac build20](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af873d290e83b09c4fa38fc)、公開commit `6e0f5bafc879aabbbaf73d36c526d664f8296396`で成功。実ログは`local/codemagic-title20/build.log`、個別Metal結果は同じ場所の`metal-alias-checks.zip`。34組のunit fixtureは計82件中80成功、2件はWindows固有cross-compilerと未構成host FFmpegの既定skip。Mac実行に必須の検査をskip扱いにはしていない。iPhoneOS Metal shader8件が全てcompileし、さらにMac GPUで実行時入力を使う20個のfast／safe数値を読戻して独立期待値と照合した。今回のcomponent導入後は最初の再compileで準備完了となった。

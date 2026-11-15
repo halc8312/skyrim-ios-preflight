@@ -26,7 +26,12 @@ static UIBackgroundTaskIdentifier cacheBackgroundTask;
 static uint64_t cacheCheckpointTicket;
 static BOOL cacheCheckpointQueued;
 
-static void finishCacheCheckpoint(uint64_t ticket, BOOL cancel) {
+// Finish source: 0 completed, 1 resumed, 2 background allowance expired.
+static void finishCacheCheckpoint(uint64_t ticket, unsigned source) {
+    const BOOL cancel = source != 0;
+    fprintf(stderr, "IOS_PIPE_CACHE event=finish ticket=%llu source=%u current=%u task_valid=%u\n",
+        (unsigned long long)ticket, source, (unsigned)(ticket == cacheCheckpointTicket),
+        (unsigned)(cacheBackgroundTask != UIBackgroundTaskInvalid));
     if (cancel) skyrim_pipeline_checkpoint_cancel(ticket);
     if (ticket != cacheCheckpointTicket) return;
     UIBackgroundTaskIdentifier task = cacheBackgroundTask;
@@ -36,24 +41,31 @@ static void finishCacheCheckpoint(uint64_t ticket, BOOL cancel) {
 }
 
 static void preparePipelineCacheCheckpoint(void) {
-    if (cacheBackgroundTask != UIBackgroundTaskInvalid) return;
+    if (cacheBackgroundTask != UIBackgroundTaskInvalid) {
+        fprintf(stderr, "IOS_PIPE_CACHE event=prepare ticket=%llu task_valid=1 reused=1\n", (unsigned long long)cacheCheckpointTicket);
+        return;
+    }
     const uint64_t ticket = skyrim_pipeline_checkpoint_begin();
     cacheCheckpointTicket = ticket;
     cacheBackgroundTask = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"Pipeline cache" expirationHandler:^{
-        finishCacheCheckpoint(ticket, YES);
+        finishCacheCheckpoint(ticket, 2);
     }];
+    fprintf(stderr, "IOS_PIPE_CACHE event=prepare ticket=%llu task_valid=%u reused=0\n",
+        (unsigned long long)ticket, (unsigned)(cacheBackgroundTask != UIBackgroundTaskInvalid));
     if (cacheBackgroundTask == UIBackgroundTaskInvalid) {
         skyrim_pipeline_checkpoint_cancel(ticket); return;
     }
 }
 
 static void checkpointPipelineCache(void) {
-    if (cacheBackgroundTask == UIBackgroundTaskInvalid || cacheCheckpointQueued) return;
+    unsigned reason = cacheBackgroundTask == UIBackgroundTaskInvalid ? 1 : cacheCheckpointQueued ? 2 : 0;
+    fprintf(stderr, "IOS_PIPE_CACHE event=queue ticket=%llu reason=%u\n", (unsigned long long)cacheCheckpointTicket, reason);
+    if (reason) return;
     cacheCheckpointQueued = YES;
     const uint64_t ticket = cacheCheckpointTicket;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         skyrim_pipeline_checkpoint_save(ticket);
-        dispatch_async(dispatch_get_main_queue(), ^{ finishCacheCheckpoint(ticket, NO); });
+        dispatch_async(dispatch_get_main_queue(), ^{ finishCacheCheckpoint(ticket, 0); });
     });
 }
 static int renderWidth, renderHeight;
@@ -455,7 +467,7 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 - (void)message:(NSString *)text {self.notice.text=text;self.noticeUntil=mobileTime()+7;self.notice.hidden=NO;}
 - (void)resignActive:(NSNotification *)note { [self clearInput]; skyrim_ios_metrics_active(0); preparePipelineCacheCheckpoint(); }
-- (void)becomeActive:(NSNotification *)note { finishCacheCheckpoint(cacheCheckpointTicket, YES); skyrim_ios_metrics_active(1); }
+- (void)becomeActive:(NSNotification *)note { finishCacheCheckpoint(cacheCheckpointTicket, 1); skyrim_ios_metrics_active(1); }
 - (void)enterBackground:(NSNotification *)note { checkpointPipelineCache(); }
 - (void)clearInput {
     self.lookFinger=nil;

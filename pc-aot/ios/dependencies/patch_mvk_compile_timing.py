@@ -15,6 +15,7 @@ DISPATCH = b'\tdispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_
 OBSERVED_DISPATCH = b'''\t// Numeric host observations only. The asynchronous block captures scalar
 \t// timestamps; it must not inspect this after the original block returns.
 \tconst uint64_t iosCompileStarted = skyrim_perf_now_ns();
+\tconst SkyrimPerfContext iosWorkContext = skyrim_perf_context_get();
 \tconst auto& iosStats = getPerformanceStats().shaderCompilation;
 \tconst unsigned iosCompileKind =
 \t\t_pPerformanceTracker == &iosStats.mslCompile ? SKYRIM_PERF_MVK_MSL_WAIT :
@@ -23,9 +24,9 @@ OBSERVED_DISPATCH = b'''\t// Numeric host observations only. The asynchronous bl
 \t\tSKYRIM_PERF_MVK_OTHER_WAIT;
 \tdispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
 \t\tconst uint64_t iosDispatchStarted = skyrim_perf_now_ns();
-\t\tskyrim_perf_interval(SKYRIM_PERF_MVK_DISPATCH_WAIT, iosCompileStarted, iosDispatchStarted, 0, 0);
+\t\tskyrim_perf_interval_context(SKYRIM_PERF_MVK_DISPATCH_WAIT, iosCompileStarted, iosDispatchStarted, 0, 0, iosWorkContext);
 \t\t@autoreleasepool { block(); }
-\t\tskyrim_perf_end(SKYRIM_PERF_MVK_DISPATCH_BLOCK, iosDispatchStarted, 0);
+\t\tskyrim_perf_interval_context(SKYRIM_PERF_MVK_DISPATCH_BLOCK, iosDispatchStarted, skyrim_perf_now_ns(), 0, 0, iosWorkContext);
 \t});'''
 END = b'\taddPerformanceInterval(*_pPerformanceTracker, _startTime);'
 OBSERVED_END = END + b'\n\tskyrim_perf_end(iosCompileKind, iosCompileStarted, 0);'

@@ -72,6 +72,23 @@ class FrameTimingAnalysisTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):analyzer.summarize([valid,timing(end=10)])
         self.assertEqual(analyzer.summarize([stalls([],1,2)])['dropped_full'],2)
 
+    def test_context_partitions_and_v1_v2_spans_are_not_double_counted(self):
+        bins=[0]*20;bins[14]=2
+        root=timing('mvk_msl_wait',bins=bins)
+        part=root.replace('IOS_TIMING ','IOS_TIMING_CONTEXT ')+' role=1 source=1 result=0'
+        old=stalls([(0,1,100000000,300000000,0,0)])
+        new=stalls([(21,2,100000000,300000000,0,0,2,3,0)]).replace('schema=1','schema=2').replace('estimated_end spans=','estimated_end,role,source,result spans=')
+        r=analyzer.summarize([root,part,part,old,new])
+        self.assertEqual(r['invalid_records'],0)
+        self.assertEqual(r['kinds']['mvk_msl_wait']['samples'],2)
+        self.assertEqual(len(r['work_contexts']),1)
+        self.assertEqual(r['work_contexts'][0]['over_100ms'],2)
+        self.assertEqual(r['duplicate_context_records'],1)
+        span=r['longest_sampled_frame_gaps'][0]['overlaps'][0]
+        self.assertEqual((span['role'],span['source'],span['result']),(2,3,0))
+        for bad in (part.replace('role=1','role=99'),new.replace(',2,3,0',',2,9,0')):
+            self.assertEqual(analyzer.summarize([bad])['invalid_records'],1)
+
     def test_cli_bounds_and_read_only_output(self):
         with tempfile.TemporaryDirectory(prefix='frame-analysis-') as tmp:
             path=Path(tmp)/'authored.log';content=timing(bins=[1]+[0]*19)+'\n'

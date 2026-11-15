@@ -7,6 +7,7 @@
 #include <vector>
 
 namespace skyrim {
+struct CacheCheckpointReport;
 /* Owns one internally-synchronized Vulkan cache. Optional disk state is an
  * acceleration hint only. No cache failures are converted into game success. */
 class PipelineCache {
@@ -26,7 +27,7 @@ private:
     void checkpoint(uint64_t ticket);
     bool validPayload(const std::vector<uint8_t>& bytes) const;
     std::vector<uint8_t> load() const;
-    bool save(const std::vector<uint8_t>& bytes, uint64_t ticket) const;
+    bool save(const std::vector<uint8_t>& bytes, uint64_t ticket, CacheCheckpointReport& report) const;
     VkDevice device_;
     PFN_vkGetPipelineCacheData getData_;
     PFN_vkDestroyPipelineCache destroy_;

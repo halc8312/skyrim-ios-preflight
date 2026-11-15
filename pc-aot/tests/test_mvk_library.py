@@ -45,7 +45,16 @@ def fixture(source, converter, codec):
     template = (ROOT/'tests/native/mvk_library_fixture.cpp.in').read_text()
     for anchor in ('@TYPES@', '@CODEC@', '@MACRO@', '@METHODS@'):
         assert template.count(anchor) == 1
-    return template.replace('@TYPES@', types).replace('@CODEC@', compressor).replace('@MACRO@', macro).replace('@METHODS@', body+constructor)
+    return '#include "performance_metrics.h"\n' + template.replace('@TYPES@', types).replace('@CODEC@', compressor).replace('@MACRO@', macro).replace('@METHODS@', body+constructor)
+
+
+def metrics_object(tmp, flags):
+    obj = tmp/'metrics.o'
+    cc = os.environ.get('CC','cc')
+    sanitizers = [f for f in flags if f.startswith('-fsanitize=') or f=='-fno-omit-frame-pointer']
+    subprocess.run([cc,'-std=c11','-D_POSIX_C_SOURCE=200809L',*sanitizers,'-c',
+        str(ROOT/'ios/runtime-port/performance_metrics.c'),'-o',str(obj)],check=True,timeout=45)
+    return obj
 
 
 class MoltenLibraryTests(unittest.TestCase):
@@ -85,7 +94,7 @@ class MoltenLibraryTests(unittest.TestCase):
             cpp = tmp/'fixture.cpp'; cpp.write_text(fixture(source, converter/'SPIRVToMSLConverter.h', codec))
             flags = ['-std=c++17', '-O2', '-pthread', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function']
             if os.environ.get('SKYRIM_TEST_SANITIZERS') == '1': flags += ['-fsanitize=address,undefined', '-fno-omit-frame-pointer']
-            subprocess.run([cxx, *flags, str(cpp), '-o', str(tmp/'fixture')], check=True, timeout=60)
+            subprocess.run([cxx, *flags, str(cpp), str(metrics_object(tmp, flags)), '-I', str(ROOT/'ios/runtime-port'), '-o', str(tmp/'fixture')], check=True, timeout=60)
             result = subprocess.run([str(tmp/'fixture')], capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stdout+'\n'+result.stderr)
             self.assertIn('ownership=PASS parallel_publication=PASS failure_policy=PASS', result.stdout)
@@ -96,9 +105,12 @@ class MoltenLibraryTests(unittest.TestCase):
         cxx = shutil.which(os.environ.get('CXX', 'c++'))
         if not cxx: self.skipTest('C++ compiler required')
         candidate = fixture(source, converter/'SPIRVToMSLConverter.h', codec)
-        before = adapter.BORROWED_PAYLOAD.decode()
+        before = adapter.BORROWED_PAYLOAD.decode().replace('\tcompileLibrary(msl, specializationMacroDef);',
+            '\tSkyrimPerfContextScope iosSource(SKYRIM_PERF_CONTEXT_KEEP, specializationMacroDef ? SKYRIM_PERF_SOURCE_MACRO : SKYRIM_PERF_SOURCE_RESTORE);\n\tcompileLibrary(msl, specializationMacroDef);')
         self.assertEqual(candidate.count(before), 1)
-        baseline = candidate.replace(before, adapter.CONSTRUCTOR_PAYLOAD.decode())
+        baseline_body = adapter.CONSTRUCTOR_PAYLOAD.decode().replace('\tcompileLibrary(msl, specializationMacroDef);',
+            '\tSkyrimPerfContextScope iosSource(SKYRIM_PERF_CONTEXT_KEEP, specializationMacroDef ? SKYRIM_PERF_SOURCE_MACRO : SKYRIM_PERF_SOURCE_RESTORE);\n\tcompileLibrary(msl, specializationMacroDef);')
+        baseline = candidate.replace(before, baseline_body)
         with tempfile.TemporaryDirectory(prefix='mvk-payload-comparison-') as tmp:
             tmp = Path(tmp)
             for name, code, retained in [('baseline', baseline, 1), ('candidate', candidate, 0)]:
@@ -106,7 +118,7 @@ class MoltenLibraryTests(unittest.TestCase):
                 flags = ['-std=c++17', '-O2', '-pthread', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function',
                          '-DEXPECT_VARIANT_PAYLOAD_RETAINED='+str(retained)]
                 if os.environ.get('SKYRIM_TEST_SANITIZERS') == '1': flags += ['-fsanitize=address,undefined', '-fno-omit-frame-pointer']
-                subprocess.run([cxx, *flags, str(cpp), '-o', str(tmp/name)], check=True, timeout=60)
+                subprocess.run([cxx, *flags, str(cpp), str(metrics_object(tmp, flags)), '-I', str(ROOT/'ios/runtime-port'), '-o', str(tmp/name)], check=True, timeout=60)
                 result = subprocess.run([str(tmp/name)], capture_output=True, text=True, timeout=20)
                 self.assertEqual(result.returncode, 0, result.stdout+'\n'+result.stderr)
                 self.assertIn('largest_variant_payload_bytes='+str(retained*16*1024*1024), result.stdout)

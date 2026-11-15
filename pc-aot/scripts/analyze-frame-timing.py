@@ -17,7 +17,7 @@ KINDS = ('frame_gap', 'present_host', 'pacer', 'hlsl', 'graphics_pipeline',
          'image_acquire', 'queue_present', 'queue_submit', 'fence_wait', 'submission_wait',
          'mvk_msl_wait', 'mvk_specialize_wait', 'mvk_pipeline_wait', 'mvk_other_wait',
          'mvk_dispatch_wait', 'mvk_dispatch_block', 'write_file', 'write_file_ex',
-         'save_candidate_write', 'save_candidate_write_ex', 'save_candidate_window')
+         'save_candidate_write', 'save_candidate_write_ex', 'save_candidate_window', 'mvk_cold_lock_wait')
 U64 = (1 << 64) - 1
 UPPER = (0, 1000000, 2000000, 4000000, 8000000, 12000000, 16666667,
          20000000, 25000000, 33333334, 40000000, 50000000, 66666667,
@@ -68,8 +68,10 @@ def timing(text):
 def stalls(text):
     f = fields(text, set(('schema', 'threshold_ns', 'count', 'dropped_busy',
                          'dropped_full', 'fields', 'spans')))
-    if f['schema'] != '1' or unsigned(f['threshold_ns']) != THRESHOLD or \
-            f['fields'] != 'kind,thread,start_ns,end_ns,failed,estimated_end':
+    schema = unsigned(f['schema'])
+    layout = 'kind,thread,start_ns,end_ns,failed,estimated_end'
+    if schema == 2: layout += ',role,source,result'
+    if schema not in (1,2) or unsigned(f['threshold_ns']) != THRESHOLD or f['fields'] != layout:
         raise ValueError('unknown schema')
     count = unsigned(f['count'])
     if count > 16:
@@ -77,13 +79,16 @@ def stalls(text):
     result = []
     for record in f['spans'].split(';') if f['spans'] else []:
         v = [unsigned(item) for item in record.split(',')]
-        if len(v) != 6:
+        if len(v) != (6 if schema == 1 else 9):
             raise ValueError('invalid span')
-        kind, thread, start, end, failed, estimated = v
+        kind, thread, start, end, failed, estimated = v[:6]
+        role, source, wait_result = v[6:] if schema == 2 else (0,0,0)
+        if role > 2 or source > 3 or wait_result > 2:
+            raise ValueError('invalid work context')
         if kind >= len(KINDS) or not start or end < start or end-start < THRESHOLD or failed > 1 or estimated > 1:
             raise ValueError('invalid span')
         result.append(dict(kind=KINDS[kind], thread=thread, start=start, end=end,
-                           failed=failed, estimated_end=estimated))
+                           failed=failed, estimated_end=estimated, role=role, source=source, result=wait_result))
     if len(result) != count or sum(s['kind'] == 'frame_gap' for s in result) > 4 or \
             sum(s['kind'] != 'frame_gap' for s in result) > 12:
         raise ValueError('span count mismatch')
@@ -106,11 +111,29 @@ def percentile(bins, percent):
 
 def summarize(lines):
     aggregate = {}
+    context_rows = []
     spans = []
     invalid = duplicate = dropped_busy = dropped_full = timing_records = stall_records = 0
     last_end = 0
     current_kinds = set()
     for line in lines:
+        if 'IOS_TIMING_CONTEXT ' in line:
+            try:
+                raw = line.split('IOS_TIMING_CONTEXT ',1)[1]
+                base, separator, suffix = raw.partition(' role=')
+                if not separator: raise ValueError('missing context')
+                c = {k:unsigned(v) for k,v in fields('role='+suffix, {'role','source','result'}).items()}
+                if c['role']>2 or c['source']>3 or c['result']>2: raise ValueError('invalid context')
+                row = timing(base)
+                if row['kind'] not in ('mvk_msl_wait','graphics_compile_wait','compute_compile_wait','mvk_cold_lock_wait'):
+                    raise ValueError('unexpected context kind')
+                if (row['kind']=='mvk_msl_wait' and c['result']) or (row['kind']!='mvk_msl_wait' and c['source']) or (row['kind']=='mvk_cold_lock_wait' and c['result']):
+                    raise ValueError('noncanonical context')
+                if len(context_rows) >= MAX_SPANS: raise RuntimeError('context record bound exceeded')
+                context_rows.append((row,c))
+            except ValueError:
+                invalid += 1
+            continue
         marker = 'IOS_TIMING ' if 'IOS_TIMING ' in line else 'IOS_STALL ' if 'IOS_STALL ' in line else None
         if marker is None:
             continue
@@ -177,18 +200,39 @@ def summarize(lines):
                 relation = 'handle_lifetime'
             overlap.append(dict(kind=s['kind'],thread_relation=relation, overlap_ms=common/1e6,
                 duration_ms=(s['end']-s['start'])/1e6, estimated_endpoint=bool(s['estimated_end']),
-                failed=bool(s['failed'])))
+                failed=bool(s['failed']), role=s['role'], source=s['source'], result=s['result']))
         overlap.sort(key=lambda s:s['overlap_ms'], reverse=True)
         correlations.append(dict(start_ms_from_first_sample=(f['start']-origin)/1e6,
             duration_ms=(f['end']-f['start'])/1e6, estimated_endpoint=bool(f['estimated_end']),
             overlaps=overlap[:12], additional_overlaps=max(0,len(overlap)-12)))
+    contexts = {}
+    seen_contexts = set()
+    context_duplicates = 0
+    context_last_end = 0
+    for row,c in context_rows:
+        if row['end_ns'] < context_last_end:
+            raise RuntimeError('context clock moved backwards; use one unmodified launch log')
+        context_last_end = row['end_ns']
+        key = (row['kind'], c['role'], c['source'], c['result'])
+        identity = (row['end_ns'], *key)
+        if identity in seen_contexts:
+            context_duplicates += 1
+            continue
+        seen_contexts.add(identity)
+        a = contexts.setdefault(key, dict(kind=key[0], **c, samples=0, over_100ms=0, total_ns=0, max_ns=0))
+        a['samples'] += row['samples']
+        a['over_100ms'] += sum(row['bins'][14:])
+        a['total_ns'] += row['total_ns']
+        a['max_ns'] = max(a['max_ns'], row['max_ns'])
     return dict(schema=1, scope='one launch; host wall time; not GPU time or a causal attribution',
         timing_records=timing_records, stall_records=stall_records, invalid_records=invalid,
+        work_contexts=list(contexts.values()), duplicate_context_records=context_duplicates,
         duplicate_timing_records=duplicate, sampled_spans=len(spans), dropped_busy=dropped_busy,
         dropped_full=dropped_full, kinds=kinds, longest_sampled_frame_gaps=correlations,
         caveats=['Histogram windows may straddle concurrent updates; percentiles are bucket ranges.',
                  'Slow spans are incomplete samples; absence of overlap does not exclude a cause.',
                  'Overlapping or nested durations must not be added together.',
+                 'Context histograms partition existing timings; they are not additional work. Role identifies the requester, not the owner of a contended lock.',
                  'Save candidates are filename-classified, not proof of autosave; their handle windows include idle time and exclude earlier serialization and later durability.',
                  'Use a separate log for each launch; anonymous thread ordinals restart per process.'])
 

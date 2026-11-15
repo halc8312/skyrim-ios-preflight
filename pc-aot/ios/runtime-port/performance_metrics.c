@@ -22,13 +22,46 @@ static const char *const names[SKYRIM_PERF_KIND_COUNT] = {
     "mvk_msl_wait", "mvk_specialize_wait", "mvk_pipeline_wait", "mvk_other_wait",
     "mvk_dispatch_wait", "mvk_dispatch_block",
     "write_file", "write_file_ex", "save_candidate_write", "save_candidate_write_ex",
-    "save_candidate_window"
+    "save_candidate_window", "mvk_cold_lock_wait"
 };
 typedef struct PerfAtomic {
     _Atomic uint64_t buckets[SKYRIM_PERF_BUCKET_COUNT];
     _Atomic uint64_t total_ns, max_ns, failures, sleep_calls;
 } PerfAtomic;
 static PerfAtomic counters[SKYRIM_PERF_KIND_COUNT];
+/* 12 MSL (role/source), 18 DXVK waits (role/result), 3 cold-lock waits.
+ * Fixed storage, no new synchronization or sampling in the recording path. */
+#define CONTEXT_COUNT 33
+static PerfAtomic context_counters[CONTEXT_COUNT];
+static _Thread_local SkyrimPerfContext work_context;
+SkyrimPerfContext skyrim_perf_context_get(void) { return work_context; }
+SkyrimPerfContext skyrim_perf_context_set(SkyrimPerfContext next) {
+    SkyrimPerfContext old = work_context;
+    if (next.role > SKYRIM_PERF_ROLE_PREFETCH) next.role = 0;
+    if (next.source > SKYRIM_PERF_SOURCE_MACRO) next.source = 0;
+    if (next.result > SKYRIM_PERF_WAIT_CREATE) next.result = 0;
+    work_context = next;
+    return old;
+}
+static unsigned context_index(unsigned kind, SkyrimPerfContext c) {
+    if (c.role > 2 || c.source > 3 || c.result > 2) return CONTEXT_COUNT;
+    if (kind == SKYRIM_PERF_MVK_MSL_WAIT) return c.role * 4 + c.source;
+    if (kind == SKYRIM_PERF_GRAPHICS_COMPILE_WAIT) return 12 + c.role * 3 + c.result;
+    if (kind == SKYRIM_PERF_COMPUTE_COMPILE_WAIT) return 21 + c.role * 3 + c.result;
+    if (kind == SKYRIM_PERF_MVK_COLD_LOCK_WAIT) return 30 + c.role;
+    return CONTEXT_COUNT;
+}
+static unsigned context_decode(unsigned index, SkyrimPerfContext *c) {
+    *c = (SkyrimPerfContext){0};
+    if (index < 12) { c->role = index / 4; c->source = index % 4; return SKYRIM_PERF_MVK_MSL_WAIT; }
+    if (index < 30) {
+        unsigned local = (index - 12) % 9;
+        c->role = local / 3; c->result = local % 3;
+        return index < 21 ? SKYRIM_PERF_GRAPHICS_COMPILE_WAIT : SKYRIM_PERF_COMPUTE_COMPILE_WAIT;
+    }
+    c->role = index - 30;
+    return SKYRIM_PERF_MVK_COLD_LOCK_WAIT;
+}
 
 static atomic_flag stall_lock = ATOMIC_FLAG_INIT;
 static SkyrimPerfStall stall_frames[SKYRIM_PERF_STALL_FRAMES];
@@ -53,7 +86,7 @@ static uint64_t anonymous_thread(void) {
 }
 
 static void stall_record(unsigned kind, uint64_t started, uint64_t ended,
-                         int failed, unsigned estimated_end) {
+                         int failed, unsigned estimated_end, SkyrimPerfContext context) {
     if (!started || ended < started || ended - started < SKYRIM_PERF_STALL_THRESHOLD_NS)
         return;
     if (started < atomic_load_explicit(&active_since_ns, memory_order_acquire)) return;
@@ -70,7 +103,8 @@ static void stall_record(unsigned kind, uint64_t started, uint64_t ended,
              * window to the thread that happened to close the handle. */
             spans[(*count)++] = (SkyrimPerfStall){started, ended,
                 kind == SKYRIM_PERF_SAVE_CANDIDATE_WINDOW ? 0 : anonymous_thread(),
-                                                kind, !!failed, estimated_end};
+                                                kind, !!failed, estimated_end,
+                kind == SKYRIM_PERF_SAVE_CANDIDATE_WINDOW ? (SkyrimPerfContext){0} : context};
         } else {
             atomic_fetch_add_explicit(&stall_dropped_full, 1, memory_order_relaxed);
         }
@@ -91,15 +125,13 @@ uint64_t skyrim_perf_bucket_upper_ns(unsigned bucket) {
     return upper_ns[bucket < SKYRIM_PERF_BUCKET_COUNT ? bucket : SKYRIM_PERF_BUCKET_COUNT - 1];
 }
 
-static void histogram_record(unsigned kind, uint64_t elapsed, int failed, uint64_t sleeps) {
-    if (kind >= SKYRIM_PERF_KIND_COUNT) return;
+static void histogram_record(PerfAtomic *p, uint64_t elapsed, int failed, uint64_t sleeps) {
     unsigned lo = 0, hi = SKYRIM_PERF_BUCKET_COUNT - 1;
     while (lo < hi) {
         unsigned mid = lo + (hi - lo) / 2;
         if (elapsed <= upper_ns[mid]) hi = mid;
         else lo = mid + 1;
     }
-    PerfAtomic *p = &counters[kind];
     atomic_fetch_add_explicit(&p->buckets[lo], 1, memory_order_relaxed);
     atomic_fetch_add_explicit(&p->total_ns, elapsed, memory_order_relaxed);
     if (failed) atomic_fetch_add_explicit(&p->failures, 1, memory_order_relaxed);
@@ -109,19 +141,28 @@ static void histogram_record(unsigned kind, uint64_t elapsed, int failed, uint64
         &p->max_ns, &old, elapsed, memory_order_relaxed, memory_order_relaxed)) {}
 }
 
+static void record_histograms(unsigned kind, uint64_t elapsed, int failed,
+                              uint64_t sleeps, SkyrimPerfContext context) {
+    histogram_record(&counters[kind], elapsed, failed, sleeps);
+    unsigned index = context_index(kind, context);
+    if (index < CONTEXT_COUNT) histogram_record(&context_counters[index], elapsed, failed, sleeps);
+}
 void skyrim_perf_record(unsigned kind, uint64_t elapsed, int failed, uint64_t sleeps) {
     if (kind >= SKYRIM_PERF_KIND_COUNT) return;
-    histogram_record(kind, elapsed, failed, sleeps);
+    record_histograms(kind, elapsed, failed, sleeps, work_context);
     if (elapsed >= SKYRIM_PERF_STALL_THRESHOLD_NS) {
         uint64_t now = skyrim_perf_now_ns();
-        if (now > elapsed) stall_record(kind, now - elapsed, now, failed, 1);
+        if (now > elapsed) stall_record(kind, now - elapsed, now, failed, 1, work_context);
     }
 }
-
-void skyrim_perf_interval(unsigned kind, uint64_t started, uint64_t ended, int failed, uint64_t sleeps) {
+void skyrim_perf_interval_context(unsigned kind, uint64_t started, uint64_t ended,
+                                 int failed, uint64_t sleeps, SkyrimPerfContext context) {
     if (kind >= SKYRIM_PERF_KIND_COUNT || !started || ended < started) return;
-    histogram_record(kind, ended - started, failed, sleeps);
-    stall_record(kind, started, ended, failed, 0);
+    record_histograms(kind, ended - started, failed, sleeps, context);
+    stall_record(kind, started, ended, failed, 0, context);
+}
+void skyrim_perf_interval(unsigned kind, uint64_t started, uint64_t ended, int failed, uint64_t sleeps) {
+    skyrim_perf_interval_context(kind, started, ended, failed, sleeps, work_context);
 }
 
 void skyrim_perf_end(unsigned kind, uint64_t started, int failed) {
@@ -148,11 +189,7 @@ int skyrim_perf_stalls_take(SkyrimPerfStalls *out) {
     return 1;
 }
 
-void skyrim_perf_take(unsigned kind, SkyrimPerfWindow *out) {
-    if (!out) return;
-    memset(out, 0, sizeof(*out));
-    if (kind >= SKYRIM_PERF_KIND_COUNT) return;
-    PerfAtomic *p = &counters[kind];
+static void histogram_take(PerfAtomic *p, SkyrimPerfWindow *out) {
     for (unsigned i = 0; i < SKYRIM_PERF_BUCKET_COUNT; ++i)
         out->buckets[i] = atomic_exchange_explicit(&p->buckets[i], 0, memory_order_relaxed);
     out->total_ns = atomic_exchange_explicit(&p->total_ns, 0, memory_order_relaxed);
@@ -161,14 +198,30 @@ void skyrim_perf_take(unsigned kind, SkyrimPerfWindow *out) {
     out->sleep_calls = atomic_exchange_explicit(&p->sleep_calls, 0, memory_order_relaxed);
 }
 
+void skyrim_perf_take(unsigned kind, SkyrimPerfWindow *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (kind < SKYRIM_PERF_KIND_COUNT) histogram_take(&counters[kind], out);
+}
+void skyrim_perf_context_take(unsigned kind, SkyrimPerfContext context, SkyrimPerfWindow *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    unsigned index = context_index(kind, context);
+    if (index < CONTEXT_COUNT) histogram_take(&context_counters[index], out);
+}
+
 void skyrim_perf_log_window(void) {
     static uint64_t previous_ns; // UI reporter is the only reader
     uint64_t end_ns = skyrim_perf_now_ns();
     uint64_t window_ns = previous_ns && end_ns >= previous_ns ? end_ns - previous_ns : 0;
     previous_ns = end_ns;
-    for (unsigned kind = 0; kind < SKYRIM_PERF_KIND_COUNT; ++kind) {
+    for (unsigned slot = 0; slot < SKYRIM_PERF_KIND_COUNT + CONTEXT_COUNT; ++slot) {
+        SkyrimPerfContext context = {0};
+        int attributed = slot >= SKYRIM_PERF_KIND_COUNT;
+        unsigned kind = attributed ? context_decode(slot - SKYRIM_PERF_KIND_COUNT, &context) : slot;
         SkyrimPerfWindow w;
-        skyrim_perf_take(kind, &w);
+        if (attributed) skyrim_perf_context_take(kind, context, &w);
+        else skyrim_perf_take(kind, &w);
         uint64_t count = 0;
         for (unsigned i = 0; i < SKYRIM_PERF_BUCKET_COUNT; ++i) count += w.buckets[i];
         if (!count && !w.total_ns && !w.max_ns && !w.failures && !w.sleep_calls) continue;
@@ -176,7 +229,8 @@ void skyrim_perf_log_window(void) {
          * The fixed histogram schema is documented; no shader names or bytes. */
         char line[1024];
         int used = snprintf(line, sizeof(line),
-            "IOS_TIMING schema=1 approximate_window=1 end_ns=%llu window_ns=%llu kind=%s samples=%llu total_ns=%llu max_ns=%llu failures_known=%u failures=%llu sleep_calls=%llu bins=",
+            "%s schema=1 approximate_window=1 end_ns=%llu window_ns=%llu kind=%s samples=%llu total_ns=%llu max_ns=%llu failures_known=%u failures=%llu sleep_calls=%llu bins=",
+            attributed ? "IOS_TIMING_CONTEXT" : "IOS_TIMING",
             (unsigned long long)end_ns, (unsigned long long)window_ns,
             names[kind], (unsigned long long)count, (unsigned long long)w.total_ns,
             (unsigned long long)w.max_ns,
@@ -192,6 +246,12 @@ void skyrim_perf_log_window(void) {
             if (n < 0 || (size_t)n >= sizeof(line) - (size_t)used) { used = -1; break; }
             used += n;
         }
+        if (attributed && used >= 0) {
+            int n = snprintf(line + used, sizeof(line) - (size_t)used,
+                " role=%u source=%u result=%u", context.role, context.source, context.result);
+            if (n < 0 || (size_t)n >= sizeof(line) - (size_t)used) used = -1;
+            else used += n;
+        }
         if (used >= 0 && (size_t)used + 2 <= sizeof(line)) {
             line[used++] = '\n'; line[used] = 0; fputs(line, stderr);
         }
@@ -203,16 +263,16 @@ void skyrim_perf_log_window(void) {
          * five-second reporting cadence. Numeric spans contain no game data. */
         char line[3072];
         int used = snprintf(line, sizeof(line),
-            "IOS_STALL schema=1 threshold_ns=%llu count=%u dropped_busy=%llu dropped_full=%llu fields=kind,thread,start_ns,end_ns,failed,estimated_end spans=",
+            "IOS_STALL schema=2 threshold_ns=%llu count=%u dropped_busy=%llu dropped_full=%llu fields=kind,thread,start_ns,end_ns,failed,estimated_end,role,source,result spans=",
             (unsigned long long)SKYRIM_PERF_STALL_THRESHOLD_NS, stalls.count,
             (unsigned long long)stalls.dropped_busy, (unsigned long long)stalls.dropped_full);
         if (used < 0 || (size_t)used >= sizeof(line)) return;
         for (unsigned i = 0; i < stalls.count; ++i) {
             const SkyrimPerfStall *s = &stalls.spans[i];
-            int n = snprintf(line + used, sizeof(line) - (size_t)used, "%s%u,%llu,%llu,%llu,%u,%u",
+            int n = snprintf(line + used, sizeof(line) - (size_t)used, "%s%u,%llu,%llu,%llu,%u,%u,%u,%u,%u",
                 i ? ";" : "", s->kind, (unsigned long long)s->thread,
                 (unsigned long long)s->started_ns, (unsigned long long)s->ended_ns,
-                s->failed, s->estimated_end);
+                s->failed, s->estimated_end, s->context.role, s->context.source, s->context.result);
             if (n < 0 || (size_t)n >= sizeof(line) - (size_t)used) { used = -1; break; }
             used += n;
         }

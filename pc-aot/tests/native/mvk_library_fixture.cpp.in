@@ -77,6 +77,7 @@ public:
     void addPerformanceInterval(unsigned& counter, uint64_t started) { assert(started==1); ++counter; }
     void compileLibrary(const string& text, const vector<pair<uint32_t,MVKShaderMacroValue>>* macros) {
         assert(text==_owner->source);
+        assert(skyrim_perf_context_get().source == (macros ? SKYRIM_PERF_SOURCE_MACRO : SKYRIM_PERF_SOURCE_RESTORE));
         ++compiles;
         if (!macros) { _mtlLibrary=new FixtureHandle(_owner->identity,0,0); return; }
         assert(!macros->empty());

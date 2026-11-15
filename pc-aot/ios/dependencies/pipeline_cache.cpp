@@ -59,12 +59,12 @@ bool readExact(int fd, void *data, size_t bytes) {
     }
     return true;
 }
-bool writeExact(int fd, const void *data, size_t bytes, uint64_t ticket) {
+bool writeExact(int fd, const void *data, size_t bytes, uint64_t ticket, int& error) {
     auto *p = static_cast<const uint8_t*>(data);
     while (bytes && !cancelled(ticket)) {
         ssize_t n = write(fd, p, std::min(bytes, size_t(1024 * 1024)));
         if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) return false;
+        if (n <= 0) { error = n < 0 ? errno : EIO; return false; }
         p += n; bytes -= size_t(n);
     }
     return !bytes && !cancelled(ticket);
@@ -72,6 +72,43 @@ bool writeExact(int fd, const void *data, size_t bytes, uint64_t ticket) {
 }
 
 namespace skyrim {
+namespace {
+enum Outcome : unsigned { Stored, Clean, NoPath, Cancelled, DriverError,
+    SizeRange, RetryExhausted, WriteFailed, Exception, InvalidPayload };
+enum Stage : unsigned { Start, SizeQuery, DataQuery, RemovePending, Open,
+    Write, Sync, Close, Rename, Done };
+constexpr uint64_t snapshotBudgetNs = UINT64_C(1000000000);
+}
+struct CacheCheckpointReport {
+    uint64_t ticket, started = skyrim_perf_now_ns(), generation, savedGeneration;
+    unsigned outcome = Exception, stage = Start, attempts = 0, budgetExpired = 0;
+    VkResult vk = VK_SUCCESS;
+    size_t sizeQuery = 0, bytes = 0;
+    int error = 0;
+    CacheCheckpointReport(uint64_t t, uint64_t g, uint64_t saved)
+        : ticket(t), generation(g), savedGeneration(saved) {}
+    void end(unsigned value) { outcome = value; }
+    // This is admission control between calls, not a deadline imposed on a
+    // running driver call or fsync. Cancellation never destroys live driver work.
+    bool stopped() {
+        if (cancelled(ticket)) { end(Cancelled); return true; }
+        uint64_t now = skyrim_perf_now_ns();
+        if (!started || !now || now < started || now - started >= snapshotBudgetNs) {
+            budgetExpired = 1; end(RetryExhausted); return true;
+        }
+        return false;
+    }
+    ~CacheCheckpointReport() {
+        const int savedErrno = errno;
+        const uint64_t now = skyrim_perf_now_ns();
+        fprintf(stderr, "IOS_PIPE_CACHE event=checkpoint ticket=%llu outcome=%u stage=%u attempts=%u vk=%d size_query=%zu bytes=%zu gen=%llu saved_gen=%llu errno=%d budget_expired=%u stored=%u elapsed_ns=%llu\n",
+            (unsigned long long)ticket, outcome, stage, attempts, int(vk), sizeQuery, bytes,
+            (unsigned long long)generation, (unsigned long long)savedGeneration, error,
+            budgetExpired, unsigned(outcome == Stored),
+            (unsigned long long)(started && now >= started ? now - started : 0));
+        errno = savedErrno;
+    }
+};
 PipelineCache::PipelineCache(VkDevice device, PFN_vkCreatePipelineCache create,
     PFN_vkGetPipelineCacheData getData, PFN_vkDestroyPipelineCache destroy,
     const VkPhysicalDeviceProperties& properties, const char *directory,
@@ -163,53 +200,104 @@ std::vector<uint8_t> PipelineCache::load() const {
     return bytes;
 }
 
-bool PipelineCache::save(const std::vector<uint8_t>& bytes, uint64_t ticket) const {
+bool PipelineCache::save(const std::vector<uint8_t>& bytes, uint64_t ticket,
+                         CacheCheckpointReport& r) const {
     if (path_.empty() || !validPayload(bytes) || cancelled(ticket)) return false;
     std::string temporary = path_ + ".pending";
-    // Checkpoints are serialized in this process. Remove only our unpublished
-    // pending name left by an interrupted earlier checkpoint, never the old cache.
-    if (unlink(temporary.c_str()) && errno != ENOENT) return false;
+    // Remove only our unpublished name, never the last valid cache.
+    r.stage = RemovePending;
+    if (unlink(temporary.c_str()) && errno != ENOENT) { r.error = errno; return false; }
+    r.stage = Open;
     File file(open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
-    if (file.fd < 0) return false;
+    if (file.fd < 0) { r.error = errno; return false; }
     uint8_t header[headerSize]{};
     memcpy(header, "SKPC0001", 8);
     writeLE(header + 8, identity_.size(), 8);
     writeLE(header + 16, bytes.size(), 8);
     writeLE(header + 24, checksum(bytes.data(), bytes.size()), 8);
-    bool ok = writeExact(file.fd, header, sizeof(header), ticket) &&
-        writeExact(file.fd, identity_.data(), identity_.size(), ticket) &&
-        writeExact(file.fd, bytes.data(), bytes.size(), ticket) && !fsync(file.fd) && !cancelled(ticket);
+    r.stage = Write;
+    bool ok = writeExact(file.fd, header, sizeof(header), ticket, r.error) &&
+        writeExact(file.fd, identity_.data(), identity_.size(), ticket, r.error) &&
+        writeExact(file.fd, bytes.data(), bytes.size(), ticket, r.error);
+    if (ok) {
+        r.stage = Sync;
+        if (fsync(file.fd)) { r.error = errno; ok = false; }
+        ok = ok && !cancelled(ticket);
+    }
+    if (ok) r.stage = Close;
     int closeResult = close(file.fd); file.fd = -1;
+    if (ok && closeResult) r.error = errno;
     ok = ok && !closeResult && !cancelled(ticket);
-    if (ok) ok = !rename(temporary.c_str(), path_.c_str());
+    if (ok) {
+        r.stage = Rename;
+        if (rename(temporary.c_str(), path_.c_str())) { r.error = errno; ok = false; }
+    }
     if (!ok) unlink(temporary.c_str());
+    else r.stage = Done;
     return ok;
 }
 
 void PipelineCache::checkpoint(uint64_t ticket) {
-    uint64_t generation = generation_.load(std::memory_order_relaxed);
-    if (path_.empty() || generation == savedGeneration_ || cancelled(ticket)) return;
-    uint64_t started = skyrim_perf_now_ns();
-    size_t size = 0;
-    VkResult result = getData_(device_, handle_, &size, nullptr);
-    if (result != VK_SUCCESS || size < 36 || size > maxPayload || cancelled(ticket)) return;
-    std::vector<uint8_t> bytes(size);
-    result = getData_(device_, handle_, &size, bytes.data());
-    if (result != VK_SUCCESS || size > bytes.size() || cancelled(ticket)) return;
-    bytes.resize(size);
-    bool stored = save(bytes, ticket);
-    if (stored) savedGeneration_ = generation; // concurrent new compiles stay dirty
-    fprintf(stderr, "IOS_PIPE_CACHE event=checkpoint bytes=%zu stored=%u elapsed_ns=%llu\n",
-        size, unsigned(stored), static_cast<unsigned long long>(skyrim_perf_now_ns() - started));
+    CacheCheckpointReport r(ticket, generation_.load(std::memory_order_relaxed), savedGeneration_);
+    if (path_.empty()) return r.end(NoPath);
+    if (cancelled(ticket)) return r.end(Cancelled);
+    if (r.generation == savedGeneration_) return r.end(Clean);
+    std::vector<uint8_t> bytes;
+    for (;;) {
+        if (r.stopped()) return;
+        ++r.attempts;
+        r.sizeQuery = r.bytes = 0;
+        r.generation = generation_.load(std::memory_order_relaxed);
+        size_t size = 0;
+        r.stage = SizeQuery;
+        r.vk = getData_(device_, handle_, &size, nullptr);
+        r.sizeQuery = size;
+        if (r.stopped()) return;
+        if (r.vk != VK_SUCCESS) return r.end(DriverError);
+        if (size < 36 || size > maxPayload) return r.end(SizeRange);
+        // Reuse the allocation when possible. On growth, release it first so
+        // vector growth cannot double a previously large allocation.
+        if (size > bytes.capacity()) std::vector<uint8_t>().swap(bytes);
+        bytes.resize(size);
+        if (r.stopped()) return;
+        r.stage = DataQuery;
+        r.vk = getData_(device_, handle_, &size, bytes.data());
+        r.bytes = size;
+        if (r.stopped()) return;
+        if (size > bytes.size()) return r.end(DriverError);
+        if (r.vk == VK_INCOMPLETE || (r.vk == VK_SUCCESS && size < 36)) {
+            if (r.attempts == 3) return r.end(RetryExhausted);
+            continue; // Only this race-shaped result gets a fresh size query.
+        }
+        if (r.vk != VK_SUCCESS) return r.end(DriverError);
+        bytes.resize(size);
+        if (!validPayload(bytes)) return r.end(InvalidPayload);
+        if (r.stopped()) return;
+        bool stored = save(bytes, ticket, r);
+        if (stored) {
+            savedGeneration_ = r.generation; // later compiles remain dirty
+            r.savedGeneration = savedGeneration_;
+            return r.end(Stored);
+        }
+        return r.end(cancelled(ticket) ? Cancelled : WriteFailed);
+    }
 }
 
 void PipelineCache::checkpointAll(uint64_t ticket) {
-    if (cancelled(ticket)) return;
-    std::lock_guard<RegistryMutex> lock(registryMutex);
-    for (auto *p = registryHead; p && !cancelled(ticket); p = p->next_) {
-        try { p->checkpoint(ticket); }
-        catch (...) { fprintf(stderr, "IOS_PIPE_CACHE event=checkpoint skipped=1\n"); }
+    if (cancelled(ticket)) {
+        fprintf(stderr, "IOS_PIPE_CACHE event=checkpoint_all ticket=%llu cancelled=1 caches=0\n",
+            (unsigned long long)ticket);
+        return;
     }
+    std::lock_guard<RegistryMutex> lock(registryMutex);
+    unsigned visited = 0;
+    for (auto *p = registryHead; p && !cancelled(ticket); p = p->next_) {
+        ++visited;
+        try { p->checkpoint(ticket); }
+        catch (...) { /* The report already emitted the one exception outcome. */ }
+    }
+    fprintf(stderr, "IOS_PIPE_CACHE event=checkpoint_all ticket=%llu cancelled=%u caches=%u\n",
+        (unsigned long long)ticket, unsigned(cancelled(ticket)), visited);
 }
 }
 

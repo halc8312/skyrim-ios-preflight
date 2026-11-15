@@ -30,7 +30,7 @@ class PerformanceTests(unittest.TestCase):
             subprocess.run(command, check=True, timeout=60)
             result = subprocess.run([str(binary)], check=True, text=True, capture_output=True, timeout=15)
             self.assertIn("concurrent_drain=PASS", result.stdout)
-            self.assertEqual(result.stderr.count("IOS_TIMING"), 2)
+            self.assertEqual(result.stderr.count("IOS_TIMING "), 2)
             self.assertIn("kind=pacer samples=1", result.stderr)
             self.assertIn("sleep_calls=8", result.stderr)
             wait_line = next(line for line in result.stderr.splitlines() if "kind=graphics_compile_wait" in line)

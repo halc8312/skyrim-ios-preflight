@@ -39,6 +39,7 @@ enum SkyrimPerfKind {
     SKYRIM_PERF_SAVE_CANDIDATE_WRITE,
     SKYRIM_PERF_SAVE_CANDIDATE_WRITE_EX,
     SKYRIM_PERF_SAVE_CANDIDATE_WINDOW,
+    SKYRIM_PERF_MVK_COLD_LOCK_WAIT,
     SKYRIM_PERF_KIND_COUNT
 };
 #define SKYRIM_PERF_BUCKET_COUNT 20
@@ -46,6 +47,19 @@ typedef struct SkyrimPerfWindow {
     uint64_t buckets[SKYRIM_PERF_BUCKET_COUNT];
     uint64_t total_ns, max_ns, failures, sleep_calls;
 } SkyrimPerfWindow;
+
+/* Request role is scoped work, not a permanent thread identity. None of these
+ * tags proves lock ownership, a cache hit rate, or CPU/GPU utilization. */
+enum SkyrimPerfRole { SKYRIM_PERF_ROLE_OTHER, SKYRIM_PERF_ROLE_DRAW, SKYRIM_PERF_ROLE_PREFETCH };
+enum SkyrimPerfSource { SKYRIM_PERF_SOURCE_UNKNOWN, SKYRIM_PERF_SOURCE_ROOT,
+    SKYRIM_PERF_SOURCE_RESTORE, SKYRIM_PERF_SOURCE_MACRO };
+enum SkyrimPerfWaitResult { SKYRIM_PERF_WAIT_UNKNOWN, SKYRIM_PERF_WAIT_HIT, SKYRIM_PERF_WAIT_CREATE };
+typedef struct SkyrimPerfContext { unsigned role, source, result; } SkyrimPerfContext;
+SkyrimPerfContext skyrim_perf_context_get(void);
+SkyrimPerfContext skyrim_perf_context_set(SkyrimPerfContext context);
+void skyrim_perf_interval_context(unsigned kind, uint64_t started_ns, uint64_t ended_ns,
+                                 int failed, uint64_t sleep_calls, SkyrimPerfContext context);
+void skyrim_perf_context_take(unsigned kind, SkyrimPerfContext context, SkyrimPerfWindow *out);
 
 /* Host wall time only, not GPU execution or CPU utilization. No allocations,
  * file I/O or guest-memory access occur in the recording functions. */
@@ -69,6 +83,7 @@ void skyrim_perf_log_window(void);
 typedef struct SkyrimPerfStall {
     uint64_t started_ns, ended_ns, thread;
     unsigned kind, failed, estimated_end;
+    SkyrimPerfContext context;
 } SkyrimPerfStall;
 typedef struct SkyrimPerfStalls {
     SkyrimPerfStall spans[SKYRIM_PERF_STALL_CAPACITY];
@@ -87,4 +102,19 @@ void skyrim_perf_activity(int active);
 
 #ifdef __cplusplus
 }
+#define SKYRIM_PERF_CONTEXT_KEEP (~0u)
+class SkyrimPerfContextScope {
+    SkyrimPerfContext previous;
+public:
+    SkyrimPerfContextScope(unsigned role, unsigned source) noexcept
+        : previous(skyrim_perf_context_get()) {
+        SkyrimPerfContext next = previous;
+        if (role != SKYRIM_PERF_CONTEXT_KEEP) { next.role = role; next.result = 0; }
+        if (source != SKYRIM_PERF_CONTEXT_KEEP) next.source = source;
+        skyrim_perf_context_set(next);
+    }
+    ~SkyrimPerfContextScope() { skyrim_perf_context_set(previous); }
+    SkyrimPerfContextScope(const SkyrimPerfContextScope&) = delete;
+    SkyrimPerfContextScope& operator=(const SkyrimPerfContextScope&) = delete;
+};
 #endif

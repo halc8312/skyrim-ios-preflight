@@ -128,7 +128,11 @@ def patched(name, raw):
     raw = once(raw, OLD_ASSIGN, NEW_ASSIGN)
     raw = once(raw, DECOMPRESS_BODY, DECOMPRESS_BORROWED)
     raw = once(raw, CONSTRUCTOR_PAYLOAD, BORROWED_PAYLOAD)
-    return once(raw, LOOKUP, LOCKED_LOOKUP)
+    raw = once(raw, b'\tcompileLibrary(conversionResult.msl);',
+        b'\tSkyrimPerfContextScope iosSource(SKYRIM_PERF_CONTEXT_KEEP, SKYRIM_PERF_SOURCE_ROOT);\n\tcompileLibrary(conversionResult.msl);')
+    raw = once(raw, b'\tcompileLibrary(msl, specializationMacroDef);',
+        b'\tSkyrimPerfContextScope iosSource(SKYRIM_PERF_CONTEXT_KEEP, specializationMacroDef ? SKYRIM_PERF_SOURCE_MACRO : SKYRIM_PERF_SOURCE_RESTORE);\n\tcompileLibrary(msl, specializationMacroDef);')
+    return b'#include "skyrim_performance_metrics.h"\n' + once(raw, LOOKUP, LOCKED_LOOKUP)
 
 
 def verify(name, current, pristine):

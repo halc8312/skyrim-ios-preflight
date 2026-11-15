@@ -2,6 +2,14 @@
  * Authored Vulkan driver data only; this is not a GPU/cache-hit benchmark. */
 #include "pipeline_cache.h"
 #include "pipeline_cache_control.h"
+#include "performance_metrics.h"
+#include <stdexcept>
+#include <atomic>
+static std::atomic<uint64_t> testClock{0};
+extern "C" uint64_t fixture_cache_now_ns() {
+    uint64_t value = testClock.load();
+    return value ? value : skyrim_perf_now_ns();
+}
 #include <cassert>
 #include <atomic>
 #include <cstring>
@@ -31,7 +39,10 @@ struct Driver {
     unsigned creates = 0, gets = 0, destroys = 0;
     bool rejectLoaded = false, rejectAll = false, incomplete = false, excessive = false;
     std::atomic<bool> inGet{false};
-    std::function<void()> duringGet;
+    std::function<void()> duringGet, duringSize;
+    VkResult dataResult = VK_SUCCESS;
+    unsigned races = 0;
+    bool shortSuccess = false;
     static VKAPI_ATTR VkResult VKAPI_CALL create(VkDevice raw,
         const VkPipelineCacheCreateInfo *info, const VkAllocationCallbacks *allocator, VkPipelineCache *out) {
         auto& d = *reinterpret_cast<Driver*>(raw); ++d.creates;
@@ -48,11 +59,15 @@ struct Driver {
     static VKAPI_ATTR VkResult VKAPI_CALL get(VkDevice raw, VkPipelineCache cache, size_t *size, void *out) {
         auto& d = *reinterpret_cast<Driver*>(raw); ++d.gets;
         assert(cache == (VkPipelineCache)uintptr_t(42));
-        if (!out) { *size = d.excessive ? 65 * 1024 * 1024 : d.data.size(); return VK_SUCCESS; }
+        if (!out) { if (d.duringSize) d.duringSize(); *size = d.excessive ? 65 * 1024 * 1024 : d.data.size(); return VK_SUCCESS; }
         d.inGet = true;
         if (d.duringGet) d.duringGet();
         d.inGet = false;
-        if (d.incomplete) { *size = 0; return VK_INCOMPLETE; }
+        if (d.dataResult != VK_SUCCESS) return d.dataResult;
+        if (d.incomplete || d.races) {
+            if (d.races) --d.races;
+            *size = 0; return d.shortSuccess ? VK_SUCCESS : VK_INCOMPLETE;
+        }
         assert(*size >= d.data.size());
         *size = d.data.size(); std::memcpy(out, d.data.data(), *size);
         return VK_SUCCESS;
@@ -68,7 +83,9 @@ static auto makeCache(Driver& driver, const fs::path& dir, const char *source = 
         Driver::create, Driver::get, Driver::destroy, p, dir.c_str(), source);
 }
 static void checkpoint() {
+    std::fputs("CACHE_CASE_BEGIN\n", stderr);
     skyrim_pipeline_checkpoint_save(skyrim_pipeline_checkpoint_begin());
+    std::fputs("CACHE_CASE_END\n", stderr);
 }
 static std::vector<uint8_t> readFile(const fs::path& path) {
     std::ifstream f(path, std::ios::binary);
@@ -134,6 +151,59 @@ int main(int argc, char **argv) {
         assert(d.creates == 2 && cache->result() == VK_ERROR_OUT_OF_HOST_MEMORY);
         cache.reset(); assert(d.destroys == 0);
     }
+    // A changing driver snapshot must not lose the last valid disk file.
+    for (bool shortSuccess : {false, true}) {
+        Driver d; auto cache = makeCache(d, dir); cache->compiled();
+        d.races = 1; d.shortSuccess = shortSuccess;
+        checkpoint(); assert(d.gets == 4 && readFile(file) == good);
+        checkpoint(); assert(d.gets == 4);
+    }
+    {
+        Driver d; auto cache = makeCache(d, dir); cache->compiled();
+        d.incomplete = true; checkpoint();
+        assert(d.gets == 6 && readFile(file) == good && !fs::exists(file.string()+".pending"));
+    }
+    {
+        Driver d; auto cache = makeCache(d, dir); cache->compiled();
+        d.races = 1; d.duringGet = [&]{ d.excessive = true; };
+        checkpoint(); assert(d.gets == 3 && readFile(file) == good);
+    }
+    {
+        Driver d; auto cache = makeCache(d, dir); cache->compiled();
+        d.dataResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+        checkpoint(); assert(d.gets == 2 && readFile(file) == good);
+    }
+    {
+        Driver d; auto cache = makeCache(d, dir); cache->compiled();
+        d.duringSize = []{ throw std::runtime_error("authored driver exception"); };
+        checkpoint(); assert(d.gets == 1 && readFile(file) == good);
+    }
+    for (bool beforeData : {true, false}) {
+        Driver d; auto cache = makeCache(d, dir); cache->compiled();
+        testClock = 100;
+        auto expire = []{ testClock = UINT64_C(1000000100); };
+        if (beforeData) d.duringSize = expire;
+        else { d.races = 1; d.duringGet = expire; }
+        checkpoint(); testClock = 0;
+        assert(d.gets == (beforeData ? 1u : 2u) && readFile(file) == good);
+    }
+    for (bool beforeData : {true, false}) {
+        Driver d; auto cache = makeCache(d, dir); cache->compiled();
+        uint64_t ticket = skyrim_pipeline_checkpoint_begin();
+        auto cancel = [ticket]{ skyrim_pipeline_checkpoint_cancel(ticket); };
+        if (beforeData) d.duringSize = cancel;
+        else { d.races = 1; d.duringGet = cancel; }
+        skyrim_pipeline_checkpoint_save(ticket);
+        assert(d.gets == (beforeData ? 1u : 2u) && readFile(file) == good);
+    }
+    // The generation of the successful retry, not the first attempt, is saved.
+    {
+        Driver d; auto cache = makeCache(d, dir); cache->compiled(); d.races = 1;
+        d.duringGet = [&]{ if (d.races) cache->compiled(); };
+        checkpoint(); assert(d.gets == 4);
+        d.duringGet = {}; checkpoint(); assert(d.gets == 4);
+    }
+    std::puts("bounded_snapshot_retry=PASS");
     {
         Driver d; auto cache = makeCache(d, dir); cache->compiled();
         d.incomplete = true; checkpoint(); assert(readFile(file) == good);

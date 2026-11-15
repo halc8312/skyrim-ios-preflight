@@ -60,14 +60,17 @@ class MoltenHotCacheTests(unittest.TestCase):
             (Path(tmp)/'MVKFoundation.h').write_text('#pragma once\ntemplate<class T> class MVKArrayRef;\n')
             for mode in (0,1):
                 unit=Path(tmp)/f'method-{mode}.cpp'
-                unit.write_text('#include "mvk_hot_cache_fixture.h"\n'+
+                unit.write_text('#include "performance_metrics.h"\n#include "mvk_hot_cache_fixture.h"\n'+
                     (replacement if mode else pipeline[start:impl])+pipeline[impl:end]+dirty+methods)
                 binary=Path(tmp)/f'test-{mode}'
                 flags=['-O2','-Wall','-Wextra','-Werror','-Wno-unknown-pragmas']
                 if os.name!='nt':flags+=['-pthread']
                 if os.environ.get('SKYRIM_TEST_SANITIZERS')=='1':flags+=['-fsanitize=address,undefined','-fno-omit-frame-pointer']
+                obj=Path(tmp)/'metrics.o'
+                sanitizers=[f for f in flags if f.startswith('-fsanitize=') or f=='-fno-omit-frame-pointer']
+                subprocess.run([os.environ.get('CC','cc'),'-std=c11','-D_POSIX_C_SOURCE=200809L',*sanitizers,'-c',str(ROOT/'ios/runtime-port/performance_metrics.c'),'-o',str(obj)],check=True,timeout=45)
                 subprocess.run([cxx,'-std=c++17',*flags,f'-DFIXTURE_NEW={mode}',str(unit),
-                    str(ROOT/'tests/native/test_mvk_hot_cache.cpp'),'-I',str(ROOT/'tests/native'),'-isystem',tmp,'-o',str(binary)],check=True,timeout=60)
+                    str(ROOT/'tests/native/test_mvk_hot_cache.cpp'),str(obj),'-I',str(ROOT/'ios/runtime-port'),'-I',str(ROOT/'tests/native'),'-isystem',tmp,'-o',str(binary)],check=True,timeout=60)
                 result=subprocess.run([str(binary)],text=True,capture_output=True,timeout=20)
                 self.assertEqual(result.returncode,0,result.stdout+'\n'+result.stderr)
                 print(result.stdout.strip())

@@ -28,6 +28,11 @@ struct Driver {
     uint64_t create(unsigned id, unsigned rp) {
         std::unique_lock<std::mutex> lock(mu);
         ++calls[key(id,rp)];
+#if PATCHED
+        auto context = skyrim_perf_context_get();
+        assert(context.role == SKYRIM_PERF_ROLE_DRAW || context.role == SKYRIM_PERF_ROLE_PREFETCH);
+        if (id == 2) assert(context.role == SKYRIM_PERF_ROLE_PREFETCH);
+#endif
         if (id==2 && !release) {
             entered=true; cv.notify_all();
             cv.wait(lock,[&]{return release;});
@@ -72,11 +77,13 @@ int main() {
     assert(!pipeline.get(9999));pipeline.build(9999);
     assert(driver.count(9999)==0 && driver.written(9999)==0);
 #endif
+    assert(skyrim_perf_context_get().role == 0);
     // API failure remains a cached null result, exactly as the pinned version.
     assert(!pipeline.get(13));assert(!pipeline.get(13));pipeline.build(13);
     assert(driver.count(13)==1 && driver.written(13)==1);
     bool threw=false;try {pipeline.get(17);}catch(const std::runtime_error&) {threw=true;}
     assert(threw && driver.written(17)==0);
+    assert(skyrim_perf_context_get().role == 0);
     assert(pipeline.get(17)==Driver::handle(17));assert(driver.count(17)==2);
 #if PATCHED
     // Cache callbacks run after both locks are released. Reentrant publication
@@ -99,6 +106,21 @@ int main() {
     constexpr unsigned wait_kind=GRAPHICS?SKYRIM_PERF_GRAPHICS_COMPILE_WAIT:SKYRIM_PERF_COMPUTE_COMPILE_WAIT;
     skyrim_perf_take(wait_kind,&window);
     assert(window.failures==0 && window.sleep_calls==0);
+    SkyrimPerfContext context{SKYRIM_PERF_ROLE_DRAW,0,SKYRIM_PERF_WAIT_HIT};
+    skyrim_perf_context_take(wait_kind,context,&window);
+    uint64_t hits=0;for(auto n:window.buckets)hits+=n;
+    assert(hits>=1 && window.total_ns>0);
+    context.role=SKYRIM_PERF_ROLE_PREFETCH;
+    skyrim_perf_context_take(wait_kind,context,&window);
+    // Scheduling may let the duplicate arrive after publication: no invented wait.
+    assert(window.failures==0);
+    {
+        SkyrimPerfContextScope outer(SKYRIM_PERF_ROLE_PREFETCH, SKYRIM_PERF_SOURCE_MACRO);
+        assert(pipeline.get(777)==Driver::handle(777));
+        assert(skyrim_perf_context_get().role==SKYRIM_PERF_ROLE_PREFETCH);
+        assert(skyrim_perf_context_get().source==SKYRIM_PERF_SOURCE_MACRO);
+    }
+    assert(skyrim_perf_context_get().role==0 && skyrim_perf_context_get().source==0);
     assert(pipeline.get(1)==Driver::handle(1));
     skyrim_perf_take(wait_kind,&window);
     for(auto n:window.buckets) assert(n==0);

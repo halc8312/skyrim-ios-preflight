@@ -28,8 +28,9 @@ class PerformanceStallTests(unittest.TestCase):
             self.assertLess(len(line), 3072)
             self.assertIn('count=2 dropped_busy=0 dropped_full=0', line)
             spans = [[int(word) for word in span.split(',')] for span in line.split(' spans=')[1].split(';')]
-            self.assertEqual(spans, [[0, 0, 5000000000, 5100000000, 0, 0],
-                                     [3, 0, 5010000000, 5090000000, 1, 0]])
+            self.assertIn('schema=2 ', line)
+            self.assertEqual(spans, [[0, 0, 5000000000, 5100000000, 0, 0, 0, 0, 0],
+                                     [3, 0, 5010000000, 5090000000, 1, 0, 0, 0, 0]])
 
     def test_runtime_uses_original_endpoints_and_existing_activity_notifications(self):
         runtime = (ROOT/'ios/runtime-port/ios_runtime.c').read_text()
