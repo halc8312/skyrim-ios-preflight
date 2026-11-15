@@ -28,6 +28,7 @@ class DevicePolicyTests(unittest.TestCase):
 #include <assert.h>
 #include <stdio.h>
 #include "device_policy.h"
+#include "performance_metrics.h"
 ''' + role + wait + '''
 static CFRunLoopSourceRef input;
 static CFRunLoopRef main_loop;
@@ -80,10 +81,13 @@ int main(void) { @autoreleasepool {
 ''')
             binary=Path(tmp)/"wait"
             policy=Path(tmp)/"policy.o"
+            metrics=Path(tmp)/"metrics.o"
             subprocess.run(["clang","-std=c11","-O2","-c",str(ROOT/"ios/runtime-port/device_policy.c"),
                 "-o",str(policy)],check=True,timeout=60)
+            subprocess.run(["clang","-std=c11","-O2","-c",str(ROOT/"ios/runtime-port/performance_metrics.c"),
+                "-o",str(metrics)],check=True,timeout=60)
             subprocess.run(["clang","-std=gnu11","-O2","-Wall","-Wextra","-Werror","-fobjc-arc",
-                "-I",str(ROOT/"ios/runtime-port"),str(source),str(policy),"-framework","Foundation","-framework","CoreFoundation",
+                "-I",str(ROOT/"ios/runtime-port"),str(source),str(policy),str(metrics),"-framework","Foundation","-framework","CoreFoundation",
                 "-o",str(binary)],check=True,timeout=60)
             subprocess.run([str(binary)],check=True,timeout=10)
 
@@ -112,11 +116,13 @@ int main(void) { @autoreleasepool {
             source = Path(tmp) / "pacer.c"
             source.write_text('''#include <stdint.h>
 #include <assert.h>
+#include <errno.h>
 typedef struct { unsigned unused; } SkyrimFrameClock;
 #include "performance_metrics.h"
 static uint64_t metrics_epoch, now, target, slept, measured, remaining_seen;
 static uint64_t interval_start, interval_end;
-static unsigned waits, pumps, recorded, mode;
+static unsigned waits, pumps, recorded, mode, overruns;
+static uint64_t overrun_start, overrun_end;
 static uint64_t monotonic_ns(void) { return now; }
 static unsigned skyrim_mobile_fps_limit(void) { return 60; }
 static uint64_t skyrim_mobile_frame_deadline(SkyrimFrameClock *c, uint64_t start, unsigned fps) {
@@ -126,11 +132,17 @@ static unsigned skyrim_device_platform_wait(uint64_t remaining) {
     assert(remaining == target-now); remaining_seen=remaining; ++waits;
     if (mode==1 && waits==1) { now+=1; return 0; } /* input source wakes early */
     if (mode==2 && waits==1) { ++metrics_epoch; now+=2; return 1; } /* interruption/resume */
+    if (mode==3) { now+=remaining+70000000; return 0; } /* callback or scheduling delay */
     now+=remaining; return mode ? 0 : 1;
 }
 static void skyrim_ios_pump_events(void) { ++pumps; }
 void skyrim_perf_interval(unsigned kind, uint64_t started, uint64_t ended, int failed, uint64_t sleeps) {
-    assert(kind==SKYRIM_PERF_PACER && !failed && ended>=started);
+    assert(!failed && ended>=started);
+    if (kind==SKYRIM_PERF_PACER_OVERRUN) {
+        ++overruns; overrun_start=started; overrun_end=ended;
+        assert(!sleeps); errno=EIO; return;
+    }
+    assert(kind==SKYRIM_PERF_PACER);
     ++recorded; measured=ended-started; slept=sleeps;
     interval_start=started; interval_end=ended;
 }
@@ -148,12 +160,136 @@ int main(void) {
     now=target+1; waits=recorded=0; skyrim_ios_pace_frame();
     assert(waits==0 && recorded==1 && measured==0);
     assert(interval_start==target+1 && interval_end==target+1);
+    assert(overruns==0); /* no requested wait is not a deadline miss */
+    mode=3; now=1; waits=pumps=recorded=0; errno=EDOM;
+    skyrim_ios_pace_frame();
+    assert(waits==1 && pumps==1 && recorded==1 && overruns==1);
+    assert(overrun_start==target && overrun_end==target+70000000);
+    assert(errno==EDOM && slept==0); /* overrun is wall time, not nanosleep count */
 }
 ''')
             binary = Path(tmp) / "pacer"
             subprocess.run([cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT/"ios/runtime-port"),
                             str(source), "-o", str(binary)], check=True, timeout=60)
             subprocess.run([str(binary)], check=True, timeout=10)
+
+    def test_runloop_elapsed_budget_does_not_add_a_second_sleep(self):
+        """Real wait body with authored CF results/clocks; not an Apple API test."""
+        cc = shutil.which(os.environ.get("CC", "cc"))
+        if not cc:
+            self.skipTest("C compiler required; run on WSL/Mac")
+        platform = (ROOT / "ios/runtime-port/device_platform.m").read_text()
+        wait = platform[platform.index("unsigned skyrim_device_platform_wait("):platform.index("void skyrim_device_platform_log(")]
+        self.assertEqual(wait.count("NSThread.isMainThread"), 1)
+        wait = wait.replace("NSThread.isMainThread", "is_main")
+        fixture = '''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <time.h>
+#include <errno.h>
+#include "performance_metrics.h"
+typedef int SInt32;
+enum { kCFRunLoopDefaultMode, kCFRunLoopRunHandledSource,
+       kCFRunLoopRunTimedOut, kCFRunLoopRunFinished, kCFRunLoopRunStopped };
+static int is_main, result, interrupted;
+static uint64_t now=1000000000, run_elapsed, slept;
+static unsigned loop_calls, sleep_calls, loop_records, sleep_records;
+uint64_t skyrim_perf_now_ns(void) { return now; }
+static SInt32 CFRunLoopRunInMode(int mode, double seconds, bool return_after_source) {
+    assert(mode==kCFRunLoopDefaultMode && seconds>0 && return_after_source);
+    ++loop_calls; now+=run_elapsed; errno=ERANGE; return result;
+}
+static int authored_nanosleep(const struct timespec *t, struct timespec *left) {
+    assert(!left); ++sleep_calls;
+    slept=(uint64_t)t->tv_sec*1000000000+t->tv_nsec;
+    now+=interrupted ? 1 : slept; errno=EINTR; return interrupted ? -1 : 0;
+}
+#define nanosleep authored_nanosleep
+void skyrim_perf_interval(unsigned kind, uint64_t start, uint64_t end, int failed, uint64_t sleeps) {
+    assert(end>=start && !failed);
+    if(kind==SKYRIM_PERF_PACER_RUNLOOP) { ++loop_records; assert(!sleeps); }
+    else { assert(kind==SKYRIM_PERF_PACER_SLEEP && sleeps==1); ++sleep_records; }
+    errno=EIO;
+}
+''' + wait + '''
+static void reset(int main_thread, int outcome, uint64_t elapsed) {
+    is_main=main_thread; result=outcome; run_elapsed=elapsed;
+    slept=loop_calls=sleep_calls=loop_records=sleep_records=0;
+    interrupted=0; errno=EDOM;
+}
+int main(void) {
+    reset(0,0,0); assert(skyrim_device_platform_wait(10000000)==1);
+    assert(!loop_calls && sleep_calls==1 && slept==10000000 && errno==EDOM);
+    assert(!loop_records && sleep_records==1);
+    reset(1,kCFRunLoopRunHandledSource,2000000);
+    assert(!skyrim_device_platform_wait(10000000) && !sleep_calls && loop_records==1 && errno==EDOM);
+    reset(1,kCFRunLoopRunTimedOut,12000000);
+    assert(!skyrim_device_platform_wait(10000000) && !sleep_calls && errno==EDOM);
+    reset(1,kCFRunLoopRunFinished,7000000);
+    assert(skyrim_device_platform_wait(10000000)==1 && slept==3000000 && errno==EDOM);
+    reset(1,kCFRunLoopRunStopped,15000000);
+    assert(!skyrim_device_platform_wait(10000000) && !sleep_calls && errno==EDOM);
+    reset(1,kCFRunLoopRunFinished,10000000);
+    assert(!skyrim_device_platform_wait(10000000) && !sleep_calls);
+    reset(1,kCFRunLoopRunFinished,0);
+    assert(skyrim_device_platform_wait(10000000)==1 && slept==4000000 && errno==EDOM);
+    reset(0,0,0); interrupted=1;
+    assert(skyrim_device_platform_wait(10000000)==1 && sleep_records==1 && errno==EDOM);
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="device-wait-budget-") as tmp:
+            source=Path(tmp)/"wait.c"; source.write_text(fixture)
+            binary=Path(tmp)/"wait"
+            flags=["-std=c11","-O2","-Wall","-Wextra","-Werror"]
+            if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
+                flags += ["-fsanitize=address,undefined","-fno-omit-frame-pointer"]
+            subprocess.run([cc,*flags,"-I",str(ROOT/"ios/runtime-port"),str(source),"-o",str(binary)],check=True,timeout=60)
+            subprocess.run([str(binary)],check=True,timeout=10)
+
+    def test_ui_pump_span_keeps_throttle_reentrancy_and_epoch(self):
+        cc=shutil.which(os.environ.get("CC","cc"))
+        if not cc:
+            self.skipTest("C compiler required; run on WSL/Mac")
+        runtime=(ROOT/"ios/runtime-port/ios_runtime.c").read_text()
+        pump=runtime[runtime.index("void skyrim_ios_pump_events(void) {"):runtime.index("void skyrim_ios_drawable_size(")]
+        fixture='''#include <assert.h>
+#include <stdint.h>
+#include <errno.h>
+#include "performance_metrics.h"
+static int is_main=1, has_window, change_epoch;
+static int *ui_window;
+static unsigned pumping, sdl_calls, ticks, records;
+static uint64_t now, metrics_epoch, last_pump_ns, recorded_start, recorded_end;
+void skyrim_ios_pump_events(void);
+static int pthread_main_np(void) { return is_main; }
+static uint64_t monotonic_ns(void) { return now; }
+static void SDL_PumpEvents(void) { ++sdl_calls; skyrim_ios_pump_events(); now+=7000000; }
+static void update_drawable(void) { now+=1000000; }
+static void skyrim_mobile_tick(void) { ++ticks; now+=2000000; metrics_epoch+=change_epoch; errno=EINTR; }
+void skyrim_perf_interval(unsigned kind, uint64_t started, uint64_t ended, int failed, uint64_t sleeps) {
+    assert(kind==SKYRIM_PERF_UI_PUMP && !failed && !sleeps);
+    ++records; recorded_start=started; recorded_end=ended; errno=EIO;
+}
+''' + pump + '''
+int main(void) {
+    now=10000000; skyrim_ios_pump_events(); assert(!sdl_calls);
+    ui_window=&has_window; is_main=0; skyrim_ios_pump_events(); assert(!sdl_calls);
+    is_main=1; now=1000000; skyrim_ios_pump_events(); assert(!sdl_calls);
+    now=10000000; skyrim_ios_pump_events();
+    assert(sdl_calls==1 && ticks==1 && records==1 && !pumping);
+    assert(recorded_start==10000000 && recorded_end==20000000 && errno==EINTR);
+    now=30000000; change_epoch=1; skyrim_ios_pump_events();
+    assert(sdl_calls==2 && ticks==2 && records==1 && !pumping && errno==EINTR);
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="ui-pump-span-") as tmp:
+            source=Path(tmp)/"pump.c"; source.write_text(fixture)
+            binary=Path(tmp)/"pump"
+            flags=["-std=c11","-O2","-Wall","-Wextra","-Werror"]
+            if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
+                flags += ["-fsanitize=address,undefined","-fno-omit-frame-pointer"]
+            subprocess.run([cc,*flags,"-I",str(ROOT/"ios/runtime-port"),str(source),"-o",str(binary)],check=True,timeout=60)
+            subprocess.run([str(binary)],check=True,timeout=10)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
+#include <errno.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_vulkan.h>
 
@@ -72,12 +73,17 @@ void skyrim_ios_pump_events(void) {
     uint64_t now = monotonic_ns();
     /* Sleep(0) can be extremely hot. Service UIKit at most once per 4 ms. */
     if (now - __atomic_load_n(&last_pump_ns, __ATOMIC_RELAXED) < UINT64_C(4000000)) return;
+    uint64_t epoch = __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED);
     pumping = 1;
     __atomic_store_n(&last_pump_ns, now, __ATOMIC_RELAXED);
     SDL_PumpEvents();
     update_drawable();
     skyrim_mobile_tick();
     pumping = 0;
+    int saved_errno = errno;
+    if (epoch == __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED))
+        skyrim_perf_interval(SKYRIM_PERF_UI_PUMP, now, monotonic_ns(), 0, 0);
+    errno = saved_errno;
 }
 
 void skyrim_ios_drawable_size(int *width, int *height) {
@@ -127,8 +133,16 @@ void skyrim_ios_pace_frame(void) {
         sleeps += skyrim_device_platform_wait(remaining);
         skyrim_ios_pump_events();
     }
-    if (epoch == __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED))
-        skyrim_perf_interval(SKYRIM_PERF_PACER, started, monotonic_ns(), 0, sleeps);
+    int saved_errno = errno;
+    uint64_t ended = monotonic_ns();
+    if (epoch == __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED)) {
+        skyrim_perf_interval(SKYRIM_PERF_PACER, started, ended, 0, sleeps);
+        /* Excess wall time after a requested deadline. This overlaps the
+         * run-loop/sleep/pump spans; it is not extra work or CPU time. */
+        if (deadline > started && ended > deadline)
+            skyrim_perf_interval(SKYRIM_PERF_PACER_OVERRUN, deadline, ended, 0, 0);
+    }
+    errno = saved_errno;
 }
 
 void skyrim_ios_watchdog(void) {

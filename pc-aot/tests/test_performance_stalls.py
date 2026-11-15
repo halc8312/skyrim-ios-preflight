@@ -25,10 +25,11 @@ class PerformanceStallTests(unittest.TestCase):
             lines = result.stderr.splitlines()
             self.assertEqual(len(lines), 3)
             line = next(line for line in lines if line.startswith('IOS_STALL '))
-            self.assertLess(len(line), 3072)
+            self.assertLess(len(line), 8192)
             self.assertIn('count=2 dropped_busy=0 dropped_full=0', line)
+            self.assertIn('window_start_ns=0 window_end_ns=4000000000', line)
             spans = [[int(word) for word in span.split(',')] for span in line.split(' spans=')[1].split(';')]
-            self.assertIn('schema=2 ', line)
+            self.assertIn('schema=3 ', line)
             self.assertEqual(spans, [[0, 0, 5000000000, 5100000000, 0, 0, 0, 0, 0],
                                      [3, 0, 5010000000, 5090000000, 1, 0, 0, 0, 0]])
 
@@ -37,7 +38,8 @@ class PerformanceStallTests(unittest.TestCase):
         self.assertIn('skyrim_perf_activity(active);', runtime)
         self.assertIn('SKYRIM_PERF_FRAME_GAP, now - gap, now, 0, 0', runtime)
         self.assertIn('SKYRIM_PERF_PRESENT_HOST, entered, now, 0, 0', runtime)
-        self.assertIn('SKYRIM_PERF_PACER, started, monotonic_ns(), 0, sleeps', runtime)
+        self.assertIn('SKYRIM_PERF_PACER, started, ended, 0, sleeps', runtime)
+        self.assertIn('SKYRIM_PERF_PACER_OVERRUN, deadline, ended, 0, 0', runtime)
         ui = (ROOT/'ios/runtime-port/mobile_ui.m').read_text()
         self.assertIn('skyrim_ios_metrics_active(0)', ui)
         self.assertIn('skyrim_ios_metrics_active(1)', ui)

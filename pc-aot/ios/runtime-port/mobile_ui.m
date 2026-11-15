@@ -7,6 +7,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
 #include <math.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "mobile_ui.h"
@@ -28,6 +29,21 @@ static BOOL cacheCheckpointQueued;
 static dispatch_queue_t cacheCheckpointQueue;
 static BOOL shaderSettingsVisible, cacheForegroundQueued;
 
+// kind: 0 background, 1 settings; phase: 0 entered, 1 save returned.
+// Log on the worker before save, not only in the eventual main-queue callback:
+// an app exit/suspension can otherwise hide which boundary was reached.
+static void logCacheWorker(uint64_t ticket, unsigned kind, unsigned phase,
+                           uint64_t queued, uint64_t entered) {
+    const int savedErrno = errno;
+    const uint64_t now = skyrim_perf_now_ns();
+    fprintf(stderr, "IOS_PIPE_CACHE event=worker ticket=%llu kind=%u phase=%u queue_wait_ns=%llu elapsed_ns=%llu monotonic_ns=%llu\n",
+        (unsigned long long)ticket, kind, phase,
+        (unsigned long long)(queued && entered >= queued ? entered - queued : 0),
+        (unsigned long long)(entered && now >= entered ? now - entered : 0),
+        (unsigned long long)now);
+    errno = savedErrno;
+}
+
 static void shaderSettingsPermission(BOOL visible) {
     shaderSettingsVisible = visible;
     skyrim_pipeline_checkpoint_foreground_permission(visible &&
@@ -40,10 +56,16 @@ static void checkpointWhileSettingsVisible(void) {
         !skyrim_mobile_shader_option(SKYRIM_SHADER_SAVE_IN_SETTINGS) ||
         UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
     cacheForegroundQueued = YES;
+    const uint64_t queued = skyrim_perf_now_ns();
     dispatch_async(cacheCheckpointQueue, ^{
+        const uint64_t entered = skyrim_perf_now_ns();
         // Eligibility and registry admission run on this worker, never UIKit.
         uint64_t ticket = skyrim_pipeline_checkpoint_foreground_begin();
-        if (ticket) skyrim_pipeline_checkpoint_save(ticket);
+        if (ticket) {
+            logCacheWorker(ticket, 1, 0, queued, entered);
+            skyrim_pipeline_checkpoint_save(ticket);
+            logCacheWorker(ticket, 1, 1, queued, entered);
+        }
         dispatch_async(dispatch_get_main_queue(), ^{ cacheForegroundQueued = NO; });
     });
 }
@@ -85,8 +107,12 @@ static void checkpointPipelineCache(void) {
     if (reason) return;
     cacheCheckpointQueued = YES;
     const uint64_t ticket = cacheCheckpointTicket;
+    const uint64_t queued = skyrim_perf_now_ns();
     dispatch_async(cacheCheckpointQueue, ^{
+        const uint64_t entered = skyrim_perf_now_ns();
+        logCacheWorker(ticket, 0, 0, queued, entered);
         skyrim_pipeline_checkpoint_save(ticket);
+        logCacheWorker(ticket, 0, 1, queued, entered);
         dispatch_async(dispatch_get_main_queue(), ^{ finishCacheCheckpoint(ticket, 0); });
     });
 }

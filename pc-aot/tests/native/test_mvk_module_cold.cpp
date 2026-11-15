@@ -1,6 +1,7 @@
 #include "mvk_module_fixture.h"
 #include "mvk_module_cold_support.h"
 #include <cstdio>
+#include "mvk_convert_observation.h"
 
 static bool moduleEnabled;
 
@@ -133,6 +134,8 @@ int main(int argc,char** argv){
   coldIsolation(true);assert(fixture.live==0 && fixture.active==0);
   failuresAndPublication();assert(fixture.live==0 && fixture.active==0);
   growingStorage();assert(fixture.live==0 && fixture.active==0);
+  conversionObservation([](MVKPipelineCache& cache,int module,int key,bool refuse){return request(cache,module,key,refuse);});
+  assert(fixture.live==0 && fixture.active==0);
 #if CANDIDATE
   converterAcrossCaches(false);assert(fixture.live==0 && fixture.active==0);
   converterAcrossCaches(true);assert(fixture.live==0 && fixture.active==0);

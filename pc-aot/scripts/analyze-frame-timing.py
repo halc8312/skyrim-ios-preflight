@@ -17,7 +17,8 @@ KINDS = ('frame_gap', 'present_host', 'pacer', 'hlsl', 'graphics_pipeline',
          'image_acquire', 'queue_present', 'queue_submit', 'fence_wait', 'submission_wait',
          'mvk_msl_wait', 'mvk_specialize_wait', 'mvk_pipeline_wait', 'mvk_other_wait',
          'mvk_dispatch_wait', 'mvk_dispatch_block', 'write_file', 'write_file_ex',
-         'save_candidate_write', 'save_candidate_write_ex', 'save_candidate_window', 'mvk_cold_lock_wait')
+         'save_candidate_write', 'save_candidate_write_ex', 'save_candidate_window', 'mvk_cold_lock_wait',
+         'mvk_convert', 'pacer_runloop', 'pacer_sleep', 'ui_pump', 'pacer_overrun')
 U64 = (1 << 64) - 1
 UPPER = (0, 1000000, 2000000, 4000000, 8000000, 12000000, 16666667,
          20000000, 25000000, 33333334, 40000000, 50000000, 66666667,
@@ -65,16 +66,25 @@ def timing(text):
     return result
 
 
-def stalls(text):
-    f = fields(text, set(('schema', 'threshold_ns', 'count', 'dropped_busy',
-                         'dropped_full', 'fields', 'spans')))
+def stalls(text, include_window=False):
+    expected = set(('schema', 'threshold_ns', 'count', 'dropped_busy',
+                    'dropped_full', 'fields', 'spans'))
+    if re.search(r'(?:^|\s)schema=3(?:\s|$)', text):
+        expected.update(('window_start_ns', 'window_end_ns'))
+    f = fields(text, expected)
     schema = unsigned(f['schema'])
     layout = 'kind,thread,start_ns,end_ns,failed,estimated_end'
-    if schema == 2: layout += ',role,source,result'
-    if schema not in (1,2) or unsigned(f['threshold_ns']) != THRESHOLD or f['fields'] != layout:
+    if schema in (2,3): layout += ',role,source,result'
+    if schema not in (1,2,3) or unsigned(f['threshold_ns']) != THRESHOLD or f['fields'] != layout:
         raise ValueError('unknown schema')
+    window = None
+    if schema == 3:
+        start, end = unsigned(f['window_start_ns']), unsigned(f['window_end_ns'])
+        if start > end: raise ValueError('invalid stall window')
+        if end: window = dict(start=start, end=end, inferred=False)
+    frame_capacity, work_capacity = (8,32) if schema == 3 else (4,12)
     count = unsigned(f['count'])
-    if count > 16:
+    if count > frame_capacity + work_capacity:
         raise ValueError('too many spans')
     result = []
     for record in f['spans'].split(';') if f['spans'] else []:
@@ -82,17 +92,18 @@ def stalls(text):
         if len(v) != (6 if schema == 1 else 9):
             raise ValueError('invalid span')
         kind, thread, start, end, failed, estimated = v[:6]
-        role, source, wait_result = v[6:] if schema == 2 else (0,0,0)
+        role, source, wait_result = v[6:] if schema in (2,3) else (0,0,0)
         if role > 2 or source > 3 or wait_result > 2:
             raise ValueError('invalid work context')
         if kind >= len(KINDS) or not start or end < start or end-start < THRESHOLD or failed > 1 or estimated > 1:
             raise ValueError('invalid span')
         result.append(dict(kind=KINDS[kind], thread=thread, start=start, end=end,
                            failed=failed, estimated_end=estimated, role=role, source=source, result=wait_result))
-    if len(result) != count or sum(s['kind'] == 'frame_gap' for s in result) > 4 or \
-            sum(s['kind'] != 'frame_gap' for s in result) > 12:
+    if len(result) != count or sum(s['kind'] == 'frame_gap' for s in result) > frame_capacity or \
+            sum(s['kind'] != 'frame_gap' for s in result) > work_capacity:
         raise ValueError('span count mismatch')
-    return result, unsigned(f['dropped_busy']), unsigned(f['dropped_full'])
+    output = (result, unsigned(f['dropped_busy']), unsigned(f['dropped_full']))
+    return (*output, window) if include_window else output
 
 
 def percentile(bins, percent):
@@ -109,10 +120,24 @@ def percentile(bins, percent):
     raise AssertionError('rank')
 
 
+def interval_union_ns(intervals):
+    """Wall-time union only: nested/cross-thread work is never added twice."""
+    total = 0
+    previous_end = 0
+    for start, end in sorted(intervals):
+        if end > max(start, previous_end):
+            total += end - max(start, previous_end)
+        previous_end = max(previous_end, end)
+    return total
+
+
 def summarize(lines):
     aggregate = {}
     context_rows = []
     spans = []
+    sampling_windows = []
+    current_window = None
+    timing_origin = None
     invalid = duplicate = dropped_busy = dropped_full = timing_records = stall_records = 0
     last_end = 0
     current_kinds = set()
@@ -125,7 +150,7 @@ def summarize(lines):
                 c = {k:unsigned(v) for k,v in fields('role='+suffix, {'role','source','result'}).items()}
                 if c['role']>2 or c['source']>3 or c['result']>2: raise ValueError('invalid context')
                 row = timing(base)
-                role_only = row['kind'] in ('mvk_cold_lock_wait','graphics_pipeline','compute_pipeline')
+                role_only = row['kind'] in ('mvk_cold_lock_wait','graphics_pipeline','compute_pipeline','mvk_convert')
                 if row['kind'] not in ('mvk_msl_wait','graphics_compile_wait','compute_compile_wait') and not role_only:
                     raise ValueError('unexpected context kind')
                 if (row['kind']=='mvk_msl_wait' and c['result']) or (row['kind']!='mvk_msl_wait' and c['source']) or (role_only and c['result']):
@@ -147,6 +172,9 @@ def summarize(lines):
                 if row['end_ns'] != last_end:
                     current_kinds = set()
                     last_end = row['end_ns']
+                    current_window = dict(start=max(0, last_end-row['window_ns']),
+                                          end=last_end, inferred=True)
+                    if timing_origin is None: timing_origin = current_window['start']
                 if row['kind'] in current_kinds:
                     duplicate += 1
                     continue
@@ -161,9 +189,17 @@ def summarize(lines):
                 a['records'] += 1
                 timing_records += 1
             else:
-                samples, busy, full = stalls(tail)
+                samples, busy, full, window = stalls(tail, include_window=True)
                 if len(spans)+len(samples) > MAX_SPANS:
                     raise RuntimeError('span bound exceeded; use a shorter single-launch log')
+                if len(sampling_windows) >= MAX_SPANS:
+                    raise RuntimeError('stall window bound exceeded')
+                # Older versions have no explicit sampling window. The nearest
+                # preceding histogram report is a conservative approximation;
+                # standalone old stall records retain an unknown window.
+                for sample in samples: sample['sampling_record'] = len(sampling_windows)
+                sampling_windows.append(dict(window=window or current_window,
+                                             dropped_busy=busy, dropped_full=full))
                 spans.extend(samples)
                 dropped_busy += busy
                 dropped_full += full
@@ -189,12 +225,14 @@ def summarize(lines):
     correlations = []
     for f in frames:
         overlap = []
+        covered = []
         for s in spans:
             if s['kind'] == 'frame_gap':
                 continue
             common = min(f['end'],s['end'])-max(f['start'],s['start'])
             if common <= 0:
                 continue
+            covered.append((max(f['start'],s['start']), min(f['end'],s['end'])))
             relation = 'unknown' if not f['thread'] or not s['thread'] else \
                        'same' if f['thread']==s['thread'] else 'different'
             if s['kind'] == 'save_candidate_window':
@@ -203,9 +241,34 @@ def summarize(lines):
                 duration_ms=(s['end']-s['start'])/1e6, estimated_endpoint=bool(s['estimated_end']),
                 failed=bool(s['failed']), role=s['role'], source=s['source'], result=s['result']))
         overlap.sort(key=lambda s:s['overlap_ms'], reverse=True)
+        source_record = sampling_windows[f['sampling_record']]
+        relevant_drops = []
+        later_drops = []
+        for index, record in enumerate(sampling_windows):
+            if not (record['dropped_busy'] or record['dropped_full']): continue
+            w = record['window']
+            if index == f['sampling_record'] or w is None or \
+                    (w['start'] <= f['end'] and w['end'] >= f['start']):
+                relevant_drops.append(record)
+            elif w['end'] >= f['end']:
+                # Work is recorded when it ends. A long overlapping operation
+                # can be dropped in a later completion window, even if that
+                # window itself no longer intersects this frame.
+                later_drops.append(record)
+        union = interval_union_ns(covered)
         correlations.append(dict(start_ms_from_first_sample=(f['start']-origin)/1e6,
+            start_ms_from_first_timing_window=(f['start']-timing_origin)/1e6 if timing_origin is not None else None,
             duration_ms=(f['end']-f['start'])/1e6, estimated_endpoint=bool(f['estimated_end']),
-            overlaps=overlap[:12], additional_overlaps=max(0,len(overlap)-12)))
+            overlaps=overlap[:12], additional_overlaps=max(0,len(overlap)-12),
+            sampled_work_overlap_union_ms=union/1e6,
+            frame_interval_without_sampled_work_ms=(f['end']-f['start']-union)/1e6,
+            sampling_status='drops_reported' if relevant_drops else
+                'possible_late_drops' if later_drops else
+                'no_reported_drops' if source_record['window'] else 'window_unknown',
+            window_dropped_busy=sum(r['dropped_busy'] for r in relevant_drops),
+            window_dropped_full=sum(r['dropped_full'] for r in relevant_drops),
+            later_window_dropped_busy=sum(r['dropped_busy'] for r in later_drops),
+            later_window_dropped_full=sum(r['dropped_full'] for r in later_drops)))
     contexts = {}
     seen_contexts = set()
     context_duplicates = 0
@@ -231,9 +294,13 @@ def summarize(lines):
         work_contexts=list(contexts.values()), duplicate_context_records=context_duplicates,
         duplicate_timing_records=duplicate, sampled_spans=len(spans), dropped_busy=dropped_busy,
         dropped_full=dropped_full, kinds=kinds, longest_sampled_frame_gaps=correlations,
+        sampling_windows_with_drops=sum(bool(r['dropped_busy'] or r['dropped_full']) for r in sampling_windows),
         caveats=['Histogram windows may straddle concurrent updates; percentiles are bucket ranges.',
                  'Slow spans are incomplete samples; absence of overlap does not exclude a cause.',
                  'Overlapping or nested durations must not be added together.',
+                 'Work-overlap union is across recorded threads, not causal attribution or GPU/CPU time. Uncovered time is not proof of guest CPU work.',
+                 'Sampling windows are approximate completion windows; unknown or dropped windows cannot establish absence of work. No reported drops still excludes operations below the sampling threshold.',
+                 'A later completion-window drop may hide a long operation that overlapped an earlier frame; possible_late_drops is uncertainty, not an attributed cause.',
                  'Context histograms partition existing timings; they are not additional work. Role identifies the requester, not the owner of a contended lock.',
                  'Save candidates are filename-classified, not proof of autosave; their handle windows include idle time and exclude earlier serialization and later durability.',
                  'Use a separate log for each launch; anonymous thread ordinals restart per process.'])

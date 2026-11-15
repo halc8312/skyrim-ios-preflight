@@ -12,9 +12,9 @@ PINS = {
     "MVKPipeline.h": "b0b85d75a31ee654d5b65ff7499f179bab14b985eb72f4482d3cb1a7fc7689b2",
     "MVKPipeline.mm": "4d8d6c9bbe639d8fa78a71802d5357f91ef15568964dd8e0d570ce4ba05790d2",
 }
-# Exact output pins include the numeric cold-lock wait observation.
-PATCHED_PINS = {'MVKPipeline.h': '6668c842747ae49abf678e418f198a499eaf5d92a50b4dd80c56cbd6a832b91f', 'MVKPipeline.mm': 'b78d437ae329f5bfd43b1ea5082f6ec476eed47bf1e9b6127bee8e1812c851c3'}
-TEMPLATE_SHA256 = "439b686b94181b5fc7f01c3e4ddeed21f999636b6af9e793cbd672e18e58cc15"
+# Exact output pins include cold-lock wait and conversion observations.
+PATCHED_PINS = {'MVKPipeline.h': '6668c842747ae49abf678e418f198a499eaf5d92a50b4dd80c56cbd6a832b91f', 'MVKPipeline.mm': '3edf941c97f50a0d5d83a9164da6eb8b41c3a25230e1ae95172e43cef30378ac'}
+TEMPLATE_SHA256 = "c84582187e95cf6eb8ea132dcac16c54a21830e19fbd834d87d17d2adc13f031"
 TEMPLATE = Path(__file__).with_name("mvk_hot_cache.cpp.in")
 
 

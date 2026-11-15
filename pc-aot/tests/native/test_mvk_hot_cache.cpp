@@ -1,5 +1,8 @@
 #include "mvk_hot_cache_fixture.h"
 #include <cstdio>
+#if FIXTURE_NEW
+#include "mvk_convert_observation.h"
+#endif
 static MVKShaderLibrary* request(MVKPipelineCache& cache,int module,int key,bool refuse=false,VkPipelineCreationFeedback* feedback=nullptr) {
   SPIRVToMSLConversionConfiguration config{key}; MVKShaderModule shader{module}; MVKPipeline pipeline{refuse};
   auto* result=cache.getShaderLibrary(&config,&shader,&pipeline,feedback,0);
@@ -87,6 +90,8 @@ int main(){
   growingVariantStorage();assert(fixture.live==0);
 #if FIXTURE_NEW
   publicationDuringCompile();assert(fixture.live==0);
+  conversionObservation([](MVKPipelineCache& cache,int module,int key,bool refuse){return request(cache,module,key,refuse);});
+  assert(fixture.live==0);
 #endif
   assert(fixture.active==0);
   printf("actual_cache_method=PASS hot_during_cold=%d snapshot_during_cold=%d max_cold=%d duplicate_compiles=0 public_cpu_only=1\n",FIXTURE_NEW,FIXTURE_NEW,int(fixture.maximum));

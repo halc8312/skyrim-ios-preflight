@@ -1,5 +1,13 @@
 # 開発状況
 
+**2026-11-15：本人GOを受け、build9のMac検証・非公開OTA準備を開始。** 待機予算の修正、shader変換／待機内訳／cache保存進捗の計測、40枠の停止記録をまとめる。build番号とassembly検査値を9へ揃え、依存stageをbuild9へ分離してbuild8成果物を保持。無料枠207/500（残293分）、subscription未有効を画面で確認。比較設定5項目は既定OFF。日本語データの導入はこの性能更新へ混在させず、所有データでの対応可否を並行調査する。Mac成功・署名・OTA切替・実機確認はまだ未完了。
+
+**2026-11-15：残る停止を8起動の保存ログから再分析し、待機予算の修正と不足区間の計測を追加。アプリは未ビルド。** 最新の全OFF回の591.409ms gapでは、記録されたworkとの重なりの和集合は255.990ms、未観測区間は335.419ms。全停止をshader起因と断定しない。6件の長いframe待機（61.559〜88.247ms）にも5秒ごとのログ出力時刻は含まれず、出力処理が主因とは確認できなかった。UI処理で待機予算を使い切った後にさらにsleepを要求する経路を修正し、再現検査では余分な4ms要求が0になることを確認した。ただし実機の長い停止が同経路だった証拠はまだない。変換時間、run loop／sleep／UI pump／期限超過、cache保存のworker入口と各段階を分けて記録し、固定slow-span枠を16→40へ拡張。新旧ログを読める解析器で記録落ちと未観測時間を区別する。PCの対象検査・ASan/UBSan・既存8ログの旧集計一致を確認。Apple SDK／実Metal／実機効果の検証は未実施で、build・push・配布・端末変更・比較設定の標準ON化は行わない。詳細はPERFORMANCE_WORK.md先頭。
+
+**2026-11-15：同じ場所・動きの全OFF基準を追加回収し、前5回と比較。** 本人は後半5回もほぼ同じ動きだったと補足し、追加の全OFF試遊を完了。22:18:10／22:18:26 JSTの新規2 fileだけをUSBで取得（366,047 bytes、前後stat一致、端末書込み0）。短い起動07は互換再利用ONのままなので基準から除外、起動08は5項目全OFFを確認した。08は記録frame時間197.492秒、100ms超gap3件／最大591.409msで、3件とも最初の計測窓開始から約9.7〜15.4秒に収まり、その後の記録では100ms超0件。6,084,940 bytesを読み込み、復元MSL334件／新規root16件。比較の前提が揃った一方、保存cacheなしのparallel／priority回とのcache条件差は残る。失敗metric0、thermal／memory警告0。標準ONへの変更や追加buildはせず、詳細・採否はPERFORMANCE_WORK.md先頭に記録。
+
+**2026-11-15：build8の6回の実機比較ログをUSBで回収・解析。** 本人は毎回完全終了・再起動、初回だけ別の場所・全OFFでクイックセーブ、後の5回はおおむね同じ場所と報告。登録済みiPhone・既存信頼・実端末build8を確認し、6 file／2,107,215 bytesを読み取り専用で取得、前後stat一致と各hashを保持した。起動時設定は全OFF→parallel→priority→settings-save→persistent-storage→compatible-reuseの各1項目だけONと一致。全400 device観測でcap60／thermal0／low_power0／memory_warning0。settings内保存2回と次回の6,084,940 bytes読込、priority gateの期限超過・無効化0を確認。初回は保存候補期間と重なる429.400／530.328msのgapがあり、別場所・cache蓄積・時間長の違いもあるため他回との改善率は算出しない。詳細はPERFORMANCE_WORK.md先頭。新build・端末変更・標準ONへの採用は行っていない。
+
 **2026-11-15：build8のMac検証・署名・非公開OTA配布が完了。** [Mac build23](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af99e8c90e83b09c4fa8baa)は公開`37f0f1002b2dca3812d184b8b3a65fb41506702d`で成功、5分55秒。37組／93検査中91成功・環境依存2skip、iPhoneOS shader8件compile、実Mac GPU20ケースreadbackが成功した。3共有ABI headerはbuild7と一致。既存private guestを再生成せずPC内で組み込み、既存profileで署名した。署名済みIPAは58,680,582 bytes、SHA256 `667c155c8d7047802e0fcf8ba4de12d465b671b544a0b9e2fa630749eb7e75bb`。2 images／39,431 pages／4 resources、暗号署名とprofileのApple chain・AppID・登録端末を検証済み。
 
 既存のTailscale更新URLをbuild8へ切替え、HTTPS manifestのbuild8／AppIDと、全IPA転送後のhash一致を確認した。旧server停止は自動承認チェックで拒否されたため、旧配信を保持した別loopback serverを検証してSkyrimIOS routeだけを切替えた。他route・旧build7 IPA・game／saveは保持。**新しい比較設定5項目は全て既定OFF・次回起動反映。本人によるiPhoneへの更新・起動・save確認と、同条件の性能／発熱比較は未実施。** 実Metalの新しい並行root／specializer失敗注入も未実施で、既存のMetal arithmetic検証と区別する。無料枠は今回198→201→207/500（残293分）、追加課金なし。詳細・原logは`local/codemagic-title23/`、署名成果物はignored private内に保持した。

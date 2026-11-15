@@ -40,6 +40,11 @@ enum SkyrimPerfKind {
     SKYRIM_PERF_SAVE_CANDIDATE_WRITE_EX,
     SKYRIM_PERF_SAVE_CANDIDATE_WINDOW,
     SKYRIM_PERF_MVK_COLD_LOCK_WAIT,
+    SKYRIM_PERF_MVK_CONVERT,
+    SKYRIM_PERF_PACER_RUNLOOP,
+    SKYRIM_PERF_PACER_SLEEP,
+    SKYRIM_PERF_UI_PUMP,
+    SKYRIM_PERF_PACER_OVERRUN,
     SKYRIM_PERF_KIND_COUNT
 };
 #define SKYRIM_PERF_BUCKET_COUNT 20
@@ -77,8 +82,8 @@ void skyrim_perf_take(unsigned kind, SkyrimPerfWindow *out);
 void skyrim_perf_log_window(void);
 
 #define SKYRIM_PERF_STALL_THRESHOLD_NS UINT64_C(50000000)
-#define SKYRIM_PERF_STALL_FRAMES 4
-#define SKYRIM_PERF_STALL_WORK 12
+#define SKYRIM_PERF_STALL_FRAMES 8
+#define SKYRIM_PERF_STALL_WORK 32
 #define SKYRIM_PERF_STALL_CAPACITY (SKYRIM_PERF_STALL_FRAMES + SKYRIM_PERF_STALL_WORK)
 typedef struct SkyrimPerfStall {
     uint64_t started_ns, ended_ns, thread;
@@ -90,7 +95,7 @@ typedef struct SkyrimPerfStalls {
     unsigned count;
     uint64_t dropped_busy, dropped_full;
 } SkyrimPerfStalls;
-/* Fixed samples, not a complete trace. Writers try once and never wait; four
+/* Fixed samples, not a complete trace. Writers try once and never wait; eight
  * frame slots are reserved so nested compilation cannot crowd out every gap.
  * Anonymous thread ordinals are process-local (0 means unavailable), never
  * pthread IDs or addresses. Recording allocates nothing and writes no files.

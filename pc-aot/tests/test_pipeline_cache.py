@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -56,6 +57,23 @@ class PipelineCacheTests(unittest.TestCase):
                 body = section.split("CACHE_CASE_END\n", 1)[0]
                 rows = [line for line in body.splitlines() if "event=checkpoint " in line]
                 self.assertEqual(len(rows), 1, body)
+                # Even a throwing/cancelled driver must be preceded by a stage
+                # record. The former end-only report could not identify a stuck
+                # or killed call. Exercise real owner calls, not a mock logger.
+                boundary, current_stage, stage_count = [], None, 0
+                for line in body.splitlines():
+                    if "event=checkpoint_boundary " in line:
+                        self.assertRegex(line, r" monotonic_ns=[0-9]+$")
+                        boundary.append(int(re.search(r"boundary=(\d+)", line)[1]))
+                    elif "event=checkpoint_stage " in line:
+                        self.assertRegex(line, r" monotonic_ns=[0-9]+$")
+                        current_stage = int(re.search(r"stage=(\d+)", line)[1])
+                        stage_count += 1
+                    elif line in ("CACHE_DRIVER_SIZE_ENTER", "CACHE_DRIVER_DATA_ENTER"):
+                        self.assertEqual(boundary, [0, 1, 2], body)
+                        self.assertEqual(current_stage, 1 if "SIZE" in line else 2, body)
+                self.assertEqual(boundary, [0, 1, 2], body)
+                self.assertLessEqual(stage_count, 12, body)  # 3 attempts + one file publication
             self.assertIn("outcome=0 stage=9 attempts=2", result.stderr)
             self.assertIn("outcome=6 stage=2 attempts=3", result.stderr)
             self.assertIn("budget_expired=1", result.stderr)

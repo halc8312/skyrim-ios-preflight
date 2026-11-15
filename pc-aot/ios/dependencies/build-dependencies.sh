@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 [[ "$(uname -s)" == Darwin ]] || { echo 'Requires macOS and the Apple iPhoneOS SDK.' >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-shader-trials-v1}"
+WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-build9}"
 PREFIX="$WORK/prefix"
 DEPLOYMENT="${IPHONEOS_DEPLOYMENT_TARGET:-18.0}"
 JOBS="${JOBS:-2}"

@@ -75,7 +75,12 @@ struct Driver {
     static VKAPI_ATTR VkResult VKAPI_CALL get(VkDevice raw, VkPipelineCache cache, size_t *size, void *out) {
         auto& d = *reinterpret_cast<Driver*>(raw); ++d.gets;
         assert(cache == (VkPipelineCache)uintptr_t(42));
-        if (!out) { if (d.duringSize) d.duringSize(); *size = d.excessive ? 65 * 1024 * 1024 : d.data.size(); return VK_SUCCESS; }
+        if (!out) {
+            std::fputs("CACHE_DRIVER_SIZE_ENTER\n", stderr);
+            if (d.duringSize) d.duringSize();
+            *size = d.excessive ? 65 * 1024 * 1024 : d.data.size(); return VK_SUCCESS;
+        }
+        std::fputs("CACHE_DRIVER_DATA_ENTER\n", stderr);
         d.inGet = true;
         if (d.duringGet) d.duringGet();
         d.inGet = false;

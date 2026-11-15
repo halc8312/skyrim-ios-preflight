@@ -47,6 +47,18 @@ struct SaveLease {
         activeSaveTicket.store(0, std::memory_order_release);
     }
 };
+// These infrequent checkpoint boundaries are emitted before a potentially
+// blocking operation. The final outcome alone cannot distinguish an unstarted
+// worker from a registry/driver/I/O wait if the process is killed or suspended.
+void logCheckpointBoundary(uint64_t ticket, unsigned boundary, uint64_t started) {
+    const int savedErrno = errno;
+    const uint64_t now = skyrim_perf_now_ns();
+    fprintf(stderr, "IOS_PIPE_CACHE event=checkpoint_boundary ticket=%llu boundary=%u elapsed_ns=%llu monotonic_ns=%llu\n",
+        (unsigned long long)ticket, boundary,
+        (unsigned long long)(started && now >= started ? now - started : 0),
+        (unsigned long long)now);
+    errno = savedErrno;
+}
 uint64_t readLE(const uint8_t *p, unsigned size) {
     uint64_t value = 0;
     for (unsigned i = 0; i < size; ++i) value |= uint64_t(p[i]) << (8 * i);
@@ -109,6 +121,16 @@ struct CacheCheckpointReport {
     CacheCheckpointReport(uint64_t t, uint64_t g, uint64_t saved)
         : ticket(t), generation(g), savedGeneration(saved) {}
     void end(unsigned value) { outcome = value; }
+    void enter(unsigned value) {
+        stage = value;
+        const int savedErrno = errno;
+        const uint64_t now = skyrim_perf_now_ns();
+        fprintf(stderr, "IOS_PIPE_CACHE event=checkpoint_stage ticket=%llu stage=%u attempt=%u elapsed_ns=%llu monotonic_ns=%llu\n",
+            (unsigned long long)ticket, stage, attempts,
+            (unsigned long long)(started && now >= started ? now - started : 0),
+            (unsigned long long)now);
+        errno = savedErrno;
+    }
     // This is admission control between calls, not a deadline imposed on a
     // running driver call or fsync. Cancellation never destroys live driver work.
     bool stopped() {
@@ -293,9 +315,9 @@ bool PipelineCache::save(const std::vector<uint8_t>& bytes, uint64_t ticket,
     if (path_.empty() || !validPayload(bytes) || cancelled(ticket)) return false;
     std::string temporary = path_ + ".pending";
     // Remove only our unpublished name, never the last valid cache.
-    r.stage = RemovePending;
+    r.enter(RemovePending);
     if (unlink(temporary.c_str()) && errno != ENOENT) { r.error = errno; return false; }
-    r.stage = Open;
+    r.enter(Open);
     File file(open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
     if (file.fd < 0) { r.error = errno; return false; }
     uint8_t header[headerSize]{};
@@ -303,22 +325,22 @@ bool PipelineCache::save(const std::vector<uint8_t>& bytes, uint64_t ticket,
     writeLE(header + 8, identity_.size(), 8);
     writeLE(header + 16, bytes.size(), 8);
     writeLE(header + 24, checksum(bytes.data(), bytes.size()), 8);
-    r.stage = Write;
+    r.enter(Write);
     bool ok = writeExact(file.fd, header, sizeof(header), ticket, r.error) &&
         writeExact(file.fd, identity_.data(), identity_.size(), ticket, r.error) &&
         writeExact(file.fd, bytes.data(), bytes.size(), ticket, r.error);
     if (ok) {
-        r.stage = Sync;
+        r.enter(Sync);
         if (fsync(file.fd)) { r.error = errno; ok = false; }
         ok = ok && !cancelled(ticket);
     }
-    if (ok) r.stage = Close;
+    if (ok) r.enter(Close);
     int closeResult = close(file.fd); file.fd = -1;
     if (ok && closeResult) r.error = errno;
     ok = ok && !closeResult && !cancelled(ticket);
     if (ok) {
         if (importPending_) {
-            r.stage = ImportPublish;
+            r.enter(ImportPublish);
             r.importPublish = 1;
             // Same-directory link publishes without replacing an intervening
             // target. Unsupported filesystems and EEXIST remain explicit
@@ -326,7 +348,7 @@ bool PipelineCache::save(const std::vector<uint8_t>& bytes, uint64_t ticket,
             if (link(temporary.c_str(), path_.c_str())) { r.error = errno; ok = false; }
             else if (unlink(temporary.c_str())) r.cleanupError = errno;
         } else {
-            r.stage = Rename;
+            r.enter(Rename);
             if (rename(temporary.c_str(), path_.c_str())) { r.error = errno; ok = false; }
         }
     }
@@ -347,7 +369,7 @@ void PipelineCache::checkpoint(uint64_t ticket) {
         r.sizeQuery = r.bytes = 0;
         r.generation = generation_.load(std::memory_order_relaxed);
         size_t size = 0;
-        r.stage = SizeQuery;
+        r.enter(SizeQuery);
         r.vk = getData_(device_, handle_, &size, nullptr);
         r.sizeQuery = size;
         if (r.stopped()) return;
@@ -358,7 +380,7 @@ void PipelineCache::checkpoint(uint64_t ticket) {
         if (size > bytes.capacity()) std::vector<uint8_t>().swap(bytes);
         bytes.resize(size);
         if (r.stopped()) return;
-        r.stage = DataQuery;
+        r.enter(DataQuery);
         r.vk = getData_(device_, handle_, &size, bytes.data());
         r.bytes = size;
         if (r.stopped()) return;
@@ -383,6 +405,8 @@ void PipelineCache::checkpoint(uint64_t ticket) {
 }
 
 void PipelineCache::checkpointAll(uint64_t ticket) {
+    const uint64_t started = skyrim_perf_now_ns();
+    logCheckpointBoundary(ticket, 0, started); // worker reached cache owner
     if (cancelled(ticket)) {
         fprintf(stderr, "IOS_PIPE_CACHE event=checkpoint_all ticket=%llu cancelled=1 caches=0\n",
             (unsigned long long)ticket);
@@ -401,7 +425,9 @@ void PipelineCache::checkpointAll(uint64_t ticket) {
         return;
     }
     SaveLease lease{ticket};
+    logCheckpointBoundary(ticket, 1, started); // about to acquire registry
     std::lock_guard<RegistryMutex> lock(registryMutex);
+    logCheckpointBoundary(ticket, 2, started); // lifetime protection acquired
     unsigned visited = 0;
     for (auto *p = registryHead; p && !cancelled(ticket); p = p->next_) {
         ++visited;

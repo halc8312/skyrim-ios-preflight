@@ -24,6 +24,11 @@ def stalls(items,busy=0,full=0):
             f'dropped_full={full} fields=kind,thread,start_ns,end_ns,failed,estimated_end spans='+
             ';'.join(','.join(map(str,item)) for item in items))
 
+def stalls_v3(items, start, end, busy=0, full=0):
+    return stalls(items,busy,full).replace('schema=1', 'schema=3').replace(
+        ' fields=',f' window_start_ns={start} window_end_ns={end} fields=').replace(
+        'estimated_end spans=', 'estimated_end,role,source,result spans=')
+
 class FrameTimingAnalysisTests(unittest.TestCase):
     def test_public_schema_matches_real_recorder(self):
         source=(ROOT/'ios/runtime-port/performance_metrics.c').read_text()
@@ -56,6 +61,57 @@ class FrameTimingAnalysisTests(unittest.TestCase):
         self.assertTrue(gap['overlaps'][-1]['failed'])
         self.assertEqual((r['sampled_spans'],r['dropped_busy'],r['dropped_full']),(5,3,5))
         self.assertNotIn('cause',gap)
+        self.assertEqual(gap['sampled_work_overlap_union_ms'],150)
+        self.assertEqual(gap['frame_interval_without_sampled_work_ms'],50)
+        self.assertEqual(gap['sampling_status'],'drops_reported')
+
+    def test_new_sampling_window_reports_drops_without_fabricating_a_cause(self):
+        frame = (0,1,100000000,300000000,0,0,0,0,0)
+        compile = (4,2,150000000,280000000,0,0,1,0,0)
+        nested = (33,2,160000000,270000000,0,0,1,0,0)
+        # The missing work is recorded in a neighboring report whose interval
+        # overlaps the frame. Later drops are kept separate because a long
+        # operation could finish later while still overlapping this frame.
+        rows=[stalls_v3([frame,compile,nested],50000000,250000000),
+              stalls_v3([],250000000,400000000,full=2),
+              stalls_v3([],500000000,700000000,busy=3)]
+        result=analyzer.summarize(rows);gap=result['longest_sampled_frame_gaps'][0]
+        self.assertEqual((result['invalid_records'],result['sampling_windows_with_drops']),(0,2))
+        self.assertEqual((gap['window_dropped_busy'],gap['window_dropped_full']),(0,2))
+        self.assertEqual(gap['later_window_dropped_busy'],3)
+        self.assertEqual(gap['sampled_work_overlap_union_ms'],130)
+        self.assertEqual(gap['frame_interval_without_sampled_work_ms'],70)
+        self.assertEqual(gap['sampling_status'],'drops_reported')
+        self.assertIsNone(gap['start_ms_from_first_timing_window'])
+        self.assertEqual(analyzer.summarize(rows[:1])['longest_sampled_frame_gaps'][0]['sampling_status'],
+                         'no_reported_drops')
+        late=analyzer.summarize([rows[0],rows[2]])['longest_sampled_frame_gaps'][0]
+        self.assertEqual(late['sampling_status'],'possible_late_drops')
+        self.assertEqual((late['window_dropped_busy'],late['later_window_dropped_busy']),(0,3))
+        malformed=rows[0].replace('window_start_ns=50000000','window_start_ns=300000000')
+        self.assertEqual(analyzer.summarize([malformed])['invalid_records'],1)
+
+    def test_old_sampling_windows_can_be_inferred_without_losing_unknown_coverage(self):
+        frame=(0,1,100000000,300000000,0,0)
+        unknown=analyzer.summarize([stalls([frame])])['longest_sampled_frame_gaps'][0]
+        self.assertEqual(unknown['sampling_status'],'window_unknown')
+        result=analyzer.summarize([timing(),stalls([frame],full=1)])
+        gap=result['longest_sampled_frame_gaps'][0]
+        self.assertEqual(gap['sampling_status'],'drops_reported')
+        self.assertEqual(gap['start_ms_from_first_timing_window'],100)
+
+    def test_v3_capacity_and_new_kinds_keep_old_contracts(self):
+        frames=[(0,1,1,60000001,0,0,0,0,0)]*8
+        work=[(34,1,1,60000001,0,0,0,0,0)]*32
+        row=stalls_v3(frames+work,0,70000000)
+        self.assertEqual(len(analyzer.stalls(row.split('IOS_STALL ',1)[1])[0]),40)
+        self.assertEqual(analyzer.summarize([row])['invalid_records'],0)
+        for invalid in (stalls_v3(frames+[frames[0]],0,70000000),
+                        stalls_v3(work+[work[0]],0,70000000)):
+            self.assertEqual(analyzer.summarize([invalid])['invalid_records'],1)
+        # Old versions retain their original 4/12 limits.
+        old=stalls([(0,1,1,60000001,0,0)]*5)
+        self.assertEqual(analyzer.summarize([old])['invalid_records'],1)
 
     def test_malformed_unknown_duplicate_and_cross_launch_inputs_are_not_success_samples(self):
         valid=timing(bins=[1]+[0]*19)
@@ -91,7 +147,7 @@ class FrameTimingAnalysisTests(unittest.TestCase):
             self.assertEqual(analyzer.summarize([bad])['invalid_records'],1)
 
     def test_pipeline_role_contexts_reject_source_and_wait_result_tags(self):
-        for kind in ('graphics_pipeline', 'compute_pipeline'):
+        for kind in ('graphics_pipeline', 'compute_pipeline', 'mvk_convert'):
             row = timing(kind, bins=[1]+[0]*19).replace('IOS_TIMING ', 'IOS_TIMING_CONTEXT ')
             row += ' role=1 source=0 result=0'
             self.assertEqual(analyzer.summarize([row])['invalid_records'], 0)
@@ -113,8 +169,16 @@ class FrameTimingAnalysisTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='frame-recorder-') as tmp:
             work=Path(tmp);source=work/'emit.c';binary=work/'emit'
             source.write_text('''#include "performance_metrics.h"
-int main(void){
+int main(int argc,char **argv){
  uint64_t now=skyrim_perf_now_ns();
+ (void)argv;
+ if(argc>1){
+  for(unsigned i=0;i<8;++i)
+   skyrim_perf_interval(SKYRIM_PERF_FRAME_GAP,now-200000000+i,now,0,0);
+  for(unsigned i=0;i<32;++i)
+   skyrim_perf_interval(SKYRIM_PERF_PACER_RUNLOOP,now-150000000+i,now,0,0);
+  skyrim_perf_log_window();return 0;
+ }
  skyrim_perf_interval(SKYRIM_PERF_FRAME_GAP,now-200000000,now,0,0);
  skyrim_perf_interval(SKYRIM_PERF_GRAPHICS_PIPELINE,now-150000000,now-10000000,0,0);
  for(unsigned k=SKYRIM_PERF_MVK_MSL_WAIT;k<=SKYRIM_PERF_MVK_DISPATCH_BLOCK;++k)
@@ -151,6 +215,14 @@ int main(void){
                 # NSError may be a warning; these observations do not classify
                 # the original API's failure/success or driver cache hits.
                 self.assertIsNone(r['kinds'][kind]['failures'])
+            burst=subprocess.run([str(binary),'burst'],capture_output=True,text=True,check=True,timeout=5)
+            r=analyzer.summarize(burst.stderr.splitlines())
+            self.assertEqual((r['invalid_records'],r['sampled_spans'],r['dropped_full']),(0,40,0))
+            self.assertEqual(len(r['longest_sampled_frame_gaps']),8)
+            self.assertEqual(r['kinds']['pacer_runloop']['samples'],32)
+            stall_line=next(line for line in burst.stderr.splitlines() if line.startswith('IOS_STALL '))
+            self.assertIn('schema=3 ',stall_line)
+            self.assertLess(len(stall_line),8192)
 
     def test_save_window_is_not_attributed_to_the_closing_thread(self):
         frame = (0, 1, 100000000, 300000000, 0, 0)

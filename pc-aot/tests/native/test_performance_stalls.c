@@ -79,15 +79,23 @@ int main(void) {
     skyrim_perf_record(SKYRIM_PERF_HLSL, UINT64_MAX, 0, 0);
     assert(skyrim_perf_stalls_take(&s) && !s.count);
 
-    for (unsigned i = 0; i < 14; ++i)
+    /* A representative nested compile burst exceeds the old 12-work-slot budget.
+     * Retain all 19 work spans without consuming the frame reservation. */
+    for (unsigned i = 0; i < 19; ++i)
         skyrim_perf_interval(SKYRIM_PERF_READ_FILE, 100 + i, 100000100 + i, 0, 0);
-    for (unsigned i = 0; i < 6; ++i)
+    for (unsigned i = 0; i < 4; ++i)
         skyrim_perf_interval(SKYRIM_PERF_FRAME_GAP, 100 + i, 100000100 + i, 0, 0);
-    assert(skyrim_perf_stalls_take(&s) && s.count == 16 && s.dropped_full == 4 && !s.dropped_busy);
+    assert(skyrim_perf_stalls_take(&s) && s.count == 23 && !s.dropped_full && !s.dropped_busy);
     verify_spans(&s);
-    for (unsigned i = 0; i < 16; ++i) {
-        assert(s.spans[i].kind == (i < 4 ? SKYRIM_PERF_FRAME_GAP : SKYRIM_PERF_READ_FILE));
-        assert(s.spans[i].started_ns == 100 + (i < 4 ? i : i - 4));
+    for (unsigned i = 0; i < SKYRIM_PERF_STALL_WORK + 2; ++i)
+        skyrim_perf_interval(SKYRIM_PERF_READ_FILE, 100 + i, 100000100 + i, 0, 0);
+    for (unsigned i = 0; i < SKYRIM_PERF_STALL_FRAMES + 2; ++i)
+        skyrim_perf_interval(SKYRIM_PERF_FRAME_GAP, 100 + i, 100000100 + i, 0, 0);
+    assert(skyrim_perf_stalls_take(&s) && s.count == SKYRIM_PERF_STALL_CAPACITY && s.dropped_full == 4 && !s.dropped_busy);
+    verify_spans(&s);
+    for (unsigned i = 0; i < SKYRIM_PERF_STALL_CAPACITY; ++i) {
+        assert(s.spans[i].kind == (i < SKYRIM_PERF_STALL_FRAMES ? SKYRIM_PERF_FRAME_GAP : SKYRIM_PERF_READ_FILE));
+        assert(s.spans[i].started_ns == 100 + (i < SKYRIM_PERF_STALL_FRAMES ? i : i - SKYRIM_PERF_STALL_FRAMES));
     }
     assert(skyrim_perf_stalls_take(&s) && !s.count && !s.dropped_full);
     assert(!atomic_flag_test_and_set(&stall_lock));
@@ -97,10 +105,25 @@ int main(void) {
     assert(skyrim_perf_stalls_take(&s) && s.dropped_busy == 1 && !s.count);
 
     skyrim_perf_activity(0);
+    for (unsigned k = SKYRIM_PERF_PACER_RUNLOOP; k <= SKYRIM_PERF_PACER_OVERRUN; ++k) {
+        SkyrimPerfWindow active;
+        skyrim_perf_interval(k, 1000000000, 2100000000, 0, 0);
+        skyrim_perf_take(k, &active);
+        assert(!active.total_ns && !active.max_ns);
+    }
     skyrim_perf_interval(SKYRIM_PERF_READ_FILE, 1000000000, 2000000000, 0, 0);
     assert(skyrim_perf_stalls_take(&s) && !s.count);
     atomic_store(&fixture_now, 2000000000);
     skyrim_perf_activity(1);
+    for (unsigned k = SKYRIM_PERF_PACER_RUNLOOP; k <= SKYRIM_PERF_PACER_OVERRUN; ++k) {
+        SkyrimPerfWindow active;
+        skyrim_perf_interval(k, 1999999999, 2100000000, 0, 0);
+        skyrim_perf_take(k, &active);
+        assert(!active.total_ns && !active.max_ns);
+        skyrim_perf_interval(k, 2000000000, 2001000000, 0, 0);
+        skyrim_perf_take(k, &active);
+        assert(active.total_ns == 1000000 && active.max_ns == 1000000);
+    }
     skyrim_perf_interval(SKYRIM_PERF_READ_FILE, 1999999999, 2100000000, 0, 0);
     skyrim_perf_interval(SKYRIM_PERF_READ_FILE, 2000000000, 2100000000, 0, 0);
     assert(skyrim_perf_stalls_take(&s) && s.count == 1 && s.spans[0].started_ns == 2000000000);

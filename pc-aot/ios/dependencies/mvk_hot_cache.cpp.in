@@ -41,7 +41,12 @@ MVKShaderLibrary* MVKPipelineCache::getShaderLibrary(SPIRVToMSLConversionConfigu
         }
     }
     SPIRVToMSLConversionResult conversionResult;
-    if (!shaderModule->convert(pContext, conversionResult)) {
+    // Measure conversion separately from cold-lock waiting and Metal library
+    // construction. Ready hits and compile-required refusals never enter here.
+    const uint64_t conversionStarted = skyrim_perf_now_ns();
+    const bool converted = shaderModule->convert(pContext, conversionResult);
+    skyrim_perf_end(SKYRIM_PERF_MVK_CONVERT, conversionStarted, !converted);
+    if (!converted) {
         // Existing getShaderLibraryImpl sets this flag when nothing was added,
         // including a conversion failure. Do not redefine its feedback API here.
         if (pShaderFeedback) mvkEnableFlags(pShaderFeedback->flags, VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT);

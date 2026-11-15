@@ -1,5 +1,82 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-15 残る停止の再分類と、未ビルドの待機修正
+
+本人の「ログから絞って改善、ビルドはまだしない」に従い、回収済み8起動だけを再解析した。原log・旧解析を保持し、新しい結果は各private回収directoryの`analysis-observation-v3/`へ分離。8件すべてで従来のkind／context histogram、span件数、drop件数、invalid件数が一致した。アプリ／cloud build、push、配布、端末・game・save・cacheへの書込みは行わない。5つの比較設定は既定OFFを維持する。
+
+### ログで絞れたことと限界
+
+最新全OFFの起動08では、記録workをframe区間へ切り詰めて和集合を取り、内包spanや別threadの時間を足し合わせないようにした。
+
+| frame gap | 記録workとの重なり（和集合） | 記録workが覆っていない時間 | 観測 |
+| ---: | ---: | ---: | --- |
+| 591.409ms | 255.990ms | 335.419ms | 必須drawのpipeline／root MSLと先読みのcompile-lock待ちが重なる。draw側cold-lock待ちは記録なし |
+| 162.349ms | 0ms | 162.349ms | 50ms以上のworkとの重なりなし |
+| 156.176ms | 51.728ms | 104.448ms | fence待ちと部分的に重なる |
+| 78.957ms | 67.616ms | 11.341ms | 同threadのframe待機と重なる |
+
+未観測時間はguest CPU時間や非shader原因を証明しない。08のdrop0でも、50ms未満の仕事の連続・未計測境界・終了前に報告されない処理は残る。最初の3件は起動後序盤で、通常プレイとロード／メニューを厳密に分けた記録ではない。
+
+03／04／06／08にある長いpacer計6件（65.767、88.247、61.559、65.734、75.436、67.616ms）のいずれにも、5秒ごとの`skyrim_perf_log_window`のend clockは含まれなかった。従ってログ出力の非同期化を停止対策として決め打ちしない。既存60FPS deadlineの通常計算からこの長さのsleepを意図して要求する経路はなく、run-loop callback／UI処理／OSによる再開遅延を区別する。[Appleのrun-loop説明](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Multithreading/RunLoopManagement/RunLoopManagement.html)も、callbackを実行する時間やtimerの配送が厳密な期限にならない点と整合するが、今回の原因を特定する資料ではない。
+
+06の1084.686ms gapにはprefetch root MSL961.508msとdraw cold-lock951.960msが重なる。既存の切替付きmodule分離／優先gateが対象とする候補は残る。一方、08の自己root生成や未観測区間に同じ対策が効くとは限らない。thermal／memory警告は観測されておらず、worker／QoS／画質を一律に変えない。
+
+### 今回の変更
+
+- **余分な待機要求の修正:** main-threadの`CFRunLoopRunInMode`がStopped／Finishedで戻った場合、そこで消費した時間を残予算から差し引く。予算を使い切っていれば追加sleepなし、残っていれば従来の上限4ms以内で残予算だけ待つ。clock不成立時は従来fallbackを維持。HandledSource／TimedOut、worker-thread待機、FPS／VSyncは不変。fixtureの予算消費済み条件では旧4ms要求→0。これは要求する待機量の差で、OSによる実待機時間の上限や実機67ms停止の解消を意味しない。
+- **待機内訳:** `pacer_runloop`、`pacer_sleep`、`ui_pump`、`pacer_overrun`を追加。最後はdeadlineから終了までの超過wall timeであり、ほかのspanと重なる。合計してCPU時間にしない。UI pumpの既存4ms抑制・再入guardを維持し、休止／復帰を跨ぐ新4分類はhistogramとslow spanから除外、既存kindの集計契約は維持する。errnoを観測によって変えない。
+- **shader変換境界:** 実cache missの`shaderModule->convert`だけを`mvk_convert`として必須／先読み／その他へ分ける。library構築とMetal待ちを含めず、ready-hit／compile-required拒否は従来のまま。既存のmodule切替・lock・キー・生成結果を変えない。upstream converterがエラーを記録してtrueを返し得る既知の性質は残り、新counterのfailure0を変換の完全成功証明には使わない。
+- **記録落ちの改善:** 固定枠をframe4→8、work12→32（合計16→40）へ増やした。heap確保なし、writerは一度だけlockを試し、待たない。ログschema3に近似の採取窓を追加し、最大40spanが8192byteの行へ収まることを実recorder出力で確認した。枠拡大でdrop0を保証せず、schema1／2も引き続き読む。解析器は採取窓のdrop、後の完了窓で落ちた長い仕事の可能性、窓不明を区別し、重なりの和集合／未観測区間を出す。
+- **cache保存の未完了を切り分け:** 全8起動でbackgroundのprepare→queue以降が記録されていないため、worker入口／保存からの帰還、registry待ちの前後、size／data取得とfile公開各段階の直前を数値で記録する。既に読んだ単調時刻も出し、frameの記録と揃えられるようにする。保存stageはcache1件あたり最大12行。次の記録で、未着手・registry待ち・driver取得・file操作のどこまで到達したかを区別する。現在の証拠だけで保存bugを同定したとは扱わず、保存時期・世代・ticket・取消・file形式は変更しない。
+
+新performance headerの正確なdigestだけを既存の互換reviewリストへ追加した。旧kind番号を維持し、OS／GPU／driver照合を緩和しない。ただしhot-cache templateやcache ownerの変更は現在のcritical namespace入力なので、次のbuildでbuild8のcacheをそのまま読めるとは保証しない。初回coldとwarm条件を分けて比較する。
+
+### 検証と次の判定
+
+PC上で実method／recorderを使う対象検査を実行：device-policy6件中5成功・Apple専用1skip、hot-cache1件、module合成3件、cache owner1件、stall2件、metrics3件、解析器12件が成功。namespaceはWSLではCMake環境の1件をskipし、WindowsのCMake configure-onlyを含む全5件で成功した。追加pacing2件・stall2件・metrics3件はASan/UBSanでも成功。既存overlay5件・submission寿命baseline3件、source preflight／差分検査も成功。8万回の並行記録で採取／busy／fullの件数整合、40span全量の出力→解析、既存ログの旧集計一致を確認した。初回に見つかった解析fixtureの入力prefix違いと旧pacer式の文字列想定はfixtureを修正し、再検査で通過。失敗を製品成功として扱っていない。
+
+Apple SDKのObjective-C全体、実Metalの新並行failure注入、iPhoneでの待機・FPS・発熱への効果は未検証。次のGO後はまず同条件の旧／新ログで、pacer超過がrun loop／sleep／pumpのどこにあるか、shader生成中の変換自体の比率、background workerが実際に進むかを判定する。今回覆えていない335ms等の区間は、追加分類でも説明がつかなければPresent間のゲーム処理／asset転送境界をさらに分ける。表示の欠落・必要同期の削除や未検証設定の標準ON化で停止を隠さない。
+
+## 2026-11-15 同じ場所・動きの全OFF基準を加えた比較
+
+本人は後半5回についても「ほとんど同じ動き」と補足し、同じ場所・動きで全OFFの追加試遊を報告した。既存collectorを別private directoryへ複製し、前回catalogにない2起動だけを読み取り専用で回収した。`private/iphone-build8-comparison-20261115-02/`に原log・hash・前後stat・解析結果を保持、366,047 bytes、端末書込み0。22:18:10 JSTの起動07は互換再利用だけONのまま、frame記録2窓／約9.8秒であり全OFF基準から除外。16秒後に起動08があるが、短い理由や終了原因を推測しない。22:18:26 JSTの起動08は5項目全OFF、module_cold0／reuse_requested0を確認した。
+
+| 条件 | 記録済みframe時間（秒） | 100ms超gap | 1分換算 | 最大gap（ms） | cache読込／復元件数 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 追加の全OFF（08） | 197.492 | 3 | 0.911 | 591.409 | 6,084,940 bytes／334 |
+| 並列準備（02） | 192.771 | 8 | 2.490 | 375.308 | 0／0 |
+| 描画優先（03） | 213.519 | 3 | 0.843 | 311.168 | 0／0 |
+| 設定画面内保存（04） | 194.371 | 6 | 1.852 | 351.501 | 0／0 |
+| アプリ内保持（05） | 157.529 | 4 | 1.524 | 1129.711 | 6,084,940 bytes／334 |
+| 互換更新後再利用（06） | 162.776 | 3 | 1.106 | 1084.686 | 0／0 |
+
+時間と率は記録済みframe間隔の合計を分母とする記述統計。起動・メニュー・ロードを厳密に分離したgameplay区間やGPU表示FPSではなく、単回・順次比較である。場所・動作が揃ったことは本人報告として採用するが、全OFFの追加回は保存cacheあり、02／03／04／06はなしという条件差が残る。OS内部cacheの温まりや、実際に遭遇した新規描画状態も同一とは限らない。差を設定の改善率として公称しない。
+
+**全OFF回の停止時刻:** 最初の計測窓開始から9.716秒に591.409ms、15.040秒に162.349ms、15.244秒に156.176ms。約15.4秒以降〜記録末尾197.777秒では100ms超gap0件だった（全体histogram3件とslow span3件が一致、dropped_full／busy0）。50ms超は全体5件で、後半にも74.643／78.957msが各1件ある。最長gapにはdraw graphics pipeline255.982ms・draw root MSL228.774ms、prefetchのgraphics lock待ち255.178msが重なる。今回はdrawがcold lockで待つ記録はなく、自己の新規生成を含む停止である。ただし全591msをこの部分に帰属させず、ほか2件も記録された長いspanだけで原因確定しない。保存候補write/windowは記録なし。
+
+**cacheと安全性:** 08は6,084,940 bytesを正常に読み込み、復元MSL334件（最大0.302ms・100ms超0）、runtime root新規16件（draw1／prefetch15）。05の読込サイズ・復元件数と一致する。04で保存した成果が全OFFに戻しても再利用されたことと整合するが、ファイルbyte同一性までは証明していない。全40 device観測でcap60／thermal0／low_power0／memory_warning0、最小headroom3.865GiB。graphics summaryとdrawableは前回同様、個別画質値は未記録。既存failure対応metric・明示FATAL／Metal／SPIR-V変換／Present失敗は0、解析invalid／duplicate0。今回もbackground prepare→queueの後に保存完了ログはなく、読込成功と終了時保存成功は分けて扱う。
+
+**現時点の判断:** 追加基準は得られ、全OFFでも序盤後は大きな停止が少なかった。描画優先は候補として維持するが、並列準備を含めて標準ONの優位性をまだ実証していない。キャッシュ保存・読込の機能成功は確認できたので、その再利用を維持しつつ、background保存完了が残らない理由の切り分けを優先候補とする。保持機能をONにした1回や互換再利用の初回だけのFPSで、保存機能自体を良否判定しない。描画欠損の目視確認や長時間の高温比較はこのログで代替しない。製品code・設定・ゲーム／save・cacheへの書込み、新build、標準ONへの切替は今回なし。
+
+## 2026-11-15 build8：6回の実機比較ログ
+
+本人報告は「初回は別の場所・全OFFでクイックセーブ、その後の数回はほぼ同じ場所。設定ごとに完全終了・再起動」。USBの既存信頼・端末／AppID／Team・build8を確認した読み取り専用collectorで、21:39／21:49／21:52／21:56／21:59／22:02 JSTの6起動、計2,107,215 bytesを取得した。全fileの前後statが一致し、hashと原logは`private/iphone-build8-comparison-20261115-01/`に保持。端末書込み0。各logを既存解析器に通し、invalid／duplicate recordsは全0だった。
+
+| 起動 | 起動時に有効だった比較項目 | 記録済みframe時間合計（秒） | 100ms超gap件数 | 最大gap（ms） | 起動時cache bytes |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 01 | 全OFF・別の場所 | 566.9 | 13 | 981.234 | 0 |
+| 02 | 並列準備のみ | 192.8 | 8 | 375.308 | 0 |
+| 03 | 描画優先のみ | 213.5 | 3 | 311.168 | 0 |
+| 04 | 設定画面内保存のみ | 194.4 | 6 | 351.501 | 0 |
+| 05 | アプリ内保持のみ | 157.5 | 4 | 1129.711 | 6,084,940 |
+| 06 | 互換更新後再利用のみ | 162.8 | 3 | 1084.686 | 0 |
+
+これは起動・メニュー・ロードを厳密に除いたgameplay区間ではなく、記録されたframe間隔の集計。時間長も異なり、件数順を性能順位にはしない。IOS_SHADER_OPTIONで全OFF→各1項目ONを確認。全回のgraphicsログはoverride_count27／resolution956x440、drawable2868x1320だが、27設定の個別値の完全一致までは確認できない。全400 device観測はcap60／thermal0／low_power0／memory_warning0、最小headroomは全体で3.747GiB。高温時や長時間の安全性は未検証。slow spanのdropped_fullは順に4／6／0／0／7／0、dropped_busyは全0。重なりなしのgapをシェーダー外と断定しない。記録されたfailure対応metricの失敗数は全0、検索したSPIR-V変換／Metal compile／FATALの明示errorも0。source=MACROのMSL計測は全0で、今回のログを根拠にmacro重複除去を優先する材料はない。
+
+**確認できた機能:** 起動04のsettings保存は4,362,828 bytes／63.857msと6,084,940 bytes／48.219msの2回成功（outcome0、attempts1）。これは保存全体の所要時間で、描画停止時間ではない。起動05は旧cache読込・新storage選択・backup除外が成功したが、新保存先への保存完了ログはない。全6回の末尾はbackground prepare→queueで、background保存のfinishは記録されていない。原因は未確定。起動03のpriorityはyielded111／sleeps258／累積wait1.676266秒、expired0／disabled0／clock_failures0。累積値は先読み側の譲歩時間であり、描画が速くなった秒数ではない。
+
+**停止の内訳と次の判断:** 起動01には保存候補window386.438／431.348msと重なるgap429.400／530.328msがあった。quicksave種別や停止原因の全量は断定せず、保存関連の参考区間として扱う。起動06の1084.686ms gapにはprefetch root MSL961.508msとdraw cold-lock951.960msが重なる。module分離を比較する具体的な対象は残るが、key／owner追跡なしに全待ちの依存を証明したとは扱わない。起動05だけ保存cache復元があり、OS内部cacheも前の回で温まり得る。互換再利用は更新を跨ぐ効果で、同buildでONにした初回の名前空間切替では0 bytesから始まる。従って今回だけで5項目の優劣・改善率・標準ON採用を決めない。次の追加基準は、後半5回と同じ場所／save／画質で全OFFを再度記録すること。新buildや端末への変更は行っていない。
+
 ## 2026-11-15 build8のApple検証と非公開配布
 
 本人GOを受け、比較設定5項目を全て既定OFFのままbuild8を作成した。公開`37f0f1002b2dca3812d184b8b3a65fb41506702d`のMac build23は5分55秒で成功。最終hostのcompile／link、37組93検査（91成功・環境依存2skip）、実iPhoneOS Metal shader compile8件、実Mac GPU arithmetic readback20ケースを確認した。最初のbuild22はworker adapter fixtureが新しいshutdown通知を復元対象に含めず失敗し、製品codeは変更せずfixture7行を修正した。失敗logも保持している。

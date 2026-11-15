@@ -107,14 +107,27 @@ unsigned skyrim_device_platform_wait(uint64_t remaining) {
     int saved = errno;
     if (NSThread.isMainThread) {
         /* Input and UIKit callbacks wake the wait. No 250 Hz timer polling. */
+        uint64_t started = skyrim_perf_now_ns();
         SInt32 result = CFRunLoopRunInMode(kCFRunLoopDefaultMode, (double)remaining / 1e9, true);
+        uint64_t ended = skyrim_perf_now_ns();
+        skyrim_perf_interval(SKYRIM_PERF_PACER_RUNLOOP, started, ended, 0, 0);
         if (result == kCFRunLoopRunHandledSource || result == kCFRunLoopRunTimedOut) { errno = saved; return 0; }
-        /* An empty/stopped run loop must not spin. Keep the old bounded fallback. */
+        /* Observers/callbacks can consume the budget even when the loop exits
+         * as stopped/finished. Do not add a second sleep after that deadline. */
+        if (started && ended >= started) {
+            uint64_t elapsed = ended - started;
+            if (elapsed >= remaining) { errno = saved; return 0; }
+            remaining -= elapsed;
+        }
+        /* An empty/stopped run loop must not spin. Keep the bounded fallback,
+         * using only the budget still left after servicing its callbacks. */
         if (remaining > 4000000) remaining = 4000000;
     }
     struct timespec pause = {(time_t)(remaining / UINT64_C(1000000000)),
         (long)(remaining % UINT64_C(1000000000))};
+    uint64_t started = skyrim_perf_now_ns();
     nanosleep(&pause, NULL); /* caller rechecks the deadline after an interruption */
+    skyrim_perf_interval(SKYRIM_PERF_PACER_SLEEP, started, skyrim_perf_now_ns(), 0, 1);
     errno = saved;
     return 1;
 }
