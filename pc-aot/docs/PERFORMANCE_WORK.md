@@ -1,5 +1,13 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-15 build7のMac検証とOTA準備完了
+
+本人GOを受け、public hostだけを公開`fdaaae1c9233dd2bc5aafeeb6c60ceec118b45e2`としてCodemagic build21で1回実行し成功。新dependency stage build7を使い、旧cacheを保持した。34組83検査の81件成功、Windows専用ARM検査／任意FFmpeg decoder検査の2件skip。実MetalはiPhoneOS8shader compileとMac GPU20自作入力ケースの数値照合が成功。新しいperformance context／cache checkpointのfixtureと実Apple compile/linkを通過したが、iPhone stutter改善は未計測。
+
+公開host SHA256は`65a38a91766ab032d7527d952ee0ce362100371c67bb9ec17da1d21ad9c9e51c`。成果物／原logは`local/codemagic-title21/`。x86.h／rt_table.h／PcGuestABI.hはbuild6とbyte一致。CPU headerは既存private guestのheaders.x86.h、PcGuestABIはabi_header_sha256と一致。private frameworkは未変更の`dedd20f0e42d4c24b10f7f10b193b5987c4bd45a069ac34e8cc263efe7c86d48`、binding manifestは`1da3244849c8d83538c2fb06a6e15e82e81f5b112424adfa6f10708baaee46be`。PC内で組立・既存署名し、2images／39,426pages／4resourcesとprofileを検証した。旧IPA／原ゲーム／saveは保持し、private guestの再compileなし。
+
+署名済みbuild7は58,672,647bytes、SHA256 `1c7dd588ab5adba482a59db2836764bbc51310b1a001e311281f9bbb111e15b5`。private OTAの既存routeだけ更新し、manifestのbuild／AppID、HTTPS全転送後hash一致、390pxの英日表示を確認。本人へ保存・完全終了・Tailscale接続後の上書き導入を案内済み。端末導入／起動／save表示／改善は未確認。無料枠は198/500（残302分）。次は同save／画質／経路で初回と反復、背景保存を挟む再起動を比較し、root／復元／macroと必須／先読みの分類を読む。今回の計測だけでlock所有者や因果を確定しない。
+
 ## 2026-11-15 USB不要のOTA更新を実機で確認
 
 ユーザーの希望により、既存開発者署名を保持したbuild6の非公開配布経路を準備。Tailscaleの既存アカウント／HTTPS設定を再利用し、PCのGUI起動後にNoStateからRunningへ復旧。既存proxyを保存し、SkyrimIOS専用のsubpathだけを追加した。Funnel／一般公開、署名鍵の移動、外部hostへのIPA upload、新規cloud build、再署名は行っていない。

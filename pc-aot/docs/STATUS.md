@@ -1,5 +1,9 @@
 # 開発状況
 
+**2026-11-15：build7のMac検証・署名・非公開OTA配布が完了。** [Mac build21](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af9262690e83b09c4fa6edc)は公開`fdaaae1c9233dd2bc5aafeeb6c60ceec118b45e2`で成功。34組／83検査中81成功・環境依存2skip、iPhoneOS shader8件compile、実Mac GPU20ケースreadbackが成功。3共有ABI headerはbuild6と一致し、CPU header／PcGuestABIも既存private guestのcontractに一致。再生成せず同guestをPC内で組み込み、既存profile／DPAPIで署名した。署名済みIPAは58,672,647 bytes、SHA256 `1c7dd588ab5adba482a59db2836764bbc51310b1a001e311281f9bbb111e15b5`。2 images／39,426 pages／4 resources、暗号署名とprofileのApple chain・AppID・登録端末を検証。
+
+Tailscaleの既存routeを保持してbuild7へ切替。HTTPS manifestのbuild7／AppID、全IPA転送後hash一致、英語／日本語の390px表示を確認した。既存のgame／save／build6 IPAは保持。**本人へiPhoneからの保存・終了後の上書き更新と起動・save確認を依頼済みで、build7の導入・実機挙動はまだ未確認。** 改善範囲はbackground cache保存の限定retry／理由記録と停止の分類計測。初回cacheはcoldになり得るため、同画質／save／経路で反復する。無料枠の使用は193→198/500（残302分）、追加課金・新認証なし。
+
 **2026-11-15：本人GOでbuild7の一括Mac検証・非公開OTA更新へ進行。** background cache保存の限定retry／終了理由と、MSL生成由来・必須／先読みの分類計測をまとめる。CFBundleVersion・assembly・dependency stageを7へ揃え、旧build6とprivate guestを保持。無料枠は開始前193/500（残307分）を確認。追加課金・新認証なし。Mac成功・署名・build7実機更新はまだ未完了。
 
 **2026-11-15：USB不要の非公開OTA配布を準備。** 既存Tailscale接続をGUI起動で復旧し、既存配布routeを保ったままSkyrimIOS用routeを追加。loopback専用serverは同じTailscale利用者＋期限付きURLを確認し、既存の署名済みbuild6だけを配布する。IPAは58,670,330 bytes、既存署名結果のSHA256とHTTPS全転送後のSHA256が一致。公開配布・外部へのIPA／署名鍵upload・新規buildなし。iPhoneからページが開いたことに続き、本人が「インストールでき、起動・セーブも確認できた」と報告。同build6のUSBなし上書き・起動・既存saveの表示を本人確認済み。端末内fileのbyte比較は今回は行っていない。最新の性能改善コードは未収録。設定とURLはignoredのprivate/ota/config.json、配布helperはscripts/serve_private_ota.py。
