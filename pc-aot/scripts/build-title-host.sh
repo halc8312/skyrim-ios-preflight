@@ -50,42 +50,47 @@ PY
   # executables must instead link against macOS and run on the build machine.
   unset IPHONEOS_DEPLOYMENT_TARGET
   export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
-  python3 -m unittest discover -s tests -p 'test_ordered_stores.py' -v
-  python3 -m unittest discover -s tests -p 'test_shadow_ranges.py' -v
-  python3 -m unittest discover -s tests -p 'test_performance_metrics.py' -v
-  python3 -m unittest discover -s tests -p 'test_performance_stalls.py' -v
-  python3 -m unittest discover -s tests -p 'test_save_write_probe.py' -v
-  python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
-  python3 -m unittest discover -s tests -p 'test_game_language.py' -v
-  python3 -m unittest discover -s tests -p 'test_diagnostic_upload.py' -v
-  python3 -m unittest discover -s tests -p 'test_private_diagnostics.py' -v
-  python3 -m unittest discover -s tests -p 'test_lifecycle_controller.py' -v
-  PYTHONPATH=tests SKYRIM_TEST_THREAD_SANITIZER=1 python3 -m unittest \
+  # Run independent suites even after a failure, but never build/package a host
+  # unless every required suite passed. Preserve all diagnostics in one Mac run.
+  HOST_CHECK_STATUS=0
+  run_validation() { "$@" || HOST_CHECK_STATUS=1; }
+  run_validation python3 -m unittest discover -s tests -p 'test_ordered_stores.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_shadow_ranges.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_performance_metrics.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_performance_stalls.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_save_write_probe.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_game_language.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_diagnostic_upload.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_private_diagnostics.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_lifecycle_controller.py' -v
+  run_validation env PYTHONPATH=tests SKYRIM_TEST_THREAD_SANITIZER=1 python3 -m unittest \
     test_lifecycle_controller.LifecycleTests.test_actual_controller_preserves_producers_and_resume_races -v
-  python3 -m unittest discover -s tests -p 'test_present_timing.py' -v
-  python3 -m unittest discover -s tests -p 'test_frame_timing_analysis.py' -v
-  python3 -m unittest discover -s tests -p 'test_asset_timing.py' -v
-  python3 -m unittest discover -s tests -p 'test_audio_submix.py' -v
-  python3 -m unittest discover -s tests -p 'test_audio_backpressure.py' -v
-  python3 -m unittest discover -s tests -p 'test_waiter_membership.py' -v
-  python3 -m unittest discover -s tests -p 'test_xwma_buffer.py' -v
-  python3 -m unittest discover -s tests -p 'test_xwma_voice_profile.py' -v
-  python3 -m unittest discover -s tests -p 'test_constant_scratch.py' -v
-  python3 -m unittest discover -s tests -p 'test_dds_layout.py' -v
-  python3 -m unittest discover -s tests -p 'test_directory_index.py' -v
-  python3 -m unittest discover -s tests -p 'test_additional_work.py' -v
-  python3 -m unittest discover -s tests -p 'test_watchdog_layout.py' -v
-  python3 -m unittest discover -s tests -p 'test_pipeline_cache.py' -v
-  python3 -m unittest discover -s tests -p 'test_pipeline_cache_namespace.py' -v
-  python3 -m unittest discover -s tests -p 'test_pipeline_locking.py' -v
-  python3 -m unittest discover -s tests -p 'test_prefetch_gate.py' -v
-  python3 -m unittest discover -s tests -p 'test_state_cache_work.py' -v
-  python3 -m unittest discover -s tests -p 'test_pending_work.py' -v
-  python3 -m unittest discover -s tests -p 'test_resource_wait.py' -v
-  python3 -m unittest discover -s tests -p 'test_device*.py' -v
-  python3 -m unittest discover -s tests -p 'test_descriptor_capacity.py' -v
-  python3 -m unittest discover -s tests -p 'test_mobile*.py' -v
-  python3 -m unittest discover -s tests -p 'test_metal_toolchain.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_present_timing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_frame_timing_analysis.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_asset_timing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_audio_submix.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_audio_backpressure.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_waiter_membership.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_xwma_buffer.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_xwma_voice_profile.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_constant_scratch.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_dds_layout.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_directory_index.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_additional_work.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_watchdog_layout.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_pipeline_cache.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_pipeline_cache_namespace.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_pipeline_locking.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_prefetch_gate.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_state_cache_work.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_pending_work.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_resource_wait.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_device*.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_descriptor_capacity.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_mobile*.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_metal_toolchain.py' -v
+  exit "$HOST_CHECK_STATUS"
 )
 
 bash ios/dependencies/build-dependencies.sh

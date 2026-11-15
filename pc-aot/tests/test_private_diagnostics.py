@@ -45,7 +45,9 @@ class ReceiverTests(unittest.TestCase):
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.private = Path(self.temp.name) / 'private'
+        # macOS may return /var/folders under the OS /var -> /private/var alias.
+        # Canonicalize this test-owned root; receiver anti-link checks stay strict.
+        self.private = Path(self.temp.name).resolve() / 'private'
         self.private.mkdir()
         self.scope = patch.object(d, 'PRIVATE_ROOT', self.private)
         self.scope.start()
