@@ -15,7 +15,7 @@ This repository contains development sources and tools, not Skyrim, a ready-to-p
 | Language | English default; Japanese text/voice selection is implemented. Language data must come from the owner's copy. |
 | iPhone 15 Pro Max with iOS 26 | Suitable test candidate, **not yet gameplay-verified**. A17 Pro supports the BC texture formats used here; FPS, heat and memory headroom need measurement. |
 | Build target | ARM64 iPhoneOS 18.0+. This is not a verified minimum-device list. |
-| Self-build | Portable guest compilation, data preparation and Mac signing helpers are provided. The newly documented complete setup has not yet been reproduced on a fresh Mac. |
+| Self-build | Helpers passed checks with real Apple SDK compilation and local signing. The newly documented complete setup has not yet been reproduced on a fresh Mac with game inputs and a registered-device profile. |
 
 [Development status](docs/STATUS.md) separates completed checks from proposals. The five shader experiments default to OFF; keep settings fixed for comparisons.
 

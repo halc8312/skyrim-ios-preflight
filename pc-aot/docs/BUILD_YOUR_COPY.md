@@ -217,4 +217,6 @@ python3 -m unittest discover -s tests -p 'test_owned_data.py' -v
 python3 scripts/check-public-tree.py
 ```
 
-These do not replace a fresh Mac build, a valid account/profile or iPhone gameplay. Read the [licensing boundary](../README.md#source-and-licensing-boundaries) before distributing outputs.
+At commit `6e7f567`, the four suites ran on Xcode 26.6 / SDK 26.5: 46 passed and one case-sensitive filesystem fixture was skipped (that case passed on Linux). This includes an actual ARM64 iPhoneOS synthetic compile/link and local `codesign -` signature/entitlement verification. The latter is not an Apple account's installable signature. [Recorded evidence](STATUS.md).
+
+These do not replace a fresh full guest build, a valid account/profile or iPhone gameplay. Read the [licensing boundary](../README.md#source-and-licensing-boundaries) before distributing outputs.

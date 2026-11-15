@@ -1,8 +1,8 @@
 # 開発状況
 
-**2026-11-16：所有者向けのセルフビルド導線を整備中。** 既存公開リポジトリのactive branchを入口に、英語READMEと`BUILD_YOUR_COPY.md`へ、所有英語LE入力の準備・生成・Apple host/guestビルド・本人署名・Data転送・初回確認をまとめた。PC環境未定の友人には、Windowsでの入力準備が一度必要で、その後Macを使う現時点の手順を明示する。既存の固定PCパスを除いたguest compiler、入力／ABI結合を検証する組立、元Dataを変更しないallowlistコピー、Mac keychainによる署名helperを追加。署名済みIPAやゲーム由来データ・本人の診断pairingは公開しない。
+**2026-11-16：所有者向けのセルフビルド導線を公開し、Mac helper検査を完了。** 既存公開リポジトリのactive branchを入口に、英語READMEと`BUILD_YOUR_COPY.md`へ、所有英語LE入力の準備・生成・Apple host/guestビルド・本人署名・Data転送・初回確認をまとめた。PC環境未定の友人には、Windowsでの入力準備が一度必要で、その後Macを使う現時点の手順を明示する。既存の固定PCパスを除いたguest compiler、入力／ABI結合を検証する組立、元Dataを変更しないallowlistコピー、Mac keychainによる署名helperを追加。署名済みIPAやゲーム由来データ・本人の診断pairingは公開しない。
 
-WSLの新規4suite／47ケースは45成功・Apple専用2skipで失敗0。Windows LLVMの実合成guestもARM64 iOS18向けにstrict link成功し、所有入力の読取り専用前提検査も成功。Mac専用2検査は実SDKコンパイルと実codesignの合成fixtureで、Apple環境の実行はこれから。新しい全512TU guestのMacビルド、正規profileによる新helper署名、初見利用者の一連の手順、iPhone 15 Pro Maxの起動・性能は未検証。実アプリbuild12を更新する作業とは区別する。
+WSLの新規4suite／47ケースは45成功・Apple専用2skipで失敗0。Windows LLVMの実合成guestもARM64 iOS18向けにstrict link成功し、所有入力の読取り専用前提検査も成功。[Mac helper検査1](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa430990e83b09c4fac6ad)は公開`6e7f567735b0bed1c0c3b90bc1925ba2281555c5`で成功（M2、Xcode26.6／SDK26.5、35秒）。47ケースは46成功、case-sensitive FS専用1skipはWSLで成功済み。実SDKによるARM64 iOS18合成guestのstrict link・libSystem import・export・load-command確認と、実codesignのローカル署名／entitlement読戻しを含む。後者の`-`署名は端末配布用証明書ではない。実ログはignored `local/self-build-mac-20261116-01/`へ保持。無料枠238→239/500（残261分）、subscription変更なし。公開READMEのPC／390px表示と内部リンクを確認した。新しい全512TU guestのMacビルド、正規profileによる新helper署名、初見利用者の一連の手順、iPhone 15 Pro Maxの起動・性能は未検証。実アプリbuild12の追加ビルド・更新は行っていない。
 
 **2026-11-16：build12の実iPhone診断を初受信し、Homeからの復帰とcache保存を確認。** 本人の手動送信でbuild12の今回ログとbuild11の前回ログを受信し、受信manifestと各sessionのbyte数・SHA256・行数が一致。今回591 timing／165 context／9 stall記録は解析エラー・重複・記録枠欠落0。非アクティブ化からの休止／復帰は3回で、GPU退役31.424／3.621／37.339 msは全成功。実際の背景移行1回は20.669837秒後に同一ログ内でACTIVEへ戻り、以後約111.9秒の描画継続を確認した。背景境界より748.758 ms前に休止済みで、期限未達event5・失敗event6は0。音声休止／再開呼出し各3回を確認したが、音が聞こえたこと自体の機械的証明ではない。
 
