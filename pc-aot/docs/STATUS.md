@@ -1,5 +1,9 @@
 # 開発状況
 
+**2026-11-16：build12の実iPhone診断を初受信し、Homeからの復帰とcache保存を確認。** 本人の手動送信でbuild12の今回ログとbuild11の前回ログを受信し、受信manifestと各sessionのbyte数・SHA256・行数が一致。今回591 timing／165 context／9 stall記録は解析エラー・重複・記録枠欠落0。非アクティブ化からの休止／復帰は3回で、GPU退役31.424／3.621／37.339 msは全成功。実際の背景移行1回は20.669837秒後に同一ログ内でACTIVEへ戻り、以後約111.9秒の描画継続を確認した。背景境界より748.758 ms前に休止済みで、期限未達event5・失敗event6は0。音声休止／再開呼出し各3回を確認したが、音が聞こえたこと自体の機械的証明ではない。
+
+同起動では4,997,179 bytes／世代3385のcacheを170.652 msで保存成功（outcome0／stored1／vk0／errno0／budget_expired0）。snapshot attempts1はfsync割込み回数を表さない。起動時offered_bytes0で5実験設定は全OFF、前回ログはbuild11のため、**build12で保存したcacheの次回起動時の復元だけは未確認**。本人へ完全終了・再起動後の再送を依頼した。復帰後の完全な22窓／5,504 frame gap試料は100 ms超0（最大94.249 ms）だが、起動全体には100 ms超5件（最大415.828 ms）が残る。inactive時間を含むFPS窓はプレイ中の停止に数えず、旧版との同条件A/Bや長時間性能の改善とは主張しない。thermalは0〜1、memory warning0。製品コード変更・追加build・署名は行わず、実機再利用確認までゴール完了を保留する。
+
 **2026-11-16：3段階の実装・Mac検証を終え、build12を非公開OTAへ配布。実iPhoneの確認待ち。** ①設定の診断送信ボタンから今回／前回の数値ログだけをTailscale経由で本人PCへ送る。共有の厳密な許可表でraw文字列・パス・ゲームデータ・セーブを除き、認証・容量制限・原子的な完了公開・同一内容の再送を検査した。②D3D/D3DX入口で新規仕事を休止し、既に入った呼出しを終えて全producerをflushしてからGPU完了を待つ。UIKitは待ちで塞がず、音声queueを保った休止／復帰を追加。③cache保存のfsync割込みを、取消と既存予算を守って最大3回まで再試行する。過去の停止や保存未完了がこの割込みに起因したとは未確認。iOSのメモリ回収／終了を防ぐ保証や、全guest時計・workerの凍結ではない。
 
 [Mac build32](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa337590e83b09c4fac1d2)は公開`3f3f819bb3ca11f207f3b4606fcbd8b67985bba6`で成功（5分57秒）。43回のunittest実行／126ケースは122成功・従来と同じ環境依存4skip・失敗0。実Foundation送信・受信13検査・lifecycle6検査（CFRunLoopと実Metal依存関係）・controller TSanを通過し、iPhoneOS shader8件とMac GPU20ケース／80値の一致も確認。3共有ABI headerはbuild11とbyte一致、compiler warning526件／44種類も増減なし。これは実iPhoneの成功とは区別する。
