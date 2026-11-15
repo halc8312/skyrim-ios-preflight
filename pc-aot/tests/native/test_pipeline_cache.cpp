@@ -24,6 +24,30 @@ extern "C" uint64_t fixture_cache_now_ns() {
 #include <cerrno>
 #include <unistd.h>
 
+static std::atomic<unsigned> interruptedWrites{0}, shortWriteLimit{0}, writeCalls{0}, failWriteAt{0};
+static std::atomic<unsigned> interruptedSyncs{0}, syncCalls{0};
+static std::atomic<int> syncError{0}, renameError{0};
+static std::atomic<uint64_t> cancelDuringSync{0}, expireDuringSync{0};
+extern "C" ssize_t fixture_cache_write(int fd, const void *data, size_t bytes) {
+    const unsigned call = writeCalls.fetch_add(1) + 1;
+    if (interruptedWrites.load()) { --interruptedWrites; errno = EINTR; return -1; }
+    if (call == failWriteAt.load()) { errno = ENOSPC; return -1; }
+    const unsigned limit = shortWriteLimit.load();
+    return write(fd, data, limit && bytes > limit ? limit : bytes);
+}
+extern "C" int fixture_cache_fsync(int fd) {
+    ++syncCalls;
+    if (const uint64_t ticket = cancelDuringSync.exchange(0)) skyrim_pipeline_checkpoint_cancel(ticket);
+    if (const uint64_t expiry = expireDuringSync.exchange(0)) testClock = expiry;
+    if (interruptedSyncs.load()) { --interruptedSyncs; errno = EINTR; return -1; }
+    if (const int error = syncError.load()) { errno = error; return -1; }
+    return fsync(fd);
+}
+extern "C" int fixture_cache_rename(const char *from, const char *to) {
+    if (const int error = renameError.load()) { errno = error; return -1; }
+    return rename(from, to);
+}
+
 static std::atomic<bool> rejectImportLink{false}, rejectPublishedCleanup{false}, importLinked{false};
 extern "C" int fixture_cache_link(const char *from, const char *to) {
     if (rejectImportLink.load()) { errno = ENOTSUP; return -1; }
@@ -395,5 +419,50 @@ int main(int argc, char **argv) {
         testClock = 0;
     }
     puts("monotonic_completion_and_clock_failure=PASS");
+    // A transient interrupted sync must not throw away a complete snapshot.
+    // Short writes and EINTR exercise the production write loop as well.
+    {
+        Driver d; auto cache = makeCache(d, dir); cache->compiled();
+        d.data.back() ^= 0x37;
+        interruptedWrites = 2; shortWriteLimit = 7; interruptedSyncs = 1; syncCalls = 0;
+        checkpoint();
+        shortWriteLimit = 0;
+        assert(syncCalls == 2 && !interruptedWrites && !interruptedSyncs);
+        assert(readFile(file) != good && !fs::exists(file.string()+".pending"));
+        unsigned calls = d.gets;
+        checkpoint(); assert(d.gets == calls); // only the successful generation is clean
+        cache.reset();
+        Driver reload; auto reopened = makeCache(reload, dir);
+        assert(reload.offered == d.data); // fresh owner accepts the published payload
+    }
+    writeFile(file, good);
+    // Every non-retriable I/O error or exhausted/cancelled retry leaves the last
+    // published cache intact and the generation dirty for a later opportunity.
+    for (unsigned mode = 0; mode < 6; ++mode) {
+        Driver d; auto cache = makeCache(d, dir); cache->compiled(); d.data.back() ^= 0x63;
+        writeCalls = 0; syncCalls = 0;
+        const uint64_t ticket = skyrim_pipeline_checkpoint_begin();
+        if (mode == 0) { shortWriteLimit = 7; failWriteAt = 3; } // partial file, then ENOSPC
+        if (mode == 1) syncError = EIO;
+        if (mode == 2) renameError = EACCES;
+        if (mode == 3) interruptedSyncs = 3; // a signal storm is bounded to three calls
+        if (mode == 4) { interruptedSyncs = 1; cancelDuringSync = ticket; }
+        if (mode == 5) {
+            testClock = UINT64_C(3000000000000000);
+            interruptedSyncs = 1; expireDuringSync = testClock.load() + UINT64_C(1000000000);
+        }
+        skyrim_pipeline_checkpoint_save(ticket);
+        assert(readFile(file) == good && !fs::exists(file.string()+".pending"));
+        assert(syncCalls == (mode == 0 ? 0u : mode == 3 ? 3u : 1u));
+        shortWriteLimit = 0; failWriteAt = 0; syncError = 0; renameError = 0;
+        interruptedSyncs = 0; testClock = 0;
+        const unsigned calls = d.gets;
+        checkpoint(); assert(d.gets == calls + 2);
+        cache.reset();
+        Driver reload; auto reopened = makeCache(reload, dir);
+        assert(reload.offered == d.data);
+        reopened.reset(); writeFile(file, good);
+    }
+    puts("interrupted_sync_bounded_retry_and_io_failure_recovery=PASS");
     puts("pipeline_cache_roundtrip_rejection_cancellation_dirty_generation_lifetime=PASS");
 }

@@ -4,10 +4,28 @@ import argparse
 import hashlib
 import json
 import plistlib
+import re
 import stat
 import zipfile
 
 APP = "Payload/SkyrimIOS.app/"
+
+
+def load_diagnostics_pairing(path):
+    """Private final-assembly input; never part of public host/CI output."""
+    if path.stat().st_size > 4096:
+        raise ValueError("Diagnostic pairing exceeds size bound")
+    pairing = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(pairing, dict) or set(pairing) != {"endpoint", "token"}:
+        raise ValueError("Invalid diagnostic pairing schema")
+    hostname = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    if (not isinstance(pairing["endpoint"], str)
+            or not re.fullmatch(r"https://" + hostname + r"\." + hostname
+                + r"\.ts\.net/skyrim-diagnostics/v1/reports", pairing["endpoint"])
+            or not isinstance(pairing["token"], str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{43,128}", pairing["token"])):
+        raise ValueError("Diagnostic pairing requires the private HTTPS receiver and a dedicated token")
+    return pairing
 
 
 def sha(path):
@@ -23,6 +41,8 @@ def main():
     p.add_argument("--input", type=Path, required=True)
     p.add_argument("--input-sha256", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--diagnostics-pairing", type=Path,
+                   help="Private endpoint/token JSON added only during local assembly")
     a = p.parse_args()
     if sha(a.host_zip) != a.host_sha256 or sha(a.input) != a.input_sha256:
         raise ValueError("Input SHA256 mismatch")
@@ -57,13 +77,17 @@ def main():
     info = plistlib.loads(records["Info.plist"][0])
     if (info.get("CFBundleIdentifier") != "org.skyrimios.pc2011"
             or info.get("CFBundleExecutable") != "SkyrimIOS"
-            or str(info.get("CFBundleVersion")) != "11"):
+            or str(info.get("CFBundleVersion")) != "12"):
         raise ValueError("Public-host identity mismatch")
     info["PcGuestExpectedInputSHA256"] = a.input_sha256
     info["LSSupportsGameMode"] = True
     info["MinimumOSVersion"] = "18.0"
     info["CFBundleSupportedPlatforms"] = ["iPhoneOS"]
     info["UIDeviceFamily"] = [1, 2]
+    if "PcDiagnostics" in info:
+        raise ValueError("Public host must not contain a diagnostic pairing")
+    if a.diagnostics_pairing:
+        info["PcDiagnostics"] = load_diagnostics_pairing(a.diagnostics_pairing)
     records["Info.plist"] = (plistlib.dumps(info), 0o644)
     for name in ("SkyrimGuest", "Info.plist"):
         records["Frameworks/SkyrimGuest.framework/" + name] = (

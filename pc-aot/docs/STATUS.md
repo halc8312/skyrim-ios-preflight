@@ -1,5 +1,9 @@
 # 開発状況
 
+**2026-11-16：本人がbuild11での日本語化成功を報告。** 表示成功は本人の確認として扱い、音声・長時間性能・端末build番号の新たな機械検証は別に残す。
+
+**次の開発ゴール（本人承認、進行中）：①iPhone→本人PCの非公開診断送信、②ホーム移行・復帰の安定化、③シェーダーキャッシュ保存・再利用の安定化。** 診断は手動送信とし、今回・前回の起動の数値記録だけを許可表で抽出する。ゲームデータ・セーブ・rawログ・パスを送らず、受信側は既存OTAと独立させる。復帰は開始済みのGPU仕事とproducerの依存関係を保って退役させる方式を検証中で、以前失敗した低層submission gateは再導入しない。OSのメモリ回収による終了を完全に防げるとは扱わない。cacheではfsync割込みによる保存断念を再現し、取消・既存予算付き最大3回の再試行を実装、旧保存保持と次回回復を通常／ASan・UBSan／TSanで確認した。過去の実機保存未完了の原因がこの割込みだった証拠はない。新しいAppleビルド・非公開配布・iPhoneでの送受信／復帰確認はこれから。
+
 **2026-11-16：日本語設定の保存先を修正したbuild11を非公開OTAへ配布。** 固定ゲームが要求する`Skyrim.INI`に対し、build10の設定画面は別名の`Skyrim.ini`へ書いていた。過去の実端末profileは大文字拡張子を使用し、両ファイル共存時はruntimeのexact-path優先によって古い英語設定を読む。旧fixtureは小文字のファイルしか作らず、この条件を検査できていなかった。canonical名を優先し、なければ単一の既存case variantを再利用するresolverへ変更し、不要な方のファイルは削除しない。Linuxのcase-sensitive FS上で実runtimeのpath／INI readerを使い、旧挙動の再現・日本語反映・英語への復帰を通常／ASan・UBSanで確認した。毎frameの処理追加はない。
 
 [Mac build27](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af9cfdf90e83b09c4fa9e3d)は公開`3d0630210e3f5910b92d343db970b3e0808a5f59`で成功（7分24秒）。39組103検査のうち99成功・環境依存4skip、Foundation起動処理・iPhoneOS shader8件・実Mac GPU20ケースを確認。大小文字共存のMac検査はvolume特性によりskipで、上記Linux検査を根拠とする。3共有ABI headerはbuild10と一致し、新規warningなし。署名済みIPAは58,688,390 bytes、SHA256 `5be9e96c90f8469bea558c94d129e8c4deb1fba570e657913469b18d364a993e`。同じ登録端末profileで署名・暗号検証し、非公開HTTPS manifestと全IPA hash一致、他route保持を確認。無料枠は220→227/500（残273分）、subscription未有効。**端末更新・最新ログ照合・実機の日本語表示／音声は未確認。** USB再接続待ちであり、今回の報告すべてをこの原因と断定しない。既に完全転送した日本語packの再転送は不要。

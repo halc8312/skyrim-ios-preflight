@@ -57,6 +57,11 @@ PY
   python3 -m unittest discover -s tests -p 'test_save_write_probe.py' -v
   python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
   python3 -m unittest discover -s tests -p 'test_game_language.py' -v
+  python3 -m unittest discover -s tests -p 'test_diagnostic_upload.py' -v
+  python3 -m unittest discover -s tests -p 'test_private_diagnostics.py' -v
+  python3 -m unittest discover -s tests -p 'test_lifecycle_controller.py' -v
+  PYTHONPATH=tests SKYRIM_TEST_THREAD_SANITIZER=1 python3 -m unittest \
+    test_lifecycle_controller.LifecycleTests.test_actual_controller_preserves_producers_and_resume_races -v
   python3 -m unittest discover -s tests -p 'test_present_timing.py' -v
   python3 -m unittest discover -s tests -p 'test_frame_timing_analysis.py' -v
   python3 -m unittest discover -s tests -p 'test_asset_timing.py' -v

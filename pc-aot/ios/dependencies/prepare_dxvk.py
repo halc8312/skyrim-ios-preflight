@@ -10,6 +10,7 @@ import hashlib
 from pathlib import Path
 
 EXPECTED = {
+    'src/d3d9/d3d9_device.cpp': 'ae0e2e6c24cd0fc0ffef265ddeefaec8355d8950deb2d7f64c16175f7c03bca2',
     'src/vulkan/vulkan_presenter.cpp': 'fc91ecc01c03ce46620843acc18450d2a99e152467c778a1b3ab5e444ca51663',
     'src/dxvk/dxvk_cmdlist.cpp': 'a4150f38f9c6139d4a4066c4a335f87880ba62bda6aaa2a2bd38d7b16c6f8e19',
     'src/dxvk/dxvk_queue.cpp': '5750907e13a8294f3f27199e329a03220b39fbb122e64b832c8a2236221ae126',
@@ -456,6 +457,11 @@ def adapt_descriptor_capacity(name: str, text: str) -> str:
 
 
 def adapt(name: str, text: str) -> str:
+    if name.endswith('d3d9_device.cpp'):
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from lifecycle_device import adapt as adapt_lifecycle
+        return adapt_lifecycle(text)
     if name.endswith(("vulkan_presenter.cpp", "dxvk_cmdlist.cpp", "dxvk_queue.cpp")):
         import sys
         sys.path.insert(0, str(Path(__file__).parent))

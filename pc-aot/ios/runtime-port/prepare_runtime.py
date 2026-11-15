@@ -794,6 +794,12 @@ def prepare(source: Path) -> dict[str, str]:
         if actual != expected:
             raise ValueError(f"{name}: differs from pinned public runtime {UPSTREAM_REVISION}; refusing patch")
         staged[name] = PATCHERS[name](original)
+    # Admission is outside frontend D3D/D3DX calls. Downstream submit and
+    # producer workers retain their original execution paths.
+    sys.path.insert(0, str(Path(__file__).parent))
+    from lifecycle_adapters import adapt as adapt_lifecycle
+    for name in ("d3d9_bridge.cpp", "d3d9_bridge_gen.cpp", "d3d9_bcemu.cpp", "d3dx_native.cpp", "xaudio2.c"):
+        staged[name] = adapt_lifecycle(name, staged[name])
     return staged
 
 

@@ -4,6 +4,7 @@
 #include "mobile_ui.h"
 #include "performance_metrics.h"
 #include "device_policy.h"
+#include "lifecycle_runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -63,6 +64,7 @@ static void update_drawable(void) {
 
 void skyrim_ios_set_window(void *window) {
     if (!pthread_main_np()) { fprintf(stderr, "FATAL UIKit window off main thread\n"); abort(); }
+    skyrim_lifecycle_initialize();
     ui_window = window;
     update_drawable();
     skyrim_mobile_install(window);
@@ -80,6 +82,9 @@ void skyrim_ios_pump_events(void) {
     update_drawable();
     skyrim_mobile_tick();
     pumping = 0;
+    /* This is outside every admitted D3D call. The guest main stack stays in
+     * place while UIKit continues servicing notifications and user actions. */
+    skyrim_lifecycle_main_checkpoint();
     int saved_errno = errno;
     if (epoch == __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED))
         skyrim_perf_interval(SKYRIM_PERF_UI_PUMP, now, monotonic_ns(), 0, 0);

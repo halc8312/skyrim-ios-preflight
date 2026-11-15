@@ -20,7 +20,8 @@ INPUTS = (
     'ios/runtime-port/performance_metrics.h', 'ios/dependencies/present_timing.py',
     'ios/dependencies/shader_inflight.cpp.in', 'ios/dependencies/prefetch_gate.h',
     'ios/dependencies/pipeline_cache.h', 'ios/dependencies/pipeline_cache.cpp',
-    'ios/runtime-port/prepare_runtime.py',
+    'ios/runtime-port/prepare_runtime.py', 'ios/runtime-port/lifecycle_adapters.py',
+    'ios/dependencies/lifecycle_device.py',
 )
 OBSERVATION_INPUTS = frozenset((
     'ios/runtime-port/performance_metrics.h',

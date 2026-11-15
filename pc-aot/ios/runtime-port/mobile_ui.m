@@ -19,6 +19,9 @@
 #include "pipeline_cache_control.h"
 #include "device_policy.h"
 #include "game_language.h"
+#include "diagnostic_upload.h"
+#include "diagnostic_schema.h"
+#include "lifecycle_runtime.h"
 
 static NSMutableDictionary *settings;
 static NSDictionary *startup;
@@ -129,6 +132,23 @@ static double value(NSString *key, double fallback) {
     id number = settings[key];
     return [number isKindOfClass:NSNumber.class] && isfinite([number doubleValue]) ? [number doubleValue] : fallback;
 }
+static void logDiagnosticSettings(void) {
+    /* Restart-only values describe this running session, not pending changes.
+     * The language result record separately reports the actual pack fallback. */
+    const char *keys[] = {"fps", "thermal", "language", "verbose", "hud", "resolution",
+        "texture", "anisotropy", "fxaa", "msaa", "shadow", "shadowDistance", "grass",
+        "objects", "water", "decals", "autosave", "game_text", "game_voices"};
+    for (unsigned i = 0; i < sizeof keys / sizeof keys[0]; ++i) {
+        NSString *key = [NSString stringWithUTF8String:keys[i]];
+        BOOL live = i <= SKYRIM_DIAG_SETTING_LANGUAGE || i == SKYRIM_DIAG_SETTING_HUD;
+        double fallback = (i >= SKYRIM_DIAG_SETTING_TEXTURE && i <= SKYRIM_DIAG_SETTING_AUTOSAVE) ? -1 :
+            i == SKYRIM_DIAG_SETTING_HUD ? 1 : 0;
+        NSNumber *n = (live ? settings : startup)[key];
+        double v = n ? n.doubleValue : fallback;
+        if (isfinite(v) && fabs(v) <= 1e9)
+            fprintf(stderr, "IOS_DIAG_SETTING key=%u value=%.6f\n", i, v);
+    }
+}
 /* UI language is explicit and independent of device/game language. Missing or
  * invalid values use English, including upgrades from Japanese-only builds. */
 static NSString *L(NSString *english, NSString *japanese) {
@@ -208,6 +228,7 @@ void skyrim_mobile_initialize(const char *profile) {
     if (![@[@0,@1] containsObject:@(value(@"game_voices",0))]) [settings removeObjectForKey:@"game_voices"];
     if (![@[@-1,@0,@1] containsObject:@(value(@"autosave",-1))]) [settings removeObjectForKey:@"autosave"];
     persist(); startup = [settings copy];
+    logDiagnosticSettings();
     iniCount = 0;
     const char *section, *key, *setting;
     const double autosave = startup[@"autosave"] ? [startup[@"autosave"] doubleValue] : -1;
@@ -427,6 +448,8 @@ static SKOverlay *overlay;
 @end
 
 @interface SKSettings : UITableViewController
+@property(nonatomic) BOOL sendingDiagnostics;
+@property(nonatomic, strong) NSString *diagnosticStatus;
 @end
 static NSArray *presets(void) { return @[L(@"Minimal", @"最軽量"),L(@"Performance", @"パフォーマンス"),L(@"Balanced", @"バランス"),L(@"High", @"高画質"),L(@"Ultra", @"最高画質")]; }
 static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
@@ -444,14 +467,16 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 - (void)close { [overlay clearInput]; [self dismissViewControllerAnimated:YES completion:nil]; }
 - (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated]; shaderSettingsPermission(YES); }
 - (void)viewWillDisappear:(BOOL)animated { shaderSettingsPermission(NO); [super viewWillDisappear:animated]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 7; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 8; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
     return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+1 : section==3 ? 2 : section==5 ? 3 : section==6 ? shaderRows().count : 1;
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
-    return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),@"Language",L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映")][section];
+    return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),@"Language",L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映"),L(@"Diagnostics", @"診断")][section];
 }
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
+    if (section==7) return L(@"Send performance, settings and numeric error records from this launch and the previous launch to your paired PC. Game data and saves are excluded. Open the game system menu first; keep the PC awake and Tailscale connected. After receipt, tell us in the chat that you sent it.",
+        @"今回と前回の起動の性能・設定・エラー番号を、登録した自分のPCへ送ります。ゲームデータやセーブは送りません。先にゲームのシステムメニューを開き、PCを起動してTailscaleを接続してください。送信できたら、このチャットで知らせてください。");
     if (section==0) return L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。");
     if (section==1) return L(@"Drag outside the buttons to look. Use the arrows and LB / RB to navigate menus, and LT / RT for the left and right hands.", @"ボタン以外をドラッグして視点移動。十字キーとLB／RBでメニュー移動、LT／RTで左右の手を操作します。");
     if (section==2) return L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。");
@@ -494,7 +519,14 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     cell.textLabel.numberOfLines=2; cell.detailTextLabel.font=[UIFont systemFontOfSize:14];
     NSDictionary *r=[self row:p];
-    if (r) {
+    if (p.section==7) {
+        cell.textLabel.text=L(@"Send diagnostics to PC", @"診断ログをPCへ送信");
+        cell.imageView.image=[UIImage systemImageNamed:@"arrow.up.doc"];
+        cell.accessoryType=UITableViewCellAccessoryNone;
+        cell.detailTextLabel.text=self.sendingDiagnostics ? L(@"Sending…", @"送信中…") :
+            self.diagnosticStatus ?: (skyrim_diagnostics_available() ? nil : L(@"Not paired", @"未接続"));
+        return cell;
+    } else if (r) {
         cell.textLabel.text=r[@"title"];
         NSNumber *choice=settings[r[@"key"]] ?: r[@"default"] ?: (p.section==2 ? [r[@"values"] firstObject] : @0);
         cell.detailTextLabel.text=choiceLabel(r,choice);
@@ -514,6 +546,36 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)p {
     [table deselectRowAtIndexPath:p animated:YES];
+    if (p.section==7) {
+        if (self.sendingDiagnostics) return;
+        self.sendingDiagnostics=YES; [table reloadRowsAtIndexPaths:@[p] withRowAnimation:UITableViewRowAnimationNone];
+        logDiagnosticSettings();
+        [overlay message:L(@"Preparing diagnostics…", @"診断ログを準備しています…")];
+        __weak SKSettings *weakSettings=self;
+        skyrim_diagnostics_send(^(SkyrimDiagnosticStatus status, NSString *receipt) {
+            NSString *message;
+            switch (status) {
+            case SkyrimDiagnosticSent:
+                message=[NSString stringWithFormat:L(@"Received by PC (%@). Let us know in the chat.", @"PCで受信しました（%@）。チャットで知らせてください。"), [receipt substringToIndex:8]]; break;
+            case SkyrimDiagnosticNotConfigured:
+                message=L(@"This app is not paired with your PC yet.", @"このアプリにはPCの送信先がまだ登録されていません。"); break;
+            case SkyrimDiagnosticBusy:
+                message=L(@"Diagnostics are already being sent.", @"診断ログを送信中です。"); break;
+            case SkyrimDiagnosticCaptureFailed:
+                message=L(@"Could not prepare the report. The original logs are still on this iPhone.", @"診断ログを準備できませんでした。元のログはiPhoneに残っています。"); break;
+            case SkyrimDiagnosticConnectionFailed:
+                message=L(@"Could not confirm receipt. Check the PC and Tailscale, then tap again to retry the same report.", @"受信を確認できませんでした。PCとTailscaleの接続を確認し、もう一度押すと同じログを再送します。"); break;
+            default:
+                message=L(@"The PC did not confirm this report. Tell us in the chat; the logs are still on this iPhone.", @"PCから正しい受信確認が届きませんでした。ログはiPhoneに残っています。チャットで知らせてください。"); break;
+            }
+            SKSettings *controller=weakSettings;
+            controller.sendingDiagnostics=NO;
+            controller.diagnosticStatus=status==SkyrimDiagnosticSent ? L(@"Received", @"受信済み") : L(@"Not received", @"未受信");
+            [controller.tableView reloadData];
+            [overlay message:message];
+        });
+        return;
+    }
     if (p.section==3 && !p.row) {
         [self dismissViewControllerAnimated:YES completion:^{[overlay beginLayout];}]; return;
     }
@@ -624,9 +686,9 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     self.notice.frame=CGRectMake(area.origin.x+area.size.width*.22,CGRectGetMaxY(area)-64,area.size.width*.56,52);
 }
 - (void)message:(NSString *)text {self.notice.text=text;self.noticeUntil=mobileTime()+7;self.notice.hidden=NO;}
-- (void)resignActive:(NSNotification *)note { [self clearInput]; skyrim_pipeline_checkpoint_foreground_permission(0); skyrim_ios_metrics_active(0); preparePipelineCacheCheckpoint(); }
-- (void)becomeActive:(NSNotification *)note { finishCacheCheckpoint(cacheCheckpointTicket, 1); shaderSettingsPermission(shaderSettingsVisible); skyrim_ios_metrics_active(1); }
-- (void)enterBackground:(NSNotification *)note { checkpointPipelineCache(); }
+- (void)resignActive:(NSNotification *)note { skyrim_lifecycle_request(0); [self clearInput]; skyrim_pipeline_checkpoint_foreground_permission(0); skyrim_ios_metrics_active(0); preparePipelineCacheCheckpoint(); }
+- (void)becomeActive:(NSNotification *)note { skyrim_lifecycle_request(1); finishCacheCheckpoint(cacheCheckpointTicket, 1); shaderSettingsPermission(shaderSettingsVisible); skyrim_ios_metrics_active(1); }
+- (void)enterBackground:(NSNotification *)note { skyrim_lifecycle_did_background(); checkpointPipelineCache(); }
 - (void)clearInput {
     self.lookFinger=nil;
     for (SKPadControl *c in self.controls) {c.finger=nil;c.stick=CGPointZero;[c setNeedsDisplay];}

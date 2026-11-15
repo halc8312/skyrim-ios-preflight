@@ -31,8 +31,13 @@ class PipelineCacheTests(unittest.TestCase):
                 "-I", str(runtime), "-o", str(metrics)], check=True, timeout=60)
             binary = folder / "cache"
             cache_object = folder / "cache.o"
+            # cstdio deliberately undefines a command-line rename macro. Load
+            # it before the test interposition instead of modifying libc names.
+            io_shim = folder / "cache_io_shim.h"
+            io_shim.write_text('#include <cstdio>\nextern "C" int fixture_cache_rename(const char *, const char *);\n#define rename fixture_cache_rename\n')
             subprocess.run([cxx, "-std=c++17", *common, "-c", str(dependency / "pipeline_cache.cpp"),
                 "-Dskyrim_perf_now_ns=fixture_cache_now_ns", "-Dlink=fixture_cache_link", "-Dunlink=fixture_cache_unlink",
+                "-Dwrite=fixture_cache_write", "-Dfsync=fixture_cache_fsync", "-include", str(io_shim),
                 "-I", str(dependency), "-I", str(runtime),
                 "-I", str(ROOT / "vendor/skydream/third_party/dxvk/include"), "-o", str(cache_object)], check=True, timeout=60)
             subprocess.run([cxx, "-std=c++17", *common,
@@ -45,13 +50,15 @@ class PipelineCacheTests(unittest.TestCase):
                 setarch = shutil.which("setarch")
                 self.assertIsNotNone(setarch, "Explicit process-local TSan layout option requires setarch")
                 command = [setarch, platform.machine(), "-R", *command]
-            result = subprocess.run(command, check=True,
+            result = subprocess.run(command, check=False,
                 capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("dirty_generation_lifetime=PASS", result.stdout)
             self.assertIn("bounded_snapshot_retry=PASS", result.stdout)
             self.assertIn("validated_absent_target_import=PASS", result.stdout)
             self.assertIn("foreground_admission_cancel_singleflight=PASS", result.stdout)
             self.assertIn("monotonic_completion_and_clock_failure=PASS", result.stdout)
+            self.assertIn("interrupted_sync_bounded_retry_and_io_failure_recovery=PASS", result.stdout)
             # Each invocation is delimited by the test, including failures and exceptions.
             for section in result.stderr.split("CACHE_CASE_BEGIN\n")[1:]:
                 body = section.split("CACHE_CASE_END\n", 1)[0]

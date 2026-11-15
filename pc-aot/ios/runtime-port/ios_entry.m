@@ -16,6 +16,7 @@
 #include "ios_runtime.h"
 #include "mobile_ui.h"
 #include "device_policy.h"
+#include "diagnostic_upload.h"
 #include "PcGuestABI.h"
 
 __attribute__((noreturn)) static void startup_failure(NSString *message) {
@@ -64,6 +65,7 @@ static void begin_log(void) {
         startup_failure(@"Cannot redirect runtime log");
     }
     close(fd);
+    skyrim_diagnostics_set_log_path(path);
     setvbuf(stderr, NULL, _IOLBF, 0);
     setvbuf(stdout, NULL, _IOLBF, 0);
     NSLog(@"SkyrimIOS log: %s", path);

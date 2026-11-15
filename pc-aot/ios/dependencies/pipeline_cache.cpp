@@ -141,6 +141,19 @@ struct CacheCheckpointReport {
         }
         return false;
     }
+    bool syncFile(int fd) {
+        // EINTR does not imply a damaged snapshot. Retry only that interruption,
+        // under the original checkpoint budget, without restarting its clock.
+        // Three calls bound a signal storm even if the clock stops advancing.
+        // An in-progress fsync is still not interruptible by our cancellation.
+        for (unsigned call = 0; call < 3; ++call) {
+            if (stopped()) return false;
+            if (!fsync(fd)) return true;
+            const int syncError = errno;
+            if (syncError != EINTR || call == 2) { error = syncError; return false; }
+        }
+        return false;
+    }
     ~CacheCheckpointReport() {
         const int savedErrno = errno;
         const uint64_t now = skyrim_perf_now_ns();
@@ -331,7 +344,7 @@ bool PipelineCache::save(const std::vector<uint8_t>& bytes, uint64_t ticket,
         writeExact(file.fd, bytes.data(), bytes.size(), ticket, r.error);
     if (ok) {
         r.enter(Sync);
-        if (fsync(file.fd)) { r.error = errno; ok = false; }
+        if (!r.syncFile(file.fd)) ok = false;
         ok = ok && !cancelled(ticket);
     }
     if (ok) r.enter(Close);
@@ -400,7 +413,7 @@ void PipelineCache::checkpoint(uint64_t ticket) {
             r.savedGeneration = savedGeneration_;
             return r.end(Stored);
         }
-        return r.end(cancelled(ticket) ? Cancelled : WriteFailed);
+        return r.end(cancelled(ticket) ? Cancelled : r.budgetExpired ? RetryExhausted : WriteFailed);
     }
 }
 
