@@ -54,6 +54,10 @@ PY
   # unless every required suite passed. Preserve all diagnostics in one Mac run.
   HOST_CHECK_STATUS=0
   run_validation() { "$@" || HOST_CHECK_STATUS=1; }
+  run_validation python3 -m unittest discover -s tests -p 'test_build_title_guest.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_title_assembly.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_title_signing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_owned_data.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_ordered_stores.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_shadow_ranges.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_performance_metrics.py' -v

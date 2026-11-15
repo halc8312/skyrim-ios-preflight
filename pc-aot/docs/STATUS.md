@@ -1,5 +1,9 @@
 # 開発状況
 
+**2026-11-16：所有者向けのセルフビルド導線を整備中。** 既存公開リポジトリのactive branchを入口に、英語READMEと`BUILD_YOUR_COPY.md`へ、所有英語LE入力の準備・生成・Apple host/guestビルド・本人署名・Data転送・初回確認をまとめた。PC環境未定の友人には、Windowsでの入力準備が一度必要で、その後Macを使う現時点の手順を明示する。既存の固定PCパスを除いたguest compiler、入力／ABI結合を検証する組立、元Dataを変更しないallowlistコピー、Mac keychainによる署名helperを追加。署名済みIPAやゲーム由来データ・本人の診断pairingは公開しない。
+
+WSLの新規4suite／47ケースは45成功・Apple専用2skipで失敗0。Windows LLVMの実合成guestもARM64 iOS18向けにstrict link成功し、所有入力の読取り専用前提検査も成功。Mac専用2検査は実SDKコンパイルと実codesignの合成fixtureで、Apple環境の実行はこれから。新しい全512TU guestのMacビルド、正規profileによる新helper署名、初見利用者の一連の手順、iPhone 15 Pro Maxの起動・性能は未検証。実アプリbuild12を更新する作業とは区別する。
+
 **2026-11-16：build12の実iPhone診断を初受信し、Homeからの復帰とcache保存を確認。** 本人の手動送信でbuild12の今回ログとbuild11の前回ログを受信し、受信manifestと各sessionのbyte数・SHA256・行数が一致。今回591 timing／165 context／9 stall記録は解析エラー・重複・記録枠欠落0。非アクティブ化からの休止／復帰は3回で、GPU退役31.424／3.621／37.339 msは全成功。実際の背景移行1回は20.669837秒後に同一ログ内でACTIVEへ戻り、以後約111.9秒の描画継続を確認した。背景境界より748.758 ms前に休止済みで、期限未達event5・失敗event6は0。音声休止／再開呼出し各3回を確認したが、音が聞こえたこと自体の機械的証明ではない。
 
 同起動では4,997,179 bytes／世代3385のcacheを170.652 msで保存成功（outcome0／stored1／vk0／errno0／budget_expired0）。snapshot attempts1はfsync割込み回数を表さない。起動時offered_bytes0で5実験設定は全OFF、前回ログはbuild11のため、**build12で保存したcacheの次回起動時の復元だけは未確認**。本人へ完全終了・再起動後の再送を依頼した。復帰後の完全な22窓／5,504 frame gap試料は100 ms超0（最大94.249 ms）だが、起動全体には100 ms超5件（最大415.828 ms）が残る。inactive時間を含むFPS窓はプレイ中の停止に数えず、旧版との同条件A/Bや長時間性能の改善とは主張しない。thermalは0〜1、memory warning0。製品コード変更・追加build・署名は行わず、実機再利用確認までゴール完了を保留する。

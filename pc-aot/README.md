@@ -1,58 +1,55 @@
-# Skyrim 2011 → iPhone
+# Skyrim 2011 on iPhone
 
-購入済みWindows版Skyrim 2011のx86コードを再現可能な静的変換でCへ変換し、ARM64へ事前コンパイルしてiPhone 17 Pro Maxで実行する開発です。現在は**PC版build5をiPhoneへ導入して試遊できている段階**です。ユーザーから60 FPSの表示と発熱低減の報告がある一方、瞬間停止・水中表示等は改善中です。未導入候補と実機確認済みの範囲は[STATUS](docs/STATUS.md)で区別し、[段階的なネイティブ化](docs/NATIVE_MIGRATION.md)を進めます。
+An experimental iPhone runtime for a personally owned **Skyrim 2011 / Legendary Edition**. The Windows x86 game is translated locally to C and compiled ahead of time to ARM64. Graphics run through DXVK and MoltenVK. This is not an official Bethesda release.
 
-作業正本は `F:\SkyrimIOS`。Steamへの2011年版インストールはユーザー許可を得て実施しました。取得した日本語版は全ファイルを独立保存済みで、その後の英語への切替にも許可を得ています。既存Unityプロジェクト、元セーブとMODを保持し、入力の加工は独立コピーで行います。ストリーミングや実行時x86 JITを達成手段にせず、SE・SKSE・ネイティブDLL MODは後段に分けます。
+**Start here: [Build and install your own copy](docs/BUILD_YOUR_COPY.md).**
 
-## 現在地
+This repository contains development sources and tools, not Skyrim, a ready-to-play IPA, generated game code, signing keys or saves. Owning LE supplies the game input; it does not supply an Apple signing identity or grant redistribution rights for every dependency.
 
-[STATUS](docs/STATUS.md) に今回の確認結果・障害・証拠、[DECISIONS](docs/DECISIONS.md) に採用理由、[SOURCE_AUDIT](docs/SOURCE_AUDIT.md) に実装と一次資料の比較を記録します。Skydreamを基盤候補に選び、具体的なcommitは [source-lock.json](source-lock.json) で固定しています。完成したiOS移植版として採用したものではありません。
+## Current status
 
-## 入力探索
+| Area | Evidence and limits |
+| --- | --- |
+| Gameplay | Build12 has been played on iPhone 17 Pro Max. Stutters and stability issues remain under investigation. |
+| Home and return | One recorded background interval of about 21 seconds resumed in the same process. iOS can still terminate the app under memory pressure. |
+| Language | English default; Japanese text/voice selection is implemented. Language data must come from the owner's copy. |
+| iPhone 15 Pro Max with iOS 26 | Suitable test candidate, **not yet gameplay-verified**. A17 Pro supports the BC texture formats used here; FPS, heat and memory headroom need measurement. |
+| Build target | ARM64 iPhoneOS 18.0+. This is not a verified minimum-device list. |
+| Self-build | Portable guest compilation, data preparation and Mac signing helpers are provided. The newly documented complete setup has not yet been reproduced on a fresh Mac. |
 
-Windowsの既存Python 3を使用します。Steamレジストリ → `libraryfolders.vdf` → appmanifest → 実ファイルの順に調べ、管理情報が不足する場合だけFドライブのSteam候補へ範囲を限定します。無関係なファイルの全文検索や元データの変更は行いません。
+[Development status](docs/STATUS.md) separates completed checks from proposals. The five shader experiments default to OFF; keep settings fixed for comparisons.
 
-```powershell
-Set-Location F:\SkyrimIOS
-./scripts/Find-SkyrimInputs.ps1
-# 管理対象外の既知の保存先がある場合だけ明示する
-./scripts/Find-SkyrimInputs.ps1 -GameDirectory 'F:\KnownGameDirectory\Skyrim'
+## Requirements
+
+- Your own **English Windows Skyrim 2011 / LE 1.9.32.0**. SE/AE and the Japanese 1.9.31 executable are different inputs. Exact input hashes are enforced.
+- A Mac with full Xcode and iPhoneOS SDK for the complete build/sign/install route. Preparing the reviewed Steam executable uses a Windows tool. Windows/WSL can generate and cross-compile the guest; this alone is not an installable app.
+- Python 3.12+, Git and the tools in the guide.
+- Your own signing identity and registered-device provisioning profile with the required memory capabilities. Free Personal Team profiles are not a validated alternative.
+
+The read-only prerequisites check does not install tools, start CI or change the game. The guide identifies steps that download public dependencies.
+
+## How it fits together
+
+```text
+Owned English game → separate preparation → local ARM64 guest
+Public runtime → Apple SDK host
+Host + your guest → local assembly and signing → your iPhone
+Owned Data folder → separate transfer to your iPhone
 ```
 
-日時付きの `local/inputs-*.json` に実パス・存在確認・exeのPE・製品／ファイルバージョン・サイズ・SHA-1/SHA-256を保存します。Data全体をハッシュしません。既存manifestを上書きしません。WSLでは `/mnt/f` 等を確認し、Fが見えない状態と検出できない状態を区別します。
+A public host or simulator check alone is not a playable game. Older research/probe workflows remain for development; use the title guide above for installation.
 
-元exeと展開済みexeは別入力です。変換の前提と、未検証のハッシュに固定アドレスを適用しない手順は [TRANSLATION](docs/TRANSLATION.md) を参照してください。日本語版exe **1.9.31.0** は対象外として保存しました。続いて英語版 **1.9.32.0** を取得し、上流が示す元exeのSHA-1 prefixと一致することを確認しました。固定したSteamlessをソースからビルドして独立コピーを静的展開しましたが、展開後のハッシュは上流記載と一致せず、互換性は未承認です。[展開手順と比較結果](docs/UNPACKING.md) を保存し、固定アドレスを使うゲームコード生成は保留しています。
+## Source and licensing boundaries
 
-## ローカル検証
+Dependencies retain their own notices. The pinned [Skydream notice](https://github.com/meizfl/skydream/blob/ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a/NOTICE.md) identifies unresolved redistribution permission for inherited runtime/recompiler code. Do not treat this entire project or game-derived output as covered by a blanket GPL grant. Personal local build instructions do not resolve those permissions.
 
-英語版の汎用解析では90,900関数候補を記録しました。変換器のAF欠落・空jump tableの報告漏れを修正し、負のindexから候補を回収する限定規則も追加しました。文字列4関数の32,000比較に続き、メモリー転送／CRCの5処理を実際の補助処理16個とともに診断用変換し、20,000比較が成功しました。途中の未解決分岐による停止も保存しています。全ゲームの生成やiPhoneでの実行はまだ行っていません。命令比較の範囲は [CPU_VALIDATION](docs/CPU_VALIDATION.md)、購入済み入力を使った限定診断は [TRANSLATION](docs/TRANSLATION.md) に分けて記録しています。
+Keep game inputs, generated C, initialization data, IPAs, profiles and private logs in ignored `private/` or `local/` folders. Never attach them to public issues or CI artifacts. Ordinary self-builds omit diagnostic receiver credentials.
 
-必要な環境は既存Python 3.10以上、Git、CMake、C11コンパイラーです。依存パッケージの自動導入はありません。
+## Development references
 
-```powershell
-py -3 -m unittest discover -s tests -p 'test_*.py' -v
-cmake -S . -B local/host-build -G 'Visual Studio 17 2022' -A x64
-cmake --build local/host-build --config Release --parallel 2
-ctest --test-dir local/host-build -C Release --output-on-failure
-py -3 scripts/check-public-tree.py
-```
-
-Windows/WSLのテストはiPhoneの結果ではありません。ゲスト領域検証は4 GiBの仮想領域を予約し、3ページのみを実体化・アクセスして解放します。
-
-## iOSビルド
-
-`ios/SkyrimProbe.xcodeproj` / scheme `SkyrimProbe` はUIKit・Metal・AVFoundationを使う小規模検証アプリです。ゲームruntimeと外部ライブラリーは含みません。タッチ・描画・音声・Filesからのコピー・検証状態の保存／読込・中断／再開・ログ共有・4 GiB疎メモリーを調べます。検証状態の保存をSkyrimのセーブ成功とは扱いません。
-
-署名なしとAd Hocを分けた `codemagic.yaml` を用意しています。macOS ARM64・Xcode **26.6 (17F113)**・iPhoneOS SDKを要求し、2並列でビルドします。既存の非公開GitHub CIで署名なしiPhoneOS ARM64ビルド・リンクが成功しました。別のARM64 iOS Simulatorでは描画・タッチ・検証状態の保存／再読込・再起動後の復元・中断／再開と、4 GiB仮想予約／48 KiBアクセスが成功しました。原成果物・ログ・画像をローカルへ取得・照合済みです。実機やSkyrimの検証結果ではありません。各ソース版の結果はSTATUSに記録します。
-
-```bash
-bash scripts/build-ios.sh unsigned
-# 既存の適合する署名設定・登録端末が揃った後のみ
-bash scripts/build-ios.sh ad-hoc
-```
-
-[CI](docs/CI.md) に設定名・秘密情報の登録場所・成果物とdSYMの対応・実行手順、[PROBE](docs/PROBE.md) に実機操作を記載しています。未署名.appは端末へインストールできるIPAではありません。macOS・Simulator・iPhoneOS・実機の結果を分けて報告します。
-
-## データの境界
-
-`local/`・`private/`・`vendor/`・`generated/`・`build/`・`artifacts/` をGitから除外します。元exe、DLL、ゲームData、ゲーム由来生成C・初期化データ、セーブ、秘密鍵、署名、ビルド成果物は公開ソースや公開CIに含めません。原失敗、archive、IPA、dSYM、入力manifestは削除せず保持します。`check-public-tree.py` は誤混入の検査であり、ライセンス許諾や秘密情報不存在の証明ではありません。
+- [Build and install](docs/BUILD_YOUR_COPY.md)
+- [Current evidence and known issues](docs/STATUS.md)
+- [Source audit](docs/SOURCE_AUDIT.md)
+- [Performance work](docs/PERFORMANCE_WORK.md)
+- [Native migration research](docs/NATIVE_MIGRATION.md)
+- [Input preparation audit](docs/UNPACKING.md) and [translation research](docs/TRANSLATION.md) — historical records, not the quick-start guide
