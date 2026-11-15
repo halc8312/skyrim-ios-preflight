@@ -256,9 +256,9 @@ int main(void) {
 #include <stdint.h>
 #include <errno.h>
 #include "performance_metrics.h"
-static int is_main=1, has_window, change_epoch;
+static int is_main=1, has_window, change_epoch, checkpoint_changes_epoch;
 static int *ui_window;
-static unsigned pumping, sdl_calls, ticks, records;
+static unsigned pumping, sdl_calls, ticks, records, checkpoints;
 static uint64_t now, metrics_epoch, last_pump_ns, recorded_start, recorded_end;
 void skyrim_ios_pump_events(void);
 static int pthread_main_np(void) { return is_main; }
@@ -266,20 +266,29 @@ static uint64_t monotonic_ns(void) { return now; }
 static void SDL_PumpEvents(void) { ++sdl_calls; skyrim_ios_pump_events(); now+=7000000; }
 static void update_drawable(void) { now+=1000000; }
 static void skyrim_mobile_tick(void) { ++ticks; now+=2000000; metrics_epoch+=change_epoch; errno=EINTR; }
+/* Test-only lifecycle boundary: UI work and its reentrancy guard must end
+ * before parking; a lifecycle transition can also invalidate this span. */
+static void skyrim_lifecycle_main_checkpoint(void) {
+    assert(!pumping && ticks==sdl_calls && ticks==checkpoints+1 && errno==EINTR);
+    ++checkpoints; metrics_epoch+=checkpoint_changes_epoch;
+}
 void skyrim_perf_interval(unsigned kind, uint64_t started, uint64_t ended, int failed, uint64_t sleeps) {
     assert(kind==SKYRIM_PERF_UI_PUMP && !failed && !sleeps);
+    assert(!pumping && checkpoints==ticks);
     ++records; recorded_start=started; recorded_end=ended; errno=EIO;
 }
 ''' + pump + '''
 int main(void) {
-    now=10000000; skyrim_ios_pump_events(); assert(!sdl_calls);
-    ui_window=&has_window; is_main=0; skyrim_ios_pump_events(); assert(!sdl_calls);
-    is_main=1; now=1000000; skyrim_ios_pump_events(); assert(!sdl_calls);
+    now=10000000; skyrim_ios_pump_events(); assert(!sdl_calls && !checkpoints);
+    ui_window=&has_window; is_main=0; skyrim_ios_pump_events(); assert(!sdl_calls && !checkpoints);
+    is_main=1; now=1000000; skyrim_ios_pump_events(); assert(!sdl_calls && !checkpoints);
     now=10000000; skyrim_ios_pump_events();
-    assert(sdl_calls==1 && ticks==1 && records==1 && !pumping);
+    assert(sdl_calls==1 && ticks==1 && checkpoints==1 && records==1 && !pumping);
     assert(recorded_start==10000000 && recorded_end==20000000 && errno==EINTR);
     now=30000000; change_epoch=1; skyrim_ios_pump_events();
-    assert(sdl_calls==2 && ticks==2 && records==1 && !pumping && errno==EINTR);
+    assert(sdl_calls==2 && ticks==2 && checkpoints==2 && records==1 && !pumping && errno==EINTR);
+    now=50000000; change_epoch=0; checkpoint_changes_epoch=1; skyrim_ios_pump_events();
+    assert(sdl_calls==3 && ticks==3 && checkpoints==3 && records==1 && !pumping && errno==EINTR);
 }
 '''
         with tempfile.TemporaryDirectory(prefix="ui-pump-span-") as tmp:
