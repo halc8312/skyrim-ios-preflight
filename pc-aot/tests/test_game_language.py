@@ -20,7 +20,9 @@ class GameLanguageTests(unittest.TestCase):
             binary = Path(tmp) / "language"
             pack = Path(tmp) / "game"
             pack.mkdir()
-            flags = ["-std=c11", "-D_POSIX_C_SOURCE=200809L", "-O2", "-Wall", "-Wextra", "-Werror"]
+            # Match the app's GNU C11 mode. Darwin's strict POSIX namespace
+            # hides O_NOFOLLOW, which the production pack reader requires.
+            flags = ["-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror"]
             if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
                 flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
             subprocess.run([cc, *flags, "-I", str(PORT), str(PORT / "game_language.c"),
