@@ -1,5 +1,7 @@
 # 開発状況
 
+**2026-11-15：build8のMac build22は既存fixtureの想定差で停止。** 公開`ac436212227ce7acbdd72f4db69f81e294507d7f`、実行2分28秒。新cache／namespace／prefetch検査を含む前段は通ったが、device-memoryのworker adapter復元検査が新しいshutdown通知行を除去せず、旧sourceとの完全一致で失敗した。製品のコンパイル成功やMetal検証成功とは扱わない。原artifact／build.logは`local/codemagic-title22/`へ保持。fixtureだけ7行修正し、WSLのdevice4成功／Apple専用1skip、descriptor2・mobile6・toolchain制御2成功を確認した。製品コードを変えず、無料枠201/500（残299分）で修正版を再実行する。旧build7配布は維持。
+
 **2026-11-15：本人GOを受け、build8のMac検証・非公開OTA準備を開始。** 3系統の切替付き試作と役割別計測を収録し、比較設定は既定OFFのまま。build番号とPC内assemblyの検査値を8へ揃え、旧build7・private guest・ゲーム／saveを保持。開始前の無料枠198/500（残302分）、課金subscriptionなしを画面で確認。公開sourceだけを既存manual workflowへ送り、署名／private guest組込みはPC内で行う。開始・Apple検証・署名・OTA反映・実機確認はまだ未完了。
 
 **2026-11-15：依頼された3系統の試作を本体へ切替付きで組み込み、PC検証を完了。** module単位のcold生成、設定画面内だけの条件付きcache保存＋保持／互換再利用、描画優先・高温時の先読み制御を実装した。英語／日本語の設定5項目を追加し、既定OFF・次回起動反映。元の経路へ同一binaryで戻せる。旧cache・game/save/IPAは保持。通常・ASan/UBSan・TSanの関連検査、生成DXVK 6unitの構文、namespace／CMake定義5検査、既存overlay／stall検査、source preflightが成功。細部はPERFORMANCE_WORK.md先頭。**Apple SDKによる新アプリbuild・Metal実機検査・iPhone比較・push・端末更新は未実施。GOまでは行わない。** 実機での効果量／発熱の改善は未確認で、標準ONへの採用判断もまだ行っていない。

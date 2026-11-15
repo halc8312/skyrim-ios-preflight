@@ -54,6 +54,13 @@ class DeviceMemoryTests(unittest.TestCase):
         changed=adapter.adapt(key,old)
         restored=changed.removeprefix('#include "device_policy.h"\n')
         restored=restored.replace("skyrim_device_compiler_cpus(dxvk::thread::hardware_concurrency())","dxvk::thread::hardware_concurrency()")
+        # The optional admission gate must be stopped before upstream worker
+        # shutdown. Validate that exact hook, then undo it for the complete
+        # source comparison below; queue ordering/count checks remain intact.
+        shutdown = '  void DxvkStateCache::stopWorkerThreads() {'
+        gated_shutdown = shutdown + '\n    m_pipeManager->iosPrefetchGate().stop();'
+        self.assertEqual(restored.count(gated_shutdown), 1)
+        restored = restored.replace(gated_shutdown, shutdown)
         for line in ("    skyrim_device_platform_work_role(SKYRIM_WORK_COMPILER);\n",
                      "      skyrim_device_platform_work_role(SKYRIM_WORK_COMPILER);\n",
                      "    skyrim_device_platform_work_role(SKYRIM_WORK_CACHE_WRITER);\n"):
