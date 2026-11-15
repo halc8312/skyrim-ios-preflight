@@ -1,5 +1,13 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-15 build8のApple検証と非公開配布
+
+本人GOを受け、比較設定5項目を全て既定OFFのままbuild8を作成した。公開`37f0f1002b2dca3812d184b8b3a65fb41506702d`のMac build23は5分55秒で成功。最終hostのcompile／link、37組93検査（91成功・環境依存2skip）、実iPhoneOS Metal shader compile8件、実Mac GPU arithmetic readback20ケースを確認した。最初のbuild22はworker adapter fixtureが新しいshutdown通知を復元対象に含めず失敗し、製品codeは変更せずfixture7行を修正した。失敗logも保持している。
+
+3共有ABI headerはbuild7と一致し、検証済みの既存private guestをPC内で再利用した。署名済み58,680,582 bytesのIPAを同じ非公開Tailscale更新URLから配信し、manifest build8とHTTPS全転送のSHA256一致を確認。旧build7とgame／saveを保持した。今回の無料枠使用は合計9分、残293分。追加のcloud buildは不要。
+
+**検証の限界:** module分離の切替fixtureはCPU境界検査で、実Metalの新しい並行root／specializer失敗注入ではない。iPhoneへの導入、同save／画質／経路でのcold・warm比較、長時間の発熱・memory・failure・frame gapはこれから確認する。まず全OFFで基準を取り、再起動を挟んで1項目ずつ比較し、悪化する項目はOFFへ戻す。設定画面を開くこと自体はゲームのpauseを保証しない。既存のMetal arithmetic成功を、試作の実機性能改善や全並行経路の安全性の証拠にはしない。
+
 ## 2026-11-15 3系統の切替付き実装とPC検証
 
 本人が「計測前にできる実装・試験をすべて」と指示した範囲を実装。app buildはGO待ちのまま。従来の「未接続試作／未実装」という節は、この節の状態へ進んだ。

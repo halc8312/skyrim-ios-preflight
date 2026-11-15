@@ -1,5 +1,9 @@
 # 開発状況
 
+**2026-11-15：build8のMac検証・署名・非公開OTA配布が完了。** [Mac build23](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af99e8c90e83b09c4fa8baa)は公開`37f0f1002b2dca3812d184b8b3a65fb41506702d`で成功、5分55秒。37組／93検査中91成功・環境依存2skip、iPhoneOS shader8件compile、実Mac GPU20ケースreadbackが成功した。3共有ABI headerはbuild7と一致。既存private guestを再生成せずPC内で組み込み、既存profileで署名した。署名済みIPAは58,680,582 bytes、SHA256 `667c155c8d7047802e0fcf8ba4de12d465b671b544a0b9e2fa630749eb7e75bb`。2 images／39,431 pages／4 resources、暗号署名とprofileのApple chain・AppID・登録端末を検証済み。
+
+既存のTailscale更新URLをbuild8へ切替え、HTTPS manifestのbuild8／AppIDと、全IPA転送後のhash一致を確認した。旧server停止は自動承認チェックで拒否されたため、旧配信を保持した別loopback serverを検証してSkyrimIOS routeだけを切替えた。他route・旧build7 IPA・game／saveは保持。**新しい比較設定5項目は全て既定OFF・次回起動反映。本人によるiPhoneへの更新・起動・save確認と、同条件の性能／発熱比較は未実施。** 実Metalの新しい並行root／specializer失敗注入も未実施で、既存のMetal arithmetic検証と区別する。無料枠は今回198→201→207/500（残293分）、追加課金なし。詳細・原logは`local/codemagic-title23/`、署名成果物はignored private内に保持した。
+
 **2026-11-15：build8のMac build22は既存fixtureの想定差で停止。** 公開`ac436212227ce7acbdd72f4db69f81e294507d7f`、実行2分28秒。新cache／namespace／prefetch検査を含む前段は通ったが、device-memoryのworker adapter復元検査が新しいshutdown通知行を除去せず、旧sourceとの完全一致で失敗した。製品のコンパイル成功やMetal検証成功とは扱わない。原artifact／build.logは`local/codemagic-title22/`へ保持。fixtureだけ7行修正し、WSLのdevice4成功／Apple専用1skip、descriptor2・mobile6・toolchain制御2成功を確認した。製品コードを変えず、無料枠201/500（残299分）で修正版を再実行する。旧build7配布は維持。
 
 **2026-11-15：本人GOを受け、build8のMac検証・非公開OTA準備を開始。** 3系統の切替付き試作と役割別計測を収録し、比較設定は既定OFFのまま。build番号とPC内assemblyの検査値を8へ揃え、旧build7・private guest・ゲーム／saveを保持。開始前の無料枠198/500（残302分）、課金subscriptionなしを画面で確認。公開sourceだけを既存manual workflowへ送り、署名／private guest組込みはPC内で行う。開始・Apple検証・署名・OTA反映・実機確認はまだ未完了。
