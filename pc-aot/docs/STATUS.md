@@ -1,5 +1,11 @@
 # 開発状況
 
+**2026-11-16：3段階の実装・Mac検証を終え、build12を非公開OTAへ配布。実iPhoneの確認待ち。** ①設定の診断送信ボタンから今回／前回の数値ログだけをTailscale経由で本人PCへ送る。共有の厳密な許可表でraw文字列・パス・ゲームデータ・セーブを除き、認証・容量制限・原子的な完了公開・同一内容の再送を検査した。②D3D/D3DX入口で新規仕事を休止し、既に入った呼出しを終えて全producerをflushしてからGPU完了を待つ。UIKitは待ちで塞がず、音声queueを保った休止／復帰を追加。③cache保存のfsync割込みを、取消と既存予算を守って最大3回まで再試行する。過去の停止や保存未完了がこの割込みに起因したとは未確認。iOSのメモリ回収／終了を防ぐ保証や、全guest時計・workerの凍結ではない。
+
+[Mac build32](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa337590e83b09c4fac1d2)は公開`3f3f819bb3ca11f207f3b4606fcbd8b67985bba6`で成功（5分57秒）。43回のunittest実行／126ケースは122成功・従来と同じ環境依存4skip・失敗0。実Foundation送信・受信13検査・lifecycle6検査（CFRunLoopと実Metal依存関係）・controller TSanを通過し、iPhoneOS shader8件とMac GPU20ケース／80値の一致も確認。3共有ABI headerはbuild11とbyte一致、compiler warning526件／44種類も増減なし。これは実iPhoneの成功とは区別する。
+
+署名済みbuild12は58,717,120 bytes、SHA256 `a743e4547bf964b60d1851bf7bd6b285097b6f82c153508b8773c70f26e84588`。既存の登録端末profileで2 images／39,453 pages／4 resourcesとApple chain・AppID・端末一致を検証した。診断送信の認証設定はPC内の最終組立時だけに追加し、公開host／CIには含めない。非公開HTTPS manifestと全IPA転送後hash一致、他route保持、Funnel無効を確認し、旧build11を保持。PC受信口のHTTPS検証は合成データであり実機送信ではない。無料枠は今回開始前227→238/500（残262分）、subscription未有効。**本人へ更新・Home20秒からの復帰・手動診断送信を依頼済み。実機の性能、復帰、送受信、cache再利用の判定と開発ゴール完了はその結果まで保留する。**
+
 **2026-11-16：本人がbuild11での日本語化成功を報告。** 表示成功は本人の確認として扱い、音声・長時間性能・端末build番号の新たな機械検証は別に残す。
 
 **build12のApple検証は進行中。** [Mac build28](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa2e8d90e83b09c4fac031)（公開`fc585a254fd0e95c94ac9cdf349f8ba4775e9e92`）は87秒で失敗した。Foundation送信fixtureが実clientをコンパイルした際、NSString型`hash`がNSObjectのNSUInteger型`hash`と衝突したためで、プロパティ名と全参照を`contentSHA256`へ修正した。通信形式は変更せず、原ログを`local/codemagic-title28/`に保持。Mac送受信・休止／復帰fixtureとiPhone動作は未検証で、build12はまだ配布していない。
