@@ -17,6 +17,7 @@
 #include "performance_metrics.h"
 #include "pipeline_cache_control.h"
 #include "device_policy.h"
+#include "game_language.h"
 
 static NSMutableDictionary *settings;
 static NSDictionary *startup;
@@ -28,6 +29,9 @@ static uint64_t cacheCheckpointTicket;
 static BOOL cacheCheckpointQueued;
 static dispatch_queue_t cacheCheckpointQueue;
 static BOOL shaderSettingsVisible, cacheForegroundQueued;
+static SkyrimGameLanguagePacks gameLanguagePacks;
+static SkyrimGameLanguage gameLanguage;
+static BOOL gameLanguagePrepared;
 
 // kind: 0 background, 1 settings; phase: 0 entered, 1 save returned.
 // Log on the worker before save, not only in the eventual main-queue callback:
@@ -199,6 +203,8 @@ void skyrim_mobile_initialize(const char *profile) {
     }
     if (![@[@0,@24,@30,@40,@60] containsObject:@(value(@"fps",0))]) [settings removeObjectForKey:@"fps"];
     if (![@[@0,@1] containsObject:@(value(@"language",0))]) [settings removeObjectForKey:@"language"];
+    if (![@[@0,@1] containsObject:@(value(@"game_text",0))]) [settings removeObjectForKey:@"game_text"];
+    if (![@[@0,@1] containsObject:@(value(@"game_voices",0))]) [settings removeObjectForKey:@"game_voices"];
     if (![@[@-1,@0,@1] containsObject:@(value(@"autosave",-1))]) [settings removeObjectForKey:@"autosave"];
     persist(); startup = [settings copy];
     iniCount = 0;
@@ -232,6 +238,55 @@ void skyrim_mobile_initialize(const char *profile) {
         integerINI("Decals","uMaxSkinDecals",enabled ? 50 : 0);
         integerINI("Decals","uMaxSkinDecalPerActor",enabled ? 20 : 0);
     }
+}
+int skyrim_mobile_prepare_game_language(const char *gameDirectory) {
+    NSCAssert(NSThread.isMainThread, @"game language is selected before guest startup");
+    skyrim_game_language_probe(gameDirectory, &gameLanguagePacks);
+    gameLanguage = skyrim_game_language_select([startup[@"game_text"] unsignedIntValue],
+        [startup[@"game_voices"] unsignedIntValue], gameLanguagePacks);
+    fprintf(stderr, "IOS_GAME_LANGUAGE requested_text=%u text=%u text_reason=%u requested_voices=%u voices=%u voices_reason=%u\n",
+        gameLanguage.requested_text, gameLanguage.text, gameLanguage.text_reason,
+        gameLanguage.requested_voices, gameLanguage.voices, gameLanguage.voices_reason);
+    // An upgrade with no explicit game-language selection keeps the existing
+    // English profile byte-for-byte. UI language alone never changes this path.
+    if (!startup[@"game_text"] && !startup[@"game_voices"]) {
+        gameLanguagePrepared = YES;
+        return 1;
+    }
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *folder = [profilePath stringByAppendingPathComponent:@"Documents/My Games/Skyrim"];
+    NSString *target = [folder stringByAppendingPathComponent:@"Skyrim.ini"];
+    BOOL exists = [fm fileExistsAtPath:target];
+    NSString *sourcePath = exists ? target :
+        [[NSString stringWithUTF8String:gameDirectory] stringByAppendingPathComponent:@"Skyrim_default.ini"];
+    NSError *error = nil;
+    NSDictionary *attributes = [fm attributesOfItemAtPath:sourcePath error:&error];
+    if (!attributes || ![attributes[NSFileType] isEqual:NSFileTypeRegular] ||
+        [attributes[NSFileSize] unsignedLongLongValue] > 1024 * 1024) return 0;
+    NSData *source = [NSData dataWithContentsOfFile:sourcePath options:0 error:&error];
+    if (!source) return 0;
+    size_t count = 0;
+    char *bytes = skyrim_game_language_ini(source.length ? source.bytes : "", source.length, gameLanguage, &count);
+    if (!bytes) return 0;
+    NSData *updated = [NSData dataWithBytesNoCopy:bytes length:count freeWhenDone:YES];
+    if ((!exists || ![source isEqualToData:updated]) &&
+        (![fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:&error] ||
+         ![updated writeToFile:target options:NSDataWritingAtomic error:&error])) return 0;
+    gameLanguagePrepared = YES;
+    return 1;
+}
+static NSString *gameLanguageFallback(void) {
+    if (!gameLanguagePrepared) return nil;
+    if (gameLanguage.text_reason && gameLanguage.voices_reason)
+        return L(@"Japanese text and voices are not ready. English is in use. Install a complete, supported Japanese pack and restart.",
+                 @"日本語のテキスト・音声を利用できないため英語で起動しました。対応する日本語パックを導入して再起動してください。");
+    if (gameLanguage.text_reason)
+        return L(@"The Japanese text pack is missing or incomplete. English text is in use.",
+                 @"日本語テキストのパックが未導入または不完全なため、英語で表示しています。");
+    if (gameLanguage.voices_reason)
+        return L(@"Japanese voices are not ready. English voices are in use.",
+                 @"日本語音声を利用できないため、英語音声で再生しています。");
+    return nil;
 }
 int skyrim_mobile_verbose(void) { return [startup[@"verbose"] boolValue]; }
 int skyrim_mobile_shader_option(unsigned option) {
@@ -383,7 +438,7 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 - (void)viewWillDisappear:(BOOL)animated { shaderSettingsPermission(NO); [super viewWillDisappear:animated]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 7; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
-    return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+1 : section==3 ? 2 : section==6 ? shaderRows().count : 1;
+    return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+1 : section==3 ? 2 : section==5 ? 3 : section==6 ? shaderRows().count : 1;
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
     return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),@"Language",L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映")][section];
@@ -394,7 +449,12 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     if (section==2) return L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。");
     if (section==3) return L(@"These settings do not pause the game. Open the game system menu first. Quick save sends F5 and checks for a changed save file; it is not an emulator save state.", @"設定画面だけではゲームは一時停止しません。先にシステムメニューを開いてください。クイックセーブはゲームのF5入力を送り、保存ファイルの更新を確認します。実行状態を丸ごと復元するステートセーブではありません。");
     if (section==4) return L(@"Save in the game, then fully close and reopen the app to apply. Off disables saves on pause, travel, waiting and rest; save manually while it is off. Keep current preserves the current values, including a previous Off choice. The game menu can still change them during play.", @"ゲーム内で保存し、アプリを完全終了して開き直すと反映します。オフではメニュー・移動・待機・休息時の自動保存を止めるため、手動で保存してください。「維持」は以前のオフも含めた現在値を保ちます。プレイ中はゲーム内設定からも変更できます。");
-    if (section==5) return L(@"Changes the app controls and settings only. Game text and audio keep their current language.", @"操作画面と設定だけの言語を変更します。ゲーム本体の字幕・音声は変わりません。");
+    if (section==5) {
+        NSString *description = L(@"App language changes immediately. Game text and voices apply after a full app restart and require the corresponding installed pack. Unavailable packs use English.",
+            @"アプリの言語はすぐに反映します。ゲームのテキスト・音声はアプリの完全終了・再起動後に反映します。対応パックが未導入・未対応の場合は英語になります。");
+        NSString *fallback = gameLanguageFallback();
+        return fallback ? [description stringByAppendingFormat:@"\n%@", fallback] : description;
+    }
     if (section==6) return L(@"Experimental comparisons: change one option at a time, save your game and restart the app. Preparation may affect heat and startup time. Cache saving is limited to this settings screen, which does not pause the game; open the game system menu first. Incompatible caches are rebuilt. Turning storage off preserves the saved files.", @"比較用の機能です。1項目ずつ変更し、ゲーム内で保存してアプリを再起動してください。発熱や起動時間が変わる場合があります。キャッシュ保存はこの設定画面内だけですが、ゲームは一時停止しないため先にゲームのシステムメニューを開いてください。互換性のないキャッシュは作り直します。保持をオフにしても保存ファイルは削除しません。");
     return nil;
 }
@@ -414,7 +474,11 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
        @{@"key":@"opacity",@"title":L(@"Control opacity", @"ボタンの不透明度"),@"values":@[@.25,@.4,@.6,@.8,@1],@"default":@.8}
     ][p.row];
     if (p.section==4) return @{@"key":@"autosave",@"title":L(@"Autosave", @"オートセーブ"),@"values":@[@-1,@0,@1],@"labels":@[L(@"Keep current", @"現在の設定を維持"),L(@"Off", @"オフ"),L(@"On", @"オン")],@"default":@-1};
-    if (p.section==5) return @{@"key":@"language",@"title":@"Language",@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]};
+    if (p.section==5) return @[
+        @{@"key":@"language",@"title":L(@"App language", @"アプリの言語"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]},
+        @{@"key":@"game_text",@"title":L(@"Game text — after restart", @"ゲームのテキスト — 次回起動"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]},
+        @{@"key":@"game_voices",@"title":L(@"Game voices — after restart", @"ゲームの音声 — 次回起動"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]}
+    ][p.row];
     if (p.section==2 && p.row) return graphicsRows()[p.row-1];
     return nil;
 }
@@ -460,6 +524,13 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
                 [overlay message:L(@"Autosave setting saved. Applies after restart.", @"自動保存の設定を保存しました。次回起動から反映します")];
             if (p.section==6)
                 [overlay message:L(@"Shader option saved. Applies after restart.", @"シェーダー設定を保存しました。次回起動から反映します")];
+            if (p.section==5 && p.row) {
+                unsigned status = p.row == 1 ? gameLanguagePacks.text_status : gameLanguagePacks.voices_status;
+                [overlay message:choice.intValue && status != SKYRIM_GAME_PACK_READY ?
+                    L(@"Japanese is not ready for this option. English will be used until a supported pack is installed; restart after installation.",
+                      @"この項目の日本語パックは未導入・未対応のため英語になります。対応パック導入後に再起動してください。") :
+                    L(@"Game language saved. Fully close and reopen the app to apply.", @"ゲームの言語を保存しました。アプリを完全終了して開き直すと反映します。")];
+            }
             self.title=L(@"SkyrimIOS Settings", @"SkyrimIOS 設定");
             self.navigationItem.rightBarButtonItem.title=L(@"Done", @"完了"); [table reloadData];
         }]];
@@ -633,6 +704,8 @@ void skyrim_mobile_install(void *window) {
     if(!root) {fprintf(stderr,"FATAL SDL UIKit root view missing\n");abort();}
     overlay=[[SKOverlay alloc] initWithFrame:root.bounds];[root addSubview:overlay];
     [overlay message:L(@"Drag an empty area to look. Open the gear for sensitivity, layout and graphics.", @"空いている場所をドラッグして視点移動。右上の設定で感度・配置・画質を変更")];
+    NSString *fallback = gameLanguageFallback();
+    if (fallback) [overlay message:fallback];
 }
 void skyrim_mobile_tick(void) {
     if(!overlay || !NSThread.isMainThread) return;

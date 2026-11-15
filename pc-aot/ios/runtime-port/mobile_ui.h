@@ -6,6 +6,9 @@ extern "C" {
 #endif
 /* Startup settings/INI values become immutable before guest threads start. */
 void skyrim_mobile_initialize(const char *profile);
+/* Once after initialization and before guest threads. Only app-owned profile
+ * preferences are written; original game archives/masters are never changed. */
+int skyrim_mobile_prepare_game_language(const char *game_directory);
 int skyrim_mobile_verbose(void);
 int skyrim_mobile_shader_option(unsigned option);
 void skyrim_mobile_install(void *sdl_window);

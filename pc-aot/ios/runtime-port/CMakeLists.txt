@@ -55,6 +55,7 @@ add_library(skyrim_ios_runtime STATIC ${runtime_sources}
     "${SKYDREAM_SOURCE_DIR}/third_party/f3daudio/F3DAudio.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/ios_runtime.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_core.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/game_language.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_ui.m")
 target_include_directories(skyrim_ios_runtime PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}" "${SKYRIM_IOS_RUNTIME_OVERLAY_DIR}"

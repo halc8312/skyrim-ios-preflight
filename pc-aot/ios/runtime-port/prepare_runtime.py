@@ -568,6 +568,45 @@ def patch_audio_submix(s: str) -> str:
     return replace_once(s, old, new, "stable audio submix stage traversal")
 
 
+def patch_xwma_voice_profile(s: str) -> str:
+    # This omitted-options profile is used by the owned Japanese LE voices.
+    # Do not guess for other formats or override explicit WAVEFORMATEX options.
+    s = replace_once(s, 'static int open_codec(XWmaDecoder *d) {',
+        '''static int ios_xwma_mono_32k_20k(const XWmaDecoder *d) {
+    return d->tag == 0x161 && !d->extra_size && d->channels == 1 &&
+           d->rate == 32000 && d->average_bytes == 2500 &&
+           d->block_align == 1280 && d->bits == 16;
+}
+
+static int ios_xwma_recreate_on_reset(const XWmaDecoder *d) {
+    /* Both verified omitted-options profiles use WMAv2 noise coding. The
+     * stereo profile also occurs in the existing English voice archives. */
+    return ios_xwma_mono_32k_20k(d) ||
+           (d->tag == 0x161 && !d->extra_size && d->channels == 2 &&
+            d->rate == 44100 && d->average_bytes == 4000 &&
+            d->block_align == 1485 && d->bits == 16);
+}
+
+static int open_codec(XWmaDecoder *d) {''', "xWMA exact omitted-options voice profile")
+    s = replace_once(s, 'else if (id == AV_CODEC_ID_WMAV2) c->extradata[4] = 31;',
+        '''else if (id == AV_CODEC_ID_WMAV2) {
+        /* WMAv2 flags2 bits 3..4 select the variable block-length range.
+         * 0x17 gives this low-bitrate profile two-bit block indices; the
+         * generic 0x1f assumption reads three bits and rejects valid audio.
+         * Other xWMA profiles retain the pinned upstream interpretation. */
+        c->extradata[4] = ios_xwma_mono_32k_20k(d) ? 0x17 : 0x1f;
+    }''', "xWMA 32k mono block-size configuration")
+    return replace_once(s, '    avcodec_flush_buffers(d->codec);',
+        '''    if (ios_xwma_recreate_on_reset(d)) {
+        /* FFmpeg 7.1.1 WMAv2 flush leaves noise_index and overlap state.
+         * Start a reused low-bitrate voice like a fresh decoder. Packet
+         * streaming does not reset here; ordinary English mono voices keep the
+         * existing flush path. Never return a partially opened codec. */
+        avcodec_free_context(&d->codec);
+        if (open_codec(d) < 0) avcodec_free_context(&d->codec);
+    } else avcodec_flush_buffers(d->codec);''', "xWMA low-bitrate stream reset")
+
+
 def patch_xwma_buffer(s: str) -> str:
     # Decode, resampling, packet/PTS order and caller ownership stay unchanged.
     # Capacity belongs only to this synchronous decode call, not to a voice.
@@ -733,7 +772,7 @@ PATCHERS = {
     "user32.c": patch_main_pump,
     "dispatch.c": patch_dispatch,
     "xaudio2.c": patch_audio,
-    "xwma.c": patch_xwma_buffer,
+    "xwma.c": lambda s: patch_xwma_buffer(patch_xwma_voice_profile(s)),
     "d3dx_image.c": patch_dds_layout,
     "d3dx_surface.cpp": patch_surface_point,
     "d3d9_bcemu.cpp": patch_bc_palette,

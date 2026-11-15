@@ -166,6 +166,8 @@ int SDL_main(int argc, char **argv) {
         if (pc_guest_open(framework.fileSystemRepresentation) != 0)
             startup_failure(@"Private guest framework binding failed; see preceding diagnostics");
         skyrim_ios_stage("private-guest-bound");
+        if (!skyrim_mobile_prepare_game_language(game.fileSystemRepresentation))
+            startup_failure(@"Cannot safely apply the game language to the app profile; the guest was not started");
         set_default("LB_LOG", skyrim_mobile_verbose() ? "1" : "0");
         set_default("DXVK_LOG_PATH", cache.fileSystemRepresentation);
         set_default("DXVK_STATE_CACHE_PATH", cache.fileSystemRepresentation);

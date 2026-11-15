@@ -28,7 +28,10 @@ def sources():
     new = adapter.prepare(ROOT / 'vendor/skydream')['xwma.c']
     start = 'static int receive_pcm('
     end = '\n#else\nstruct XWmaDecoder { int unused; };'
-    assert old[:old.index(start)] == new[:new.index(start)].replace('#include <errno.h>\n', '', 1)
+    # The independently tested voice-profile adapter changes only codec setup
+    # and reset; this differential isolates the PCM allocation optimization.
+    setup = adapter.patch_xwma_voice_profile(old)
+    assert setup[:setup.index(start)] == new[:new.index(start)].replace('#include <errno.h>\n', '', 1)
     assert old[old.index(end):] == new[new.index(end):]
     return old, new
 

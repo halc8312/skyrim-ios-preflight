@@ -56,6 +56,7 @@ PY
   python3 -m unittest discover -s tests -p 'test_performance_stalls.py' -v
   python3 -m unittest discover -s tests -p 'test_save_write_probe.py' -v
   python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
+  python3 -m unittest discover -s tests -p 'test_game_language.py' -v
   python3 -m unittest discover -s tests -p 'test_present_timing.py' -v
   python3 -m unittest discover -s tests -p 'test_frame_timing_analysis.py' -v
   python3 -m unittest discover -s tests -p 'test_asset_timing.py' -v
@@ -63,6 +64,7 @@ PY
   python3 -m unittest discover -s tests -p 'test_audio_backpressure.py' -v
   python3 -m unittest discover -s tests -p 'test_waiter_membership.py' -v
   python3 -m unittest discover -s tests -p 'test_xwma_buffer.py' -v
+  python3 -m unittest discover -s tests -p 'test_xwma_voice_profile.py' -v
   python3 -m unittest discover -s tests -p 'test_constant_scratch.py' -v
   python3 -m unittest discover -s tests -p 'test_dds_layout.py' -v
   python3 -m unittest discover -s tests -p 'test_directory_index.py' -v

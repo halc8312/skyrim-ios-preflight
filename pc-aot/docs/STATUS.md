@@ -1,6 +1,12 @@
 # 開発状況
 
-**2026-11-15：本人GOを受け、build9のMac検証・非公開OTA準備を開始。** 待機予算の修正、shader変換／待機内訳／cache保存進捗の計測、40枠の停止記録をまとめる。build番号とassembly検査値を9へ揃え、依存stageをbuild9へ分離してbuild8成果物を保持。無料枠207/500（残293分）、subscription未有効を画面で確認。比較設定5項目は既定OFF。日本語データの導入はこの性能更新へ混在させず、所有データでの対応可否を並行調査する。Mac成功・署名・OTA切替・実機確認はまだ未完了。
+**2026-11-15：設定からゲームの文字／音声を独立に切り替えるbuild10候補を実装。** アプリUIのLanguageとは分離し、英語既定・ゲーム側は次回起動のみ反映。未設定の更新では既存profileを変更せず、選択時もapp-owned Skyrim.iniの3項目だけを編集し、他archiveを保持する。所有日本語データは別名で追加する非公開packとして準備し、元exe／master／英語Data／saveを上書きしない。起動時は小さい完了markerとファイルサイズだけを確認し、音声archive全読込み・コピー・毎frame判定は追加しない。
+
+所有日本語音声の32kHz mono profileでは既存xWMA設定が不一致だったため限定修正し、2つの低bitrate profileの再利用時noise stateもリセットする。アプリと同じFFmpeg7.1.1で、全保有formatを層別抽出した130音声（JP72／EN58）が独立CLI出力・分割入力・繰り返し再生で一致。公開audio4検査、native ASan/UBSan、言語C fixture、既存mobile6検査・namespace5検査を通過。**新機能のMac build・署名・端末導入・実機の日本語表示／会話／負荷確認はまだ未完了。** build9は引き続き非公開更新ページで取得可能。詳細と性能上の限界はPERFORMANCE_WORK.md先頭。
+
+**2026-11-15：build9のMac検証・署名・非公開OTA配布が完了。** [Mac build24](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af9b9e990e83b09c4fa9593)は公開`781647ae34b2b8e4d354af066fe9ad47f8ad29b1`で成功（6分31秒）。37組／98検査中96成功・環境依存2skip、iPhoneOS shader8件compile、実Mac GPU20ケースreadbackが成功。3共有ABI headerはbuild8と一致。既存private guestをPC内で組み込み、同じ登録端末profileで署名・暗号検証。IPAは58,680,866 bytes、SHA256 `59fe29fac1b613313c03e886b1bd03a9984900de7a509e2f16d06356aa87644b`。2 images／39,431 pages／4 resources、profileのApple chain・AppID・端末一致も検証した。
+
+Tailscaleの他routeと旧build8を保持し、非公開更新ページをbuild9へ切替。HTTPS manifestのbuild9／AppIDと全IPA転送後hash一致、認証なし404を確認。**端末へのインストール・起動・実機性能は未確認。** 待機予算修正と停止の内訳計測を含み、比較設定5項目は既定OFF。無料枠は207→213/500（残287分）、subscription未有効・追加課金なし。日本語のゲーム文字／音声切替はこのbuild9に含まれず、次の変更として所有データと再生互換性を検証・実装中。
 
 **2026-11-15：残る停止を8起動の保存ログから再分析し、待機予算の修正と不足区間の計測を追加。アプリは未ビルド。** 最新の全OFF回の591.409ms gapでは、記録されたworkとの重なりの和集合は255.990ms、未観測区間は335.419ms。全停止をshader起因と断定しない。6件の長いframe待機（61.559〜88.247ms）にも5秒ごとのログ出力時刻は含まれず、出力処理が主因とは確認できなかった。UI処理で待機予算を使い切った後にさらにsleepを要求する経路を修正し、再現検査では余分な4ms要求が0になることを確認した。ただし実機の長い停止が同経路だった証拠はまだない。変換時間、run loop／sleep／UI pump／期限超過、cache保存のworker入口と各段階を分けて記録し、固定slow-span枠を16→40へ拡張。新旧ログを読める解析器で記録落ちと未観測時間を区別する。PCの対象検査・ASan/UBSan・既存8ログの旧集計一致を確認。Apple SDK／実Metal／実機効果の検証は未実施で、build・push・配布・端末変更・比較設定の標準ON化は行わない。詳細はPERFORMANCE_WORK.md先頭。
 

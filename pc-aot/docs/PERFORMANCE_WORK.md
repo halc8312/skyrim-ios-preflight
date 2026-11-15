@@ -1,5 +1,19 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-15 ゲーム言語の起動時選択と、日本語音声の限定修正
+
+本人は日本語テキスト・音声を希望し、負荷が大きい場合は英語音声を許容。SettingsのLanguageにApp language／Game text／Game voicesを設け、個別にEnglish／日本語を選ぶ。ゲーム言語の選択はguest thread起動前の一度だけで、プレイ中の判定・archiveコピー・シェーダーcache削除を追加しない。日本語／英語の切替自体はshader cache identityを変更しない。ただし本更新のaudio adapter変更は既存の保守的identityに含まれるため、アプリ更新直後はcacheの再準備があり得る。この互換判定を今回の言語機能に混ぜて緩和しない。
+
+所有する日本語版から、6つのstrings、翻訳、font、専用fontconfigの9ファイルと、別名のvoice BSA2個を非公開で準備した。本文ID68,394件は所有英語データと一致し、Skyrim.esm／Update.esmのhashも一致。旧版の日本語exeやInterface BSA全体は置き換えない。声は約1.26GBの追加保存容量で、切替時にコピーし直さずINIのarchive参照を選ぶ。日本語font・音声の実際のメモリ／CPUコストが英語と同一であるとは主張しない。
+
+`game_language.c`は固定名の完了markerとsizeを起動時に確認し、不完全なpackなら説明付きで英語を選ぶ。これは完全性検査であり同サイズ破損の検出や認証ではない。非公開USB導入側でhashとreadbackを確認し、全payloadの公開後にmarkerを置く。明示選択時のみapp-owned Skyrim.iniのsLanguage、[Fonts] sFontConfigFile、sResourceArchiveList2をatomic更新する。既存sectionへ不足keyを追加し、重複keyを解消、無関係なarchiveの順序と他設定を保持する。未設定upgradeはprofileのread/write前にreturnする。元ゲーム・saveは変更しない。
+
+音声は単なるasset追加では動かなかった。省略されたWMAv2設定を一律0x1fにする既存経路では、所有日本語の32kHz／mono／20kbps／1280-byte block／16bit profileを誤解釈した。この正確な組のみ0x17を補い、明示extradataと他formatは従来の解釈を維持する。同profileと44.1kHz／stereo／32kbps／1485-byte blockのnoise stateがflush後に残る問題は、その2組だけstream再利用時にcodecを再生成する。通常英語monoは従来のflushで、途中packetごとの再生成は行わない。再生成失敗はdecode失敗となり、空の成功に置き換えない。
+
+アプリpinと同じFFmpeg7.1.1（`db69d06eeeab4f46da15030a80d539efb4503ca8`）を無料ローカル環境に最小構成でbuild。自作公開fixture4検査と、全保有formatを層別抽出した130音声（日本語72／英語58）の独立CLI PCM・分割入力・EOS再利用比較が成功した。PCの再生成中央値は日本語0.351ms／stereo0.361ms、通常英語mono flush0.0043ms。host側x86 asmは無効で、これをiPhoneの時間やゼロ負荷の証拠にはしない。全音声の全量再生・ゲームによる異種圧縮format間のsample-rate変更・iPhone AudioUnitでの再生は未検証。実機の字幕・会話・口形・本／メニュー・発熱を確認して採用する。
+
+言語の実C fixtureはpack破損／不足／symlink、英語へ戻すこと、既存sectionと追加archive保持、BOM、512個の自作入力をASan/UBSan付きで確認。Foundationの実startup関数fixtureと新audio fixtureをMac buildへ追加した。既存mobile6検査・namespace5検査も成功。新機能のApple SDK build・署名・端末配布はこの記録時点では未完了。
+
 ## 2026-11-15 残る停止の再分類と、未ビルドの待機修正
 
 本人の「ログから絞って改善、ビルドはまだしない」に従い、回収済み8起動だけを再解析した。原log・旧解析を保持し、新しい結果は各private回収directoryの`analysis-observation-v3/`へ分離。8件すべてで従来のkind／context histogram、span件数、drop件数、invalid件数が一致した。アプリ／cloud build、push、配布、端末・game・save・cacheへの書込みは行わない。5つの比較設定は既定OFFを維持する。
