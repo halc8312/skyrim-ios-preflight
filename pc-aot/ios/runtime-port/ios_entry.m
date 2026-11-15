@@ -37,6 +37,21 @@ static NSURL *directory(NSSearchPathDirectory kind, NSString *suffix) {
     return result;
 }
 
+static NSURL *persistent_shader_cache(NSURL *fallback) {
+    if (!skyrim_mobile_shader_option(SKYRIM_SHADER_PERSISTENT)) return fallback;
+    NSFileManager *manager = NSFileManager.defaultManager;
+    NSURL *base = [manager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+    NSURL *target = [base URLByAppendingPathComponent:@"SkyrimIOS/ShaderCache" isDirectory:YES];
+    NSError *error = nil;
+    BOOL created = target && [manager createDirectoryAtURL:target withIntermediateDirectories:YES attributes:nil error:&error];
+    BOOL excluded = created && [target setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:&error];
+    fprintf(stderr, "IOS_PIPE_CACHE event=storage persistent_requested=1 selected=%u backup_excluded=%u error=%ld\n",
+        (unsigned)excluded, (unsigned)excluded, (long)error.code);
+    // This is only an acceleration hint. A failed optional location must not
+    // prevent gameplay, delete old cache data, or add it to device backups.
+    return excluded ? target : fallback;
+}
+
 static void begin_log(void) {
     NSURL *logs = directory(NSLibraryDirectory, @"Logs/SkyrimIOS");
     NSString *name = [NSString stringWithFormat:@"run-%.0f-%d-%@.log",
@@ -131,6 +146,18 @@ int SDL_main(int argc, char **argv) {
         NSURL *profile = directory(NSApplicationSupportDirectory, @"SkyrimIOS/Profile");
         NSURL *cache = directory(NSCachesDirectory, @"SkyrimIOS/DXVK");
         skyrim_mobile_initialize(profile.fileSystemRepresentation);
+        for (unsigned i = 0; i < SKYRIM_SHADER_OPTION_COUNT; ++i) {
+            int enabled = skyrim_mobile_shader_option(i);
+            if (setenv(skyrim_shader_option_environment(i), enabled ? "1" : "0", 1))
+                startup_failure(@"Cannot initialize shader preparation option");
+            fprintf(stderr, "IOS_SHADER_OPTION option=%u enabled=%u\n", i, (unsigned)enabled);
+        }
+        NSURL *pipelineCache = persistent_shader_cache(cache);
+        if (pipelineCache != cache) {
+            // Import only a validated pipeline-v1.cache when the destination
+            // is absent. The old cache and DXVK state recipes are preserved.
+            set_default("SKYRIM_VK_PIPELINE_CACHE_IMPORT_PATH", cache.fileSystemRepresentation);
+        }
         verify_guest_input(game);
         NSURL *framework = [NSBundle.mainBundle.privateFrameworksURL
                              URLByAppendingPathComponent:@"SkyrimGuest.framework/SkyrimGuest"];
@@ -142,7 +169,7 @@ int SDL_main(int argc, char **argv) {
         set_default("LB_LOG", skyrim_mobile_verbose() ? "1" : "0");
         set_default("DXVK_LOG_PATH", cache.fileSystemRepresentation);
         set_default("DXVK_STATE_CACHE_PATH", cache.fileSystemRepresentation);
-        set_default("SKYRIM_VK_PIPELINE_CACHE_PATH", cache.fileSystemRepresentation);
+        set_default("SKYRIM_VK_PIPELINE_CACHE_PATH", pipelineCache.fileSystemRepresentation);
         set_default("SKYDREAM_VSYNC", "1");
         fprintf(stderr, "Game input: %s\nProfile: %s\n", game.fileSystemRepresentation,
                 profile.fileSystemRepresentation);

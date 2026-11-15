@@ -1,6 +1,6 @@
 # Classic MOD management — first implementation design
 
-Status: design only, 2026-11-14. The next build does not install a MOD manager or enable any proposed MOD. Target: the pinned 2011 PC executable, Skyrim.esm and Update.esm. This is separate from engine performance work.
+Status: deferred by the user on 2026-11-15. Stutter, stability and performance take priority; MOD support comes afterward and multiplayer is deferred. This remains a design only. The next build does not install a MOD manager or enable any proposed MOD. Target: the pinned 2011 PC executable, Skyrim.esm and Update.esm. This is separate from engine performance work.
 
 ## First usable scope
 
@@ -40,3 +40,48 @@ Settings defaults to English with the existing Japanese language option. A minim
 - Possessive Corpses: a 2012 fix for accumulated weapons/remains/nirnroot effects. Need exact package and comparison with the pinned 1.9.32 scripts/records before deciding relevance. No automatic adoption or claim of modern-port stability.
 
 This design is the completion of the agreed minimum-design item, not an implemented compatibility layer. The next build contains only reviewed host changes and leaves the current vanilla content selection intact.
+
+## 2026-11-15 feasibility review and current installation status
+
+The user asked about future LE MOD support and multiplayer, then whether the
+friend's suggested MODs had already been installed. They remain deferred: none
+of SPO, Realistic Ragdolls and Force, the suggested body cleaners or Possessive
+Corpses was enabled by this project. The current perceived improvement is not
+evidence of their effectiveness. The MOD manager remains a design, not a feature
+in build7.
+
+| Candidate scope | Assessment for this iOS port |
+| --- | --- |
+| Classic textures, meshes, ESP/ESM and compatible BSA | Practical first target, subject to actual file-format, dependency, resource-budget and save/relaunch checks. LE labeling alone does not establish compatibility. |
+| Vanilla Papyrus scripts | Candidate when required functions are present in the original VM. A data package may still depend on SKSE functions; inspect dependencies and actual execution. |
+| SKSE, SkyUI requiring SKSE, Windows native DLL plugins, ENB | Separate native compatibility work. The current `ios_build_contract.h` explicitly rejects SKSE/SkyUI builds. Windows binaries and executable hooks do not automatically become part of the signed ARM64 static translation. |
+| SE/AE/ESL packages | Outside the first classic compatibility scope. Do not infer compatibility from a similar MOD name. |
+
+[SKSE's official page](https://skse.silverlock.org/) identifies classic 1.7.3 and
+runtime 1.9.32 separately from SE/AE. The first shipping MOD milestone should be
+one authored harmless data package with import, dependency/order checks, a
+separate profile, and save/relaunch verification. Package disabling cannot undo
+changes already recorded in a save. Keep the current performance work first;
+this review does not authorize installing third-party packages or changing the
+user's existing content selection.
+
+Multiplayer is a separate engine integration project, not an extension of OTA
+installation or a promise that an existing Windows MOD will work. The
+[official Skyrim Together FAQ](https://wiki.tiltedphoques.com/tilted-online/general-information/faq)
+excludes LE. Its [public source](https://github.com/tiltedphoques/TiltedEvolution)
+separates the SE-specific engine hooks, client, server and shared messages; those
+systems can inform a design, but the existing hooks are not an LE/iOS adapter.
+[Tamriel Online's classic release](https://www.nexusmods.com/skyrim/mods/67038)
+is an older example, with SKSE/SkyUI dependencies and a 2017 listed update. It is
+research material, not a verified compatible component for this port. No third
+party multiplayer code or assets have been imported.
+
+A staged research target is: two peers displaying each other's position and
+appearance in a separate test profile; then movement/animation and cell changes;
+then host-authoritative combat, enemy state, health and inventory; finally quest,
+Papyrus, time and persistent-save synchronization. The first visible-peer stage
+is not co-op gameplay. Define identity using agreed game records and package/load
+order, not process addresses. Require matching gameplay content between peers.
+Engine access, thread/lifetime contracts, network loss/reconnection, pause/death
+policy and persistence remain unimplemented. A Windows peer would also need a
+compatible client; vanilla PC Skyrim would not automatically interoperate.

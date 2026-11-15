@@ -84,10 +84,19 @@ class FrameTimingAnalysisTests(unittest.TestCase):
         self.assertEqual(len(r['work_contexts']),1)
         self.assertEqual(r['work_contexts'][0]['over_100ms'],2)
         self.assertEqual(r['duplicate_context_records'],1)
+        self.assertIsNone(r['work_contexts'][0]['failures'])
         span=r['longest_sampled_frame_gaps'][0]['overlaps'][0]
         self.assertEqual((span['role'],span['source'],span['result']),(2,3,0))
         for bad in (part.replace('role=1','role=99'),new.replace(',2,3,0',',2,9,0')):
             self.assertEqual(analyzer.summarize([bad])['invalid_records'],1)
+
+    def test_pipeline_role_contexts_reject_source_and_wait_result_tags(self):
+        for kind in ('graphics_pipeline', 'compute_pipeline'):
+            row = timing(kind, bins=[1]+[0]*19).replace('IOS_TIMING ', 'IOS_TIMING_CONTEXT ')
+            row += ' role=1 source=0 result=0'
+            self.assertEqual(analyzer.summarize([row])['invalid_records'], 0)
+            for bad in (row.replace('source=0', 'source=1'), row.replace('result=0', 'result=1')):
+                self.assertEqual(analyzer.summarize([bad])['invalid_records'], 1)
 
     def test_cli_bounds_and_read_only_output(self):
         with tempfile.TemporaryDirectory(prefix='frame-analysis-') as tmp:
@@ -110,6 +119,12 @@ int main(void){
  skyrim_perf_interval(SKYRIM_PERF_GRAPHICS_PIPELINE,now-150000000,now-10000000,0,0);
  for(unsigned k=SKYRIM_PERF_MVK_MSL_WAIT;k<=SKYRIM_PERF_MVK_DISPATCH_BLOCK;++k)
   skyrim_perf_interval(k,now-80000000,now,0,0);
+ for(unsigned role=0;role<3;++role){
+  SkyrimPerfContext old=skyrim_perf_context_set((SkyrimPerfContext){role,3,2});
+  skyrim_perf_interval(SKYRIM_PERF_GRAPHICS_PIPELINE,now-20000000,now,0,0);
+  skyrim_perf_interval(SKYRIM_PERF_COMPUTE_PIPELINE,now-20000000,now,role==2,0);
+  skyrim_perf_context_set(old);
+ }
  skyrim_perf_log_window();return 0;
 }''')
             subprocess.run([cc,'-std=c11','-D_POSIX_C_SOURCE=200809L','-O2',
@@ -117,9 +132,20 @@ int main(void){
                 '-o',str(binary)],check=True,timeout=45)
             result=subprocess.run([str(binary)],capture_output=True,text=True,check=True,timeout=5)
             r=analyzer.summarize(result.stderr.splitlines())
-            self.assertEqual((r['timing_records'],r['stall_records'],r['invalid_records']),(8,1,0))
+            self.assertEqual((r['timing_records'],r['stall_records'],r['invalid_records']),(9,1,0))
             self.assertEqual(r['kinds']['frame_gap']['observed_max_ms'],200)
             self.assertEqual(r['longest_sampled_frame_gaps'][0]['overlaps'][0]['overlap_ms'],140)
+            contexts = {(c['kind'], c['role']): c for c in r['work_contexts']}
+            for kind, expected_samples in (('graphics_pipeline', 4), ('compute_pipeline', 3)):
+                parts = [contexts[kind, role] for role in range(3)]
+                self.assertEqual(r['kinds'][kind]['samples'], expected_samples)
+                self.assertEqual(sum(p['samples'] for p in parts), expected_samples)
+                self.assertTrue(all(p['source'] == p['result'] == 0 for p in parts))
+                self.assertEqual(sum(p['total_ns'] for p in parts), 200000000 if kind == 'graphics_pipeline' else 60000000)
+                self.assertEqual(sum(p['failures'] for p in parts), r['kinds'][kind]['failures'])
+            self.assertEqual(contexts['graphics_pipeline', 0]['over_100ms'], 1)
+            self.assertEqual(contexts['graphics_pipeline', 1]['over_100ms'], 0)
+            self.assertEqual(contexts['compute_pipeline', 2]['failures'], 1)
             for kind in analyzer.KINDS[21:27]:
                 self.assertEqual(r['kinds'][kind]['observed_max_ms'],80)
                 # NSError may be a warning; these observations do not classify

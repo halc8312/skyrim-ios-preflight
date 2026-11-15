@@ -29,9 +29,10 @@ typedef struct PerfAtomic {
     _Atomic uint64_t total_ns, max_ns, failures, sleep_calls;
 } PerfAtomic;
 static PerfAtomic counters[SKYRIM_PERF_KIND_COUNT];
-/* 12 MSL (role/source), 18 DXVK waits (role/result), 3 cold-lock waits.
- * Fixed storage, no new synchronization or sampling in the recording path. */
-#define CONTEXT_COUNT 33
+/* 12 MSL (role/source), 18 DXVK waits (role/result), 3 cold-lock waits,
+ * 6 Vulkan pipeline calls (graphics/compute by role). Fixed storage and the
+ * existing relaxed atomic recorder; no extra clocks, locks or allocations. */
+#define CONTEXT_COUNT 39
 static PerfAtomic context_counters[CONTEXT_COUNT];
 static _Thread_local SkyrimPerfContext work_context;
 SkyrimPerfContext skyrim_perf_context_get(void) { return work_context; }
@@ -49,6 +50,8 @@ static unsigned context_index(unsigned kind, SkyrimPerfContext c) {
     if (kind == SKYRIM_PERF_GRAPHICS_COMPILE_WAIT) return 12 + c.role * 3 + c.result;
     if (kind == SKYRIM_PERF_COMPUTE_COMPILE_WAIT) return 21 + c.role * 3 + c.result;
     if (kind == SKYRIM_PERF_MVK_COLD_LOCK_WAIT) return 30 + c.role;
+    if (kind == SKYRIM_PERF_GRAPHICS_PIPELINE) return 33 + c.role;
+    if (kind == SKYRIM_PERF_COMPUTE_PIPELINE) return 36 + c.role;
     return CONTEXT_COUNT;
 }
 static unsigned context_decode(unsigned index, SkyrimPerfContext *c) {
@@ -59,8 +62,12 @@ static unsigned context_decode(unsigned index, SkyrimPerfContext *c) {
         c->role = local / 3; c->result = local % 3;
         return index < 21 ? SKYRIM_PERF_GRAPHICS_COMPILE_WAIT : SKYRIM_PERF_COMPUTE_COMPILE_WAIT;
     }
-    c->role = index - 30;
-    return SKYRIM_PERF_MVK_COLD_LOCK_WAIT;
+    if (index < 33) {
+        c->role = index - 30;
+        return SKYRIM_PERF_MVK_COLD_LOCK_WAIT;
+    }
+    c->role = (index - 33) % 3;
+    return index < 36 ? SKYRIM_PERF_GRAPHICS_PIPELINE : SKYRIM_PERF_COMPUTE_PIPELINE;
 }
 
 static atomic_flag stall_lock = ATOMIC_FLAG_INIT;

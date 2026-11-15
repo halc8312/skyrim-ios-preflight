@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 [[ "$(uname -s)" == Darwin ]] || { echo 'Requires macOS and the Apple iPhoneOS SDK.' >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-build7}"
+WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-shader-trials-v1}"
 PREFIX="$WORK/prefix"
 DEPLOYMENT="${IPHONEOS_DEPLOYMENT_TARGET:-18.0}"
 JOBS="${JOBS:-2}"
@@ -46,7 +46,7 @@ preserve_failure() {
 }
 trap preserve_failure EXIT
 BASE_CONFIG="SDL-5d249570393f7a37e037abf22cd6012a4cc56a71 FFmpeg-db69d06eeeab4f46da15030a80d539efb4503ca8 MoltenVK-458870543b9bcf6b0edd6f90aaa776707b310d96 vkd3d-2.0 ios-$DEPLOYMENT $(xcodebuild -version) $(xcrun --sdk iphoneos --show-sdk-version)"
-CONFIG="$BASE_CONFIG $(shasum -a 256 "$0" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_spirv_cross.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_moltenvk.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_hot_cache.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/mvk_hot_cache.cpp.in" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compressed_copy.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_library.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/verify_lifecycle_baseline.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compile_timing.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/runtime-port/performance_metrics.h" | cut -d' ' -f1)"
+CONFIG="$BASE_CONFIG $(shasum -a 256 "$0" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_spirv_cross.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_moltenvk.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_hot_cache.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/mvk_hot_cache.cpp.in" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compressed_copy.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_library.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/verify_lifecycle_baseline.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compile_timing.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_module_cold.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/runtime-port/performance_metrics.h" | cut -d' ' -f1)"
 KEY="$(printf '%s' "$CONFIG" | shasum -a 256 | cut -d' ' -f1)"
 if [[ -f "$WORK/configuration.sha256" && "$(cat "$WORK/configuration.sha256")" != "$KEY" ]]; then
   echo 'Dependency configuration changed; use a new SKYRIM_IOS_DEPS_ROOT to preserve previous build evidence.' >&2
@@ -196,14 +196,13 @@ if set(changed)-{'MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConv
 PYMVK
   python3 "$ROOT/ios/dependencies/patch_moltenvk.py" \
     "$MVK/MoltenVKShaderConverter/MoltenVKShaderConverter/SPIRVToMSLConverter.cpp" --in-place
-  python3 "$ROOT/ios/dependencies/patch_mvk_hot_cache.py" "$MVK/MoltenVK/MoltenVK/GPUObjects"
-  python3 "$ROOT/ios/dependencies/patch_mvk_library.py" "$MVK/MoltenVK/MoltenVK/GPUObjects" \
+  # Validate all five pinned shader files before applying the composition. Runtime
+  # defaults to the build7 global cold mutex; module mode is an explicit switch.
+  python3 "$ROOT/ios/dependencies/patch_mvk_module_cold.py" "$MVK/MoltenVK/MoltenVK/GPUObjects" \
     --pristine "$WORK/sources/MoltenVK/MoltenVK/MoltenVK/GPUObjects"
   # The admission gate failed real Metal event-dependency validation. Keep
   # original native submission methods and reject any cached gated variant.
   python3 "$ROOT/ios/dependencies/verify_lifecycle_baseline.py" "$MVK/MoltenVK/MoltenVK"
-  python3 "$ROOT/ios/dependencies/patch_mvk_compile_timing.py" "$MVK/MoltenVK/MoltenVK/GPUObjects" \
-    --header "$ROOT/ios/runtime-port/performance_metrics.h"
   (
     cd "$MVK"
     ./fetchDependencies --ios --keep-cache --spirv-cross-root "$CROSS"

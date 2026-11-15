@@ -9,6 +9,9 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
+stage_spec = importlib.util.spec_from_file_location("composed_mvk_stage", ROOT / "ios/dependencies/patch_mvk_module_cold.py")
+composed_stage = importlib.util.module_from_spec(stage_spec)
+stage_spec.loader.exec_module(composed_stage)
 PINS={"MVKPipeline.mm":"4d8d6c9bbe639d8fa78a71802d5357f91ef15568964dd8e0d570ce4ba05790d2",
       "MVKShaderModule.mm":"f455a0f4f364fad8071f237e54b810ba47af2f8c3a7da4acb31e10619e8722e1"}
 VECTOR_PINS={"MVKSmallVector.h":"5a5885e5d0fb6dbe0c0dbab86c500248920dee1d3a7d31e92712c3cda621aee4",
@@ -42,7 +45,7 @@ class MoltenHotCacheTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(changed).hexdigest(),adapter.PATCHED_PINS[name])
             with self.assertRaises(ValueError):adapter.patched(name,original+b'\n')
             staged=os.environ.get('SKYRIM_MVK_PATCHED_GPU_SOURCE')
-            if staged:self.assertEqual((Path(staged)/name).read_bytes(),changed)
+            if staged:composed_stage.verify(Path(staged), Path(source))
         # Verify the final whole-file patch inserts exactly the function tested
         # below and keeps getShaderLibraryImpl / all serialization methods.
         patched=adapter.patched('MVKPipeline.mm',pipeline.encode()).decode()

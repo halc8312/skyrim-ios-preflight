@@ -25,6 +25,28 @@ static uint64_t frameCount;
 static UIBackgroundTaskIdentifier cacheBackgroundTask;
 static uint64_t cacheCheckpointTicket;
 static BOOL cacheCheckpointQueued;
+static dispatch_queue_t cacheCheckpointQueue;
+static BOOL shaderSettingsVisible, cacheForegroundQueued;
+
+static void shaderSettingsPermission(BOOL visible) {
+    shaderSettingsVisible = visible;
+    skyrim_pipeline_checkpoint_foreground_permission(visible &&
+        skyrim_mobile_shader_option(SKYRIM_SHADER_SAVE_IN_SETTINGS) &&
+        UIApplication.sharedApplication.applicationState == UIApplicationStateActive);
+}
+
+static void checkpointWhileSettingsVisible(void) {
+    if (!shaderSettingsVisible || cacheForegroundQueued ||
+        !skyrim_mobile_shader_option(SKYRIM_SHADER_SAVE_IN_SETTINGS) ||
+        UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
+    cacheForegroundQueued = YES;
+    dispatch_async(cacheCheckpointQueue, ^{
+        // Eligibility and registry admission run on this worker, never UIKit.
+        uint64_t ticket = skyrim_pipeline_checkpoint_foreground_begin();
+        if (ticket) skyrim_pipeline_checkpoint_save(ticket);
+        dispatch_async(dispatch_get_main_queue(), ^{ cacheForegroundQueued = NO; });
+    });
+}
 
 // Finish source: 0 completed, 1 resumed, 2 background allowance expired.
 static void finishCacheCheckpoint(uint64_t ticket, unsigned source) {
@@ -63,7 +85,7 @@ static void checkpointPipelineCache(void) {
     if (reason) return;
     cacheCheckpointQueued = YES;
     const uint64_t ticket = cacheCheckpointTicket;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    dispatch_async(cacheCheckpointQueue, ^{
         skyrim_pipeline_checkpoint_save(ticket);
         dispatch_async(dispatch_get_main_queue(), ^{ finishCacheCheckpoint(ticket, 0); });
     });
@@ -112,12 +134,29 @@ static NSArray<NSDictionary *> *graphicsRows(void) {
       @{@"key":@"decals", @"title":L(@"Decals", @"血痕・着弾跡"), @"values":@[@-1,@0,@1], @"labels":@[L(@"Keep current", @"維持"),L(@"Off", @"オフ"),L(@"On", @"オン")]}
     ];
 }
+static NSArray<NSDictionary *> *shaderRows(void) {
+    NSArray *titles = @[L(@"Parallel shader preparation", @"シェーダー準備を並列化"),
+        L(@"Prioritize gameplay preparation", @"プレイ中に必要な準備を優先"),
+        L(@"Save cache while settings are open", @"設定画面でキャッシュを保存"),
+        L(@"Keep shader cache in app storage", @"シェーダーキャッシュをアプリ内に保持"),
+        L(@"Reuse cache after compatible updates", @"互換性のある更新後もキャッシュを再利用")];
+    NSMutableArray *rows = [NSMutableArray arrayWithCapacity:SKYRIM_SHADER_OPTION_COUNT];
+    for (unsigned i = 0; i < SKYRIM_SHADER_OPTION_COUNT; ++i)
+        [rows addObject:@{@"key":[NSString stringWithUTF8String:skyrim_shader_option_key(i)],
+            @"title":titles[i], @"values":@[@0,@1], @"default":@0,
+            @"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")]}];
+    return rows;
+}
 void skyrim_mobile_initialize(const char *profile) {
     NSCAssert(NSThread.isMainThread, @"mobile startup must run on main");
     /* UIKit exports this value; it is not a C constant initializer. Set it on
      * the main thread before creating the overlay and its lifecycle observers. */
     static dispatch_once_t cacheInitialization;
-    dispatch_once(&cacheInitialization, ^{ cacheBackgroundTask = UIBackgroundTaskInvalid; });
+    dispatch_once(&cacheInitialization, ^{
+        cacheBackgroundTask = UIBackgroundTaskInvalid;
+        cacheCheckpointQueue = dispatch_queue_create("SkyrimIOS.shader-cache",
+            dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
+    });
     profilePath = [NSString stringWithUTF8String:profile];
     id saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
     settings = [NSMutableDictionary dictionary];
@@ -125,6 +164,10 @@ void skyrim_mobile_initialize(const char *profile) {
         for (NSString *key in saved)
             if ([key isKindOfClass:NSString.class] && [saved[key] isKindOfClass:NSNumber.class] && isfinite([saved[key] doubleValue])) settings[key] = saved[key];
     for (NSDictionary *row in graphicsRows()) {
+        NSNumber *choice = settings[row[@"key"]];
+        if (choice && ![row[@"values"] containsObject:choice]) [settings removeObjectForKey:row[@"key"]];
+    }
+    for (NSDictionary *row in shaderRows()) {
         NSNumber *choice = settings[row[@"key"]];
         if (choice && ![row[@"values"] containsObject:choice]) [settings removeObjectForKey:row[@"key"]];
     }
@@ -165,6 +208,10 @@ void skyrim_mobile_initialize(const char *profile) {
     }
 }
 int skyrim_mobile_verbose(void) { return [startup[@"verbose"] boolValue]; }
+int skyrim_mobile_shader_option(unsigned option) {
+    const char *key = skyrim_shader_option_key(option);
+    return key && skyrim_shader_option_enabled([startup[[NSString stringWithUTF8String:key]] doubleValue]);
+}
 void skyrim_mobile_render_size(int *width, int *height) {
     int selected = [startup[@"resolution"] intValue];
     if (!selected) return;
@@ -306,12 +353,14 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:L(@"Done", @"完了") style:UIBarButtonItemStyleDone target:self action:@selector(close)];
 }
 - (void)close { [overlay clearInput]; [self dismissViewControllerAnimated:YES completion:nil]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 6; }
+- (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated]; shaderSettingsPermission(YES); }
+- (void)viewWillDisappear:(BOOL)animated { shaderSettingsPermission(NO); [super viewWillDisappear:animated]; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 7; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
-    return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+1 : section==3 ? 2 : 1;
+    return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+1 : section==3 ? 2 : section==6 ? shaderRows().count : 1;
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
-    return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),@"Language"][section];
+    return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),@"Language",L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映")][section];
 }
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
     if (section==0) return L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。");
@@ -320,9 +369,11 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     if (section==3) return L(@"These settings do not pause the game. Open the game system menu first. Quick save sends F5 and checks for a changed save file; it is not an emulator save state.", @"設定画面だけではゲームは一時停止しません。先にシステムメニューを開いてください。クイックセーブはゲームのF5入力を送り、保存ファイルの更新を確認します。実行状態を丸ごと復元するステートセーブではありません。");
     if (section==4) return L(@"Save in the game, then fully close and reopen the app to apply. Off disables saves on pause, travel, waiting and rest; save manually while it is off. Keep current preserves the current values, including a previous Off choice. The game menu can still change them during play.", @"ゲーム内で保存し、アプリを完全終了して開き直すと反映します。オフではメニュー・移動・待機・休息時の自動保存を止めるため、手動で保存してください。「維持」は以前のオフも含めた現在値を保ちます。プレイ中はゲーム内設定からも変更できます。");
     if (section==5) return L(@"Changes the app controls and settings only. Game text and audio keep their current language.", @"操作画面と設定だけの言語を変更します。ゲーム本体の字幕・音声は変わりません。");
+    if (section==6) return L(@"Experimental comparisons: change one option at a time, save your game and restart the app. Preparation may affect heat and startup time. Cache saving is limited to this settings screen, which does not pause the game; open the game system menu first. Incompatible caches are rebuilt. Turning storage off preserves the saved files.", @"比較用の機能です。1項目ずつ変更し、ゲーム内で保存してアプリを再起動してください。発熱や起動時間が変わる場合があります。キャッシュ保存はこの設定画面内だけですが、ゲームは一時停止しないため先にゲームのシステムメニューを開いてください。互換性のないキャッシュは作り直します。保持をオフにしても保存ファイルは削除しません。");
     return nil;
 }
 - (NSDictionary *)row:(NSIndexPath *)p {
+    if (p.section==6) return shaderRows()[p.row];
     if (p.section==0) return @[
        @{@"key":@"fps",@"title":L(@"FPS limit", @"FPS上限"),@"values":@[@0,@24,@30,@40,@60],@"labels":@[L(@"No additional limit", @"追加制限なし"),@"24",@"30",@"40",@"60"]},
        @{@"key":@"thermal",@"title":L(@"Thermal protection", @"高温時の自動抑制"),@"values":@[@0,@1],@"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")]},
@@ -381,6 +432,8 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
             settings[row[@"key"]]=choice; persist(); [overlay refreshLanguage]; [overlay setNeedsLayout];
             if ([row[@"key"] isEqualToString:@"autosave"])
                 [overlay message:L(@"Autosave setting saved. Applies after restart.", @"自動保存の設定を保存しました。次回起動から反映します")];
+            if (p.section==6)
+                [overlay message:L(@"Shader option saved. Applies after restart.", @"シェーダー設定を保存しました。次回起動から反映します")];
             self.title=L(@"SkyrimIOS Settings", @"SkyrimIOS 設定");
             self.navigationItem.rightBarButtonItem.title=L(@"Done", @"完了"); [table reloadData];
         }]];
@@ -466,8 +519,8 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     self.notice.frame=CGRectMake(area.origin.x+area.size.width*.22,CGRectGetMaxY(area)-64,area.size.width*.56,52);
 }
 - (void)message:(NSString *)text {self.notice.text=text;self.noticeUntil=mobileTime()+7;self.notice.hidden=NO;}
-- (void)resignActive:(NSNotification *)note { [self clearInput]; skyrim_ios_metrics_active(0); preparePipelineCacheCheckpoint(); }
-- (void)becomeActive:(NSNotification *)note { finishCacheCheckpoint(cacheCheckpointTicket, 1); skyrim_ios_metrics_active(1); }
+- (void)resignActive:(NSNotification *)note { [self clearInput]; skyrim_pipeline_checkpoint_foreground_permission(0); skyrim_ios_metrics_active(0); preparePipelineCacheCheckpoint(); }
+- (void)becomeActive:(NSNotification *)note { finishCacheCheckpoint(cacheCheckpointTicket, 1); shaderSettingsPermission(shaderSettingsVisible); skyrim_ios_metrics_active(1); }
 - (void)enterBackground:(NSNotification *)note { checkpointPipelineCache(); }
 - (void)clearInput {
     self.lookFinger=nil;
@@ -568,9 +621,10 @@ void skyrim_mobile_tick(void) {
     }
     /* No state capture/draw through the game's graphics pipeline. */
     if(overlay.superview.subviews.lastObject!=overlay) [overlay.superview bringSubviewToFront:overlay];
-    static uint64_t lastFrames,logFrames;static NSTimeInterval lastTime,lastLog,lastSaveCheck;
+    static uint64_t lastFrames,logFrames;static NSTimeInterval lastTime,lastLog,lastSaveCheck,lastCacheCheck;
     NSTimeInterval now=mobileTime();
     if(now-lastTime<.5) return;
+    if (now-lastCacheCheck>=5) { lastCacheCheck=now; checkpointWhileSettingsVisible(); }
     uint64_t frames=__atomic_load_n(&frameCount,__ATOMIC_RELAXED);
     double fps=lastTime ? (frames-lastFrames)/(now-lastTime) : 0;
     lastFrames=frames;lastTime=now;

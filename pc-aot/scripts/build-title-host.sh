@@ -69,7 +69,9 @@ PY
   python3 -m unittest discover -s tests -p 'test_additional_work.py' -v
   python3 -m unittest discover -s tests -p 'test_watchdog_layout.py' -v
   python3 -m unittest discover -s tests -p 'test_pipeline_cache.py' -v
+  python3 -m unittest discover -s tests -p 'test_pipeline_cache_namespace.py' -v
   python3 -m unittest discover -s tests -p 'test_pipeline_locking.py' -v
+  python3 -m unittest discover -s tests -p 'test_prefetch_gate.py' -v
   python3 -m unittest discover -s tests -p 'test_state_cache_work.py' -v
   python3 -m unittest discover -s tests -p 'test_pending_work.py' -v
   python3 -m unittest discover -s tests -p 'test_resource_wait.py' -v

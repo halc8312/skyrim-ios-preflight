@@ -71,6 +71,10 @@ class StateCacheWorkTests(unittest.TestCase):
     def test_binary_reader_writer_and_pipeline_compilers_remain_unchanged(self):
         old = (SOURCE/'src/dxvk/dxvk_state_cache.cpp').read_text()
         new = adapter.adapt_workers(old)
+        stop = '    m_pipeManager->iosPrefetchGate().stop();\n'
+        self.assertEqual(new.count(stop), 1)
+        self.assertLess(new.index(stop), new.index('if (m_stopThreads.exchange(true))'))
+        new = new.replace(stop, '')
         for first,last in [('  bool DxvkStateCache::readCacheHeader(', '  void DxvkStateCache::workerFunc('),
                            ('  void DxvkStateCache::registerShader(', '  bool DxvkStateCache::readCacheFile(')]:
             self.assertEqual(section(old,first,last),section(new,first,last))

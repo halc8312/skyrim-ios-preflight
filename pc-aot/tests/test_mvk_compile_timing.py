@@ -9,6 +9,9 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+stage_spec = importlib.util.spec_from_file_location("composed_mvk_stage", ROOT / "ios/dependencies/patch_mvk_module_cold.py")
+composed_stage = importlib.util.module_from_spec(stage_spec)
+stage_spec.loader.exec_module(composed_stage)
 spec = importlib.util.spec_from_file_location('metal_timing', ROOT/'ios/dependencies/patch_mvk_compile_timing.py')
 adapter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(adapter)
@@ -28,9 +31,7 @@ class MetalCompileTimingTests(unittest.TestCase):
             adapter.original(changed+b'\n')
         staged = os.environ.get('SKYRIM_MVK_PATCHED_GPU_SOURCE')
         if staged:
-            self.assertEqual((Path(staged)/'MVKSync.mm').read_bytes(), changed)
-            self.assertEqual((Path(staged)/'skyrim_performance_metrics.h').read_bytes(),
-                             (ROOT/'ios/runtime-port/performance_metrics.h').read_bytes())
+            composed_stage.verify(Path(staged), Path(source))
         fixture = (ROOT/'tests/native/mvk_compile_timing_fixture.cpp.in').read_text()
         with tempfile.TemporaryDirectory(prefix='metal-compile-timing-') as tmp:
             tmp = Path(tmp)

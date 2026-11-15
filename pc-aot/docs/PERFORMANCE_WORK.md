@@ -1,5 +1,98 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-15 3系統の切替付き実装とPC検証
+
+本人が「計測前にできる実装・試験をすべて」と指示した範囲を実装。app buildはGO待ちのまま。従来の「未接続試作／未実装」という節は、この節の状態へ進んだ。
+
+- **待ち分離:** `patch_mvk_module_cold.py`が既存hot／library／timing patchを固定5fileへ合成し、dependency buildに接続した。`SKYRIM_MVK_MODULE_COLD=1`だけでmodule cold lockを選び、それ以外は旧global cold lock。決定はprocess内で不変。ready-hit・同module重複防止・公開／size無効化、共有compile失敗状態の保護、既存Metal monitor／timeout／callbackを維持する。診断converter guardはobject単位。旧experiment入口は互換wrapperとして保持。最終stage全体を別検査し、baseline fixtureも削らない。
+- **保存:** native Settingsが表示中かつ本人のstartup opt-inがある時だけ、単一utility queue上でforeground admissionを試す。未保存あり・進行中compileなし・完了後10秒・前回試行から60秒を条件にする。main threadはdriver／registryを待たない。新compile、設定終了、非activeで取消。全saveをsingle-flightとし、寿命保護・3回のbounded snapshot再試行・64MiB上限・既存file保持を維持。完了時刻はatomic max、clock失敗は当該cacheのforeground保存を閉じる。Settingsはゲームをpauseしないので、driver snapshot／fsync中のframe停止が消えたとは扱わない。
+- **保持と再利用:** opt-inでpipeline cacheだけをApplication Support/SkyrimIOS/ShaderCacheへ置き、backup除外に失敗すれば旧Cachesへ戻す。DXVKレシピ／logの場所と旧fileは保持。移行はtarget不在かつ旧identity／checksum／driver header一致時だけ。最初の公開はatomic no-replace linkで、途中にtargetが現れた場合やlink非対応では上書きせず明示failure。公開済みでpending掃除だけ失敗した場合はstored成功＋cleanup_errnoとして区別する。
+- **互換性キー:** `pipeline_cache_namespace.py`とレビュー済みdigestのcontractによりstrict／reuseを作る。reuseが省略できるのは確認済みの計測header／present計測／Metal計測patchだけで、未知の版・不正contractはstrictへfallbackする。shader・serialization・その他critical source、identity algorithm、実SDK buildとcompiler version、deploymentの照合は維持し、入力変更はCMake再configureの依存にも登録。OS／deviceID／UUID照合は緩和せずopaque driver headerを書き換えない。初回導入やstrict↔reuse切替はcoldになる。同一binaryのmodule／prefetch切替だけではkeyを変えない。今後の任意の計測変更を自動的に互換扱いする仕組みではない。
+- **先読み:** manager所有の`PrefetchGate`をdefault OFFで接続。required missはatomic scopeのみ、ready-hitは従来の早期return。先読みはvariant境界のlock外で譲り、compile mutex取得後も再確認する。1variantで同じ絶対期限1秒を使い、2ms刻みで確認し、高温／低電力は8msのbounded pacing。clock異常や累積3回の期限超過で従来動作へ退く。終了前に停止flagを立て、例外時はRAIIでrequired数を戻す。開始済みcompile／mutex待ちやOS timer遅延に1秒上限を保証するものではない。pending jobを捨てず、worker本数・QoS・画質／FPSを変えない。ログはlock解放後、進捗最大5秒1回・期限通知最大3件、errno保持。
+
+**設定と統合:** `Shader trials — applies after restart`へparallel／priority／settings-save／persistent-storage／compatible-reuseの5項目を英語default＋日本語選択で追加した。全て既定OFFで、startup snapshotからのみ有効化する。1項目ずつ同条件で比較できる。設定を閉じる／非active時はforeground permissionを即時取消し、foreground／既存background保存は同じserial queueを使用。新しい依存buildの既定先を`local/ios-dependencies-shader-trials-v1`へ分離し、旧build7の成果物を上書きしない。次のMac検査へ新namespace／gate／composed-module検査を登録したが、実行はしていない。
+
+**実行した検査と修正:** module実methodはnormal2検査18.447秒、ASan/UBSan2検査49.150秒、TSan2検査21.015秒。その後の最終stage drift／既存4adapter整合は5検査23.264秒で成功。cache ownerはtimestamp逆転・clock失敗・移行途中collision・link非対応・pending掃除失敗を追加し、最終normal7.860秒／ASan-UBSan14.156秒／TSan7.520秒で成功。gate＋実Graphics/Compute method等は関連8検査175.382秒、ASan/UBSan3検査、最終共有ログを含むTSan3検査70.092秒が成功。8要求を同時期限超過させてもログ3件に留まる追加TSan1検査5.854秒も成功。TSanは既存の明示指定による子processだけのASLR対処を使用し、app／system設定を変更しない。
+
+親側ではnamespace安全性＋実CMake identity blockの5検査が成功（Windows CMakeでconfigure-only、Apple SDK buildではない）。旧overlay5検査は成功。stall fixtureは追加したrole histogramをクリアし忘れて出力が1行多くなる失敗を検出し、fixtureが全contextをdrainするよう直して2検査が成功。新しく生成したDXVKのgraphics／compute／shader／state_cache／pipemanager／pipecacheの6実translation unitをGCC13 -fsyntax-onlyで検査した。最初のpipecache検査は手動検査コマンドにCMakeが与えるnamespace defineが欠けて失敗し、それを供給した再検査が成功。source preflight・差分・3shell script構文も成功。試験の重複回数をiPhone frame数や効果倍率と数えない。
+
+**残る採用条件:** Apple SDKでの本体・UIKit・最終ObjC++構成、実Metalの並行failure／readback、iPhoneで同save／画質／経路のcold・warm・高温比較は未実施。新build／push／署名／配布／端末更新なし。特にforeground snapshotのcatalog lock、MSL compilerの内部混雑、先読み遅延による後続miss、起動時間・headroom・heatを確認する。平均FPSだけでなく100ms超gap／draw準備時間／failureと描画結果で判定し、悪化する項目はOFFへ戻す。
+
+## 2026-11-15 Gemini review統合：キャッシュ互換性の見落としと役割別pipeline計測
+
+**独立確認した訂正:** 固定MoltenVKの`MVKDevice.mm`（SHA256は既存pinの1561014e…と一致）の`getHighestGPUCapability()`はOS major／minorとGPU familyをまとめ、それがiPhoneの`deviceID`と`pipelineCacheUUID`双方へ入る。従ってアプリ側の`uname.release/version`だけを外しても、driver側識別が変わるOS更新を跨げない。同一OS major／minor内の修正更新とは区別する。driver headerを書き換えて受理させる変更はしない。`readData()`はheader照合後、全entryをdeserialiseし`addShaderLibrary()`からMetal libraryを生成する。実際の新要求と`matches()`するより前の処理なので、後段のconfig一致だけで読込全体の「100%安全」を証明したとは扱わない。
+
+**保存時期の制約:** `writeData()`はflags=0でcatalog lockを保持したままCerealの計数／書出しを行う。既存hot-cache変更が外へ出したのはcold生成であり、この保存lockではない。`compiled()`は成功したpipeline APIの完了を数えるため、増加が止まっていても進行中のコンパイル、通常描画、I/Oが静穏とは限らない。条件確認後の新規仕事もあり得る。checkpointの1秒予算や取消は実行中のdriver／fsyncを中断する上限ではなく、registry lockはcheckpoint中のcache破棄を待たせる。低QoS化だけで描画非阻害とはしない。switcher終了が毎回未保存になる、offered_bytesが実hit数を示す、同ルートならroot missが必ず0になる、という断定も採らない。
+
+**共通方針と分割:** FableとGeminiが支持したmodule単位cold分離候補は維持するが、実MetalとiPhone比較前に採用しない。発熱中のworker本数は自動で減らず、起動時の本数とitem境界のQoS変更は別である。先読み抑制、FIFO化、QoS overrideは効果と飢餓／終了処理を別に検証する。キャッシュ改善は（a）build7の保存outcome／取消／復元とroot・macro実測、（b）シェーダー出力以外にserialization／ABI・入力検証・runtime機能も含む名前空間の依存確認、（c）安全な保存機会とdriver snapshotの待ち、（d）容量上限・backup除外・旧path保持を含む保存先移行、へ分ける。OS照合緩和は別の後段課題。BinaryArchiveは後段PSO再生成の候補であり、本経路のMSL library生成を省く変更ではない。圧縮方式やMetal 4への全面移行も優先しない。ゲーム由来入力の外部送信禁止と、本人所有データのPC内解析は混同しない。
+
+**今回の実装:** `performance_metrics.c`にgraphics／compute pipeline各3role、計6枠の固定histogramを追加。既存API区間とTLS roleを利用し、新規のclock／lock／allocationはない（集計用relaxed atomicsは増える）。既存kind番号・header・DXVK／MoltenVKパッチ・compile順序は不変。`analyze-frame-timing.py`は新しいrole別行と失敗数に対応し、source／wait-result付きの誤ったpipeline行を拒否する。旧行も読め、全体集計にrole別を二重加算しない。この時間はVulkan pipeline API区間で、呼出し前のDXVK compile mutex待ちは含まず、CPU実行時間や待たせた所有者の証明でもない。
+
+**検証:** native recorderの4 producer・80,000件について全体とdraw／prefetch各40,000件の集計、各失敗10,000件と時間総和を確認。実C logger→Python解析の往復でgraphics／compute全role、非0の継承source/resultの正規化、失敗分類、100ms境界、旧形式と不正入力を検査し、関連2suite・12検査が62.095秒で成功。ASan／UBSan付きの並行記録1検査も1.962秒で成功。source preflight・差分検査も成功。CMake本体と名前空間に含む17fileがHEADとbyte一致するため、この計測差分だけでは既存cacheを無効化しない。SDK／compiler／他入力変更がない場合の限定で、一般的な更新互換性保証ではない。
+
+次の実機比較ではdrawのpipeline／MSL時間とframe gap、失敗・描画・headroom・thermalを同じ経路／設定とcold・warm条件で見る。cold_lock_waitだけの減少や、合計待ちの重なりを因果と誤認しない。build7の新しいログは未回収で効果量は未確認。新しいcloud build／push／IPA／端末更新は実施していない。
+
+参照：[固定MoltenVKのGPU識別](https://github.com/KhronosGroup/MoltenVK/blob/458870543b9bcf6b0edd6f90aaa776707b310d96/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm)、[固定cache読込・書出し](https://github.com/KhronosGroup/MoltenVK/blob/458870543b9bcf6b0edd6f90aaa776707b310d96/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm)、[Appleのdevice-built archive説明](https://developer.apple.com/documentation/metal/creating-binary-archives-from-device-built-pipeline-state-objects)。
+
+## 2026-11-15 Fable review：試験の境界を訂正し、実converterの戻り値を限定再現
+
+本人が中継したFable回答を、固定MoltenVK／DXVK、現build7のpolicy・計測、Apple pthread資料、Vulkan仕様と照合した。既存の24条件512比較とsanitizer結果を再利用し、今回変わったfixtureと新しいerror probeだけを通常実行した。reviewは設計支持の材料であり、Apple／iPhoneでの採用承認や性能証明ではない。Geminiの別観点reviewと合わせて最初の製品変更を絞る。
+
+**確認・反映した点:**
+- 冷えた状態で起動した6core例ではworker3本が作られ、その後のthermal／低電力ではworker item前のQoS判定が変わるがthread数は作り直されない。module分離で同時進行可能なroot cold生成は当該CS1＋worker3の範囲で増え得る。macro生成は元からcache cold lock外にもあるため、全Metal仕事が従来1本だった、service内部が必ず4並列になる、とは扱わない。
+- flags=0のmergeはdst lockを内部取得しない。[Vulkan仕様](https://docs.vulkan.org/refpages/latest/refpages/source/vkMergePipelineCaches.html)上も、INTERNALLY_SYNCHRONIZED_MERGEなしでは呼出し側がdstCacheを同期する。DXVKのこの経路はmergeを使わない。自作`mergeReady`を`publishReadyForTest`へ改名し、catalog保護された競合公開／敗者cleanupだけの検査と明記。実merge API／flags=0並行mergeの検証とは呼ばない。
+- `_conversionLock`はmodule objectごとで、同じcontent keyを持つ別object間で共有されない。異なるcacheから同名dumpへ書く経路までは保護しない。候補comment／READMEを限定し、診断機能全体の並行安全性は未検証として残す。製品の通常変換へ新mutexを追加する変更はない。
+- 実SPIRVToMSLConverterのwasConvertedはtrue初期化後、CompilerError catchでfalseへ変わらない。空の自作SPIR-Vと空configをconverterへ直接渡す1ケースで、stderr／resultLogの変換error・空MSL・true返却を再現した。これはinvalid-inputのCPU境界検査で、vkCreateShaderModuleの入力検証を通しておらず、valid game shaderの到達性や全catch後処理の安全性を証明しない。既存のfailConvert注入が「実converterの失敗を正しく再現」するという解釈は撤回する。製品の戻り値／失敗library方針は今回変えず、独立の不具合候補として記録。
+- 旧build6の終了済み4ログだけをPC内で再検索し、SPIR-V→MSL conversion error、Metal compile failed、graphics_pipeline failures>0の窓は各0件。生logや名前を外部へ出さない。記録内で未観測という意味で、全実行に不存在／現在のカクつきの原因とする意味ではない。
+
+**回答から引き継がない断定:**
+- A=draw graphics-lock、B=draw cold-lock、C=prefetch cold-lock、D=draw MSLの集計だけで因果は確定しない。Bには必要な同module合流が含まれ得るため「B大ならmodule分離が直接効く」とは言えない。AとCが同時に大きくても同じ依存鎖とは限らず、Dにはcompiler内部のqueue待ちも含まれる。個別span、同module／別module、owner世代・公開時点の整合を補い、未知は未知に残す。
+- first-error VkResultが後で読まれなくてもplain値への並行writeはC++ data raceであり、共有error公開の保護は形式だけの対処として降格しない。catalog→Metal／module待ちを新設しない条件と、遅延callbackのowner寿命を維持する。
+- [Appleのfairshare](https://raw.githubusercontent.com/apple-oss-distributions/libpthread/main/man/pthread_mutexattr.3)はFIFOであり必須描画を優先する仕組みではない。待機者flagの取得前後snapshotだけでは、OS待機列への登録順を証明しない。後続workerの取り直し軽減候補として、正しいiOS mutex生成・対象pipeline限定・shutdown・実機の待ちを別途確認する。QoS overrideも所有者thread寿命、解除、非同期Metal serviceへの効果、熱の代償が未検証。どちらも今は導入しない。
+- metalCompileTimeout既定INT64_MAXは実用上ほぼ無期限だが、全設定・全経路で遅延callbackが存在しない保証として既存timeout／destroy契約を削らない。
+- MSL分布の悪化だけでcompiler混雑と断定せず、温度・scene・準備対象数・cache温度・録画等を揃えて比較する。warm再訪・再起動も含める。cold_lock_wait自体の短縮は、lock範囲を変えた結果でもあるので採用の単独指標にしない。
+
+**次の最小観測候補:** build7はMSL role/sourceとcompile/cold待ちを分類済みだが、graphics_pipeline全区間のrole別histogramは未実装（長いstall spanのroleと区別）。変換区間とrole別graphics全区間、必要なら同module／別module競合を固定量で追加する案を、Gemini回答と統合して決める。まず現build7ログの再利用で足りる情報を読み、新しい観測を必要な境界へ絞る。
+
+**今回の実行:** 追加error characterizationを含む実converter通常1検査47.064秒成功（既存512比較も一致）。名称とcommentを限定したmodule method通常2検査19.260秒成功。並行algorithmは変更しておらず、そのsanitizer検査を繰り返さない。実Metal failure注入／readback、Apple compile、長時間・温度域別のiPhone比較は未実施。review packet `local/consultations/Skyrim-shader-review-20261115.txt`は送付時点の資料として上書きしない。新Mac build、private再compile、push、署名、端末更新は行っていない。
+
+## 2026-11-15 性能優先へ固定：実converterで追加排他の必要範囲を確認
+
+本人はカクつき・安定性等の性能を最優先とし、MODはその後、multiplayerは当面保留と指定。MOD_MANAGEMENT_DESIGN.mdにも反映。追加のcloud build／push／署名／端末更新をせず、build7・private guest・原ゲーム／save／旧IPAを保持する。
+
+**前の保守的なconverter排他を修正:** 固定SPIRVToMSLConverterはSPIR-V vectorを保持し、通常convertではCompilerMSLと付随状態を呼出しごとに作る。callerのconfig／resultも別物である。`tests/test_mvk_converter_parallel.py`で固定MoltenVK converter・SPIRVSupportと実SPIRV-Cross 6unitをcompileし、既存のconfig比較／sampler alias修正を含む実変換を検査した。自作の色／深度alias順違い・別bindingの3program×MSL版／binding／MSL・GLSL結果logの8条件＝24条件を使用。直列referenceと、8thread×32回の外側排他あり／なしの各256回を比較し、MSL・result log・conversion metadata・used-resource flags一致、入力SPIR-V不変を確認した。512回は比較回数であり、実機frame数や性能倍率ではない。
+
+通常GCC13は1検査45.024秒、TSanは1検査48.167秒で成功。最初のportable compileはApple側precompiled headerに相当するcstdint不足で失敗し、test compileへ明示includeを足した。最初のTSanは`unexpected memory mapping`で起動できず、pass扱いせず、`SKYRIM_TSAN_DISABLE_ASLR=1`による子process限定setarch -Rで再実行した。OS全体やappのASLR設定は変えない。実SPIRV-Tools disassembly／file dumpは対象外（upstreamの除外optionを使用し、export到達時はabort）。実Metal・Apple SDKの成功を模したものではない。
+
+この根拠から`experiments/mvk-module-cold/patch.py`の追加conversion lockはdebugModeまたはshaderDumpDir有効時だけ取得する。通常経路の複数cache／cacheなし変換を新たなmutexで直列化しない。同module cold生成の順序、ready-hit、catalog公開、共有plain VkResultのfirst-error保護、Metal device monitor／completion／timeoutは保持。旧節の全面converter排他案はこの限定案で置き換える。
+
+**修正候補の検証:** 実method fixtureでnormal cross-cache進行、diagnostic排他、Metal待ち相当中のconverter解放を追加確認。重複生成0、4,096 vector成長lookup、16,384並行error公開と既存失敗／寿命検査も維持。GCC13 ASan/UBSanは2検査44.285秒、TSanは2検査18.721秒で成功。後者も検査子processだけ上記ASLR対処を使用した。新たな全private compileや無関係なsuiteの繰返しは行わない。
+
+候補は引き続き未接続。実Metal並行compile・failure・readbackと、同save／画質／経路のiPhone比較は未実施。同時compileの増加がMetal compiler混雑・peak memory・熱へ与える影響も未確認であり、通常変換の出力一致や局所待ち分離をFPS改善とは呼ばない。build7ログのroot／復元／macro、必須／先読み、cold lock待ちを確認して採用対象を絞り、次のMac buildは本人GO後にまとめる。
+
+## 2026-11-15 続行時のsource再点検と将来機能の切り分け
+
+LE MOD／multiplayer調査はMOD_MANAGEMENT_DESIGN.mdへ統合した。今は第三者MODを入れず本体性能を優先する。cold分離候補では実SPIRVToMSLConverterも読み、保持memberがSPIR-V vectorで、通常convertはCompilerMSLを毎回newし結果とconfigを呼出し側へ返すことを確認した。従来の「converterが非constだから共有状態を変える」という推定だけでは追加mutexの必須性を証明できない。前回の自作境界検査はmutexの排他動作を示すもので、実変換器のrace再現ではない。既存candidateは未接続のまま保持し、通常経路とlog／dump等の補助経路を分けて最小の必要同期を見直す。compiler失敗時のplain VkResult共有は別の具体的な問題であり、専用の短い公開lockによる保護候補は維持する。今回新たなbuild／shader変換ベンチ／実機比較は行っていない。
+
+## 2026-11-15 追加候補：moduleごとのcold生成と共有失敗状態の保護
+
+ユーザーの「今あなたの方でできる他のことはもうない？」を受け、build7ログ待ち中に独立して進められる最小の待ち分離候補を実装した。`experiments/mvk-module-cold/patch.py`は既存build7 hot-cache／library／timing adapterを合成した固定MoltenVK 45887054だけを受け付ける。製品のdependency buildには接続しない。元入力へ直接書かず、全入力を先に照合し、stage再適用も同一結果にする。
+
+- **待ち分離:** `_shaderCompileLock`をcache全体から安定した各`MVKShaderLibraryCache`のcold用mutexへ移す。ready検索・再検索・vector公開・markDirtyは既存catalog lock下で行う。同module別variantのcold生成は直列のまま、同moduleのready-hitはcold待ちを通らない。未変換configのmatchesを同一key判定に使わず、worker増設／QoS変更／画像やCPU ABI変更もない。
+- **converter:** 実`MVKShaderModule::convert()`全体だけを別mutexで保護。複数VkPipelineCache／cacheなしから同じmoduleを使う場合も内部converterを同時に変更しない。Metal library構築と完了待ちへmutexを持ち込まない。
+- **追加で確認した失敗経路:** 固定`MVKConfigurableMixin`はplain VkResultでfirst-errorを保持する。`MVKMetalCompiler::handleError()`はownerがcacheでもこの値へ直接触るため、cold並列化だけでは共有失敗状態が競合し得る。候補はcache ownerのerror公開だけを既存catalog lockへ通し、他ownerは元のsetterへ戻す。library生成中にcatalog lockを保持しない。cacheのreadData失敗／構成結果読取りは作成時、runtime compiler失敗はAPI使用中という寿命を維持する。遅延callbackへowner参照を追加せず、completion／timeout／destroy本文は不変。
+- **維持・限界:** 全cache serialization／merge本文、外部同期経路、nil-library cache、feedback、Metal device monitorを保持。catalog snapshot検査は個数・size metadataを扱うだけでCereal／実driver payloadの検査ではない。同module coldやmacro特殊化の待ち、初回MSL compile自体を除去する変更ではない。
+
+**検証:** `tests/test_mvk_module_cold.py`は固定ソースから実cache method・実convert本文・実compiler error本文・非atomic first-error mixinを抽出し、実MVKSmallVectorを使う。SPIRV-Cross／Metalの実行部分は自作境界であり、実shader変換・GPU描画の成功とは扱わない。変換中／library生成中の停止を注入した2ケースとも、旧方式では別moduleのcold要求が待機し、候補では停止解除前に完了。2module fixtureでは進行可能なcold処理が1→2、同module duplicate8要求の余分な生成は0。same-module ready-hitとcatalog snapshot通過、shared converter同時進入最大1、変換失敗／例外、構築例外、公開bad_alloc、merge競合、外部同期、nil-library保持、実vector成長中4,096lookup、32回×8thread×64回＝16,384error公開とfirst-error保持を確認。
+
+GCC13通常2検査は13.997秒、ASan/UBSan 2検査は39.420秒、TSan 2検査は16.489秒で成功。今回TSanは起動・実行まで成功した。初回はfixture内のvendor include分類とtestのindent警告でcompileが止まり、修正後に上記を実行した。runtime候補の動作失敗を隠してskipしたものではない。生のゲームログ・ゲーム由来codeは使わず、クラウド送信／課金／Macビルド／署名／端末更新はしていない。
+
+**採用前:** Apple SDKで全体をcompileし、実Metalの並行compile／失敗／readbackを確認した上で、同条件のiPhone比較が必要。同時MSL生成の増加はcompiler service混雑、peak memory、発熱を増やす可能性がある。build7のroot／restore／macroと必須／先読み分類を読み、実際の停止にこの待ちがどれだけ含まれるかで採用を判断する。局所的な待ち分離の証明をFPS改善とは呼ばない。現build7はそのまま保持する。
+
+## 2026-11-15 build7の初回短時間プレイ報告
+
+本人は短時間のプレイで「60fps近くで前より安定」「カクつきも大きく減ったかもしれない」と報告。狼の出現後、戦闘へ入ろうとした時に一瞬停止した。体感の改善傾向として記録し、未回収の新ログや同条件ABで確認した数値とは扱わない。shader／描画状態の初回準備、素材読込等は候補であり、狼との遭遇だけから原因を決めない。更新による改善・cache蓄積・設定／場面差の寄与は未確定。今は追加プレイを求めず、後で今回のログを分類して直接対策の対象を選ぶ。
+
 ## 2026-11-15 build7のMac検証とOTA準備完了
 
 本人GOを受け、public hostだけを公開`fdaaae1c9233dd2bc5aafeeb6c60ceec118b45e2`としてCodemagic build21で1回実行し成功。新dependency stage build7を使い、旧cacheを保持した。34組83検査の81件成功、Windows専用ARM検査／任意FFmpeg decoder検査の2件skip。実MetalはiPhoneOS8shader compileとMac GPU20自作入力ケースの数値照合が成功。新しいperformance context／cache checkpointのfixtureと実Apple compile/linkを通過したが、iPhone stutter改善は未計測。

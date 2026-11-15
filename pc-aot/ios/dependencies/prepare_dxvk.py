@@ -37,6 +37,7 @@ EXPECTED = {
     "src/dxvk/dxvk_pipecache.cpp": "a7d0a391aa19fa8f560487843b9a2d83e492c87a710914f76c4807640829e070",
     "src/dxvk/dxvk_pipecache.h": "b0dd5f8120da50e0426e1c84b13e9e169fc9088b50e1fc906f12c2ca0f72caeb",
     "src/dxvk/dxvk_pipemanager.cpp": "7f6a912d006624cf5236eebeea3ef211664e380c4595f69e6e6efeac49cd0c8a",
+    "src/dxvk/dxvk_pipemanager.h": "b4d6d7148be411ad6b4a321652da25e20a646a52eba907f86e567a43ee7befd5",
 }
 
 
@@ -165,6 +166,8 @@ def adapt_memory(name: str, text: str) -> str:
 
 def adapt_workers(text: str) -> str:
     text = '#include "device_policy.h"\n' + text
+    text = once(text, '  void DxvkStateCache::stopWorkerThreads() {',
+        '  void DxvkStateCache::stopWorkerThreads() {\n    m_pipeManager->iosPrefetchGate().stop();')
     text = once(text, 'uint32_t numCpuCores = dxvk::thread::hardware_concurrency();',
         'uint32_t numCpuCores = skyrim_device_compiler_cpus(dxvk::thread::hardware_concurrency());')
     text = once(text, '    env::setThreadName("dxvk-shader");',
@@ -232,17 +235,21 @@ def adapt_pipeline_locking(name: str, text: str) -> str:
     wait_kind = "SKYRIM_PERF_" + kind.upper() + "_COMPILE_WAIT"
     compile_lock = f"""    uint64_t waitStartedNs = 0, waitEndedNs = 0;
     std::unique_lock<dxvk::mutex> compileLock(m_compileMutex, std::defer_lock);
-    if (!compileLock.try_lock()) {{
-      const uint64_t waitStarted = skyrim_perf_now_ns();
-      compileLock.lock();
-      waitStartedNs = waitStarted;
-      waitEndedNs = skyrim_perf_now_ns();
-    }}
+    auto acquireCompileLock = [&] {{
+      waitStartedNs = waitEndedNs = 0;
+      if (!compileLock.try_lock()) {{
+        const uint64_t waitStarted = skyrim_perf_now_ns();
+        compileLock.lock();
+        waitStartedNs = waitStarted;
+        waitEndedNs = skyrim_perf_now_ns();
+      }}
+    }};
     auto recordWait = [&](unsigned result) {{
       if (!waitStartedNs) return;
       SkyrimPerfContext context = skyrim_perf_context_get();
       context.result = result;
       skyrim_perf_interval_context({wait_kind}, waitStartedNs, waitEndedNs, 0, 0, context);
+      waitStartedNs = 0;
     }};
 """
     validate = ""
@@ -262,7 +269,9 @@ def adapt_pipeline_locking(name: str, text: str) -> str:
     SkyrimPerfContextScope iosRequest(SKYRIM_PERF_ROLE_DRAW, SKYRIM_PERF_CONTEXT_KEEP);
     VkPipeline pipeline = VK_NULL_HANDLE;
     {{
+      skyrim::PrefetchGate::RequiredScope iosRequired(m_pipeMgr->iosPrefetchGate());
 {compile_lock}
+      acquireCompileLock();
       bool ready = false;
       {{ std::lock_guard<sync::Spinlock> lock(m_mutex);
         if (auto* instance = this->findInstance({args})) {{
@@ -291,7 +300,15 @@ def adapt_pipeline_locking(name: str, text: str) -> str:
         return;
     }}
     SkyrimPerfContextScope iosRequest(SKYRIM_PERF_ROLE_PREFETCH, SKYRIM_PERF_CONTEXT_KEEP);
+    skyrim::PrefetchGate::Attempt iosAdmission(m_pipeMgr->iosPrefetchGate());
 {compile_lock}
+    for (;;) {{
+      iosAdmission.wait(); // No DXVK/MoltenVK lock is held here.
+      acquireCompileLock();
+      if (iosAdmission.mayStart()) break;
+      recordWait(SKYRIM_PERF_WAIT_UNKNOWN);
+      compileLock.unlock();
+    }}
     bool ready;
     {{ std::lock_guard<sync::Spinlock> lock(m_mutex);
       ready = this->findInstance({args}) != nullptr;
@@ -328,8 +345,9 @@ def adapt_timing(name: str, text: str) -> str:
                 "          m_pipeMgr->m_cache->handle(), 1, &info, nullptr, &pipeline)")
         kind = "SKYRIM_PERF_GRAPHICS_PIPELINE" if graphics else "SKYRIM_PERF_COMPUTE_PIPELINE"
     dirty = "" if name.endswith("dxvk_shader.cpp") else "    if (iosResult == VK_SUCCESS) m_pipeMgr->m_cache->compiled();\n"
+    admission = "" if name.endswith("dxvk_shader.cpp") else "    auto iosCacheCompile = m_pipeMgr->m_cache->compileScope();\n"
     return once(text, "    if (" + call + " != VK_SUCCESS)",
-        "    const uint64_t iosStarted = skyrim_perf_now_ns();\n"
+        admission + "    const uint64_t iosStarted = skyrim_perf_now_ns();\n"
         "    const VkResult iosResult = " + call + ";\n"
         "    skyrim_perf_end(" + kind + ", iosStarted, iosResult != VK_SUCCESS);\n"
         + dirty +
@@ -461,6 +479,13 @@ def adapt(name: str, text: str) -> str:
         return adapt_workers(text)
     if name.endswith(("dxvk_graphics.h", "dxvk_compute.h")):
         return adapt_pipeline_locking(name, text)
+    if name.endswith("dxvk_pipemanager.h"):
+        text = '#include "prefetch_gate.h"\n' + text
+        text = once(text, '    void stopWorkerThreads() const;',
+            '    void stopWorkerThreads() const;\n    skyrim::PrefetchGate& iosPrefetchGate() const { return m_iosPrefetchGate; }')
+        return once(text, '    const DxvkDevice*         m_device;',
+            '    // Construct before and destroy after the state cache/workers.\n'
+            '    mutable skyrim::PrefetchGate m_iosPrefetchGate;\n    const DxvkDevice*         m_device;')
     if name.endswith("dxvk_pipemanager.cpp"):
         return once(text, "new DxvkPipelineCache(device->vkd())",
             "new DxvkPipelineCache(device->vkd(), device->adapter()->deviceProperties())")
@@ -468,19 +493,34 @@ def adapt(name: str, text: str) -> str:
         text = '#include "pipeline_cache.h"\n#include <memory>\n' + text
         text = once(text, "DxvkPipelineCache(const Rc<vk::DeviceFn>& vkd);",
             "DxvkPipelineCache(const Rc<vk::DeviceFn>& vkd, const VkPhysicalDeviceProperties& properties);\n"
-            "    void compiled() { m_disk->compiled(); }")
+            "    void compiled() { m_disk->compiled(); }\n"
+            "    skyrim::PipelineCache::CompileScope compileScope() { return skyrim::PipelineCache::CompileScope(*m_disk); }")
         return once(text, "VkPipelineCache         m_handle;",
             "VkPipelineCache         m_handle;\n    std::unique_ptr<skyrim::PipelineCache> m_disk;")
     if name.endswith("dxvk_pipecache.cpp"):
         return '''#include "dxvk_pipecache.h"
 #include <cstdlib>
+#include <cstdio>
+#ifndef SKYRIM_PIPELINE_CACHE_REUSE_NAMESPACE
+#define SKYRIM_PIPELINE_CACHE_REUSE_NAMESPACE SKYRIM_PIPELINE_CACHE_NAMESPACE
+#endif
+#ifndef SKYRIM_PIPELINE_CACHE_REUSE_REVIEWED
+#define SKYRIM_PIPELINE_CACHE_REUSE_REVIEWED 0
+#endif
 namespace dxvk {
   DxvkPipelineCache::DxvkPipelineCache(const Rc<vk::DeviceFn>& vkd,
       const VkPhysicalDeviceProperties& properties) : m_vkd(vkd) {
+    const char* reuse = std::getenv("SKYRIM_CACHE_REUSE");
+    const bool reuseRequested = reuse && reuse[0] == '1' && !reuse[1];
+    const char* sourceNamespace = reuseRequested
+        ? SKYRIM_PIPELINE_CACHE_REUSE_NAMESPACE : SKYRIM_PIPELINE_CACHE_NAMESPACE;
+    std::fprintf(stderr, "IOS_PIPE_CACHE event=identity reuse_requested=%u reuse_reviewed=%u\\n",
+        unsigned(reuseRequested), unsigned(SKYRIM_PIPELINE_CACHE_REUSE_REVIEWED));
     m_disk = std::make_unique<skyrim::PipelineCache>(m_vkd->device(),
         m_vkd->vkCreatePipelineCache, m_vkd->vkGetPipelineCacheData,
         m_vkd->vkDestroyPipelineCache, properties,
-        std::getenv("SKYRIM_VK_PIPELINE_CACHE_PATH"), SKYRIM_PIPELINE_CACHE_NAMESPACE);
+        std::getenv("SKYRIM_VK_PIPELINE_CACHE_PATH"), sourceNamespace,
+        std::getenv("SKYRIM_VK_PIPELINE_CACHE_IMPORT_PATH"));
     if (m_disk->result() != VK_SUCCESS)
       throw DxvkError("DxvkPipelineCache: Failed to create cache");
     m_handle = m_disk->handle();

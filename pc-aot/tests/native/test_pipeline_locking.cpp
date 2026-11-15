@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include "util/sync/sync_spinlock.h"
 #include "performance_metrics.h"
+#include "prefetch_gate.h"
 
 using namespace std::chrono_literals;
 struct Driver {
@@ -22,12 +23,14 @@ struct Driver {
     std::condition_variable cv;
     bool entered=false, release=false, throw_once=true;
     std::map<uint64_t, unsigned> calls, writes;
+    std::vector<unsigned> order;
     std::function<void(unsigned)> on_write;
     static uint64_t key(unsigned id, unsigned rp) { return uint64_t(id)*2+rp; }
     static uint64_t handle(unsigned id, unsigned rp=0) { return id==13 ? 0 : key(id,rp)+1; }
     uint64_t create(unsigned id, unsigned rp) {
         std::unique_lock<std::mutex> lock(mu);
         ++calls[key(id,rp)];
+        order.push_back(id);
 #if PATCHED
         auto context = skyrim_perf_context_get();
         assert(context.role == SKYRIM_PERF_ROLE_DRAW || context.role == SKYRIM_PERF_ROLE_PREFETCH);
@@ -83,6 +86,9 @@ int main() {
     assert(driver.count(13)==1 && driver.written(13)==1);
     bool threw=false;try {pipeline.get(17);}catch(const std::runtime_error&) {threw=true;}
     assert(threw && driver.written(17)==0);
+#if PATCHED
+    assert(manager.gate.stats().required==0);
+#endif
     assert(skyrim_perf_context_get().role == 0);
     assert(pipeline.get(17)==Driver::handle(17));assert(driver.count(17)==2);
 #if PATCHED
@@ -121,9 +127,26 @@ int main() {
         assert(skyrim_perf_context_get().source==SKYRIM_PERF_SOURCE_MACRO);
     }
     assert(skyrim_perf_context_get().role==0 && skyrim_perf_context_get().source==0);
+    assert(manager.gate.stats().required == 0);
     assert(pipeline.get(1)==Driver::handle(1));
     skyrim_perf_take(wait_kind,&window);
     for(auto n:window.buckets) assert(n==0);
+    if (std::getenv("SKYRIM_PREFETCH_GATE") && std::string(std::getenv("SKYRIM_PREFETCH_GATE"))=="1") {
+        // A worker finishes an already admitted variant and immediately asks
+        // for the next one. The waiting draw must precede that next variant,
+        // even if the worker reacquires the underlying first-fit mutex first.
+        Driver d; dxvk::DxvkPipelineManager m; TestPipeline p(d,m);
+        std::thread prefetch([&]{p.build(2);p.build(4);});
+        {std::unique_lock<std::mutex> lock(d.mu);assert(d.cv.wait_for(lock,3s,[&]{return d.entered;}));}
+        auto draw=std::async(std::launch::async,[&]{return p.get(3);});
+        auto until=std::chrono::steady_clock::now()+3s;
+        while (!m.gate.stats().required && std::chrono::steady_clock::now()<until) std::this_thread::yield();
+        const bool observed=m.gate.stats().required!=0;
+        {std::lock_guard<std::mutex> lock(d.mu);d.release=true;d.cv.notify_all();}
+        prefetch.join(); assert(draw.get()==Driver::handle(3)); assert(observed);
+        assert((d.order==std::vector<unsigned>{2,3,4}));
+        assert(m.gate.stats().required==0 && m.gate.stats().expired==0);
+    }
 #endif
     std::printf("ready_while_compiler_blocked=%d cold_wait_preserved=1 semantics=PASS\n",int(bypass));
 }

@@ -11,7 +11,7 @@ if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
   message(FATAL_ERROR "Set CMAKE_OSX_ARCHITECTURES=arm64")
 endif()
 get_filename_component(_root "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
-set(SKYRIM_IOS_DEPS_PREFIX "${_root}/local/ios-dependencies-build7/prefix" CACHE PATH "Prepared iPhoneOS static dependencies")
+set(SKYRIM_IOS_DEPS_PREFIX "${_root}/local/ios-dependencies-shader-trials-v1/prefix" CACHE PATH "Prepared iPhoneOS static dependencies")
 set(SKYDREAM_SOURCE_DIR "${_root}/vendor/skydream" CACHE PATH "Public Skydream source checkout")
 
 # This is an already-built iPhoneOS prefix outside the SDK. Do not re-root
@@ -71,24 +71,40 @@ list(TRANSFORM _sources PREPEND "${_dxvk}/")
 add_library(dxvk_d3d9 STATIC ${_sources})
 target_sources(dxvk_d3d9 PRIVATE "${CMAKE_CURRENT_LIST_DIR}/pipeline_cache.cpp")
 target_include_directories(dxvk_d3d9 PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
-# Invalidate serialized driver data after translator, shader-adapter, SDK/compiler
-# or dependency changes. GPU/driver UUID and running OS are checked at runtime.
-set(_cache_identity "v1;${CMAKE_CXX_COMPILER_VERSION};${CMAKE_OSX_SYSROOT};${CMAKE_OSX_DEPLOYMENT_TARGET}")
-foreach(_input source-lock.json ios/dependencies/build-dependencies.sh
-    ios/dependencies/patch_spirv_cross.py ios/dependencies/patch_moltenvk.py ios/dependencies/prepare_dxvk.py
-    ios/dependencies/patch_mvk_hot_cache.py ios/dependencies/mvk_hot_cache.cpp.in
-    ios/dependencies/patch_mvk_compressed_copy.py ios/dependencies/verify_lifecycle_baseline.py
-    ios/dependencies/patch_mvk_library.py ios/dependencies/patch_mvk_compile_timing.py
-    ios/runtime-port/performance_metrics.h
-    ios/dependencies/present_timing.py
-    ios/dependencies/shader_inflight.cpp.in
-    ios/dependencies/pipeline_cache.h ios/dependencies/pipeline_cache.cpp
-    ios/runtime-port/prepare_runtime.py)
-  file(SHA256 "${_root}/${_input}" _cache_input_sha)
-  string(APPEND _cache_identity ";${_cache_input_sha}")
+# Both modes retain shader/serialization/toolchain and runtime OS/GPU checks.
+# The opt-in reuse identity accepts only explicitly reviewed observation files;
+# an unknown revision falls back to the full identity, never a permissive hit.
+execute_process(COMMAND xcrun --sdk iphoneos --show-sdk-build-version
+  RESULT_VARIABLE _cache_sdk_result OUTPUT_VARIABLE _cache_sdk_build
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+execute_process(COMMAND "${CMAKE_CXX_COMPILER}" --version
+  RESULT_VARIABLE _cache_compiler_result OUTPUT_VARIABLE _cache_compiler_build
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT _cache_sdk_result EQUAL 0 OR NOT _cache_compiler_result EQUAL 0
+    OR _cache_sdk_build STREQUAL "" OR _cache_compiler_build STREQUAL "")
+  message(FATAL_ERROR "Pipeline cache toolchain identity could not be verified")
+endif()
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/pipeline_cache_namespace.py"
+  --root "${_root}" --compiler "${CMAKE_CXX_COMPILER_VERSION};${_cache_compiler_build}"
+  --sdk "${CMAKE_OSX_SYSROOT};${_cache_sdk_build}" --target "${CMAKE_OSX_DEPLOYMENT_TARGET}"
+  RESULT_VARIABLE _cache_identity_result OUTPUT_VARIABLE _cache_identities
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT _cache_identity_result EQUAL 0)
+  message(FATAL_ERROR "Pipeline cache source identity could not be verified")
+endif()
+string(JSON _cache_namespace GET "${_cache_identities}" strict)
+string(JSON _cache_reuse_namespace GET "${_cache_identities}" reuse)
+string(JSON _cache_reuse_reviewed GET "${_cache_identities}" reviewed)
+string(JSON _cache_input_count LENGTH "${_cache_identities}" inputs)
+math(EXPR _cache_last_input "${_cache_input_count}-1")
+foreach(_index RANGE ${_cache_last_input})
+  string(JSON _cache_input GET "${_cache_identities}" inputs ${_index})
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_root}/${_cache_input}")
 endforeach()
-string(SHA256 _cache_namespace "${_cache_identity}")
-target_compile_definitions(dxvk_d3d9 PRIVATE "SKYRIM_PIPELINE_CACHE_NAMESPACE=\"${_cache_namespace}\"")
+target_compile_definitions(dxvk_d3d9 PRIVATE
+  "SKYRIM_PIPELINE_CACHE_NAMESPACE=\"${_cache_namespace}\""
+  "SKYRIM_PIPELINE_CACHE_REUSE_NAMESPACE=\"${_cache_reuse_namespace}\""
+  "SKYRIM_PIPELINE_CACHE_REUSE_REVIEWED=${_cache_reuse_reviewed}")
 enable_language(OBJC)
 add_library(skyrim_performance STATIC "${_root}/ios/runtime-port/performance_metrics.c"
   "${_root}/ios/runtime-port/device_policy.c" "${_root}/ios/runtime-port/device_platform.m")

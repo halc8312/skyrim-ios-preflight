@@ -6,7 +6,9 @@
 #include <stdexcept>
 #include <atomic>
 static std::atomic<uint64_t> testClock{0};
+static std::atomic<bool> invalidClock{false};
 extern "C" uint64_t fixture_cache_now_ns() {
+    if (invalidClock.load()) return 0;
     uint64_t value = testClock.load();
     return value ? value : skyrim_perf_now_ns();
 }
@@ -19,6 +21,20 @@ extern "C" uint64_t fixture_cache_now_ns() {
 #include <thread>
 #include <memory>
 #include <cstdio>
+#include <cerrno>
+#include <unistd.h>
+
+static std::atomic<bool> rejectImportLink{false}, rejectPublishedCleanup{false}, importLinked{false};
+extern "C" int fixture_cache_link(const char *from, const char *to) {
+    if (rejectImportLink.load()) { errno = ENOTSUP; return -1; }
+    int result = link(from, to);
+    if (!result) importLinked = true;
+    return result;
+}
+extern "C" int fixture_cache_unlink(const char *name) {
+    if (rejectPublishedCleanup.load() && importLinked.load()) { errno = EACCES; return -1; }
+    return unlink(name);
+}
 
 namespace fs = std::filesystem;
 static VkPhysicalDeviceProperties properties() {
@@ -78,9 +94,9 @@ struct Driver {
     }
 };
 static auto makeCache(Driver& driver, const fs::path& dir, const char *source = "authored-fixture-v1",
-                      VkPhysicalDeviceProperties p = properties()) {
+                      VkPhysicalDeviceProperties p = properties(), const char *legacy = nullptr) {
     return std::make_unique<skyrim::PipelineCache>(reinterpret_cast<VkDevice>(&driver),
-        Driver::create, Driver::get, Driver::destroy, p, dir.c_str(), source);
+        Driver::create, Driver::get, Driver::destroy, p, dir.c_str(), source, legacy);
 }
 static void checkpoint() {
     std::fputs("CACHE_CASE_BEGIN\n", stderr);
@@ -238,5 +254,141 @@ int main(int argc, char **argv) {
         skyrim_pipeline_checkpoint_save(old); assert(d.gets == 0);
         skyrim_pipeline_checkpoint_save(current); assert(d.gets == 2);
     }
+    // Import is an acceleration hint, never an excuse to replace an existing
+    // target (including an invalid target), or remove the legacy file.
+    {
+        fs::path legacy = dir.parent_path() / "legacy-files", target = dir.parent_path() / "persistent-files";
+        fs::create_directory(legacy); fs::create_directory(target);
+        fs::path legacyFile = legacy / "pipeline-v1.cache", targetFile = target / "pipeline-v1.cache";
+        writeFile(legacyFile, good);
+        {
+            Driver d; auto cache = makeCache(d, target, "authored-fixture-v1", properties(), legacy.c_str());
+            assert(d.offered == d.data && !fs::exists(targetFile));
+            checkpoint(); // import is dirty even without a new pipeline
+            assert(d.gets == 2 && readFile(targetFile) == good && readFile(legacyFile) == good);
+        }
+        writeFile(targetFile, {1, 2, 3});
+        {
+            Driver d; auto cache = makeCache(d, target, "authored-fixture-v1", properties(), legacy.c_str());
+            assert(d.offered.empty()); checkpoint();
+            assert(d.gets == 0 && readFile(targetFile) == std::vector<uint8_t>({1, 2, 3}));
+        }
+        fs::remove(targetFile);
+        writeFile(legacyFile, {1, 2, 3});
+        {
+            Driver d; auto cache = makeCache(d, target, "authored-fixture-v1", properties(), legacy.c_str());
+            assert(d.offered.empty()); checkpoint(); assert(d.gets == 0 && !fs::exists(targetFile));
+        }
+        writeFile(legacyFile, good);
+        {
+            Driver d; d.rejectLoaded = true;
+            auto cache = makeCache(d, target, "authored-fixture-v1", properties(), legacy.c_str());
+            assert(d.creates == 2); checkpoint(); assert(d.gets == 0 && !fs::exists(targetFile));
+        }
+        {
+            Driver d; auto cache = makeCache(d, target, "authored-fixture-v1", properties(), legacy.c_str());
+            writeFile(targetFile, {9, 8, 7}); // another writer wins after our initial absence check
+            checkpoint(); assert(readFile(targetFile) == std::vector<uint8_t>({9, 8, 7}));
+            assert(!fs::exists(targetFile.string()+".pending") && readFile(legacyFile) == good);
+            checkpoint(); assert(readFile(targetFile) == std::vector<uint8_t>({9, 8, 7}));
+        }
+        fs::remove(targetFile);
+        {
+            Driver d; auto cache = makeCache(d, target, "authored-fixture-v1", properties(), legacy.c_str());
+            rejectImportLink = true; checkpoint(); rejectImportLink = false;
+            assert(!fs::exists(targetFile) && !fs::exists(targetFile.string()+".pending"));
+            importLinked = false; rejectPublishedCleanup = true;
+            checkpoint(); rejectPublishedCleanup = false;
+            assert(readFile(targetFile) == good && fs::exists(targetFile.string()+".pending"));
+            unsigned before = d.gets;
+            checkpoint(); assert(d.gets == before); // publication succeeded despite cleanup error
+            cache->compiled(); checkpoint(); // next ordinary save can remove stale pending
+            assert(d.gets == before+2 && !fs::exists(targetFile.string()+".pending"));
+        }
+        assert(readFile(legacyFile) == good);
+    }
+    puts("validated_absent_target_import=PASS");
+    {
+        testClock = UINT64_C(1000000000000000);
+        Driver d; auto cache = makeCache(d, dir); cache->compiled();
+        testClock += UINT64_C(11000000000);
+        assert(!skyrim_pipeline_checkpoint_foreground_begin()); // default OFF
+        skyrim_pipeline_checkpoint_foreground_permission(1);
+        {
+            skyrim::PipelineCache::CompileScope active(*cache);
+            testClock += UINT64_C(11000000000);
+            assert(!skyrim_pipeline_checkpoint_foreground_begin()); // active is not quiet
+        }
+        assert(!skyrim_pipeline_checkpoint_foreground_begin()); // recently finished
+        testClock += UINT64_C(10000000000);
+        auto ticket = skyrim_pipeline_checkpoint_foreground_begin(); assert(ticket);
+        assert(!skyrim_pipeline_checkpoint_foreground_begin()); // reservation
+        d.duringSize = [&] { skyrim::PipelineCache::CompileScope active(*cache); cache->compiled(); };
+        skyrim_pipeline_checkpoint_save(ticket);
+        assert(d.gets == 1 && readFile(file) == good); // new work cancels before data query
+        assert(!skyrim_pipeline_checkpoint_foreground_begin()); // cooldown
+        d.duringSize = {};
+        testClock += UINT64_C(61000000000);
+        ticket = skyrim_pipeline_checkpoint_foreground_begin(); assert(ticket);
+        skyrim_pipeline_checkpoint_foreground_permission(0);
+        skyrim_pipeline_checkpoint_save(ticket);
+        assert(d.gets == 1 && readFile(file) == good); // permission loss before worker starts
+        skyrim_pipeline_checkpoint_foreground_permission(1);
+        testClock += UINT64_C(61000000000);
+        ticket = skyrim_pipeline_checkpoint_foreground_begin(); assert(ticket);
+        std::atomic<bool> entered{false}, release{false};
+        d.duringGet = [&] { entered = true; while (!release) std::this_thread::yield(); };
+        std::thread saver([&] { skyrim_pipeline_checkpoint_save(ticket); });
+        while (!entered) std::this_thread::yield();
+        assert(!skyrim_pipeline_checkpoint_foreground_begin());
+        skyrim_pipeline_checkpoint_save(ticket); // duplicate does not wait or invoke the driver
+        skyrim_pipeline_checkpoint_foreground_permission(0); // does not wait on blocked driver
+        assert(d.gets == 3);
+        release = true; saver.join();
+        assert(readFile(file) == good && !fs::exists(file.string()+".pending"));
+        d.duringGet = {};
+        skyrim_pipeline_checkpoint_foreground_permission(1);
+        testClock += UINT64_C(61000000000);
+        ticket = skyrim_pipeline_checkpoint_foreground_begin(); assert(ticket);
+        skyrim_pipeline_checkpoint_save(ticket);
+        assert(d.gets == 5 && readFile(file) == good);
+        testClock += UINT64_C(61000000000);
+        assert(!skyrim_pipeline_checkpoint_foreground_begin()); // clean
+        cache->compiled();
+        try { skyrim::PipelineCache::CompileScope failed(*cache); throw std::runtime_error("authored"); }
+        catch (const std::runtime_error&) {}
+        assert(!skyrim_pipeline_checkpoint_foreground_begin()); // exception decremented active, refreshed quiet time
+        testClock += UINT64_C(10000000000);
+        ticket = skyrim_pipeline_checkpoint_foreground_begin(); assert(ticket);
+        skyrim_pipeline_checkpoint_cancel(ticket);
+        skyrim_pipeline_checkpoint_foreground_permission(0);
+        testClock = 0;
+    }
+    puts("foreground_admission_cancel_singleflight=PASS");
+    {
+        testClock = UINT64_C(2000000000000000);
+        Driver d; auto cache = makeCache(d, dir); cache->compiled();
+        skyrim_pipeline_checkpoint_foreground_permission(1);
+        auto earlier = std::make_unique<skyrim::PipelineCache::CompileScope>(*cache);
+        auto later = std::make_unique<skyrim::PipelineCache::CompileScope>(*cache);
+        const uint64_t base = testClock.load();
+        testClock = base + UINT64_C(20000000000); later.reset();
+        testClock = base + UINT64_C(10000000000); earlier.reset(); // older sampled finish published last
+        testClock = base + UINT64_C(25000000000);
+        assert(!skyrim_pipeline_checkpoint_foreground_begin());
+        testClock = base + UINT64_C(30000000000);
+        auto ticket = skyrim_pipeline_checkpoint_foreground_begin(); assert(ticket);
+        skyrim_pipeline_checkpoint_cancel(ticket);
+        {
+            skyrim::PipelineCache::CompileScope badClock(*cache);
+            invalidClock = true;
+        }
+        invalidClock = false;
+        testClock = base + UINT64_C(100000000000);
+        assert(!skyrim_pipeline_checkpoint_foreground_begin()); // clock failure remains closed
+        skyrim_pipeline_checkpoint_foreground_permission(0);
+        testClock = 0;
+    }
+    puts("monotonic_completion_and_clock_failure=PASS");
     puts("pipeline_cache_roundtrip_rejection_cancellation_dirty_generation_lifetime=PASS");
 }

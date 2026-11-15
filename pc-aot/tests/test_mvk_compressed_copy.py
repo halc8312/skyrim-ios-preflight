@@ -9,6 +9,9 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
+stage_spec = importlib.util.spec_from_file_location("composed_mvk_stage", ROOT / "ios/dependencies/patch_mvk_module_cold.py")
+composed_stage = importlib.util.module_from_spec(stage_spec)
+stage_spec.loader.exec_module(composed_stage)
 spec=importlib.util.spec_from_file_location('compressed_patch',ROOT/'ios/dependencies/patch_mvk_compressed_copy.py')
 adapter=importlib.util.module_from_spec(spec);spec.loader.exec_module(adapter)
 CODEC_SHA='dfe81dba1bb352d81b78eaa38abeb567793ecfb79c891a551d955f6f65bb4a98'
@@ -146,9 +149,7 @@ struct MVKMTLFunction {
             with self.assertRaises(ValueError):adapter.verify_patched(name,patched+b'\n')
             staged=os.environ.get('SKYRIM_MVK_PATCHED_GPU_SOURCE')
             if staged:
-                # The final stage composes copy reductions with variant ownership.
-                spec=importlib.util.spec_from_file_location('library_stage',ROOT/'ios/dependencies/patch_mvk_library.py')
-                library=importlib.util.module_from_spec(spec);spec.loader.exec_module(library)
-                library.verify(name,(Path(staged)/name).read_bytes(),raw)
+                # The final stage also includes module-cold and error-publication changes.
+                composed_stage.verify(Path(staged), source)
 
 if __name__=='__main__':unittest.main()

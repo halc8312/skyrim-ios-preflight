@@ -3,7 +3,7 @@
 # compiler. This checks shader compilation, not an actual rendered game frame.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-build7}"
+WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-shader-trials-v1}"
 CROSS="$WORK/sources/SPIRV-Cross-ios-samplerfix"
 OUT="${1:?fresh output directory required}"
 mkdir "$OUT"
@@ -48,6 +48,13 @@ env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT \
   SKYRIM_MVK_PATCHED_GPU_SOURCE="$WORK/sources/MoltenVK-ios-cachefix/MoltenVK/MoltenVK/GPUObjects" \
   python3 -m unittest discover -s "$ROOT/tests" -p test_mvk_compile_timing.py -v \
   2>&1 | tee "$OUT/mvk-compile-timing.log"
+# Exercise the actual final composition in both OFF/ON runtime modes. These
+# authored CPU boundaries complement, but do not replace, real Metal checks.
+env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT \
+  SKYRIM_MVK_GPU_SOURCE="$MVK_CORE/GPUObjects" \
+  SKYRIM_MVK_PATCHED_GPU_SOURCE="$WORK/sources/MoltenVK-ios-cachefix/MoltenVK/MoltenVK/GPUObjects" \
+  python3 -m unittest discover -s "$ROOT/tests" -p test_mvk_module_cold.py -v \
+  2>&1 | tee "$OUT/mvk-module-cold.log"
 python3 "$ROOT/tests/graphics_alias_fixture.py" "$OUT/fixtures"
 # This executable runs on the build Mac, not on the phone. The workflow's
 # IPHONEOS_DEPLOYMENT_TARGET otherwise makes Apple clang silently select iOS.

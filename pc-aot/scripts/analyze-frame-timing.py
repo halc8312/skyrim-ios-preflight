@@ -125,9 +125,10 @@ def summarize(lines):
                 c = {k:unsigned(v) for k,v in fields('role='+suffix, {'role','source','result'}).items()}
                 if c['role']>2 or c['source']>3 or c['result']>2: raise ValueError('invalid context')
                 row = timing(base)
-                if row['kind'] not in ('mvk_msl_wait','graphics_compile_wait','compute_compile_wait','mvk_cold_lock_wait'):
+                role_only = row['kind'] in ('mvk_cold_lock_wait','graphics_pipeline','compute_pipeline')
+                if row['kind'] not in ('mvk_msl_wait','graphics_compile_wait','compute_compile_wait') and not role_only:
                     raise ValueError('unexpected context kind')
-                if (row['kind']=='mvk_msl_wait' and c['result']) or (row['kind']!='mvk_msl_wait' and c['source']) or (row['kind']=='mvk_cold_lock_wait' and c['result']):
+                if (row['kind']=='mvk_msl_wait' and c['result']) or (row['kind']!='mvk_msl_wait' and c['source']) or (role_only and c['result']):
                     raise ValueError('noncanonical context')
                 if len(context_rows) >= MAX_SPANS: raise RuntimeError('context record bound exceeded')
                 context_rows.append((row,c))
@@ -219,11 +220,12 @@ def summarize(lines):
             context_duplicates += 1
             continue
         seen_contexts.add(identity)
-        a = contexts.setdefault(key, dict(kind=key[0], **c, samples=0, over_100ms=0, total_ns=0, max_ns=0))
+        a = contexts.setdefault(key, dict(kind=key[0], **c, samples=0, over_100ms=0, total_ns=0, max_ns=0, failures=0))
         a['samples'] += row['samples']
         a['over_100ms'] += sum(row['bins'][14:])
         a['total_ns'] += row['total_ns']
         a['max_ns'] = max(a['max_ns'], row['max_ns'])
+        a['failures'] = a['failures'] + row['failures'] if row['failures_known'] and a['failures'] is not None else None
     return dict(schema=1, scope='one launch; host wall time; not GPU time or a causal attribution',
         timing_records=timing_records, stall_records=stall_records, invalid_records=invalid,
         work_contexts=list(contexts.values()), duplicate_context_records=context_duplicates,

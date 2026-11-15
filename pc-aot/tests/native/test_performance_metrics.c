@@ -43,6 +43,8 @@ int main(void) {
     assert(count(&w) == 1 && w.failures == 1 && w.max_ns == 5000);
     skyrim_perf_take(SKYRIM_PERF_COMPUTE_PIPELINE, &w);
     assert(count(&w) == 0 && w.failures == 0 && w.max_ns == 0);
+    skyrim_perf_context_take(SKYRIM_PERF_COMPUTE_PIPELINE, (SkyrimPerfContext){0}, &w);
+    assert(count(&w) == 1 && w.failures == 1 && w.total_ns == 5000);
     skyrim_perf_record(SKYRIM_PERF_KIND_COUNT, 7, 1, 3);
     skyrim_perf_end(SKYRIM_PERF_HLSL, 0, 0);
     skyrim_perf_take(SKYRIM_PERF_HLSL, &w);
@@ -52,10 +54,16 @@ int main(void) {
     pthread_t threads[4];
     for (unsigned i = 0; i < 4; ++i) assert(!pthread_create(&threads[i], NULL, produce, (void*)(uintptr_t)i));
     uint64_t samples = 0, total = 0, failures = 0, sleeps = 0;
+    uint64_t role_samples[3] = {0}, role_total[3] = {0}, role_failures[3] = {0};
     do {
         skyrim_perf_take(SKYRIM_PERF_GRAPHICS_PIPELINE, &w);
         samples += count(&w); total += w.total_ns;
         failures += w.failures; sleeps += w.sleep_calls;
+        for (unsigned role = 0; role < 3; ++role) {
+            skyrim_perf_context_take(SKYRIM_PERF_GRAPHICS_PIPELINE, (SkyrimPerfContext){role, 0, 0}, &w);
+            role_samples[role] += count(&w); role_total[role] += w.total_ns;
+            role_failures[role] += w.failures;
+        }
     } while (atomic_load(&finished) != 4);
     for (unsigned i = 0; i < 4; ++i) assert(!pthread_join(threads[i], NULL));
     skyrim_perf_take(SKYRIM_PERF_GRAPHICS_PIPELINE, &w);
@@ -63,6 +71,15 @@ int main(void) {
     failures += w.failures; sleeps += w.sleep_calls;
     assert(samples == 80000 && total == 80000 * UINT64_C(1234567));
     assert(failures == 20000 && sleeps == 240000);
+    for (unsigned role = 0; role < 3; ++role) {
+        skyrim_perf_context_take(SKYRIM_PERF_GRAPHICS_PIPELINE, (SkyrimPerfContext){role, 0, 0}, &w);
+        role_samples[role] += count(&w); role_total[role] += w.total_ns;
+        role_failures[role] += w.failures;
+        uint64_t expected = role ? 40000 : 0;
+        assert(role_samples[role] == expected);
+        assert(role_total[role] == expected * UINT64_C(1234567));
+        assert(role_failures[role] == expected / 4);
+    }
     assert(skyrim_perf_context_get().role == 0);
     skyrim_perf_take(SKYRIM_PERF_MVK_MSL_WAIT, &w);
     assert(count(&w) == 80000);

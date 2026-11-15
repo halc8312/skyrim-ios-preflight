@@ -49,6 +49,7 @@ class PerformanceTests(unittest.TestCase):
             import re
             new = new.removeprefix('#include "performance_metrics.h"\n')
             new = new.replace("    if (iosResult == VK_SUCCESS) m_pipeMgr->m_cache->compiled();\n", "")
+            new = new.replace("    auto iosCacheCompile = m_pipeMgr->m_cache->compileScope();\n", "")
             pattern = (r"    const uint64_t iosStarted = skyrim_perf_now_ns\(\);\n"
                        r"    const VkResult iosResult = (m_vkd->vkCreate[\s\S]+?);\n"
                        r"    skyrim_perf_end\(SKYRIM_PERF_\w+, iosStarted, iosResult != VK_SUCCESS\);\n"

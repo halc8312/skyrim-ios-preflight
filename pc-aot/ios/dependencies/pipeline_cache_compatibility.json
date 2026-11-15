@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "epoch": "build7-observation-v1",
+  "observations": {
+    "ios/runtime-port/performance_metrics.h": [
+      "d0a702eb5786086eb709a93b7098487d65a3dcbb3eb996af917a6b0df2d3b7ed"
+    ],
+    "ios/dependencies/present_timing.py": [
+      "dc0c145c94b0deea931cb1b8d785f96cabe3d33ff35fd3bd1a07d0b910b9ea88"
+    ],
+    "ios/dependencies/patch_mvk_compile_timing.py": [
+      "21313cd91c9b1a328260f7867f650c1e20a815925612824c5442c78b389f5982"
+    ]
+  }
+}

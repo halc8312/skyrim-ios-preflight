@@ -102,7 +102,9 @@ public:
   size_t snapshot(){lock_guard<mutex> lock(_shaderCacheLock);if(!_dataSize){
     size_t count=0;for(auto p:_shaderCache)count+=p.second->_shaderLibraries.size();_dataSize=count+1;
   }return _dataSize-1;}
-  void mergeReady(int module,int key){lock_guard<mutex> lock(_shaderCacheLock);
+  // Models a catalog-protected competing publisher, not vkMergePipelineCaches.
+  // flags=0 Vulkan merge requires caller-side synchronization; its body is not tested.
+  void publishReadyForTest(int module,int key){lock_guard<mutex> lock(_shaderCacheLock);
     getShaderLibraryCache(module)->_shaderLibraries.emplace_back(SPIRVToMSLConversionConfiguration{key},new MVKShaderLibrary(key));markDirty();}
   ~MVKPipelineCache(){for(auto p:_shaderCache)delete p.second;}
 };

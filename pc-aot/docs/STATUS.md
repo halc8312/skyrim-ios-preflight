@@ -1,5 +1,21 @@
 # 開発状況
 
+**2026-11-15：本人GOを受け、build8のMac検証・非公開OTA準備を開始。** 3系統の切替付き試作と役割別計測を収録し、比較設定は既定OFFのまま。build番号とPC内assemblyの検査値を8へ揃え、旧build7・private guest・ゲーム／saveを保持。開始前の無料枠198/500（残302分）、課金subscriptionなしを画面で確認。公開sourceだけを既存manual workflowへ送り、署名／private guest組込みはPC内で行う。開始・Apple検証・署名・OTA反映・実機確認はまだ未完了。
+
+**2026-11-15：依頼された3系統の試作を本体へ切替付きで組み込み、PC検証を完了。** module単位のcold生成、設定画面内だけの条件付きcache保存＋保持／互換再利用、描画優先・高温時の先読み制御を実装した。英語／日本語の設定5項目を追加し、既定OFF・次回起動反映。元の経路へ同一binaryで戻せる。旧cache・game/save/IPAは保持。通常・ASan/UBSan・TSanの関連検査、生成DXVK 6unitの構文、namespace／CMake定義5検査、既存overlay／stall検査、source preflightが成功。細部はPERFORMANCE_WORK.md先頭。**Apple SDKによる新アプリbuild・Metal実機検査・iPhone比較・push・端末更新は未実施。GOまでは行わない。** 実機での効果量／発熱の改善は未確認で、標準ONへの採用判断もまだ行っていない。
+
+**2026-11-15：Gemini回答をFable review・固定ソースと照合し、最小の比較計測を追加。** graphics／computeのVulkan pipeline生成時間・失敗数を必須描画／先読み／その他で集計し、解析器も対応した。既存の役割scopeを使い、追加の時計読取り・lock・heap確保はない。キャッシュ名前空間の17入力とSDK／compiler設定は不変。module分離試作は未接続のまま。GeminiのOS互換案には、MoltenVKのdeviceID／pipelineCacheUUID自体がOS版を含む見落としがある。静穏時保存・名前空間縮小・保存先移動・OS条件緩和を一括採用せず、別々に検証する。関連12検査成功。新しいMac／iPhone build・push・端末更新は行っていない。詳細と採用条件はPERFORMANCE_WORK.md先頭。
+
+**2026-11-15：Fableの独立reviewを固定ソース・一次仕様と照合。** module分離は候補として維持し、実機採用は保留。試験のmerge相当処理を「catalog保護された競合公開」と明記・改名し、実vkMergePipelineCaches検証とは扱わない。診断mutexはmodule object単位で、同内容の別objectのdump全体を保護しない点も訂正。実converterへ空の自作SPIR-Vを直接渡す限定probeで、エラー記録・空MSLなのにtrue返却を再現した（製品修正ではなく、Vulkan入力検証やvalid game shaderの到達性は未検証）。既存build6の4ログは該当エラー／Metal compile failed／graphics failure窓が各0件で、停止原因とは未同定。normal converter1検査・method2検査は成功。待ちの分類値だけで因果・改善を断定せず、発熱・失敗・frame gapと合わせて比較する方針。FIFO／QoS変更や追加計測の製品実装、cloud build／push／端末更新は行っていない。
+
+**2026-11-15：本人指定でカクつき・安定性・性能を優先し、MODとマルチプレイを保留。** 未接続のcold生成分離候補を絞り込み、通常のshader変換には追加mutexを取らず、debug／dumpだけ保護する形へ修正した。固定された実MoltenVK converter＋SPIRV-Crossを自作24条件・計512回で照合し、直列／並行でMSL・付随情報一致、入力変更なし。通常実行とTSanが成功。修正候補の実method fixtureもASan/UBSan・TSan各2検査を通過。TSanの初回mapping起動失敗は、検査子processだけASLRを無効にして実行可能とした。全system／app設定は不変。詳細と限界はPERFORMANCE_WORK.md先頭。**build7への組込み・新Macビルド・push・実機更新はしていない。** FPS／発熱への効果は未確認で、次はbuild7の実機ログと実Metal比較を根拠に採用を判断する。
+
+**2026-11-15：LE MOD／マルチプレイの将来対応を調査。** 友人提案のSPO・ragdoll・死体整理等は引き続き未導入で、MOD managerは設計段階。通常LEデータMODを最初の候補、SKSE／Windows DLLは別対応と整理。現runtime contractはSKSE／SkyUIを明示拒否する。Skyrim Together公式FAQはLE非対応、classic Tamriel OnlineはSKSE／SkyUI依存の旧作であり、そのままのiOS導入は確認できない。MOD_MANAGEMENT_DESIGN.mdに根拠・段階案を追加した。カクつき候補の固定converterも再点検し、通常経路は呼出しごとにCompilerMSLを作ることを確認。追加converter mutexの必要性は保守的な仮定として再評価し、fixtureの排他成功を実converterのrace証明と混同しない。製品code・build7・原game／saveを変更せず、cloud build／push／MOD導入なし。
+
+**2026-11-15：追加のローカル候補を作成・検証。** `experiments/mvk-module-cold/` に、MoltenVKの新規shader生成待ちをcache全体からmoduleごとへ分ける試作を追加した。同moduleのready-hit、重複生成防止、公開とsize無効化を保持。複数cache／cacheなしで共有されるconverterを保護し、並列compile失敗時の共有VkResultも短いcache lockで保護する。固定公開ソースの実methodを使うCPU fixtureで、旧方式では止まる別module要求が試作では進むこと、重複生成0、vector成長中4,096lookup、16,384error通知を確認。GCC13の通常／ASan・UBSan／TSanが成功。**アプリへの組込み・Macビルド・push・実機更新はしていない。** Metal並行処理・描画一致・iPhone FPS／発熱は未検証で、同時compile増加による混雑／memory／熱の悪化も採用前に比較する。build7とゲーム・save・旧IPAは保持。詳細はPERFORMANCE_WORK.md先頭。
+
+**2026-11-15：build7更新後の短時間プレイを本人が報告。** 60fps近くで以前より安定し、カクつきも大きく減ったように感じたとのこと。狼が出て戦おうとした時に一瞬の停止あり。起動・プレイは本人報告として確認、端末build番号の直接読取りと今回ログの回収は未実施。短時間の体感で、同条件ABではないため更新の効果量・原因は未確定。画質／場面／cache蓄積等の影響を分離してから判断する。仕事中の追加操作は依頼せず、後で当該ログを読みMSL由来・必須／先読みと停止の重なりを確認する。
+
 **2026-11-15：build7のMac検証・署名・非公開OTA配布が完了。** [Mac build21](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af9262690e83b09c4fa6edc)は公開`fdaaae1c9233dd2bc5aafeeb6c60ceec118b45e2`で成功。34組／83検査中81成功・環境依存2skip、iPhoneOS shader8件compile、実Mac GPU20ケースreadbackが成功。3共有ABI headerはbuild6と一致し、CPU header／PcGuestABIも既存private guestのcontractに一致。再生成せず同guestをPC内で組み込み、既存profile／DPAPIで署名した。署名済みIPAは58,672,647 bytes、SHA256 `1c7dd588ab5adba482a59db2836764bbc51310b1a001e311281f9bbb111e15b5`。2 images／39,426 pages／4 resources、暗号署名とprofileのApple chain・AppID・登録端末を検証。
 
 Tailscaleの既存routeを保持してbuild7へ切替。HTTPS manifestのbuild7／AppID、全IPA転送後hash一致、英語／日本語の390px表示を確認した。既存のgame／save／build6 IPAは保持。**本人へiPhoneからの保存・終了後の上書き更新と起動・save確認を依頼済みで、build7の導入・実機挙動はまだ未確認。** 改善範囲はbackground cache保存の限定retry／理由記録と停止の分類計測。初回cacheはcoldになり得るため、同画質／save／経路で反復する。無料枠の使用は193→198/500（残302分）、追加課金・新認証なし。

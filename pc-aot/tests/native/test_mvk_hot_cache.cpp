@@ -55,10 +55,10 @@ static void failures() {
 #endif
 }
 #if FIXTURE_NEW
-static void mergeDuringCompile() {
+static void publicationDuringCompile() {
   MVKPipelineCache cache;fixture.arm(600,true);
   auto cold=async(launch::async,[&]{return request(cache,6,600);});fixture.waitEntered();
-  cache.mergeReady(6,600);auto* merged=request(cache,6,600);
+  cache.publishReadyForTest(6,600);auto* merged=request(cache,6,600);
   assert(cache.snapshot()==1);
   fixture.release();assert(cold.get()==merged);
   assert(cache.snapshot()==1 && fixture.live.load()==1);
@@ -86,7 +86,7 @@ int main(){
   failures();assert(fixture.live==0);
   growingVariantStorage();assert(fixture.live==0);
 #if FIXTURE_NEW
-  mergeDuringCompile();assert(fixture.live==0);
+  publicationDuringCompile();assert(fixture.live==0);
 #endif
   assert(fixture.active==0);
   printf("actual_cache_method=PASS hot_during_cold=%d snapshot_during_cold=%d max_cold=%d duplicate_compiles=0 public_cpu_only=1\n",FIXTURE_NEW,FIXTURE_NEW,int(fixture.maximum));

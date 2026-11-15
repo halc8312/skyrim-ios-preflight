@@ -36,6 +36,13 @@ static void clear_histograms(void) {
     for (unsigned kind = 0; kind < SKYRIM_PERF_KIND_COUNT; ++kind) {
         SkyrimPerfWindow w; skyrim_perf_take(kind, &w);
     }
+    /* The recorder also retains partitions of those same events. Drain both
+     * sets when isolating a later exact-output fixture. */
+    for (unsigned index = 0; index < CONTEXT_COUNT; ++index) {
+        SkyrimPerfContext context;
+        unsigned kind = context_decode(index, &context);
+        SkyrimPerfWindow w; skyrim_perf_context_take(kind, context, &w);
+    }
 }
 static void verify_spans(const SkyrimPerfStalls *s) {
     assert(s->count <= SKYRIM_PERF_STALL_CAPACITY);

@@ -9,6 +9,9 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+stage_spec = importlib.util.spec_from_file_location("composed_mvk_stage", ROOT / "ios/dependencies/patch_mvk_module_cold.py")
+composed_stage = importlib.util.module_from_spec(stage_spec)
+stage_spec.loader.exec_module(composed_stage)
 spec = importlib.util.spec_from_file_location('library_patch', ROOT/'ios/dependencies/patch_mvk_library.py')
 adapter = importlib.util.module_from_spec(spec); spec.loader.exec_module(adapter)
 
@@ -82,8 +85,7 @@ class MoltenLibraryTests(unittest.TestCase):
             self.assertEqual((tmp/'MVKShaderModule.h').read_bytes(), header)
         staged = os.environ.get('SKYRIM_MVK_PATCHED_GPU_SOURCE')
         if staged:
-            for name in adapter.PINS:
-                adapter.verify(name, (Path(staged)/name).read_bytes(), (source/name).read_bytes())
+            composed_stage.verify(Path(staged), source)
 
     def test_real_methods_preserve_independent_ownership_parallel_publication_and_errors(self):
         source, converter, codec = self.inputs()
