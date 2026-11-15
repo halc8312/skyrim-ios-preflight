@@ -6,7 +6,11 @@
 
 修正は起動時の設定ファイル解決だけ。canonical名が存在すれば同ファイルへ、なければ単一のcase-insensitive既存名へatomic更新し、どちらも無ければcanonical名を作る。canonicalがなく複数の別case名がある曖昧状態やsymlink／非regular fileはエラー。古い小文字ファイルの自動削除・改名やgame Dataの更新は行わない。default INIの大小文字差も同じ原則で読み取る。変更する値は従来どおり言語・fontconfig・音声archiveの3項目で、他のprofile設定を保持する。
 
-自作の`Skyrim.INI`（英語）と`Skyrim.ini`（日本語）を実際に共存させ、固定runtimeの`resolve_ci`／`rt_host_path`／`ini_get`／`ini_find`を使うfixtureで旧挙動を再現した。同じreaderが修正後に日本語を読むこと、英語へ戻せること、他設定と未使用aliasを保持すること、単一mixed-case／曖昧aliases／symlink／directory拒否を確認する。case-insensitive volumeでは共存検査を明示skipし、WSLのLinux FSで実行する。Foundationの起動fixtureも実canonical名へ変更した。build11のMac検証・配布と、現端末の最新設定／ログ照合・実表示確認はこれから行う。
+自作の`Skyrim.INI`（英語）と`Skyrim.ini`（日本語）を実際に共存させ、固定runtimeの`resolve_ci`／`rt_host_path`／`ini_get`／`ini_find`を使うfixtureで旧挙動を再現した。同じreaderが修正後に日本語を読むこと、英語へ戻せること、他設定と未使用aliasを保持すること、単一mixed-case／曖昧aliases／symlink／directory拒否を確認。WSLのLinux FSで通常・ASan／UBSan実行が成功した。case-insensitive volumeでは共存検査を明示skipする。Foundationの起動fixtureも実canonical名へ変更し、独立レビューで固定runtimeの検索順との一致と起動時のみの呼出しを確認した。
+
+公開`3d0630210e3f5910b92d343db970b3e0808a5f59`のMac build27は7分24秒で成功。39組103検査のうち99成功・4skipで、Foundation起動処理・言語C変換・音声profile設定／resetは成功。追加のcase-sensitive reader検査とFoundation共存subcaseはMacのvolume特性によりskipで、同条件を通ったと主張しない。iPhoneOS shader8件、実Mac GPU20ケース／80値readbackも成功。526件のwarningはbuild26と正規化message／件数が完全一致。Metal Toolchain不足の初回失敗は公式取得後の再試行で解消した。hostはbuild11／ARM64／iOS min18／SDK26.5、共有ABI3 headerはbuild26と一致。
+
+既存private guestをPC内で組み込み、同じ登録端末profileで署名。IPAは58,688,390 bytes、SHA256 `5be9e96c90f8469bea558c94d129e8c4deb1fba570e657913469b18d364a993e`。2 images／39,431 pages／4 resourcesの暗号検証とprofileのApple chain・AppID・端末一致を確認した。同じ非公開OTAページをbuild11へ更新し、HTTPS manifest・全IPA読み戻しhash・認証なし404を検査。他routeと旧build10を保持。無料枠は220→227/500（残273分）、subscription未有効。最新端末ログと選択内容の取得はUSB再接続待ちで、build11の端末インストール・日本語の実表示／会話・性能はまだ確認できていない。転送済み日本語packの再送やセーブの変更は行っていない。
 
 ## 2026-11-16 日本語packのUSB導入と保全確認
 
