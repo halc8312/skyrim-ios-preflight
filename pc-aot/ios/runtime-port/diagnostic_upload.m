@@ -176,7 +176,7 @@ static BOOL exactInteger(id value, uint64_t expected) {
 
 @interface SKDiagnosticTransfer : NSObject <NSURLSessionDataDelegate>
 @property(nonatomic, strong) NSData *body;
-@property(nonatomic, strong) NSString *identifier, *hash;
+@property(nonatomic, strong) NSString *identifier, *contentSHA256;
 @property(nonatomic, strong) NSMutableData *receipt;
 @property(nonatomic, strong) NSURLSession *connection;
 @property(nonatomic, copy) void (^finished)(SkyrimDiagnosticStatus, NSString *);
@@ -208,7 +208,7 @@ static BOOL exactInteger(id value, uint64_t expected) {
         id receipt = [NSJSONSerialization JSONObjectWithData:self.receipt options:0 error:NULL];
         BOOL valid = [receipt isKindOfClass:NSDictionary.class] && [receipt count] == 4 &&
             exactInteger(receipt[@"schema"], 1) &&
-            [receipt[@"report_id"] isEqual:self.identifier] && [receipt[@"sha256"] isEqual:self.hash] &&
+            [receipt[@"report_id"] isEqual:self.identifier] && [receipt[@"sha256"] isEqual:self.contentSHA256] &&
             exactInteger(receipt[@"bytes"], self.body.length);
         status = valid ? SkyrimDiagnosticSent : SkyrimDiagnosticInvalidReceipt;
     }
@@ -216,7 +216,7 @@ static BOOL exactInteger(id value, uint64_t expected) {
     [s finishTasksAndInvalidate]; self.connection = nil;
     dispatch_async(dispatch_get_main_queue(), ^{
         /* Keep failed immutable bytes for an idempotent manual retry. */
-        if (status == SkyrimDiagnosticSent) { self.body = nil; self.identifier = nil; self.hash = nil; }
+        if (status == SkyrimDiagnosticSent) { self.body = nil; self.identifier = nil; self.contentSHA256 = nil; }
         self.busy = NO;
         void (^done)(SkyrimDiagnosticStatus, NSString *) = self.finished; self.finished = nil;
         if (done) done(status, identifier);
@@ -249,7 +249,7 @@ void skyrim_diagnostics_send(void (^completion)(SkyrimDiagnosticStatus, NSString
             if (!sender.body) {
                 NSDictionary *report = skyrim_diagnostics_capture(path.stringByDeletingLastPathComponent, path, build, NULL);
                 sender.body = report ? skyrim_diagnostics_encode(report, NULL) : nil;
-                if (sender.body) { sender.identifier = report[@"report_id"]; sender.hash = digest(sender.body); }
+                if (sender.body) { sender.identifier = report[@"report_id"]; sender.contentSHA256 = digest(sender.body); }
             }
             if (!sender.body) {
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -268,7 +268,7 @@ void skyrim_diagnostics_send(void (^completion)(SkyrimDiagnosticStatus, NSString
             request.HTTPMethod = @"POST"; request.HTTPBody = sender.body;
             [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
             [request setValue:[NSString stringWithFormat:@"Bearer %@", pairing[@"token"]] forHTTPHeaderField:@"Authorization"];
-            [request setValue:sender.hash forHTTPHeaderField:@"X-Content-SHA256"];
+            [request setValue:sender.contentSHA256 forHTTPHeaderField:@"X-Content-SHA256"];
             [[sender.connection dataTaskWithRequest:request] resume];
         }
     });
