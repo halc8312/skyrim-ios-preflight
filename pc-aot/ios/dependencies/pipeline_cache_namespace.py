@@ -22,6 +22,10 @@ INPUTS = (
     'ios/dependencies/pipeline_cache.h', 'ios/dependencies/pipeline_cache.cpp',
     'ios/runtime-port/prepare_runtime.py', 'ios/runtime-port/lifecycle_adapters.py',
     'ios/dependencies/lifecycle_device.py',
+    'ios/dependencies/d3d9_lock_timing.py', 'ios/dependencies/d3d9_lock_timing.cpp.in',
+    'ios/runtime-port/runtime_lock_timing.py', 'ios/runtime-port/runtime_lock_event.h.in',
+    'ios/runtime-port/runtime_audio_lock.c.in', 'ios/runtime-port/runtime_com_lock.cpp.in',
+    'ios/runtime-port/lock_metrics.h', 'ios/runtime-port/lock_metrics.c',
 )
 OBSERVATION_INPUTS = frozenset((
     'ios/runtime-port/performance_metrics.h',

@@ -154,6 +154,8 @@ class Schema:
                         not (role_only and result), 'timing_context_fields')
             elif value.startswith('IOS_STALL '):
                 self.timing.stalls(value.split(' ', 1)[1])
+            elif value.startswith('IOS_LOCK '):
+                self.timing.locks(value.split(' ', 1)[1])
             elif value.startswith('IOS_DIAG_SETTING '):
                 number = Decimal(value.rsplit('=', 1)[1])
                 require(abs(number) <= 1000000000, 'setting_range')

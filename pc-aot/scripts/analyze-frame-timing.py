@@ -27,6 +27,15 @@ THRESHOLD = 50000000
 MAX_BYTES = 256 * 1024 * 1024
 MAX_SPANS = 100000
 MAX_LINE = 1024 * 1024
+LOCK_THRESHOLD = 16666667
+LOCK_CAPACITY = 16
+LOCK_NAMES = ('unknown', 'd3d9', 'audio', 'com', 'shadow', 'bc')
+LOCK_PHASES = ('unknown', 'wait', 'hold', 'work')
+LOCK_OPERATIONS = ('unknown', 'd3d9_other', 'd3d9_present', 'audio_other',
+                   'audio_submit', 'audio_get_state', 'audio_flush', 'audio_mix',
+                   'audio_destroy', 'com_lookup', 'com_wrap', 'com_forget',
+                   'shadow_cleanup', 'bc_cleanup', 'adpcm_decode', 'audio_reset')
+LOCK_FIELDS = 'lock,phase,operation,instance,thread,owner_thread,owner_operation,start_ns,end_ns,cpu_ns,cpu_valid'
 
 
 def unsigned(value):
@@ -120,6 +129,39 @@ def percentile(bins, percent):
     raise AssertionError('rank')
 
 
+def locks(text):
+    """Numeric observations, never a claim that one sampled owner caused a wait."""
+    f = fields(text, {'schema', 'threshold_ns', 'count', 'dropped_busy', 'dropped_full',
+                      'window_start_ns', 'window_end_ns', 'totals', 'fields', 'spans'})
+    if f['schema'] != '1' or unsigned(f['threshold_ns']) != LOCK_THRESHOLD or f['fields'] != LOCK_FIELDS:
+        raise ValueError('unknown lock schema')
+    count = unsigned(f['count'])
+    start, end = unsigned(f['window_start_ns']), unsigned(f['window_end_ns'])
+    if count > LOCK_CAPACITY or not end or start > end:
+        raise ValueError('invalid lock window')
+    totals = [unsigned(value) for value in f['totals'].split(',')]
+    if len(totals) != 6:
+        raise ValueError('invalid lock totals')
+    samples = []
+    for record in f['spans'].split(';') if f['spans'] else []:
+        v = [unsigned(value) for value in record.split(',')]
+        if len(v) != 11:
+            raise ValueError('invalid lock span')
+        lock, phase, operation, instance, thread, owner, owner_op, begun, ended, cpu, cpu_valid = v
+        if not 1 <= lock <= 5 or not 1 <= phase <= 3 or operation > 15 or owner_op > 15 or \
+                not begun or ended < begun or ended-begun < LOCK_THRESHOLD or cpu_valid > 1 or \
+                (not cpu_valid and cpu) or (cpu_valid and cpu > ended-begun) or (not owner and owner_op):
+            raise ValueError('invalid lock metadata')
+        samples.append(dict(lock=lock, phase=phase, operation=operation, instance=instance,
+                            thread=thread, owner_thread=owner, owner_operation=owner_op,
+                            start=begun, end=ended, cpu_ns=cpu, cpu_valid=cpu_valid))
+    if len(samples) != count:
+        raise ValueError('lock count mismatch')
+    return samples, dict(window=dict(start=start, end=end),
+                          dropped_busy=unsigned(f['dropped_busy']), dropped_full=unsigned(f['dropped_full']),
+                          totals=totals)
+
+
 def interval_union_ns(intervals):
     """Wall-time union only: nested/cross-thread work is never added twice."""
     total = 0
@@ -135,6 +177,10 @@ def summarize(lines):
     aggregate = {}
     context_rows = []
     spans = []
+    lock_spans = []
+    lock_windows = []
+    lock_last_end = 0
+    lock_duplicates = 0
     sampling_windows = []
     current_window = None
     timing_origin = None
@@ -142,6 +188,23 @@ def summarize(lines):
     last_end = 0
     current_kinds = set()
     for line in lines:
+        if 'IOS_LOCK ' in line:
+            try:
+                samples, window = locks(line.split('IOS_LOCK ', 1)[1])
+                lock_end = window['window']['end']
+                if lock_end < lock_last_end:
+                    raise RuntimeError('lock clock moved backwards; use one unmodified launch log')
+                if lock_end and lock_end == lock_last_end:
+                    lock_duplicates += 1
+                    continue
+                if len(lock_spans) + len(samples) > MAX_SPANS or len(lock_windows) >= MAX_SPANS:
+                    raise RuntimeError('lock observation bound exceeded')
+                lock_last_end = lock_end
+                lock_spans.extend(samples)
+                lock_windows.append(window)
+            except ValueError:
+                invalid += 1
+            continue
         if 'IOS_TIMING_CONTEXT ' in line:
             try:
                 raw = line.split('IOS_TIMING_CONTEXT ',1)[1]
@@ -256,6 +319,28 @@ def summarize(lines):
                 # window itself no longer intersects this frame.
                 later_drops.append(record)
         union = interval_union_ns(covered)
+        lock_overlap = []
+        lock_covered = []
+        for sample in lock_spans:
+            begin, end = max(f['start'], sample['start']), min(f['end'], sample['end'])
+            if begin >= end:
+                continue
+            lock_covered.append((begin, end))
+            lock_overlap.append(dict(lock=LOCK_NAMES[sample['lock']], phase=LOCK_PHASES[sample['phase']],
+                operation=LOCK_OPERATIONS[sample['operation']], instance=sample['instance'],
+                thread=sample['thread'], observed_owner_thread=sample['owner_thread'],
+                observed_owner_operation=LOCK_OPERATIONS[sample['owner_operation']],
+                thread_relation='unknown' if not f['thread'] or not sample['thread'] else
+                    'same' if f['thread'] == sample['thread'] else 'different',
+                overlap_ms=(end-begin)/1e6, duration_ms=(sample['end']-sample['start'])/1e6,
+                observed_thread_cpu_ms=sample['cpu_ns']/1e6 if sample['cpu_valid'] else None))
+        lock_overlap.sort(key=lambda item: item['overlap_ms'], reverse=True)
+        lock_drops = [r for r in lock_windows if (r['dropped_busy'] or r['dropped_full']) and
+                      r['window']['start'] <= f['end'] and r['window']['end'] >= f['start']]
+        lock_late_drops = [r for r in lock_windows if (r['dropped_busy'] or r['dropped_full']) and
+                           r['window']['start'] > f['end']]
+        lock_window_known = any(r['window']['start'] <= f['end'] and r['window']['end'] >= f['start']
+                                for r in lock_windows)
         correlations.append(dict(start_ms_from_first_sample=(f['start']-origin)/1e6,
             start_ms_from_first_timing_window=(f['start']-timing_origin)/1e6 if timing_origin is not None else None,
             duration_ms=(f['end']-f['start'])/1e6, estimated_endpoint=bool(f['estimated_end']),
@@ -268,7 +353,16 @@ def summarize(lines):
             window_dropped_busy=sum(r['dropped_busy'] for r in relevant_drops),
             window_dropped_full=sum(r['dropped_full'] for r in relevant_drops),
             later_window_dropped_busy=sum(r['dropped_busy'] for r in later_drops),
-            later_window_dropped_full=sum(r['dropped_full'] for r in later_drops)))
+            later_window_dropped_full=sum(r['dropped_full'] for r in later_drops),
+            lock_overlaps=lock_overlap[:16], additional_lock_overlaps=max(0, len(lock_overlap)-16),
+            sampled_lock_overlap_union_ms=interval_union_ns(lock_covered)/1e6,
+            sampled_work_and_lock_overlap_union_ms=interval_union_ns(covered+lock_covered)/1e6,
+            lock_sampling_status='drops_reported' if lock_drops else 'possible_late_drops' if lock_late_drops else
+                'no_reported_drops' if lock_window_known else 'not_recorded',
+            lock_window_dropped_busy=sum(r['dropped_busy'] for r in lock_drops),
+            lock_window_dropped_full=sum(r['dropped_full'] for r in lock_drops),
+            lock_later_window_dropped_busy=sum(r['dropped_busy'] for r in lock_late_drops),
+            lock_later_window_dropped_full=sum(r['dropped_full'] for r in lock_late_drops)))
     contexts = {}
     seen_contexts = set()
     context_duplicates = 0
@@ -295,6 +389,12 @@ def summarize(lines):
         duplicate_timing_records=duplicate, sampled_spans=len(spans), dropped_busy=dropped_busy,
         dropped_full=dropped_full, kinds=kinds, longest_sampled_frame_gaps=correlations,
         sampling_windows_with_drops=sum(bool(r['dropped_busy'] or r['dropped_full']) for r in sampling_windows),
+        lock_records=len(lock_windows), sampled_lock_spans=len(lock_spans),
+        duplicate_lock_records=lock_duplicates,
+        lock_dropped_busy=sum(r['dropped_busy'] for r in lock_windows),
+        lock_dropped_full=sum(r['dropped_full'] for r in lock_windows),
+        lock_observed_totals={key: sum(r['totals'][i] for r in lock_windows)
+            for i, key in enumerate(('wait_count', 'wait_ns', 'hold_count', 'hold_ns', 'work_count', 'work_ns'))},
         caveats=['Histogram windows may straddle concurrent updates; percentiles are bucket ranges.',
                  'Slow spans are incomplete samples; absence of overlap does not exclude a cause.',
                  'Overlapping or nested durations must not be added together.',
@@ -302,6 +402,11 @@ def summarize(lines):
                  'Sampling windows are approximate completion windows; unknown or dropped windows cannot establish absence of work. No reported drops still excludes operations below the sampling threshold.',
                  'A later completion-window drop may hide a long operation that overlapped an earlier frame; possible_late_drops is uncertainty, not an attributed cause.',
                  'Context histograms partition existing timings; they are not additional work. Role identifies the requester, not the owner of a contended lock.',
+                 'Lock totals cover instrumented intervals only, not every acquisition. Wait, hold and nested work overlap; never sum them as frame cost.',
+                 'Observed lock owners are samples, may be unavailable, and do not identify every owner during a wait. Thread CPU time, when available, covers the full observed interval, not only its overlap with a frame.',
+                 'Lock observations use a separate 16.667ms threshold and bounded buffer. No reported drops excludes neither shorter waits nor uninstrumented work.',
+                 'Lock samples retain the longest completed intervals when full; completion order and recorder contention can still hide relevant work.',
+                 'Unfinished waits and work completing after capture are absent even with zero drops. Missing or empty observations do not prove that a probe was enabled or that its target was reached.',
                  'Save candidates are filename-classified, not proof of autosave; their handle windows include idle time and exclude earlier serialization and later durability.',
                  'Use a separate log for each launch; anonymous thread ordinals restart per process.'])
 
@@ -330,7 +435,7 @@ def main():
         parser.exit(2, 'Unable to analyze this local log: '+
                     (str(error) if isinstance(error,RuntimeError) else 'file could not be read')+'\n')
     print(json.dumps(result,indent=2,allow_nan=False))
-    return 0 if result['timing_records'] or result['stall_records'] else 1
+    return 0 if result['timing_records'] or result['stall_records'] or result['lock_records'] else 1
 
 
 if __name__ == '__main__':

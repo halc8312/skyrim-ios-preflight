@@ -1,0 +1,42 @@
+/* Fixed-size observations only. Helpers preserve the caller's errno and never
+ * print, allocate, change lock policy, or inspect guest data. */
+#include "lock_metrics.h"
+#include "performance_metrics.h"
+#include <errno.h>
+
+static inline uint64_t ios_runtime_lock_now(void) {
+    const int saved_errno = errno;
+    const uint64_t now = skyrim_perf_now_ns();
+    errno = saved_errno;
+    return now;
+}
+
+/* One atomic word makes an owner sample internally consistent. Overflow means
+ * unknown, not a truncated thread identity. This is a sample, not proof that
+ * the same owner held the lock throughout a wait. */
+static inline uint64_t ios_runtime_lock_owner(unsigned operation) {
+    const uint64_t thread = skyrim_perf_thread_ordinal();
+    return thread && thread <= (UINT64_MAX >> 8) && operation <= 255
+        ? (thread << 8) | operation : 0;
+}
+
+static inline void ios_runtime_lock_report(unsigned category, unsigned phase,
+        unsigned operation, uint64_t start, uint64_t end, uint64_t owner) {
+    const int saved_errno = errno;
+#ifdef __cplusplus
+    SkyrimLockEvent event{};
+#else
+    SkyrimLockEvent event = {0};
+#endif
+    event.start_ns = start;
+    event.end_ns = end;
+    event.instance = 1; /* Each observed runtime lock is a process singleton. */
+    event.thread = skyrim_perf_thread_ordinal();
+    event.owner_thread = owner >> 8;
+    event.owner_operation = (unsigned)(owner & 255);
+    event.lock = category;
+    event.phase = phase;
+    event.operation = operation;
+    skyrim_lock_record(&event);
+    errno = saved_errno;
+}

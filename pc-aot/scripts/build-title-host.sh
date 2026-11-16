@@ -62,6 +62,14 @@ PY
   run_validation python3 -m unittest discover -s tests -p 'test_shadow_ranges.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_performance_metrics.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_performance_stalls.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_lock_metrics.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_lock_timing_analysis.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_d3d9_lock_timing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_runtime_lock_timing.py' -v
+  run_validation env PYTHONPATH=tests SKYRIM_TEST_SANITIZERS=thread python3 -m unittest \
+    test_lock_metrics \
+    test_d3d9_lock_timing.D3D9LockAdapterTests.test_actual_lock_recursion_contention_and_hot_clock_budget \
+    test_runtime_lock_timing -v
   run_validation python3 -m unittest discover -s tests -p 'test_save_write_probe.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_game_language.py' -v

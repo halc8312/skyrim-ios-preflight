@@ -800,6 +800,9 @@ def prepare(source: Path) -> dict[str, str]:
     from lifecycle_adapters import adapt as adapt_lifecycle
     for name in ("d3d9_bridge.cpp", "d3d9_bridge_gen.cpp", "d3d9_bcemu.cpp", "d3dx_native.cpp", "xaudio2.c"):
         staged[name] = adapt_lifecycle(name, staged[name])
+    from runtime_lock_timing import adapt as adapt_lock_timing
+    for name in ("d3d9_bridge.cpp", "xaudio2.c"):
+        staged[name] = adapt_lock_timing(name, staged[name])
     return staged
 
 

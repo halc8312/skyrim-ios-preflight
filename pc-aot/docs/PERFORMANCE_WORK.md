@@ -1,5 +1,24 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-16 描画・音声・資源管理の待機観測
+
+統合レポートと現行sourceを照合し、build12で残ったshader重なりのない約0.6〜1秒gapを絞るための観測を実装。画質・guest・save・日本語・shader実験設定は変更せず、lock除去、復号の非同期化、優先度変更は行わない。新しいiPhoneビルド、配布、実機A/Bは未実施。
+
+- **D3D9 device**：専用adapterで固定版RecursiveSpinlockのspin(2000)、再帰、acquire/release、保持範囲を維持。別の非zero ownerを観測した競合時だけwall／thread CPU時間・匿名ownerを採取する。weak CASの疑似失敗を競合と数えない。Presentの最外側だけ保持時間を観測し、通常API／再帰／非保護経路は時計取得0。ownerはPresentかOtherの分類であり、全呼出し元や所有者交代を復元するものではない。
+- **音声**：元のpthread再帰mutexを保持し、Submit／GetState／Flush／mixer／voice退役等を分類。取得待ちと最外側の保持を別々に記録し、従来のxWMA時間に含まれなかったADPCMと外部resetも区分する。callbackのlock外実行とPCM／queue／Flushの順序は維持する。
+- **COMと後始末**：lookup／wrap／forgetの共有mutexを観測。通常lookupは時計・記録なし。shadow／BC後始末は子lock待ちを含むWORK区間であり、子lock保持時間やそのownerを計ったとは扱わない。Release本体は引き続きregistry lock外。
+- **記録・送信・解析**：新しい数値限定`IOS_LOCK schema=1`を既存5秒報告に追加。匿名thread ordinalを既存stallと共有し、native ID・pointer・ゲーム情報を出さない。記録側は確保・I/O・追加の待機なし。16.667 ms閾値、16枠、満杯時の固定長走査で長い完了区間を残し、busy/fullの欠落を記録。閾値未満も観測した区間の件数・合計には含むが、全lock取得数ではない。解析は既存workとの和集合を使い、wait／hold／内部workの時間を単純加算しない。CPU値は観測したthreadの全区間であり、frameとの重なり分やGPU時間ではない。
+
+これらは完了時の標本で、所有者情報も単一時点。未完了の待ち、送信後に完了した処理、閾値未満の連鎖、未計測経路は欠落数0でも除外できない。長い区間を優先しても種類別の偏りは残る。通常Presentが先に16枠を埋めても、その後の600 ms音声待ちが保持されるケースを検証する。空／欠けた記録だけからprobe無効・未到達・未完了を区別しない。
+
+新しいadapter/templateと記録sourceをキャッシュidentityの入力へ追加。既存のOS／GPU／driverチェックと保守的な無効化を維持し、未検証の旧cache互換性を認めない。この変更を含む次回buildはbuild12と同じcache温度とは限らないため、直後のcold runと温まった旧buildを性能比較しない。
+
+PC検証：新規4suiteの17項目を確認。記録・D3D9・音声／COMのnativeケースはASan/UBSanとTSanでも成功。D3D9の10,000回hot／再帰取得で時計0、8threadの再帰排他、Presentの再帰／move／例外、生成後のdevice／swapchain／multithread完全translation unit構文を確認。音声の実関数でエラー・queue満杯・Flush・再帰を検証し、実ミキサー132ケースはPCM／callback／voice退役が変更前と一致。COMの10,000回lookupも時計／記録0。記録40,000件の並行集計、満杯時の長い音声待ち保持、実出力→許可規則→解析器、非公開情報の拒否を検証した。
+
+関連既存suiteはperformance3、stall2、frame解析12、private診断13、diagnostic upload3、cache namespace5、asset/audio/shadow/lifecycle17項目。新規と重複を除く計72項目のうちPCで70を確認し、実Foundation送信とCore Foundation／Metalの2項目はApple専用で未実施。namespaceのCMake検査はWindowsで確認した。TSanは初期のWSLアドレス配置で実行前に失敗し、GCC＋テストプロセスだけの`setarch -R`で成功。clangのTSan runtime未導入も成功とは扱わず、OS全体の設定・依存導入は行っていない。
+
+Apple hostビルド前の必須検査に新suiteとTSanを組み込み、今回未実施のApple SDK／Foundation sender／実機判定をPC検査で代用しない。次の配布時にはPCの常駐診断受信processも新しい許可規則で再起動する必要がある。今回の変更は受信側sourceまでで、既存build12のログ送信経路を停止・再起動していない。
+
 ## 2026-11-16 build12 再起動後の復元と長時間試遊
 
 手動診断2件を受信し、payload／manifest／sessionのbyte数・SHA256・行数・対応を検証した。先のcurrentは後のcurrentの完全なprefix、previousは同一なので重複集計しない。既存解析器のinvalid／duplicateは0。最新currentは7,602 timing／153 stall記録、dropped_busy0／dropped_full27。原記録と解析は`private/diagnostic-upload-20261116-v1/`のreports／analysisに保持した。

@@ -96,6 +96,12 @@ static uint64_t anonymous_thread(void) {
     return thread_ordinal;
 }
 
+uint64_t skyrim_perf_thread_ordinal(void) { return anonymous_thread(); }
+int skyrim_perf_interval_active(uint64_t started) {
+    const uint64_t active_since = atomic_load_explicit(&active_since_ns, memory_order_acquire);
+    return started && active_since != UINT64_MAX && started >= active_since;
+}
+
 static void stall_record(unsigned kind, uint64_t started, uint64_t ended,
                          int failed, unsigned estimated_end, SkyrimPerfContext context) {
     if (!started || ended < started || ended - started < SKYRIM_PERF_STALL_THRESHOLD_NS)

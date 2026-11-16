@@ -107,6 +107,7 @@ target_compile_definitions(dxvk_d3d9 PRIVATE
   "SKYRIM_PIPELINE_CACHE_REUSE_REVIEWED=${_cache_reuse_reviewed}")
 enable_language(OBJC)
 add_library(skyrim_performance STATIC "${_root}/ios/runtime-port/performance_metrics.c"
+  "${_root}/ios/runtime-port/lock_metrics.c"
   "${_root}/ios/runtime-port/device_policy.c" "${_root}/ios/runtime-port/device_platform.m")
 target_compile_features(skyrim_performance PRIVATE c_std_11)
 target_compile_options(skyrim_performance PRIVATE -O2 "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>")

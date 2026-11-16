@@ -69,6 +69,13 @@ void skyrim_perf_context_take(unsigned kind, SkyrimPerfContext context, SkyrimPe
 /* Host wall time only, not GPU execution or CPU utilization. No allocations,
  * file I/O or guest-memory access occur in the recording functions. */
 uint64_t skyrim_perf_now_ns(void);
+/* Shared anonymous identity for numeric observers. Zero means unavailable;
+ * no native thread ID or pointer is exposed. These values are not scheduling
+ * priorities and must never control synchronization. */
+uint64_t skyrim_perf_thread_ordinal(void);
+/* False if a sample started before the latest foreground transition, or while
+ * inactive. Used by additional bounded observers to reject suspended time. */
+int skyrim_perf_interval_active(uint64_t started_ns);
 void skyrim_perf_record(unsigned kind, uint64_t elapsed_ns, int failed, uint64_t sleep_calls);
 /* Use the original interval when available; avoids a second clock read and
  * lets long operations be correlated with frame gaps. Invalid intervals drop. */

@@ -10,6 +10,9 @@ import hashlib
 from pathlib import Path
 
 EXPECTED = {
+    'src/d3d9/d3d9_multithread.h': '78c954cad28730b7be132a6b4034ad1b4aecf38d8c26f507630527b7bbeffc04',
+    'src/d3d9/d3d9_device.h': '56b14e8a8303c13ea85a55f5cd3ddd0e35e310cb96d2d4c4e4ea5078e9fd1728',
+    'src/d3d9/d3d9_swapchain.cpp': '04caf3a5097461d5b2fd6e82bb12749f74ccca8f617ca2ac1b5466a365c61f29',
     'src/d3d9/d3d9_device.cpp': 'ae0e2e6c24cd0fc0ffef265ddeefaec8355d8950deb2d7f64c16175f7c03bca2',
     'src/vulkan/vulkan_presenter.cpp': 'fc91ecc01c03ce46620843acc18450d2a99e152467c778a1b3ab5e444ca51663',
     'src/dxvk/dxvk_cmdlist.cpp': 'a4150f38f9c6139d4a4066c4a335f87880ba62bda6aaa2a2bd38d7b16c6f8e19',
@@ -457,6 +460,11 @@ def adapt_descriptor_capacity(name: str, text: str) -> str:
 
 
 def adapt(name: str, text: str) -> str:
+    if name.endswith(('d3d9_multithread.h', 'd3d9_device.h', 'd3d9_swapchain.cpp')):
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from d3d9_lock_timing import adapt as observe_device_lock
+        return observe_device_lock(name, text)
     if name.endswith('d3d9_device.cpp'):
         import sys
         sys.path.insert(0, str(Path(__file__).parent))
