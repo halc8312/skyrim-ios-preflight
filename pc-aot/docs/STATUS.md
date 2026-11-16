@@ -1,6 +1,10 @@
 # 開発状況
 
-**2026-11-16：Issue #2に沿う残存カクつき改善のゴールを本人承認で開始。** ①追加済み計測をApple環境で検証し、診断受信processを更新してbuild13を非公開OTAへ用意、②初回と再訪を分けた同条件の実機ログでCPU処理・lock待ち・素材読込み・Present待ちを判別、③寄与を確認した少数の処理を修正して正しさとframe gapを比較する。9件のnative性能候補は未採用で、現iPhoneのhotspotや全面ABI同値とは扱わない。準備時にMac TSan入口のD3D9テストクラス名の誤りを修正した。build13のApple検証・署名・配布・実機計測はまだ未完了。
+**2026-11-16：build13のApple検証・署名・非公開OTA準備を完了。実iPhoneの比較待ち。** [Mac build33](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afae47b90e83b09c4faf449)は公開`b44c19d8e3935d0102e2f01566d07dd810a8f062`で成功（M2、Xcode26.6／SDK26.5、12分35秒）。52回のunittest実行／197ケースは192成功・環境依存5skip・失敗0。新しい描画／音声／COM計測とTSan再実行7件、実Foundation送信・Core Foundation／Metal検査を通過し、iPhoneOS shader8件とMac GPU20ケース／80値readbackも成功。Metal Toolchain不足の初回失敗は既存の取得・再試行で回復し、原logを保持。warning526件はbuild32と同じで、新規分類なし。これはiPhone実行の証明ではない。
+
+同じprivate guestを、3共有ABI headerのLF正規化後一致を確認して再利用。署名済みbuild13は58,721,962 bytes、SHA256 `ca2a3e2123f9cdab9c88c6650a02305a9a3a21b47097d56997da6bf2567e72b8`。既存profileのApple chain・AppID・登録端末一致と2 images／39,457 code pages／4 resourcesの暗号検証を確認した。非公開HTTPS manifest・全IPA転送hash・認証なし404を検査し、他routeと旧版を保持。PC常駐受信processを更新し、合成`IOS_LOCK`のHTTPS送信・重複再送・異なる内容の拒否・解析を確認した。合成送信を本人の実機ログに数えない。無料枠239→252/500（残248分）、subscription変更なし。今回の追加は原因を判別する計測であり、性能改善やiPhoneでの署名受理・インストール成功は未確認。本人には更新後、全5比較設定OFF・同じsave／画質／動作で初回と再起動後の2回を試し、診断送信するよう依頼済み。
+
+**2026-11-16：Issue #2に沿う残存カクつき改善のゴールを本人承認で開始。** ①追加済み計測をApple環境で検証し、診断受信processを更新してbuild13を非公開OTAへ用意、②初回と再訪を分けた同条件の実機ログでCPU処理・lock待ち・素材読込み・Present待ちを判別、③寄与を確認した少数の処理を修正して正しさとframe gapを比較する。9件のnative性能候補は未採用で、現iPhoneのhotspotや全面ABI同値とは扱わない。準備時にMac TSan入口のD3D9テストクラス名の誤りを修正した。①のApple検証・署名・配布準備まで完了し、②の実機計測と③の実証済み改善は未完了。
 
 **2026-11-16：残存停止を絞る描画・音声・資源管理の計測を実装（次のiPhoneビルドは未作成）。** D3D9 deviceの実競合とPresentの最外側保持、音声のSubmit／GetState／Flush／mixer等の共有lock、COM registryとshadow／BC後始末を観測する。既存の再帰性・同期方式・保護範囲・音声callback境界を維持し、通常の非競合D3D API／COM lookupには時計取得を追加しない。16.667 ms以上の完了区間は固定16枠へ記録し、満杯時は長い区間を優先して欠落数も残す。送信許可規則・受信検証・frame解析も対応し、所有者は一時点の観測、未完了区間は未確認として扱う。新規17＋関連既存55項目のうちPCで70を確認、Apple専用2項目は未実施。新native計測のASan/UBSan・TSan、実ミキサー132ケースの一致も確認。これは原因を特定するための実装であり、戦闘時の体感改善を実証したものではない。詳細・計測限界・次配布時の受信process更新はPERFORMANCE_WORK.mdに記録した。
 

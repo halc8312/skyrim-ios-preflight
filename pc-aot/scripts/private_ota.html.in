@@ -12,7 +12,7 @@
 <h1><span lang="en">Update SkyrimIOS</span><span lang="ja">SkyrimIOSを更新</span></h1>
 <p><span lang="en">Install directly on your iPhone with your existing developer signature.</span><span lang="ja">いつもの開発者署名で<br>iPhoneから直接インストールできます。</span></p>
 <div class="meta"><span class="pill">Build @@BUILD@@</span><span class="pill">@@SIZE@@ MB</span><span class="pill">iOS 18+</span></div>
-<div class="notice"><span lang="en">Build @@BUILD@@ improves shader-cache saving and adds diagnostics to identify brief pauses. Smoother gameplay has not yet been verified on iPhone.</span><span lang="ja">build @@BUILD@@では描画キャッシュの保存処理を改善し、瞬間停止の原因を調べる計測を追加しました。iPhoneでのカクつき軽減はこれから確認します。</span></div>
+<div class="notice"><span lang="en">Build @@BUILD@@ adds more detailed diagnostics to investigate brief pauses. Its effect on iPhone performance has not yet been measured.</span><span lang="ja">build @@BUILD@@はカクつきの原因を詳しく調べる記録を追加しています。iPhoneでの性能への影響は、これから確認します。</span></div>
 <ol class="steps">
 <li><span class="number">1</span><span lang="en">Save your game and fully close SkyrimIOS.</span><span lang="ja">ゲーム内で保存してアプリを完全に終了</span></li>
 <li><span class="number">2</span><span lang="en">Tap Install and confirm the iPhone prompt.</span><span lang="ja">インストールを押し、iPhoneの確認画面で許可</span></li>

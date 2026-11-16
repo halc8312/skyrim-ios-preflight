@@ -1,5 +1,19 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-16 build13のApple検証と実機比較の準備
+
+Issue #2の確認を受け、本人承認のゴールを①計測版のApple検証・配布準備、②同条件の実機ログで原因分類、③寄与を確認した少数の修正と比較検証に設定した。以下の待機観測を含む公開`b44c19d8e3935d0102e2f01566d07dd810a8f062`をMac build33で検証し、build13を既存の非公開OTAへ用意した。新しい待機方式・native leaf・画質変更・実験設定の既定ONは追加していない。
+
+Macで52回のunittest実行／197ケースのうち192成功・5skip・失敗0。skipはcase-sensitive filesystem専用2、Windows専用1、任意FFmpeg開発依存2であり、未実行を成功と数えない。新計測・D3D9／音声／COMの検査とTSan再実行7ケース、Foundation送信・CFRunLoop／Metalも成功。iPhoneOS shader8出力、Mac GPU20ケース／80値一致、iOS18向けstrict linkを確認。Metal Toolchain初回不足は既存自動取得後の再試行で回復し、失敗を含む原logをignored `local/codemagic-title33/`に保持した。warning526件はbuild32と同じで、新規分類なし。実iPhoneでの排他・音声・性能の確認は別に必要。
+
+既存private guestの再利用前に、共有ABI3 headerをbuild12とLF正規化して比較した。build13の署名・profile／端末対応・全58,721,962 bytesの非公開HTTPS転送hashを検証し、旧版と他配布routeを保持した。常駐診断受信processを新しい数値許可規則へ更新。合成`IOS_LOCK`＋`IOS_STALL`を実HTTPS経路で受信し、未認証拒否・同内容再送・異内容衝突拒否・hash／行一致と100 msの区間和集合を確認した。これは受信系の検査であり、本人の実機送信ではない。更新ページの説明も計測版に合わせて修正し、英語／日本語のスマートフォン表示を確認した。
+
+比較は全5実験設定OFF、画質・FPS・開始saveを固定し、初回と完全終了／再起動後で同じ3〜5分の動きと可能なら複数人戦闘を行い、各回の診断を手動送信する。今回も保守的cache identity変更があるため、coldのbuild13とwarmのbuild12だけから回帰・改善を判定しない。受信後はbuild／session／prefix重複・inactive区間・欠落を確認し、frame gapと完了lock区間の和集合、thread CPU対wall時間、既存shader／save／asset workを照合する。未帰属は未帰属のまま残し、空記録をCPU hotspotや同期不要の根拠にしない。
+
+追加の読取り専用確認で、既存guestの90,390個の`_f_<guest address>`通常symbolと`LC_FUNCTION_STARTS`の一致、host／guestのUUID・symbol table・unwind情報の存在を確認した。dSYM／埋込みDWARFはなく、関数名への対応には実際の端末image UUIDとASLR load slideが必要。MacからのInstruments接続・実際のsample取得やsymbolicationは未検証。現段階ではこの準備をCPU原因の確定やx86 oracleとの同値性とは扱わない。
+
+**現在の到達点は①の配布準備。** build13の実iPhoneインストール、2回のログ受信、戦闘停止の原因分類、③の改善採否はまだ完了していない。以下の「未ビルド／受信process未更新」は、この検証前の実装記録である。
+
 ## 2026-11-16 描画・音声・資源管理の待機観測
 
 統合レポートと現行sourceを照合し、build12で残ったshader重なりのない約0.6〜1秒gapを絞るための観測を実装。画質・guest・save・日本語・shader実験設定は変更せず、lock除去、復号の非同期化、優先度変更は行わない。新しいiPhoneビルド、配布、実機A/Bは未実施。
