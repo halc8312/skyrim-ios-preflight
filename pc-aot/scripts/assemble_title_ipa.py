@@ -123,7 +123,7 @@ def main():
     info = plistlib.loads(records["Info.plist"][0])
     if (info.get("CFBundleIdentifier") != "org.skyrimios.pc2011"
             or info.get("CFBundleExecutable") != "SkyrimIOS"
-            or str(info.get("CFBundleVersion")) != "12"):
+            or str(info.get("CFBundleVersion")) != "13"):
         raise ValueError("Public-host identity mismatch")
     info["PcGuestExpectedInputSHA256"] = a.input_sha256
     info["LSSupportsGameMode"] = True

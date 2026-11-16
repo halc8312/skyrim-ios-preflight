@@ -68,7 +68,7 @@ PY
   run_validation python3 -m unittest discover -s tests -p 'test_runtime_lock_timing.py' -v
   run_validation env PYTHONPATH=tests SKYRIM_TEST_SANITIZERS=thread python3 -m unittest \
     test_lock_metrics \
-    test_d3d9_lock_timing.D3D9LockAdapterTests.test_actual_lock_recursion_contention_and_hot_clock_budget \
+    test_d3d9_lock_timing.D3D9LockNativeTests.test_actual_lock_recursion_contention_and_hot_clock_budget \
     test_runtime_lock_timing -v
   run_validation python3 -m unittest discover -s tests -p 'test_save_write_probe.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
