@@ -1,5 +1,11 @@
 # 開発状況
 
+**2026-11-16：build12の保存→再起動→復元を実機で確認し、3段階の機能検証を完了。** 新しい手動診断2件のpayload・manifest・sessionのbyte数／SHA256／行数と対応を検証した。先の送信のcurrentは後の送信のcurrentの完全なprefixで、previousも同一なので、独立した4起動とは数えない。前回の8,745,777 bytes保存成功に続き、次回起動で同じサイズを空cacheへの再試行なしに受理し、RESTORE由来MSL458件（合計38.648 ms、最大0.287 ms）を実行した。単なるoffered_bytesだけでなく、実際の復元経路を確認できた。全5実験設定OFFでも通常の同一build cache再利用は有効。日本語テキスト／音声も要求値と適用値が一致した。ログの手動送信・Home復帰・cache保存／次回復元の受入確認を満たしたが、全シェーダーの事前準備、PSOバイナリ永続化、iOSからの終了防止を意味しない。
+
+最新起動は約44分38秒。18回のinactive休止／復帰のうち実際のbackgroundは1回（10.007110秒）で、以後も同一processで約43分14秒継続した。GPU退役は全成功（最大39.852 ms）、期限未達／失敗eventは0、音声休止／再開呼出しは各18回。全527 device観測でthermal0／memory warning0、最小headroom3,954,193,568 bytes。音声呼出しの記録だけを可聴出力の証明とは扱わない。
+
+**戦闘時を含む残存カクつきは別の未解決課題。** 100 ms超gapはhistogram75件、区間を採取できた67件のうちshader処理との重なり21件・保存候補windowとの重なり6件・50 ms以上の記録workとの重なりなし40件。67件はいずれも記録されたinactive区間と重ならないが、ロード画面／ゲームメニューとの厳密な分離ではない。最大2,152.840 msでは必須描画のpipeline／cold-lock待ちと先読みroot MSLが連続し、+27〜29分にはshader重なりのない最大978.746 msも残る。stall枠のdrop27件があり、記録のない仕事を除外できない。生ログと解析はignored private内に保持。製品code・設定・画質・ゲーム／saveは変更せず、追加buildも行っていない。詳細と次の比較条件はPERFORMANCE_WORK.md先頭。
+
 **2026-11-16：所有者向けのセルフビルド導線を公開し、Mac helper検査を完了。** 既存公開リポジトリのactive branchを入口に、英語READMEと`BUILD_YOUR_COPY.md`へ、所有英語LE入力の準備・生成・Apple host/guestビルド・本人署名・Data転送・初回確認をまとめた。PC環境未定の友人には、Windowsでの入力準備が一度必要で、その後Macを使う現時点の手順を明示する。既存の固定PCパスを除いたguest compiler、入力／ABI結合を検証する組立、元Dataを変更しないallowlistコピー、Mac keychainによる署名helperを追加。署名済みIPAやゲーム由来データ・本人の診断pairingは公開しない。
 
 WSLの新規4suite／47ケースは45成功・Apple専用2skipで失敗0。Windows LLVMの実合成guestもARM64 iOS18向けにstrict link成功し、所有入力の読取り専用前提検査も成功。[Mac helper検査1](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa430990e83b09c4fac6ad)は公開`6e7f567735b0bed1c0c3b90bc1925ba2281555c5`で成功（M2、Xcode26.6／SDK26.5、35秒）。47ケースは46成功、case-sensitive FS専用1skipはWSLで成功済み。実SDKによるARM64 iOS18合成guestのstrict link・libSystem import・export・load-command確認と、実codesignのローカル署名／entitlement読戻しを含む。後者の`-`署名は端末配布用証明書ではない。実ログはignored `local/self-build-mac-20261116-01/`へ保持。無料枠238→239/500（残261分）、subscription変更なし。公開READMEのPC／390px表示と内部リンクを確認した。新しい全512TU guestのMacビルド、正規profileによる新helper署名、初見利用者の一連の手順、iPhone 15 Pro Maxの起動・性能は未検証。実アプリbuild12の追加ビルド・更新は行っていない。

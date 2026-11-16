@@ -1,5 +1,29 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-16 build12 再起動後の復元と長時間試遊
+
+手動診断2件を受信し、payload／manifest／sessionのbyte数・SHA256・行数・対応を検証した。先のcurrentは後のcurrentの完全なprefix、previousは同一なので重複集計しない。既存解析器のinvalid／duplicateは0。最新currentは7,602 timing／153 stall記録、dropped_busy0／dropped_full27。原記録と解析は`private/diagnostic-upload-20261116-v1/`のreports／analysisに保持した。
+
+前回8,745,777 bytesのcacheを151.792 msで保存成功し、次回は同サイズをresult0／empty_retry0で受理。RESTORE由来のMSL458件（合計38.648 ms、最大0.287 ms）を確認した。全5実験設定OFFでも通常の保存・同一build復元は動作している。最新起動のHome移行でも8,846,627 bytesを168.918 msで保存成功。ただしlive prefix後の保存はこの送信には入らず、長時間試遊で増えた全entryの保存までを証明するものではない。GPU PSOバイナリの永続化や全状態のcache hit率とも区別する。
+
+最新起動は約44分38秒。100 ms超gapはhistogram75件、採取した区間67件。後者はshader重なり21件、保存候補window重なり6件、記録された50 ms以上のworkとの重なりなし40件で、全67件が記録inactive区間の外だった。メニュー／ロードと操作中の厳密な分離はできず、27件のdropと閾値未満の連続処理も残るので、40件をそのままguest CPU原因としない。平均FPSや旧buildとの改善率は算出しない。
+
+| 最新起動の処理 | 件数 | 100 ms超 | 最大 ms |
+| --- | ---: | ---: | ---: |
+| 起動時MSL復元 | 458 | 0 | 0.287 |
+| 必須描画の新規root MSL | 30 | 21 | 277.718 |
+| 先読みの新規root MSL | 95 | 11 | 674.877 |
+| SPIR-V→MSL変換 | 125 | 0 | 4.317 |
+| 最終PSO生成 | 5,335 | 1 | 168.162 |
+
+macro派生は0。graphics pipeline生成は必須747／先読み4,442件で、記録された失敗は0。全527 device観測がthermal0／memory warning0、最小headroom3,954,193,568 bytes。フィルタ済み診断であり、記録対象外のエラー不在や瞬間的なOS状態まで証明しない。
+
+**最長停止:** 最初のtiming窓から20分47.323秒の2,152.840 ms。提示threadのsubmission_waitは2,135.981 msで、必須描画側にroot MSL166.901 ms、pipeline-lock待ち322.675／313.392／299.238 ms、cold-lock待ち796.872 ms、root MSL121.380 msが順次記録される。先読み側では数百msのroot MSLが同時期に進行する。内包spanや別threadの時間を合算しない。全体cold mutexをMSL生成完了まで持つ現行OFF経路と整合し、共有待ち行列を優先調査する根拠になる。ただしmodule key／lock所有者IDは記録していないため、別module由来で削れる割合は未確定。
+
+**別系統:** +27〜29分に685.084／577.599／595.119／978.746 msのgapがあり、長いshader／save／その他workとの重なりがない。各窓のdrop報告も0だが、未計測処理や50 ms未満の連続待ちは除外できない。978.746 msは集計窓を跨ぐため、開始側のwindowだけを見ず完了側・前後のwindowを照合した。戦闘の時刻・場面情報との対応はまだ未確定で、人数増加やHavok／AIを原因として断定しない。
+
+**次の判別:** 既存の「シェーダー準備を並列化」と「プレイ中に必要な準備を優先」を1項目ずつ比較する候補を維持する。同じsave・場面・画質・保存済みcacheで各条件を複数回走らせ、初回だけの温まりと設定効果を分ける。過去build8比較はcache有無が揃っておらず、標準ONの優位性は未証明。今回も自動で設定を変更しない。別系統の停止は場面を絞ってからguest処理／未計測同期境界を調べる。MSL圧縮変更・最終PSO保存・worker数／QoSの一律引上げを先行させる根拠はない。製品code変更・追加buildは行っていない。
+
 ## 2026-11-16 build10の言語設定と実game INIの大小文字不一致
 
 本人は設定から日本語を選択して完全再起動しても英語だったと報告。code／過去の端末profileを追跡すると、固定ゲームの要求名は`Skyrim.INI`である一方、Foundation側は`Skyrim.ini`へ書いていた。実runtimeの`resolve_ci`はexact存在を優先するため、case-sensitive FSで両者があると大文字側の旧英語設定を読む。今回の転送前backupも小文字INIはmissingで、取得したINI1ファイルはSkyrimPrefs.iniだった。save8ファイルの前後一致は維持されるが、この限定backupを大文字Skyrim.INIの取得証拠とは扱わない。
