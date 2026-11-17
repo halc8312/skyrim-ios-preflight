@@ -169,6 +169,7 @@ int main(int argc, const char* argv[]) {
                     report[@"library_load"] = @{ @"created": @(library != nil), @"error_present": @(error != nil),
                         @"error": errorInfo(error) };
                     require(library && !error, "offline IR library load failed");
+                    report[@"library_function_names"] = [library.functionNames sortedArrayUsingSelector:@selector(compare:)] ?: @[];
                     MTLBinaryArchiveDescriptor* archiveDescriptor = [MTLBinaryArchiveDescriptor new];
                     NSURL* archiveURL = [NSURL fileURLWithPath:arguments[@"--archive"]];
                     if (harvesting) {

@@ -118,6 +118,80 @@ def validate_profile(profile):
     return profile
 
 
+def include_validation_view(text):
+    """A bounded lexical view for include checks, not a C++ preprocessor.
+
+    Compilation still uses the original bytes. Normalize supported line ends
+    before phase-2 splicing; comments are then masked without losing newlines.
+    Quoted literals keep their text, so comment markers inside them cannot hide
+    later directives. Unclassified source forms fail explicitly.
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if re.search(r"\\[ \t\v\f]+\n", text):
+        raise BatchError("Whitespace between backslash and newline is not supported")
+    # Trigraph translation precedes line splicing and literal recognition.
+    # Do not silently interpret it differently from a compiler extension.
+    if re.search(r"\?\?[=/\'()!<>-]", text):
+        raise BatchError("Trigraph source forms are not supported")
+    text = text.replace("\\\n", "")
+    view = list(text)
+    size, index = len(text), 0
+    while index < size:
+        if text.startswith("//", index):
+            end = text.find("\n", index + 2)
+            end = size if end == -1 else end
+            view[index:end] = " " * (end - index)
+            index = end
+        elif text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            if end == -1:
+                raise BatchError("Unterminated block comment in MSL source")
+            end += 2
+            view[index:end] = ["\n" if char == "\n" else " " for char in text[index:end]]
+            index = end
+        elif text[index] in "\"'":
+            quote = text[index]
+            index += 1
+            while index < size:
+                if text[index] == "\n":
+                    raise BatchError("Unspliced newline in a quoted MSL literal")
+                if text[index] == "\\":
+                    index += 2
+                elif text[index] == quote:
+                    index += 1
+                    break
+                else:
+                    index += 1
+            else:
+                raise BatchError("Unterminated quoted literal in MSL source")
+        elif text[index].isdigit() or (text[index] == "." and index + 1 < size and text[index + 1].isdigit()):
+            # Consume preprocessing-number spelling, including C++ digit
+            # separators, without mistaking its apostrophes for char literals.
+            index += 1
+            while index < size:
+                char = text[index]
+                if char.isalnum() or char in "._":
+                    index += 1
+                elif char == "'" and index + 1 < size and (text[index + 1].isalnum() or text[index + 1] == "_"):
+                    index += 2
+                elif char in "+-" and text[index - 1] in "eEpP":
+                    index += 1
+                else:
+                    break
+        elif text[index].isalpha() or text[index] == "_":
+            start = index
+            index += 1
+            while index < size and (text[index].isalnum() or text[index] == "_"):
+                index += 1
+            if text[start:index] in ("R", "u8R", "uR", "UR", "LR") and index < size and text[index] == '"':
+                raise BatchError("Raw string literals are not supported by the MSL include checker")
+        elif text[index] == "\\" and index + 1 < size and text[index + 1] in "uU":
+            raise BatchError("Universal-character escapes outside quoted literals are not supported")
+        else:
+            index += 1
+    return "".join(view)
+
+
 def validate_source(data):
     if not data or b"\0" in data:
         raise BatchError("MSL source must be nonempty text without NUL bytes")
@@ -125,10 +199,10 @@ def validate_source(data):
         text = data.decode("utf-8")
     except UnicodeError as error:
         raise BatchError("MSL source is not UTF-8") from error
-    # The representative generator emits only these SDK headers. External
-    # include trees are not captured by this experiment and must be rejected.
-    text = text.replace("\\\r\n", "").replace("\\\n", "")
-    without_comments = re.sub(r"/\*.*?\*/|//[^\n]*", " ", text, flags=re.S)
+    # The representative generator emits only these SDK headers. This check
+    # does not establish semantic equivalence, deterministic preprocessing or
+    # a sandbox: source macros, #line and location/time builtins remain allowed.
+    without_comments = include_validation_view(text)
     # This deliberately narrow input format does not support the alternative
     # directive introducer. Reject it instead of missing an external include.
     if re.search(r"^[^\S\r\n]*%:", without_comments, re.M):

@@ -253,6 +253,73 @@ class PrivateMslBatchTests(unittest.TestCase):
             with self.subTest(data=data), self.assertRaisesRegex(batch.BatchError, "Alternative"):
                 batch.validate_source(data)
 
+    def test_comment_markers_in_quoted_literals_cannot_hide_an_external_include(self):
+        for opening, closing in ((b'"/*"', b'"*/"'), (b"'/*'", b"'*/'"),
+                                 (b'L"/*"', b'L"*/"'), (b'u8"/*"', b'u8"*/"')):
+            data = b'#define OPEN ' + opening + b'\n#include "external.h"\n#define CLOSE ' + closing + b'\n'
+            with self.subTest(opening=opening), self.assertRaisesRegex(batch.BatchError, "declared Metal SDK includes"):
+                batch.validate_source(data)
+        # Escaped quotes, slashes and numeric separators are ordinary lexical
+        # input; none of these strings is a real preprocessing directive.
+        batch.validate_source(br'''#include <metal_stdlib>
+#define URL "https://example.invalid/*not a comment*/"
+#define QUOTE "escaped \" /* still inside */ and \\"
+#define CHAR '\''
+#define WIDE L'/'
+constant uint count = 1'000;
+constant uint mask = 0xAB'CD;
+constant float scale = 1.0'5e+2;
+''')
+
+    def test_supported_line_endings_and_phase_two_splicing_do_not_hide_directives(self):
+        for newline in (b'\n', b'\r\n', b'\r'):
+            for first, second in ((b'#include <metal_stdlib>', b'#include "external.h"'),
+                                  (b'#include <metal_stdlib>', b'#inc\\' + newline + b'lude<external.h>')):
+                with self.subTest(newline=newline, second=second), self.assertRaises(batch.BatchError):
+                    batch.validate_source(first + newline + second + newline)
+            batch.validate_source(b'#inc\\' + newline + b'lude <metal_stdlib>' + newline)
+            # Splicing precedes comments: the apparent include continues //.
+            batch.validate_source(b'// continued \\' + newline + b'#include "ignored.h"' + newline + b'#include <metal_stdlib>' + newline)
+            # The block-comment delimiters themselves can be line-spliced.
+            batch.validate_source(b'/\\' + newline + b'* #include "ignored.h" *\\' + newline + b'/' + newline + b'#include<metal_stdlib>')
+
+    def test_block_comment_newlines_keep_a_following_directive_at_line_start(self):
+        for newline in (b'\n', b'\r\n', b'\r'):
+            data = b'kernel void k() {} /* comment' + newline + b' */ #include "external.h"' + newline
+            with self.subTest(newline=newline), self.assertRaisesRegex(batch.BatchError, "declared Metal SDK includes"):
+                batch.validate_source(data)
+        batch.validate_source(b'/* #include "ignored.h"\n*/ #/**/include/**/<metal_stdlib>\n// eof comment')
+
+    def test_unclassified_and_unterminated_lexical_forms_fail_explicitly(self):
+        for data, reason in ((b'/* unfinished', 'Unterminated block'),
+                             (b'"unfinished', 'Unterminated quoted'),
+                             (b"'unfinished", 'Unterminated quoted'),
+                             (b'"line\n#include <metal_stdlib>"', 'Unspliced newline'),
+                             (b'R"tag(raw\n#include "external.h"\n)tag"', 'Raw string'),
+                             (b'u8R"(raw)"', 'Raw string'),
+                             (b'#inc\\ \nlude "external.h"', 'Whitespace'),
+                             (b'#inc\\\t\r\nlude "external.h"', 'Whitespace'),
+                             (b'??=include "external.h"', 'Trigraph'),
+                             (br'#\u0069nclude "external.h"', 'Universal-character')):
+            with self.subTest(data=data), self.assertRaisesRegex(batch.BatchError, reason):
+                batch.validate_source(data)
+
+    def test_lexical_parse_view_never_rewrites_original_compiler_snapshot_bytes(self):
+        original = b'/* authored */\r\n#inc\\\r\nlude <metal_stdlib>\r\n#define TEXT "/* literal */"\r\nkernel void k() {}\r\n'
+        (self.sources / "a.metal").write_bytes(original)
+        manifest = self.make_manifest()
+        prepared = json.loads(manifest.read_text())
+        first = prepared["cases"][0]
+        self.assertEqual((self.prepared / first["source"]).read_bytes(), original)
+        self.assertEqual(first["sha256"], hashlib.sha256(original).hexdigest())
+        self.output.mkdir()
+        snapshots, _ = batch.snapshot_manifest(manifest, self.output)
+        self.assertEqual(Path(snapshots[0]["snapshot"]).read_bytes(), original)
+        self.assertEqual(snapshots[0]["sha256"], first["sha256"])
+        # These constructs remain accepted; include validation is deliberately
+        # not a context-free-source or deduplication eligibility proof.
+        batch.validate_source(b'#define CAT(a,b) a##b\n#line 7 "authored.metal"\nconstant char name[] = __FILE__;\n')
+
     def test_duplicate_json_fields_are_rejected(self):
         path = self.directory / "duplicate.json"
         path.write_text('{"math_mode":"safe","math_mode":"fast"}')

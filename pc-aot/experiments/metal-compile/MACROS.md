@@ -61,8 +61,17 @@ changes. Two floating-point observations need an additional GPU value check:
 | Float bits `0x80000000` | `-0` | `-0.0f` |
 
 The separate option getter retained both original float bit patterns. Therefore
-getter equality alone does not establish equal compiler input. These are
-observed diagnostic tokens, not yet GPU expression results or a Skyrim bug.
+getter equality alone does not establish equal compiler input. The next Mac run
+at public source `c86a082` also completed the authored GPU value probe:
+
+| Original float bits | NSNumber GPU bits | NSString GPU bits |
+| --- | --- | --- |
+| `3f800001` | `3f800000` | `3f800001` |
+| `80000000` | `00000000` | `80000000` |
+
+Both routes passed the direct-literal, buffer-input and unwritten-guard controls.
+This establishes a difference for these two authored cases on that Paravirtual
+Mac device. It does not establish a Skyrim bug or all-type equivalence.
 Replacing NSNumber with more precise strings could change existing semantics;
 do not automatically make that a production precision fix. The original native
 report and compiler diagnostics remain under
@@ -73,8 +82,9 @@ compute readback. It keeps original bits, numeric getters, diagnostic tokens and
 GPU bits in separate fields; fixed literal, buffer-input and unwritten-guard
 controls check that the expected work ran. Differences between NSNumber and
 NSString are observations, not an automatic failure or a production fix. It
-uses no Metal 4 API. Its 14 portable controls passed; actual Apple execution is
-pending.
+uses no Metal 4 API. Its 14 portable controls and actual Apple execution passed;
+the latter evidence is retained in
+`local/metal-compile/mac-run-04/evidence/macro-values/`.
 
 ```sh
 python3 experiments/metal-compile/macro_value.py --output local/metal-compile/macro-value-new --budget 90 --timeout 30

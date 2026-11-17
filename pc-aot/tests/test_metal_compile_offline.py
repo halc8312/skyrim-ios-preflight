@@ -373,6 +373,53 @@ class MetalOfflineControlTests(unittest.TestCase):
         self.assertEqual(report, json.loads((self.output / "result.json").read_text()))
         self.assertIn("SYNTHETIC", (self.output / report["commands"][-2]["stdout"]).read_text())
 
+    def test_mac_symlink_driver_names_survive_discovery_probes_and_linking(self):
+        sdk = self.directory / "synthetic SDK"
+        sdk.mkdir()
+        targets = {}
+        for name, target_name in (("metal", "metal-driver"), ("metallib", "air-lld")):
+            target = self.bin / target_name
+            target.write_bytes(("synthetic implementation bytes: " + target_name).encode())
+            targets[name] = target
+            try:
+                (self.bin / name).symlink_to(target)
+            except (OSError, NotImplementedError):
+                self.skipTest("host does not permit symbolic links")
+        launches = []
+
+        def child(command, **kwargs):
+            launches.append(command)
+            self.assertIs(kwargs["shell"], False)
+            if command[0] == "synthetic-xcrun":
+                value = sdk if "--show-sdk-path" in command else self.bin / command[-1]
+                kwargs["stdout"].write((str(value) + "\n").encode())
+                return Mock(pid=12345, returncode=0, wait=Mock(return_value=0))
+            # The driver spelling is passed to a real synthetic child, never an
+            # Apple executable. Renaming the invocation is an explicit failure.
+            name = Path(command[0]).name
+            self.assertIn(name, ("metal", "metallib"))
+            return self.original_popen([sys.executable, str(self.shim), name, *command[1:]], **kwargs)
+
+        args = self.arguments("--target", "macos")
+        args.tools = None
+        with patch.object(offline.platform, "system", return_value="Darwin"), \
+                patch.object(offline.shutil, "which", return_value="synthetic-xcrun"), \
+                patch.dict(os.environ, {"OFFLINE_SYNTHETIC_MODE": "success"}), \
+                patch.object(offline.subprocess, "Popen", side_effect=child):
+            report = offline.run_experiment(args)
+        self.assertEqual(report["status"], "passed")
+        for name in ("metal", "metallib"):
+            identity = report["tools"][name]
+            self.assertEqual(identity["path"], str(self.bin / name))
+            self.assertEqual(identity["resolved_path"], str(targets[name]))
+            self.assertEqual(identity["sha256"], hashlib.sha256(targets[name].read_bytes()).hexdigest())
+            self.assertEqual(identity["bytes"], targets[name].stat().st_size)
+            self.assertIn([str(self.bin / name), "--version"], launches)
+        link = next(event for event in report["commands"] if event["label"] == "link-01")
+        self.assertEqual(link["argv"][0], str(self.bin / "metallib"))
+        self.assertNotEqual(link["argv"][0], str(targets["metallib"]))
+        self.assertEqual(report, json.loads((self.output / "result.json").read_text(encoding="utf-8")))
+
     def test_budget_exhausted_during_inputs_starts_no_tool_and_keeps_snapshot(self):
         clock = [0.0]
         original = offline.file_info
@@ -545,6 +592,27 @@ class MetalOfflineArgumentsTests(unittest.TestCase):
                     self.assertEqual(calls, [["/usr/bin/xcrun", "--sdk", expected, "--show-sdk-path"],
                                              ["/usr/bin/xcrun", "--sdk", expected, "--find", "metal"],
                                              ["/usr/bin/xcrun", "--sdk", expected, "--find", "metallib"]])
+
+    def test_mac_rejects_relative_xcrun_paths_before_launching_a_tool(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            sdk = directory / "SDK"
+            sdk.mkdir()
+            for relative_result in ("--show-sdk-path", "metal"):
+                calls = []
+
+                def query(command, *unused):
+                    calls.append(command)
+                    value = "relative/path" if command[-1] == relative_result else str(sdk)
+                    return {"returncode": 0, "timed_out": False}, value + "\n", ""
+
+                with self.subTest(relative_result=relative_result), \
+                        patch.object(offline.shutil, "which", return_value="/usr/bin/xcrun"), \
+                        patch.object(offline, "run_command", side_effect=query), \
+                        self.assertRaisesRegex(offline.TrialError, "non-absolute"):
+                    offline.resolve_tools(None, "macos", "Darwin", directory, {}, {}, 1)
+                self.assertEqual(len(calls), 1 if relative_result == "--show-sdk-path" else 2)
+                self.assertTrue(all(command[0] == "/usr/bin/xcrun" for command in calls))
 
 
 if __name__ == "__main__":

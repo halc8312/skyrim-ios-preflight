@@ -289,6 +289,8 @@ static NSArray* words(const uint32_t* data, size_t count) {
 
 static void runGPU(id<MTLDevice> device, id<MTLCommandQueue> queue,
                    id<MTLLibrary> library, NSMutableDictionary* sample) {
+    // Loading a valid container does not establish that entry points survived linking.
+    sample[@"library_function_names"] = [library.functionNames sortedArrayUsingSelector:@selector(compare:)] ?: @[];
     NSError* error = nil;
     auto start = Clock::now();
     id<MTLFunction> vertex = [library newFunctionWithName:@"probe_vertex"];

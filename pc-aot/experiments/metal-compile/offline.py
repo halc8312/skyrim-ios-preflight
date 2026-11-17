@@ -308,9 +308,14 @@ def resolve_tools(explicit, target, system, output, report, env, timeout, deadli
             value = stdout.strip()
             if not value or "\n" in value:
                 raise TrialError("xcrun returned an empty or ambiguous path")
-            return Path(value).resolve()
+            path = Path(value)
+            if not path.is_absolute():
+                raise TrialError("xcrun returned a non-absolute path")
+            # Driver selection can depend on argv[0]: metallib may be a
+            # symlink to air-lld. Preserve xcrun's spelling when launching it.
+            return path
 
-        sdk_path = query("--show-sdk-path")
+        sdk_path = query("--show-sdk-path").resolve()
         if not sdk_path.is_dir():
             raise TrialError(f"Apple SDK directory is missing: {sdk_path}")
         if explicit is None:
@@ -385,7 +390,9 @@ def run_experiment(args):
         paths, sdk_path = resolve_tools(args.tools, args.target, system, output, report, env, args.timeout, deadline)
         report["tools"] = {}
         for name, tool in paths.items():
-            info = file_info(tool)
+            resolved_tool = tool.resolve(strict=True)
+            info = file_info(resolved_tool)
+            info.update(path=str(tool), resolved_path=str(resolved_tool))
             event, stdout, stderr = run_command([tool, "--version"], name + "-version", output, report, env, args.timeout, deadline)
             info["version_returncode"] = event["returncode"]
             info["version_timed_out"] = event["timed_out"]

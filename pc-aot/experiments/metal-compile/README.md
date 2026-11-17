@@ -134,6 +134,15 @@ not a capture of the game's effective MoltenVK options. No GPU output or iPhone
 performance result is established. Duplicate source files were intentionally
 retained; byte-identical source alone does not imply identical artifact bytes.
 
+The include checker uses a narrow lexical view that preserves quoted comment
+markers and line boundaries, including CR/CRLF and standard line splicing.
+Raw strings, trigraphs and nonstandard whitespace splices are explicitly
+unsupported; the original compiled bytes remain unchanged. This fixes two
+authored cases that the prior comment regex missed. It is not a complete C++
+preprocessor or a containment boundary. Location/time macros and `#line` still
+make identical source/profile hashes insufficient for semantic reuse, so no
+duplicate-compilation skipping is enabled.
+
 ## Request lifetime models
 
 `request_lifetime.h` is a separate portable model, not connected to the runtime
@@ -249,6 +258,20 @@ linking. The runner now preserves the reported executable spelling, with a
 symlink regression control. The original failed archive evidence is retained in
 `local/metal-compile/mac-run-03/`; corrected Apple execution remains pending.
 
+Run 4 at public source `c86a082` passed all 177 controls, including Darwin TSan.
+The two-float macro probe completed actual compute readback and confirmed both
+NSNumber/string differences above. Legacy synchronous and asynchronous source
+routes also completed matching first-iteration render/compute outputs. However,
+offline libraries loaded without exposing the expected functions: the archive
+fixture stopped before harvesting, and runtime comparison stopped on its first
+offline vertex lookup. Neither full comparison passed. The linker invocation
+used resolved `air-lld` rather than `metallib`. Actual symbol inspection found the
+entry points in AIR and none in the 92-byte libraries. The runner now preserves
+the invocation name and records the resolved binary separately; a symlink
+regression covers discovery, version probes and linking. Corrected Mac execution
+remains pending. Original evidence and both installed pipeline-script manuals
+are retained in `local/metal-compile/mac-run-04/`.
+
 ## Binary archive boundary
 
 `archive.py` tests two authored compute kernels through ordinary Metal APIs,
@@ -291,6 +314,24 @@ configuration script, so script extraction remains unsupported for that trial.
 Its original inputs were unchanged; evidence is retained in
 `local/metal-compile/archive-windows-packed-render-ios18-apple9-01/`. Do not treat
 offline archive extraction as a public runtime MTLLibrary export API.
+
+Metal 4's direct archive lookup remains a separate unverified boundary. The
+public [`MTL4LibraryFunctionDescriptor.library`](https://developer.apple.com/documentation/metal/mtl4libraryfunctiondescriptor/library)
+and function-name descriptions do not establish a `library=nil` render/compute
+lookup contract. The explicit unique-name rule on
+[`MTL4BinaryFunctionDescriptor.name`](https://developer.apple.com/documentation/metal/mtl4binaryfunctiondescriptor/name)
+belongs to binary-function lookup and cannot be transferred to pipeline lookup.
+The next capable-device test should compare separate restore processes with a
+known IR library, with no application library/compiler factory calls, and with
+an unrecorded function name. Call archive factories directly so fallback cannot
+hide a miss. If the library-free case passes exact readbacks, then test two
+different libraries with the same entry-point names before relying on name
+identity. This would establish only the observed OS/GPU/descriptor case, not
+absence of internal library work or a universally portable archive key.
+
+The installed Apple `metal4-pipelines-script.5` manual says a missing or empty
+script `library` selects the library passed on the `metal-nt` command line.
+That offline-script rule does not establish runtime `library=nil` behavior.
 
 ```sh
 python -m unittest discover -s tests -p 'test_metal_compile_*.py' -v

@@ -1,5 +1,7 @@
 # 開発状況
 
+**夜間検証run4：全177検査と小数macroの実GPU比較に成功。offline linkerの呼出名を修正して再検証へ。** [実行run4](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcadc2d133a39c4a125ace)は公開`c86a082`、1分51秒。Darwin TSanを含む177検査、iOS object、getter、macro値のGPU readbackが成功した。NSNumberでは元bits `3f800001`→GPU `3f800000`、`80000000`→`00000000`、精密なNSStringでは元bitsを保持した。これは自作2ケースの差であり、ゲームの不具合や精度設定変更の根拠とはしない。legacyの同期／非同期source経路は初回の描画・compute一致を確認したが、offline libraryの関数取得で停止し、全比較とarchive検査は未合格。原因は`metallib`をsymlink実体`air-lld`名で呼び、関数を持たない92 bytesを生成したrunner不備。AIRの関数残存とlibraryのsymbol不在を実ツールで確認し、呼出名保持＋別欄の実体hashへ修正した。原artifactは`local/metal-compile/mac-run-04/`へ保持。無料枠286/500使用、残214分。アプリbuild・配布・製品変更なし。
+
 **夜間検証run3：Macの151検査とmacro token観測は成功。archiveはリンク方法の不備を修正し再検証へ。** [実行run3](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afca654d133a39c4a125829)は公開`5539d19`、Xcode26.6／SDK26.5。Darwin TSanを含む全151検査、iOS object、getter、offline生成が成功した。NSNumberのfloat bits `3f800001`がtoken `1`、負のゼロが`-0`へ展開された一方、NSString／CLIは明示文字列を保持した。GPU値・ゲームへの影響は未確認なので、自動的な精度修正はしない。archive fixtureはclang++のsymlinkをclangへ解決してC++ runtime linkを失うrunner不備で失敗。呼出名を保持する修正と実symlink回帰検査17件を通し、原失敗artifactを`local/metal-compile/mac-run-03/`へ保持した。独立unitの後続macro検査は失敗に巻き込まれず実行できた。次は修正版archiveと明示legacy-onlyのsource／offline readbackを確認する。無料枠284/500使用、残216分。アプリbuild・配布・製品設定変更はない。
 
 実データの追加SPIR-V変換試作は作業用AIの自動審査でサイバーセキュリティ懸念として停止されたため未実施。既存32件の読取り検査と自作Metal検査は別の完了済み範囲として保持する。先の統合検査のheredoc抽出不備も修正し、失敗ログは保持している。
