@@ -612,6 +612,134 @@ static void launchUnwindBoundaries() {
     launchFailureWhileCallbackActive();
 }
 
+// Test-local retirement mailbox. It models no Metal task release/join contract.
+struct HandoffControl {
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::thread::id producer;
+    bool callbackReturned = false, joinEntered = false, producerExited = false, abort = false;
+    std::exception_ptr failure;
+    std::atomic<int> wrongThreadJoins{0}, joins{0};
+    void stop() { std::lock_guard<std::mutex> lock(mutex); abort = true; changed.notify_all(); }
+};
+struct JoinTask : Counted {
+    std::shared_ptr<HandoffControl> control;
+    JoinTask(std::atomic<int>& alive, std::shared_ptr<HandoffControl> value) : Counted(alive), control(std::move(value)) {}
+    void joinOutsideProducer() {
+        std::unique_lock<std::mutex> lock(control->mutex);
+        if (std::this_thread::get_id() == control->producer) {
+            ++control->wrongThreadJoins;
+            throw std::runtime_error("authored join attempted on callback/producer thread");
+        }
+        ++control->joins;
+        control->joinEntered = true;
+        control->changed.notify_all();
+        check(control->changed.wait_for(lock, std::chrono::seconds(2), [&] {
+            return control->producerExited || control->abort;
+        }) && control->producerExited, "waiter could not join after callback returned");
+    }
+};
+using HandoffBridge = metal_compile_experiment::OwnerRetirement<Payload, std::shared_ptr<JoinTask>>;
+struct HandoffThreadScope {
+    std::shared_ptr<HandoffControl> control;
+    std::thread& thread;
+    ~HandoffThreadScope() { control->stop(); if (thread.joinable()) thread.join(); }
+};
+
+static void retirementHandoff(bool early) {
+    std::atomic<int> owners{0}, tasks{0}, payloads{0}, notifications{0}, handoffs{0};
+    auto control = std::make_shared<HandoffControl>();
+    auto owner = std::make_unique<Owner>(owners);
+    auto task = std::make_shared<JoinTask>(tasks, control);
+    std::shared_ptr<JoinTask> mailbox;
+    bool outsideBridgeMutex = false;
+    std::shared_ptr<HandoffBridge> bridge;
+    bridge = HandoffBridge::create([&](Payload payload) {
+        owner->result = std::move(payload);
+        ++notifications;
+    }, [&](std::shared_ptr<JoinTask> retiredTask) {
+        // This re-enters the bridge on the retirement caller itself. A bridge
+        // lock held across Retire would deadlock and fail the process budget.
+        outsideBridgeMutex = bridge->retired();
+        std::lock_guard<std::mutex> lock(control->mutex);
+        mailbox = std::move(retiredTask); // No join or owner destruction here.
+        ++handoffs;
+        control->changed.notify_all();
+    });
+    bridge->requestDestroy(); // Logical timeout is not cancellation.
+    if (!early) bridge->finishLaunch(std::move(task));
+    check(owners == 1 && tasks == 1 && notifications == 0 && handoffs == 0,
+          "pending logical timeout lost resources");
+    std::thread producer;
+    HandoffThreadScope joined{control, producer};
+    producer = std::thread([&] {
+        try {
+            { std::lock_guard<std::mutex> lock(control->mutex); control->producer = std::this_thread::get_id(); }
+            bridge->callback(Payload{std::make_shared<Counted>(payloads), nullptr});
+            std::unique_lock<std::mutex> lock(control->mutex);
+            control->callbackReturned = true;
+            control->changed.notify_all();
+            // The waiter enters its fake task join while this producer is still
+            // alive. It cannot finish until this callback thread exits the gate.
+            check(control->changed.wait_for(lock, std::chrono::seconds(2), [&] {
+                return control->joinEntered || control->abort;
+            }) && control->joinEntered, "cleanup context never entered task join");
+            control->producerExited = true;
+            control->changed.notify_all();
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(control->mutex);
+            control->failure = std::current_exception();
+            control->abort = true;
+            control->changed.notify_all();
+        }
+    });
+    if (early) {
+        {
+            std::unique_lock<std::mutex> lock(control->mutex);
+            check(control->changed.wait_for(lock, std::chrono::seconds(2), [&] {
+                return control->callbackReturned || control->abort;
+            }) && control->callbackReturned, "early notification did not return before launch adoption");
+        }
+        check(notifications == 1 && handoffs == 0 && owners == 1 && tasks == 1,
+              "early callback delayed readiness or retired before task adoption");
+        bridge->finishLaunch(std::move(task));
+    }
+    std::shared_ptr<JoinTask> cleanupTask;
+    {
+        std::unique_lock<std::mutex> lock(control->mutex);
+        check(control->changed.wait_for(lock, std::chrono::seconds(2), [&] {
+            return bool(mailbox) || control->abort;
+        }) && bool(mailbox), "retirement did not hand off an owned task");
+        cleanupTask = std::move(mailbox);
+    }
+    check(outsideBridgeMutex && owners == 1 && tasks == 1, "handoff released resources before cleanup");
+    cleanupTask->joinOutsideProducer(); // Neither bridge nor mailbox mutex held.
+    producer.join();
+    if (control->failure) std::rethrow_exception(control->failure);
+    cleanupTask.reset();
+    owner.reset();
+    bridge.reset();
+    check(owners == 0 && tasks == 0 && payloads == 0 && notifications == 1 && handoffs == 1 &&
+          control->joins == 1 && control->wrongThreadJoins == 0 && control->callbackReturned,
+          "retirement handoff leaked resources or joined on the producer");
+}
+
+static void retirementHandoffBoundaries() {
+    retirementHandoff(false);
+    retirementHandoff(true);
+    std::atomic<int> tasks{0};
+    auto control = std::make_shared<HandoffControl>();
+    control->producer = std::this_thread::get_id();
+    {
+        JoinTask task(tasks, control);
+        bool rejected = false;
+        try { task.joinOutsideProducer(); } catch (const std::runtime_error&) { rejected = true; }
+        check(rejected && control->wrongThreadJoins == 1 && control->joins == 0,
+              "wrong-placement control did not reject callback-thread join");
+    }
+    check(tasks == 0, "wrong-placement control leaked its fake task");
+}
+
 struct UnsafeOwner { volatile int returnedTask = 0; };
 #if defined(__GNUC__)
 __attribute__((noinline))
@@ -635,8 +763,14 @@ int main(int argc, char** argv) {
         return 99; // Reaching here means ASan did not establish the intended negative control.
     }
     const bool launchOnly = argc == 2 && std::strcmp(argv[1], "--launch-unwind-only") == 0;
-    if (argc != 1 && !launchOnly) return 2;
+    const bool handoffOnly = argc == 2 && std::strcmp(argv[1], "--retirement-handoff-only") == 0;
+    if (argc != 1 && !launchOnly && !handoffOnly) return 2;
     try {
+        if (handoffOnly) {
+            retirementHandoffBoundaries();
+            std::puts("METAL_RETIREMENT_HANDOFF cases=2 wrong_thread_controls=1 metal_api_verified=0 objc_runtime_verified=0");
+            return 0;
+        }
         if (launchOnly) {
             launchUnwindBoundaries();
             std::puts("METAL_REQUEST_LAUNCH_UNWIND cases=5 metal_api_verified=0 objc_runtime_verified=0");

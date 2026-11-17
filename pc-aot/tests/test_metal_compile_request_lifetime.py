@@ -17,6 +17,7 @@ SPEC.loader.exec_module(runtime)
 CXX = shutil.which(os.environ.get("CXX", "c++"))
 EXPECTED = "METAL_REQUEST_LIFETIME barrier_cases=9 owner_hold_cases=9 launch_unwind_cases=5 concurrent_iterations_each=300 metal_api_verified=0"
 EXPECTED_LAUNCH = "METAL_REQUEST_LAUNCH_UNWIND cases=5 metal_api_verified=0 objc_runtime_verified=0"
+EXPECTED_HANDOFF = "METAL_RETIREMENT_HANDOFF cases=2 wrong_thread_controls=1 metal_api_verified=0 objc_runtime_verified=0"
 TOTAL_BUDGET_SECONDS = 180
 
 
@@ -62,6 +63,7 @@ class MetalRequestLifetimeTests(unittest.TestCase):
                       "metal_api_verified": False, "objc_runtime_verified": False,
                       "gpu_execution_verified": False, "inputs": {}, "tests": {},
                       "budget_seconds": TOTAL_BUDGET_SECONDS, "tsan_model_verified": False,
+                      "retirement_handoff_tsan_verified": False,
                       "tsan_scope": "Darwin-only safe authored models; not Metal callback or driver race validation"}
         cls.env = os.environ.copy()
         for name in ("SDKROOT", "MACOSX_DEPLOYMENT_TARGET", "IPHONEOS_DEPLOYMENT_TARGET"):
@@ -156,6 +158,24 @@ class MetalRequestLifetimeTests(unittest.TestCase):
                 "Authored C++ provider null/throw before or after notification and concurrent notification; "
                 "not Objective-C unwinding, Metal task release, cancellation, or production integration.")
 
+    def test_retirement_handoff_host_protocol_normal_and_sanitized(self):
+        with self.case("retirement_handoff_host_protocol"):
+            arguments = ("--retirement-handoff-only",)
+            self.verify_positive(self.build("handoff-normal"), "handoff-normal",
+                                 arguments=arguments, expected=EXPECTED_HANDOFF)
+            env = self.env.copy()
+            env["ASAN_OPTIONS"] = "halt_on_error=1:abort_on_error=0:detect_leaks=" + (
+                "0" if platform.system() == "Darwin" else "1")
+            env["UBSAN_OPTIONS"] = "halt_on_error=1:print_stacktrace=1"
+            self.verify_positive(self.build("handoff-asan", "address,undefined"), "handoff-asan", env,
+                                 arguments=arguments, expected=EXPECTED_HANDOFF)
+            self.report["retirement_handoff_host_protocol_verified"] = True
+            self.report["retirement_handoff_cases"] = 2
+            self.report["wrong_thread_join_controls"] = 1
+            self.report["retirement_handoff_scope"] = (
+                "Authored fake task handoff and joining outside producer/callback/bridge lock; "
+                "not Objective-C or Metal task wait/release, actual cancellation, or production integration.")
+
     def test_asan_model_and_explicit_unsafe_negative_control(self):
         with self.case("asan_ubsan_and_authored_negative"):
             binary = self.build("asan", "address,undefined")
@@ -184,6 +204,9 @@ class MetalRequestLifetimeTests(unittest.TestCase):
             # Both models and all 300 concurrent iterations each use the same
             # exact output/stderr checks. The authored unsafe control is ASan-only.
             self.verify_positive(binary, "tsan-safe", env)
+            self.verify_positive(binary, "tsan-handoff", env,
+                                 arguments=("--retirement-handoff-only",), expected=EXPECTED_HANDOFF)
+            self.report["retirement_handoff_tsan_verified"] = True
             self.report["tsan_model_verified"] = True
 
 

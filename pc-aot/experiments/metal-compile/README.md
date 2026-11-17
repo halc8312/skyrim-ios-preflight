@@ -199,6 +199,13 @@ duplicate-compilation skipping is enabled.
 
 ## Request lifetime models
 
+`--retirement-handoff-only` adds two CPU-only cases and one wrong-thread join
+control. An owned fake task is transferred to a waiter before joining; early
+notification stays immediate, and a logical destruction request does not cancel
+pending work. WSL normal/ASan/UBSan runs passed. The dedicated Python control also
+requests the new mode under Darwin TSan, independently of the existing default
+models. This is a proposed ownership protocol test, not Metal task execution.
+
 `request_lifetime.h` is a separate portable model, not connected to the runtime
 fixture or production. It waits for both factory return and callback receipt
 before notifying an owner exactly once. That matters when notification can

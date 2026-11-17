@@ -100,6 +100,10 @@ update; the rejected GPU admission changes remain excluded.
   Apple's [task API](https://developer.apple.com/documentation/metal/mtl4compilertask)
   documents a blocking wait; it does not prove callback/release ordering for this
   adapter. The next hardware check should use the existing ARC comparison first.
+  The separate `--retirement-handoff-only` CPU model now covers early/late callback
+  handoff to a waiter and rejects a join on the producer thread. WSL normal and
+  ASan/UBSan controls passed. It uses fake tasks and does not supply the missing
+  Metal 4 wait/release contract; the new mode's Mac/TSan check is still pending.
 
 ## Failure routing and diagnostics
 
