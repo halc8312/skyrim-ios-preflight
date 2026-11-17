@@ -155,3 +155,22 @@ update; the rejected GPU admission changes remain excluded.
    and an A/B plan preserving options, cache state, role/source timing, failures,
    memory, and thermal observations. No stutter or rendering improvement is established
    until comparable physical-device results exist.
+
+## Practical next device check
+
+On a Metal 4 capable Mac, the existing `runtime.py --async-library` comparison
+can exercise the actual task and legacy PSOs. On iPhone, the Python/CLI runner
+cannot simply be installed: a small signed UIKit host is still needed. That host
+should call the same authored comparison after the UI is responsive, retain the
+per-request objects, and save the resulting JSON in its own sandbox. Keep its
+bundle and storage separate from Skyrim, with no game files or save access.
+
+The iPhone check must record device capability and OS before submission, preserve
+unsupported/failure outcomes, and verify the legacy and Metal 4 routes against
+the same prescribed GPU output. SDK object compilation alone does not satisfy
+this gate. Compare timing only after controlling source/options, request order,
+cache history and thermal state; a faster warm run is not proof of a new backend
+speedup. Do not turn a blocking task join into a timeout or cancellation claim.
+
+This host is a pending implementation, not an existing installable artifact.
+It was not built or installed during the overnight host experiments.
