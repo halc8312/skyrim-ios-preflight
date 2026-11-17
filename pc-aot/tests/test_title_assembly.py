@@ -1,11 +1,16 @@
 """Game-free host/guest provenance checks for the self-build packaging route."""
 import hashlib
 import importlib.util
+import contextlib
+import io
 import json
 from pathlib import Path
+import plistlib
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("title_assembly", ROOT / "scripts/assemble_title_ipa.py")
@@ -93,6 +98,49 @@ class ArtifactBindingTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 self.check()
             self.host_result[key] = old
+
+
+class PackageIdentityTests(unittest.TestCase):
+    def test_packages_current_app_build_and_rejects_other_versions(self):
+        info = plistlib.loads((ROOT / "ios/runtime-port/Info.plist.in").read_bytes())
+        current = str(info["CFBundleVersion"])
+        info.update(CFBundleExecutable="SkyrimIOS", CFBundleIdentifier="org.skyrimios.pc2011")
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            game = base / "synthetic-input"
+            game.write_bytes(b"authored input fixture")
+            framework = base / "SkyrimGuest.framework"
+            framework.mkdir()
+            (framework / "SkyrimGuest").write_bytes(b"authored guest fixture")
+            (framework / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "SkyrimGuest"}))
+            result = base / "guest-result.json"
+            result.write_text(json.dumps({"framework": str(framework), "strict_link_succeeded": True,
+                                          "signed": False, "sha256": assembly.sha(framework / "SkyrimGuest")}))
+            for version in (current, str(int(current) - 1), str(int(current) + 1)):
+                with self.subTest(version=version):
+                    archive = base / (version + ".zip")
+                    output = base / (version + ".ipa")
+                    app_info = dict(info, CFBundleVersion=version)
+                    with zipfile.ZipFile(archive, "w") as package:
+                        package.writestr("SkyrimIOS.app/Info.plist", plistlib.dumps(app_info))
+                        package.writestr("SkyrimIOS.app/SkyrimIOS", b"authored host fixture")
+                    argv = ["assemble_title_ipa.py", "--host-zip", str(archive),
+                            "--host-sha256", assembly.sha(archive), "--guest-result", str(result),
+                            "--input", str(game), "--input-sha256", assembly.sha(game),
+                            "--output", str(output)]
+                    with patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
+                        if version != current:
+                            with self.assertRaisesRegex(ValueError, "Public-host identity mismatch"):
+                                assembly.main()
+                            self.assertFalse(output.exists())
+                            continue
+                        assembly.main()
+                    with zipfile.ZipFile(output) as package:
+                        actual = plistlib.loads(package.read(assembly.APP + "Info.plist"))
+                        self.assertEqual(actual["CFBundleVersion"], current)
+                        self.assertEqual(actual["PcGuestExpectedInputSHA256"], assembly.sha(game))
+                        self.assertEqual(package.read(assembly.APP + "Frameworks/SkyrimGuest.framework/SkyrimGuest"),
+                                         (framework / "SkyrimGuest").read_bytes())
 
 
 if __name__ == "__main__":

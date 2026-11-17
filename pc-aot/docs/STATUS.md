@@ -1,8 +1,10 @@
 # 開発状況
 
-**2026-11-17：build14の比較経路を製品コードへ統合。** 実Metalで検証済みのstate別生成調整を、同じアプリの起動時設定「描画の準備待ちを分ける」に接続した。既定OFF、既存5設定のIDと保存値は維持。OFFは従来のshader組ごとのmutex、ONはstate全体とrender-passが同一の要求だけを合流する。ready-hitには追加clock／待機を入れず、Compute経路・guest・メモリ順序・画質は変更しない。新しい待ちは`graphics_state_wait`として従来の`graphics_compile_wait`と分離し、診断送受信／解析器も対応。同一binaryのOFF／ON native検査、ASan/UBSan、TSan、実graphics／manager全translation unitと従来adapterの回帰検査に成功。独立reviewにblocking指摘はなく、Apple統合ビルド・署名・iPhone比較はこの時点では未完了。両手ボタンも次のアプリに含める。
+**2026-11-17：build14のApple検証・署名・本人向けOTA準備を完了。** 実Metalで検証済みのstate別生成調整を、同じアプリの起動時設定「描画の準備待ちを分ける」に接続した。既定OFF、既存5設定のIDと保存値は維持。OFFは従来のshader組ごとのmutex、ONはstate全体とrender-passが同一の要求だけを合流する。ready-hitには追加clock／待機を入れず、Compute経路・guest・メモリ順序・画質は変更しない。新しい待ちは`graphics_state_wait`として従来の`graphics_compile_wait`と分離し、診断送受信／解析器も対応。同一binaryのOFF／ON native検査、ASan/UBSan、TSan、実graphics／manager全translation unitと従来adapterの回帰検査に成功。独立reviewにblocking指摘はない。両手ボタンも今回のアプリに含むが、iPhoneでの起動・入力・性能比較は未確認。
 
-共通reader/writerの部分解析から、元guestのCAS／Sleep呼出しを観測する独立試作を進めている。ゲーム内部ロックの置換やnative overrideは行わない。最終guest identityとの結合・thread／activity寿命・数値sinkの統合確認が残るため、build14にはまだ入れない。
+[Mac run37](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc250fd133a39c4a121e84)は公開`1920180e71177b62eee06c21e3b226c26d67be77`で成功（6分43秒）。211ケース中206成功・環境依存5skip・失敗0、同じproduction binaryのOFF／ONで実Metal8ケースのreadbackが一致。既存guestと共有ABI3headerの一致を確認してローカル組立し、署名済み58,724,457 bytesの暗号検証・既存profileのApple chain／登録端末／AppID対応・非公開HTTPSの全転送hashを確認した。旧版・他routeを保持し、インストール操作は本人のiPhoneで行う。初回の組立拒否はhelperのbuild13固定をbuild14へ修正し、別版拒否を含む7検査で確認した。原logは保持。無料枠273→279/500（残221分）。build13からはcache namespaceが変わるので、新版の初回だけで優劣を判断せず、build14内で再起動を挟んでOFF／ONを比較する。性能採用とゴール③は未完了。
+
+共通reader/writerの部分解析から、元guestのCAS／Sleep呼出しを観測する独立試作を完成。最初のCAS失敗後から取得成功後までの区間と実際のSleep引数を記録し、元の生成関数との比較31ケースがASan/UBSanで成功した。CPU状態・フラグ・x87／SIMD・stack／TEB／lock結果を比較し、時計取得は競合したepisodeの開始／完了だけに抑えた。最後のSleep差分も独立review済み。ゲーム内部ロックの置換やnative overrideは行わず、最終guest identityとの結合・thread／activity寿命・有界数値sink・Apple／実機負荷確認が残るため、build14には入れない。
 
 診断の事前送信では、既存受信bundle内に置かれた解析フォルダが検証拒否の原因だった。解析3ファイルをhash維持で別のprivate解析領域へ移し、元受信ログを保持したまま復旧。新しい数値categoryの非公開HTTPS受信・再送・認証拒否・内容競合拒否を合成データで確認した。これは実機計測結果ではない。
 

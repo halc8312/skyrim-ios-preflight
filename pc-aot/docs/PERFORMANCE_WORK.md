@@ -12,6 +12,14 @@
 
 PC側では新しい記録／解析／受信／設定を29ケース、metricsとmobile coreをGCC ASan/UBSanで確認。Linux clang18 sanitizerはruntime archive欠落でリンクできず、成功扱いにしていない。送信fixtureに追加した2番目のcontextへの期待値を更新し、拒否条件は維持した。Foundation／実Metal／iPhoneOS統合検査はApple側で行う。受信bundle内の解析directoryを別private領域へhash維持で移動し、503拒否を解消した。合成build14の送受信は実プレイ集計へ混ぜない。
 
+**Apple統合検証。** [Mac run37](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc250fd133a39c4a121e84)は公開`1920180e71177b62eee06c21e3b226c26d67be77`で成功（M2、6分43秒）。56回のunittest実行／211ケースは206成功・環境依存5skip・失敗0。同じproduction binaryのOFF／ONで実Metalの8ケースがbit一致し、実MSL失敗のcached-null、例外再試行、ON時の公開失敗cleanupを確認。fixture保有PSOはOFF9作成／9解放、ON10／10、live0。native ASan/UBSan・TSanとiPhoneOS hostリンクも成功した。warning526行はrun36と同じ分類・件数、`-fno-threadsafe-statics`はlogにない。実iPhone描画と性能は未検証。無料枠は273→279/500（残221分）、有料変更なし。
+
+公開hostのSHA256とsource commit、Infoのbuild14、共有ABI3headerの一致を確認した。ローカル組立の最初の試行はhelperがbuild13だけを許可していたため拒否され、原logを保持。build14へ更新し、現行Infoの版を組み立てられ、前後の別版を拒否する実package回帰を加えて7ケースに成功した。この変更はPCの組立helperと検査のみで、Macで完成したアプリbinaryは変更していない。
+
+署名済みbuild14は58,724,457 bytes、SHA256 `396c78c68ff0d92edb83aa09fa3ed44a66ba7f96f53816007de58ebe896c8ba1`。既存profileのApple chain／AppID／登録端末、2 images／39,458 code pages／4 resourcesの暗号検証を確認。非公開OTAでmanifestと全IPA転送hash、認証なし404、既存他route維持・Funnel無効を検査し、日英の携帯幅ページも確認した。端末OSによる署名受理・インストール・ゲーム実行は未確認。ゲーム内保存→完全終了→既存アプリを削除せず更新し、新しい比較設定だけをOFF／ONで切り替えて再起動後に通常プレイを比較する。既存5設定と画質は固定し、正確な戦闘再現を条件にしない。初回cache構築・inactive・セーブ・ログ欠落は解析で区別する。
+
+**privateのguest観測試作。** 既存host importの処理結果を利用し、元のCAS／Increment／Sleepとguest命令列を保持した。31ケースのASan/UBSan比較ではCPU全体・guest flags・x87／SIMD・stack／TEB／lock結果とSleep回数が一致。通常取得／再帰は追加clock0、完了した競合episodeは開始と完了の2回のみ。Sleepは既存event pump後に実際に読み取った引数を渡し、pumpが引数を変えるfixtureも確認した。記録区間は最初の失敗後から成功後のhookまでで、取得処理全体・CPU時間・owner公開時刻とは異なる。native浮動小数状態は丸めモードだけを確認しており、全fenv同値、ARM ordering、実UIKit、実機負荷は証明していない。最終4ファイルのhashとrun-05対応を独立reviewで確認。署名後の実guest結合、単一の実装TUへの固定profile設定、同thread寿命／activity接続、CAS成功後にも待ち・allocation・I/Oを行わない数値sinkを組み込むまでは製品経路へ入れない。
+
 ## 2026-11-17 Apple検証とホスト側の独立試作
 
 **ホスト2試作のApple追加検証。** [専用run2](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc103c95b45c83b9742a7f)（公開8e7c3b7、M2、Xcode26.6／macOS SDK26.5、57秒）で通常12ケースとTSan2ケースが成功、skip0。実os_unfair_lockの待機／解除と共有stateの整合、未競合clock0、QoS無効時のAPI／log0と有効時の要求／readback、errno・ログ上限、完全CS translation unitを確認した。通常の人工競合3回のwall／CPU合計は従来136.016／83.081416 ms、blocking版138.603／0.024416 ms。CPU占有は減ったが待ち自体の短縮ではなく、iPhone性能・公平性・コア割当・発熱には外挿しない。TSanでも同じ契約を成功。run1はテストのSDK場所指定不足とmacOSの/var別名によるfake ROOT不一致で失敗したため、両compiler経路へ明示的isysrootを渡し、fixture rootだけを正規化して再実行した。製品codeを変えずに修正し、失敗／成功の原logはlocal/host-wait-mac-01／02へ保存した。
