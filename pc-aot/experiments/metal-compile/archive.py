@@ -21,6 +21,7 @@ SPEC = importlib.util.spec_from_file_location("metal_archive_offline", HERE / "o
 offline = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(offline)
 SCOPE = "authored-legacy-metal-binary-archive"
+SPECIALIZED_SCOPE = "authored-legacy-metal-specialized-binary-archive"
 FALSE_EVIDENCE = (
     "metal4_verified", "windows_archive_runtime_verified", "nil_library_lookup_verified",
     "physical_iphone_verified", "game_rendering_verified", "performance_improvement_verified",
@@ -32,6 +33,11 @@ RECORDED_WORDS = [3, 7, 10, 0x12345678, 4, 14, 10, 0x12345678,
                   5, 21, 10, 0x12345678, 6, 28, 10, 0x12345678]
 UNRECORDED_WORDS = [11, 20, 29, 0x87654321, 16, 19, 28, 0x87654321,
                     21, 18, 27, 0x87654321, 26, 17, 26, 0x87654321]
+
+
+def specialized_words(value):
+    return [word for index in range(4)
+            for word in (index + value, (index + 1) * value, value ^ 0x12345678, 100 - value)]
 
 
 def budget_seconds(value):
@@ -46,6 +52,8 @@ def parse_args(argv=None):
     parser.add_argument("--output", type=Path, required=True, help="fresh evidence directory")
     parser.add_argument("--budget", type=budget_seconds, default=180.0,
                         help="overall tool wall budget; cleanup and reporting can extend elapsed time")
+    parser.add_argument("--specialized", action="store_true",
+                        help="test one kernel with uint constant 7 saved and constant 11 absent; macOS 15+")
     return parser.parse_args(argv)
 
 
@@ -67,10 +75,13 @@ def successful(operation, field):
         raise ValueError("operation was not successful: " + field)
 
 
-def validate_native(report, mode):
-    if not isinstance(report, dict) or type(report.get("schema")) is not int or report.get("schema") != 1 or report.get("scope") != SCOPE \
+def validate_native(report, mode, specialized=False):
+    scope = SPECIALIZED_SCOPE if specialized else SCOPE
+    if not isinstance(report, dict) or type(report.get("schema")) is not int or report.get("schema") != 1 or report.get("scope") != scope \
             or report.get("mode") != mode:
         raise ValueError("wrong native archive report identity")
+    if report.get("variant_mode", "basic") != ("specialized" if specialized else "basic"):
+        raise ValueError("wrong native archive variant mode")
     for key in FALSE_EVIDENCE:
         if report.get(key) is not False:
             raise ValueError("unsupported evidence claim: " + key)
@@ -83,6 +94,8 @@ def validate_native(report, mode):
     if not isinstance(device, dict) or not isinstance(version, list) or len(version) != 3 \
             or any(type(part) is not int or part < 0 for part in version):
         raise ValueError("missing device or OS observation")
+    if specialized and version[0] < 15:
+        raise ValueError("specialized archive requires macOS 15 or newer")
     if report.get("status") == "unsupported":
         if device.get("available") is not False or report.get("unsupported_reason") != "no_default_metal_device" \
                 or report.get("gpu_execution_verified") is not False or type(report.get("url_library_loads")) is not int \
@@ -99,22 +112,41 @@ def validate_native(report, mode):
     successful(report.get("archive_factory"), "created")
     if report["archive_factory"].get("kind") != ("fresh" if mode == "harvest" else "saved"):
         raise ValueError("wrong archive factory route")
-    if report.get("harvested_kernels") != (["archive_recorded"] if mode == "harvest" else []):
+    recorded_name = "archive_specialized" if specialized else "archive_recorded"
+    unrecorded_name = "archive_specialized" if specialized else "archive_unrecorded"
+    if report.get("harvested_kernels") != ([recorded_name] if mode == "harvest" else []):
         raise ValueError("wrong harvested kernel set")
-    expected = [("harvest_recorded_strict", "archive_recorded", True, True, True, RECORDED_WORDS)] \
+    recorded_words = specialized_words(7) if specialized else RECORDED_WORDS
+    unrecorded_words = specialized_words(11) if specialized else UNRECORDED_WORDS
+    expected = [("harvest_recorded_strict", recorded_name, True, True, True, recorded_words)] \
         if mode == "harvest" else [
-            ("restore_recorded_strict", "archive_recorded", True, True, True, RECORDED_WORDS),
-            ("restore_unrecorded_strict", "archive_unrecorded", True, True, False, None),
-            ("restore_unrecorded_fallback", "archive_unrecorded", False, False, True, UNRECORDED_WORDS),
+            ("restore_recorded_strict", recorded_name, True, True, True, recorded_words),
+            ("restore_unrecorded_strict", unrecorded_name, True, True, False, None),
+            ("restore_unrecorded_fallback", unrecorded_name, False, False, True, unrecorded_words),
         ]
+    specializations = report.get("function_specializations", [])
+    expected_values = ([7] if mode == "harvest" else [7, 11]) if specialized else []
+    if not isinstance(specializations, list) or len(specializations) != len(expected_values):
+        raise ValueError("missing or unexpected function specializations")
+    for item, value in zip(specializations, expected_values):
+        if not isinstance(item, dict) or item.get("kernel") != recorded_name \
+                or type(item.get("index")) is not int or item.get("index") != 0 \
+                or item.get("type") != "uint" or type(item.get("value")) is not int or item.get("value") != value:
+            raise ValueError("wrong function specialization input")
+        successful(item, "created")
     rows = report.get("pipelines")
     if not isinstance(rows, list) or len(rows) != len(expected):
         raise ValueError("missing or duplicate pipeline observations")
-    for row, (case, kernel, strict, attached, created, words) in zip(rows, expected):
+    for row_index, (row, (case, kernel, strict, attached, created, words)) in enumerate(zip(rows, expected)):
         if not isinstance(row, dict) or row.get("case") != case or row.get("kernel") != kernel \
                 or row.get("strict") is not strict or row.get("archive_attached") is not attached \
                 or row.get("created") is not created:
             raise ValueError("wrong pipeline route: " + case)
+        constants = row.get("function_constants", [])
+        expected_constants = [{"index": 0, "type": "uint", "value": 7 if row_index == 0 else 11}] if specialized else []
+        if constants != expected_constants or any(type(item.get("index")) is not int
+                or type(item.get("value")) is not int for item in constants):
+            raise ValueError("wrong pipeline function constants: " + case)
         if created:
             successful(row, "created")
             if row.get("command_status") != "completed" or row.get("command_error") != {} \
@@ -150,13 +182,18 @@ def run(args):
     deadline = started + args.budget
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=False)
-    report = {"schema": 1, "scope": SCOPE, "status": "running", "commands": [],
-              "host": platform.system(), "source_options": OPTIONS.copy(),
+    options = OPTIONS.copy()
+    if args.specialized:
+        options.update(target="air64-apple-macosx15.0",
+                       function_constants={"index": 0, "type": "uint", "recorded": 7, "unrecorded": 11})
+    report = {"schema": 1, "scope": SPECIALIZED_SCOPE if args.specialized else SCOPE, "status": "running", "commands": [],
+              "host": platform.system(), "source_options": options,
               "overall_tool_wall_budget_seconds": args.budget, "command_timeout_cap_seconds": 60,
               "budget_scope": "Admission/waits share one deadline. Input I/O, process startup, cleanup, reporting and external Metal services are not hard-deadline bounded.",
               "native_reports": [], "offline_compile_verified": False,
               "native_compile_verified": False, "gpu_execution_verified": False,
               "legacy_archive_save_reload_verified": False,
+              "specialized_archive_identity_verified": False,
               **{key: False for key in FALSE_EVIDENCE}}
     code = 1
     env, removed = offline.clean_environment()
@@ -187,9 +224,10 @@ def run(args):
             report.update(status="unsupported", unsupported_reason="macos_host_required")
             code = 78
             return report, code
-        for name in ("archive_fixture.metal", "archive_runtime.mm"):
+        fixture = "archive_specialized.metal" if args.specialized else "archive_fixture.metal"
+        for name in (fixture, "archive_runtime.mm"):
             shutil.copyfile(HERE / name, output / name)
-        report["inputs"] = [offline.file_info(output / name) for name in ("archive_fixture.metal", "archive_runtime.mm")]
+        report["inputs"] = [offline.file_info(output / name) for name in (fixture, "archive_runtime.mm")]
         report["runner"] = offline.file_info(Path(__file__))
         report["command_helper"] = offline.file_info(HERE / "offline.py")
         tools, sdk = offline.resolve_tools(None, "macos", "Darwin", output, report, env, 60, deadline)
@@ -211,9 +249,9 @@ def run(args):
                 offline.require_success(event)
         _, report["sdk_version"] = command("sdk-version", [xcrun, "--sdk", "macosx", "--show-sdk-version"])
         library = output / "archive_fixture.metallib"
-        command("compile-metal", [tools["metal"], "-c", "-target", OPTIONS["target"],
-                                  "-std=" + OPTIONS["language"], "-fno-fast-math", "-isysroot", sdk,
-                                  output / "archive_fixture.metal", "-o", output / "archive_fixture.air"])
+        command("compile-metal", [tools["metal"], "-c", "-target", options["target"],
+                                  "-std=" + options["language"], "-fno-fast-math", "-isysroot", sdk,
+                                  output / fixture, "-o", output / "archive_fixture.air"])
         offline.validate_artifact(output / "archive_fixture.air")
         command("link-metallib", [tools["metallib"], output / "archive_fixture.air", "-o", library])
         offline.validate_artifact(library, metallib=True)
@@ -237,6 +275,7 @@ def run(args):
             native_path = output / (mode + ".json")
             event, _ = command("native-" + mode, [binary, "--mode", mode, "--library", library,
                                                  "--archive", archive, "--empty", empty, "--malformed", malformed,
+                                                 "--variant-mode", "specialized" if args.specialized else "basic",
                                                  "--report", native_path], success=False)
             if native_path.is_file():
                 native = load_native(native_path)
@@ -244,14 +283,14 @@ def run(args):
             else:
                 native = None
             if event.get("returncode") == 78 and not event.get("timed_out"):
-                validate_native(native, mode)
+                validate_native(native, mode, args.specialized)
                 if native["status"] != "unsupported":
                     raise ValueError("exit 78 without unsupported evidence")
                 report.update(status="unsupported", unsupported_reason=native["unsupported_reason"])
                 code = 78
                 return report, code
             offline.require_success(event)
-            validate_native(native, mode)
+            validate_native(native, mode, args.specialized)
             if native["status"] != "passed":
                 raise ValueError("native run returned success without passed evidence")
             offline.validate_artifact(archive)
@@ -266,7 +305,8 @@ def run(args):
             raise ValueError("harvest and restore were not separate processes")
         if producer["device"] != consumer["device"] or producer.get("os_version") != consumer.get("os_version"):
             raise ValueError("harvest/restore device or OS changed")
-        report.update(status="passed", gpu_execution_verified=True, legacy_archive_save_reload_verified=True)
+        report.update(status="passed", gpu_execution_verified=True, legacy_archive_save_reload_verified=True,
+                      specialized_archive_identity_verified=args.specialized)
         code = 0
     except (KeyboardInterrupt, SystemExit) as error:
         report.update(status="interrupted", error=type(error).__name__)

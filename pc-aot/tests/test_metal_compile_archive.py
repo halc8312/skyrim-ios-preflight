@@ -67,7 +67,66 @@ def unsupported_report(mode):
     return result
 
 
+def specialized_report(mode):
+    result = native_report(mode)
+    result.update(scope=archive.SPECIALIZED_SCOPE, variant_mode="specialized", os_version=[15, 0, 0],
+                  harvested_kernels=["archive_specialized"] if mode == "harvest" else [],
+                  function_specializations=[])
+    for value in ([7] if mode == "harvest" else [7, 11]):
+        result["function_specializations"].append({"kernel": "archive_specialized", "index": 0,
+            "type": "uint", "value": value, **success("created")})
+    for index, row in enumerate(result["pipelines"]):
+        row["kernel"] = "archive_specialized"
+        row["function_constants"] = [{"index": 0, "type": "uint", "value": 7 if index == 0 else 11}]
+        if row["created"]:
+            row["compute_words"] = [7, 7, 305419903, 93, 8, 14, 305419903, 93,
+                                    9, 21, 305419903, 93, 10, 28, 305419903, 93] if index == 0 else \
+                                   [11, 11, 305419891, 89, 12, 22, 305419891, 89,
+                                    13, 33, 305419891, 89, 14, 44, 305419891, 89]
+    return result
+
+
 class ArchiveReportTests(unittest.TestCase):
+    def test_same_kernel_different_constants_are_a_separate_boundary(self):
+        for mode in ("harvest", "restore"):
+            report = specialized_report(mode)
+            archive.validate_native(report, mode, specialized=True)
+            with self.assertRaises(ValueError):
+                archive.validate_native(report, mode)
+            with self.assertRaises(ValueError):
+                archive.validate_native(native_report(mode), mode, specialized=True)
+
+    def test_specialized_input_type_index_value_and_creation_are_verified(self):
+        mutations = [
+            lambda r: r.__setitem__("variant_mode", "basic"),
+            lambda r: r.__setitem__("os_version", [14, 9, 9]),
+            lambda r: r["function_specializations"].pop(),
+            lambda r: r["function_specializations"][0].__setitem__("value", 11),
+            lambda r: r["function_specializations"][0].__setitem__("index", False),
+            lambda r: r["function_specializations"][0].__setitem__("type", "float"),
+            lambda r: r["function_specializations"][0].__setitem__("created", False),
+            lambda r: r["function_specializations"][1].__setitem__("kernel", "another_kernel"),
+            lambda r: r["pipelines"][1]["function_constants"][0].__setitem__("value", 7),
+            lambda r: r["pipelines"][2]["function_constants"][0].__setitem__("index", False),
+            lambda r: r["pipelines"][2].__setitem__("kernel", "another_kernel"),
+            lambda r: r["pipelines"][1].__setitem__("created", True),
+            lambda r: r["pipelines"][2].__setitem__("compute_words", r["pipelines"][0]["compute_words"]),
+        ]
+        for index, mutate in enumerate(mutations):
+            with self.subTest(mutation=index):
+                report = specialized_report("restore")
+                mutate(report)
+                with self.assertRaises(ValueError):
+                    archive.validate_native(report, "restore", specialized=True)
+
+    def test_every_specialized_readback_word_matters(self):
+        for row in (0, 2):
+            for index in range(16):
+                report = specialized_report("restore")
+                report["pipelines"][row]["compute_words"][index] ^= 1
+                with self.subTest(row=row, index=index), self.assertRaisesRegex(ValueError, "readback"):
+                    archive.validate_native(report, "restore", specialized=True)
+
     def test_valid_synthetic_harvest_restore_and_no_gpu_reports(self):
         for mode in ("harvest", "restore"):
             archive.validate_native(native_report(mode), mode)
@@ -152,9 +211,10 @@ class ArchiveRunnerTests(unittest.TestCase):
         self.returncode = 1
         self.interrupt_label = None
         self.native_mutation = None
+        self.specialized = False
 
     def args(self):
-        return archive.parse_args(["--output", str(self.output)])
+        return archive.parse_args(["--output", str(self.output)] + (["--specialized"] if self.specialized else []))
 
     def fake_command(self, command, label, output, report, env, timeout, deadline=None):
         argv = [str(part) for part in command]
@@ -170,7 +230,7 @@ class ArchiveRunnerTests(unittest.TestCase):
             Path(argv[argv.index("-o") + 1]).write_bytes(b"MTLBsynthetic" if label == "link-metallib" else b"synthetic artifact")
         if label.startswith("native-"):
             mode = label.removeprefix("native-")
-            native = native_report(mode)
+            native = specialized_report(mode) if self.specialized else native_report(mode)
             if self.native_mutation:
                 self.native_mutation(mode, native, event)
             if mode == "harvest" and event["returncode"] == 0:
@@ -216,6 +276,32 @@ class ArchiveRunnerTests(unittest.TestCase):
             self.assertEqual(command[command.index("-isysroot") + 1], str(self.sdk))
         self.assertEqual((self.output / "empty.binary.metallib").stat().st_size, 0)
         self.assertEqual(json.loads((self.output / "result.json").read_text())["status"], "passed")
+        self.assertFalse(report["specialized_archive_identity_verified"])
+
+    def test_specialized_run_keeps_basic_fixture_and_uses_one_name_two_values(self):
+        self.specialized = True
+        before = (archive.HERE / "archive_fixture.metal").read_bytes()
+        report, code = self.patched_run()
+        self.assertEqual((report["status"], code), ("passed", 0))
+        self.assertEqual(report["scope"], archive.SPECIALIZED_SCOPE)
+        self.assertTrue(report["specialized_archive_identity_verified"])
+        self.assertEqual(report["source_options"]["target"], "air64-apple-macosx15.0")
+        command = next(call[1] for call in self.calls if call[0] == "compile-metal")
+        self.assertIn(str(self.output / "archive_specialized.metal"), command)
+        for _, command, _, _, _ in [call for call in self.calls if call[0].startswith("native-")]:
+            self.assertEqual(command[command.index("--variant-mode") + 1], "specialized")
+        self.assertEqual((archive.HERE / "archive_fixture.metal").read_bytes(), before)
+        self.assertFalse((self.output / "archive_fixture.metal").exists())
+
+    def test_specialized_native_failure_cannot_set_identity_success(self):
+        self.specialized = True
+        def mismatch(mode, native, event):
+            if mode == "restore":
+                native["pipelines"][2]["compute_words"][0] = 7
+        self.native_mutation = mismatch
+        report, code = self.patched_run()
+        self.assertEqual((report["status"], code), ("failed", 1))
+        self.assertFalse(report["specialized_archive_identity_verified"])
 
     def test_native_no_gpu_preserves_unsupported_report_and_false_flags(self):
         def unsupported(mode, native, event):

@@ -86,6 +86,21 @@ uses no Metal 4 API. Its 14 portable controls and actual Apple execution passed;
 the latter evidence is retained in
 `local/metal-compile/mac-run-04/evidence/macro-values/`.
 
+`macro_integer.py` extends the question to unsigned integer input with three
+separate cases: `numberWithUnsignedInt(0xffffffff)`, the previously observed
+unsuffixed token as NSString, and the explicitly unsigned `"4294967295u"` string.
+It reads back `uint(value)`, `sizeof(value)` and `-1 < value`, alongside direct
+uint-literal, input-buffer, signature and unwritten-guard controls. Only the
+explicit uint case has a fixed expected expression triple; the other two are
+observations. It does not recapture NSNumber's expansion token or infer the
+original type from the three expressions. A rejected case retains its raw
+compiler error and makes the aggregate fail even when later controls pass.
+Its 12 portable controls passed; actual Apple execution is pending.
+
+```sh
+python3 experiments/metal-compile/macro_integer.py --output local/metal-compile/macro-integer-new --budget 90
+```
+
 ```sh
 python3 experiments/metal-compile/macro_value.py --output local/metal-compile/macro-value-new --budget 90 --timeout 30
 ```

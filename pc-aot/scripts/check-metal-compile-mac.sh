@@ -216,8 +216,10 @@ for folder in (usr / 'share/man', usr / 'metal/current/share/man'):
 print(f'METAL_TOOL_REFERENCE captured={sum(row["status"] == "captured" for row in records)} runtime_verified=0')
 PY
 run_experiment archive 180 experiments/metal-compile/archive.py --output "$RUN/archive"
+run_experiment archive-specialized 180 experiments/metal-compile/archive.py --specialized --output "$RUN/archive-specialized"
 run_experiment macro-diagnostics 90 experiments/metal-compile/macro_probe.py --timeout 30 --output "$RUN/macro-diagnostics"
 run_experiment macro-values 90 experiments/metal-compile/macro_value.py --timeout 30 --output "$RUN/macro-values"
+run_experiment macro-integers 90 experiments/metal-compile/macro_integer.py --timeout 30 --output "$RUN/macro-integers"
 if [[ "$MODE" == full ]]; then
   run_experiment runtime 240 experiments/metal-compile/runtime.py --repeat 3 --async-library --probe-library-factory --output "$RUN/runtime" \
     --library "$RUN/offline/trial-01/fixture.metallib"

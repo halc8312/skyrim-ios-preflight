@@ -761,3 +761,10 @@
 !/pc-aot/experiments/metal-compile/macro_value.mm
 !/pc-aot/experiments/metal-compile/macro_value.py
 !/pc-aot/tests/test_metal_compile_macro_value.py
+!/pc-aot/experiments/metal-compile/archive_offline.py
+!/pc-aot/experiments/metal-compile/archive_offline_fixture.metal
+!/pc-aot/experiments/metal-compile/archive_specialized.metal
+!/pc-aot/experiments/metal-compile/macro_integer.mm
+!/pc-aot/experiments/metal-compile/macro_integer.py
+!/pc-aot/tests/test_metal_compile_archive_offline.py
+!/pc-aot/tests/test_metal_compile_macro_integer.py

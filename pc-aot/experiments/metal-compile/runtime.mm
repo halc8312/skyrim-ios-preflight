@@ -46,9 +46,23 @@ static NSDictionary* deviceInfo(id<MTLDevice> device) {
         @"supports_metal4": @NO, @"metal4_family_queried": @NO,
         @"supports_metal3": @NO, @"supports_mac2": @NO,
         @"supports_apple7": @NO, @"supports_apple8": @NO, @"supports_apple9": @NO,
+        @"architecture_query_status": device ? @"unavailable_os" : @"no_device",
+        @"architecture_name": NSNull.null,
         @"new_compiler_selector_available": @(device && [device respondsToSelector:@selector(newCompilerWithDescriptor:error:)])
     } mutableCopy];
     if (!device) return info;
+    if (@available(macOS 14.0, iOS 17.0, *)) {
+        @try {
+            NSString* architecture = device.architecture.name;
+            info[@"architecture_query_status"] = architecture.length ? @"observed" : @"empty_result";
+            info[@"architecture_name"] = architecture.length ? (id)architecture : NSNull.null;
+        } @catch (NSException* error) {
+            // Optional provenance must not turn an otherwise useful legacy
+            // test into a guessed architecture or a different device choice.
+            info[@"architecture_query_status"] = @"exception";
+            info[@"architecture_query_exception"] = error.name ?: @"unknown";
+        }
+    }
     info[@"supports_metal3"] = @([device supportsFamily:MTLGPUFamilyMetal3]);
     info[@"supports_mac2"] = @([device supportsFamily:MTLGPUFamilyMac2]);
     info[@"supports_apple7"] = @([device supportsFamily:MTLGPUFamilyApple7]);

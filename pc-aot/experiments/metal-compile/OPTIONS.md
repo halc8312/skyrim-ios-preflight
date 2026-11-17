@@ -52,6 +52,19 @@ integer widths or float/double constructors before submitting the library.
 This probe does not call those functions, reproduce their runtime inputs or
 claim that an authored case represents a game shader.
 
+Before a production capture is reused, bind the final option snapshot to the
+same source/request and retain the original specialization declaration and raw
+bytes separately from NSNumber getters and observed tokens. Do not collapse
+`relaxed/precise` into a fast-math boolean. Library preprocessor macros and later
+MTLFunction constants are different inputs; the latter need entry point,
+constant index/type/raw bytes, unset/default distinctions and applicable
+workgroup metadata. This Mac header is not an iPhone capture implementation.
+
+The fixed MoltenVK path also permits a nonnil library with an NSError warning.
+The authored fixtures require diagnostic-free success for their own known
+inputs; that stricter fixture assertion must not replace production warning,
+late-completion ownership or failed-variant retry behavior during an API change.
+
 Primary references:
 
 - [Apple MTLCompileOptions](https://developer.apple.com/documentation/metal/mtlcompileoptions)

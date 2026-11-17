@@ -272,7 +272,31 @@ regression covers discovery, version probes and linking. Corrected Mac execution
 remains pending. Original evidence and both installed pipeline-script manuals
 are retained in `local/metal-compile/mac-run-04/`.
 
+Run 5 at public source `fb225fe` passed all 184 controls without a skip. After the
+linker fix, legacy synchronous source, asynchronous source and offline-library
+routes completed three iterations each with identical 64-word render and
+16-word compute readbacks. Controlled async retention and invalid-source checks
+also passed. The archive fixture saved one kernel and, in a different process,
+strictly found it, strictly rejected an unrecorded kernel, explicitly compiled
+the fallback and verified both outputs. Empty/malformed archives were rejected
+and saved bytes stayed unchanged. Each native archive process made zero source
+library compiles and one IR-library URL load. Evidence is in
+`local/metal-compile/mac-run-05/`. These are legacy APIs on the Paravirtual Mac
+GPU, not Metal 4 or iPhone gameplay validation. The first and subsequent routes
+have different OS-cache histories; their elapsed-time ratio is not a speedup
+measurement.
+
 ## Binary archive boundary
+
+The optional `archive.py --specialized` case uses one authored kernel name with
+uint function constant 0 set to 7 for harvesting and 11 for an unrecorded state.
+It requires the restored value-7 pipeline to hit strictly, value 11 to miss
+strictly, and an explicit ordinary value-11 fallback to produce its different
+16-word output. Function creation, constant type/index/value, separate process
+identity, unchanged saved bytes and invalid archive controls remain checked.
+This case requires macOS 15 or newer for device serialization of specialized
+functions. Portable controls passed; actual Apple execution is pending.
+The existing constant-free fixture and its evidence remain separate.
 
 `archive.py` tests two authored compute kernels through ordinary Metal APIs,
 without requiring Metal 4. It compiles a macOS IR library, harvests one kernel
@@ -332,6 +356,36 @@ absence of internal library work or a universally portable archive key.
 The installed Apple `metal4-pipelines-script.5` manual says a missing or empty
 script `library` selects the library passed on the `metal-nt` command line.
 That offline-script rule does not establish runtime `library=nil` behavior.
+
+`archive_offline.py` reproduces a narrower Windows boundary using the official
+`.mtl4-json` schema: one authored, constant-free IR library feeds one compute
+and one render descriptor. It fixes iOS 26, Apple9 and `applegpu_g16p`, checks
+the target architecture query and each generated archive with `metal-lipo`,
+and preserves sources, tools, scripts, hashes and failures. Commands run one
+at a time with a shared 180-second admission/wait budget; no compiler memory
+ceiling or hard bound on external services is claimed. It accepts no arbitrary
+shader or configuration input, and it is not part of the iPhone app.
+
+```powershell
+python experiments/metal-compile/archive_offline.py --tools F:/SkyrimIOS/local/tools/metal-6.2/bin --output local/metal-compile/archive-offline-new
+```
+
+The 13 portable controls passed, followed by one real Windows Metal 6.2 run:
+all 12 commands succeeded, with compute/render archives of 12,704/15,600 bytes,
+both reporting only `applegpu_g16p`. Evidence is in
+`local/metal-compile/archive-offline-runner-windows-01/`. This establishes
+offline Metal 4 script translation only. GPU loading/readback, library-free
+lookup, game settings equivalence and iPhone performance remain unverified.
+
+Family filtering is not an exclusive chip selection: this tool's iOS 26 Apple9
+query includes six architectures, including both returned for Apple10. The
+fixed `g16p` artifact must not be assumed to match either test phone. Apple's
+feature tables identify A17 Pro as Apple9 and A19 Pro as Apple10, but family
+support alone does not establish the artifact architecture. Record the actual
+[`device.architecture.name`](https://developer.apple.com/documentation/metal/mtlarchitecture/name),
+OS and runtime capabilities, then verify loading and matching GPU outputs on
+that device. The isolated runtime fixture now records the architecture name;
+the production phone diagnostics are unchanged.
 
 ```sh
 python -m unittest discover -s tests -p 'test_metal_compile_*.py' -v

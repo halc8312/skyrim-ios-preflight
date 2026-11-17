@@ -32,8 +32,20 @@ static bool writeReport(NSString* path, NSDictionary* report) {
     return data && [data writeToFile:path options:NSDataWritingAtomic error:&error];
 }
 
-static MTLComputePipelineDescriptor* descriptor(id<MTLLibrary> library, NSString* name) {
-    id<MTLFunction> function = [library newFunctionWithName:name];
+static MTLComputePipelineDescriptor* descriptor(id<MTLLibrary> library, NSString* name,
+    bool specialized, uint32_t value, NSMutableArray* specializations) {
+    id<MTLFunction> function;
+    if (specialized) {
+        MTLFunctionConstantValues* constants = [MTLFunctionConstantValues new];
+        [constants setConstantValue:&value type:MTLDataTypeUInt atIndex:0];
+        NSError* error = nil;
+        function = [library newFunctionWithName:name constantValues:constants error:&error];
+        [specializations addObject:@{ @"kernel": name, @"index": @0, @"type": @"uint", @"value": @(value),
+            @"created": @(function != nil), @"error_present": @(error != nil), @"error": errorInfo(error) }];
+        require(function && !error, "function constant specialization failed");
+    } else {
+        function = [library newFunctionWithName:name];
+    }
     require(function != nil, "authored kernel is missing from the IR library");
     MTLComputePipelineDescriptor* result = [MTLComputePipelineDescriptor new];
     result.computeFunction = function;
@@ -41,7 +53,7 @@ static MTLComputePipelineDescriptor* descriptor(id<MTLLibrary> library, NSString
 }
 
 static void readback(id<MTLDevice> device, id<MTLComputePipelineState> pipeline,
-                     bool recorded, NSMutableDictionary* observation) {
+                     bool recorded, bool specialized, NSMutableDictionary* observation) {
     phase(recorded ? "recorded_readback_setup" : "unrecorded_readback_setup");
     id<MTLBuffer> buffer = [device newBufferWithLength:16 * sizeof(uint32_t)
         options:MTLResourceStorageModeShared];
@@ -67,12 +79,19 @@ static void readback(id<MTLDevice> device, id<MTLComputePipelineState> pipeline,
     NSMutableArray* values = [NSMutableArray arrayWithCapacity:16];
     bool matches = true;
     for (uint32_t index = 0; index < 4; ++index) {
-        const uint32_t expected[4] = {
+        uint32_t expected[4] = {
             recorded ? index + 3u : index * 5u + 11u,
             recorded ? (index + 1u) * 7u : (index ^ 3u) + 17u,
             recorded ? 10u : 29u - index,
             recorded ? 0x12345678u : 0x87654321u,
         };
+        if (specialized) {
+            uint32_t value = recorded ? 7u : 11u;
+            expected[0] = index + value;
+            expected[1] = (index + 1u) * value;
+            expected[2] = value ^ 0x12345678u;
+            expected[3] = 100u - value;
+        }
         for (uint32_t component = 0; component < 4; ++component) {
             uint32_t actual = words[4 * index + component];
             [values addObject:@(actual)];
@@ -85,10 +104,11 @@ static void readback(id<MTLDevice> device, id<MTLComputePipelineState> pipeline,
 
 static id<MTLComputePipelineState> createPipeline(id<MTLDevice> device,
     MTLComputePipelineDescriptor* configuration, bool strict, NSString* caseName,
-    NSMutableArray* observations) {
+    bool specialized, uint32_t value, NSMutableArray* observations) {
     NSMutableDictionary* item = [@{ @"case": caseName,
         @"kernel": configuration.computeFunction.name,
         @"strict": @(strict), @"archive_attached": @(configuration.binaryArchives.count != 0) } mutableCopy];
+    item[@"function_constants"] = specialized ? @[@{ @"index": @0, @"type": @"uint", @"value": @(value) }] : @[];
     [observations addObject:item];
     NSError* error = nil;
     MTLPipelineOption options = strict ? MTLPipelineOptionFailOnBinaryArchiveMiss : MTLPipelineOptionNone;
@@ -120,6 +140,7 @@ int main(int argc, const char* argv[]) {
         NSString* reportPath = nil;
         NSMutableArray* pipelines = [NSMutableArray array];
         NSMutableArray* rejections = [NSMutableArray array];
+        NSMutableArray* specializations = [NSMutableArray array];
         NSMutableDictionary* report = [@{
             @"schema": @1, @"scope": @"authored-legacy-metal-binary-archive",
             @"status": @"failed", @"process_id": @(getpid()),
@@ -130,6 +151,7 @@ int main(int argc, const char* argv[]) {
             @"performance_improvement_verified": @NO, @"cold_os_cache_verified": @NO,
             @"production_compile_settings_parity_verified": @NO,
             @"harvested_kernels": @[], @"pipelines": pipelines, @"archive_rejections": rejections,
+            @"function_specializations": specializations, @"variant_mode": @"basic",
         } mutableCopy];
         int exitCode = 1;
         @try {
@@ -140,7 +162,7 @@ int main(int argc, const char* argv[]) {
                     NSString* key = [NSString stringWithUTF8String:argv[index]];
                     NSString* value = [NSString stringWithUTF8String:argv[index + 1]];
                     require(key && value && arguments[key] == nil, "invalid or repeated argument");
-                    require([@[@"--mode", @"--library", @"--archive", @"--empty", @"--malformed", @"--report"] containsObject:key],
+                    require([@[@"--mode", @"--library", @"--archive", @"--empty", @"--malformed", @"--report", @"--variant-mode"] containsObject:key],
                             "unknown argument");
                     arguments[key] = value;
                     if ([key isEqualToString:@"--report"]) reportPath = value;
@@ -151,8 +173,14 @@ int main(int argc, const char* argv[]) {
                 require(reportPath && arguments[@"--library"] && arguments[@"--archive"], "missing path argument");
                 require(harvesting || (arguments[@"--empty"] && arguments[@"--malformed"]), "missing invalid archive inputs");
                 report[@"mode"] = mode;
+                NSString* variantMode = arguments[@"--variant-mode"] ?: @"basic";
+                bool specialized = [variantMode isEqualToString:@"specialized"];
+                require(specialized || [variantMode isEqualToString:@"basic"], "unknown variant mode");
+                report[@"variant_mode"] = variantMode;
+                if (specialized) report[@"scope"] = @"authored-legacy-metal-specialized-binary-archive";
                 NSOperatingSystemVersion version = NSProcessInfo.processInfo.operatingSystemVersion;
                 report[@"os_version"] = @[@(version.majorVersion), @(version.minorVersion), @(version.patchVersion)];
+                require(!specialized || version.majorVersion >= 15, "specialized archive serialization requires macOS 15 or newer");
                 phase("default_device");
                 id<MTLDevice> device = MTLCreateSystemDefaultDevice();
                 report[@"device"] = @{ @"available": @(device != nil), @"name": device.name ?: @"" };
@@ -183,20 +211,21 @@ int main(int argc, const char* argv[]) {
                     report[@"archive_factory"] = @{ @"kind": harvesting ? @"fresh" : @"saved",
                         @"created": @(archive != nil), @"error_present": @(error != nil), @"error": errorInfo(error) };
                     require(archive && !error, "binary archive creation/load failed");
-                    MTLComputePipelineDescriptor* recorded = descriptor(library, @"archive_recorded");
+                    NSString* recordedName = specialized ? @"archive_specialized" : @"archive_recorded";
+                    MTLComputePipelineDescriptor* recorded = descriptor(library, recordedName, specialized, 7, specializations);
                     if (harvesting) {
                         error = nil;
                         phase("archive_add_recorded_kernel");
                         BOOL added = [archive addComputePipelineFunctionsWithDescriptor:recorded error:&error];
                         report[@"archive_add"] = @{ @"succeeded": @(added), @"error_present": @(error != nil), @"error": errorInfo(error) };
                         require(added && !error, "adding the recorded kernel failed");
-                        report[@"harvested_kernels"] = @[@"archive_recorded"];
+                        report[@"harvested_kernels"] = @[recordedName];
                     }
                     recorded.binaryArchives = @[archive];
                     id<MTLComputePipelineState> hit = createPipeline(device, recorded, true,
-                        harvesting ? @"harvest_recorded_strict" : @"restore_recorded_strict", pipelines);
+                        harvesting ? @"harvest_recorded_strict" : @"restore_recorded_strict", specialized, 7, pipelines);
                     require(hit && ![pipelines.lastObject[@"error_present"] boolValue], "recorded strict archive lookup failed");
-                    readback(device, hit, true, pipelines.lastObject);
+                    readback(device, hit, true, specialized, pipelines.lastObject);
                     if (harvesting) {
                         error = nil;
                         phase("archive_serialize");
@@ -204,15 +233,16 @@ int main(int argc, const char* argv[]) {
                         report[@"archive_serialize"] = @{ @"succeeded": @(saved), @"error_present": @(error != nil), @"error": errorInfo(error) };
                         require(saved && !error, "binary archive serialization failed");
                     } else {
-                        MTLComputePipelineDescriptor* missing = descriptor(library, @"archive_unrecorded");
+                        NSString* missingName = specialized ? @"archive_specialized" : @"archive_unrecorded";
+                        MTLComputePipelineDescriptor* missing = descriptor(library, missingName, specialized, 11, specializations);
                         missing.binaryArchives = @[archive];
-                        id<MTLComputePipelineState> miss = createPipeline(device, missing, true, @"restore_unrecorded_strict", pipelines);
+                        id<MTLComputePipelineState> miss = createPipeline(device, missing, true, @"restore_unrecorded_strict", specialized, 11, pipelines);
                         require(!miss && [pipelines.lastObject[@"error_present"] boolValue], "unrecorded strict lookup did not fail with an error");
                         // The fallback is explicit and cannot modify the saved archive.
                         missing.binaryArchives = @[];
-                        id<MTLComputePipelineState> fallback = createPipeline(device, missing, false, @"restore_unrecorded_fallback", pipelines);
+                        id<MTLComputePipelineState> fallback = createPipeline(device, missing, false, @"restore_unrecorded_fallback", specialized, 11, pipelines);
                         require(fallback && ![pipelines.lastObject[@"error_present"] boolValue], "explicit normal fallback failed");
-                        readback(device, fallback, false, pipelines.lastObject);
+                        readback(device, fallback, false, specialized, pipelines.lastObject);
                         rejectArchive(device, arguments[@"--empty"], @"empty_file", rejections);
                         rejectArchive(device, arguments[@"--malformed"], @"malformed_file", rejections);
                     }
