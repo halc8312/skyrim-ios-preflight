@@ -1,5 +1,7 @@
 # 開発状況
 
+**2026-11-17：ホスト側2試作の実Apple API検査も完了。** [専用Mac run2](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc103c95b45c83b9742a7f)は公開`8e7c3b73afd6e5eee8db4e226d7f377327353a0f`で成功（57秒）。通常12検査とTSan2検査はskip／失敗0。generic blocking lockの排他・例外解除・待ちCPU計測、dxvk-csのQoS要求とreadback、完全CS translation unitを実Apple環境で確認した。意図的に保持した3回の待機ではCPU使用は83.081416→0.024416 msと減ったが、wallは136.016→138.603 msで短縮していない。これは人工競合でのCPU消費差であり、ゲーム性能・公平性・発熱の証明ではない。先のrun1のSDK指定／一時root fixtureの失敗と原ログも保持。試作は本番未適用、FPS0比較・iPhone採否・ゴール③は未完了。
+
 **2026-11-17：state別生成試作のApple検証が完了。** [Mac run36](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc0bf295b45c83b97428cb)は公開`ac49eaa17636eb13a9026457b6904ded704d5e69`で成功（M2、Xcode26.6／SDK26.5、7分30秒）。実Metalで8ケースのRGBA32Float readbackが従来方式と一致し、意図したMSL失敗のcached-null、例外再試行、試作の公開時確保失敗とPSO参照解放を確認。native通常・ASan/UBSan・TSanも成功。全56回のunittest実行／209ケースは204成功・環境依存5skip、失敗0。公開iPhoneOS hostもリンク成功し、両手ボタンはAppleコンパイルまで確認できた。ゲーム実行・iPhone改善・新IPA導入は未確認。試作は本番adapter未接続。原失敗run34／35と成功artifactsは保持し、run36の無料枠は263→271/500（残229分）。
 
 **同日：添付scannerと生成物の調査を完了し、ホスト側2試作を分離。** scannerは9検査後に所有入力へread-only実行。実生成C／既存ARM objectで一部x87 storeのST/FULL fence欠落を確認したため、LIFT_TSO等は維持。共通reader/writer同期群の取得・解放・再帰・待機境界を次の観測対象とする。generic SpinlockのApple blocking版とdxvk-csの明示QoSは、別stageへ個別適用する独立試作を用意しPC検査／TSanを通過。Apple API確認用の小さな手動workflowを追加したが、本番設定・描画・署名済みアプリへは適用しない。FPS cap0の実機ログは未受信で、cap60との比較は保留。詳細はPERFORMANCE_WORK.md。

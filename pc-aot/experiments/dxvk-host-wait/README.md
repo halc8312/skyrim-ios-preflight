@@ -59,4 +59,19 @@ The manual `pc2011-host-wait-checks` workflow calls
 `scripts/check-host-wait-mac.sh`: it fetches the pinned public source, runs normal
 and targeted ThreadSanitizer checks with real Apple APIs, and preserves the log.
 It does not build or sign an iPhone app. Linux normal/stage checks and both
-native ThreadSanitizer cases passed; actual Apple execution is pending.
+native ThreadSanitizer cases passed.
+
+Actual Apple validation passed on 2026-11-17 in host-check run 2 (public commit
+`8e7c3b7`, M2, Xcode 26.6/macOS SDK 26.5): 12 normal tests and two targeted
+ThreadSanitizer tests, no skips or failures. This includes actual os_unfair_lock,
+QoS request/readback, the complete staged CS translation unit, and zero added
+clock reads on uncontended locks. The first run's SDK-path and canonical
+temporary-root fixture failures are preserved; production was not changed.
+
+For three deliberately held locks, normal-run wall/CPU totals were
+136.016/83.081416 ms for the original spinlock and 138.603/0.024416 ms for the
+blocking trial. This demonstrates reduced busy CPU use in the authored
+scenario, not reduced waiting latency, iPhone frame gains, fairness or heat.
+QoS success confirms API requests/readback only, not effective scheduler
+priority or core placement. Production activation and iPhone comparison remain
+pending; no new setting or runtime diagnostic field was added.

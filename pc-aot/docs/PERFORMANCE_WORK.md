@@ -2,13 +2,15 @@
 
 ## 2026-11-17 Apple検証とホスト側の独立試作
 
+**ホスト2試作のApple追加検証。** [専用run2](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc103c95b45c83b9742a7f)（公開8e7c3b7、M2、Xcode26.6／macOS SDK26.5、57秒）で通常12ケースとTSan2ケースが成功、skip0。実os_unfair_lockの待機／解除と共有stateの整合、未競合clock0、QoS無効時のAPI／log0と有効時の要求／readback、errno・ログ上限、完全CS translation unitを確認した。通常の人工競合3回のwall／CPU合計は従来136.016／83.081416 ms、blocking版138.603／0.024416 ms。CPU占有は減ったが待ち自体の短縮ではなく、iPhone性能・公平性・コア割当・発熱には外挿しない。TSanでも同じ契約を成功。run1はテストのSDK場所指定不足とmacOSの/var別名によるfake ROOT不一致で失敗したため、両compiler経路へ明示的isysrootを渡し、fixture rootだけを正規化して再実行した。製品codeを変えずに修正し、失敗／成功の原logはlocal/host-wait-mac-01／02へ保存した。
+
 [Mac run36](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc0bf295b45c83b97428cb)（公開ac49eaa、M2、Xcode26.6／SDK26.5、7分30秒）でgraphics state試作の実Metal検査が成功。従来／試作の8ケース・各4成分のreadbackが一致し、real shader compile rejectionとcached-null、例外再試行、試作のpublication allocation failureを確認。fixtureが保持したPSOは従来9作成／9解放、試作10／10、live0。これはOS内部の即時GPU資源回収やゲーム全経路の証明ではない。通常7検査とnative ASan/UBSan／TSanも成功した。全56回のunittest実行は209ケース・5skip・失敗0。公開hostのiPhoneOSリンクと両手ボタンのコンパイルも成功し、compiler warningは526行で前回と同数。`-fno-threadsafe-statics`はbuild log内にない。host zipのhashはresult.jsonに一致する。新しい署名済みアプリはまだ配布していない。
 
 run34の固定header警告とrun35の誤ったMetal負例を保存し、後者は明示的な自作MSLエラーへ修正した。試作を本番へ有効化した結果ではなく、実packed state・生成された調整処理に自作Metal driverを繋いだ確認である。同時生成の増加がiPhoneのframe gap、メモリ、発熱へ与える影響は未検証。
 
 `experiments/dxvk-host-wait/`はgeneric Spinlockとcs QoSの2モードを相互排他にし、shader試作との混在も拒否する。blocking版はApple tryを1回行い、失敗時のみwall／thread CPUを読んでos_unfair_lockのblocking取得へ進む。hot hit／try-lockにはclock読みを足さず、保持中にI/O・allocation・再try loopを行わない。観測はthread-localの有界counterで、CPU区間をwall内に収め、不正clockを欠測扱いにする。generic lock8メンバ／21取得scopeを確認し、source上の所有者移譲・cross-thread unlock・value移動は見つからない。元のrecursive D3D lockとspin helperは変更しない。
 
-QoSはdxvk-csの命名直後、環境値が厳密に1のときだけUSER_INITIATEDを要求する。未設定・不正値はAPI呼出し／counter／logとも0で従来の継承を保つ。数値のAPI結果と前後readbackはrequested/self classであり、実効優先度overrideやP/E core割当の観測ではない。例外・競合・errno・ログ上限・stage拒否をPCで検査し、両native fixtureのTSanも成功。実Apple APIは専用手動workflowで確認する。製品への計測接続とiPhone比較は別段階で、本番・設定・キャッシュidentityは未変更。
+QoSはdxvk-csの命名直後、環境値が厳密に1のときだけUSER_INITIATEDを要求する。未設定・不正値はAPI呼出し／counter／logとも0で従来の継承を保つ。数値のAPI結果と前後readbackはrequested/self classであり、実効優先度overrideやP/E core割当の観測ではない。例外・競合・errno・ログ上限・stage拒否をPCで検査し、両native fixtureのTSanも成功。実Apple APIの確認結果は上記の専用run2に記録した。製品への計測接続とiPhone比較は別段階で、本番・設定・キャッシュidentityは未変更。
 
 ## 2026-11-17 添付スキャナーと実生成物の照合
 
