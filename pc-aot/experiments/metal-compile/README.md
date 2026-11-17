@@ -14,6 +14,15 @@ That is narrower than migrating the renderer to Metal 4.
 
 ## What each environment establishes
 
+`mrc_lifetime.py --output NEW_DIRECTORY` runs a separate Foundation-only ownership
+fixture on Mac. Its seven authored cases use manual retain/release, copied Blocks,
+an expired caller autorelease pool, immediate/late callbacks, warnings, nil task
+returns, and Objective-C exceptions before/after notification. The default runs
+normal, ASan/UBSan, and TSan binaries separately. It tracks its owner, fake task,
+and token instances; it does not establish Metal task retirement, arbitrary
+`MTLCompileOptions` copying, or production behavior. Portable report controls
+cannot substitute for those native runs.
+
 | Environment | Can establish | Cannot establish |
 | --- | --- | --- |
 | Windows with Apple Metal Developer Tools | MSL compilation, diagnostics, generated library size, and offline compiler elapsed time | Apple GPU execution, iPhone frame time, memory pressure, thermal behavior, or runtime Metal 4 speed |

@@ -773,3 +773,9 @@
 !/pc-aot/tests/test_metal_compile_archive_metal4.py
 !/pc-aot/experiments/metal-compile/MOLTENVK_PLAN.md
 !/pc-aot/experiments/metal-compile/ARCHIVE_PLAN.md
+
+!/pc-aot/experiments/metal-compile/mrc_lifetime.mm
+
+!/pc-aot/experiments/metal-compile/mrc_lifetime.py
+
+!/pc-aot/tests/test_metal_compile_mrc_lifetime.py

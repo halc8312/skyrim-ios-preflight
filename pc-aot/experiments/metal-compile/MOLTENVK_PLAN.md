@@ -124,6 +124,10 @@ update; the rejected GPU admission changes remain excluded.
    target callback-before-return, timeout/late completion, duplicate callbacks,
    warnings, nil factory/task, exceptions, and owner destruction. Reuse existing
    CPU proofs; add only the actual Objective-C ownership/routing boundary checks.
+   The authored `mrc_lifetime.py/.mm` fixture now covers seven Foundation cases
+   with separate normal, ASan/UBSan and TSan binaries. Its portable controls pass;
+   native Mac execution is still pending. Fake task lifetime and dictionary copies
+   do not establish Metal task behavior or `MTLCompileOptions` parity.
 2. On capable OS-26 hardware, verify real async task retirement and compare both
    library backends through legacy function specialization, PSOs, and exact authored
    GPU readbacks, including existing macro/math/invariance edge cases. SDK compilation

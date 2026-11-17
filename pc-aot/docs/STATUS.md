@@ -1,5 +1,7 @@
 # 開発状況
 
+**手動メモリ管理の実Mac検証を準備。** 新しい`mrc_lifetime.py/.mm`はFoundationのみを使い、呼出し元autorelease pool終了後の入力保持、通知前後のnil／Objective-C例外、警告、破棄要求後の遅延通知を7caseで確認する。normal／ASan+UBSan／TSanを別binaryで実行し、owner・仮task・tokenの収支と通知1回・終了後の破棄を検査する。制御12検査は成功したが、Mac実行はまだ未確認。実Metal task、一般的なMTLCompileOptionsコピー、製品適用の証明ではない。既存の無料・自作shader専用workflowへ追加し、アプリbuild／端末更新は行わない。
+
 **特殊化archiveと非同期終了の追加境界を検証。** Windows6.2の`archive_offline.py --specialized`は同一自作kernelのuint定数7／11から12,368／12,384 bytesの異なるarchiveを生成。一方、必須定数を省いたnegative controlは警告＋exit0＋archive生成となり、期待した拒否を実証できなかった。全体を`failed`として正例・失敗原logを保持し、成功へ読み替えていない。新22制御検査はこの挙動を含めて成功。追加のC++ launch/unwind 5caseは通常・ASan/UBSanで成功し、通知後nil／例外と通知中の終了で結果の維持・通知1回・破棄延期を確認した。WSL全249検査成功、Darwin専用TSan1skip。Metal4実行、Objective-C所有規則、iPhone改善の証拠にはしない。`ARCHIVE_PLAN.md`に早期PSO取得でも必要な変換結果・定数型・macro識別・起動時復元の残作業を整理した。
 
 **検証出力の保護を修正し、組込み境界を整理。** `archive.py`／`batch.py`／`runtime.py`で、存在するリンクを新しい出力先として扱う経路を修正。既存・切れたリンクの再現試験と元の証拠ファイル保護を確認した。修正後のWSL全239検査は成功、Darwin専用TSanのみ1skip。Macで確認済みなのはrun7の235検査までで、追加4件は未実行。`MOLTENVK_PLAN.md`に非同期ライブラリ生成、手動retain/release、遅延callback、失敗通知の維持条件を記録。料金ページへの直接移動でログイン画面が出たため一時中断したが、通常のUI移動では認証が有効で、Free残210分を確認した。期限切れという初期判断は訂正。製品コード・設定は未変更。
