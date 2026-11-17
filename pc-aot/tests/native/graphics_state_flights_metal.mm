@@ -25,7 +25,15 @@
 // fixture; all DXVK declarations still see their original Win32 integer ABI.
 #define BOOL DxvkNativeBOOL
 #include "dxvk/dxvk_bind_mask.h"
+// Only the unchanged packed-state header needs these newer Clang exceptions.
+// Keep -Werror active for our Objective-C++ driver and coordination methods.
+#pragma clang diagnostic push
+#if __has_warning("-Wnontrivial-memcall")
+#pragma clang diagnostic ignored "-Wnontrivial-memcall"
+#endif
+#pragma clang diagnostic ignored "-Wunused-private-field"
 #include "dxvk/dxvk_graphics_state.h"
+#pragma clang diagnostic pop
 #include "util/sync/sync_spinlock.h"
 #undef BOOL
 #include "performance_metrics.h"

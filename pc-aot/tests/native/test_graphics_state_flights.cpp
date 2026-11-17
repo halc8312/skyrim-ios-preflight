@@ -18,7 +18,20 @@
 #include <thread>
 #include <vector>
 #include "dxvk/dxvk_bind_mask.h"
+// Keep pinned DXVK's intentional packed-state memcpy and reserved bits intact.
+// Limit Apple Clang's newer diagnostics to this unchanged upstream header;
+// the authored fixture and coordination methods retain -Werror.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#if __has_warning("-Wnontrivial-memcall")
+#pragma clang diagnostic ignored "-Wnontrivial-memcall"
+#endif
+#pragma clang diagnostic ignored "-Wunused-private-field"
+#endif
 #include "dxvk/dxvk_graphics_state.h"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 #include "util/sync/sync_spinlock.h"
 #include "performance_metrics.h"
 #include "prefetch_gate.h"
