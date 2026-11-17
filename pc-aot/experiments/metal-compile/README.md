@@ -57,8 +57,9 @@ Apple CMS/DER/profile verification, certificate and registered-device matching,
 49 code pages, three resources, append-only changes against the original app,
 and temporary-key cleanup passed. Evidence remains in
 `private/metal-probe-signing/run-20261117T233201Z-d9d6ec7f85/`.
-Phone acceptance/installation, actual Metal 4 GPU output and performance remain
-unverified; signing and simulator UI evidence do not satisfy those checks.
+The later physical-phone reports below establish installation and authored GPU
+execution. Signing and simulator evidence alone did not satisfy that gate.
+Performance and production integration remain unverified.
 
 `scripts/sign-metal-probe-ipa.py` is a local WSL adapter for the existing reviewed
 signer and Apple-identity verification tools. It accepts only the four-file
@@ -78,9 +79,52 @@ is separately deployed. Real private HTTPS page/manifest/package requests return
 requests returned 404. All three pre-existing routes were unchanged and Funnel
 remains disabled. Existing light/dark visual evidence was reused; a fresh live
 screenshot after the version/size substitution was not obtained. The installation
-link was sent to the user; phone acceptance, installation and measurement remain
-pending. No link token, account or device identifier is recorded in this document.
+link was sent to the user and two completed physical-phone reports were received.
+No link token, account or unique device identifier is recorded in this document.
 The live Skyrim updater was not replaced.
+
+## First physical iPhone results
+
+Two user-supplied records from 2026-11-18 08:38 and 08:42 JST passed validation
+against the original build manifest (`9af993d`), authored source/options, prescribed
+route rotation and expected GPU output. Both report A19 Pro (`applegpu_g18p`),
+iOS 26.5.2 and the same device model. The first starts with Metal 4, the second
+with legacy. Across both runs, 24 normal samples and four retained-success cases
+match all 64 render words and 16 compute words. Eight normal invalid-source
+checks and four retained-error cases return the expected nil/NSError; all eight
+retention cases preserve input/result ownership and single callback delivery.
+Their deliberate zero-duration publication-gate timeout occurs after compiler
+completion and does not demonstrate compiler cancellation or a real timeout.
+
+Library creation wall time, median of three samples per route in each run:
+
+| Route | Metal 4 first (ms) | Legacy first (ms) |
+| --- | ---: | ---: |
+| Legacy synchronous | 0.044000 | 0.024250 |
+| Metal 4 synchronous | 0.029875 | 0.045666 |
+| Legacy asynchronous | 0.027208 | 0.063666 |
+| Metal 4 asynchronous | 0.041333 | 0.033875 |
+
+The ordering reverses for both synchronous and asynchronous comparisons. All
+normal library calls span 0.016875–0.142042 ms. This single 1 KiB source, reused
+serially with uncontrolled OS/compiler caches, does not reproduce the game's
+long compile stalls or establish a backend speedup. Each whole run lasts about
+129–130 ms; all sampled thermal states are zero and low-power mode is false.
+Observed footprint peaks are 63.30/64.67 MiB and minimum advisory headroom is
+3.235/3.234 GiB; snapshots do not bound transient peaks or long-session heat.
+The immutable `host_build` false flags describe the earlier unsigned build,
+while the runtime-level flags describe this successful physical execution.
+
+Original records remain private and unmodified under
+`private/metal-probe-results/20261118-083859/comparison.json` (SHA-256
+`83a5cbc162f2af38c776c5fad9c17771a075e5bbd3048cd696287798f066acce`) and
+`20261118-084250/comparison.json`
+(`5ad4f71b21579144ec00781ae98104d8e6cb8b2844a8624acde8535b947fe69c`).
+Next, compare multiple more complex authored inputs with all four routes equally
+represented at each execution position and fixed expected outputs. Keep first
+observed and repeated samples separate. Parallel contention and actual Metal 4
+MRC lifetime checks are later, independent gates; this ARC probe does not close
+them or validate a MoltenVK integration.
 
 The immediate question is whether a library produced by `MTL4Compiler` or by an
 offline Windows compiler can feed the existing Metal function-specialization,
@@ -350,9 +394,10 @@ A matching dedicated registered-device profile is now available and the private
 device IPA has passed signing verification, as recorded above. The Skyrim app's
 bundle/profile is not substituted.
 
-Apple builds, simulator UI review and private signing are complete. Installation
-and physical iPhone execution remain pending. The overnight Mac results below
-are earlier evidence for shared components, not a physical-phone pass for this app.
+Apple builds, simulator UI review, private signing and the two authored physical
+iPhone runs above are complete. The overnight Mac results below are separate
+evidence for shared components. Game performance and production lifetime remain
+unverified.
 
 ## Verification status
 

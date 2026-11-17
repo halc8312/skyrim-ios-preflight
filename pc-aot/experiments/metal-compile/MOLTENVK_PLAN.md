@@ -1,7 +1,8 @@
 # Optional Metal 4 library compiler integration
 
-Design review only, 2026-11-18. The production path is unchanged. No applied
-MoltenVK patch, game conversion, renderer change, or device run is part of this plan.
+Integration design review, 2026-11-18. The production path is unchanged. No
+MoltenVK patch, game conversion or renderer change has been applied. Separate
+authored iPhone comparison results inform the readiness gates below.
 
 The smallest useful boundary is MSL source/options to `MTLLibrary`. Function
 specialization, legacy pipeline descriptors, PSO creation, encoding, cache format,
@@ -22,14 +23,18 @@ and the existing DXVK scheduling remain on their current paths.
   source `e0bdd02`, compiled the new archive probe with the macOS and iOS 26.5
   SDKs without warnings; that probe was not executed.
 - The available Apple Paravirtual device does not provide the required Metal 4
-  capability. A capable Mac/iPhone is still missing for the relevant runtime tests.
+  capability. The iPhone now supplies the basic library evidence below; the
+  device archive and production-lifetime gates still lack execution evidence.
 - The separate UIKit comparison host now builds for a physical iPhone and the
   simulator with SDK 26.5 (phone run 4, public `9af993d`, main `3447be4`). Its 56
   relevant controls and simulator unsupported-result/save/share UI checks passed.
   The separate device IPA has since passed private signing verification with
-  its dedicated Apple profile and existing certificate. Installation, physical
-  Metal 4 execution and performance remain unverified. This host reuses the
-  authored library boundary, not MoltenVK itself.
+  its dedicated Apple profile and existing certificate. Two physical iPhone
+  reports (A19 Pro/iOS 26.5.2, opposite starting backends) passed all 24 normal
+  samples, four retained-success GPU cases and twelve intentional rejections.
+  These establish the basic ARC library boundary through legacy PSOs, not
+  MoltenVK MRC lifetime or a performance improvement. See README for exact times,
+  input identities and the unmodified private records.
 
 Upstream source references below are all at the built revision:
 [shader implementation](https://github.com/KhronosGroup/MoltenVK/blob/458870543b9bcf6b0edd6f90aaa776707b310d96/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm),
@@ -175,7 +180,8 @@ can exercise the actual task and legacy PSOs. On iPhone, the Python/CLI runner
 cannot simply be installed. The new, separately signed UIKit host calls the
 same authored comparison after the UI is responsive, retains per-request objects,
 and saves JSON in its own sandbox. Its bundle and storage remain separate from
-Skyrim, with no game files or save access. Installation is the next device step.
+Skyrim, with no game files or save access. Installation and the basic authored
+comparison have now succeeded in two opposite-order physical runs.
 
 The iPhone check must record device capability and OS before submission, preserve
 unsupported/failure outcomes, and verify the legacy and Metal 4 routes against
@@ -192,7 +198,13 @@ is 74,013 bytes, with evidence under
 Private OTA delivery is verified: page, manifest and full IPA returned 200 over
 HTTPS; the delivered hash matched the signed IPA and unauthenticated access
 returned 404. The three existing routes were preserved and Funnel remains off.
-The user has received the installation link; phone installation and execution
-are pending. This later work is separate from the earlier overnight experiments.
-SDK, simulator, signing and delivery results do not establish Metal 4 device
-performance.
+The user installed the app and supplied two completed physical runs. Both
+synchronous and asynchronous timing rankings reverse between runs; a single
+small reused source with three samples per route does not establish a speedup.
+The next smallest experiment is a serial set of more complex authored shaders,
+with runtime-dependent inputs, fixed expected GPU outputs and all four routes
+balanced across execution positions. Preserve initial/repeated observations and
+make no cold-cache claim. Parallel contention and actual Metal 4 MRC task
+retirement should then be evaluated independently. The production gate stays
+open until those lifetime/options checks pass; neither an ARC fixture nor its
+short thermal-zero run proves game performance or long-session stability.
