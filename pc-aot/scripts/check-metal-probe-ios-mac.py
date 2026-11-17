@@ -127,7 +127,9 @@ def main():
         call("simulator-install", ["xcrun", "simctl", "install", udid, str(preview)])
         call("appearance", ["xcrun", "simctl", "ui", udid, "appearance", "light"])
         call("launch-ready", ["xcrun", "simctl", "launch", udid, BUNDLE])
-        time.sleep(3)
+        # Fresh simulator services and UIKit's rendered button titles can lag
+        # process launch. Capture settled UI, not a launch/transition frame.
+        time.sleep(8)
         call("screen-ready", ["xcrun", "simctl", "io", udid, "screenshot", str(out / "ready.png")])
         call("terminate-ready", ["xcrun", "simctl", "terminate", udid, BUNDLE])
         container = Path(call("app-container", ["xcrun", "simctl", "get_app_container", udid, BUNDLE, "data"]))
@@ -148,15 +150,16 @@ def main():
             time.sleep(0.2)
         if not record:
             raise RuntimeError("No fresh unsupported record from this exact source revision")
-        time.sleep(1)
+        time.sleep(8)
         call("screen-result", ["xcrun", "simctl", "io", udid, "screenshot", str(out / "result.png")])
         call("terminate-result", ["xcrun", "simctl", "terminate", udid, BUNDLE])
         call("launch-restore", ["xcrun", "simctl", "launch", udid, BUNDLE])
-        time.sleep(2)
+        time.sleep(8)
         call("screen-restored", ["xcrun", "simctl", "io", udid, "screenshot", str(out / "restored.png")])
         call("terminate-restored", ["xcrun", "simctl", "terminate", udid, BUNDLE])
         call("launch-share", ["xcrun", "simctl", "launch", udid, BUNDLE, "--probe-ui-share"])
-        time.sleep(3)
+        # The share extension discovery can outlast the presentation animation.
+        time.sleep(12)
         call("screen-share", ["xcrun", "simctl", "io", udid, "screenshot", str(out / "share.png")])
         report["simulator_unsupported_record_verified"] = True
         report["screenshots_captured"] = ["ready.png", "result.png", "restored.png", "share.png"]

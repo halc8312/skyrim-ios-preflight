@@ -80,7 +80,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
         [content.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-40]
     ]];
     [content addArrangedSubview:makeLabel(@"シェーダー準備を測る", UIFontTextStyleTitle2)];
-    UILabel* intro = makeLabel(@"小さなテスト用シェーダーで、準備にかかる時間と描画結果を比較します。画面を開いたままお待ちください。", UIFontTextStyleBody);
+    UILabel* intro = makeLabel(@"描画の準備時間と結果を比較します。測定中は画面を開いたままお待ちください。", UIFontTextStyleBody);
     intro.textColor = UIColor.secondaryLabelColor;
     [content addArrangedSubview:intro];
     [content addArrangedSubview:makeLabel(@"最初に試す方式", UIFontTextStyleHeadline)];
@@ -89,7 +89,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
     self.orderControl.accessibilityLabel = @"最初に試す方式";
     [self.orderControl.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
     [content addArrangedSubview:self.orderControl];
-    UILabel* orderHint = makeLabel(@"各方式を3回ずつ、順番を変えて測ります。OSのキャッシュを消去する操作は行いません。", UIFontTextStyleSubheadline);
+    UILabel* orderHint = makeLabel(@"各方式を3回ずつ、順番を変えて測ります。次の測定では、もう一方の方式から始めてください。", UIFontTextStyleSubheadline);
     orderHint.textColor = UIColor.secondaryLabelColor;
     [content addArrangedSubview:orderHint];
     self.stateLabel = makeLabel(@"準備できています", UIFontTextStyleHeadline);
