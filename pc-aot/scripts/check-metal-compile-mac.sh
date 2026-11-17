@@ -173,10 +173,56 @@ PY
 python3 experiments/metal-compile/options_probe.py --budget "$(remaining_budget)" --output "$RUN/options"
 python3 experiments/metal-compile/offline.py --target macos --deployment 15.0 \
   --repeat 3 --timeout 30 --budget "$(remaining_budget)" --output "$RUN/offline"
+# Read the installed toolchain's pipeline-script reference, when supplied.
+# This is optional documentation evidence; absence never implies API support.
+python3 - "$RUN" <<'PY'
+import gzip, hashlib, json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+tool = pathlib.Path(json.loads((root / 'offline/result.json').read_text())['tools']['metal']['path'])
+usr = tool.parent.parent
+output = root / 'tool-reference'
+output.mkdir()
+records = []
+for folder in (usr / 'share/man', usr / 'metal/current/share/man'):
+    try:
+        if not folder.is_dir():
+            continue
+        for path in folder.rglob('*'):
+            if len(records) >= 20:
+                break
+            if 'metal' not in path.name.lower() or 'pipeline' not in path.name.lower():
+                continue
+            try:
+                if not path.is_file():
+                    continue
+                if path.stat().st_size > 1024 * 1024:
+                    records.append({'name': path.name, 'status': 'oversized'})
+                    continue
+                opener = gzip.open if path.suffix == '.gz' else open
+                with opener(path, 'rb') as stream:
+                    data = stream.read(1024 * 1024 + 1)
+                if len(data) > 1024 * 1024:
+                    raise ValueError('expanded manual exceeds size limit')
+                name = f'{len(records):02d}-{path.name}.txt'
+                (output / name).write_bytes(data)
+                records.append({'name': path.name, 'status': 'captured', 'file': name,
+                                'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
+            except (OSError, ValueError, EOFError) as error:
+                records.append({'name': path.name, 'status': 'unavailable', 'error': str(error)})
+    except OSError as error:
+        records.append({'name': str(folder), 'status': 'unavailable', 'error': str(error)})
+(output / 'index.json').write_text(json.dumps({'scope': 'installed toolchain documentation only',
+    'records': records, 'runtime_support_verified': False}, indent=2) + '\n')
+print(f'METAL_TOOL_REFERENCE captured={sum(row["status"] == "captured" for row in records)} runtime_verified=0')
+PY
 run_experiment archive 180 experiments/metal-compile/archive.py --output "$RUN/archive"
 run_experiment macro-diagnostics 90 experiments/metal-compile/macro_probe.py --timeout 30 --output "$RUN/macro-diagnostics"
+run_experiment macro-values 90 experiments/metal-compile/macro_value.py --timeout 30 --output "$RUN/macro-values"
 if [[ "$MODE" == full ]]; then
   run_experiment runtime 240 experiments/metal-compile/runtime.py --repeat 3 --async-library --probe-library-factory --output "$RUN/runtime" \
+    --library "$RUN/offline/trial-01/fixture.metallib"
+else
+  run_experiment legacy-runtime 120 experiments/metal-compile/runtime.py --legacy-only --async-library --repeat 3 --output "$RUN/legacy-runtime" \
     --library "$RUN/offline/trial-01/fixture.metallib"
 fi
 write_unit_summary

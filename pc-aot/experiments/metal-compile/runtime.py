@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Run the authored library comparison on a Metal 4 capable Mac.
+"""Run the authored library comparison on macOS 26 or later.
 
 Portable control tests are not native compilation or GPU execution evidence.
 The optional library must target macOS; its original compile flags are not inferred.
+The default comparison requires Metal 4. Explicit --legacy-only requires an
+offline library and compares it with legacy runtime source compilation instead.
 """
 import argparse
 import hashlib
@@ -35,7 +37,7 @@ SOURCE_OPTIONS = {
     "function_constant": {"index": 0, "type": "uint", "value": 7},
 }
 FALSE_EVIDENCE = (
-    "full_moltenvk_verified", "physical_iphone_verified", "game_rendering_verified",
+    "full_metal4_verified", "full_moltenvk_verified", "physical_iphone_verified", "game_rendering_verified",
     "performance_improvement_verified", "cold_os_cache_verified", "offline_compile_options_verified",
     "production_async_lifetime_verified",
 )
@@ -61,13 +63,21 @@ def parse_args(argv=None):
     parser.add_argument("--output", required=True, type=Path, help="fresh evidence directory; never overwritten")
     parser.add_argument("--repeat", type=int, choices=range(1, 6), default=3)
     parser.add_argument("--library", type=Path, help="optional macOS-targeted authored fixture.metallib")
+    parser.add_argument("--legacy-only", action="store_true",
+                        help="compare legacy source compilation with --library; optional --async-library tests only the legacy async factory")
     parser.add_argument("--async-library", action="store_true",
                         help="also test isolated async factories and controlled late-result retention")
     parser.add_argument("--probe-library-factory", action="store_true",
                         help="after the normal comparison, separately probe the factory/library API even if its Metal 4 family guard rejects the device")
     parser.add_argument("--budget", type=budget_seconds,
                         help="optional overall tool wall budget in seconds; cleanup/reporting can extend elapsed time")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.legacy_only:
+        if args.library is None:
+            parser.error("--legacy-only requires --library")
+        if args.probe_library_factory:
+            parser.error("--legacy-only cannot be combined with --probe-library-factory")
+    return args
 
 
 def sha256(path):
@@ -237,7 +247,7 @@ def validate_factory_probe(probe):
         raise ValueError("factory probe did not create its claimed library")
 
 
-def validate_native(report, repeats, with_library, async_library=False):
+def validate_native(report, repeats, with_library, async_library=False, legacy_only=False):
     """Independently check every authored output, not just the binary's pass label."""
     def require(condition, message):
         if not condition:
@@ -262,15 +272,25 @@ def validate_native(report, repeats, with_library, async_library=False):
         require(sample.get("metal4_task_joined") is metal4, "async task lifetime was not verified")
         if metal4:
             require(sample.get("metal4_task_status") == "finished", "Metal 4 task was not finished")
+        else:
+            require("metal4_task_status" not in sample, "legacy async must not report a Metal 4 task")
 
     def rejection_error(error):
         require(isinstance(error, dict) and isinstance(error.get("domain"), str) and bool(error["domain"])
                 and type(error.get("code")) is int, "rejection diagnostic missing")
 
     require(isinstance(report, dict), "native report is not an object")
+    require(not legacy_only or with_library, "invalid legacy-only comparison request")
     require(type(report.get("schema")) is int and report["schema"] == 1, "unsupported native schema")
     require(report.get("status") == "passed" and report.get("scope") == SCOPE, "native run did not pass the expected scope")
+    require(report.get("comparison_mode") == ("legacy-only" if legacy_only else "metal4-comparison")
+            and report.get("legacy_only_requested") is legacy_only, "comparison mode differs")
     require(report.get("gpu_execution_verified") is True, "GPU execution was not verified")
+    require(report.get("metal4_library_verified") is (not legacy_only), "Metal 4 library evidence differs")
+    require(report.get("metal4_compiler_created") is (not legacy_only), "Metal 4 compiler creation differs")
+    if legacy_only:
+        require(report.get("library_factory_probe_requested") is False
+                and "library_factory_probe" not in report, "unexpected Metal 4 factory probe")
     for key in FALSE_EVIDENCE:
         require(report.get(key) is False, "unsupported evidence claim: " + key)
     # JSON canonicalization distinguishes booleans from integers (Python equality does not).
@@ -280,6 +300,8 @@ def validate_native(report, repeats, with_library, async_library=False):
     require(report.get("offline_library_requested") is with_library, "offline route differs")
     require(report.get("async_library_requested") is async_library, "async route differs")
     require(report.get("async_adapter_verified") is async_library, "async adapter validation incomplete")
+    require(report.get("metal4_async_adapter_verified") is (async_library and not legacy_only),
+            "Metal 4 async evidence differs")
     require(report.get("specialization_scope") == "vertex lookup plus fragment and compute specialization",
             "specialization timing scope differs")
     os_version = report.get("os_version")
@@ -288,14 +310,22 @@ def validate_native(report, repeats, with_library, async_library=False):
         integer(component, "OS version")
     require(os_version[0] >= 26, "unsupported native OS")
     device = report.get("device")
-    require(isinstance(device, dict) and device.get("supports_metal4") is True
-            and isinstance(device.get("name"), str) and bool(device["name"]), "Metal 4 device missing")
+    require(isinstance(device, dict) and device.get("available") is True
+            and isinstance(device.get("name"), str) and bool(device["name"]), "Metal device missing")
+    if not legacy_only:
+        require(device.get("supports_metal4") is True, "Metal 4 device missing")
     integer(report.get("compiler_setup_ns"), "compiler setup duration")
-    source_apis = ["legacy_source", "metal4_source"]
+    if legacy_only:
+        require(report["compiler_setup_ns"] == 0, "legacy-only must not time a Metal 4 compiler setup")
+    source_apis = ["legacy_source"] if legacy_only else ["legacy_source", "metal4_source"]
+    async_apis = (["legacy_async_source"] if legacy_only else
+                  ["legacy_async_source", "metal4_async_source"]) if async_library else []
+    require(report.get("async_apis") == async_apis, "async API scope differs")
     if async_library:
-        source_apis.extend(("legacy_async_source", "metal4_async_source"))
-        require(report.get("async_timing_scope") ==
-                "submission through callback publication and task join; controlled retention checks excluded",
+        source_apis.extend(async_apis)
+        timing_scope = ("submission through callback publication; controlled retention checks excluded" if legacy_only
+                        else "submission through callback publication and task join; controlled retention checks excluded")
+        require(report.get("async_timing_scope") == timing_scope,
                 "async timing scope differs")
     expected_order = []
     for iteration in range(1, repeats + 1):
@@ -329,8 +359,8 @@ def validate_native(report, repeats, with_library, async_library=False):
         if "_async_" in api:
             async_result(rejection, api)
     checks = report.get("async_retention_checks")
-    expected_checks = [(api, case) for api in ("legacy_async_source", "metal4_async_source")
-                       for case in ("library_success", "compiler_error")] if async_library else []
+    expected_checks = [(api, case) for api in async_apis
+                       for case in ("library_success", "compiler_error")]
     require(isinstance(checks, list) and len(checks) == len(expected_checks), "async retention checks missing or unexpected")
     for check, (api, case) in zip(checks, expected_checks):
         require(isinstance(check, dict) and check.get("api") == api and check.get("case") == case,
@@ -357,7 +387,12 @@ def run_experiment(args):
         "schema": 1, "status": "running", "scope": SCOPE, "source_options": SOURCE_OPTIONS,
         "repeat": args.repeat, "commands": [], "inputs": {},
         "budget_seconds": args.budget,
+        "comparison_mode": "legacy-only" if args.legacy_only else "metal4-comparison",
+        "legacy_only_requested": args.legacy_only, "metal4_library_verified": False,
         "async_library_requested": args.async_library, "async_adapter_verified": False,
+        "metal4_async_adapter_verified": False,
+        "async_apis": (["legacy_async_source"] if args.legacy_only else
+                       ["legacy_async_source", "metal4_async_source"]) if args.async_library else [],
         "library_factory_probe_requested": args.probe_library_factory,
         "host": {"system": platform.system(), "release": platform.release(), "macos": platform.mac_ver()[0]},
         "native_compilation_verified": False, "gpu_execution_verified": False,
@@ -408,6 +443,8 @@ def run_experiment(args):
                    "--report", str(output / "native.json"), "--repeat", str(args.repeat)]
         if args.library:
             command.extend(("--library", str(output / "offline.metallib")))
+        if args.legacy_only:
+            command.append("--legacy-only")
         if args.async_library:
             command.append("--async-library")
         if args.probe_library_factory:
@@ -423,9 +460,12 @@ def run_experiment(args):
             raise Unsupported(report["native"].get("failure", "unsupported native device"))
         if event["returncode"] != 0:
             raise RuntimeError("native comparison failed; see native.json and retained logs")
-        validate_native(report.get("native"), args.repeat, args.library is not None, args.async_library)
+        validate_native(report.get("native"), args.repeat, args.library is not None,
+                        args.async_library, args.legacy_only)
         report["gpu_execution_verified"] = True
+        report["metal4_library_verified"] = not args.legacy_only
         report["async_adapter_verified"] = args.async_library
+        report["metal4_async_adapter_verified"] = args.async_library and not args.legacy_only
         report["status"] = "passed"
     except Unsupported as error:
         report["status"] = "unsupported"

@@ -19,17 +19,27 @@ runtime = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runtime)
 
 
-def synthetic_report(repeats=2, offline=True, async_library=False):
+def synthetic_report(repeats=2, offline=True, async_library=False, legacy_only=False):
     """Authored JSON for parser tests; deliberately not returned by a Metal process."""
+    async_apis = (["legacy_async_source"] if legacy_only else
+                  ["legacy_async_source", "metal4_async_source"]) if async_library else []
     result = {
         "schema": 1, "status": "passed", "scope": runtime.SCOPE,
+        "comparison_mode": "legacy-only" if legacy_only else "metal4-comparison",
+        "legacy_only_requested": legacy_only,
+        "metal4_library_verified": not legacy_only, "metal4_compiler_created": not legacy_only,
+        "library_factory_probe_requested": False,
         "source_options": copy.deepcopy(runtime.SOURCE_OPTIONS),
         "gpu_execution_verified": True, "repeat": repeats, "offline_library_requested": offline,
-        "os_version": [26, 0, 0], "device": {"name": "SYNTHETIC NON-GPU", "supports_metal4": True},
-        "compiler_setup_ns": 100, "samples": [], "rejections": [],
+        "os_version": [26, 0, 0],
+        "device": {"available": True, "name": "SYNTHETIC NON-GPU", "supports_metal4": not legacy_only},
+        "compiler_setup_ns": 0 if legacy_only else 100, "samples": [], "rejections": [],
         "async_library_requested": async_library, "async_adapter_verified": async_library,
+        "metal4_async_adapter_verified": async_library and not legacy_only,
+        "async_apis": async_apis,
         "async_retention_checks": [],
-        "async_timing_scope": "submission through callback publication and task join; controlled retention checks excluded",
+        "async_timing_scope": ("submission through callback publication; controlled retention checks excluded" if legacy_only
+                               else "submission through callback publication and task join; controlled retention checks excluded"),
         "specialization_scope": "vertex lookup plus fragment and compute specialization",
         **{key: False for key in runtime.FALSE_EVIDENCE},
     }
@@ -37,9 +47,8 @@ def synthetic_report(repeats=2, offline=True, async_library=False):
     color = [0x3e400000, 0x3ee00000, 0x3f000000, 0x3f800000]
     compute = [3, 7, 10, 0x12345678, 4, 14, 10, 0x12345678,
                5, 21, 10, 0x12345678, 6, 28, 10, 0x12345678]
-    source_apis = ["legacy_source", "metal4_source"]
-    if async_library:
-        source_apis += ["legacy_async_source", "metal4_async_source"]
+    source_apis = ["legacy_source"] if legacy_only else ["legacy_source", "metal4_source"]
+    source_apis += async_apis
 
     def async_fields(api):
         if "_async_" not in api:
@@ -69,7 +78,7 @@ def synthetic_report(repeats=2, offline=True, async_library=False):
             **async_fields(api),
         })
     if async_library:
-        for api in ("legacy_async_source", "metal4_async_source"):
+        for api in async_apis:
             for case in ("library_success", "compiler_error"):
                 result["async_retention_checks"].append({
                     "api": api, "case": case, "input_snapshot_verified": True, "wait_timed_out": True,
@@ -98,6 +107,109 @@ class MetalRuntimeReportTests(unittest.TestCase):
     def test_valid_control_reports_with_and_without_offline(self):
         self.validate(synthetic_report())
         runtime.validate_native(synthetic_report(1, False), 1, False)
+
+    def test_legacy_only_accepts_exact_outputs_without_metal4_but_requires_explicit_mode(self):
+        report = synthetic_report(3, True, legacy_only=True)
+        runtime.validate_native(report, 3, True, legacy_only=True)
+        self.assertEqual([sample["api"] for sample in report["samples"]],
+                         ["legacy_source", "offline_metallib"] * 3)
+        with self.assertRaisesRegex(ValueError, "comparison mode"):
+            runtime.validate_native(report, 3, True)
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous), \
+                    self.assertRaisesRegex(ValueError, "invalid legacy-only"):
+                runtime.validate_native(report, 3, False, asynchronous, legacy_only=True)
+
+    def test_legacy_only_cannot_promote_metal4_async_or_lifetime_evidence(self):
+        mutations = (
+            lambda r: r.__setitem__("metal4_library_verified", True),
+            lambda r: r.__setitem__("metal4_compiler_created", True),
+            lambda r: r.__setitem__("full_metal4_verified", True),
+            lambda r: r.__setitem__("compiler_setup_ns", 1),
+            lambda r: r.__setitem__("async_library_requested", True),
+            lambda r: r.__setitem__("async_adapter_verified", True),
+            lambda r: r.__setitem__("metal4_async_adapter_verified", True),
+            lambda r: r.__setitem__("production_async_lifetime_verified", True),
+            lambda r: r["async_retention_checks"].append({"synthetic": True}),
+            lambda r: r.__setitem__("library_factory_probe_requested", True),
+            lambda r: r.__setitem__("library_factory_probe", synthetic_factory_probe()),
+            lambda r: r.__setitem__("comparison_mode", "metal4-comparison"),
+        )
+        for index, mutation in enumerate(mutations):
+            with self.subTest(mutation=index):
+                report = synthetic_report(legacy_only=True)
+                mutation(report)
+                with self.assertRaises(ValueError):
+                    runtime.validate_native(report, 2, True, legacy_only=True)
+
+    def test_legacy_async_requires_its_own_routes_and_retained_success_and_error(self):
+        report = synthetic_report(3, True, True, legacy_only=True)
+        runtime.validate_native(report, 3, True, True, legacy_only=True)
+        self.assertEqual([sample["api"] for sample in report["samples"]], [
+            "legacy_source", "legacy_async_source", "offline_metallib",
+            "legacy_async_source", "legacy_source", "offline_metallib",
+            "legacy_source", "legacy_async_source", "offline_metallib",
+        ])
+        self.assertEqual([(check["api"], check["case"]) for check in report["async_retention_checks"]],
+                         [("legacy_async_source", "library_success"), ("legacy_async_source", "compiler_error")])
+        with self.assertRaisesRegex(ValueError, "async route"):
+            runtime.validate_native(report, 3, True, legacy_only=True)
+        with self.assertRaisesRegex(ValueError, "comparison mode"):
+            runtime.validate_native(report, 3, True, True)
+
+    def test_legacy_async_protocol_failures_and_metal4_claims_cannot_be_hidden(self):
+        mutations = (
+            lambda r: r.__setitem__("metal4_async_adapter_verified", True),
+            lambda r: r.__setitem__("async_apis", ["legacy_async_source", "metal4_async_source"]),
+            lambda r: r.__setitem__("async_timing_scope", "submission through callback publication and task join; controlled retention checks excluded"),
+            lambda r: r["samples"][1].__setitem__("api", "metal4_async_source"),
+            lambda r: r["samples"][1].__setitem__("async_callback_count", 2),
+            lambda r: r["samples"][1].__setitem__("metal4_task_joined", True),
+            lambda r: r["samples"][1].__setitem__("metal4_task_status", "finished"),
+            lambda r: r["samples"][1]["render_bits"].__setitem__(63, 0),
+            lambda r: r["rejections"][1].__setitem__("returned_nil", False),
+            lambda r: r["rejections"][1].__setitem__("error", {}),
+            lambda r: r["async_retention_checks"].pop(),
+            lambda r: r["async_retention_checks"][0].__setitem__("input_snapshot_verified", False),
+            lambda r: r["async_retention_checks"][0].__setitem__("wait_timed_out", False),
+            lambda r: r["async_retention_checks"][0].__setitem__("cancellation_requested", True),
+            lambda r: r["async_retention_checks"][0].__setitem__("timeout_scope", "actual compiler timed out"),
+            lambda r: r["async_retention_checks"][0]["compute_words"].__setitem__(15, 0),
+            lambda r: r["async_retention_checks"][1].__setitem__("error_present", False),
+            lambda r: r["async_retention_checks"][1].__setitem__("returned_nil", False),
+        )
+        for index, mutation in enumerate(mutations):
+            with self.subTest(mutation=index):
+                report = synthetic_report(1, True, True, legacy_only=True)
+                mutation(report)
+                with self.assertRaises(ValueError):
+                    runtime.validate_native(report, 1, True, True, legacy_only=True)
+
+    def test_legacy_only_requires_both_exact_readbacks_and_real_source_rejection(self):
+        for index in range(4):
+            for key in ("render_bits", "compute_words"):
+                with self.subTest(sample=index, readback=key):
+                    report = synthetic_report(legacy_only=True)
+                    report["samples"][index][key][-1] ^= 1
+                    with self.assertRaisesRegex(ValueError, "readback mismatch"):
+                        runtime.validate_native(report, 2, True, legacy_only=True)
+        mutations = (
+            lambda r: r["samples"].pop(),
+            lambda r: r["samples"][1].__setitem__("api", "metal4_source"),
+            lambda r: r["samples"][1].__setitem__("library_operation", "compile"),
+            lambda r: r["rejections"].clear(),
+            lambda r: r["rejections"][0].__setitem__("returned_nil", False),
+            lambda r: r["rejections"][0].__setitem__("error", {}),
+            lambda r: r["source_options"]["function_constant"].__setitem__("value", 8),
+            lambda r: r["device"].__setitem__("available", False),
+            lambda r: r.__setitem__("os_version", [15, 0, 0]),
+        )
+        for index, mutation in enumerate(mutations):
+            with self.subTest(mutation=index):
+                report = synthetic_report(legacy_only=True)
+                mutation(report)
+                with self.assertRaises(ValueError):
+                    runtime.validate_native(report, 2, True, legacy_only=True)
 
     def test_async_is_explicit_and_requires_every_retained_result(self):
         report = synthetic_report(3, True, True)
@@ -225,6 +337,105 @@ class MetalRuntimeControlTests(unittest.TestCase):
 
     def arguments(self, *extra):
         return runtime.parse_args(["--output", str(self.output), "--repeat", "1", *extra])
+
+    def test_legacy_only_requires_library_and_rejects_other_metal4_modes_before_work(self):
+        self.assertFalse(self.arguments().legacy_only)
+        args = self.arguments("--legacy-only", "--library", "authored-macos.metallib")
+        self.assertTrue(args.legacy_only)
+        asynchronous = self.arguments("--legacy-only", "--library", "authored-macos.metallib", "--async-library")
+        self.assertTrue(asynchronous.legacy_only and asynchronous.async_library)
+        invalid = (("--legacy-only",),
+                   ("--legacy-only", "--async-library"),
+                   ("--legacy-only", "--library", "authored-macos.metallib", "--async-library", "--probe-library-factory"),
+                   ("--legacy-only", "--library", "authored-macos.metallib", "--probe-library-factory"))
+        for extra in invalid:
+            with self.subTest(arguments=extra), contextlib.redirect_stderr(io.StringIO()), \
+                    patch.object(runtime, "run_experiment") as run, self.assertRaises(SystemExit):
+                runtime.main(["--output", str(self.output), *extra])
+            run.assert_not_called()
+            self.assertFalse(self.output.exists())
+
+    def native_comparison_control(self, native, *, legacy_only, async_library=False, returncode=0):
+        """No native tools run: test forwarding and independent report validation."""
+        library = self.directory / "synthetic library.metallib"
+        library.write_bytes(b"MTLB synthetic; not compiled")
+        calls = []
+
+        def command(argv, label, output, report, env, timeout, deadline=None):
+            calls.append(argv)
+            if label == "native-compile":
+                (output / "runtime").write_bytes(b"synthetic binary")
+                return {"returncode": 0}
+            self.assertEqual(label, "native-run")
+            (output / "native.json").write_text(json.dumps(native))
+            return {"returncode": returncode}
+
+        extra = ["--library", str(library)]
+        if legacy_only:
+            extra.append("--legacy-only")
+        if async_library:
+            extra.append("--async-library")
+        with patch.object(runtime.platform, "system", return_value="Darwin"), \
+                patch.object(runtime.platform, "mac_ver", return_value=("26.5.1", (), "")), \
+                patch.object(runtime, "probe", side_effect=["26.5", "synthetic SDK", "synthetic Xcode", "synthetic clang"]), \
+                patch.object(runtime, "run_command", side_effect=command):
+            report = runtime.run_experiment(self.arguments(*extra))
+        self.assertEqual(report, json.loads((self.output / "result.json").read_text()))
+        self.assertEqual(report["native"], native)
+        return report, calls[-1]
+
+    def test_legacy_only_command_retains_and_validates_both_routes_without_metal4_claims(self):
+        report, command = self.native_comparison_control(synthetic_report(1, True, legacy_only=True),
+                                                         legacy_only=True)
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["comparison_mode"], "legacy-only")
+        self.assertTrue(report["legacy_only_requested"])
+        self.assertTrue(report["gpu_execution_verified"])
+        self.assertIn("--legacy-only", command)
+        self.assertEqual(command[command.index("--library") + 1], str(self.output / "offline.metallib"))
+        self.assertNotIn("--async-library", command)
+        self.assertNotIn("--probe-library-factory", command)
+        for key in ("metal4_library_verified", "metal4_async_adapter_verified", "async_adapter_verified", *runtime.FALSE_EVIDENCE):
+            self.assertIs(report[key], False)
+
+    def test_legacy_async_command_verifies_only_requested_legacy_adapter_scope(self):
+        report, command = self.native_comparison_control(synthetic_report(1, True, True, legacy_only=True),
+                                                         legacy_only=True, async_library=True)
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["comparison_mode"], "legacy-only")
+        self.assertEqual(report["async_apis"], ["legacy_async_source"])
+        self.assertTrue(report["async_adapter_verified"])
+        self.assertTrue(report["gpu_execution_verified"])
+        self.assertIn("--legacy-only", command)
+        self.assertIn("--async-library", command)
+        self.assertNotIn("--probe-library-factory", command)
+        for key in ("metal4_library_verified", "metal4_async_adapter_verified", *runtime.FALSE_EVIDENCE):
+            self.assertIs(report[key], False)
+
+    def test_legacy_only_failure_retains_native_evidence_without_gpu_promotion(self):
+        native = synthetic_report(1, True, legacy_only=True)
+        native["samples"][-1]["compute_words"][-1] ^= 1
+        report, _ = self.native_comparison_control(native, legacy_only=True)
+        self.assertEqual(report["status"], "failed")
+        self.assertIn("readback mismatch", report["failure"])
+        self.assertFalse(report["gpu_execution_verified"])
+        self.assertFalse(report["metal4_library_verified"])
+
+    def test_default_mode_stays_unsupported_for_non_metal4_device(self):
+        native = synthetic_report(1, True)
+        native.update(status="unsupported", failure="a Metal 4 capable device is required",
+                      unsupported_reason="metal4_family_unavailable", gpu_execution_verified=False,
+                      metal4_library_verified=False, metal4_compiler_created=False)
+        native["device"]["supports_metal4"] = False
+        native["samples"].clear()
+        native["rejections"].clear()
+        report, command = self.native_comparison_control(native, legacy_only=False, returncode=78)
+        self.assertEqual(report["status"], "unsupported")
+        self.assertEqual(report["comparison_mode"], "metal4-comparison")
+        self.assertFalse(report["legacy_only_requested"])
+        self.assertFalse(report["gpu_execution_verified"])
+        self.assertFalse(report["metal4_library_verified"])
+        self.assertNotIn("--legacy-only", command)
 
     def test_non_mac_records_explicit_unsupported_with_source_hashes_and_no_process(self):
         with patch.object(runtime.platform, "system", return_value="Windows"), \

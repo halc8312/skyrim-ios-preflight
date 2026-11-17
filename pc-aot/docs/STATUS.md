@@ -1,6 +1,8 @@
 # 開発状況
 
-**夜間検証run3準備：archive再利用・macro token・中断時のprocess所有を独立検査へ追加。** 統合WSL検査は151件中150成功、Darwin専用TSan1skip（`local/metal-compile/controls-20261118-06/`）。最初の統合実行で検査用Bash抽出のheredoc不備が出たため修正し、失敗ログを保持した。新しい手動legacy workflowはMetal4 runtimeを要求せず、archive／macroの失敗・未対応を独立に保存する。macOS26／SDK26の前提は維持。実データの追加SPIR-V変換試作は作業用AIの自動審査でサイバーセキュリティ懸念として停止されたため未実施。既存32件の読取り検査と自作Metal検査は別の完了済み範囲として保持する。
+**夜間検証run3：Macの151検査とmacro token観測は成功。archiveはリンク方法の不備を修正し再検証へ。** [実行run3](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afca654d133a39c4a125829)は公開`5539d19`、Xcode26.6／SDK26.5。Darwin TSanを含む全151検査、iOS object、getter、offline生成が成功した。NSNumberのfloat bits `3f800001`がtoken `1`、負のゼロが`-0`へ展開された一方、NSString／CLIは明示文字列を保持した。GPU値・ゲームへの影響は未確認なので、自動的な精度修正はしない。archive fixtureはclang++のsymlinkをclangへ解決してC++ runtime linkを失うrunner不備で失敗。呼出名を保持する修正と実symlink回帰検査17件を通し、原失敗artifactを`local/metal-compile/mac-run-03/`へ保持した。独立unitの後続macro検査は失敗に巻き込まれず実行できた。次は修正版archiveと明示legacy-onlyのsource／offline readbackを確認する。無料枠284/500使用、残216分。アプリbuild・配布・製品設定変更はない。
+
+実データの追加SPIR-V変換試作は作業用AIの自動審査でサイバーセキュリティ懸念として停止されたため未実施。既存32件の読取り検査と自作Metal検査は別の完了済み範囲として保持する。先の統合検査のheredoc抽出不備も修正し、失敗ログは保持している。
 
 **夜間検証run2：Apple SDK・設定getter・全106検査は成功。Metal 4実行は仮想GPU非対応と確認。** [実行run2](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc9df8d133a39c4a125505)は公開`68a6963`、Xcode26.6／SDK26.5／macOS26.5.1。Darwin TSanを含む106検査にskip／失敗なし、iPhoneOS26.0向けadapter object compileとMac offline生成も成功した。全14件の自作macro値はgetterで保持され、負のゼロも確認したが、元の型やpreprocessor tokenの一致は別問題。deviceは`Apple Paravirtual device`のみでMac2対応・Metal3／4／Apple7〜9非対応。明示MTL4Compiler factoryもnil＋MTLDeviceErrorDomain code1のため通常runtimeはunsupported78、Metal4 library／PSO／GPU比較は未実行。原artifactは`local/metal-compile/mac-run-02/`。無料枠282/500使用、残218分を確認。次は従来Metal APIで可能なarchive再利用とmacro token観測を独立workflowで検証する。アプリbuild・署名・配布・製品設定変更はない。
 

@@ -9,6 +9,7 @@ external Apple service exited, and its report explicitly says so.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -20,6 +21,10 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_DEADLINE_ENV = "SKYRIM_METAL_TEST_DEADLINE"
+CONTROL_SPEC = importlib.util.spec_from_file_location(
+    "metal_supervisor_creation_control", ROOT / "experiments/metal-compile/offline.py")
+metal_control = importlib.util.module_from_spec(CONTROL_SPEC)
+CONTROL_SPEC.loader.exec_module(metal_control)
 
 
 def positive_budget(value):
@@ -115,9 +120,12 @@ def run_supervised(command, output, budget, *, cwd=ROOT, env=None,
                 report["status"] = "budget_exhausted"
                 report["failure"] = "no tool-work allowance remains before worker launch"
                 return report
-            process = subprocess.Popen(report["argv"], cwd=cwd, env=child_env, stdin=subprocess.DEVNULL,
-                                       stdout=stdout, stderr=stderr, shell=False, start_new_session=True)
-            report.update(process_started=True, worker_pid=process.pid, worker_pgid=process.pid)
+            # Defer Python SIGINT delivery until the live child and its group
+            # are owned here, including a signal inside Popen before it returns.
+            with metal_control.defer_sigint_during_creation():
+                process = subprocess.Popen(report["argv"], cwd=cwd, env=child_env, stdin=subprocess.DEVNULL,
+                                           stdout=stdout, stderr=stderr, shell=False, start_new_session=True)
+                report.update(process_started=True, worker_pid=process.pid, worker_pgid=process.pid)
             write_report(output, report)
             try:
                 process.wait(timeout=max(0.0, worker_deadline - time.monotonic()))

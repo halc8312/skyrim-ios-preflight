@@ -230,6 +230,20 @@ class ArchiveRunnerTests(unittest.TestCase):
         self.assertFalse(report["legacy_archive_save_reload_verified"])
         self.assertNotIn("native-restore", [call[0] for call in self.calls])
 
+    def test_clangxx_symlink_keeps_cxx_driver_invocation(self):
+        target = self.root / "clang"
+        target.write_bytes(b"synthetic non-executable C-family driver")
+        self.tools["clang++"].unlink()
+        try:
+            self.tools["clang++"].symlink_to(target)
+        except (OSError, NotImplementedError):
+            self.skipTest("host does not permit symbolic links")
+        report, code = self.patched_run()
+        self.assertEqual((report["status"], code), ("passed", 0))
+        command = next(call[1] for call in self.calls if call[0] == "compile-native")
+        self.assertEqual(command[0], str(self.tools["clang++"]))
+        self.assertNotEqual(command[0], str(target))
+
     def test_compile_failure_and_timeout_stop_later_commands_and_keep_logs(self):
         for returncode in (1, None):
             with self.subTest(returncode=returncode):

@@ -141,6 +141,72 @@ while True:
         self.assertEqual(report["status"], "interrupted")
         self.assertTrue(report["cleanup"]["worker_reaped"])
 
+    def test_sigint_inside_real_popen_before_assignment_reaps_the_owned_worker(self):
+        code = """from pathlib import Path
+import signal, sys, time
+def stop(signum, frame):
+    print('OWNED_CHILD_STOPPED', flush=True)
+    raise SystemExit(0)
+signal.signal(signal.SIGINT, stop)
+Path(__file__).with_suffix('.ready').write_text('ready')
+while True:
+    time.sleep(0.05)
+"""
+        command, output = self.prepare(code)
+        ready = Path(command[-1]).with_suffix(".ready")
+        real_popen = supervisor.subprocess.Popen
+        real_killpg = os.killpg
+        owned = []
+        factory_returned = []
+        previous_handler = signal.getsignal(signal.SIGINT)
+
+        def interrupted_factory(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            owned.append(process)
+            deadline = time.monotonic() + 3
+            while not ready.is_file() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(ready.is_file(), "authored child did not establish its SIGINT handler")
+            # This signal arrives while Popen's result has not yet been
+            # assigned to run_supervised's local process variable.
+            os.kill(os.getpid(), signal.SIGINT)
+            factory_returned.append(True)
+            return process
+
+        try:
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+            with patch.object(supervisor.subprocess, "Popen", side_effect=interrupted_factory), \
+                    patch.object(supervisor.os, "killpg", wraps=real_killpg) as kill:
+                with self.assertRaises(KeyboardInterrupt):
+                    supervisor.run_supervised(command, output, 8, cleanup_reserve=0.5,
+                                               interrupt_grace=1, reap_grace=1)
+            self.assertEqual(factory_returned, [True])
+            self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
+            self.assertEqual(len(owned), 1)
+            process = owned[0]
+            kill.assert_called_once_with(process.pid, signal.SIGINT)
+            report = json.loads((output / "result.json").read_text())
+            self.assertEqual(report["status"], "interrupted")
+            self.assertTrue(report["process_started"])
+            self.assertEqual(report["worker_pid"], process.pid)
+            self.assertEqual(report["worker_pgid"], process.pid)
+            self.assertTrue(report["cleanup"]["worker_reaped"])
+            self.assertFalse(report["cleanup"]["sigkill_sent"])
+            self.assertEqual(process.returncode, 0)
+            self.assertIn("OWNED_CHILD_STOPPED", (output / report["stdout"]).read_text())
+            self.assertFalse(report["cleanup"]["nested_process_groups_termination_verified"])
+        finally:
+            signal.signal(signal.SIGINT, previous_handler)
+            # Retain the failure evidence but do not leak this authored child
+            # if the regression reappears before supervisor ownership is set.
+            for process in owned:
+                if process.returncode is None:
+                    try:
+                        real_killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait(timeout=2)
+
 
 if __name__ == "__main__":
     unittest.main()

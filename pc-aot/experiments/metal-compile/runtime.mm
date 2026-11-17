@@ -440,6 +440,7 @@ int main(int argc, const char* argv[]) {
         NSString* reportPath = nil;
         NSString* libraryPath = nil;
         unsigned repeats = 0;
+        bool legacyOnly = false;
         bool asyncLibrary = false;
         bool libraryFactoryProbe = false;
         bool argumentsValid = false;
@@ -447,13 +448,15 @@ int main(int argc, const char* argv[]) {
         NSMutableDictionary* report = [@{
             @"schema": @1, @"status": @"failed", @"scope": @"authored-metal-library-api-and-readback",
             @"source_options": sourceOptions(), @"gpu_execution_verified": @NO,
+            @"full_metal4_verified": @NO, @"metal4_library_verified": @NO,
+            @"metal4_compiler_created": @NO, @"compiler_setup_ns": @0,
             @"full_moltenvk_verified": @NO, @"physical_iphone_verified": @NO,
             @"game_rendering_verified": @NO, @"performance_improvement_verified": @NO,
             @"cold_os_cache_verified": @NO,
             @"specialization_scope": @"vertex lookup plus fragment and compute specialization",
             @"offline_compile_options_verified": @NO,
             @"production_async_lifetime_verified": @NO,
-            @"async_adapter_verified": @NO,
+            @"async_adapter_verified": @NO, @"metal4_async_adapter_verified": @NO,
             @"samples": [NSMutableArray new], @"rejections": [NSMutableArray new],
             @"async_retention_checks": [NSMutableArray new]
         } mutableCopy];
@@ -461,6 +464,10 @@ int main(int argc, const char* argv[]) {
         try {
             for (int i = 1; i < argc; ++i) {
                 const std::string key(argv[i]);
+                if (key == "--legacy-only" && !legacyOnly) {
+                    legacyOnly = true;
+                    continue;
+                }
                 if (key == "--async-library" && !asyncLibrary) {
                     asyncLibrary = true;
                     continue;
@@ -483,12 +490,22 @@ int main(int argc, const char* argv[]) {
                 } else throw std::runtime_error("unknown or duplicate argument");
             }
             require(sourcePath && reportPath && repeats, "source, report and repeat are required");
+            require(!legacyOnly || libraryPath, "legacy-only requires an offline library");
+            require(!legacyOnly || !libraryFactoryProbe,
+                    "legacy-only cannot request the Metal 4 factory probe");
             argumentsValid = true;
+            report[@"comparison_mode"] = legacyOnly ? @"legacy-only" : @"metal4-comparison";
+            report[@"legacy_only_requested"] = @(legacyOnly);
             report[@"repeat"] = @(repeats);
             report[@"offline_library_requested"] = @(libraryPath != nil);
             report[@"async_library_requested"] = @(asyncLibrary);
             report[@"library_factory_probe_requested"] = @(libraryFactoryProbe);
-            report[@"async_timing_scope"] = @"submission through callback publication and task join; controlled retention checks excluded";
+            NSArray<NSString*>* asyncAPIs = !asyncLibrary ? @[] : legacyOnly
+                ? @[@"legacy_async_source"] : @[@"legacy_async_source", @"metal4_async_source"];
+            report[@"async_apis"] = asyncAPIs;
+            report[@"async_timing_scope"] = legacyOnly
+                ? @"submission through callback publication; controlled retention checks excluded"
+                : @"submission through callback publication and task join; controlled retention checks excluded";
             NSOperatingSystemVersion version = NSProcessInfo.processInfo.operatingSystemVersion;
             report[@"os_version"] = @[@(version.majorVersion), @(version.minorVersion), @(version.patchVersion)];
             device = MTLCreateSystemDefaultDevice();
@@ -499,12 +516,12 @@ int main(int argc, const char* argv[]) {
                     report[@"unsupported_reason"] = @"no_default_metal_device";
                     throw std::runtime_error("no default Metal device is available");
                 }
-                if (![report[@"device"][@"supports_metal4"] boolValue]) {
+                if (!legacyOnly && ![report[@"device"][@"supports_metal4"] boolValue]) {
                     report[@"status"] = @"unsupported";
                     report[@"unsupported_reason"] = @"metal4_family_unavailable";
                     throw std::runtime_error("a Metal 4 capable device is required");
                 }
-                if (![report[@"device"][@"new_compiler_selector_available"] boolValue]) {
+                if (!legacyOnly && ![report[@"device"][@"new_compiler_selector_available"] boolValue]) {
                     report[@"status"] = @"unsupported";
                     report[@"unsupported_reason"] = @"metal4_compiler_selector_unavailable";
                     throw std::runtime_error("the Metal 4 compiler factory is unavailable");
@@ -518,16 +535,20 @@ int main(int argc, const char* argv[]) {
             NSString* source = [NSString stringWithContentsOfFile:sourcePath encoding:NSUTF8StringEncoding error:&error];
             requireObject(source, error, "authored source read");
             auto start = Clock::now();
-            error = nil;
-            id<MTL4Compiler> compiler = [device newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&error];
-            report[@"compiler_setup_ns"] = @(elapsed(start));
-            requireObject(compiler, error, "Metal 4 compiler creation");
+            id<MTL4Compiler> compiler = nil;
+            if (!legacyOnly) {
+                error = nil;
+                compiler = [device newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&error];
+                report[@"compiler_setup_ns"] = @(elapsed(start));
+                report[@"metal4_compiler_created"] = @(compiler != nil);
+                requireObject(compiler, error, "Metal 4 compiler creation");
+            }
             id<MTLCommandQueue> queue = [device newCommandQueue];
             requireObject(queue, nil, "legacy command queue");
             NSMutableArray* samples = report[@"samples"];
-            NSArray<NSString*>* sourceAPIs = asyncLibrary
-                ? @[@"legacy_source", @"metal4_source", @"legacy_async_source", @"metal4_async_source"]
-                : @[@"legacy_source", @"metal4_source"];
+            NSMutableArray<NSString*>* sourceAPIs = [NSMutableArray arrayWithObject:@"legacy_source"];
+            if (!legacyOnly) [sourceAPIs addObject:@"metal4_source"];
+            [sourceAPIs addObjectsFromArray:asyncAPIs];
             unsigned sourceRoutes = unsigned(sourceAPIs.count);
             for (unsigned iteration = 0; iteration < repeats; ++iteration) {
                 // Rotate the source routes. OS/compiler caches remain uncontrolled.
@@ -535,9 +556,9 @@ int main(int argc, const char* argv[]) {
                     @autoreleasepool {
                         bool offline = slot == sourceRoutes;
                         unsigned route = (slot + iteration) % sourceRoutes;
-                        bool metal4 = route % 2 != 0;
-                        bool asynchronous = !offline && route >= 2;
                         NSString* api = offline ? @"offline_metallib" : sourceAPIs[route];
+                        bool metal4 = [api hasPrefix:@"metal4_"];
+                        bool asynchronous = [api containsString:@"_async_"];
                         NSMutableDictionary* sample = [@{ @"api": api, @"iteration": @(iteration + 1),
                             @"library_operation": offline ? @"load" : asynchronous ? @"async_compile" : @"compile" } mutableCopy];
                         [samples addObject:sample];
@@ -560,26 +581,31 @@ int main(int argc, const char* argv[]) {
             }
             NSString* invalidSource = [@"#error Intentional_Metal_compile_fixture_rejection\n" stringByAppendingString:source];
             NSMutableArray* rejections = report[@"rejections"];
-            for (unsigned mode = 0; mode < sourceRoutes; ++mode) {
+            for (NSString* api in sourceAPIs) {
                 error = nil;
-                NSMutableDictionary* rejection = [@{ @"api": sourceAPIs[mode] } mutableCopy];
+                bool metal4 = [api hasPrefix:@"metal4_"];
+                bool asynchronous = [api containsString:@"_async_"];
+                NSMutableDictionary* rejection = [@{ @"api": api } mutableCopy];
                 [rejections addObject:rejection];
                 start = Clock::now();
-                id<MTLLibrary> invalid = mode >= 2
-                    ? asyncSourceLibrary(device, compiler, invalidSource, mode % 2 != 0, &error, rejection)
-                    : sourceLibrary(device, compiler, invalidSource, mode != 0, &error);
+                id<MTLLibrary> invalid = asynchronous
+                    ? asyncSourceLibrary(device, compiler, invalidSource, metal4, &error, rejection)
+                    : sourceLibrary(device, compiler, invalidSource, metal4, &error);
                 [rejection addEntriesFromDictionary:@{ @"library_ns": @(elapsed(start)), @"returned_nil": @(invalid == nil),
                                                        @"error_present": @(error != nil), @"error": errorInfo(error) }];
                 require(!invalid && error, "invalid source did not produce nil library plus NSError");
             }
             if (asyncLibrary) {
-                for (unsigned mode = 0; mode < 2; ++mode) {
-                    checkAsyncRetention(device, compiler, queue, source, mode != 0, false, report[@"async_retention_checks"]);
-                    checkAsyncRetention(device, compiler, queue, invalidSource, mode != 0, true, report[@"async_retention_checks"]);
+                for (NSString* api in asyncAPIs) {
+                    bool metal4 = [api hasPrefix:@"metal4_"];
+                    checkAsyncRetention(device, compiler, queue, source, metal4, false, report[@"async_retention_checks"]);
+                    checkAsyncRetention(device, compiler, queue, invalidSource, metal4, true, report[@"async_retention_checks"]);
                 }
                 report[@"async_adapter_verified"] = @YES;
+                report[@"metal4_async_adapter_verified"] = @(!legacyOnly);
             }
             report[@"gpu_execution_verified"] = @YES;
+            report[@"metal4_library_verified"] = @(!legacyOnly);
             report[@"status"] = @"passed";
             result = 0;
         } catch (const std::exception& exception) {

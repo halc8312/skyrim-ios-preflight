@@ -758,3 +758,6 @@
 !/pc-aot/tests/test_metal_compile_macros.py
 !/pc-aot/tests/test_metal_compile_runtime_creation.py
 !/pc-aot/tests/test_shader_candidate_check.py
+!/pc-aot/experiments/metal-compile/macro_value.mm
+!/pc-aot/experiments/metal-compile/macro_value.py
+!/pc-aot/tests/test_metal_compile_macro_value.py

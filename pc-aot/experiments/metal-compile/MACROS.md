@@ -45,8 +45,40 @@ type and value tests before an automatic production conversion is justified.
 The first Windows Metal 6.2 runner observation captured all eight tokens. Thirteen
 portable controls passed, including source-echo rejection, ambiguous diagnostics,
 unexpected compiler success, truncation, scope claims, fresh output, both
-KeyboardInterrupt/SystemExit, and atomic report replacement. Native Objective-C++ compilation and NSNumber diagnostics
-are pending an Apple-host run. No game data or production capture is involved.
+KeyboardInterrupt/SystemExit, and atomic report replacement. No game data or
+production capture is involved.
+
+The actual Mac run at public source `5539d19` compiled the native probe and
+observed all eight expansions through the Apple Paravirtual device, Xcode 26.6 /
+SDK 26.5 / Metal compiler 32023.883. The NSString route matched the explicit CLI
+tokens in all eight cases. NSNumber tokens differed from the string controls in
+seven cases; some differences were integer suffixes, not established value
+changes. Two floating-point observations need an additional GPU value check:
+
+| Authored value | NSNumber token | NSString / CLI token |
+| --- | --- | --- |
+| Float bits `0x3f800001` | `1` | `1.00000011920928955078125f` |
+| Float bits `0x80000000` | `-0` | `-0.0f` |
+
+The separate option getter retained both original float bit patterns. Therefore
+getter equality alone does not establish equal compiler input. These are
+observed diagnostic tokens, not yet GPU expression results or a Skyrim bug.
+Replacing NSNumber with more precise strings could change existing semantics;
+do not automatically make that a production precision fix. The original native
+report and compiler diagnostics remain under
+`local/metal-compile/mac-run-03/evidence/macro-diagnostics/`.
+
+`macro_value.py` follows those two authored float cases through ordinary Metal
+compute readback. It keeps original bits, numeric getters, diagnostic tokens and
+GPU bits in separate fields; fixed literal, buffer-input and unwritten-guard
+controls check that the expected work ran. Differences between NSNumber and
+NSString are observations, not an automatic failure or a production fix. It
+uses no Metal 4 API. Its 14 portable controls passed; actual Apple execution is
+pending.
+
+```sh
+python3 experiments/metal-compile/macro_value.py --output local/metal-compile/macro-value-new --budget 90 --timeout 30
+```
 
 `macro_fixture.metal` preserves an unsuccessful earlier method as an explicitly
 negative fixture. Stringification worked, but `host_name` rejected the negative

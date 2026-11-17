@@ -78,6 +78,16 @@ new SDK and OS:
 python3 experiments/metal-compile/runtime.py --output local/metal-compile/runtime-01 --repeat 3
 ```
 
+On the same OS/SDK 26 host with an ordinary Metal device, an explicit
+`--legacy-only --library /path/to/macos/fixture.metallib` comparison uses only
+legacy source creation and offline library loading. It still requires every
+render/compute readback, function-constant result and invalid-source rejection
+to match. Optional `--async-library` adds only the legacy async factory and its
+controlled success/error retention checks; it creates no Metal 4 task. The
+Metal 4 factory probe flag remains incompatible. Results list the exact async
+APIs and keep all Metal 4 evidence false. The default
+Metal 4 comparison and its unsupported result are unchanged.
+
 It can also receive a macOS-targeted library through
 `--library /path/to/mac-offline-01/trial-01/fixture.metallib`. An iOS-targeted
 library is not interchangeable with a macOS-targeted library. For the first
@@ -171,6 +181,10 @@ WSL suite passed 150 of 151 checks; the same Darwin-only check was skipped.
 The first expanded run exposed a test-harness heredoc extraction error, which
 was corrected; its original failed evidence was preserved. The new aggregate
 CI helper keeps independent results and never turns unsupported into success.
+With the legacy async route and two-float GPU observation added, the next WSL
+suite passed 176 of 177 checks in 31.900 seconds; only Darwin TSan was skipped.
+The supervisor also passed a real SIGINT-during-child-creation regression.
+Evidence is retained in `local/metal-compile/controls-20261118-08/`.
 
 Apple's signed Metal Developer Tools for Windows 6.2 was subsequently installed
 in an ignored project-local directory. Its README identifies Xcode 26.2 as the
@@ -223,6 +237,18 @@ negative zero, but getters alone do not expose preprocessor token spelling.
 The separate [macro diagnostic probe](MACROS.md) observes that next boundary
 through intentional compiler rejection; it does not infer original numeric types.
 
+The third Apple-host run at public source `5539d19` passed all 151 portable
+controls (including Darwin TSan), SDK object checks, option getters, offline
+compilation and actual macro-token observation. NSNumber float input `0x3f800001`
+expanded to `1`, and negative zero to `-0`, while explicit string macros kept
+their submitted tokens. This is a compiler-input observation, not yet a GPU or
+game-correctness result; see [the macro boundary](MACROS.md).
+The archive fixture failed to link because its runner resolved the `clang++`
+symlink to `clang`, changing driver mode and omitting automatic C++ runtime
+linking. The runner now preserves the reported executable spelling, with a
+symlink regression control. The original failed archive evidence is retained in
+`local/metal-compile/mac-run-03/`; corrected Apple execution remains pending.
+
 ## Binary archive boundary
 
 `archive.py` tests two authored compute kernels through ordinary Metal APIs,
@@ -251,6 +277,20 @@ targets. `metal-lipo` reported the requested g16p/g16g targets. Its `.mtlp-json`
 script and IR are not Metal 4 `.mtl4-json` serialization. The subsequent
 `metal-source` extraction emitted an empty file and is retained as an unsupported
 extraction result. Neither result validates the Windows archive on a device.
+
+A second Windows smoke test produced a 31,568-byte render archive for the same
+iOS 18 / Apple9 targets. The VS/FS entry points and BGRA8Unorm attachment came
+from the authored fixture and Apple's documented configuration schema. A local
+source snapshot replaced its indexed function constant with the fixed value 7;
+the original source hash was unchanged. The result does not validate indexed
+function-constant specialization, a Metal 4 archive, or actual GPU execution.
+Evidence is in `local/metal-compile/archive-windows-render-ios18-apple9-01/`.
+An explicit `-pack-scripts -pack-metallibs` follow-up produced the same archive
+hash. Extraction yielded per-architecture library/object files but no pipeline
+configuration script, so script extraction remains unsupported for that trial.
+Its original inputs were unchanged; evidence is retained in
+`local/metal-compile/archive-windows-packed-render-ios18-apple9-01/`. Do not treat
+offline archive extraction as a public runtime MTLLibrary export API.
 
 ```sh
 python -m unittest discover -s tests -p 'test_metal_compile_*.py' -v

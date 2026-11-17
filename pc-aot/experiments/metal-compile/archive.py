@@ -175,8 +175,10 @@ def run(args):
         _, value = command(label, argv)
         if not value or "\n" in value:
             raise ValueError("empty or ambiguous tool path: " + label)
-        path = Path(value).resolve()
-        if not path.is_file():
+        # Preserve the driver name. On Xcode clang++ is a symlink to clang;
+        # resolving it changes argv[0] and drops automatic C++ runtime linking.
+        path = Path(value)
+        if not path.is_absolute() or not path.is_file():
             raise ValueError("missing resolved tool: " + label)
         return path
 
