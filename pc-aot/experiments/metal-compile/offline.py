@@ -28,6 +28,7 @@ DEFAULT_TIMEOUT = 120.0
 TREE_TERMINATION_TIMEOUT = 5.0
 PARENT_REAP_TIMEOUT = 2.0
 LOG_PREVIEW_BYTES = 65536
+TEST_DEADLINE_ENV = "SKYRIM_METAL_TEST_DEADLINE"
 ENV_OPTIONS = (
     "SDKROOT", "MACOSX_DEPLOYMENT_TARGET", "IPHONEOS_DEPLOYMENT_TARGET",
     "TVOS_DEPLOYMENT_TARGET", "WATCHOS_DEPLOYMENT_TARGET", "XROS_DEPLOYMENT_TARGET",
@@ -37,6 +38,10 @@ ENV_OPTIONS = (
 
 
 class TrialError(RuntimeError):
+    pass
+
+
+class BudgetExhausted(TrialError):
     pass
 
 
@@ -127,13 +132,27 @@ def log_preview(path):
     return data.decode("utf-8", errors="replace"), size, size > len(data)
 
 
-def run_command(command, label, output, report, env, timeout):
+def command_deadline(deadline, env):
+    """An inherited test-supervisor deadline may shorten, never extend, a run."""
+    if TEST_DEADLINE_ENV not in env:
+        return deadline
+    try:
+        inherited = float(env[TEST_DEADLINE_ENV])
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid {TEST_DEADLINE_ENV}: expected positive finite monotonic seconds") from None
+    if not math.isfinite(inherited) or inherited <= 0:
+        raise ValueError(f"invalid {TEST_DEADLINE_ENV}: expected positive finite monotonic seconds")
+    return inherited if deadline is None else min(deadline, inherited)
+
+
+def run_command(command, label, output, report, env, timeout, deadline=None):
     """Write raw logs directly to files; inherited child handles cannot block EOF."""
     command = [str(value) for value in command]
     prefix = f"{len(report['commands']):03d}-{label}"
     stdout_path, stderr_path = output / (prefix + ".stdout.txt"), output / (prefix + ".stderr.txt")
     event = {"label": label, "argv": command, "shell": False, "cwd": str(output),
              "timeout_seconds": timeout, "stdout": stdout_path.name, "stderr": stderr_path.name,
+             "timeout_cap_seconds": timeout, "process_started": False, "budget_exhausted": False,
              "returncode": None, "timed_out": False, "interrupted": False}
     started = time.perf_counter_ns()
     process = None
@@ -141,12 +160,31 @@ def run_command(command, label, output, report, env, timeout):
         options = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP} \
             if os.name == "nt" else {"start_new_session": True}
         with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
+            try:
+                deadline = command_deadline(deadline, env)
+            except ValueError as error:
+                event["error"] = str(error)
+                raise TrialError(str(error)) from error
+            event["test_deadline_inherited"] = TEST_DEADLINE_ENV in env
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                event["budget_remaining_seconds"] = max(0.0, remaining)
+                event["timeout_seconds"] = timeout = max(0.0, min(timeout, remaining))
+                if remaining <= 0:
+                    event["budget_exhausted"] = True
+                    event["error"] = "overall tool wall budget exhausted before launch"
+                    raise BudgetExhausted(label + ": " + event["error"])
             process = subprocess.Popen(command, cwd=output, env=env, shell=False,
                                        stdout=stdout, stderr=stderr, **options)
             event["pid"] = process.pid
-            event["returncode"] = process.wait(timeout=timeout)
+            event["process_started"] = True
+            # Popen itself may consume time; it is not a cancellable operation.
+            wait_timeout = timeout if deadline is None else max(0.0, min(timeout, deadline - time.monotonic()))
+            event["wait_timeout_seconds"] = wait_timeout
+            event["returncode"] = process.wait(timeout=wait_timeout)
     except subprocess.TimeoutExpired:
         event["timed_out"] = True
+        event["budget_exhausted"] = deadline is not None and time.monotonic() >= deadline
         event["error"] = "command timed out"
         if process is not None:
             event["termination"] = terminate_tree(process, output, prefix)
@@ -168,6 +206,8 @@ def run_command(command, label, output, report, env, timeout):
 
 
 def require_success(event):
+    if event.get("budget_exhausted"):
+        raise BudgetExhausted(f"{event['label']}: overall tool wall budget exhausted; see {event['stderr']}")
     if event["timed_out"] or event["returncode"] != 0:
         reason = event.get("error", f"exit status {event['returncode']}")
         raise TrialError(f"{event['label']}: {reason}; see {event['stderr']}")
@@ -210,7 +250,7 @@ def windows_candidates(env):
     return candidates
 
 
-def resolve_tools(explicit, target, system, output, report, env, timeout):
+def resolve_tools(explicit, target, system, output, report, env, timeout, deadline=None):
     sdk = "iphoneos" if target == "ios" else "macosx"
     sdk_path = None
     if system == "Darwin":
@@ -220,7 +260,7 @@ def resolve_tools(explicit, target, system, output, report, env, timeout):
 
         def query(*args):
             event, stdout, _ = run_command([xcrun, "--sdk", sdk, *args], "resolve-" + args[-1].lstrip("-"),
-                                          output, report, env, timeout)
+                                          output, report, env, timeout, deadline)
             require_success(event)
             value = stdout.strip()
             if not value or "\n" in value:
@@ -282,25 +322,28 @@ def run_experiment(args):
     report = {"schema": 1, "status": "running", "host": system, "commands": [], "trials": [],
               "options": {"target": args.target, "deployment": args.deployment, "language": args.language,
                           "repeat": args.repeat, "timeout_seconds": args.timeout, "define": "PROBE_BIAS=3",
+                          "budget_seconds": args.budget,
                           "fast_math": False, "tools": str(args.tools) if args.tools else None},
               "removed_environment_options": removed,
               "offline_compile_verified": False, "gpu_execution_verified": False,
               "physical_iphone_verified": False, "game_rendering_verified": False,
               "performance_improvement_verified": False,
               "scope": "Authored fixture offline compilation only; not production compile-setting parity.",
-              "timing_scope": "Host subprocess wall time; repeats share uncontrolled OS/tool caches. Not cold/warm proof."}
+              "timing_scope": "Host subprocess wall time; repeats share uncontrolled OS/tool caches. Not cold/warm proof.",
+              "budget_scope": "Elapsed wall time from runner start caps admission and waits for all tools. Input I/O, process startup, cleanup and reporting are not hard-deadline bounded; external compiler services are not cancelled."}
     started = time.perf_counter_ns()
+    deadline = None if args.budget is None else time.monotonic() + args.budget
     try:
         # Use one byte snapshot for all repeats and retain it with the evidence.
         source = output / "fixture.metal"
         source.write_bytes(SOURCE.read_bytes())
         report["source"] = file_info(source)
         report["source"]["original_path"] = str(SOURCE)
-        paths, sdk_path = resolve_tools(args.tools, args.target, system, output, report, env, args.timeout)
+        paths, sdk_path = resolve_tools(args.tools, args.target, system, output, report, env, args.timeout, deadline)
         report["tools"] = {}
         for name, tool in paths.items():
             info = file_info(tool)
-            event, stdout, stderr = run_command([tool, "--version"], name + "-version", output, report, env, args.timeout)
+            event, stdout, stderr = run_command([tool, "--version"], name + "-version", output, report, env, args.timeout, deadline)
             info["version_returncode"] = event["returncode"]
             info["version_timed_out"] = event["timed_out"]
             info["version_output"] = stdout + stderr
@@ -320,12 +363,12 @@ def run_experiment(args):
             try:
                 command = compile_command(paths["metal"], source, air, args.target, args.deployment,
                                           args.language, sdk_path)
-                compile_event, _, _ = run_command(command, f"compile-{index + 1:02d}", output, report, env, args.timeout)
+                compile_event, _, _ = run_command(command, f"compile-{index + 1:02d}", output, report, env, args.timeout, deadline)
                 trial["compile_duration_ns"] = compile_event["duration_ns"]
                 require_success(compile_event)
                 validate_artifact(air)
                 link_event, _, _ = run_command([paths["metallib"], air, "-o", library],
-                                               f"link-{index + 1:02d}", output, report, env, args.timeout)
+                                               f"link-{index + 1:02d}", output, report, env, args.timeout, deadline)
                 trial["link_duration_ns"] = link_event["duration_ns"]
                 require_success(link_event)
                 validate_artifact(library, metallib=True)
@@ -342,6 +385,9 @@ def run_experiment(args):
         report["status"] = "interrupted"
         report["error"] = "KeyboardInterrupt: execution interrupted; see command termination evidence"
         raise
+    except BudgetExhausted as error:
+        report["status"] = "budget_exhausted"
+        report["error"] = f"{type(error).__name__}: {error}"
     except (OSError, TrialError) as error:
         report["status"] = "failed"
         report["error"] = f"{type(error).__name__}: {error}"
@@ -371,6 +417,13 @@ def timeout_seconds(value):
     return value
 
 
+def budget_seconds(value):
+    value = float(value)
+    if not math.isfinite(value) or not 0 < value <= 3600:
+        raise argparse.ArgumentTypeError("budget must be greater than zero and at most 3600 seconds")
+    return value
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path, help="fresh evidence directory; existing paths are refused")
@@ -380,6 +433,8 @@ def parse_args(argv=None):
     parser.add_argument("--language", type=version, default="2.4")
     parser.add_argument("--repeat", type=repeat_count, default=3)
     parser.add_argument("--timeout", type=timeout_seconds, default=DEFAULT_TIMEOUT, help="per-command timeout in seconds")
+    parser.add_argument("--budget", type=budget_seconds,
+                        help="optional overall tool wall budget in seconds; cleanup/reporting can extend elapsed time")
     args = parser.parse_args(argv)
     args.deployment = args.deployment or ("18.0" if args.target == "ios" else "15.0")
     if args.language.count(".") != 1:

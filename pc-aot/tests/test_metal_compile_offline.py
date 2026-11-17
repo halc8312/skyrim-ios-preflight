@@ -325,6 +325,132 @@ class MetalOfflineControlTests(unittest.TestCase):
         self.assertFalse(json.loads((self.output / "result.json").read_text())["offline_compile_verified"])
 
 
+    def test_shared_budget_covers_all_resolvers_probes_compile_and_link(self):
+        clock, waits = [0.0], []
+        sdk = self.directory / "synthetic SDK"
+        sdk.mkdir()
+        durations = iter((1, 1, 1, 1, 1, 2, 1))
+
+        def child(command, **kwargs):
+            if "--show-sdk-path" in command:
+                message = str(sdk)
+            elif "--find" in command:
+                message = str(self.bin / (command[-1] + ".exe"))
+            else:
+                message = "SYNTHETIC BUDGET CONTROL; NOT APPLE METAL"
+            kwargs["stdout"].write((message + "\n").encode())
+            if "-o" in command:
+                artifact = Path(command[command.index("-o") + 1])
+                artifact.write_bytes(b"synthetic AIR" if "-c" in command else b"MTLB synthetic payload")
+            process = Mock(pid=12345)
+
+            def wait(timeout):
+                waits.append(timeout)
+                clock[0] += next(durations)
+                return 0
+
+            process.wait.side_effect = wait
+            return process
+
+        args = self.arguments("--budget", "8", "--timeout", "4", "--repeat", "2")
+        args.tools = None
+        with patch.object(offline.platform, "system", return_value="Darwin"), \
+                patch.object(offline.shutil, "which", return_value="synthetic-xcrun"), \
+                patch.object(offline.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(offline.subprocess, "Popen", side_effect=child) as spawn:
+            report = offline.run_experiment(args)
+        self.assertEqual(spawn.call_count, 7)
+        self.assertEqual(waits, [4, 4, 4, 4, 4, 3, 1])
+        self.assertEqual(report["status"], "budget_exhausted")
+        self.assertFalse(report["offline_compile_verified"])
+        self.assertEqual([row["status"] for row in report["trials"]], ["passed", "failed"])
+        self.assertEqual(len(report["trials"][0]["artifacts"]), 2)
+        denied = report["commands"][-1]
+        self.assertEqual(denied["label"], "compile-02")
+        self.assertFalse(denied["process_started"])
+        self.assertTrue(denied["budget_exhausted"])
+        self.assertEqual(denied["timeout_seconds"], 0)
+        self.assertEqual(report, json.loads((self.output / "result.json").read_text()))
+        self.assertIn("SYNTHETIC", (self.output / report["commands"][-2]["stdout"]).read_text())
+
+    def test_budget_exhausted_during_inputs_starts_no_tool_and_keeps_snapshot(self):
+        clock = [0.0]
+        original = offline.file_info
+
+        def inspected(path):
+            clock[0] = 2.0
+            return original(path)
+
+        with patch.object(offline.platform, "system", return_value="Windows"), \
+                patch.object(offline.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(offline, "file_info", side_effect=inspected), \
+                patch.object(offline.subprocess, "Popen") as spawn:
+            report = offline.run_experiment(self.arguments("--budget", "1"))
+        spawn.assert_not_called()
+        self.assertEqual(report["status"], "budget_exhausted")
+        self.assertEqual((self.output / "fixture.metal").read_bytes(), offline.SOURCE.read_bytes())
+        self.assertFalse(report["commands"][0]["process_started"])
+
+    def test_process_startup_consumes_budget_and_timeout_keeps_partial_logs(self):
+        self.output.mkdir()
+        report = {"commands": []}
+        process = Mock(pid=12345)
+        process.wait.side_effect = subprocess.TimeoutExpired("synthetic", 1)
+
+        def child(command, **kwargs):
+            kwargs["stdout"].write(b"synthetic partial output")
+            return process
+
+        with patch.object(offline.time, "monotonic", side_effect=[8.0, 9.0, 10.0]), \
+                patch.object(offline.subprocess, "Popen", side_effect=child), \
+                patch.object(offline, "terminate_tree", return_value={"synthetic_cleanup": True}) as cleanup:
+            event, stdout, _ = offline.run_command(["synthetic"], "limited", self.output, report, {}, 30, deadline=10)
+        process.wait.assert_called_once_with(timeout=1)
+        cleanup.assert_called_once()
+        self.assertEqual(event["timeout_cap_seconds"], 30)
+        self.assertEqual(event["timeout_seconds"], 2)
+        self.assertTrue(event["timed_out"])
+        self.assertTrue(event["budget_exhausted"])
+        self.assertIn("partial output", stdout)
+        with self.assertRaises(offline.BudgetExhausted):
+            offline.require_success(event)
+
+    def test_inherited_test_deadline_never_extends_explicit_deadline(self):
+        self.output.mkdir()
+        for explicit, expected in ((None, 2), (12, 2), (9, 1)):
+            with self.subTest(explicit=explicit):
+                process = Mock(pid=12345)
+                process.wait.return_value = 0
+                report = {"commands": []}
+                with patch.object(offline.time, "monotonic", return_value=8), \
+                        patch.object(offline.subprocess, "Popen", return_value=process):
+                    event, _, _ = offline.run_command(["synthetic"], "inherited", self.output, report,
+                        {offline.TEST_DEADLINE_ENV: "10"}, 30, deadline=explicit)
+                process.wait.assert_called_once_with(timeout=expected)
+                self.assertTrue(event["test_deadline_inherited"])
+        process = Mock(pid=12345)
+        process.wait.return_value = 0
+        with patch.object(offline.time, "monotonic", side_effect=AssertionError("unexpected deadline clock")), \
+                patch.object(offline.subprocess, "Popen", return_value=process):
+            offline.run_command(["synthetic"], "legacy", self.output, {"commands": []}, {}, 30)
+        process.wait.assert_called_once_with(timeout=30)
+
+    def test_invalid_or_expired_inherited_deadline_keeps_logs_without_launch(self):
+        self.output.mkdir()
+        for value in ("", "nan", "inf", "-inf", "0", "-1", "invalid", "1e999", "7"):
+            with self.subTest(value=value):
+                report = {"commands": []}
+                with patch.object(offline.time, "monotonic", return_value=8), \
+                        patch.object(offline.subprocess, "Popen") as spawn, self.assertRaises(offline.TrialError):
+                    offline.run_command(["synthetic"], "invalid", self.output, report,
+                        {offline.TEST_DEADLINE_ENV: value}, 30)
+                spawn.assert_not_called()
+                event = report["commands"][0]
+                self.assertFalse(event["process_started"])
+                self.assertTrue((self.output / event["stderr"]).is_file())
+                self.assertTrue((self.output / "000-invalid.json").is_file())
+                self.assertTrue(event["budget_exhausted"] if value == "7" else offline.TEST_DEADLINE_ENV in event["error"])
+
 class MetalOfflineArgumentsTests(unittest.TestCase):
     def test_cli_language_standards_follow_actual_apple_compiler_spellings(self):
         # Accepted spellings from the installed Apple metal 32023.850 diagnostic.
@@ -367,12 +493,15 @@ class MetalOfflineArgumentsTests(unittest.TestCase):
         bad_options = [("--repeat", "0"), ("--repeat", "21"), ("--timeout", "0"),
                        ("--timeout", "601"), ("--timeout", "nan"), ("--timeout", "inf"),
                        ("--language", "2.4.0"), ("--language", "2.4 -ffast-math"),
-                       ("--deployment", "18.0;whoami"), ("--target", "simulator")]
+                       ("--deployment", "18.0;whoami"), ("--target", "simulator"),
+                       *(("--budget", value) for value in ("0", "-1", "3601", "nan", "inf", "1e309"))]
         for option in bad_options:
             with self.subTest(option=option), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as error:
                     offline.parse_args(["--output", "fresh", *option])
                 self.assertEqual(error.exception.code, 2)
+        self.assertIsNone(offline.parse_args(["--output", "fresh"]).budget)
+        self.assertEqual(offline.parse_args(["--output", "fresh", "--budget", "3600"]).budget, 3600)
 
     def test_windows_search_is_limited_to_product_roots_and_absolute_path(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,5 +1,15 @@
 # 開発状況
 
+**夜間検証の追加：独立したMetal比較・設定観測・終了処理を統合し、WSLで106件中105成功・Darwin専用TSan1skip。** 実行証拠は`local/metal-compile/controls-20261118-04/`。Windowsの自作MSLは、iOS18／MSL3.2、iOS26／MSL4.0、macOS15／MSL3.2、macOS26／MSL4.0の追加4条件でもcompile・link成功、stderrなし。Macの次回検査にはGPU不要のcompile option観測、iPhone SDK向けの独立adapter object compile、非対応deviceの詳細と明示library factory probeを加えた。factory probeの成功だけをGPU対応やゲーム改善と扱わず、通常のMetal4条件とunsupported終了を維持する。Apple SDK／実APIでの追加分は次回実行待ち。
+
+**2026-11-18 夜間検証：Windowsの実シェーダー候補48件をコンパイルでき、入力・寿命検査を拡張。Apple SDK検査は成功、Metal 4実GPU比較は環境非対応。** 既存の私有生成MSL48件（803,016 bytes、固有source29件）を、明示したiOS18.0／MSL3.1／safe・precise／invarianceなし／macroなしの条件で順番にcompile・linkし、全件成功した。全件に同じ未使用定数のwarningがある。実ゲームの実効compile設定を採取したものではなく、描画一致・速度改善は未確認。`batch.py`は入力hashと全設定を実行前に検証し、件数・サイズ・時間を制限、失敗証拠を保持する。子compilerのRAM上限を保証しない。Windows制御検査は75件中67成功・POSIX専用8skip。
+
+非同期library生成の独立fixtureを追加した。入力の所有、完了後のlibrary／NSError保持、task完了、意図的に公開を遅らせた場合の待機を検査するが、本物のcompiler timeoutや製品callback寿命の実証ではない。2つのC++寿命モデルは通常／ASan・UBSanで各9ケースと各300回の並行反復に成功し、危険な対照モデルでは予想どおりuse-after-freeを検出。WSLのTSanは開始前のmemory-mappingエラーで検査不可として保持する。先着callbackをfactory返却まで遅らせるモデルは完了時刻を変えるため、そのまま製品へ採用しない。別モデルは完了通知を即時に保ち、ownerの物理破棄だけをlaunch／callback終了まで延期する。実Metal／Objective-Cの寿命契約は別途確認が必要。
+
+所有BSAのread-only調査は122 FXP／10,475候補／6,659種類のstage・SHA1キー（VS309、FS6,350）。固定DXSOとの自作21ケースの消費長・stage・hash照合はASan／UBSanで一致し、原本hashも前後不変。これは完全なFXP文法、ゲームbytecodeのnative安全性、実描画の網羅率を示さない。DXVK v10のread-only索引は実writerを用いる13検査が成功、古い版や破損を拒否する。実機cache本体が手元にないため、実際に何割を事前準備できるかはまだ算出しない。詳細は実験READMEとignored証拠。
+
+Macの自作shader比較専用workflowを追加し、[最初の実行](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc8dd3d133a39c4a124e69)を公開`7985e6f`で1件だけ投入した。run1は1分6秒で終了。37制御検査・Mac向けoffline 3回・Xcode26.6／SDK26.5でnative compileが成功したが、macOS26.5.1上のdefault deviceがMetal4 family条件を満たさずexit78（unsupported）。元reportにdevice名／device不在の区別がないため診断を追加する。実GPU比較は成功扱いにしない。原artifactはlocal/metal-compile/mac-run-01へ保持。無料枠内、署名・ゲーム入力・アプリbuildは含まない。次のfixture版は同workflow内で実行期限と非同期検査を追加する。アプリ本体・標準設定・端末・セーブは変更していない。
+
 **2026-11-18：Windows公式Metalツールを導入し、iOS／macOS向けの事前コンパイルを確認。** 本人が取得したApple署名済みMetal Developer Tools 6.2をignoredの専用フォルダへ導入した。同梱READMEはXcode26.2向け、実compiler／linkerは32023.850。installer・launcher・実compiler／linkerの署名がすべて有効で、hashと導入情報を`local/metal-compile/toolchain-6.2.json`へ保持。初回の実行で言語指定`metal2.4`が拒否されたため、MSL1／2は対象OS付き、3以降は共通表記へrunnerを修正し、関連6検査（12条件の言語指定回帰を含む）が成功した。自作MSLからiOS18.0向け／macOS15.0向けを各3回生成し、全回でAIRと11,352 bytesのmetallib生成に成功、stderr診断なし。各target内の3回のhashは一致し、target間の生成物は異なる。成功結果は`local/metal-compile/windows-ios-6.2-02/`と`windows-macos-6.2-01/`、先の未導入・指定拒否の失敗結果も保持する。
 
 `experiments/metal-compile/`には、Macで従来API／MTL4Compiler生成のlibraryを既存のfunction特殊化・render／compute PSOへ渡し、固定GPU出力を照合する独立fixtureも用意済み。Windows側の事前コンパイル成功は、Metal 4 runtime・実GPU readback・iPhone性能の成功ではない。Apple側のnative検査とSDK／配布版の整合確認が残る。準備段階のWindows制御36検査とWSL終了処理3検査は成功済みで、Windows runtime拒否の原結果も保持。アプリ・MoltenVK本体・設定・CIには接続せず、アプリbuild／配布も行っていない。３AIの共通準備案は既存私有一覧の10,475 SM3候補と48件の過去の変換例を再利用できるが、安全な候補抽出と実機`.dxvk-cache`との照合が必要。候補数を初回描画の網羅率とは扱わず、次はApple側の比較→本人所有MSLの代表例→共通準備の小規模試作へ進む。詳細は [比較実験](../experiments/metal-compile/README.md)。

@@ -1,0 +1,483 @@
+// Authored portable lifecycle model. No Metal, Objective-C, MoltenVK, or GPU calls.
+#include "request_lifetime.h"
+#include "owner_retirement.h"
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+#include <stdexcept>
+#include <thread>
+
+using metal_compile_experiment::RequestEvent;
+
+static void check(bool condition, const char* message) {
+    if (!condition) throw std::runtime_error(message);
+}
+
+struct Counted {
+    std::atomic<int>& alive;
+    explicit Counted(std::atomic<int>& count) : alive(count) { ++alive; }
+    virtual ~Counted() { --alive; }
+};
+struct Payload {
+    std::shared_ptr<Counted> library;
+    std::shared_ptr<Counted> error;
+};
+struct Task : Counted {
+    using Counted::Counted;
+    std::function<void()> retainedCallback;
+};
+struct Owner : Counted {
+    using Counted::Counted;
+    bool complete = false;
+    bool destroyRequested = false;
+    Payload result;
+    int adoptedTaskSlot = 0;
+};
+using Request = metal_compile_experiment::RequestLifetime<Payload, std::shared_ptr<Task>>;
+
+struct Fixture {
+    std::atomic<int> owners{0}, tasks{0}, payloads{0}, notifications{0};
+    std::mutex ownerMutex;
+    std::unique_ptr<Owner> owner = std::make_unique<Owner>(owners);
+    std::shared_ptr<Request> request;
+    bool expectError = false;
+    bool expectWarning = false;
+    bool expectTask = true;
+    bool throwOnNotify = false;
+    bool reenter = false;
+    bool dropRequestOnNotify = false;
+
+    Fixture() {
+        request = Request::create([this](Payload payload, std::shared_ptr<Task> task) {
+            check(bool(payload.error) == (expectError || expectWarning), "error ownership/value changed");
+            check(bool(payload.library) == !expectError, "library ownership/value changed");
+            check(bool(task) == expectTask, "task ownership/value changed");
+            {
+                std::lock_guard<std::mutex> lock(ownerMutex);
+                check(bool(owner), "notification reached a destroyed owner");
+                ++notifications;
+                owner->complete = true;
+                if (owner->destroyRequested) owner.reset();
+            }
+            if (reenter) {
+                check(request->delivered(), "delivery was not published before notification");
+                check(request->callback(makePayload()) == RequestEvent::duplicate, "reentrant callback was forwarded");
+            }
+            if (dropRequestOnNotify) request.reset();
+            if (throwOnNotify) throw std::runtime_error("authored notification failure");
+        });
+    }
+
+    Payload makePayload() {
+        return {expectError ? nullptr : std::make_shared<Counted>(payloads),
+                expectError || expectWarning ? std::make_shared<Counted>(payloads) : nullptr};
+    }
+    std::shared_ptr<Task> makeTask() { return std::make_shared<Task>(tasks); }
+
+    // Model the fixed MVK rule: destroy during a pending compile only marks the
+    // owner; final notification may then delete it. No wait duration is changed.
+    void requestDestroy() {
+        std::lock_guard<std::mutex> lock(ownerMutex);
+        if (!owner) return;
+        owner->destroyRequested = true;
+        if (owner->complete) owner.reset();
+    }
+
+    void clean() {
+        requestDestroy();
+        request.reset();
+        check(owners == 0 && tasks == 0 && payloads == 0 && notifications == 1,
+              "owner/task/payload leaked or notification count differed");
+    }
+};
+
+static void normalOrder() {
+    Fixture f;
+    check(f.request->launchReturned(f.makeTask()) == RequestEvent::pending, "premature launch completion");
+    check(f.owners == 1 && f.tasks == 1, "pending launch lost ownership");
+    check(f.request->callback(f.makePayload()) == RequestEvent::delivered, "normal callback not delivered");
+    check(f.owners == 1, "owner deleted before its explicit destroy");
+    f.clean();
+}
+
+static void callbackBeforeLaunchReturn() {
+    Fixture f;
+    f.requestDestroy(); // Waiting caller timed out before the factory returned.
+    check(f.request->callback(f.makePayload()) == RequestEvent::pending, "early callback escaped launch barrier");
+    check(f.owners == 1 && f.payloads == 1 && f.notifications == 0, "owner retired before task adoption");
+    check(f.request->launchReturned(f.makeTask()) == RequestEvent::delivered, "early callback not delivered after launch");
+    check(f.owners == 0, "late owner was not retired");
+    f.clean();
+}
+
+static void timeoutThenLateCallback() {
+    Fixture f;
+    f.expectError = true;
+    f.request->launchReturned(f.makeTask());
+    f.requestDestroy();
+    check(f.owners == 1 && f.tasks == 1 && f.notifications == 0, "timeout released pending state");
+    check(f.request->callback(f.makePayload()) == RequestEvent::delivered, "late compiler error not delivered");
+    check(f.owners == 0, "late compiler error did not retire owner");
+    f.clean();
+}
+
+static void defensiveDuplicates() {
+    Fixture f;
+    f.request->callback(f.makePayload());
+    check(f.request->callback(f.makePayload()) == RequestEvent::duplicate, "early duplicate callback accepted");
+    check(f.payloads == 1, "duplicate payload replaced the original");
+    f.request->launchReturned(f.makeTask());
+    check(f.request->launchReturned(f.makeTask()) == RequestEvent::duplicate, "duplicate launch accepted");
+    check(f.request->callback(f.makePayload()) == RequestEvent::duplicate, "late duplicate callback accepted");
+    f.clean();
+}
+
+static void reentrantNotificationAndWarning() {
+    Fixture f;
+    f.expectWarning = true; // A non-null result plus diagnostic must remain intact.
+    f.reenter = true;
+    f.request->launchReturned(f.makeTask());
+    f.request->callback(f.makePayload());
+    f.clean();
+}
+
+static void exceptionDoesNotRetry() {
+    Fixture f;
+    f.throwOnNotify = true;
+    f.request->launchReturned(f.makeTask());
+    bool threw = false;
+    try { f.request->callback(f.makePayload()); }
+    catch (const std::runtime_error&) { threw = true; }
+    check(threw && f.request->delivered(), "notification exception was hidden or reset completion");
+    check(f.request->callback(f.makePayload()) == RequestEvent::duplicate, "failed notification was retried");
+    f.clean();
+}
+
+static void lastReferenceAndTaskCycle() {
+    Fixture f;
+    f.dropRequestOnNotify = true;
+    f.requestDestroy();
+    std::weak_ptr<Request> weakRequest = f.request;
+    auto task = f.makeTask();
+    std::weak_ptr<Task> weakTask = task;
+    task->retainedCallback = [request = f.request] { (void)request; }; // Deliberate task->state ownership edge.
+    f.request->launchReturned(std::move(task));
+    check(f.request->callback(f.makePayload()) == RequestEvent::delivered, "last-reference callback not delivered");
+    check(weakRequest.expired() && weakTask.expired(), "task/state cycle or notification lifetime leaked");
+    f.clean();
+}
+
+static void noTaskFailure() {
+    Fixture f;
+    f.expectError = true;
+    f.expectTask = false;
+    f.requestDestroy();
+    f.request->callback(f.makePayload());
+    f.request->launchReturned(nullptr);
+    f.clean();
+}
+
+static void simultaneousEvents() {
+    for (unsigned iteration = 0; iteration < 300; ++iteration) {
+        Fixture f;
+        std::atomic<bool> start{false};
+        std::atomic<int> deliveries{0};
+        const auto wait = [&] { while (!start.load(std::memory_order_acquire)) std::this_thread::yield(); };
+        std::thread launch([&] {
+            wait();
+            if (f.request->launchReturned(f.makeTask()) == RequestEvent::delivered) ++deliveries;
+        });
+        std::thread callback([&] {
+            wait();
+            if (f.request->callback(f.makePayload()) == RequestEvent::delivered) ++deliveries;
+        });
+        std::thread timeout([&] { wait(); f.requestDestroy(); });
+        start.store(true, std::memory_order_release);
+        launch.join(); callback.join(); timeout.join();
+        check(deliveries == 1 && f.request->delivered(), "racing events did not deliver exactly once");
+        f.clean();
+    }
+}
+
+using Retirement = metal_compile_experiment::OwnerRetirement<Payload, std::shared_ptr<Task>>;
+
+struct NotifyScope {
+    std::atomic<int>& active;
+    explicit NotifyScope(std::atomic<int>& value) : active(value) { ++active; }
+    ~NotifyScope() { --active; }
+};
+
+struct HoldFixture {
+    std::atomic<int> owners{0}, tasks{0}, payloads{0}, notifications{0}, retirements{0}, destroys{0}, activeNotify{0};
+    std::atomic<bool> launchActive{true};
+    std::mutex completionMutex;
+    std::condition_variable readyChanged;
+    bool ready = false;
+    std::unique_ptr<Owner> owner = std::make_unique<Owner>(owners);
+    std::shared_ptr<Retirement> state;
+    bool expectError = false, expectWarning = false, expectTask = true;
+    bool throwOnNotify = false, dropStateOnRetire = false;
+    std::function<void()> afterReady;
+
+    HoldFixture() {
+        state = Retirement::create([this](Payload payload) {
+            NotifyScope callbackScope(activeNotify);
+            bool isLate;
+            {
+                // Pinned MVKShaderLibraryCompiler::compileComplete retains the
+                // result under _completionLock, then endCompile sets done and
+                // notifies the existing waiter before returning _isDestroyed.
+                std::lock_guard<std::mutex> lock(completionMutex);
+                check(bool(owner), "completion touched a retired owner");
+                check(bool(payload.error) == (expectError || expectWarning), "retained error changed");
+                check(bool(payload.library) == !expectError, "retained library changed");
+                owner->result = std::move(payload);
+                owner->complete = true;
+                ready = true;
+                ++notifications;
+                readyChanged.notify_all();
+                isLate = owner->destroyRequested;
+            }
+            if (afterReady) afterReady();
+            // Pinned callback: if (compileComplete(...)) destroy(). The normal
+            // waiting caller independently calls destroy after newMTLLibrary.
+            if (isLate) destroy();
+            if (throwOnNotify) throw std::runtime_error("authored immediate-notify failure");
+        }, [this](std::shared_ptr<Task> task) {
+            check(!launchActive && activeNotify == 0, "retired inside a launch/notification scope");
+            check(bool(task) == expectTask, "retirement lost the adopted task");
+            check(state->retired(), "retirement ran under its own mutex or before publication");
+            {
+                std::lock_guard<std::mutex> lock(completionMutex);
+                check(owner && owner->complete && owner->destroyRequested, "retirement violated markDestroyed order");
+                owner.reset();
+                ++retirements;
+            }
+            if (dropStateOnRetire) state.reset();
+        });
+    }
+
+    Payload makePayload() {
+        return {expectError ? nullptr : std::make_shared<Counted>(payloads),
+                expectError || expectWarning ? std::make_shared<Counted>(payloads) : nullptr};
+    }
+    std::shared_ptr<Task> makeTask() { return std::make_shared<Task>(tasks); }
+
+    void destroy() {
+        bool compileDone;
+        {
+            // Pinned markDestroyed: set destroyed, return done while locked.
+            std::lock_guard<std::mutex> lock(completionMutex);
+            if (!owner) return;
+            ++destroys;
+            owner->destroyRequested = true;
+            compileDone = owner->complete;
+        }
+        // The only changed model step is physical retirement. Notification,
+        // done/error state and the preceding markDestroyed decision stay intact.
+        if (compileDone) state->requestDestroy();
+    }
+
+    void finishLaunch(std::shared_ptr<Task> task) {
+        {
+            std::lock_guard<std::mutex> lock(completionMutex);
+            check(bool(owner), "owner vanished before task adoption");
+            owner->adoptedTaskSlot = task ? 1 : 0;
+        }
+        launchActive = false; // The modeled device monitor/scope has now exited.
+        state->finishLaunch(std::move(task));
+        // No owner access is allowed after this handoff.
+    }
+
+    bool waitReady() {
+        std::unique_lock<std::mutex> lock(completionMutex);
+        return readyChanged.wait_for(lock, std::chrono::seconds(2), [this] { return ready; });
+    }
+
+    void clean() {
+        destroy();
+        state.reset();
+        check(owners == 0 && tasks == 0 && payloads == 0 && notifications == 1 && retirements == 1,
+              "owner-hold resources leaked or notification/retirement count differed");
+    }
+};
+
+static void holdNormalOrder() {
+    HoldFixture f;
+    f.finishLaunch(f.makeTask());
+    check(f.state->callback(f.makePayload()), "normal notification rejected");
+    check(f.ready && f.notifications == 1 && f.owners == 1, "normal callback readiness changed");
+    f.clean();
+}
+
+static void holdEarlyCallbackKeepsReadiness() {
+    HoldFixture f;
+    check(f.state->callback(f.makePayload()), "early notification rejected");
+    check(f.ready && f.notifications == 1 && f.launchActive, "early readiness was incorrectly delayed until launch return");
+    f.destroy();
+    check(f.owners == 1 && f.payloads == 1 && f.retirements == 0, "waiting caller freed owner during launch");
+    f.finishLaunch(f.makeTask());
+    check(f.owners == 0, "owner did not retire after launch scope left");
+    f.clean();
+}
+
+static void holdTimeoutThenLateCallback() {
+    HoldFixture f;
+    f.expectError = true;
+    f.finishLaunch(f.makeTask());
+    f.destroy();
+    check(!f.ready && f.owners == 1 && f.tasks == 1, "timeout canceled or retired pending work");
+    f.state->callback(f.makePayload());
+    check(f.ready && f.destroys == 2 && f.owners == 0, "late callback did not follow compileComplete/late destroy ordering");
+    f.clean();
+}
+
+static void holdActiveNotificationScope() {
+    HoldFixture f;
+    std::mutex gateMutex;
+    std::condition_variable gateChanged;
+    bool release = false;
+    f.afterReady = [&] {
+        std::unique_lock<std::mutex> lock(gateMutex);
+        gateChanged.wait(lock, [&] { return release; });
+    };
+    std::thread callback([&] { f.state->callback(f.makePayload()); });
+    check(f.waitReady(), "callback did not wake existing waiter before launch return");
+    f.destroy();
+    f.finishLaunch(f.makeTask());
+    check(f.owners == 1 && f.activeNotify == 1 && f.retirements == 0, "owner retired while callback still used it");
+    {
+        std::lock_guard<std::mutex> lock(gateMutex);
+        release = true;
+    }
+    gateChanged.notify_all();
+    callback.join();
+    f.clean();
+}
+
+static void holdDuplicatesAndReentrantDestroy() {
+    HoldFixture f;
+    f.afterReady = [&] {
+        check(!f.state->callback(f.makePayload()), "reentrant duplicate callback accepted");
+        f.destroy();
+        check(f.owners == 1, "reentrant destroy retired an active callback");
+    };
+    f.state->callback(f.makePayload());
+    f.finishLaunch(f.makeTask());
+    check(!f.state->finishLaunch(f.makeTask()) && !f.state->callback(f.makePayload()), "duplicate event reused retired owner");
+    f.clean();
+}
+
+static void holdLastReferenceAndTaskCycle() {
+    HoldFixture f;
+    f.dropStateOnRetire = true;
+    std::weak_ptr<Retirement> weakState = f.state;
+    auto task = f.makeTask();
+    std::weak_ptr<Task> weakTask = task;
+    task->retainedCallback = [state = f.state] { (void)state; };
+    f.finishLaunch(std::move(task));
+    f.destroy();
+    f.state->callback(f.makePayload());
+    check(weakState.expired() && weakTask.expired(), "owner-hold task/state cycle survived retirement");
+    f.clean();
+}
+
+static void holdFailuresAndWarnings() {
+    {
+        HoldFixture f;
+        f.expectError = true;
+        f.expectTask = false;
+        f.destroy();
+        f.state->callback(f.makePayload());
+        f.finishLaunch(nullptr);
+        f.clean();
+    }
+    {
+        HoldFixture f;
+        f.expectWarning = true;
+        f.state->callback(f.makePayload());
+        check(f.payloads == 2, "non-null library plus warning was not retained");
+        f.finishLaunch(f.makeTask());
+        f.clean();
+    }
+}
+
+static void holdNotificationException() {
+    HoldFixture f;
+    f.throwOnNotify = true;
+    f.finishLaunch(f.makeTask());
+    bool threw = false;
+    try { f.state->callback(f.makePayload()); }
+    catch (const std::runtime_error&) { threw = true; }
+    check(threw && f.notifications == 1, "notification exception was hidden or repeated");
+    check(!f.state->callback(f.makePayload()), "notification retried after throwing");
+    f.clean();
+}
+
+static void holdSimultaneousEvents() {
+    for (unsigned iteration = 0; iteration < 300; ++iteration) {
+        HoldFixture f;
+        std::atomic<bool> start{false};
+        const auto wait = [&] { while (!start.load(std::memory_order_acquire)) std::this_thread::yield(); };
+        std::thread launch([&] { wait(); f.finishLaunch(f.makeTask()); });
+        std::thread callback([&] { wait(); f.state->callback(f.makePayload()); });
+        std::thread timeout([&] { wait(); f.destroy(); });
+        start.store(true, std::memory_order_release);
+        launch.join(); callback.join(); timeout.join();
+        check(f.ready && f.notifications == 1 && f.state->retired(), "owner-hold race changed readiness or retirement");
+        f.clean();
+    }
+}
+
+struct UnsafeOwner { volatile int returnedTask = 0; };
+#if defined(__GNUC__)
+__attribute__((noinline))
+#endif
+static void earlyCallbackDestroysOwner(UnsafeOwner* owner) {
+    delete owner;
+}
+#if defined(__GNUC__)
+__attribute__((noinline))
+#endif
+static void assignAfterCallback(UnsafeOwner* owner) {
+    owner->returnedTask = 17;
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--unsafe-model") == 0) {
+        std::fputs("EXPECTED NEGATIVE: authored early-callback owner destruction, not an observed Metal callback\n", stderr);
+        auto* owner = new UnsafeOwner;
+        earlyCallbackDestroysOwner(owner);
+        assignAfterCallback(owner); // Model this->_task assignment after the factory returns.
+        return 99; // Reaching here means ASan did not establish the intended negative control.
+    }
+    if (argc != 1) return 2;
+    try {
+        normalOrder();
+        callbackBeforeLaunchReturn();
+        timeoutThenLateCallback();
+        defensiveDuplicates();
+        reentrantNotificationAndWarning();
+        exceptionDoesNotRetry();
+        lastReferenceAndTaskCycle();
+        noTaskFailure();
+        simultaneousEvents();
+        holdNormalOrder();
+        holdEarlyCallbackKeepsReadiness();
+        holdTimeoutThenLateCallback();
+        holdActiveNotificationScope();
+        holdDuplicatesAndReentrantDestroy();
+        holdLastReferenceAndTaskCycle();
+        holdFailuresAndWarnings();
+        holdNotificationException();
+        holdSimultaneousEvents();
+        std::puts("METAL_REQUEST_LIFETIME barrier_cases=9 owner_hold_cases=9 concurrent_iterations_each=300 metal_api_verified=0");
+        return 0;
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "lifecycle model failed: %s\n", error.what());
+        return 1;
+    }
+}

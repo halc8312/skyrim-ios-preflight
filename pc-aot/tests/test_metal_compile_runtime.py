@@ -19,7 +19,7 @@ runtime = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runtime)
 
 
-def synthetic_report(repeats=2, offline=True):
+def synthetic_report(repeats=2, offline=True, async_library=False):
     """Authored JSON for parser tests; deliberately not returned by a Metal process."""
     result = {
         "schema": 1, "status": "passed", "scope": runtime.SCOPE,
@@ -27,6 +27,9 @@ def synthetic_report(repeats=2, offline=True):
         "gpu_execution_verified": True, "repeat": repeats, "offline_library_requested": offline,
         "os_version": [26, 0, 0], "device": {"name": "SYNTHETIC NON-GPU", "supports_metal4": True},
         "compiler_setup_ns": 100, "samples": [], "rejections": [],
+        "async_library_requested": async_library, "async_adapter_verified": async_library,
+        "async_retention_checks": [],
+        "async_timing_scope": "submission through callback publication and task join; controlled retention checks excluded",
         "specialization_scope": "vertex lookup plus fragment and compute specialization",
         **{key: False for key in runtime.FALSE_EVIDENCE},
     }
@@ -34,23 +37,58 @@ def synthetic_report(repeats=2, offline=True):
     color = [0x3e400000, 0x3ee00000, 0x3f000000, 0x3f800000]
     compute = [3, 7, 10, 0x12345678, 4, 14, 10, 0x12345678,
                5, 21, 10, 0x12345678, 6, 28, 10, 0x12345678]
+    source_apis = ["legacy_source", "metal4_source"]
+    if async_library:
+        source_apis += ["legacy_async_source", "metal4_async_source"]
+
+    def async_fields(api):
+        if "_async_" not in api:
+            return {}
+        fields = {"async_callback_count": 1, "metal4_task_joined": api == "metal4_async_source"}
+        if fields["metal4_task_joined"]:
+            fields["metal4_task_status"] = "finished"
+        return fields
+
     for iteration in range(1, repeats + 1):
-        modes = ["legacy_source", "metal4_source"] if iteration % 2 else ["metal4_source", "legacy_source"]
+        offset = (iteration - 1) % len(source_apis)
+        modes = source_apis[offset:] + source_apis[:offset]
         if offline:
             modes.append("offline_metallib")
         for api in modes:
             result["samples"].append({
                 "api": api, "iteration": iteration,
-                "library_operation": "load" if api == "offline_metallib" else "compile",
+                "library_operation": "load" if api == "offline_metallib" else "async_compile" if "_async_" in api else "compile",
                 "library_ns": 101, "specialization_ns": 102, "render_pso_ns": 103, "compute_pso_ns": 104,
                 "render_bits": color * 16, "compute_words": list(compute), "command_status": "completed",
+                **async_fields(api),
             })
-    for api in ("legacy_source", "metal4_source"):
+    for api in source_apis:
         result["rejections"].append({
             "api": api, "library_ns": 105, "returned_nil": True, "error_present": True,
             "error": {"domain": "SyntheticCompilerError", "code": 3},
+            **async_fields(api),
         })
+    if async_library:
+        for api in ("legacy_async_source", "metal4_async_source"):
+            for case in ("library_success", "compiler_error"):
+                result["async_retention_checks"].append({
+                    "api": api, "case": case, "input_snapshot_verified": True, "wait_timed_out": True,
+                    "cancellation_requested": False,
+                    "timeout_scope": "controlled publication gate after the real compiler callback; not compilation latency",
+                    "returned_nil": case == "compiler_error", "error_present": case == "compiler_error",
+                    "error": {"domain": "SyntheticCompilerError", "code": 3} if case == "compiler_error" else {},
+                    "render_bits": color * 16, "compute_words": list(compute), "command_status": "completed",
+                    **async_fields(api),
+                })
     return result
+
+
+def synthetic_factory_probe(created=True):
+    return {"scope": runtime.FACTORY_PROBE_SCOPE,
+            "status": "library_created" if created else "no_device",
+            "factory_attempted": created, "factory_created": created,
+            "library_attempted": created, "library_created": created,
+            **{key: False for key in runtime.FACTORY_PROBE_FALSE_EVIDENCE}}
 
 
 class MetalRuntimeReportTests(unittest.TestCase):
@@ -60,6 +98,33 @@ class MetalRuntimeReportTests(unittest.TestCase):
     def test_valid_control_reports_with_and_without_offline(self):
         self.validate(synthetic_report())
         runtime.validate_native(synthetic_report(1, False), 1, False)
+
+    def test_async_is_explicit_and_requires_every_retained_result(self):
+        report = synthetic_report(3, True, True)
+        runtime.validate_native(report, 3, True, True)
+        with self.assertRaisesRegex(ValueError, "async route"):
+            runtime.validate_native(report, 3, True, False)
+        report["async_retention_checks"].pop()
+        with self.assertRaisesRegex(ValueError, "retention checks"):
+            runtime.validate_native(report, 3, True, True)
+
+    def test_async_protocol_failures_cannot_be_hidden_by_successful_readbacks(self):
+        mutations = (
+            lambda r: r["samples"][2].__setitem__("async_callback_count", 2),
+            lambda r: r["samples"][3].__setitem__("metal4_task_joined", False),
+            lambda r: r["rejections"][3].__setitem__("metal4_task_status", "scheduled"),
+            lambda r: r["async_retention_checks"][0].__setitem__("input_snapshot_verified", False),
+            lambda r: r["async_retention_checks"][0].__setitem__("wait_timed_out", False),
+            lambda r: r["async_retention_checks"][0].__setitem__("cancellation_requested", True),
+            lambda r: r["async_retention_checks"][1].__setitem__("error_present", False),
+            lambda r: r["async_retention_checks"][2]["compute_words"].__setitem__(15, 0),
+            lambda r: r["async_retention_checks"][3].__setitem__("returned_nil", False),
+        )
+        for mutation in mutations:
+            report = synthetic_report(2, False, True)
+            mutation(report)
+            with self.assertRaises(ValueError):
+                runtime.validate_native(report, 2, False, True)
 
     def test_all_pixels_and_compute_threads_are_checked_even_if_native_claims_pass(self):
         for key, index in (("render_bits", 63), ("compute_words", 15)):
@@ -132,6 +197,24 @@ class MetalRuntimeReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.validate(report)
 
+    def test_factory_probe_cannot_claim_gpu_or_full_metal4_or_an_uncreated_library(self):
+        runtime.validate_factory_probe(synthetic_factory_probe())
+        runtime.validate_factory_probe(synthetic_factory_probe(False))
+        for key in runtime.FACTORY_PROBE_FALSE_EVIDENCE:
+            with self.subTest(key=key):
+                probe = synthetic_factory_probe()
+                probe[key] = True
+                with self.assertRaisesRegex(ValueError, "evidence claim"):
+                    runtime.validate_factory_probe(probe)
+        for key in ("factory_attempted", "factory_created", "library_attempted", "library_created"):
+            with self.subTest(key=key):
+                probe = synthetic_factory_probe()
+                probe[key] = False
+                with self.assertRaises(ValueError):
+                    runtime.validate_factory_probe(probe)
+        with self.assertRaisesRegex(ValueError, "missing"):
+            runtime.validate_factory_probe(None)
+
 
 class MetalRuntimeControlTests(unittest.TestCase):
     def setUp(self):
@@ -194,6 +277,180 @@ class MetalRuntimeControlTests(unittest.TestCase):
         self.assertFalse(report["native_compilation_verified"])
         self.assertIn("SDK discovery", report["failure"])
 
+    def test_unsupported_device_diagnostics_and_narrow_probe_are_retained_without_promotion(self):
+        for available in (False, True):
+            with self.subTest(default_device_available=available):
+                self.output = self.directory / ("available" if available else "missing")
+                device = {"available": available, "name": "SYNTHETIC VIRTUAL GPU" if available else "",
+                          "supports_metal4": False, "metal4_family_queried": available,
+                          "supports_metal3": available, "supports_mac2": available,
+                          "supports_apple7": False, "supports_apple8": False, "supports_apple9": False,
+                          "new_compiler_selector_available": available}
+                native = {"schema": 1, "status": "unsupported", "scope": runtime.SCOPE,
+                          "failure": "synthetic unsupported device", "device": device,
+                          "default_device_available": available, "device_enumeration": "all_devices",
+                          "available_device_count": int(available), "available_devices": [device] if available else [],
+                          "gpu_execution_verified": False, "library_factory_probe_requested": True,
+                          "library_factory_probe": synthetic_factory_probe(available),
+                          **{key: False for key in runtime.FALSE_EVIDENCE}}
+                calls = []
+
+                def command(argv, label, output, report, env, timeout, deadline=None):
+                    calls.append(argv)
+                    if label == "native-compile":
+                        (output / "runtime").write_bytes(b"synthetic binary")
+                        return {"returncode": 0}
+                    self.assertEqual(label, "native-run")
+                    (output / "native.json").write_text(json.dumps(native))
+                    return {"returncode": 78}
+
+                with patch.object(runtime.platform, "system", return_value="Darwin"), \
+                        patch.object(runtime.platform, "mac_ver", return_value=("26.5.1", (), "")), \
+                        patch.object(runtime, "probe", side_effect=["26.5", "synthetic SDK", "synthetic Xcode", "synthetic clang"]), \
+                        patch.object(runtime, "run_command", side_effect=command):
+                    report = runtime.run_experiment(self.arguments("--probe-library-factory"))
+                self.assertEqual(report["status"], "unsupported")
+                self.assertTrue(report["native_compilation_verified"])
+                self.assertEqual(report["native"], native)
+                self.assertIn("--probe-library-factory", calls[-1])
+                for key in ("gpu_execution_verified", *runtime.FALSE_EVIDENCE):
+                    self.assertIs(report[key], False)
+                self.assertEqual(report, json.loads((self.output / "result.json").read_text()))
+
+    def test_budget_is_optional_positive_finite_and_bounded(self):
+        self.assertIsNone(self.arguments().budget)
+        self.assertEqual(self.arguments("--budget", "3600").budget, 3600)
+        for value in ("0", "-1", "nan", "inf", "1e309", "3601"):
+            with self.subTest(value=value), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                self.arguments("--budget", value)
+
+    def budget_control(self, budget, compile_seconds, native_timeout=False):
+        """Fake clocks/processes exercise admission without any Apple compiler."""
+        clock, waits = [0.0], []
+
+        def child(command, **kwargs):
+            native = Path(command[0]).name == "runtime"
+            compile_step = "-o" in command
+            message = "26.2" if "--show-sdk-version" in command else "SYNTHETIC CONTROL; NOT APPLE"
+            kwargs["stdout"].write((message + "\n").encode())
+            if compile_step:
+                Path(command[command.index("-o") + 1]).write_bytes(b"synthetic executable placeholder")
+            if native:
+                (self.output / "native.json").write_text('{"status":"running","synthetic":true}\n')
+            process = unittest.mock.Mock(pid=12345, returncode=-9)
+
+            def wait(timeout):
+                waits.append(timeout)
+                clock[0] += timeout if native else compile_seconds if compile_step else 1
+                if native and native_timeout:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                return 0
+
+            process.wait.side_effect = wait
+            return process
+
+        with patch.object(runtime.platform, "system", return_value="Darwin"), \
+                patch.object(runtime.platform, "mac_ver", return_value=("26.0", (), "")), \
+                patch.object(runtime.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(runtime.subprocess, "Popen", side_effect=child) as spawn, \
+                patch.object(runtime, "stop_process") as cleanup:
+            report = runtime.run_experiment(self.arguments("--budget", str(budget)))
+        self.assertEqual(report, json.loads((self.output / "result.json").read_text()))
+        return report, waits, spawn.call_count, cleanup.call_count
+
+    def test_budget_stops_native_launch_after_probes_and_compile_and_keeps_evidence(self):
+        report, waits, launches, cleanups = self.budget_control(7, 3)
+        self.assertEqual((launches, cleanups), (5, 0))
+        self.assertEqual(waits, [7, 6, 5, 4, 3])
+        self.assertEqual(report["status"], "budget_exhausted")
+        self.assertTrue(report["native_compilation_verified"])
+        self.assertFalse(report["gpu_execution_verified"])
+        self.assertEqual(report["commands"][-1]["label"], "native-run")
+        self.assertFalse(report["commands"][-1]["process_started"])
+        self.assertTrue((self.output / "runtime").is_file())
+        self.assertIn("SYNTHETIC", (self.output / "native-compile.stdout.log").read_text())
+
+    def test_native_wait_uses_remaining_budget_and_preserves_partial_failure(self):
+        report, waits, launches, cleanups = self.budget_control(8, 2, native_timeout=True)
+        self.assertEqual((launches, cleanups), (6, 1))
+        self.assertEqual(waits, [8, 7, 6, 5, 4, 2])
+        self.assertEqual(report["status"], "budget_exhausted")
+        event = report["commands"][-1]
+        self.assertEqual(event["timeout_cap_seconds"], 180)
+        self.assertEqual(event["timeout_seconds"], 2)
+        self.assertEqual(event["status"], "timed_out")
+        self.assertTrue(event["budget_exhausted"])
+        self.assertFalse(report["gpu_execution_verified"])
+        self.assertTrue(json.loads((self.output / "native.json").read_text())["synthetic"])
+
+    def test_budget_exhausted_during_inputs_never_starts_first_probe(self):
+        clock = [0.0]
+        original = runtime.sha256
+
+        def inspected(path):
+            clock[0] = 2.0
+            return original(path)
+
+        with patch.object(runtime.platform, "system", return_value="Darwin"), \
+                patch.object(runtime.platform, "mac_ver", return_value=("26.0", (), "")), \
+                patch.object(runtime.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(runtime, "sha256", side_effect=inspected), \
+                patch.object(runtime.subprocess, "Popen") as spawn:
+            report = runtime.run_experiment(self.arguments("--budget", "1"))
+        spawn.assert_not_called()
+        self.assertEqual(report["status"], "budget_exhausted")
+        self.assertEqual(report["commands"][0]["label"], "sdk-version")
+        self.assertFalse(report["commands"][0]["process_started"])
+        self.assertFalse(report["native_compilation_verified"])
+        self.assertEqual(len(report["inputs"]), 3)
+
+    def test_budget_is_rechecked_after_process_startup(self):
+        self.output.mkdir()
+        report = {"commands": []}
+        process = unittest.mock.Mock(pid=12345)
+        process.wait.return_value = 17
+        with patch.object(runtime.time, "monotonic", side_effect=[2.0, 4.0]), \
+                patch.object(runtime.subprocess, "Popen", return_value=process):
+            event = runtime.run_command(["synthetic"], "startup", self.output, report, {}, 30, deadline=5)
+        process.wait.assert_called_once_with(timeout=1)
+        self.assertEqual(event["timeout_seconds"], 3)
+        self.assertEqual(event["returncode"], 17)
+
+    def test_inherited_test_deadline_never_extends_explicit_deadline(self):
+        self.output.mkdir()
+        for explicit, expected in ((None, 2), (12, 2), (9, 1)):
+            with self.subTest(explicit=explicit):
+                process = unittest.mock.Mock(pid=12345)
+                process.wait.return_value = 0
+                report = {"commands": []}
+                with patch.object(runtime.time, "monotonic", return_value=8), \
+                        patch.object(runtime.subprocess, "Popen", return_value=process):
+                    event = runtime.run_command(["synthetic"], "inherited", self.output, report,
+                        {runtime.TEST_DEADLINE_ENV: "10"}, 30, deadline=explicit)
+                process.wait.assert_called_once_with(timeout=expected)
+                self.assertTrue(event["test_deadline_inherited"])
+        process = unittest.mock.Mock(pid=12345)
+        process.wait.return_value = 0
+        with patch.object(runtime.time, "monotonic", side_effect=AssertionError("unexpected deadline clock")), \
+                patch.object(runtime.subprocess, "Popen", return_value=process):
+            runtime.run_command(["synthetic"], "legacy", self.output, {"commands": []}, {}, 30)
+        process.wait.assert_called_once_with(timeout=30)
+
+    def test_invalid_or_expired_inherited_deadline_keeps_logs_without_launch(self):
+        self.output.mkdir()
+        for value in ("", "nan", "inf", "-inf", "0", "-1", "invalid", "1e999", "7"):
+            with self.subTest(value=value):
+                report = {"commands": []}
+                with patch.object(runtime.time, "monotonic", return_value=8), \
+                        patch.object(runtime.subprocess, "Popen") as spawn, self.assertRaises((ValueError, runtime.BudgetExhausted)):
+                    runtime.run_command(["synthetic"], "invalid", self.output, report,
+                        {runtime.TEST_DEADLINE_ENV: value}, 30)
+                spawn.assert_not_called()
+                event = report["commands"][0]
+                self.assertFalse(event["process_started"])
+                self.assertTrue((self.output / event["stderr"]).is_file())
+                self.assertEqual(event["status"], "budget_exhausted" if value == "7" else "invalid_deadline")
+
     def run_child(self, script, timeout=10):
         self.output.mkdir()
         report = {"commands": []}
@@ -234,6 +491,33 @@ class MetalRuntimeControlTests(unittest.TestCase):
                 runtime.run_command(["synthetic"], "interrupted", self.output, report, {}, 10)
         process.kill.assert_called_once()
         self.assertEqual(process.wait.call_count, 2)
+        self.assertEqual(report["commands"][0]["status"], "interrupted")
+
+    def test_interrupt_immediately_after_popen_return_still_cleans_owned_child(self):
+        self.output.mkdir()
+        report = {"commands": []}
+        process = unittest.mock.Mock(pid=12345, returncode=-9)
+        interrupted = []
+
+        def trace(frame, event, argument):
+            if (frame.f_code is runtime.run_command.__code__ and event == "line"
+                    and frame.f_locals.get("process") is process and not interrupted):
+                interrupted.append(True)
+                raise KeyboardInterrupt()
+            return trace
+
+        previous = sys.gettrace()
+        with patch.object(runtime.subprocess, "Popen", return_value=process), \
+                patch.object(runtime, "stop_process") as cleanup:
+            try:
+                sys.settrace(trace)
+                with self.assertRaises(KeyboardInterrupt):
+                    runtime.run_command(["synthetic"], "startup-interrupt", self.output, report, {}, 10)
+            finally:
+                sys.settrace(previous)
+        self.assertTrue(interrupted)
+        process.wait.assert_not_called()
+        cleanup.assert_called_once_with(process, report["commands"][0])
         self.assertEqual(report["commands"][0]["status"], "interrupted")
 
     def test_cli_does_not_return_success_for_unsupported(self):

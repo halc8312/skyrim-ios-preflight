@@ -1,8 +1,9 @@
 # Metal compilation experiments
 
 This isolated experiment compares ways to prepare an **authored** shader library.
-It is not connected to the application, MoltenVK patches, shader settings, or CI.
-It contains no Skyrim shaders or game data.
+It is not connected to the application, MoltenVK patches, or shader settings.
+The manual `pc2011-metal-compile-checks` workflow runs authored checks only.
+The tracked experiment contains no Skyrim shaders or game data.
 
 The immediate question is whether a library produced by `MTL4Compiler` or by an
 offline Windows compiler can feed the existing Metal function-specialization,
@@ -31,9 +32,20 @@ independently prescribed integer vectors. Runtime comparison also tests invalid
 source rejection. A missing compiler, incompatible library, failed GPU command,
 or unsupported runtime is not a successful validation result.
 
-The fixture tests the two library factories synchronously to keep their scope
-comparable. It does not test production asynchronous callbacks, timeouts,
-priority propagation, or the Metal compiler service under game load.
+The default fixture tests the two library factories synchronously. The optional
+`--async-library` route also checks both asynchronous factories, owned source and
+option snapshots, retained errors/libraries and Metal 4 task completion. Its
+deterministic publication gate tests a timed waiter without releasing the
+request. That is not an actual compiler timeout, cancellation or production
+MoltenVK lifetime test. Priority propagation and compiler-service contention
+under game load remain outside this fixture.
+
+`--probe-library-factory` is a separate opt-in diagnostic, run after the normal
+comparison (including an unsupported result). It records the default device,
+available device names/families, factory selector, and whether the factory can
+create the authored library. It performs no function, PSO or GPU work and never
+changes the normal Metal 4 eligibility check or unsupported exit code. A factory
+success is not evidence that a virtualized device supports the full Metal 4 API.
 
 ## Offline preparation
 
@@ -73,11 +85,79 @@ and installation layout; automatic discovery does not establish target support.
 Raw command logs are written directly to files. On timeout or interruption the
 supervisor attempts bounded child/group termination and records unsuccessful
 cleanup. A process deadline does not cancel external Apple compiler services.
+Both runners accept `--budget` for a shared tool-admission and wait allowance;
+process startup, input I/O, cleanup and evidence publication are not a guaranteed
+hard wall-clock deadline.
+
+## Effective option observations
+
+`options_probe.py` builds a GPU-free Mac probe of `MTLCompileOptions` getters.
+Fresh defaults, legacy and modern math assignments, and typed authored macros
+are separate cases. It records availability and observed numeric bits without
+claiming to recover the original macro type or production assignment history.
+See [option snapshot contract](OPTIONS.md) for the fields and limits.
+
+```sh
+python3 experiments/metal-compile/options_probe.py --output local/metal-compile/options-01
+```
+
+This captures authored option objects only. It does not compile shaders or prove
+that the private batch profile matches effective game options.
+
+## Private generated-source batches
+
+`batch.py prepare` snapshots an explicitly selected local MSL set and a complete
+declared profile. `batch.py run` verifies all source hashes/options before
+starting a serial compile/link sequence. Both require a new private output
+directory. The profile includes target, deployment version, MSL version, math
+mode/functions, invariance, optimization and macros; missing values are not
+inferred. Source/count/time bounds do not impose a compiler-process RAM cap.
+
+On 2026-11-18, 48 previously generated private inputs (803,016 bytes; 29 distinct
+source hashes) compiled and linked successfully with Windows tools 6.2 using
+iOS 18.0, MSL 3.1, safe/precise math, invariance false, default optimization and
+no macros. All 48 warned about the same unused `boolConstants` variable. Inputs
+and complete evidence stay under ignored paths. This is a controlled profile,
+not a capture of the game's effective MoltenVK options. No GPU output or iPhone
+performance result is established. Duplicate source files were intentionally
+retained; byte-identical source alone does not imply identical artifact bytes.
+
+## Request lifetime models
+
+`request_lifetime.h` is a separate portable model, not connected to the runtime
+fixture or production. It waits for both factory return and callback receipt
+before notifying an owner exactly once. That matters when notification can
+destroy the owner before a returned task is assigned. The model checks early,
+late, simultaneous and defensive duplicate notifications, ownership cycles and
+notification failures. When the callback precedes factory return, this barrier
+delays notification compared with the fixed MoltenVK behavior. It must not be
+adopted as a drop-in production fix.
+
+`owner_retirement.h` is the separate design that preserves immediate completion
+notification. Destruction is requested idempotently and deferred until the launch
+and callback scopes have finished. It retains the returned task without moving
+the existing wait/error semantics into a new completion barrier. This model is
+also unconnected to production: actual Objective-C ownership and Metal callback
+retirement still need their own tests.
+
+Normal and ASan/UBSan runs passed nine authored cases and 300 concurrent event
+iterations for each model. An intentionally unsafe model produced the expected ASan use-after-
+free report. This is a model counterexample, not an observed early Metal
+callback. The WSL TSan run could not start because of an unexpected memory
+mapping; it is not a race-detector pass. Actual Metal task retirement still
+needs validation on Apple hardware.
+
+The Apple workflow additionally runs both safe models with TSan. The portable
+test supervisor bounds the entire unittest worker, permits cooperative child
+cleanup before a limited process-group termination fallback, and preserves the
+worker log. It does not scan or terminate unrelated processes or prove that
+external Apple compiler services have stopped.
 
 ## Verification status
 
-On 2026-11-18, the combined Windows control suite passed 36 tests. Three targeted
-POSIX process-control checks also passed in WSL. These exercise failure handling,
+On 2026-11-18, the integrated WSL control suite passed 105 tests, with the one
+Darwin-only TSan check explicitly skipped. Earlier Windows controls and targeted
+POSIX process-control checks also passed. These exercise failure handling,
 time limits, retained evidence, expected-output validation, and refusal to promote
 synthetic results into Apple GPU evidence. They do not compile the native fixture.
 
@@ -98,11 +178,23 @@ each target; the iOS and macOS outputs are distinct. Results are retained in
 `local/metal-compile/windows-ios-6.2-02/` and
 `local/metal-compile/windows-macos-6.2-01/`.
 
+Four additional authored profiles passed one compile/link trial each with empty
+stderr: iOS 18 / MSL 3.2, iOS 26 / MSL 4.0, macOS 15 / MSL 3.2, and macOS 26 /
+MSL 4.0. This checks accepted compiler inputs and targets; it does not establish
+runtime Metal 4 or production compile-option parity.
+
 The original missing-tool result, rejected-argument result, and unsupported
 Windows runtime result remain intact. Successful offline compilation does not
 establish Metal 4 runtime compatibility, GPU output correctness, or faster iPhone
-gameplay. The native comparison and SDK/release alignment remain to be validated
-on Apple hardware. No production default, CI workflow, app build, or deployment
+gameplay. The first manual Apple-host run at public source `7985e6f` passed 37
+control tests, three offline macOS compile/link trials and native Objective-C++
+compilation with Xcode 26.6 / SDK 26.5. Runtime returned explicit `unsupported`
+because the default device did not pass the Metal 4 family check. The original
+report did not record the device name or distinguish a missing device from an
+unsupported family; the next fixture adds those diagnostics. This is not a GPU pass.
+The Mac generated its own offline library, so it also does not validate a
+Windows-produced artifact on a GPU. Original evidence is retained in
+`local/metal-compile/mac-run-01/`. No production default, app build or deployment
 was changed.
 
 ```sh
@@ -130,12 +222,13 @@ python -m unittest discover -s tests -p 'test_metal_compile_*.py' -v
 ## Connection to first-use preparation
 
 The three external reviews' common-recipe proposal still needs actual shader
-inputs. A private prior inventory contains 10,475 SM3 candidates across 122 FXP
-entries, including 48 previously translated cases. This is not measured coverage
-of the runtime pipelines. The old extractor needs bounded decompression and
-token/record validation before reuse, and the actual device `.dxvk-cache` has not
-yet been located in the available local files. Current numeric diagnostics do
-not contain that cache.
+inputs. The bounded private inventory in `experiments/shader-inputs/` identified
+10,475 candidate records across 122 FXP entries, with 6,659 distinct stage/hash
+keys (309 VS and 6,350 FS). An authored-only pinned DXSO oracle agrees on 21
+synthetic consumption/stage/hash cases under ASan/UBSan. This is not complete FXP
+grammar validation, native safety for game candidates, or measured runtime
+pipeline coverage. The actual device `.dxvk-cache` has not been located in the
+available local files; current numeric diagnostics do not contain that cache.
 
 The next input study therefore classifies and validates candidates, reconstructs
 DXVK stage/hash keys, and compares them with a private device-cache copy. Generated

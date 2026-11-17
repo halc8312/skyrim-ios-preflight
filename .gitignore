@@ -726,3 +726,20 @@
 !/pc-aot/tests/test_shader_input_study.py
 !/pc-aot/tests/test_shader_cache_index.py
 !/pc-aot/tests/test_shader_input_join.py
+
+# Isolated authored Metal comparisons and control checks.
+!/pc-aot/tests/native/
+!/pc-aot/experiments/metal-compile/OPTIONS.md
+!/pc-aot/experiments/metal-compile/batch.py
+!/pc-aot/experiments/metal-compile/options_probe.mm
+!/pc-aot/experiments/metal-compile/options_probe.py
+!/pc-aot/experiments/metal-compile/options_snapshot.h
+!/pc-aot/experiments/metal-compile/owner_retirement.h
+!/pc-aot/experiments/metal-compile/request_lifetime.h
+!/pc-aot/scripts/supervise-metal-tests.py
+!/pc-aot/tests/native/test_metal_request_lifetime.cpp
+!/pc-aot/tests/test_metal_compile_batch.py
+!/pc-aot/tests/test_metal_compile_ci.py
+!/pc-aot/tests/test_metal_compile_options.py
+!/pc-aot/tests/test_metal_compile_request_lifetime.py
+!/pc-aot/tests/test_metal_compile_supervisor.py
