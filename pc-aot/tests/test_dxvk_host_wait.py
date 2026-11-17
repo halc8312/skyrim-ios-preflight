@@ -110,7 +110,7 @@ class HostWaitStageTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "Creating links requires POSIX test permissions")
     def test_private_directory_link_cannot_allow_a_vendor_destination(self):
         with tempfile.TemporaryDirectory(prefix="host-private-link-") as temporary:
-            fake_root = Path(temporary) / "checkout"
+            fake_root = Path(temporary).resolve() / "checkout"
             vendor = fake_root / "vendor"
             minimum_stage(vendor)
             (fake_root / "local").symlink_to(vendor, target_is_directory=True)
@@ -143,11 +143,61 @@ def native_environment():
     return result
 
 
+def macos_compile_flags():
+    if platform.system() != "Darwin":
+        return []
+    result = subprocess.run(["xcrun", "--sdk", "macosx", "--show-sdk-path"],
+                            env=native_environment(), check=True, capture_output=True, text=True, timeout=20)
+    sdk = result.stdout.strip()
+    if not sdk:
+        raise RuntimeError("xcrun returned an empty macOS SDK path")
+    return ["-isysroot", sdk, "-mmacosx-version-min=14.0"]
+
+
 def compile_command():
     return [os.environ.get("CXX", "c++"), "-std=c++17", "-O2", "-g", "-pthread", *sanitizer_flags(),
             "-Wall", "-Wextra", "-Werror", "-Wno-deprecated-declarations", "-Wno-unused-parameter",
             "-DDXVK_NATIVE", "-DNOMINMAX", "-D_WIN32_WINNT=0xa00",
-            *(["-mmacosx-version-min=14.0"] if platform.system() == "Darwin" else [])]
+            *macos_compile_flags()]
+
+
+def syntax_command(stage):
+    return [os.environ.get("CXX", "c++"), "-std=c++17", "-fsyntax-only", "-include", "cstdint", "-include", "cstring",
+            "-DDXVK_NATIVE", "-DNOMINMAX", "-D_WIN32_WINNT=0xa00", "-Wno-deprecated-declarations",
+            *macos_compile_flags(), *includes(stage), str(stage / trial.CS)]
+
+
+class HostWaitCompilerCommandTests(unittest.TestCase):
+    def test_both_mac_commands_use_explicit_host_sdk_and_clean_environment(self):
+        sdk = "/Applications/Xcode Test.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+        resolved = subprocess.CompletedProcess([], 0, stdout=sdk + "\n", stderr="")
+        with mock_patch.object(platform, "system", return_value="Darwin"), \
+                mock_patch.dict(os.environ, {"SDKROOT": "/wrong/iPhoneOS.sdk", "IPHONEOS_DEPLOYMENT_TARGET": "18.0"}), \
+                mock_patch.object(subprocess, "run", return_value=resolved) as resolve:
+            commands = (compile_command(), syntax_command(Path("stage")))
+            for command in commands:
+                self.assertEqual(command.count("-isysroot"), 1)
+                self.assertEqual(command[command.index("-isysroot") + 1], sdk)
+                self.assertIn("-mmacosx-version-min=14.0", command)
+            self.assertEqual(resolve.call_count, 2)
+            for call in resolve.call_args_list:
+                self.assertEqual(call.args[0], ["xcrun", "--sdk", "macosx", "--show-sdk-path"])
+                self.assertNotIn("SDKROOT", call.kwargs["env"])
+                self.assertNotIn("IPHONEOS_DEPLOYMENT_TARGET", call.kwargs["env"])
+                self.assertTrue(call.kwargs["check"])
+
+    def test_non_mac_commands_do_not_query_an_apple_sdk(self):
+        with mock_patch.object(platform, "system", return_value="Linux"), mock_patch.object(subprocess, "run") as resolve:
+            for command in (compile_command(), syntax_command(Path("stage"))):
+                self.assertNotIn("-isysroot", command)
+                self.assertNotIn("-mmacosx-version-min=14.0", command)
+            resolve.assert_not_called()
+
+    def test_empty_sdk_path_is_an_explicit_failure(self):
+        with mock_patch.object(platform, "system", return_value="Darwin"), \
+                mock_patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout="\n", stderr="")), \
+                self.assertRaisesRegex(RuntimeError, "empty macOS SDK"):
+            compile_command()
 
 
 def run_command(binary):
@@ -239,10 +289,7 @@ class HostWaitNativeTests(unittest.TestCase):
             stage = Path(temporary) / "dxvk"
             trial.adapter.stage(SOURCE, stage)
             trial.apply(stage, "cs-qos")
-            self.execute([os.environ.get("CXX", "c++"), "-std=c++17", "-fsyntax-only", "-include", "cstdint", "-include", "cstring",
-                "-DDXVK_NATIVE", "-DNOMINMAX", "-D_WIN32_WINNT=0xa00", "-Wno-deprecated-declarations",
-                *(["-mmacosx-version-min=14.0"] if platform.system() == "Darwin" else []),
-                *includes(stage), str(stage / trial.CS)], timeout=90)
+            self.execute(syntax_command(stage), timeout=90)
 
 
 if __name__ == "__main__":
