@@ -36,8 +36,13 @@ int main() {
                 __block NSUInteger unsupportedProgress = 0;
                 // Catch inside the block: exceptions must never unwind GCD frames.
                 __block NSString* workerFailure = nil;
-                dispatch_sync(queue, ^{
+                __block BOOL workerWasMain = YES;
+                dispatch_semaphore_t completed = dispatch_semaphore_create(0);
+                // dispatch_sync may execute on its caller, including main.
+                // This test must enter through a real asynchronous worker.
+                dispatch_async(queue, ^{
                     @autoreleasepool {
+                        workerWasMain = NSThread.isMainThread;
                         @try {
                             try {
                                 invalid = SkyrimMetalRunPhoneComparison(@"missing-authored-fixture", 0, NO, nil, nil);
@@ -55,7 +60,11 @@ int main() {
                             workerFailure = e.name;
                         }
                     }
+                    dispatch_semaphore_signal(completed);
                 });
+                check(dispatch_semaphore_wait(completed, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC)) == 0,
+                      "native worker did not complete within test deadline");
+                check(!workerWasMain, "worker test ran on main thread");
                 check(workerFailure == nil, "exception escaped callable runtime");
                 check([invalid[@"status"] isEqual:@"failed"], "invalid repeat was accepted");
                 check([invalid[@"failure"] containsString:@"repeat"], "invalid repeat not diagnosed");
