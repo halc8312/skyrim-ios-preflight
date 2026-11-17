@@ -1,5 +1,15 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-17 Apple検証とホスト側の独立試作
+
+[Mac run36](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc0bf295b45c83b97428cb)（公開ac49eaa、M2、Xcode26.6／SDK26.5、7分30秒）でgraphics state試作の実Metal検査が成功。従来／試作の8ケース・各4成分のreadbackが一致し、real shader compile rejectionとcached-null、例外再試行、試作のpublication allocation failureを確認。fixtureが保持したPSOは従来9作成／9解放、試作10／10、live0。これはOS内部の即時GPU資源回収やゲーム全経路の証明ではない。通常7検査とnative ASan/UBSan／TSanも成功した。全56回のunittest実行は209ケース・5skip・失敗0。公開hostのiPhoneOSリンクと両手ボタンのコンパイルも成功し、compiler warningは526行で前回と同数。`-fno-threadsafe-statics`はbuild log内にない。host zipのhashはresult.jsonに一致する。新しい署名済みアプリはまだ配布していない。
+
+run34の固定header警告とrun35の誤ったMetal負例を保存し、後者は明示的な自作MSLエラーへ修正した。試作を本番へ有効化した結果ではなく、実packed state・生成された調整処理に自作Metal driverを繋いだ確認である。同時生成の増加がiPhoneのframe gap、メモリ、発熱へ与える影響は未検証。
+
+`experiments/dxvk-host-wait/`はgeneric Spinlockとcs QoSの2モードを相互排他にし、shader試作との混在も拒否する。blocking版はApple tryを1回行い、失敗時のみwall／thread CPUを読んでos_unfair_lockのblocking取得へ進む。hot hit／try-lockにはclock読みを足さず、保持中にI/O・allocation・再try loopを行わない。観測はthread-localの有界counterで、CPU区間をwall内に収め、不正clockを欠測扱いにする。generic lock8メンバ／21取得scopeを確認し、source上の所有者移譲・cross-thread unlock・value移動は見つからない。元のrecursive D3D lockとspin helperは変更しない。
+
+QoSはdxvk-csの命名直後、環境値が厳密に1のときだけUSER_INITIATEDを要求する。未設定・不正値はAPI呼出し／counter／logとも0で従来の継承を保つ。数値のAPI結果と前後readbackはrequested/self classであり、実効優先度overrideやP/E core割当の観測ではない。例外・競合・errno・ログ上限・stage拒否をPCで検査し、両native fixtureのTSanも成功。実Apple APIは専用手動workflowで確認する。製品への計測接続とiPhone比較は別段階で、本番・設定・キャッシュidentityは未変更。
+
 ## 2026-11-17 添付スキャナーと実生成物の照合
 
 添付のscannerと分析を全文確認した。添付にテストはなかったため、synthetic PE／命令列でstore方向・stack／fs区分・locked／xchg・import待機・decode gap・出力上書き拒否の9検査を作成して成功後、固定の所有入力とdiscoveryへread-only実行した。scanner本体は変更せず、前後の両入力SHA256一致を確認。依存ファイルもdiscovery時のmanifestと一致した。Capstoneはdistribution metadataが5.0.9、内部version文字列が5.0.7なので、後者を出すsummaryの値を別版への切替と誤解しない。

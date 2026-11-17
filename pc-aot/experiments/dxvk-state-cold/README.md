@@ -91,9 +91,14 @@ compile/run/platform logs and result JSON, including on failure. The artifact
 archive excludes objects and executables. On a Mac, a missing SDK or Metal
 device is a failure; only a non-Mac local run skips the GPU case.
 
-The two portable checks passed locally; Apple compilation and GPU execution
-are pending. This is not the full DXVK/MoltenVK rendering path, an iPhone test,
-or evidence of a performance gain. The production adapter remains unchanged.
+Mac run 36 (public commit `ac49eaa`) passed Apple compilation and real GPU
+execution on 2026-11-17: all eight authored RGBA readbacks matched in both
+models, the intentional shader compile failed once and stayed cached null,
+retry succeeded, and retained PSO counts balanced at 9/9 and 10/10. The
+prototype alone exercised publication-allocation cleanup. Native normal,
+ASan/UBSan and TSan checks also passed. This is not the full DXVK/MoltenVK
+rendering path, an iPhone test, or evidence of a performance gain.
+The production adapter remains unchanged.
 
 Mac run 34 stopped on Apple Clang diagnostics from the unchanged packed-state
 header. Diagnostic exceptions are scoped to that header; authored code retains
@@ -115,9 +120,10 @@ render-pass pointers with identical formats, eight concurrent threads, null /
 invalid / exception outcomes, publication-allocation failure cleanup, reentrant
 callbacks, admission without parked owners, and shutdown admission release.
 
-Host tests can establish ordering, duplicate suppression, exception cleanup,
-publication and native compilation. They cannot establish Metal rendering,
-compiler-service scheduling, thermal behavior or actual frame-time gains.
+Portable host tests establish ordering, duplicate suppression, exception
+cleanup, publication and native compilation. The separate Mac fixture verifies
+authored Metal output; neither establishes full game rendering, compiler-service
+scheduling, thermal behavior or actual frame-time gains.
 The module-cold and priority switches already shipped remain independent:
 MoltenVK may still serialize work even when the DXVK coordinator allows it.
 

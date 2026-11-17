@@ -1,6 +1,18 @@
 # Run manually from a personal Codemagic account with free M2 minutes remaining.
 # No code-signing credentials, game data, or generated game code are inputs.
 workflows:
+  pc2011-host-wait-checks:
+    name: Skyrim isolated Apple lock and thread checks
+    instance_type: mac_mini_m2
+    max_build_duration: 10
+    environment:
+      xcode: "26.6"
+    # Manual only; authored host checks, not an app build or iPhone comparison.
+    scripts:
+      - name: Check independent lock and thread trials with Apple APIs
+        script: bash pc-aot/scripts/check-host-wait-mac.sh
+    artifacts:
+      - pc-aot/local/host-wait-checks/*/*.log
   pc2011-self-build-tools:
     name: Skyrim owned-copy helper checks
     instance_type: mac_mini_m2

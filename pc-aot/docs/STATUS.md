@@ -1,5 +1,9 @@
 # 開発状況
 
+**2026-11-17：state別生成試作のApple検証が完了。** [Mac run36](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc0bf295b45c83b97428cb)は公開`ac49eaa17636eb13a9026457b6904ded704d5e69`で成功（M2、Xcode26.6／SDK26.5、7分30秒）。実Metalで8ケースのRGBA32Float readbackが従来方式と一致し、意図したMSL失敗のcached-null、例外再試行、試作の公開時確保失敗とPSO参照解放を確認。native通常・ASan/UBSan・TSanも成功。全56回のunittest実行／209ケースは204成功・環境依存5skip、失敗0。公開iPhoneOS hostもリンク成功し、両手ボタンはAppleコンパイルまで確認できた。ゲーム実行・iPhone改善・新IPA導入は未確認。試作は本番adapter未接続。原失敗run34／35と成功artifactsは保持し、run36の無料枠は263→271/500（残229分）。
+
+**同日：添付scannerと生成物の調査を完了し、ホスト側2試作を分離。** scannerは9検査後に所有入力へread-only実行。実生成C／既存ARM objectで一部x87 storeのST/FULL fence欠落を確認したため、LIFT_TSO等は維持。共通reader/writer同期群の取得・解放・再帰・待機境界を次の観測対象とする。generic SpinlockのApple blocking版とdxvk-csの明示QoSは、別stageへ個別適用する独立試作を用意しPC検査／TSanを通過。Apple API確認用の小さな手動workflowを追加したが、本番設定・描画・署名済みアプリへは適用しない。FPS cap0の実機ログは未受信で、cap60との比較は保留。詳細はPERFORMANCE_WORK.md。
+
 **2026-11-17：state別生成試作のApple検証を実行中。** 実際の調整処理・packed state・破棄処理に自作Metal driverを接続する独立fixtureを追加した。8ケースのGPU readback、実shader生成失敗、例外後の再試行、公開時の確保失敗と参照解放を従来方式と比較する。Mac run34は固定headerの新しいClang警告で停止し、header内だけに警告例外を限定。run35は通常7検査・native ASan/UBSan／TSanを通過したが、失敗を期待したinterpolant不一致がMetalに受理されたため、負例を実MSLコンパイルエラーへ修正した。元の失敗を保持し、GPU検査完了／iPhone改善とは扱わない。公開host workflowに検査を接続した一方、試作自体は本番adapterに接続していない。ゲーム入力・生成guestはCIへ送らない。
 
 **2026-11-17：描画条件ごとに生成待ちを分ける試作を実装・PC検証。** 本人の依頼で`experiments/dxvk-state-cold/`に独立試作を追加。graphics pipelineごとに、実際のstate全体と正確なrender-passポインタが一致する要求だけを合流させ、異なる条件の生成を並行して進める。完成済みhit経路・GPU生成本体・state照合は維持し、例外時の待機解除、公開前の確保失敗時のhandle破棄、再入callbackとvector拡張も検証した。実DXVKのpacked state／instance／lookupを使う通常7検査、native比較のASan/UBSan・TSan、graphics／manager全translation unitの構文検査に成功。意図的に一方の生成を止めた比較で、従来は別条件も停止、試作は先に完了することを確認した。これは順序の確認で、iPhoneの速度向上率ではない。
