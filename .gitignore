@@ -791,3 +791,20 @@
 !/pc-aot/tests/test_metal_compile_mrc_metal.py
 
 !/pc-aot/tests/test_metal_compile_windows_fixture.py
+
+# Explicit authored iPhone Metal probe, packaging and checks.
+!/pc-aot/experiments/metal-compile/ios/
+!/pc-aot/experiments/metal-compile/ios/Info.plist
+!/pc-aot/experiments/metal-compile/ios/ProbeRunStore.h
+!/pc-aot/experiments/metal-compile/ios/ProbeRunStore.mm
+!/pc-aot/experiments/metal-compile/ios/main.mm
+!/pc-aot/experiments/metal-compile/runtime_host.h
+!/pc-aot/scripts/build-metal-probe-ios.py
+!/pc-aot/scripts/build-metal-probe-ios.sh
+!/pc-aot/scripts/check-metal-probe-ios-mac.py
+!/pc-aot/tests/native/test_metal_phone_runtime.mm
+!/pc-aot/tests/native/test_metal_probe_store.mm
+!/pc-aot/tests/test_metal_phone_runtime.py
+!/pc-aot/tests/test_metal_probe_ios_build.py
+!/pc-aot/tests/test_metal_probe_store.py
+!/pc-aot/tests/test_metal_probe_ui_driver.py

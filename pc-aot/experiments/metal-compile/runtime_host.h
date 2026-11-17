@@ -1,0 +1,16 @@
+#pragma once
+#import <Foundation/Foundation.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+// Call on a worker thread. The caller owns scheduling and report persistence.
+// Stop requests only prevent subsequent work: an issued Metal task is retained
+// and joined on this worker before returning, and cannot be cancelled here.
+// Progress dictionaries are immutable JSON snapshots and are delivered on the
+// calling worker. Never update UIKit directly from the progress callback.
+FOUNDATION_EXPORT NSDictionary* SkyrimMetalRunPhoneComparison(
+    NSString* sourcePath, NSUInteger repeats, BOOL metal4First,
+    BOOL (^ _Nullable shouldContinue)(void),
+    void (^ _Nullable progress)(NSDictionary* snapshot));
+
+NS_ASSUME_NONNULL_END
