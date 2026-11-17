@@ -75,6 +75,26 @@ and implementation are tested together with the real packed-state equality.
 
 ## Limits before iPhone adoption
 
+### Apple validation entry point
+
+`tests/test_graphics_state_flights_metal.py` reuses the actual generated
+coordination methods, packed state, instance class and pinned destructor with
+an authored Metal driver. It compares eight RGBA32Float GPU readbacks between
+the baseline and prototype and checks real PSO rejection, cached null, retry,
+publication failure cleanup and balanced fixture-retained PSO references.
+Controlled pre-driver gates test admission order, not internal Metal parallelism.
+
+The public host workflow runs this fixture plus the existing native suite under
+normal, ASan/UBSan and TSan configurations. A requested fresh
+`SKYRIM_GRAPHICS_METAL_OUTPUT` directory retains generated fixture source,
+compile/run/platform logs and result JSON, including on failure. The artifact
+archive excludes objects and executables. On a Mac, a missing SDK or Metal
+device is a failure; only a non-Mac local run skips the GPU case.
+
+The two portable checks passed locally; Apple compilation and GPU execution
+are pending. This is not the full DXVK/MoltenVK rendering path, an iPhone test,
+or evidence of a performance gain. The production adapter remains unchanged.
+
 Verified on 2026-11-17: the normal Linux suite passed all seven tests, including
 complete staged `dxvk_graphics.cpp` and `dxvk_pipemanager.cpp` translation-unit
 syntax checks. The native baseline/prototype fixture also passed separately

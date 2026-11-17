@@ -94,6 +94,13 @@ PY
   run_validation python3 -m unittest discover -s tests -p 'test_pipeline_cache.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_pipeline_cache_namespace.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_pipeline_locking.py' -v
+  # Isolated graphics coordination prototype: compile and exercise on Apple
+  # without enabling it in the app or changing the production cache identity.
+  run_validation python3 -m unittest discover -s tests -p 'test_graphics_state_flights.py' -v
+  run_validation env PYTHONPATH=tests SKYRIM_TEST_SANITIZERS=1 python3 -m unittest \
+    test_graphics_state_flights.GraphicsStateFlightNativeTests.test_actual_state_lookup_publication_admission_and_failures -v
+  run_validation env PYTHONPATH=tests SKYRIM_TEST_SANITIZERS=thread python3 -m unittest \
+    test_graphics_state_flights.GraphicsStateFlightNativeTests.test_actual_state_lookup_publication_admission_and_failures -v
   run_validation python3 -m unittest discover -s tests -p 'test_prefetch_gate.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_state_cache_work.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_pending_work.py' -v
@@ -110,6 +117,23 @@ bash ios/dependencies/build-dependencies.sh
 # same paid-minute run instead of stopping before its build can start.
 METAL_CHECK_STATUS=0
 bash ios/dependencies/check-metal-alias.sh "$RUN/metal-alias" || METAL_CHECK_STATUS=$?
+# The fixture exercises actual coordination methods with authored Metal PSOs
+# and GPU readback. It is not a full DXVK/MoltenVK or iPhone gameplay test.
+if ! env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT \
+  SKYRIM_GRAPHICS_METAL_OUTPUT="$RUN/graphics-state-metal" python3 -m unittest \
+  discover -s tests -p 'test_graphics_state_flights_metal.py' -v \
+  2>&1 | tee "$RUN/artifacts/graphics-state-metal.log"; then
+  METAL_CHECK_STATUS=1
+fi
+python3 - "$RUN/graphics-state-metal" "$RUN/artifacts/graphics-state-metal-checks.zip" <<'PYGRAPHICS'
+from pathlib import Path
+import sys, zipfile
+source, output = map(Path, sys.argv[1:])
+with zipfile.ZipFile(output, 'x', zipfile.ZIP_DEFLATED) as archive:
+    for path in sorted(source.rglob('*')):
+        if path.is_file() and not path.is_symlink() and path.suffix in ('.mm', '.c', '.log', '.json'):
+            archive.write(path, path.relative_to(source).as_posix())
+PYGRAPHICS
 # Preserve the actual toolchain/compiler diagnostics on success and failure.
 # Only authored fixtures and text logs are included, not CMake object files.
 python3 - "$RUN/metal-alias" "$RUN/artifacts/metal-alias-checks.zip" <<'PYMETAL'
