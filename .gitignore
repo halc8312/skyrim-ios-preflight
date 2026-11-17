@@ -779,3 +779,15 @@
 !/pc-aot/experiments/metal-compile/mrc_lifetime.py
 
 !/pc-aot/tests/test_metal_compile_mrc_lifetime.py
+
+!/pc-aot/codemagic.yaml
+
+!/pc-aot/experiments/metal-compile/mrc_metal.mm
+
+!/pc-aot/experiments/metal-compile/mrc_metal.py
+
+!/pc-aot/experiments/metal-compile/windows_fixture.py
+
+!/pc-aot/tests/test_metal_compile_mrc_metal.py
+
+!/pc-aot/tests/test_metal_compile_windows_fixture.py

@@ -23,6 +23,26 @@ and token instances; it does not establish Metal task retirement, arbitrary
 `MTLCompileOptions` copying, or production behavior. Portable report controls
 cannot substitute for those native runs.
 
+`mrc_metal.py --output NEW_DIRECTORY` connects the same owner-retirement model
+to the actual legacy asynchronous library API under manual retain/release.
+Its success, invalid-source, controlled-publication and warning-source cases
+require retained callback objects and exact compute readbacks where applicable.
+The warning case specifically requires a usable library plus the original
+diagnostic. Normal and ASan/UBSan runs remain separate. Controlled publication
+is delayed after actual completion; it does not prove compiler cancellation or
+a real compilation timeout. Metal 4 task behavior remains unverified.
+
+The legacy-only CI workflow accepts an optional `authored_windows_library` build
+input. It passes this through an environment variable, never shell-source
+interpolation. `windows_fixture.py` accepts only one fixed, authored Windows 6.2
+product (macOS 15 / MSL 2.4, 11,352 bytes, SHA-256 pinned in the script) and the
+matching source hash, then runs the existing three-route GPU comparison. The
+binary/base64 stays in private build input and ignored evidence; no generated
+library is committed. A matching hash establishes content identity, not a
+signature or reconstructed compiler options. Omitting the input leaves this
+additional unit unrequested. [Codemagic build inputs](https://docs.codemagic.io/knowledge-codemagic/build-inputs/)
+documents the manual per-workflow input mechanism.
+
 | Environment | Can establish | Cannot establish |
 | --- | --- | --- |
 | Windows with Apple Metal Developer Tools | MSL compilation, diagnostics, generated library size, and offline compiler elapsed time | Apple GPU execution, iPhone frame time, memory pressure, thermal behavior, or runtime Metal 4 speed |

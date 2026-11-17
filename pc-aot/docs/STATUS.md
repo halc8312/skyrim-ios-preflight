@@ -1,5 +1,9 @@
 # 開発状況
 
+**実MetalのMRC保持とWindows生成物のGPU比較を準備。** `mrc_metal.py/.mm`は実legacy非同期APIで成功・不正source・通知延期・警告付き成功の4caseを検査し、元library／NSErrorと自作ownerの寿命、成功時16語readbackを要求する。通常／ASan+UBSanの2実行で、実timeout／Metal4 task／製品適用は対象外。`windows_fixture.py`は既にWindows6.2で作成した自作macOS15／MSL2.4 library（11,352 bytes）の固定hashだけをmanual build inputから受け入れ、base64を子envやlogへ渡さず既存9sample GPU比較へ接続する。binaryはGitへ入れない。WSL全290検査が50.223秒で成功、Darwin TSanのみ1skip。新2unitの実Mac結果は未確認。公式Codemagic schema、公開source検査、shell構文確認済み。
+
+**夜間検証run8成功：Foundationの実MRC境界を確認。** [実行run8](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcc678d133a39c4a126380)は公開`d7bce92`、1分46秒。Mac全261検査は23.423秒で成功、skipなし、独立8unitも全成功。新MRC fixtureはnormal／ASan+UBSan／TSanの各binaryで7caseずつ成功し、呼出し元pool終了後の保持、早期／遅延通知、Objective-C例外前後の結果維持・通知1回・終了後の解放を確認した（3.557秒）。追跡は自作owner・仮task・tokenであり、Metal task、任意のMTLCompileOptionsコピー、製品適用の証明ではない。原artifactは`local/metal-compile/mac-run-08/`。Metal4対応実GPUとiPhone性能は未検証、アプリbuild／端末更新／製品変更なし。
+
 **手動メモリ管理の実Mac検証を準備。** 新しい`mrc_lifetime.py/.mm`はFoundationのみを使い、呼出し元autorelease pool終了後の入力保持、通知前後のnil／Objective-C例外、警告、破棄要求後の遅延通知を7caseで確認する。normal／ASan+UBSan／TSanを別binaryで実行し、owner・仮task・tokenの収支と通知1回・終了後の破棄を検査する。制御12検査は成功したが、Mac実行はまだ未確認。実Metal task、一般的なMTLCompileOptionsコピー、製品適用の証明ではない。既存の無料・自作shader専用workflowへ追加し、アプリbuild／端末更新は行わない。
 
 **特殊化archiveと非同期終了の追加境界を検証。** Windows6.2の`archive_offline.py --specialized`は同一自作kernelのuint定数7／11から12,368／12,384 bytesの異なるarchiveを生成。一方、必須定数を省いたnegative controlは警告＋exit0＋archive生成となり、期待した拒否を実証できなかった。全体を`failed`として正例・失敗原logを保持し、成功へ読み替えていない。新22制御検査はこの挙動を含めて成功。追加のC++ launch/unwind 5caseは通常・ASan/UBSanで成功し、通知後nil／例外と通知中の終了で結果の維持・通知1回・破棄延期を確認した。WSL全249検査成功、Darwin専用TSan1skip。Metal4実行、Objective-C所有規則、iPhone改善の証拠にはしない。`ARCHIVE_PLAN.md`に早期PSO取得でも必要な変換結果・定数型・macro識別・起動時復元の残作業を整理した。
