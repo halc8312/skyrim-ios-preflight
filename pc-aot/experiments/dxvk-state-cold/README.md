@@ -80,7 +80,7 @@ and implementation are tested together with the real packed-state equality.
 `tests/test_graphics_state_flights_metal.py` reuses the actual generated
 coordination methods, packed state, instance class and pinned destructor with
 an authored Metal driver. It compares eight RGBA32Float GPU readbacks between
-the baseline and prototype and checks real PSO rejection, cached null, retry,
+the baseline and prototype and checks real shader compile rejection, cached null, retry,
 publication failure cleanup and balanced fixture-retained PSO references.
 Controlled pre-driver gates test admission order, not internal Metal parallelism.
 
@@ -94,6 +94,15 @@ device is a failure; only a non-Mac local run skips the GPU case.
 The two portable checks passed locally; Apple compilation and GPU execution
 are pending. This is not the full DXVK/MoltenVK rendering path, an iPhone test,
 or evidence of a performance gain. The production adapter remains unchanged.
+
+Mac run 34 stopped on Apple Clang diagnostics from the unchanged packed-state
+header. Diagnostic exceptions are scoped to that header; authored code retains
+`-Werror`. Run 35 then passed the normal and sanitizer native checks, but its
+negative Metal linker test was accepted by the driver: a missing interpolant
+is not a reliable rejection case. The revised negative uses an authored MSL
+`#error`, requires the real Metal API to return nil with NSError, and routes
+that failure through the same cached-null publication path. It makes no claim
+of testing a PSO linker failure. Original failures and logs are retained.
 
 Verified on 2026-11-17: the normal Linux suite passed all seven tests, including
 complete staged `dxvk_graphics.cpp` and `dxvk_pipemanager.cpp` translation-unit

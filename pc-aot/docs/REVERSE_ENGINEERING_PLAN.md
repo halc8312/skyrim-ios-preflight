@@ -1,5 +1,13 @@
 # Skyrim PC版の部分逆コンパイルとカクつき改善計画
 
+## 2026-11-17：実生成物による優先順位の補正
+
+添付scannerを9件のsynthetic検査後に固定入力へ実行し、build13で使う既存C／ARM64 objectまで照合した。x87と一部SIMD storeの分類漏れは実生成物でも存在する。ただし、残りのメモリ順序保護の解除・leaf一括native化の根拠にはならず、LIFT_TSO／MEMORDER／LB_STRICT_ORDERは維持する。詳細と静的件数の制約はPERFORMANCE_WORK.mdの同日記録。
+
+次に読む対象は、imported InterlockedとSleepを使う実際の共通reader/writer同期群。所有者の再帰取得・28-bit reader count・条件付き取得と途中遷移があるため、取得／解放の一部だけをmutexへ置き換えない。原条件を真実としてwait／retryを計測し、frame停止と対応してから置換契約を詰める。scannerのゼロ書込み最上位は初期化用途が確認され、解放関数としての選定を取り消した。spin候補0はheuristicの検出漏れであり、同期ループ不在ではない。
+
+CRC／copyの既存契約と有限比較は再利用する。static call数やleaf候補率をCPU寄与と同一視しない。guest側の保護設定、generic DXVK lock、dxvk-csのQoS、shader state生成の調整は別実験に保ち、同時変更による採否の混同を避ける。
+
 ## 追加レビュー：変換器改善を先行可能な独立段階に（2026-11-14）
 
 [段階移行設計](NATIVE_MIGRATION.md)へClaudeの追加7提案と3試作の注意点を照合・反映した。手作業のleaf化に先立ち、既存のGPR local／direct call／間接call cacheを区別し、証明できるper-bit flags生存解析とx87 stack静的化を局所比較する。通常MSVC ABIの慣習だけで未知entryのflags／FP状態を捨てない。

@@ -87,9 +87,9 @@ def verify_report(result, prototype):
     counts = result.get("counts", {})
     expected_created = 10 if prototype else 9
     if not isinstance(counts, dict) or any(type(counts.get(name)) is not int for name in
-            ("pso_created", "pso_released", "pso_live", "pso_rejected", "injected_exceptions", "publication_failures")) \
+            ("pso_created", "pso_released", "pso_live", "metal_rejected", "injected_exceptions", "publication_failures")) \
             or counts.get("pso_created") != expected_created or counts.get("pso_released") != expected_created \
-            or counts.get("pso_live") != 0 or counts.get("pso_rejected") != 1 \
+            or counts.get("pso_live") != 0 or counts.get("metal_rejected") != 1 \
             or counts.get("injected_exceptions") != 1 or counts.get("publication_failures") != int(prototype):
         raise ValueError("Metal pipeline ownership or failure counts do not balance")
     cases = result.get("cases")
@@ -200,7 +200,7 @@ class GraphicsStateFlightMetalSourceTests(unittest.TestCase):
                 "checks": {name: True for name in CHECKS}, "distinct_state_progress": prototype,
                 "publication_allocation_failure_exercised": prototype, "cleanup_kept_flight_owned": prototype,
                 "counts": {"pso_created": 10 if prototype else 9, "pso_released": 10 if prototype else 9,
-                           "pso_live": 0, "pso_rejected": 1, "injected_exceptions": 1, "publication_failures": int(prototype)},
+                           "pso_live": 0, "metal_rejected": 1, "injected_exceptions": 1, "publication_failures": int(prototype)},
                 "cases": [{"case": name, "matches": True,
                            "bits": [struct.unpack("<I", struct.pack("<f", value))[0] for value in (token, token + 1, token + 2, 1)]}
                           for name, token in CASES.items()],

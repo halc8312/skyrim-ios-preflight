@@ -1,5 +1,19 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-17 添付スキャナーと実生成物の照合
+
+添付のscannerと分析を全文確認した。添付にテストはなかったため、synthetic PE／命令列でstore方向・stack／fs区分・locked／xchg・import待機・decode gap・出力上書き拒否の9検査を作成して成功後、固定の所有入力とdiscoveryへread-only実行した。scanner本体は変更せず、前後の両入力SHA256一致を確認。依存ファイルもdiscovery時のmanifestと一致した。Capstoneはdistribution metadataが5.0.9、内部version文字列が5.0.7なので、後者を出すsummaryの値を別版への切替と誤解しない。
+
+結果は90,900関数・5,250,610命令occurrence、未分類のnon-stack store21,540（主にx87）。重複するdiscovery範囲を含む静的数であり、実行頻度でも固有命令数でもない。locked98 occurrenceは固有90箇所。spin候補0も不在証明ではなく、imported Interlockedとregister経由Sleepの実際の共通待機loopが見つかった。ゼロstore上位候補はconstructorのfield初期化にも使われ、解放関数としての採用を却下した。元命令・派生出力・入力hash・summary・検査記録はprivateに保持した。
+
+build13 assemblerが再利用する既存guestの生成CとARM64 objectを照合した。各C／objectとruntime headerのhashは保存済みcompile contractに一致。x87 store2関数ではST／FULL_FENCEがなく、実ARMにもplain storeと後段の`dmb ishld`だけがあった。movups／movlpsの実生成Cにも該当store前のST_FENCEがなく、同じ関数の別のaligned storeにはST_FENCEがある。positive controlのmovaps／movdqaでは生成CのST_FENCEとARMの`dmb ishst`を確認した。「全くDMBがない関数」と一般化せず、read側barrierとstore順序の欠落を区別する。movups各storeのARM命令への個別対応までは主張しない。
+
+**設定判断:** LIFT_TSO／MEMORDER／LB_STRICT_ORDERを維持する。既存の保護に抜けがある事実は、残りを外してよい根拠ではない。今後のwrite分類修正には命令種別のsynthetic検査、生成C／ARMの確認とordering検査が必要。今回guest生成・再コンパイル・native override・同期置換は行わない。優先して読む対象は、所有者ID・再帰・読者count・条件付き取得を持つ共通reader/writer同期群。10,000回のSleep(0)後にSleep(1)へ移るが、時間上限ではない。単純mutexへの置換前に関連取得／解放／遷移と寿命を網羅し、wait・retryの実機寄与を測る。CRC／copyは既存の有限比較と契約を再利用し、static call数やleaf判定をhotness／ABI同値の証明にしない。
+
+**ビルド不要比較:** 受信済み診断のcapはすべて60で、cap0の対照はまだない。表示FPS0.06は長いinactiveを含む窓であり、cap0ではない。他設定を固定した60→0各2〜3分の通常プレイと診断送信を依頼した。戦闘の厳密な再現は不要。現ログだけから60上限の余分な待ちや0の改善率を作らない。
+
+**ホスト側の順序:** generic Spinlockと、独自の再帰D3D9 lockを分ける。後者の待ち計測は既にbuild13にあり、添付分析の未計測という前提は現在に当てはまらない。追加診断の大停止ではshader生成待ちが主な観測で、generic lockのCPU／wallはまだ未計測。generic lockのblocking版とdxvk-cs起動時QoSは別の独立試作として検証し、本番やshader試作の性能比較へ混ぜない。CPU占有低下だけでframe改善とせず、実機の必須待ち・音声・熱・headroomも採否に使う。
+
 ## 2026-11-17 graphics state別生成の独立試作
 
 追加ログのdraw pipeline mutex待ち10件が取得後CREATEだったことを受け、本人承認で`experiments/dxvk-state-cold/`を実装した。本番の`prepare_dxvk.py`や設定・キャッシュnamespace・CIへは接続しない。別途stageした固定版DXVKのgraphics header／lookup・publication部分にだけ適用し、computeやGPU生成本体、既存CompileScopeと描画引数、instance照合は変更しない。

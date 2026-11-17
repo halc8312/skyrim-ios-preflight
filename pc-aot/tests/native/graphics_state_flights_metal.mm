@@ -118,10 +118,6 @@ vertex float4 flight_vertex(uint index [[vertex_id]]) {
 fragment float4 flight_fragment() {
     return float4(float(color_code), float(color_code + 1u), float(color_code + 2u), 1.0f);
 }
-// Valid library function, deliberately incompatible with flight_vertex's output.
-// The real render-PSO linker must reject this missing interpolant with NSError.
-struct MissingInput { float4 absent [[user(absent)]]; };
-fragment float4 flight_bad_fragment(MissingInput input [[stage_in]]) { return input.absent; }
 )MSL"];
         MTLCompileOptions* options = [MTLCompileOptions new];
         options.languageVersion = MTLLanguageVersion3_1;
@@ -134,15 +130,22 @@ fragment float4 flight_bad_fragment(MissingInput input [[stage_in]]) { return in
     }
     id<MTLRenderPipelineState> create(const State& input, const Pass* pass, bool reject) {
         NSError* error = nil;
-        id<MTLFunction> fragment;
         if (reject) {
-            fragment = [library newFunctionWithName:@"flight_bad_fragment"];
-        } else {
-            MTLFunctionConstantValues* constants = [MTLFunctionConstantValues new];
-            uint32_t value = token(input, pass);
-            [constants setConstantValue:&value type:MTLDataTypeUInt atIndex:0];
-            fragment = [library newFunctionWithName:@"flight_fragment" constantValues:constants error:&error];
+            // Missing interpolants are accepted by some Metal drivers. Use a
+            // real malformed authored shader, not a driver-dependent linker
+            // assumption or a manufactured null. Failure still flows through
+            // the actual coordinator's cached-null publication path.
+            id<MTLLibrary> invalid = [device newLibraryWithSource:
+                @"#include <metal_stdlib>\n#error Intentional_Metal_fixture_compile_failure\n"
+                options:nil error:&error];
+            require(invalid == nil && error != nil, "Real Metal compiler did not reject malformed shader");
+            std::fprintf(stderr, "Expected real Metal shader rejection: %s\n", error.localizedDescription.UTF8String);
+            return nil;
         }
+        MTLFunctionConstantValues* constants = [MTLFunctionConstantValues new];
+        uint32_t value = token(input, pass);
+        [constants setConstantValue:&value type:MTLDataTypeUInt atIndex:0];
+        id<MTLFunction> fragment = [library newFunctionWithName:@"flight_fragment" constantValues:constants error:&error];
         metal_require(fragment != nil, error, "Authored Metal fragment specialization failed");
         MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
         descriptor.vertexFunction = vertex;
@@ -150,12 +153,7 @@ fragment float4 flight_bad_fragment(MissingInput input [[stage_in]]) { return in
         descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA32Float;
         error = nil;
         id<MTLRenderPipelineState> pipeline = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
-        if (reject) {
-            require(pipeline == nil && error != nil, "Real Metal linker did not reject the incompatible fixture");
-            std::fprintf(stderr, "Expected real Metal PSO rejection: %s\n", error.localizedDescription.UTF8String);
-        } else {
-            metal_require(pipeline != nil, error, "Real Metal render PSO creation failed");
-        }
+        metal_require(pipeline != nil, error, "Real Metal render PSO creation failed");
         return pipeline;
     }
 };
@@ -361,8 +359,8 @@ static bool coordination_cases(MetalContext& metal, Totals& totals, NSMutableArr
         pipeline.build(state(9999), &pass);
         require(pipeline.size() == before_invalid && driver.count(state(9999), &pass) == 0,
                 "Invalid state was cached or sent to Metal");
-        require(pipeline.get(state(13), &pass) == VK_NULL_HANDLE, "Expected real linker failure was not null");
-        require(pipeline.get(state(13), &pass) == VK_NULL_HANDLE, "Cached linker failure changed");
+        require(pipeline.get(state(13), &pass) == VK_NULL_HANDLE, "Expected real shader failure was not null");
+        require(pipeline.get(state(13), &pass) == VK_NULL_HANDLE, "Cached shader failure changed");
         pipeline.build(state(13), &pass);
         require(driver.count(state(13), &pass) == 1 && pipeline.size() == before_invalid + 1,
                 "Real Metal failure was not cached exactly once");
@@ -457,7 +455,7 @@ int main() {
                     @"full_state_identity":@YES, @"render_pass_pointer_identity":@YES, @"real_metal_cached_null":@YES,
                     @"invalid_state_absent":@YES, @"exception_retry":@YES, @"all_pso_references_released":@YES},
                 @"counts":@{@"pso_created":@(totals.created.load()), @"pso_released":@(totals.released.load()),
-                    @"pso_live":@(totals.live.load()), @"pso_rejected":@(totals.rejected.load()),
+                    @"pso_live":@(totals.live.load()), @"metal_rejected":@(totals.rejected.load()),
                     @"injected_exceptions":@(totals.exceptions.load()), @"publication_failures":@(totals.publication_failures.load())},
                 @"cases":results,
             };
