@@ -1,6 +1,8 @@
 # 開発状況
 
-**検証出力の保護を修正し、組込み境界を整理。** `archive.py`／`batch.py`／`runtime.py`で、存在するリンクを新しい出力先として扱う経路を修正。既存・切れたリンクの再現試験と元の証拠ファイル保護を確認した。修正後のWSL全239検査は成功、Darwin専用TSanのみ1skip。Macで確認済みなのはrun7の235検査までで、追加4件は未実行。`MOLTENVK_PLAN.md`に非同期ライブラリ生成、手動retain/release、遅延callback、失敗通知の維持条件を記録。CIログインが期限切れになったため追加Mac実行はしていない。製品コード・設定は未変更。
+**特殊化archiveと非同期終了の追加境界を検証。** Windows6.2の`archive_offline.py --specialized`は同一自作kernelのuint定数7／11から12,368／12,384 bytesの異なるarchiveを生成。一方、必須定数を省いたnegative controlは警告＋exit0＋archive生成となり、期待した拒否を実証できなかった。全体を`failed`として正例・失敗原logを保持し、成功へ読み替えていない。新22制御検査はこの挙動を含めて成功。追加のC++ launch/unwind 5caseは通常・ASan/UBSanで成功し、通知後nil／例外と通知中の終了で結果の維持・通知1回・破棄延期を確認した。WSL全249検査成功、Darwin専用TSan1skip。Metal4実行、Objective-C所有規則、iPhone改善の証拠にはしない。`ARCHIVE_PLAN.md`に早期PSO取得でも必要な変換結果・定数型・macro識別・起動時復元の残作業を整理した。
+
+**検証出力の保護を修正し、組込み境界を整理。** `archive.py`／`batch.py`／`runtime.py`で、存在するリンクを新しい出力先として扱う経路を修正。既存・切れたリンクの再現試験と元の証拠ファイル保護を確認した。修正後のWSL全239検査は成功、Darwin専用TSanのみ1skip。Macで確認済みなのはrun7の235検査までで、追加4件は未実行。`MOLTENVK_PLAN.md`に非同期ライブラリ生成、手動retain/release、遅延callback、失敗通知の維持条件を記録。料金ページへの直接移動でログイン画面が出たため一時中断したが、通常のUI移動では認証が有効で、Free残210分を確認した。期限切れという初期判断は訂正。製品コード・設定は未変更。
 
 **夜間検証run7成功：新Metal4 archive probeのMac／iPhone SDKコンパイルを確認。** [実行run7](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcbc20d133a39c4a125fdb)は公開`e0bdd02`、1分39秒。235検査が19.639秒で全成功、skipなし、独立7unitも成功。新probeはXcode26.6／SDK26.5でMac executable 73,976 bytesとiOS26 object 85,048 bytesを生成し、両compileのstderrは0 bytes。compile-onlyのnative_reportsは空、GPU／library-free成功flagもfalseを保持した。別のWindows6.2試験では、同じ2kernelと単一記録scriptからmacOS26／明示g13g用archive 10,032 bytesを28.6秒で生成し、AIRの2関数とarchiveの対象archを確認したが、実deviceを選んだ試験ではない。原結果は`local/metal-compile/mac-run-07/`と`archive-macos26-windows-01/`。Metal4対応GPUでのlibrary省略lookup・旧encoder実行・Windows生成物のruntime読込みは未検証。アプリbuild・端末更新・製品経路変更なし。
 

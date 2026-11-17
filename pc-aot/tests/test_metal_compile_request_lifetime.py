@@ -15,7 +15,8 @@ SPEC = importlib.util.spec_from_file_location("metal_request_runtime_helpers", R
 runtime = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runtime)
 CXX = shutil.which(os.environ.get("CXX", "c++"))
-EXPECTED = "METAL_REQUEST_LIFETIME barrier_cases=9 owner_hold_cases=9 concurrent_iterations_each=300 metal_api_verified=0"
+EXPECTED = "METAL_REQUEST_LIFETIME barrier_cases=9 owner_hold_cases=9 launch_unwind_cases=5 concurrent_iterations_each=300 metal_api_verified=0"
+EXPECTED_LAUNCH = "METAL_REQUEST_LAUNCH_UNWIND cases=5 metal_api_verified=0 objc_runtime_verified=0"
 TOTAL_BUDGET_SECONDS = 180
 
 
@@ -58,7 +59,8 @@ class MetalRequestLifetimeTests(unittest.TestCase):
         cls.output = Path(base).resolve() if base else ROOT / "local/tests" / f"metal-request-{time.time_ns()}-{os.getpid()}"
         cls.output.mkdir(parents=True, exist_ok=False)
         cls.report = {"scope": "authored portable request-lifetime model", "status": "running", "commands": [],
-                      "metal_api_verified": False, "gpu_execution_verified": False, "inputs": {}, "tests": {},
+                      "metal_api_verified": False, "objc_runtime_verified": False,
+                      "gpu_execution_verified": False, "inputs": {}, "tests": {},
                       "budget_seconds": TOTAL_BUDGET_SECONDS, "tsan_model_verified": False,
                       "tsan_scope": "Darwin-only safe authored models; not Metal callback or driver race validation"}
         cls.env = os.environ.copy()
@@ -109,11 +111,11 @@ class MetalRequestLifetimeTests(unittest.TestCase):
         self.assertEqual(event["returncode"], 0, (self.output / event["stderr"]).read_text(errors="replace"))
         return binary
 
-    def verify_positive(self, binary, suffix, env=None):
-        event = self.run_logged([str(binary)], "run-" + suffix, env=env)
+    def verify_positive(self, binary, suffix, env=None, arguments=(), expected=EXPECTED):
+        event = self.run_logged([str(binary), *arguments], "run-" + suffix, env=env)
         self.assertEqual(event["returncode"], 0, (self.output / event["stderr"]).read_text(errors="replace"))
         self.assertEqual((self.output / event["stderr"]).read_text(errors="replace"), "", "safe model emitted a runtime diagnostic")
-        self.assertEqual((self.output / event["stdout"]).read_text().strip(), EXPECTED)
+        self.assertEqual((self.output / event["stdout"]).read_text().strip(), expected)
 
     @contextlib.contextmanager
     def case(self, name):
@@ -136,6 +138,23 @@ class MetalRequestLifetimeTests(unittest.TestCase):
         with self.case("normal"):
             self.verify_positive(self.build("normal"), "normal")
             self.report["normal_model_verified"] = True
+
+    def test_launch_unwind_host_protocol_normal_and_sanitized(self):
+        with self.case("launch_unwind_host_protocol"):
+            arguments = ("--launch-unwind-only",)
+            self.verify_positive(self.build("launch-normal"), "launch-normal",
+                                 arguments=arguments, expected=EXPECTED_LAUNCH)
+            env = self.env.copy()
+            env["ASAN_OPTIONS"] = "halt_on_error=1:abort_on_error=0:detect_leaks=" + (
+                "0" if platform.system() == "Darwin" else "1")
+            env["UBSAN_OPTIONS"] = "halt_on_error=1:print_stacktrace=1"
+            self.verify_positive(self.build("launch-asan", "address,undefined"), "launch-asan", env,
+                                 arguments=arguments, expected=EXPECTED_LAUNCH)
+            self.report["launch_unwind_host_protocol_verified"] = True
+            self.report["launch_unwind_cases"] = 5
+            self.report["launch_unwind_scope"] = (
+                "Authored C++ provider null/throw before or after notification and concurrent notification; "
+                "not Objective-C unwinding, Metal task release, cancellation, or production integration.")
 
     def test_asan_model_and_explicit_unsafe_negative_control(self):
         with self.case("asan_ubsan_and_authored_negative"):

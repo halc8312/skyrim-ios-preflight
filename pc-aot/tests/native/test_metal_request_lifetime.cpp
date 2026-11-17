@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <stdexcept>
 #include <thread>
@@ -221,6 +222,7 @@ struct HoldFixture {
     bool expectError = false, expectWarning = false, expectTask = true;
     bool throwOnNotify = false, dropStateOnRetire = false;
     std::function<void()> afterReady;
+    std::function<void(const Payload&)> beforeRetire;
 
     HoldFixture() {
         state = Retirement::create([this](Payload payload) {
@@ -253,6 +255,7 @@ struct HoldFixture {
             {
                 std::lock_guard<std::mutex> lock(completionMutex);
                 check(owner && owner->complete && owner->destroyRequested, "retirement violated markDestroyed order");
+                if (beforeRetire) beforeRetire(owner->result);
                 owner.reset();
                 ++retirements;
             }
@@ -432,6 +435,183 @@ static void holdSimultaneousEvents() {
     }
 }
 
+// Test-local host protocol around the unchanged OwnerRetirement model. A
+// provider may notify successfully, then fail while returning its task. That
+// fault remains observable without retracting a published result or notifying
+// twice. None of this models Objective-C unwinding or Metal task release rules.
+enum class LaunchFault { none, missingTask, exception };
+
+struct LaunchTrace {
+    std::atomic<int> providerScopes{0};
+    LaunchFault fault = LaunchFault::none;
+    unsigned faults = 0;
+    bool faultAfterNotification = false, failureNotificationAccepted = false;
+    bool launchExited = false, launchUnwound = false, exceptionObserved = false;
+    bool payloadPreservedAtRetirement = false;
+    std::weak_ptr<Counted> firstLibrary, firstError;
+};
+
+struct AuthoredLaunchFailure : std::runtime_error {
+    AuthoredLaunchFailure() : std::runtime_error("authored provider failed after entering launch") {}
+};
+
+struct ProviderScope {
+    LaunchTrace& trace;
+    explicit ProviderScope(LaunchTrace& value) : trace(value) { ++trace.providerScopes; }
+    ~ProviderScope() { --trace.providerScopes; }
+};
+
+struct LaunchExitScope {
+    HoldFixture& fixture;
+    LaunchTrace& trace;
+    std::shared_ptr<Task> task;
+    LaunchExitScope(HoldFixture& f, LaunchTrace& t) : fixture(f), trace(t) {}
+    ~LaunchExitScope() {
+        trace.launchExited = true;
+        trace.launchUnwound = std::uncaught_exceptions() != 0;
+        fixture.finishLaunch(std::move(task));
+        // No owner access after the handoff, including during stack unwinding.
+    }
+};
+
+static void configureLaunchObservation(HoldFixture& f, LaunchTrace& trace, bool throwing) {
+    f.expectTask = false;
+    f.afterReady = [&] {
+        {
+            std::lock_guard<std::mutex> lock(f.completionMutex);
+            trace.firstLibrary = f.owner->result.library;
+            trace.firstError = f.owner->result.error;
+        }
+        f.destroy(); // Model a waiter that leaves as soon as it receives a result.
+    };
+    f.beforeRetire = [&, throwing](const Payload& payload) {
+        check(trace.launchExited && trace.providerScopes == 0,
+              "launch failure retired owner before its provider scope left");
+        check(trace.launchUnwound == throwing, "launch exception did not unwind the adoption scope");
+        check(payload.library == trace.firstLibrary.lock() && payload.error == trace.firstError.lock(),
+              "launch fault replaced the first notified payload");
+        trace.payloadPreservedAtRetirement = true;
+    };
+}
+
+static void recordLaunchFault(HoldFixture& f, LaunchTrace& trace, LaunchFault fault) {
+    check(++trace.faults == 1, "launch failure was reported more than once");
+    trace.fault = fault;
+    trace.faultAfterNotification = f.notifications != 0;
+    // A failure before any callback completes the modeled host waiter. After a
+    // callback it is a rejected duplicate; the independent fault record remains.
+    Payload failure{nullptr, std::make_shared<Counted>(f.payloads)};
+    trace.failureNotificationAccepted = f.state->callback(std::move(failure));
+}
+
+static void runFailingProvider(HoldFixture& f, LaunchTrace& trace, bool throwing,
+                               const std::function<void()>& provider) {
+    try {
+        LaunchExitScope launch(f, trace);
+        try {
+            ProviderScope active(trace);
+            provider();
+            if (throwing) throw AuthoredLaunchFailure();
+            launch.task = nullptr;
+        } catch (const AuthoredLaunchFailure&) {
+            recordLaunchFault(f, trace, LaunchFault::exception);
+            throw; // Exercise real C++ unwinding; keep the original exception.
+        }
+        if (!launch.task) recordLaunchFault(f, trace, LaunchFault::missingTask);
+    } catch (const AuthoredLaunchFailure&) {
+        trace.exceptionObserved = true;
+    }
+}
+
+static void verifyLaunchFault(HoldFixture& f, LaunchTrace& trace, bool early, bool throwing) {
+    check(trace.faults == 1 && trace.fault == (throwing ? LaunchFault::exception : LaunchFault::missingTask),
+          "provider failure disappeared or changed kind");
+    check(trace.faultAfterNotification == early && trace.failureNotificationAccepted == !early,
+          "launch fault did not preserve the first notification decision");
+    check(trace.exceptionObserved == throwing && trace.payloadPreservedAtRetirement,
+          "launch unwind or payload observation was lost");
+    check(f.notifications == 1 && f.retirements == 1 && f.owners == 0,
+          "launch failure changed notification/retirement counts");
+    check(trace.firstLibrary.expired() && trace.firstError.expired(), "retired first payload leaked");
+    Payload late{std::make_shared<Counted>(f.payloads), nullptr};
+    check(!f.state->callback(std::move(late)), "late callback after launch failure touched retired owner");
+    f.clean();
+}
+
+static void launchNullAndThrowBoundaries() {
+    for (bool early : {false, true}) {
+        for (bool throwing : {false, true}) {
+            HoldFixture f;
+            LaunchTrace trace;
+            f.expectError = !early;
+            configureLaunchObservation(f, trace, throwing);
+            runFailingProvider(f, trace, throwing, [&] {
+                if (early) {
+                    check(f.state->callback(f.makePayload()), "provider's early success was rejected");
+                    check(f.ready && f.owners == 1 && f.retirements == 0,
+                          "early success was delayed or retired during launch");
+                }
+            });
+            verifyLaunchFault(f, trace, early, throwing);
+        }
+    }
+}
+
+struct NotificationGate {
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered = false, released = false;
+    void arriveAndWait() {
+        std::unique_lock<std::mutex> lock(mutex);
+        entered = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return released; });
+    }
+    bool waitUntilEntered() {
+        std::unique_lock<std::mutex> lock(mutex);
+        return changed.wait_for(lock, std::chrono::seconds(2), [&] { return entered; });
+    }
+    void release() {
+        { std::lock_guard<std::mutex> lock(mutex); released = true; }
+        changed.notify_all();
+    }
+};
+
+struct CallbackJoinScope {
+    NotificationGate& gate;
+    std::thread& thread;
+    ~CallbackJoinScope() { gate.release(); if (thread.joinable()) thread.join(); }
+};
+
+static void launchFailureWhileCallbackActive() {
+    HoldFixture f;
+    LaunchTrace trace;
+    configureLaunchObservation(f, trace, true);
+    NotificationGate gate;
+    const auto observe = f.afterReady;
+    f.afterReady = [&] { observe(); gate.arriveAndWait(); };
+    std::thread callback;
+    CallbackJoinScope joined{gate, callback};
+    runFailingProvider(f, trace, true, [&] {
+        callback = std::thread([&] { f.state->callback(f.makePayload()); });
+        check(gate.waitUntilEntered(), "callback did not enter the deterministic failure gate");
+    });
+    bool held;
+    {
+        std::lock_guard<std::mutex> lock(f.completionMutex);
+        held = f.owner && f.activeNotify == 1 && f.retirements == 0 && trace.launchExited;
+    }
+    gate.release();
+    callback.join();
+    check(held, "launch unwind retired an owner while its callback was still active");
+    verifyLaunchFault(f, trace, true, true);
+}
+
+static void launchUnwindBoundaries() {
+    launchNullAndThrowBoundaries();
+    launchFailureWhileCallbackActive();
+}
+
 struct UnsafeOwner { volatile int returnedTask = 0; };
 #if defined(__GNUC__)
 __attribute__((noinline))
@@ -454,8 +634,14 @@ int main(int argc, char** argv) {
         assignAfterCallback(owner); // Model this->_task assignment after the factory returns.
         return 99; // Reaching here means ASan did not establish the intended negative control.
     }
-    if (argc != 1) return 2;
+    const bool launchOnly = argc == 2 && std::strcmp(argv[1], "--launch-unwind-only") == 0;
+    if (argc != 1 && !launchOnly) return 2;
     try {
+        if (launchOnly) {
+            launchUnwindBoundaries();
+            std::puts("METAL_REQUEST_LAUNCH_UNWIND cases=5 metal_api_verified=0 objc_runtime_verified=0");
+            return 0;
+        }
         normalOrder();
         callbackBeforeLaunchReturn();
         timeoutThenLateCallback();
@@ -474,7 +660,8 @@ int main(int argc, char** argv) {
         holdFailuresAndWarnings();
         holdNotificationException();
         holdSimultaneousEvents();
-        std::puts("METAL_REQUEST_LIFETIME barrier_cases=9 owner_hold_cases=9 concurrent_iterations_each=300 metal_api_verified=0");
+        launchUnwindBoundaries();
+        std::puts("METAL_REQUEST_LIFETIME barrier_cases=9 owner_hold_cases=9 launch_unwind_cases=5 concurrent_iterations_each=300 metal_api_verified=0");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "lifecycle model failed: %s\n", error.what());

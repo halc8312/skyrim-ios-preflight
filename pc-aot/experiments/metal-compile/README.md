@@ -172,6 +172,13 @@ The second Apple-host run passed both models with Darwin TSan, alongside the
 normal and ASan/UBSan controls. That closes the model's race-detector gap on this
 host, but does not establish actual Metal callback ownership or game behavior.
 
+Five additional host-protocol controls cover a provider that returns nil or
+throws before/after a callback, and launch unwinding while a callback is held
+open. Normal and ASan/UBSan runs passed with immediate single notification,
+preserved first payload, a separate launch-fault record and deferred retirement.
+These additions do not establish Objective-C unwinding or actual task release;
+their Darwin TSan run is still pending.
+
 The Apple workflow additionally runs both safe models with TSan. The portable
 test supervisor bounds the entire unittest worker, permits cooperative child
 cleanup before a limited process-group termination fallback, and preserves the
@@ -442,6 +449,21 @@ both reporting only `applegpu_g16p`. Evidence is in
 offline Metal 4 script translation only. GPU loading/readback, library-free
 lookup, game settings equivalence and iPhone performance remain unverified.
 
+The optional `--specialized` mode uses one authored function and uint constant
+index 0, generates value-7/value-11 archives separately, and checks omission of
+the required value. Its 22 portable controls passed. The real Windows 6.2 run
+generated distinct 12,368/12,384-byte positive archives, but the omitted-value
+case returned exit 0 with a warning and an archive. The runner therefore reports
+`failed`, retains both positive results and the negative evidence, and does not
+claim the compiler enforces this boundary. This is not a GPU or Skyrim failure.
+Evidence: `local/metal-compile/archive-specialized-runner-windows-01/`.
+No warning-promotion option was added. Before replaying captured recipes, required
+constant completeness needs separate validation; archive existence is insufficient.
+
+```powershell
+python experiments/metal-compile/archive_offline.py --specialized --tools F:/SkyrimIOS/local/tools/metal-6.2/bin --output local/metal-compile/archive-specialized-new
+```
+
 Family filtering is not an exclusive chip selection: this tool's iOS 26 Apple9
 query includes six architectures, including both returned for Apple10. The
 fixed `g16p` artifact must not be assumed to match either test phone. Apple's
@@ -461,6 +483,9 @@ python -m unittest discover -s tests -p 'test_metal_compile_*.py' -v
 The [pinned integration plan](MOLTENVK_PLAN.md) identifies the asynchronous
 library boundary, manual ownership requirements, and the remaining runtime
 gates. It is a reviewed design, not an applied production patch.
+The separate [direct archive plan](ARCHIVE_PLAN.md) explains the earlier lookup
+and conversion-metadata work needed to avoid library creation, including the
+specialization and eager-cache-restoration limits.
 
 1. Establish actual Apple compilation and matching render/compute readbacks for
    the authored source through the chosen API route. A later representative-MSL
