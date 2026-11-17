@@ -17,6 +17,80 @@ static void *producer(void *arg) {
     }
     return NULL;
 }
+static void *both_hands_producer(void *arg) {
+    (void)arg;
+    for (unsigned i=0;i<20000;i++) {
+        skyrim_mobile_button(SKYRIM_PAD_BOTH_HANDS,1);
+        if (i&1) skyrim_mobile_button(SKYRIM_PAD_BOTH_HANDS,0);
+        else skyrim_mobile_button_cancel(SKYRIM_PAD_BOTH_HANDS);
+        if (!(i%10)) skyrim_mobile_clear();
+    }
+    return NULL;
+}
+static void both_hands(void) {
+    const struct timespec delay={0,140000000};
+    SkyrimMobilePad p;
+    /* One touch produces both trigger edges without setting Xbox button bits.
+     * Preserve brief taps across a delayed game poll, like individual LT/RT. */
+    skyrim_mobile_clear();
+    skyrim_mobile_button(SKYRIM_PAD_BOTH_HANDS,1);
+    p=skyrim_mobile_pad(); assert(p.lt==255&&p.rt==255&&!p.buttons);
+    skyrim_mobile_button(SKYRIM_PAD_BOTH_HANDS,0);
+    p=skyrim_mobile_pad(); assert(p.lt==255&&p.rt==255);
+    nanosleep(&delay,NULL);
+    p=skyrim_mobile_pad(); assert(!p.lt&&!p.rt);
+
+    /* Holding lasts beyond the tap pulse; release either source independently.
+     * Repeat for both individual hands to catch accidental source clearing. */
+    const unsigned hands[]={SKYRIM_PAD_LT,SKYRIM_PAD_RT};
+    for (unsigned i=0;i<2;i++) {
+        skyrim_mobile_clear();
+        skyrim_mobile_button(SKYRIM_PAD_BOTH_HANDS,1);
+        skyrim_mobile_button(hands[i],1);
+        nanosleep(&delay,NULL);
+        p=skyrim_mobile_pad(); assert(p.lt==255&&p.rt==255);
+        skyrim_mobile_button(SKYRIM_PAD_BOTH_HANDS,0);
+        p=skyrim_mobile_pad(); assert(p.lt==(i==0?255:0)&&p.rt==(i==1?255:0));
+        skyrim_mobile_button(hands[i],0);
+        p=skyrim_mobile_pad(); assert(!p.lt&&!p.rt);
+
+        skyrim_mobile_button(SKYRIM_PAD_BOTH_HANDS,1);
+        skyrim_mobile_button(hands[i],1);
+        skyrim_mobile_button_cancel(hands[i]);
+        p=skyrim_mobile_pad(); assert(p.lt==255&&p.rt==255);
+        skyrim_mobile_button_cancel(SKYRIM_PAD_BOTH_HANDS);
+        p=skyrim_mobile_pad(); assert(!p.lt&&!p.rt);
+    }
+
+    /* UIKit cancellation clears even an unexpired pulse but not another finger.
+     * App inactivity / settings clear every source, including the new control. */
+    skyrim_mobile_button(SKYRIM_PAD_LT,1);
+    skyrim_mobile_button(SKYRIM_PAD_RT,1);
+    skyrim_mobile_button(SKYRIM_PAD_BOTH_HANDS,1);
+    skyrim_mobile_button_cancel(SKYRIM_PAD_BOTH_HANDS);
+    p=skyrim_mobile_pad(); assert(p.lt==255&&p.rt==255);
+    skyrim_mobile_button_cancel(SKYRIM_PAD_LT);
+    p=skyrim_mobile_pad(); assert(!p.lt&&p.rt==255);
+    skyrim_mobile_button_cancel(SKYRIM_PAD_RT);
+    p=skyrim_mobile_pad(); assert(!p.lt&&!p.rt);
+    skyrim_mobile_button(SKYRIM_PAD_BOTH_HANDS,1);
+    skyrim_mobile_clear();
+    p=skyrim_mobile_pad(); assert(!p.lt&&!p.rt&&!p.buttons);
+    /* Move retains saved layout ID18 and must never become a gamepad bit. */
+    skyrim_mobile_button(SKYRIM_PAD_MOVE,1);
+    skyrim_mobile_button(SKYRIM_PAD_CONTROL_COUNT,1);
+    skyrim_mobile_button(UINT32_MAX,1);
+    skyrim_mobile_button_cancel(UINT32_MAX);
+    p=skyrim_mobile_pad(); assert(!p.lt&&!p.rt&&!p.buttons);
+
+    pthread_t thread;
+    assert(pthread_create(&thread,NULL,both_hands_producer,NULL)==0);
+    for (unsigned i=0;i<30000;i++) {
+        p=skyrim_mobile_pad(); assert(p.lt==p.rt&&!p.buttons);
+    }
+    assert(pthread_join(thread,NULL)==0);
+    skyrim_mobile_clear();
+}
 int main(void) {
     int16_t x,y,a,b;
     skyrim_mobile_stick(0,.05f,.1f,&x,&y);assert(!x&&!y);
@@ -76,5 +150,6 @@ int main(void) {
     pthread_t thread;assert(pthread_create(&thread,NULL,producer,NULL)==0);
     for(unsigned i=0;i<30000;i++) {p=skyrim_mobile_pad();assert(p.rt==0||p.rt==255);(void)skyrim_mobile_f5_down();}
     assert(pthread_join(thread,NULL)==0);skyrim_mobile_clear();
-    puts("MOBILE_CORE input, multitouch composition, tap/expiry, F5, thermal policy, pacing, concurrent snapshots PASS");
+    both_hands();
+    puts("MOBILE_CORE input, multitouch composition, tap/expiry, F5, thermal policy, pacing, both hands/cancel, concurrent snapshots PASS");
 }

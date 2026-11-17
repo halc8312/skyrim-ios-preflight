@@ -8,7 +8,7 @@
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static SkyrimMobilePad pad;
 static uint32_t held;
-static uint64_t tap_until[18], look_time, look_interval, f5_until;
+static uint64_t tap_until[SKYRIM_PAD_CONTROL_COUNT], look_time, look_interval, f5_until;
 static unsigned limit, thermal;
 static int guard;
 
@@ -47,12 +47,19 @@ void skyrim_mobile_camera(float dx, float dy, float seconds, float height,
     *oy = (int16_t)lroundf(y / length * amount * 32767);
 }
 void skyrim_mobile_button(unsigned index, int down) {
-    if (index >= 18) return;
+    if (index >= SKYRIM_PAD_CONTROL_COUNT || index == SKYRIM_PAD_MOVE) return;
     pthread_mutex_lock(&lock);
     if (down) {
         held |= 1u << index;
         tap_until[index] = skyrim_mobile_now() + UINT64_C(120000000);
     } else held &= ~(1u << index);
+    pthread_mutex_unlock(&lock);
+}
+void skyrim_mobile_button_cancel(unsigned index) {
+    if (index >= SKYRIM_PAD_CONTROL_COUNT || index == SKYRIM_PAD_MOVE) return;
+    pthread_mutex_lock(&lock);
+    held &= ~(1u << index);
+    tap_until[index] = 0;
     pthread_mutex_unlock(&lock);
 }
 void skyrim_mobile_camera_age(int16_t x, int16_t y, uint64_t age_ns,
@@ -109,7 +116,13 @@ SkyrimMobilePad skyrim_mobile_pad(void) {
     pthread_mutex_lock(&lock);
     SkyrimMobilePad result = pad;
     uint32_t buttons = held;
-    for (unsigned i = 0; i < 18; ++i) if (tap_until[i] > now) buttons |= 1u << i;
+    for (unsigned i = 0; i < SKYRIM_PAD_CONTROL_COUNT; ++i)
+        if (tap_until[i] > now) buttons |= 1u << i;
+    /* One source drives both triggers in the same snapshot. Releasing it must
+     * not clear a separately held LT/RT (or the physical controller downstream).
+     * Short taps keep the same 120 ms minimum pulse as the individual controls. */
+    if (buttons & (1u << SKYRIM_PAD_BOTH_HANDS))
+        buttons |= (1u << SKYRIM_PAD_LT) | (1u << SKYRIM_PAD_RT);
     result.buttons = (uint16_t)buttons;
     result.lt = buttons & (1u << SKYRIM_PAD_LT) ? 255 : 0;
     result.rt = buttons & (1u << SKYRIM_PAD_RT) ? 255 : 0;

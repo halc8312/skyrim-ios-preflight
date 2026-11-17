@@ -9,9 +9,14 @@ typedef struct {
     uint8_t lt, rt;
     int16_t lx, ly, rx, ry;
 } SkyrimMobilePad;
-enum { SKYRIM_PAD_LT = 16, SKYRIM_PAD_RT = 17 };
+/* Control IDs also key saved touch positions: keep Move at 18. */
+enum {
+    SKYRIM_PAD_LT = 16, SKYRIM_PAD_RT = 17, SKYRIM_PAD_MOVE = 18,
+    SKYRIM_PAD_BOTH_HANDS = 19, SKYRIM_PAD_CONTROL_COUNT = 20
+};
 uint64_t skyrim_mobile_now(void);
 void skyrim_mobile_button(unsigned index, int down);
+void skyrim_mobile_button_cancel(unsigned index);
 void skyrim_mobile_move(float x, float y, float deadzone);
 void skyrim_mobile_look(float dx, float dy, float seconds, float height,
                         float sensitivity, int invert);

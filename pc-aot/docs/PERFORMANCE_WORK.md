@@ -1,5 +1,29 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-17 追加の通常プレイで現れたshader競合
+
+新しい手動送信もbuild13。manifest・完了receipt・bundle・sessionのbyte数／SHA256／行数と許可schemaを検証した。previousは前送信と同一で、currentは前送信の214,887 bytes／974行を完全なprefixとして延長したもの。追加1,155,468 bytes／4,981行だけを新規観測とし、再起動・warm replay成功と数えない。19設定は継続して一致し、shader比較5項目は全OFF。原記録と追加区間の解析をprivate reports内のanalysisに保持した。
+
+追加68,032 frame試料の時間合計は1,248.131650秒。50／100／250 ms超は140／57／21件、最大1,870.729 ms。新規root要求はdraw39／prefetch119で、その100 ms超は17／12件、最大285.294／1,116.740 ms。追加RESTORE／macroは0。以下は`sdl-application-entry`からの秒で、入れ子・並行区間は加算しない。
+
+| 起動後 秒 | gap ms | 同区間の根拠 |
+| ---: | ---: | --- |
+| 3772.267245 | 1,487.367 | 必須pipeline1,443.523 ms内にcold-lock待ち1,410.833 ms。先読みroot1,116.740／321.964 msが順に実行。Present／submissionは1,470.746／1,470.667 ms |
+| 3983.131748 | 1,870.729 | draw pipeline mutex待ちの重なり和集合1,808.043 ms、先読みpipelineの重なり1,856.396 ms。Present／submission1,853.490／1,853.404 ms |
+| 3999.496610 | 1,587.472 | draw pipeline mutex待ちの重なり和集合1,464.214 ms、先読みpipeline1,571.055 ms。Present／submission1,572.030／1,571.935 ms |
+
+追加のdraw cold-lock待ちは7件。100 ms超のdraw pipeline mutex待ち10件はすべて`result=CREATE`であり、`prepare_dxvk.py`の二度目の検索でも要求stateが未生成だった。従って、同じ完成品ができるのを待っていたという説明だけでは足りず、shader組単位の直列化を調べる根拠になる。ただし所有者のmodule／state identityや完全な所有者交代は未記録。module別cold生成と必須優先の既存比較が後半の停止に対する候補になったが、優先gateは開始済み処理を中断せず、効果は実機未検証。
+
+既存sourceとfixtureの追加監査では、必須scopeの開始と先読みのmutex取得後再確認・lock外待機は実装済みで、単純な優先hookの不足は見つからなかった。新しいstate別合流を試作する場合のidentityは、所有するgraphics pipelineオブジェクト＋既存operator==で比較するstate全体＋正確なrender-passポインタであり、formatだけの一致には縮めない。失敗時のcached-nullは未登録と区別し、例外時の通知、公開lock内でのhandleコピー、再入するcache callbackによるvector拡張、先読みを登録してから必須を待たせる循環を検証する必要がある。現fixtureの簡略stateだけでは十分ではない。次の実機比較には実装済みswitchを使え、新しい本番adapter変更や既定値変更は行っていない。
+
+100 ms超57件はshader重なり19（うち8件はPresent／submissionとも重なる）、保存候補window9、復帰直後resource／fence1、50 ms以上のworkと重なりなし28。最後の最大は200.374 ms。work dropは0だが、閾値未満の連鎖や未計測処理を除外できず、28件をguest CPU原因と断定しない。音声追加15区間（submit保持8、mixer待ち7）は全140 slow-frame標本と重なり0。COM／shadow／BC、D3D取得待ちの追加長時間標本もないため、これらの同期除去は採用しない。
+
+追加lock246窓／50標本のうち35件はPresent保持。上表の3区間と同threadでほぼ同じ長さを示すが、包囲区間であってshader待ちとは別の費用ではない。CPU未記録は既存のhold計測範囲による。lockのbusy drop0、最後の窓にfull drop3。保持された16区間は17.042〜22.275 msで、長い区間を残す方式から捨てられた完了標本は17.042 ms以下に限られる。未完了処理の不在は保証しない。
+
+先行prefixとの間には3,053.383343秒のinactiveがあり、その後にも9.061044／9.984975秒のinactiveがある。全140 slow-frame標本は記録inactiveの外。最初の追加表示FPS0.06は長い背景滞在を含む集計で、同窓の実gap最大は35.780 ms。追加device246観測はthermal0が232／thermal1が14、low power／memory warningは全0、最小advisory headroom3,953,489,080 bytes。保存完了の最終記録は初期のinactive時の7,859,397 bytes／gen3966で、後半に増えたrootの保存までは今回のlive prefixで確認できない。
+
+本人の追加観察は「複数のことが同時に起こると重くなりやすい」。上記の競合と整合するが、具体的な戦闘イベントとの対応やGPU／CPU負荷の内訳を断定しない。「再現できない」は同じ場所・敵・魔法の状況を作れない意味だと確認済みで、同一戦闘の再現は依頼条件から外した。通常プレイのまま計測し、先行する短い4件の停止と今回の後半停止を区別して改善候補を選ぶ。新build・端末設定変更は行っておらず、性能改善の採用判定は未完了。
+
 ## 2026-11-17 build13の2起動と新規MSL待ちの分類
 
 本人の手動診断1送信に、build13の`previous=closed`／`current=live_prefix`が含まれた。manifest・完了receipt・bundle・sessionのbyte数／SHA256／行数と許可schemaを照合し、既存解析器のinvalid／重複は0。本人の2〜3回という試遊報告を3起動の受信証拠にはせず、直近2件を比較する。19設定は一致、shader比較5項目全OFF、autosave設定0、日本語text／voice1。画質は60 cap／resolution設定2160／MSAA4／shadow4096等で一致するが、同じ動き・敵・天候・描画状態の厳密な再現はログだけでは保証できない。privateの同送信analysisに解析結果とlifecycle照合を保存した。

@@ -396,10 +396,10 @@ static SKOverlay *overlay;
 }
 - (void)drawRect:(CGRect)rect {
     CGRect circle=CGRectInset(self.bounds,2,2);
-    UIBezierPath *path=[UIBezierPath bezierPathWithRoundedRect:circle cornerRadius:self.code==18 ? self.bounds.size.width/2 : 14];
+    UIBezierPath *path=[UIBezierPath bezierPathWithRoundedRect:circle cornerRadius:self.code==SKYRIM_PAD_MOVE ? self.bounds.size.width/2 : 14];
     [[UIColor colorWithWhite:self.finger ? 0.45 : 0.08 alpha:0.78] setFill]; [path fill];
     [[UIColor colorWithWhite:1 alpha:self.editing ? 1 : 0.65] setStroke]; path.lineWidth=self.editing ? 2.5 : 1; [path stroke];
-    if (self.code==18) {
+    if (self.code==SKYRIM_PAD_MOVE) {
         CGFloat size=self.bounds.size.width*0.4;
         CGPoint center=CGPointMake(CGRectGetMidX(self.bounds)+self.stick.x*self.bounds.size.width*.28,
                                   CGRectGetMidY(self.bounds)-self.stick.y*self.bounds.size.height*.28);
@@ -431,20 +431,25 @@ static SKOverlay *overlay;
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     if (self.editing || self.finger) return;
     self.finger=touches.anyObject;
-    if (self.code==18) [self updateStick:self.finger]; else skyrim_mobile_button((unsigned)self.code,1);
+    if (self.code==SKYRIM_PAD_MOVE) [self updateStick:self.finger]; else skyrim_mobile_button((unsigned)self.code,1);
     [self setNeedsDisplay];
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    if (!self.editing && self.code==18 && self.finger && [touches containsObject:self.finger]) [self updateStick:self.finger];
+    if (!self.editing && self.code==SKYRIM_PAD_MOVE && self.finger && [touches containsObject:self.finger]) [self updateStick:self.finger];
 }
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+- (void)finishTouches:(NSSet<UITouch *> *)touches cancelled:(BOOL)cancelled {
     if (!self.finger || ![touches containsObject:self.finger]) return;
     self.finger=nil;
-    if (self.code==18) {self.stick=CGPointZero;skyrim_mobile_move(0,0,0);} else skyrim_mobile_button((unsigned)self.code,0);
+    if (self.code==SKYRIM_PAD_MOVE) {self.stick=CGPointZero;skyrim_mobile_move(0,0,0);}
+    else if (cancelled) skyrim_mobile_button_cancel((unsigned)self.code);
+    else skyrim_mobile_button((unsigned)self.code,0);
     [self setNeedsDisplay];
 }
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [self finishTouches:touches cancelled:NO];
+}
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [self touchesEnded:touches withEvent:event];
+    [self finishTouches:touches cancelled:YES];
 }
 @end
 
@@ -479,7 +484,7 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     if (section==7) return L(@"Send performance, settings and numeric error records from this launch and the previous launch to your paired PC. Game data and saves are excluded. Open the game system menu first; keep the PC awake and Tailscale connected. After receipt, tell us in the chat that you sent it.",
         @"今回と前回の起動の性能・設定・エラー番号を、登録した自分のPCへ送ります。ゲームデータやセーブは送りません。先にゲームのシステムメニューを開き、PCを起動してTailscaleを接続してください。送信できたら、このチャットで知らせてください。");
     if (section==0) return L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。");
-    if (section==1) return L(@"Drag outside the buttons to look. Use the arrows and LB / RB to navigate menus, and LT / RT for the left and right hands.", @"ボタン以外をドラッグして視点移動。十字キーとLB／RBでメニュー移動、LT／RTで左右の手を操作します。");
+    if (section==1) return L(@"Drag outside the buttons to look. Use the arrows and LB / RB to navigate menus, and LT / RT for the left and right hands. Hold L+R to use both hands together.", @"ボタン以外をドラッグして視点移動。十字キーとLB／RBでメニュー移動、LT／RTで左右の手を操作します。「両手」を長押しすると左右の手を同時に使えます。");
     if (section==2) return L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。");
     if (section==3) return L(@"These settings do not pause the game. Open the game system menu first. Quick save sends F5 and checks for a changed save file; it is not an emulator save state.", @"設定画面だけではゲームは一時停止しません。先にシステムメニューを開いてください。クイックセーブはゲームのF5入力を送り、保存ファイルの更新を確認します。実行状態を丸ごと復元するステートセーブではありません。");
     if (section==4) return L(@"Save in the game, then fully close and reopen the app to apply. Off disables saves on pause, travel, waiting and rest; save manually while it is off. Keep current preserves the current values, including a previous Off choice. The game menu can still change them during play.", @"ゲーム内で保存し、アプリを完全終了して開き直すと反映します。オフではメニュー・移動・待機・休息時の自動保存を止めるため、手動で保存してください。「維持」は以前のオフも含めた現在値を保ちます。プレイ中はゲーム内設定からも変更できます。");
@@ -626,8 +631,12 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
         L(@"System menu",@"システムメニュー"),L(@"Wait",@"待機"),L(@"Sneak",@"隠密"),L(@"Change view",@"視点切替"),
         L(@"Sprint / previous tab",@"走る／前のタブ"),L(@"Shout / next tab",@"シャウト／次のタブ"),@"",@"",
         L(@"Use / confirm",@"使う／決定"),L(@"Menu / back",@"メニュー／戻る"),L(@"Draw / sheathe weapon",@"武器を構える／しまう"),
-        L(@"Jump",@"ジャンプ"),L(@"Left hand / block",@"左手／防御"),L(@"Right hand / attack",@"右手／攻撃"),L(@"Move",@"移動")];
-    for(SKPadControl *c in self.controls) c.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",labels[c.code],c.caption];
+        L(@"Jump",@"ジャンプ"),L(@"Left hand / block",@"左手／防御"),L(@"Right hand / attack",@"右手／攻撃"),L(@"Move",@"移動"),L(@"Use both hands",@"左右の手を同時に使う")];
+    for(SKPadControl *c in self.controls) {
+        if(c.code==SKYRIM_PAD_BOTH_HANDS) c.caption=L(@"L+R",@"両手");
+        c.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",labels[c.code],c.caption];
+        [c setNeedsDisplay];
+    }
     self.settingsButton.accessibilityLabel=self.editing ? L(@"Finish layout",@"配置完了") : L(@"Settings",@"設定");
     [self.settingsButton setImage:[UIImage systemImageNamed:self.editing ? @"checkmark" : @"gearshape"] forState:UIControlStateNormal];
     self.saveButton.accessibilityLabel=L(@"Quick save",@"クイック保存");
@@ -640,10 +649,10 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
         self.controls=[NSMutableArray array]; self.positions=[NSMutableDictionary dictionary];
         id saved=[NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-layout-v1"];
         if ([saved isKindOfClass:NSDictionary.class]) [self.positions addEntriesFromDictionary:saved];
-        NSArray *captions=@[@"↑",@"↓",@"←",@"→",@"START",@"BACK",@"L3",@"R3",@"LB",@"RB",@"",@"",@"A",@"B",@"X",@"Y",@"LT",@"RT",@""];
+        NSArray *captions=@[@"↑",@"↓",@"←",@"→",@"START",@"BACK",@"L3",@"R3",@"LB",@"RB",@"",@"",@"A",@"B",@"X",@"Y",@"LT",@"RT",@"",@"L+R"];
         NSArray *symbols=@[@"arrowtriangle.up.fill",@"arrowtriangle.down.fill",@"arrowtriangle.left.fill",@"arrowtriangle.right.fill",
             @"line.3.horizontal",@"clock",@"figure.walk",@"eye",@"figure.run",@"waveform",@"",@"",
-            @"hand.tap",@"arrow.uturn.backward",@"shield.lefthalf.filled",@"arrow.up",@"hand.raised",@"scope",@""];
+            @"hand.tap",@"arrow.uturn.backward",@"shield.lefthalf.filled",@"arrow.up",@"hand.raised",@"scope",@"",@"hands.sparkles"];
         for (NSInteger i=0;i<captions.count;++i) {
             if (i==10 || i==11) continue;
             SKPadControl *c=[[SKPadControl alloc] initWithFrame:CGRectZero]; c.code=i; c.caption=captions[i];
@@ -667,14 +676,14 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
-    static const float xy[19][2]={{.34,.60},{.34,.80},{.29,.70},{.39,.70},{.62,.07},{.48,.07},{.34,.94},{.70,.94},{.12,.36},{.75,.36},{0,0},{0,0},{.87,.79},{.94,.61},{.80,.61},{.87,.43},{.77,.19},{.93,.19},{.13,.73}};
+    static const float xy[SKYRIM_PAD_CONTROL_COUNT][2]={{.34,.60},{.34,.80},{.29,.70},{.39,.70},{.62,.07},{.48,.07},{.34,.94},{.70,.94},{.12,.36},{.75,.36},{0,0},{0,0},{.87,.79},{.94,.61},{.80,.61},{.87,.43},{.77,.19},{.93,.19},{.13,.73},{.63,.45}};
     CGRect area=UIEdgeInsetsInsetRect(self.bounds,self.safeAreaInsets);
     CGFloat base=clamp(area.size.height*.13,40,58)*clamp(value(@"size",1),.8,1.4);
     for (SKPadControl *c in self.controls) {
         CGFloat x=xy[c.code][0],y=xy[c.code][1]; id point=self.positions[@(c.code).stringValue];
         if ([point isKindOfClass:NSArray.class] && [point count]==2 && [point[0] isKindOfClass:NSNumber.class] && [point[1] isKindOfClass:NSNumber.class] && isfinite([point[0] doubleValue]) && isfinite([point[1] doubleValue])) {x=[point[0] doubleValue];y=[point[1] doubleValue];}
-        CGFloat w=c.code==18 ? base*2.2 : c.code==4 || c.code==5 ? base*1.15 : base;
-        CGFloat h=c.code==18 ? w : base;
+        CGFloat w=c.code==SKYRIM_PAD_MOVE ? base*2.2 : c.code==4 || c.code==5 ? base*1.15 : base;
+        CGFloat h=c.code==SKYRIM_PAD_MOVE ? w : base;
         CGFloat cx=clamp(area.origin.x+x*area.size.width,area.origin.x+w/2,CGRectGetMaxX(area)-w/2);
         CGFloat cy=clamp(area.origin.y+y*area.size.height,area.origin.y+h/2,CGRectGetMaxY(area)-h/2);
         c.frame=CGRectMake(cx-w/2,cy-h/2,w,h); c.alpha=self.editing ? 1 : clamp(value(@"opacity",.8),.25,1); [c setNeedsDisplay];
