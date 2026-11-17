@@ -1,5 +1,11 @@
 # 開発状況
 
+**2026-11-17：build13の実iPhone診断を受信し、残存停止を分類。** 1送信に含まれる直近2起動のmanifest・完了receipt・bundle・sessionのbyte数／SHA256／行数／許可schemaを検証した。両方build13、19設定が一致し、shader比較5項目は全OFF。解析invalid／重複とwork／lockのdropは0。100 ms超gapは先の記録6件（最大405.881 ms）、後の記録8件（最大777.984 ms）。全14件は記録されたinactive区間の外だが、ロード／メニューと操作中を厳密には分離できない。本人は2〜3回のプレイと送信を報告し、受信できた独立起動は直近2件。後の回ではホワイトランで衛兵に魔法を使った可能性を本人が報告したが、個々のgapとの対応は未確定。
+
+前の回で6,916,077 bytesを保存し、後の起動が同量を受理してroot MSL371件を復元（合計9.487 ms、最大0.065 ms）。その後44件の追加root生成があり、必須描画の5回のMSL待ちが4つの長いgapと重なる。最大777.984 ms内の2 pipeline区間の和集合は680.548 msで、内包MSL時間を二重加算しない。同じ窓の変換／dispatch開始は短く、draw cold-lock待ちの観測はなく、この4件を共有lockの巻き添えとする根拠はない。後の回の7,792,718 bytes保存も成功し、保存消失を原因とする見立ては支持されない。
+
+新しいlock観測では、音声submit保持／mixer待ちの全14区間は採取した全32件の50 ms超gapと重なりなし。COM／shadow／BCに閾値16.667 ms以上の完了標本なし。全58 device観測はthermal0／memory warning0。音声・資源管理の同期変更や無条件のshader並列化は今回の改善策として採用しない。保存・Present送信待ち・UI pumpと重なる別の停止もあり、100 ms超のうち6件は50 ms以上の記録workと重ならず未帰属。原因不明をguest CPU負荷と断定しない。次は同じbuild13・保存済みcacheで、同じ場所と魔法を再訪して初回生成と反復missを区別する。実機計測版の起動・受信は確認できたが、残存停止の改善とゴール③の採用判定は未完了。今回の分析で新build・署名・設定変更は行っていない。
+
 **2026-11-16：build13のApple検証・署名・非公開OTA準備を完了。実iPhoneの比較待ち。** [Mac build33](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afae47b90e83b09c4faf449)は公開`b44c19d8e3935d0102e2f01566d07dd810a8f062`で成功（M2、Xcode26.6／SDK26.5、12分35秒）。52回のunittest実行／197ケースは192成功・環境依存5skip・失敗0。新しい描画／音声／COM計測とTSan再実行7件、実Foundation送信・Core Foundation／Metal検査を通過し、iPhoneOS shader8件とMac GPU20ケース／80値readbackも成功。Metal Toolchain不足の初回失敗は既存の取得・再試行で回復し、原logを保持。warning526件はbuild32と同じで、新規分類なし。これはiPhone実行の証明ではない。
 
 同じprivate guestを、3共有ABI headerのLF正規化後一致を確認して再利用。署名済みbuild13は58,721,962 bytes、SHA256 `ca2a3e2123f9cdab9c88c6650a02305a9a3a21b47097d56997da6bf2567e72b8`。既存profileのApple chain・AppID・登録端末一致と2 images／39,457 code pages／4 resourcesの暗号検証を確認した。非公開HTTPS manifest・全IPA転送hash・認証なし404を検査し、他routeと旧版を保持。PC常駐受信processを更新し、合成`IOS_LOCK`のHTTPS送信・重複再送・異なる内容の拒否・解析を確認した。合成送信を本人の実機ログに数えない。無料枠239→252/500（残248分）、subscription変更なし。今回の追加は原因を判別する計測であり、性能改善やiPhoneでの署名受理・インストール成功は未確認。本人には更新後、全5比較設定OFF・同じsave／画質／動作で初回と再起動後の2回を試し、診断送信するよう依頼済み。

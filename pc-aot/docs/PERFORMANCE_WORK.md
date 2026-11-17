@@ -1,5 +1,35 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-17 build13の2起動と新規MSL待ちの分類
+
+本人の手動診断1送信に、build13の`previous=closed`／`current=live_prefix`が含まれた。manifest・完了receipt・bundle・sessionのbyte数／SHA256／行数と許可schemaを照合し、既存解析器のinvalid／重複は0。本人の2〜3回という試遊報告を3起動の受信証拠にはせず、直近2件を比較する。19設定は一致、shader比較5項目全OFF、autosave設定0、日本語text／voice1。画質は60 cap／resolution設定2160／MSAA4／shadow4096等で一致するが、同じ動き・敵・天候・描画状態の厳密な再現はログだけでは保証できない。privateの同送信analysisに解析結果とlifecycle照合を保存した。
+
+| 記録 | frame試料 | 50 ms超 | 100 ms超 | 最大gap ms | 新規root draw／prefetch | root復元 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| previous | 7,123 | 13 | 6 | 405.881 | 225／146 | 0 |
+| current | 6,598 | 19 | 8 | 777.984 | 9／35 | 371 |
+
+workとlockのdropは両方0。100 ms超14件はすべて記録inactive区間の外だが、初期ロード・メニュー・操作中の境界は未計測。previous初期inactive2.249850秒と最後のinactive、current初期1.731798秒と後半34.328729秒を照合した。currentの表示FPS1.49はこの34秒の背景滞在を含む35.499142秒の集計によるもので、対応するframe-gap試料53件の最大は42.859 ms。背景中の`ui_pump_age_ms=34029`もプレイ中の停止としない。frame-gap自体はlifecycleでリセットされるため、窓がinactiveと重なるだけで窓内全試料を削除することもしない。
+
+**保存と復元は動作した。** previousはoffered_bytes0から6,916,077 bytesを299.924 msで保存成功。currentが同じサイズをresult0／empty_retry0で受理し、RESTORE371件（合計9.487 ms、最大0.065 ms）を実行した。currentはその後44件の新規root要求を実行し、7,792,718 bytesを137.579 msで保存した。全checkpoint成功はinactive区間内。371件が復元されたことは確認できるが、個々の入力・変換設定identityがないので44件を44種類の固有shaderと数えたり、同じ設定の反復missがないと断定しない。最初のoffered_bytes0もOS内Metal cacheが冷たかったことを意味しない。
+
+**後の起動の最大停止は新規root MSL待ちと重なる。** 下表の時刻は各起動の`sdl-application-entry`からの秒。最大停止の2 pipelineは同じthreadで順番に実行され、pipeline区間の和集合680.548 msがgap777.984 msに含まれる。MSLはその内側なので加算しない。
+
+| current起動後 秒 | gap ms | 必須pipeline区間 ms | 内包root MSL待ち ms |
+| ---: | ---: | --- | --- |
+| 65.059415 | 777.984 | 484.567、195.981 | 460.163、173.584 |
+| 68.087192 | 302.054 | 278.767 | 250.917 |
+| 68.426787 | 261.466 | 243.103 | 220.906 |
+| 124.059882 | 370.064 | 285.039 | 261.853 |
+
+対応する3窓のdraw変換最大は2.615／3.458／2.907 ms、dispatch queue待ち0.737／0.103／0.024 ms、dispatch block2.728／0.499／3.352 ms。currentにdraw cold-lock待ちの観測はなく、draw pipeline mutex待ちの最大も29.039 ms。従ってこの4件には、既存module-cold／priority設定をONにすれば消えるという根拠がない。長いMSL待ちは非同期Metal完了までのwall時間で、compiler CPU・内部queue・callback遅延の内訳は不明。macro派生は両起動0。本人の「ホワイトランで衛兵に魔法を出していたかも」という回答は新しい描画状態と整合するが、魔法名／場面は記録しておらず個々のgapと結び付けない。
+
+**音声／後始末の同期を変える根拠は得られなかった。** IOS_LOCKはprevious28窓10標本、current30窓12標本、最大占有3／16と2／16。audio submit保持7区間（40.676〜91.790 ms）とmixer待ち7区間（37.537〜84.272 ms）は、全32件の50 ms超frame gapと重なり0。COM／shadow／BC、ADPCM／resetの16.667 ms以上の完了標本は0。音声とPresent保持のCPU未記録は既存の観測範囲によるもので、CPU clock故障ではない。previousのD3D通常取得待ち1件はwall38.320 ms／CPU37.742542 msで実機でも有効。frame threadとは別threadで、観測ownerはframe threadのd3d9_other、同時期の66.311 ms gapとの重なりはあるが、frame thread自身が38 ms待った証拠ではない。259.416 msのshader重なりgap終了後に始まっており、その原因とも扱わない。
+
+**残りの分類と次の判別。** 100 ms超14件のうちshaderと重なり5、保存候補windowと重なり1、同thread Present／submission待ちと重なり1、UI pumpと重なり1、50 ms以上のworkとの重なりなし6。保存405.881 msのうちcandidate window320.207 ms、Present157.992 msのうちPresent150.669／submission150.653 ms、UI pump108.595 msのうち85.885 msで、それぞれ内包時間を加算しない。全58 device観測でthermal0／memory warning0、最小headroomはprevious4,304,516,688／current4,504,401,440 bytes。これらを常時のメモリ余裕や未計測CPU処理の不在の証明にはしない。
+
+次は同じbuild13・全5設定OFF・同じ開始save／画質のまま、ホワイトランの同じ魔法を再訪し、保存済み7,792,718 bytesの受理・RESTOREと新規root待ちを比較する。復元確認と長いroot待ちの消失は既知状態の再利用と整合するが、入力identityの一致を証明するものではない。初遭遇を前倒しする対象・機会は別に検討する。なお同じ状態で長いroot生成が反復するなら、module／conversion configurationのmiss区別だけを追加してからcache key／prewarm対象を判断する。今回の証拠だけで音声lock除去、MSL精度低下、cache照合条件の緩和、設定の一律ON、native leaf置換は行わない。新build・署名・端末設定変更は実施せず、ゴール③の改善採否は未完了。
+
 ## 2026-11-16 build13のApple検証と実機比較の準備
 
 Issue #2の確認を受け、本人承認のゴールを①計測版のApple検証・配布準備、②同条件の実機ログで原因分類、③寄与を確認した少数の修正と比較検証に設定した。以下の待機観測を含む公開`b44c19d8e3935d0102e2f01566d07dd810a8f062`をMac build33で検証し、build13を既存の非公開OTAへ用意した。新しい待機方式・native leaf・画質変更・実験設定の既定ONは追加していない。
