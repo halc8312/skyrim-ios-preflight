@@ -1,5 +1,21 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-17 graphics state別生成の独立試作
+
+追加ログのdraw pipeline mutex待ち10件が取得後CREATEだったことを受け、本人承認で`experiments/dxvk-state-cold/`を実装した。本番の`prepare_dxvk.py`や設定・キャッシュnamespace・CIへは接続しない。別途stageした固定版DXVKのgraphics header／lookup・publication部分にだけ適用し、computeやGPU生成本体、既存CompileScopeと描画引数、instance照合は変更しない。
+
+identityはgraphics pipelineオブジェクトごとに、実際の`DxvkGraphicsPipelineStateInfo::operator==`と正確な`DxvkRenderPass*`を使う。stateを一整数や部分keyへ縮めず、render-passのformatが同じでも異なるポインタは別扱いにする。完成済みhitは従来の短いlist lockだけで返る。miss時は短いtable lock内で完成済みを再確認してから、同一identityの生成中ticketを待つか、自分を登録する。
+
+ticketはcallerのstack上に置き、table lock外へ他threadのticketポインタを持ち出さない。待機と削除は同じmutex／condition-variable述語を使い、例外を含む終了時に登録解除と通知を行う。先読みは登録前にのみ譲歩し、table取得後にも開始可否を確認する。生成中ownerが必須側を待って停止する循環を作らない。共有lockの順序はtable→list、GPU生成とcache callbackは両lock外、公開はlist内でhandleをコピーしてから返す。
+
+不正stateは未公開、Vulkan生成失敗のnullは公開済み失敗として保持、例外は未公開で再試行可能という既存の区別を維持する。生成成功後にvector確保が失敗した場合は、未公開の非null handleを破棄してからticketを解除する。公開数は実際の追加後に加算する。worker停止→pipeline破棄の外部寿命契約は維持し、開始済みdriver処理の強制中断や成功扱いのtimeoutは追加しない。
+
+**PCで確認した範囲。** 通常7検査が成功（90.436秒）。固定版の実packed state・instance class・Spinlock・生成された実lookup／publicationと、制御できる自作driverを組み合わせた。従来方式は別cold stateも待つ一方、試作は先行生成を止めたまま別stateを完了できた。完成済みhit、同一keyの1回生成、全state byteの一致条件、同format・別render-pass、別pipeline owner、cached-null／invalid／例外と待機者再試行、公開時の確保失敗とhandle破棄、callback再入とvector拡張、8thread競合、開始前譲歩・開始済み継続・終了時の譲歩解除を確認した。graphicsとmanagerの完全translation unitも実headerで構文検査を通過した。
+
+同じnative baseline／prototype比較をASan/UBSan（80.917秒）とTSan（37.314秒）でも成功。TSanのASLR調整は対象test processだけ。生産用sourceと異なるanchorの拒否、再適用の同一性、変更対象がstage内2ファイル＋helperだけであることも確認した。テストのdriver停止は並行順序を判定するもので、実Metalや速度のbenchmarkではない。
+
+**計測と採用の限界。** 試作の`graphics_compile_wait`は同一identityのcondition-variable待ちに意味が変わり、table mutex取得時間と先読み譲歩のsleepは含まない。counter減少だけで改善としない。MoltenVKのcold lockやcompiler serviceの混雑は残り、同時生成増でメモリ・発熱が増える可能性がある。次の段階はApple SDK／実Metalの描画一致と失敗経路、ラベルを分けたiPhone比較。100 ms超frame gapの件数・合計・最大と、必須MSL待ち・生成失敗・headroom・thermalを見て判断する。本番採用、iPhone改善、新buildは未完了。
+
 ## 2026-11-17 追加の通常プレイで現れたshader競合
 
 新しい手動送信もbuild13。manifest・完了receipt・bundle・sessionのbyte数／SHA256／行数と許可schemaを検証した。previousは前送信と同一で、currentは前送信の214,887 bytes／974行を完全なprefixとして延長したもの。追加1,155,468 bytes／4,981行だけを新規観測とし、再起動・warm replay成功と数えない。19設定は継続して一致し、shader比較5項目は全OFF。原記録と追加区間の解析をprivate reports内のanalysisに保持した。
