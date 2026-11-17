@@ -247,6 +247,37 @@ cleanup before a limited process-group termination fallback, and preserves the
 worker log. It does not scan or terminate unrelated processes or prove that
 external Apple compiler services have stopped.
 
+
+## Isolated iPhone comparison app
+
+`ios/main.mm` and `runtime_host.h` expose the authored comparison in a separate
+UIKit app (`org.skyrimios.metalprobe`, iOS 26). It has no game/container/account
+or network access. The user selects which backend starts first, runs three
+rotated rounds of four library routes, and shares a JSON report through the
+system share sheet. The same fixture, compile options and exact GPU readback
+checks are reused; legacy PSO creation remains common to both library backends.
+
+Run the app in the foreground. Stop or leaving the foreground requests a stop
+at operation boundaries; already-issued Metal work still drains on the worker.
+This is not Metal cancellation or a bounded compiler completion guarantee.
+A new run cannot begin while the previous worker is still active. Partial and
+failed records are retained, and restarting the app labels unfinished work as
+interrupted. JSON includes source/build provenance, ordering, per-stage wall
+times and environment snapshots. OS compiler caches are not cleared; a first
+observed sample is not a proven cold-cache benchmark.
+
+`scripts/build-metal-probe-ios.sh` creates an **unsigned** physical-device IPA.
+Its explicit `--simulator` mode creates a separate preview app. The manual
+`pc2011-metal-phone-probe` workflow validates native boundaries and atomic record
+storage, builds both targets and captures simulator ready/result/restore/share
+screens. The simulator must record `unsupported`, never a Metal 4 GPU pass.
+An existing matching registered-device profile is needed separately for iPhone
+installation; the Skyrim app's bundle/profile must not be substituted.
+
+As of this implementation commit, Apple builds, UI review, signing and physical
+iPhone execution of this new host are pending. The overnight Mac results below
+are earlier evidence for shared components, not a pass for this new app.
+
 ## Verification status
 
 Latest completed run: [run12](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcd2f5d133a39c4a126814),

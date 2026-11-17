@@ -177,5 +177,8 @@ this gate. Compare timing only after controlling source/options, request order,
 cache history and thermal state; a faster warm run is not proof of a new backend
 speedup. Do not turn a blocking task join into a timeout or cancellation claim.
 
-This host is a pending implementation, not an existing installable artifact.
-It was not built or installed during the overnight host experiments.
+The isolated UIKit host is now implemented in `ios/main.mm` with a callable
+comparison API and atomic result store. Its new Apple SDK build, simulator UI
+review, dedicated-device signing and physical execution are pending. It was not
+built or installed during the earlier overnight experiments; SDK/simulator
+results will not establish Metal 4 device performance.

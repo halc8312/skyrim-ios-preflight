@@ -3,6 +3,14 @@
 #import <Metal/Metal.h>
 #import <TargetConditionals.h>
 
+#ifdef SKYRIM_METAL_RUNTIME_NO_MAIN
+#import "runtime_host.h"
+#import <CommonCrypto/CommonDigest.h>
+#include <mach/mach.h>
+#include <os/proc.h>
+#include <sys/utsname.h>
+#endif
+
 #if TARGET_OS_OSX
 #if !defined(__MAC_OS_X_VERSION_MAX_ALLOWED) || __MAC_OS_X_VERSION_MAX_ALLOWED < 260000
 #error This fixture requires the macOS 26 SDK or later
@@ -35,6 +43,14 @@ static uint64_t elapsed(Clock::time_point start) {
 
 static void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+struct ProbeInterrupted final : std::exception {
+    const char* what() const noexcept override { return "stopped before starting the next operation"; }
+};
+
+static void checkContinue(BOOL (^shouldContinue)(void)) {
+    if (shouldContinue && !shouldContinue()) throw ProbeInterrupted();
 }
 
 // Record capability names and booleans before any eligibility guard. This
@@ -79,10 +95,15 @@ static void recordDevices(NSMutableDictionary* report, id<MTLDevice> device) {
     report[@"device"] = deviceInfo(device);
     report[@"default_device_available"] = @(device != nil);
     NSMutableArray* available = [NSMutableArray new];
+#if TARGET_OS_OSX
     report[@"device_enumeration"] = @"all_devices";
     for (id<MTLDevice> candidate in MTLCopyAllDevices()) {
         [available addObject:deviceInfo(candidate)];
     }
+#else
+    report[@"device_enumeration"] = @"default_device_only";
+    if (device) [available addObject:deviceInfo(device)];
+#endif
     report[@"available_devices"] = available;
     report[@"available_device_count"] = @(available.count);
 }
@@ -120,6 +141,7 @@ static MTLCompileOptions* compileOptions() {
 
 // This explicit diagnostic runs after the normal comparison has terminated,
 // including its unsupported guard. It never creates a PSO or submits GPU work.
+#ifndef SKYRIM_METAL_RUNTIME_NO_MAIN
 static NSDictionary* probeLibraryFactory(id<MTLDevice> device, NSString* sourcePath) {
     NSMutableDictionary* result = [@{
         @"scope": @"metal4-factory-and-authored-library-only", @"status": @"not_attempted",
@@ -179,6 +201,7 @@ static NSDictionary* probeLibraryFactory(id<MTLDevice> device, NSString* sourceP
     }
     return result;
 }
+#endif
 
 static id<MTLLibrary> sourceLibrary(id<MTLDevice> device, id<MTL4Compiler> compiler,
                                    NSString* source, bool metal4, NSError** error) {
@@ -302,7 +325,9 @@ static NSArray* words(const uint32_t* data, size_t count) {
 }
 
 static void runGPU(id<MTLDevice> device, id<MTLCommandQueue> queue,
-                   id<MTLLibrary> library, NSMutableDictionary* sample) {
+                   id<MTLLibrary> library, NSMutableDictionary* sample,
+                   BOOL (^shouldContinue)(void) = nil) {
+    checkContinue(shouldContinue);
     // Loading a valid container does not establish that entry points survived linking.
     sample[@"library_function_names"] = [library.functionNames sortedArrayUsingSelector:@selector(compare:)] ?: @[];
     NSError* error = nil;
@@ -314,12 +339,17 @@ static void runGPU(id<MTLDevice> device, id<MTLCommandQueue> queue,
     [constants setConstantValue:&scale type:MTLDataTypeUInt atIndex:0];
     id<MTLFunction> fragment = [library newFunctionWithName:@"probe_fragment"
                                           constantValues:constants error:&error];
+    sample[@"fragment_diagnostic"] = errorInfo(error);
     requireObject(fragment, error, "fragment specialization");
+    checkContinue(shouldContinue);
     error = nil;
     id<MTLFunction> kernel = [library newFunctionWithName:@"probe_kernel"
                                         constantValues:constants error:&error];
+    sample[@"compute_function_diagnostic"] = errorInfo(error);
     requireObject(kernel, error, "compute specialization");
     sample[@"specialization_ns"] = @(elapsed(start));
+
+    checkContinue(shouldContinue);
 
     MTLRenderPipelineDescriptor* renderDescriptor = [MTLRenderPipelineDescriptor new];
     renderDescriptor.vertexFunction = vertex;
@@ -329,11 +359,14 @@ static void runGPU(id<MTLDevice> device, id<MTLCommandQueue> queue,
     start = Clock::now();
     id<MTLRenderPipelineState> render = [device newRenderPipelineStateWithDescriptor:renderDescriptor error:&error];
     sample[@"render_pso_ns"] = @(elapsed(start));
+    sample[@"render_pso_diagnostic"] = errorInfo(error);
     requireObject(render, error, "legacy render pipeline");
+    checkContinue(shouldContinue);
     error = nil;
     start = Clock::now();
     id<MTLComputePipelineState> compute = [device newComputePipelineStateWithFunction:kernel error:&error];
     sample[@"compute_pso_ns"] = @(elapsed(start));
+    sample[@"compute_pso_diagnostic"] = errorInfo(error);
     requireObject(compute, error, "legacy compute pipeline");
 
     MTLTextureDescriptor* textureDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA32Float
@@ -365,8 +398,12 @@ static void runGPU(id<MTLDevice> device, id<MTLCommandQueue> queue,
     [computing setBuffer:output offset:0 atIndex:0];
     [computing dispatchThreads:MTLSizeMake(4, 1, 1) threadsPerThreadgroup:MTLSizeMake(4, 1, 1)];
     [computing endEncoding];
+    // A phone stop/background request only prevents this submission. Once
+    // committed, completion still drains on the worker; there is no cancellation.
+    checkContinue(shouldContinue);
     [command commit];
-    // The Python supervisor has a deadline. This API itself has no timeout.
+    // The CLI supervisor has a deadline. This API itself has no timeout; the
+    // UIKit host keeps this wait off its main thread and never pretends to cancel.
     [command waitUntilCompleted];
     sample[@"command_status_value"] = @(command.status);
     sample[@"command_error"] = errorInfo(command.error);
@@ -395,7 +432,9 @@ static void runGPU(id<MTLDevice> device, id<MTLCommandQueue> queue,
 
 static void checkAsyncRetention(id<MTLDevice> device, id<MTL4Compiler> compiler,
                                 id<MTLCommandQueue> queue, NSString* source,
-                                bool metal4, bool invalid, NSMutableArray* observations) {
+                                bool metal4, bool invalid, NSMutableArray* observations,
+                                BOOL (^shouldContinue)(void) = nil) {
+    checkContinue(shouldContinue);
     NSMutableDictionary* observation = [@{
         @"api": metal4 ? @"metal4_async_source" : @"legacy_async_source",
         @"case": invalid ? @"compiler_error" : @"library_success",
@@ -430,6 +469,7 @@ static void checkAsyncRetention(id<MTLDevice> device, id<MTL4Compiler> compiler,
     require(!ready, "controlled async publication escaped its gate");
     request.releasePublication();
     request.drain();
+    checkContinue(shouldContinue);
     NSError* error = nil;
     id<MTLLibrary> library = request.result(&error, observation);
     observation[@"returned_nil"] = @(library == nil);
@@ -439,10 +479,11 @@ static void checkAsyncRetention(id<MTLDevice> device, id<MTL4Compiler> compiler,
         require(!library && error, "late async rejection lost nil library or NSError");
     } else {
         requireObject(library, error, "late async library");
-        runGPU(device, queue, library, observation);
+        runGPU(device, queue, library, observation, shouldContinue);
     }
 }
 
+#ifndef SKYRIM_METAL_RUNTIME_NO_MAIN
 static void writeReport(NSDictionary* report, NSString* path) {
     NSError* error = nil;
     NSData* data = [NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:&error];
@@ -655,3 +696,252 @@ int main(int argc, const char* argv[]) {
         return result;
     }
 }
+#endif
+
+#ifdef SKYRIM_METAL_RUNTIME_NO_MAIN
+static NSDictionary* phoneEnvironment() {
+    NSMutableDictionary* result = [@{
+        @"thermal_state": @(NSProcessInfo.processInfo.thermalState),
+        @"low_power_mode": @(NSProcessInfo.processInfo.lowPowerModeEnabled),
+        @"phys_footprint_bytes": NSNull.null,
+        @"available_memory_bytes": NSNull.null,
+        @"memory_scope": @"app footprint and advisory process headroom; not GPU-only memory or a hard allocation budget"
+    } mutableCopy];
+    task_vm_info_data_t info{};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    kern_return_t status = task_info(mach_task_self(), TASK_VM_INFO,
+                                    reinterpret_cast<task_info_t>(&info), &count);
+    result[@"footprint_query_status"] = @(status);
+    if (status == KERN_SUCCESS && count >= TASK_VM_INFO_REV1_COUNT)
+        result[@"phys_footprint_bytes"] = @(info.phys_footprint);
+#if TARGET_OS_IOS && !TARGET_OS_SIMULATOR && !TARGET_OS_MACCATALYST
+    result[@"available_memory_bytes"] = @(os_proc_available_memory());
+#endif
+    return result;
+}
+
+static NSDictionary* phoneSnapshot(NSDictionary* report) {
+    NSError* error = nil;
+    NSData* encoded = [NSJSONSerialization dataWithJSONObject:report options:0 error:&error];
+    requireObject(encoded, error, "phone report serialization");
+    error = nil;
+    NSDictionary* snapshot = [NSJSONSerialization JSONObjectWithData:encoded options:0 error:&error];
+    requireObject(snapshot, error, "phone report snapshot");
+    return snapshot;
+}
+
+static void phoneCheckpoint(NSMutableDictionary* report, NSString* phase,
+                            BOOL (^shouldContinue)(void), void (^progress)(NSDictionary*)) {
+    report[@"phase"] = phase;
+    checkContinue(shouldContinue);
+    if (progress) progress(phoneSnapshot(report));
+    // Persistence may take time or request a stop; recheck before issuing work.
+    checkContinue(shouldContinue);
+}
+
+static NSString* phoneSourceHash(NSData* source) {
+    require(source.length > 0 && source.length <= 64 * 1024, "authored source size is outside the probe limit");
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(source.bytes, static_cast<CC_LONG>(source.length), digest);
+    NSMutableString* value = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+    for (unsigned char byte : digest) [value appendFormat:@"%02x", byte];
+    return value;
+}
+
+NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger repeats,
+                                            BOOL metal4First, BOOL (^shouldContinue)(void),
+                                            void (^progress)(NSDictionary*)) {
+    @autoreleasepool {
+        auto started = Clock::now();
+        NSMutableDictionary* report = [@{
+            @"schema": @1, @"scope": @"authored-iphone-metal-library-comparison",
+            @"status": @"running", @"phase": @"prepare", @"repeat": @(repeats),
+            @"metal4_first_requested": @(metal4First), @"completed_samples": @0,
+            @"total_samples": @0, @"source_options": sourceOptions(),
+            @"samples": [NSMutableArray new], @"rejections": [NSMutableArray new],
+            @"async_retention_checks": [NSMutableArray new],
+            @"gpu_execution_verified": @NO, @"metal4_library_verified": @NO,
+            @"metal4_async_adapter_verified": @NO, @"physical_iphone_verified": @NO,
+            @"full_metal4_verified": @NO, @"full_moltenvk_verified": @NO,
+            @"game_rendering_verified": @NO, @"performance_improvement_verified": @NO,
+            @"production_async_lifetime_verified": @NO, @"cold_os_cache_verified": @NO,
+            @"metal4_compiler_created": @NO, @"compiler_setup_ns": @0,
+            @"cancellation_requested": @NO, @"stop_requested": @NO,
+            @"timing_scope": @"wall intervals; async library includes callback and task join; PSOs use legacy APIs",
+            @"cache_scope": @"first observed sample and repeated samples; OS/compiler cache is not reset or controlled",
+            @"stop_scope": @"cooperative boundaries only; issued compiler tasks and GPU work drain on worker without cancellation",
+            @"environment_before": phoneEnvironment()
+        } mutableCopy];
+        @try {
+            try {
+                require(!NSThread.isMainThread, "phone comparison must run off the main thread");
+                require(repeats >= 1 && repeats <= 5, "repeat must be between 1 and 5");
+                report[@"total_samples"] = @(repeats * 4);
+                NSOperatingSystemVersion os = NSProcessInfo.processInfo.operatingSystemVersion;
+                report[@"os_version"] = @[@(os.majorVersion), @(os.minorVersion), @(os.patchVersion)];
+                struct utsname machine{};
+                bool haveMachine = uname(&machine) == 0;
+                NSString* model = haveMachine ? [NSString stringWithUTF8String:machine.machine] : nil;
+                report[@"hardware_model"] = model ?: @"unknown";
+#if TARGET_OS_IOS && !TARGET_OS_SIMULATOR && !TARGET_OS_MACCATALYST
+                BOOL physicalPhone = [model hasPrefix:@"iPhone"];
+#else
+                BOOL physicalPhone = NO;
+#endif
+                report[@"physical_iphone_eligible"] = @(physicalPhone);
+                phoneCheckpoint(report, @"device", shouldContinue, progress);
+                id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+                recordDevices(report, device);
+                if (!physicalPhone) {
+                    report[@"status"] = @"unsupported";
+                    report[@"unsupported_reason"] = @"physical_iphone_required";
+                    throw std::runtime_error("this host comparison requires a physical iPhone");
+                }
+                if (@available(macOS 26.0, iOS 26.0, *)) {
+                    if (!device || ![report[@"device"][@"supports_metal4"] boolValue] ||
+                        ![report[@"device"][@"new_compiler_selector_available"] boolValue]) {
+                        report[@"status"] = @"unsupported";
+                        report[@"unsupported_reason"] = !device ? @"no_default_metal_device" : @"metal4_unavailable";
+                        throw std::runtime_error("a Metal 4 capable device and compiler factory are required");
+                    }
+                } else {
+                    report[@"status"] = @"unsupported";
+                    report[@"unsupported_reason"] = @"os_before_26";
+                    throw std::runtime_error("iOS 26 or later is required");
+                }
+                phoneCheckpoint(report, @"source", shouldContinue, progress);
+                NSError* error = nil;
+                NSData* sourceBytes = [NSData dataWithContentsOfFile:sourcePath options:0 error:&error];
+                report[@"input_diagnostic"] = errorInfo(error);
+                requireObject(sourceBytes, error, "authored source read");
+                NSString* sourceHash = phoneSourceHash(sourceBytes);
+                report[@"source_sha256"] = sourceHash;
+                report[@"source_bytes"] = @(sourceBytes.length);
+                // This entry point runs only the bundled authored fixture, never
+                // a game-derived or externally supplied shader.
+                require([sourceHash isEqualToString:@"e45755523aabf64eb236c01a77ae220e271b4ae6d0eabcf120d9a80cabbada87"],
+                        "bundled authored fixture hash mismatch");
+                NSString* source = [[NSString alloc] initWithData:sourceBytes encoding:NSUTF8StringEncoding];
+                requireObject(source, nil, "authored UTF-8 source");
+                phoneCheckpoint(report, @"compiler", shouldContinue, progress);
+                auto compilerStarted = Clock::now();
+                error = nil;
+                id<MTL4Compiler> compiler = [device newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&error];
+                report[@"compiler_setup_ns"] = @(elapsed(compilerStarted));
+                report[@"compiler_diagnostic"] = errorInfo(error);
+                report[@"metal4_compiler_created"] = @(compiler != nil);
+                requireObject(compiler, error, "Metal 4 compiler creation");
+                checkContinue(shouldContinue);
+                id<MTLCommandQueue> queue = [device newCommandQueue];
+                requireObject(queue, nil, "legacy command queue");
+                NSArray<NSString*>* routes = metal4First
+                    ? @[@"metal4_source", @"legacy_source", @"metal4_async_source", @"legacy_async_source"]
+                    : @[@"legacy_source", @"metal4_source", @"legacy_async_source", @"metal4_async_source"];
+                report[@"base_route_order"] = routes;
+                report[@"order_policy"] = @"rotate four routes by iteration; choose opposite initial backend on the next run";
+                NSMutableArray* samples = report[@"samples"];
+                for (NSUInteger iteration = 0; iteration < repeats; ++iteration) {
+                    for (NSUInteger slot = 0; slot < routes.count; ++slot) {
+                        @autoreleasepool {
+                            NSString* api = routes[(slot + iteration) % routes.count];
+                            bool metal4 = [api hasPrefix:@"metal4_"];
+                            bool asynchronous = [api containsString:@"_async_"];
+                            NSMutableDictionary* sample = [@{
+                                @"api": api, @"iteration": @(iteration + 1), @"slot": @(slot + 1),
+                                @"sample_index": @(samples.count + 1), @"source_sha256": sourceHash,
+                                @"source_options": sourceOptions(), @"status": @"running",
+                                @"cache_observation": iteration ? @"repeated_in_this_run" : @"first_for_this_api_in_this_run",
+                                @"library_operation": asynchronous ? @"async_compile" : @"compile",
+                                @"environment_before": phoneEnvironment()
+                            } mutableCopy];
+                            [samples addObject:sample];
+                            report[@"active_api"] = api;
+                            report[@"active_sample"] = sample[@"sample_index"];
+                            phoneCheckpoint(report, @"library", shouldContinue, progress);
+                            auto libraryStarted = Clock::now();
+                            error = nil;
+                            id<MTLLibrary> library = asynchronous
+                                ? asyncSourceLibrary(device, compiler, source, metal4, &error, sample)
+                                : sourceLibrary(device, compiler, source, metal4, &error);
+                            sample[@"library_ns"] = @(elapsed(libraryStarted));
+                            sample[@"library_diagnostic"] = errorInfo(error);
+                            requireObject(library, error, "phone library creation");
+                            phoneCheckpoint(report, @"gpu_readback", shouldContinue, progress);
+                            runGPU(device, queue, library, sample, shouldContinue);
+                            sample[@"environment_after"] = phoneEnvironment();
+                            sample[@"status"] = @"passed";
+                            report[@"completed_samples"] = @([report[@"completed_samples"] unsignedIntegerValue] + 1);
+                            phoneCheckpoint(report, @"sample_complete", shouldContinue, progress);
+                        }
+                    }
+                }
+                NSString* invalid = [@"#error Intentional_Metal_compile_fixture_rejection\n" stringByAppendingString:source];
+                NSMutableArray* rejections = report[@"rejections"];
+                for (NSString* api in routes) {
+                    report[@"active_api"] = api;
+                    phoneCheckpoint(report, @"invalid_source", shouldContinue, progress);
+                    NSMutableDictionary* rejection = [@{ @"api": api } mutableCopy];
+                    [rejections addObject:rejection];
+                    auto rejectionStarted = Clock::now();
+                    error = nil;
+                    bool metal4 = [api hasPrefix:@"metal4_"];
+                    id<MTLLibrary> library = [api containsString:@"_async_"]
+                        ? asyncSourceLibrary(device, compiler, invalid, metal4, &error, rejection)
+                        : sourceLibrary(device, compiler, invalid, metal4, &error);
+                    [rejection addEntriesFromDictionary:@{
+                        @"library_ns": @(elapsed(rejectionStarted)), @"returned_nil": @(library == nil),
+                        @"error_present": @(error != nil), @"error": errorInfo(error)
+                    }];
+                    require(!library && error, "invalid source did not return nil library and NSError");
+                }
+                for (NSString* api in @[@"legacy_async_source", @"metal4_async_source"]) {
+                    bool metal4 = [api hasPrefix:@"metal4_"];
+                    report[@"active_api"] = api;
+                    phoneCheckpoint(report, @"retained_success", shouldContinue, progress);
+                    checkAsyncRetention(device, compiler, queue, source, metal4, false,
+                                        report[@"async_retention_checks"], shouldContinue);
+                    phoneCheckpoint(report, @"retained_error", shouldContinue, progress);
+                    checkAsyncRetention(device, compiler, queue, invalid, metal4, true,
+                                        report[@"async_retention_checks"], shouldContinue);
+                }
+                checkContinue(shouldContinue);
+                report[@"gpu_execution_verified"] = @YES;
+                report[@"metal4_library_verified"] = @YES;
+                report[@"metal4_async_adapter_verified"] = @YES;
+                report[@"physical_iphone_verified"] = @YES;
+                report[@"status"] = @"passed";
+                report[@"phase"] = @"complete";
+            } catch (const ProbeInterrupted& exception) {
+                report[@"status"] = @"interrupted";
+                report[@"stop_requested"] = @YES;
+                report[@"failure"] = [NSString stringWithUTF8String:exception.what()];
+            } catch (const std::exception& exception) {
+                if (![report[@"status"] isEqual:@"unsupported"]) report[@"status"] = @"failed";
+                report[@"failure"] = [NSString stringWithUTF8String:exception.what()] ?: @"native failure";
+            } catch (...) {
+                report[@"status"] = @"failed";
+                report[@"failure"] = @"unknown native exception";
+            }
+        } @catch (NSException* exception) {
+            report[@"status"] = @"failed";
+            report[@"failure"] = @"Objective-C exception";
+            report[@"exception_name"] = exception.name ?: @"unknown";
+            report[@"exception_reason"] = exception.reason ?: @"";
+        }
+        report[@"environment_after"] = phoneEnvironment();
+        report[@"elapsed_ns"] = @(elapsed(started));
+        if (![report[@"status"] isEqual:@"passed"]) {
+            NSMutableDictionary* unfinished = [report[@"samples"] lastObject];
+            if ([unfinished[@"status"] isEqual:@"running"])
+                unfinished[@"status"] = report[@"status"];
+            // Partial sample success is retained, but cannot promote an
+            // interrupted/unsupported/failed whole run to a verified claim.
+            report[@"gpu_execution_verified"] = @NO;
+            report[@"metal4_library_verified"] = @NO;
+            report[@"metal4_async_adapter_verified"] = @NO;
+            report[@"physical_iphone_verified"] = @NO;
+        }
+        return phoneSnapshot(report);
+    }
+}
+#endif
