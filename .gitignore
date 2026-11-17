@@ -714,3 +714,15 @@
 !/ci/owned-host/tools/ios-owned-game-host/native/TargetFrameLifetime.h
 !/ci/owned-host/tools/ios-owned-game-host/native/TargetFramePacket.h
 !/ci/owned-host/tools/ios-owned-game-host/sdk-test/native/TargetFramePortableTests.cpp
+
+# Authored private shader inventory and recipe-index tools; no input/output data.
+!/pc-aot/experiments/shader-inputs/
+!/pc-aot/experiments/shader-inputs/README.md
+!/pc-aot/experiments/shader-inputs/study.py
+!/pc-aot/experiments/shader-inputs/cache_index.py
+!/pc-aot/experiments/shader-inputs/join.py
+!/pc-aot/experiments/shader-inputs/native_check.py
+!/pc-aot/experiments/shader-inputs/native_oracle.cpp
+!/pc-aot/tests/test_shader_input_study.py
+!/pc-aot/tests/test_shader_cache_index.py
+!/pc-aot/tests/test_shader_input_join.py
