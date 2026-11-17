@@ -28,7 +28,9 @@ workとlockのdropは両方0。100 ms超14件はすべて記録inactive区間の
 
 **残りの分類と次の判別。** 100 ms超14件のうちshaderと重なり5、保存候補windowと重なり1、同thread Present／submission待ちと重なり1、UI pumpと重なり1、50 ms以上のworkとの重なりなし6。保存405.881 msのうちcandidate window320.207 ms、Present157.992 msのうちPresent150.669／submission150.653 ms、UI pump108.595 msのうち85.885 msで、それぞれ内包時間を加算しない。全58 device観測でthermal0／memory warning0、最小headroomはprevious4,304,516,688／current4,504,401,440 bytes。これらを常時のメモリ余裕や未計測CPU処理の不在の証明にはしない。
 
-次は同じbuild13・全5設定OFF・同じ開始save／画質のまま、ホワイトランの同じ魔法を再訪し、保存済み7,792,718 bytesの受理・RESTOREと新規root待ちを比較する。復元確認と長いroot待ちの消失は既知状態の再利用と整合するが、入力identityの一致を証明するものではない。初遭遇を前倒しする対象・機会は別に検討する。なお同じ状態で長いroot生成が反復するなら、module／conversion configurationのmiss区別だけを追加してからcache key／prewarm対象を判断する。今回の証拠だけで音声lock除去、MSL精度低下、cache照合条件の緩和、設定の一律ON、native leaf置換は行わない。新build・署名・端末設定変更は実施せず、ゴール③の改善採否は未完了。
+同じbuild13・全5設定OFF・同じ開始save／画質での再訪を最初に依頼したが、本人から再現困難との報告があったため、同一戦闘の再現を調査の進行条件にはしない。現buildと設定で通常プレイし、目立つ停止の後にゲームのシステムメニューで一時停止して、アプリを完全終了せず手動診断を送る方式へ切り替える。場所・操作は覚えている範囲で補足し、場面情報がなくても測定区間の分類を進める。「再現できない」が同じ操作で停止しなかった意味か、同じ場面を作れない意味かは区別し、現時点で改善・cache hitの証拠とは扱わない。
+
+保存済み7,792,718 bytesの受理・RESTOREと新規root待ちは次の通常プレイでも照合できる。復元確認と長いroot待ちの消失は既知状態の再利用と整合するが、入力identityの一致を証明するものではない。初遭遇を前倒しする対象・機会は別に検討する。反復missの判定が必要になった場合は、module／conversion configurationのmiss区別だけを追加してからcache key／prewarm対象を判断する。今回の証拠だけで音声lock除去、MSL精度低下、cache照合条件の緩和、設定の一律ON、native leaf置換は行わない。新build・署名・端末設定変更は実施せず、ゴール③の改善採否は未完了。
 
 ## 2026-11-16 build13のApple検証と実機比較の準備
 
