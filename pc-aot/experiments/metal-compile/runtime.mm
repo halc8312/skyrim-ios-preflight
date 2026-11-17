@@ -23,6 +23,10 @@
 #error This fixture supports only the macOS or iOS SDK
 #endif
 
+#if TARGET_OS_SIMULATOR && !defined(SKYRIM_METAL_RUNTIME_NO_MAIN)
+#error The simulator supports only the callable unsupported UI-preview path
+#endif
+
 #include <array>
 #include <chrono>
 #include <condition_variable>
@@ -64,9 +68,12 @@ static NSDictionary* deviceInfo(id<MTLDevice> device) {
         @"supports_apple7": @NO, @"supports_apple8": @NO, @"supports_apple9": @NO,
         @"architecture_query_status": device ? @"unavailable_os" : @"no_device",
         @"architecture_name": NSNull.null,
-        @"new_compiler_selector_available": @(device && [device respondsToSelector:@selector(newCompilerWithDescriptor:error:)])
+        @"new_compiler_selector_available": @NO
     } mutableCopy];
     if (!device) return info;
+#if !TARGET_OS_SIMULATOR
+    info[@"new_compiler_selector_available"] = @([device respondsToSelector:@selector(newCompilerWithDescriptor:error:)]);
+#endif
     if (@available(macOS 14.0, iOS 17.0, *)) {
         @try {
             NSString* architecture = device.architecture.name;
@@ -84,10 +91,12 @@ static NSDictionary* deviceInfo(id<MTLDevice> device) {
     info[@"supports_apple7"] = @([device supportsFamily:MTLGPUFamilyApple7]);
     info[@"supports_apple8"] = @([device supportsFamily:MTLGPUFamilyApple8]);
     info[@"supports_apple9"] = @([device supportsFamily:MTLGPUFamilyApple9]);
+#if !TARGET_OS_SIMULATOR
     if (@available(macOS 26.0, iOS 26.0, *)) {
         info[@"metal4_family_queried"] = @YES;
         info[@"supports_metal4"] = @([device supportsFamily:MTLGPUFamilyMetal4]);
     }
+#endif
     return info;
 }
 
@@ -108,10 +117,12 @@ static void recordDevices(NSMutableDictionary* report, id<MTLDevice> device) {
     report[@"available_device_count"] = @(available.count);
 }
 
+#if !TARGET_OS_SIMULATOR
 static NSDictionary* errorInfo(NSError* error) {
     return error ? @{ @"domain": error.domain, @"code": @(error.code),
                      @"description": error.localizedDescription ?: @"" } : @{};
 }
+#endif
 
 static void requireObject(id object, NSError* error, const char* operation) {
     if (object) return; // A non-nil result may carry a compiler warning.
@@ -127,6 +138,10 @@ static NSDictionary* sourceOptions() {
               @"function_constant": @{ @"index": @0, @"type": @"uint", @"value": @7 } };
 }
 
+// The simulator SDK intentionally omits Metal 4 compiler declarations. Its UI
+// preview still uses the real report/stop/unsupported path below, but cannot
+// compile or execute these comparison routes.
+#if !TARGET_OS_SIMULATOR
 static MTLCompileOptions* compileOptions() {
     MTLCompileOptions* options = [MTLCompileOptions new];
     options.languageVersion = MTLLanguageVersion2_4;
@@ -482,6 +497,7 @@ static void checkAsyncRetention(id<MTLDevice> device, id<MTL4Compiler> compiler,
         runGPU(device, queue, library, observation, shouldContinue);
     }
 }
+#endif
 
 #ifndef SKYRIM_METAL_RUNTIME_NO_MAIN
 static void writeReport(NSDictionary* report, NSString* path) {
@@ -739,6 +755,7 @@ static void phoneCheckpoint(NSMutableDictionary* report, NSString* phase,
     checkContinue(shouldContinue);
 }
 
+#if !TARGET_OS_SIMULATOR
 static NSString* phoneSourceHash(NSData* source) {
     require(source.length > 0 && source.length <= 64 * 1024, "authored source size is outside the probe limit");
     unsigned char digest[CC_SHA256_DIGEST_LENGTH];
@@ -747,11 +764,15 @@ static NSString* phoneSourceHash(NSData* source) {
     for (unsigned char byte : digest) [value appendFormat:@"%02x", byte];
     return value;
 }
+#endif
 
 NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger repeats,
                                             BOOL metal4First, BOOL (^shouldContinue)(void),
                                             void (^progress)(NSDictionary*)) {
     @autoreleasepool {
+#if TARGET_OS_SIMULATOR
+        (void)sourcePath; // The unsupported preview never reads shader inputs.
+#endif
         auto started = Clock::now();
         NSMutableDictionary* report = [@{
             @"schema": @1, @"scope": @"authored-iphone-metal-library-comparison",
@@ -797,6 +818,7 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                     report[@"unsupported_reason"] = @"physical_iphone_required";
                     throw std::runtime_error("this host comparison requires a physical iPhone");
                 }
+#if !TARGET_OS_SIMULATOR
                 if (@available(macOS 26.0, iOS 26.0, *)) {
                     if (!device || ![report[@"device"][@"supports_metal4"] boolValue] ||
                         ![report[@"device"][@"new_compiler_selector_available"] boolValue]) {
@@ -911,6 +933,7 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                 report[@"physical_iphone_verified"] = @YES;
                 report[@"status"] = @"passed";
                 report[@"phase"] = @"complete";
+#endif
             } catch (const ProbeInterrupted& exception) {
                 report[@"status"] = @"interrupted";
                 report[@"stop_requested"] = @YES;
