@@ -23,6 +23,13 @@ and the existing DXVK scheduling remain on their current paths.
   SDKs without warnings; that probe was not executed.
 - The available Apple Paravirtual device does not provide the required Metal 4
   capability. A capable Mac/iPhone is still missing for the relevant runtime tests.
+- The separate UIKit comparison host now builds for a physical iPhone and the
+  simulator with SDK 26.5 (phone run 4, public `9af993d`, main `3447be4`). Its 56
+  relevant controls and simulator unsupported-result/save/share UI checks passed.
+  The separate device IPA has since passed private signing verification with
+  its dedicated Apple profile and existing certificate. Installation, physical
+  Metal 4 execution and performance remain unverified. This host reuses the
+  authored library boundary, not MoltenVK itself.
 
 Upstream source references below are all at the built revision:
 [shader implementation](https://github.com/KhronosGroup/MoltenVK/blob/458870543b9bcf6b0edd6f90aaa776707b310d96/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm),
@@ -165,10 +172,10 @@ update; the rejected GPU admission changes remain excluded.
 
 On a Metal 4 capable Mac, the existing `runtime.py --async-library` comparison
 can exercise the actual task and legacy PSOs. On iPhone, the Python/CLI runner
-cannot simply be installed: a small signed UIKit host is still needed. That host
-should call the same authored comparison after the UI is responsive, retain the
-per-request objects, and save the resulting JSON in its own sandbox. Keep its
-bundle and storage separate from Skyrim, with no game files or save access.
+cannot simply be installed. The new, separately signed UIKit host calls the
+same authored comparison after the UI is responsive, retains per-request objects,
+and saves JSON in its own sandbox. Its bundle and storage remain separate from
+Skyrim, with no game files or save access. Installation is the next device step.
 
 The iPhone check must record device capability and OS before submission, preserve
 unsupported/failure outcomes, and verify the legacy and Metal 4 routes against
@@ -177,8 +184,15 @@ this gate. Compare timing only after controlling source/options, request order,
 cache history and thermal state; a faster warm run is not proof of a new backend
 speedup. Do not turn a blocking task join into a timeout or cancellation claim.
 
-The isolated UIKit host is now implemented in `ios/main.mm` with a callable
-comparison API and atomic result store. Its new Apple SDK build, simulator UI
-review, dedicated-device signing and physical execution are pending. It was not
-built or installed during the earlier overnight experiments; SDK/simulator
-results will not establish Metal 4 device performance.
+The isolated UIKit host is implemented in `ios/main.mm` with a callable
+comparison API and atomic result store. Apple SDK builds, simulator UI review
+and dedicated-device signing verification have passed. The private signed IPA
+is 74,013 bytes, with evidence under
+`private/metal-probe-signing/run-20261117T233201Z-d9d6ec7f85/`.
+Private OTA delivery is verified: page, manifest and full IPA returned 200 over
+HTTPS; the delivered hash matched the signed IPA and unauthenticated access
+returned 404. The three existing routes were preserved and Funnel remains off.
+The user has received the installation link; phone installation and execution
+are pending. This later work is separate from the earlier overnight experiments.
+SDK, simulator, signing and delivery results do not establish Metal 4 device
+performance.

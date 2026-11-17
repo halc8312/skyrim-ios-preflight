@@ -1,11 +1,86 @@
 # Metal compilation experiments
 
 This isolated experiment compares ways to prepare an **authored** shader library.
-It is not connected to the application, MoltenVK patches, or shader settings.
+It is not connected to the Skyrim application, MoltenVK patches, or shader settings.
 The manual `pc2011-metal-compile-checks` workflow runs authored checks only.
 The separate `pc2011-metal-legacy-checks` workflow runs archive and option-token
 boundaries without requesting a Metal 4 runtime. Neither workflow builds the app.
 The tracked experiment contains no Skyrim shaders or game data.
+
+## Separate iPhone comparison app
+
+The `pc2011-metal-phone-probe` manual workflow builds an isolated UIKit app,
+`MetalProbe` (`org.skyrimios.metalprobe`, iOS 26 or later). It compares the legacy
+and Metal 4 library APIs, synchronously and asynchronously, using this same
+authored fixture and the same legacy render/compute pipeline path. Each of the
+four routes runs three times in a rotating order; the first backend is selectable.
+All 64 render words and 16 compute words must match before a sample is accepted.
+This tests a library preparation boundary, not Skyrim frame rate or a complete
+Metal 4 renderer. It does not access the game, saves, accounts, or network.
+
+The app records source/build identity, individual timing intervals, errors,
+memory headroom and thermal state. It saves immutable JSON snapshots in its own
+container and exposes the latest result through the system share sheet. An
+unfinished saved run is presented as interrupted after relaunch. Stop and
+backgrounding request a stop at the next operation boundary; already issued
+compiler/GPU work remains owned until completion on the worker. This is not
+Metal cancellation or a hard time limit, and the UI never joins that worker.
+
+On an Apple host with the iOS 26 SDK, `scripts/build-metal-probe-ios.sh` creates
+a fresh unsigned device IPA and build evidence under `local/metal-probe-ios/`.
+An explicit `--simulator` produces a separate simulator app archive. Device and
+simulator Mach-O platforms are checked independently. The manual CI also runs
+the native host/store controls, launches the simulator UI, checks that a new
+result from the current source is explicitly unsupported, and captures the
+initial, result, restored and sharing screens for visual review. Simulator UI
+success is never accepted as physical iPhone or Metal 4 execution evidence.
+
+The dedicated `org.skyrimios.metalprobe` profile is now registered with Apple,
+and a private IPA has been signed with the existing certificate for the registered
+iPhone. No additional entitlements were requested beyond development identity.
+The workflow itself neither signs nor installs the app, and the Skyrim identity
+is never substituted. On the phone, start with the legacy-first
+order, share the saved JSON, then repeat with Metal-4-first. The OS/compiler cache
+is not cleared, so first-observed and repeated samples are reported separately
+without claiming a cold cache or a measured game performance improvement.
+
+Phone workflow run 4 (`9af993d`, 2026-11-18 JST) passed all 56 relevant test
+methods on Apple hardware, including four native entry controls and ten store
+cases in normal and ASan/UBSan builds. Xcode 26.6 / SDK 26.5 built the ARM64
+device and simulator products without compiler warnings. The initial, explicit
+unsupported, restored and share-sheet screens were visually reviewed on the
+iPhone 17 Pro Max simulator. Device sources matched main `3447be4` byte for byte.
+The unsigned device IPA is 59,756 bytes. Its separately signed private copy is
+74,013 bytes (SHA-256
+`4199fb2d503c55c12dd58534c96a0e25dec8f988046f51f685780136a928b2bc`).
+Apple CMS/DER/profile verification, certificate and registered-device matching,
+49 code pages, three resources, append-only changes against the original app,
+and temporary-key cleanup passed. Evidence remains in
+`private/metal-probe-signing/run-20261117T233201Z-d9d6ec7f85/`.
+Phone acceptance/installation, actual Metal 4 GPU output and performance remain
+unverified; signing and simulator UI evidence do not satisfy those checks.
+
+`scripts/sign-metal-probe-ipa.py` is a local WSL adapter for the existing reviewed
+signer and Apple-identity verification tools. It accepts only the four-file
+authored device app, its exact input hash, a matching registered-device profile,
+and the existing certificate/key. It does not log in, unseal a key, create a
+certificate, install an app or substitute the game's bundle identity. Output
+must be a new path under `private/metal-probe-signing/`; a cryptographic verification
+failure cannot publish an IPA. Its authored controls are separate from the
+completed private signing verification above. The verification helpers require
+a modern `cryptography` version exposing `not_valid_before_utc`: WSL 41.0.7
+failed this requirement, while private isolated Linux dependencies at 50.0.2
+passed without modifying the original helpers. The launcher’s sibling-import
+setup was corrected before key use; the subsequent dependency-version failure
+is retained in the private signing run. The allowlisted `/metal-probe` OTA product/page
+is separately deployed. Real private HTTPS page/manifest/package requests returned
+200, the complete delivered IPA matched the signed hash, and unauthenticated
+requests returned 404. All three pre-existing routes were unchanged and Funnel
+remains disabled. Existing light/dark visual evidence was reused; a fresh live
+screenshot after the version/size substitution was not obtained. The installation
+link was sent to the user; phone acceptance, installation and measurement remain
+pending. No link token, account or device identifier is recorded in this document.
+The live Skyrim updater was not replaced.
 
 The immediate question is whether a library produced by `MTL4Compiler` or by an
 offline Windows compiler can feed the existing Metal function-specialization,
@@ -271,12 +346,13 @@ Its explicit `--simulator` mode creates a separate preview app. The manual
 `pc2011-metal-phone-probe` workflow validates native boundaries and atomic record
 storage, builds both targets and captures simulator ready/result/restore/share
 screens. The simulator must record `unsupported`, never a Metal 4 GPU pass.
-An existing matching registered-device profile is needed separately for iPhone
-installation; the Skyrim app's bundle/profile must not be substituted.
+A matching dedicated registered-device profile is now available and the private
+device IPA has passed signing verification, as recorded above. The Skyrim app's
+bundle/profile is not substituted.
 
-As of this implementation commit, Apple builds, UI review, signing and physical
-iPhone execution of this new host are pending. The overnight Mac results below
-are earlier evidence for shared components, not a pass for this new app.
+Apple builds, simulator UI review and private signing are complete. Installation
+and physical iPhone execution remain pending. The overnight Mac results below
+are earlier evidence for shared components, not a physical-phone pass for this app.
 
 ## Verification status
 

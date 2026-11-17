@@ -20,8 +20,27 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 
+# Only these two separately signed applications may use this service. A product
+# selects its own route, resource name and reviewed page; configuration cannot
+# turn one application's link into an update for the other.
+PRODUCTS = {
+    "org.skyrimios.pc2011": {
+        "path": "/skyrim-ios", "filename": "SkyrimIOS.ipa",
+        "title": "SkyrimIOS", "template": "private_ota.html.in",
+    },
+    "org.skyrimios.metalprobe": {
+        "path": "/metal-probe", "filename": "MetalProbe.ipa",
+        "title": "Metal比較", "template": "metal_probe_ota.html.in",
+    },
+}
+
+
 class Package:
     def __init__(self, config: dict):
+        product = PRODUCTS.get(config.get("bundle_id"))
+        if product is None:
+            raise ValueError("Unexpected application identity")
+        self.filename = product["filename"]
         self.ipa = Path(config["ipa"]).resolve(strict=True)
         self.signature = self.ipa.stat()
         self.sha256 = config["sha256"]
@@ -38,7 +57,7 @@ class Package:
                 base.password or base.query or base.fragment or base.port):
             raise ValueError("Use the private Tailscale HTTPS origin on port 443")
         self.base_path = base.path.rstrip("/")
-        if self.base_path != "/skyrim-ios":
+        if self.base_path != product["path"]:
             raise ValueError("Unexpected private route")
         self.origin = f"https://{base.netloc}"
         self.route = f"/{self.token}/"
@@ -75,13 +94,13 @@ class Package:
         if profile["ExpirationDate"].replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
             raise ValueError("Provisioning profile has expired")
         self.manifest = plistlib.dumps({"items": [{
-            "assets": [{"kind": "software-package", "url": self.url + "SkyrimIOS.ipa"}],
+            "assets": [{"kind": "software-package", "url": self.url + self.filename}],
             "metadata": {"bundle-identifier": self.bundle, "bundle-version": self.build,
-                         "kind": "software", "title": "SkyrimIOS"},
+                         "kind": "software", "title": product["title"]},
         }]}, fmt=plistlib.FMT_XML)
         install_url = "itms-services://?action=download-manifest&url=" + quote(
             self.url + "manifest.plist", safe="")
-        template = Path(__file__).with_name("private_ota.html.in").read_text(encoding="utf-8")
+        template = Path(__file__).with_name(product["template"]).read_text(encoding="utf-8")
         replacements = {"@@BUILD@@": self.build,
                         "@@SIZE@@": f"{self.signature.st_size / 1_000_000:.1f}",
                         "@@INSTALL@@": install_url}
@@ -161,14 +180,14 @@ def handler_for(package: Package):
             if route is None or parsed.query or parsed.fragment:
                 return self.empty(404)
             resource = path[len(route):]
-            if resource not in ("", "manifest.plist", "SkyrimIOS.ipa", "status.json"):
+            if resource not in ("", "manifest.plist", package.filename, "status.json"):
                 return self.empty(404)
             if time.time() >= package.expires:
                 return self.empty(410)
             try:
                 if not package.unchanged():
                     return self.empty(503)
-                if resource == "SkyrimIOS.ipa":
+                if resource == package.filename:
                     try:
                         start, end, partial = byte_range(self.headers.get("Range"),
                                                          package.signature.st_size)

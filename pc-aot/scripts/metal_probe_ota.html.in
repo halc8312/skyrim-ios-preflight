@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Metal比較をインストール</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f5f8;color:#172030;font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:28px 22px 40px;min-height:100svh}main{max-width:470px;margin:4vh auto}.brand{font-size:12px;font-weight:650;letter-spacing:.15em;color:#526479;margin-bottom:30px}h1{font-size:34px;line-height:1.4;letter-spacing:-.035em;font-weight:700;margin:0 0 18px}p{margin:0 0 22px;color:#536072}.meta{display:flex;flex-wrap:wrap;gap:8px;margin:25px 0}.meta span{border:1px solid #cfd7e1;border-radius:7px;padding:4px 10px;color:#445368;font-size:13px}.note{border-radius:12px;background:#e5edf8;padding:17px 19px;margin:26px 0;color:#2e4769;font-size:14px}.steps{padding:0;list-style:none;margin:28px 0}.steps li{display:flex;align-items:baseline;gap:13px;margin:18px 0;color:#3b4b60}.number{font-size:12px;line-height:26px;border:1px solid #b7c5d5;border-radius:50%;text-align:center;flex:0 0 28px;color:#486382}.install{display:block;padding:16px 12px;border-radius:12px;background:#2159ab;color:#fff;text-align:center;text-decoration:none;font-weight:650;min-height:56px}.install:focus-visible{outline:3px solid #183966;outline-offset:4px}.fine{font-size:13px;line-height:1.8;margin-top:20px}footer{margin-top:30px;padding-top:20px;border-top:1px solid #d4dce6;color:#607186;font-size:12px}@media(prefers-color-scheme:dark){body{background:#101923;color:#f0f4fa}.brand,p,footer{color:#acbbcd}.meta span{color:#c2cfdf;border-color:#3b4c61}.note{background:#20314a;color:#ceddf3}.steps li{color:#c3cedd}.number{border-color:#56708e;color:#bbcde5}.install{background:#97beff;color:#112b50}.install:focus-visible{outline-color:#d5e5ff}footer{border-color:#33465b}}@media(max-width:360px){body{padding:22px 18px 32px}h1{font-size:30px}.brand{margin-bottom:24px}}
+</style>
+<main>
+<div class="brand">METAL PROBE</div>
+<h1>Metal比較を<br>インストール</h1>
+<p>iPhoneでシェーダーの準備時間と描画結果を比較する検証アプリです。</p>
+<div class="meta"><span>Build @@BUILD@@</span><span>@@SIZE@@ MB</span><span>iOS 26以上</span></div>
+<div class="note">Skyrimとは別にインストールされます。ゲーム本体やセーブは変更しません。実際のゲームが速くなるかは、今後の検証で確認します。</div>
+<ol class="steps">
+<li><span class="number">1</span><span>Tailscaleを接続したまま、Safariでこのページを開く</span></li>
+<li><span class="number">2</span><span>下のボタンを押し、iPhoneの確認画面でインストールを許可</span></li>
+<li><span class="number">3</span><span>完了後に「Metal Probe」を開き、「比較を開始」を押す</span></li>
+</ol>
+<a class="install" href="@@INSTALL@@">検証アプリをインストール</a>
+<p class="fine">測定中は画面を開いたままお待ちください。完了したら「結果を共有」から、このチャットへ結果ファイルを送れます。</p>
+<footer>非公開の端末テスト · あなたのPCから配布</footer>
+</main>
+</html>

@@ -808,3 +808,11 @@
 !/pc-aot/tests/test_metal_probe_ios_build.py
 !/pc-aot/tests/test_metal_probe_store.py
 !/pc-aot/tests/test_metal_probe_ui_driver.py
+
+!/pc-aot/scripts/metal_probe_ota.html.in
+
+!/pc-aot/scripts/sign-metal-probe-ipa.py
+
+!/pc-aot/tests/test_private_ota_products.py
+
+!/pc-aot/tests/test_metal_probe_signing.py
