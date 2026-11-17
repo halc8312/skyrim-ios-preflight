@@ -36,6 +36,7 @@
 #include "performance_metrics.h"
 #include "prefetch_gate.h"
 #include "graphics_flights.h"
+#include "graphics_policy.h"
 
 using namespace std::chrono_literals;
 using State = dxvk::DxvkGraphicsPipelineStateInfo;
@@ -186,7 +187,13 @@ struct Driver {
     unsigned validated(unsigned id) { std::lock_guard<std::mutex> lock(mutex); return validations[id]; }
 };
 
+static std::atomic<unsigned> observed_clock_reads{0};
+static uint64_t observed_now_ns() { ++observed_clock_reads; return skyrim_perf_now_ns(); }
+#define skyrim_perf_now_ns observed_now_ns
 // ACTUAL_DXVK_METHODS
+#undef skyrim_perf_now_ns
+
+static bool exact_mode() { return skyrim::exactGraphicsStateEnabled(); }
 
 void compare_ready_and_cold_progress() {
     Driver driver, other_driver;
@@ -211,10 +218,10 @@ void compare_ready_and_cold_progress() {
     auto packed_variant = std::async(std::launch::async, [&] { return pipeline.get(full_state_variant, &pass); });
     auto pass_variant = std::async(std::launch::async, [&] { return pipeline.get(cold, &same_format_pass); });
     bool progress, ordered;
-#if PROTOTYPE
+    if (exact_mode()) {
     progress = finished(different) && finished(packed_variant) && finished(pass_variant);
     ordered = progress;
-#else
+    } else {
     // The failed try_lock notification proves each cold request has reached the
     // occupied compiler mutex. No elapsed-time assertion establishes blocking.
     ordered = driver.wait_for_waiters(distinct, &pass, 1)
@@ -223,7 +230,7 @@ void compare_ready_and_cold_progress() {
     progress = driver.count(distinct, &pass) != 0
         || driver.count(full_state_variant, &pass) != 0
         || driver.count(cold, &same_format_pass) != 0;
-#endif
+    }
     auto duplicate_draw = std::async(std::launch::async, [&] { return pipeline.get(cold, &pass); });
     auto duplicate_prefetch = std::async(std::launch::async, [&] { pipeline.build(cold, &pass); });
     const bool duplicates_waited = driver.wait_for_waiters(cold, &pass, 2);
@@ -235,7 +242,7 @@ void compare_ready_and_cold_progress() {
     const auto ready_handle = ready.get(), independent_handle = independent.get();
     const auto different_handle = different.get(), packed_handle = packed_variant.get(), pass_handle = pass_variant.get();
     assert(owner_entered && ready_done && independent_done && ordered && duplicates_waited);
-    assert(progress == bool(PROTOTYPE));
+    assert(progress == exact_mode());
     assert(ready_handle == warm_handle && independent_handle != VK_NULL_HANDLE);
     assert(different_handle && packed_handle && pass_handle && duplicate_handle);
     assert(driver.count(cold, &pass) == 1 && other_driver.count(cold, &pass) == 1);
@@ -243,6 +250,15 @@ void compare_ready_and_cold_progress() {
     assert(driver.count(cold, &same_format_pass) == 1 && driver.written(1) == 1);
     assert(driver.written(2) == 2); // Only the two distinct draw-created variants.
     assert(manager.gate.stats().required == 0);
+    SkyrimPerfWindow serial{}, exact{};
+    skyrim_perf_take(SKYRIM_PERF_GRAPHICS_COMPILE_WAIT, &serial);
+    skyrim_perf_take(SKYRIM_PERF_GRAPHICS_STATE_WAIT, &exact);
+    uint64_t serial_count = 0, exact_count = 0;
+    for (auto count : serial.buckets) serial_count += count;
+    for (auto count : exact.buckets) exact_count += count;
+    assert(exact_mode() ? (exact_count >= 2 && serial_count == 0) : (serial_count >= 2 && exact_count == 0));
+    assert(serial.failures == 0 && exact.failures == 0);
+    std::puts("wait_kind_split=PASS");
     std::puts("ready_and_independent_owner=PASS");
     std::puts("same_identity_single_generation=PASS");
     std::printf("different_state_progress=%d\n", int(progress));
@@ -356,7 +372,6 @@ void concurrent_eight_threads() {
     std::puts("eight_threads=PASS");
 }
 
-#if PROTOTYPE
 void publication_failure_cleanup() {
     Driver driver; Manager manager(true); TestPipeline pipeline(driver, manager); Pass pass;
     const auto input = state(31);
@@ -452,20 +467,44 @@ void shutdown_releases_admission() {
     assert(manager.gate.stats().stopping && manager.gate.stats().required == 0 && manager.gate.stats().expired == 0);
     std::puts("shutdown_releases_admission=PASS");
 }
-#endif
+void hot_ready_clock_free() {
+    Driver driver; Manager manager(true); TestPipeline pipeline(driver, manager); Pass pass;
+    const auto input = state(501);
+    const auto handle = pipeline.get(input, &pass);
+    const unsigned before = observed_clock_reads;
+    for (unsigned index = 0; index < 1000; ++index) {
+        assert(pipeline.get(input, &pass) == handle);
+        pipeline.build(input, &pass);
+    }
+    assert(observed_clock_reads == before && manager.gate.stats().required == 0);
+    assert(driver.count(input, &pass) == 1);
+    std::puts("hot_ready_clock_free=PASS");
+}
 
-int main() {
+int main(int argc, char** argv) {
+    const char* value = std::getenv("SKYRIM_EXACT_GRAPHICS_STATE");
+    const bool expected = value && std::strcmp(value, "1") == 0;
+    errno = EAGAIN;
+    Manager first;
+    assert(errno == EAGAIN && first.iosExactGraphicsState() == expected);
+    assert(setenv("SKYRIM_EXACT_GRAPHICS_STATE", expected ? "0" : "1", 1) == 0);
+    Manager later;
+    assert(later.iosExactGraphicsState() == expected && exact_mode() == expected);
+    std::puts("startup_policy_latched=PASS");
+    std::printf("policy_state=%d\n", int(expected));
+    if (argc == 2 && std::strcmp(argv[1], "--policy-only") == 0) return 0;
     compare_ready_and_cold_progress();
+    hot_ready_clock_free();
     exact_state_and_pass_identity();
     failures_and_retry();
     reentrant_callback();
     concurrent_eight_threads();
-#if PROTOTYPE
-    publication_failure_cleanup();
-    parked_prefetch_owns_no_flight();
-    admitted_work_not_preempted();
-    shutdown_releases_admission();
-#endif
+    if (exact_mode()) {
+        publication_failure_cleanup();
+        parked_prefetch_owns_no_flight();
+        admitted_work_not_preempted();
+        shutdown_releases_admission();
+    }
     assert(skyrim_perf_context_get().role == 0);
     std::puts("semantics=PASS");
 }

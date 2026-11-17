@@ -94,8 +94,8 @@ PY
   run_validation python3 -m unittest discover -s tests -p 'test_pipeline_cache.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_pipeline_cache_namespace.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_pipeline_locking.py' -v
-  # Isolated graphics coordination prototype: compile and exercise on Apple
-  # without enabling it in the app or changing the production cache identity.
+  # Graphics coordination comparison: exercise both routes on Apple. The app
+  # keeps the original route until its startup-only comparison option is ON.
   run_validation python3 -m unittest discover -s tests -p 'test_graphics_state_flights.py' -v
   run_validation env PYTHONPATH=tests SKYRIM_TEST_SANITIZERS=1 python3 -m unittest \
     test_graphics_state_flights.GraphicsStateFlightNativeTests.test_actual_state_lookup_publication_admission_and_failures -v

@@ -210,6 +210,21 @@ class ReceiverTests(unittest.TestCase):
             self.receive(self.encoded(candidate))
         self.assert_no_published_or_partial()
 
+    def test_exact_state_policy_and_wait_are_accepted_without_private_fields(self):
+        row = timing().replace('kind=frame_gap', 'kind=graphics_state_wait')
+        context = row.replace('IOS_TIMING ', 'IOS_TIMING_CONTEXT ') + ' role=1 source=0 result=1'
+        candidate = copy.deepcopy(self.bundle)
+        candidate['sessions'][0]['lines'] = [row, context,
+            'IOS_SHADER_OPTION option=5 enabled=1',
+            'IOS_GRAPHICS_POLICY schema=1 exact_state=1 wait_scope=1']
+        self.schema.bundle(self.encoded(candidate))
+        for bad in (context.replace('source=0', 'source=1'),
+                    'IOS_SHADER_OPTION option=6 enabled=1',
+                    'IOS_GRAPHICS_POLICY schema=1 exact_state=1 wait_scope=0',
+                    'IOS_GRAPHICS_POLICY schema=1 exact_state=1 wait_scope=1 key=private'):
+            with self.subTest(row=bad), self.assertRaises(d.Rejected):
+                self.schema.line(bad)
+
     def test_two_session_line_and_byte_limits_are_not_silently_truncated(self):
         candidate = copy.deepcopy(self.bundle)
         candidate['sessions'].append(copy.deepcopy(candidate['sessions'][0]))

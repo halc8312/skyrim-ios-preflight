@@ -1,10 +1,12 @@
 /* Authored host-only inputs. Does not load or execute a game. */
 #include "mobile_core.h"
+#include "shader_options.h"
 #include <assert.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 static void *producer(void *arg) {
@@ -92,6 +94,16 @@ static void both_hands(void) {
     skyrim_mobile_clear();
 }
 int main(void) {
+    /* Append-only startup preference: missing old dictionaries remain OFF.
+     * Existing five IDs keep their persisted meaning. */
+    assert(SKYRIM_SHADER_REUSE == 4 && SKYRIM_SHADER_EXACT_STATE == 5);
+    assert(SKYRIM_SHADER_OPTION_COUNT == 6);
+    assert(!strcmp(skyrim_shader_option_key(5), "shaderExactState"));
+    assert(!strcmp(skyrim_shader_option_environment(5), "SKYRIM_EXACT_GRAPHICS_STATE"));
+    assert(!skyrim_shader_option_key(6) && !skyrim_shader_option_environment(UINT32_MAX));
+    assert(skyrim_shader_option_enabled(1));
+    assert(!skyrim_shader_option_enabled(0) && !skyrim_shader_option_enabled(NAN));
+    assert(!skyrim_shader_option_enabled(2) && !skyrim_shader_option_enabled(-1));
     int16_t x,y,a,b;
     skyrim_mobile_stick(0,.05f,.1f,&x,&y);assert(!x&&!y);
     skyrim_mobile_stick(1,1,.1f,&x,&y);assert(x>23000&&x<23200&&x==y);

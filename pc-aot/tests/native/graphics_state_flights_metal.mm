@@ -39,6 +39,7 @@
 #include "performance_metrics.h"
 #include "prefetch_gate.h"
 #include "graphics_flights.h"
+#include "graphics_policy.h"
 
 using namespace std::chrono_literals;
 using State = dxvk::DxvkGraphicsPipelineStateInfo;
@@ -257,6 +258,8 @@ struct Driver {
 
 // ACTUAL_DXVK_METHODS
 
+static bool exact_mode() { return skyrim::exactGraphicsStateEnabled(); }
+
 static void render(NSMutableArray* results, NSString* name, MetalContext& metal,
                    Driver& driver, VkPipeline handle, unsigned expected_token) {
     @autoreleasepool {
@@ -324,16 +327,16 @@ static bool coordination_cases(MetalContext& metal, Totals& totals, NSMutableArr
         auto packed_variant = std::async(std::launch::async, [&] { @autoreleasepool { return pipeline.get(packed, &pass); } });
         auto pass_variant = std::async(std::launch::async, [&] { @autoreleasepool { return pipeline.get(cold, &same_format_pass); } });
         bool ordered;
-#if PROTOTYPE
+        if (exact_mode()) {
         progress = finished(different) && finished(packed_variant) && finished(pass_variant);
         ordered = progress;
-#else
+        } else {
         ordered = driver.wait_for_waiters(distinct, &pass, 1)
             && driver.wait_for_waiters(packed, &pass, 1)
             && driver.wait_for_waiters(cold, &same_format_pass, 1);
         progress = driver.count(distinct, &pass) != 0 || driver.count(packed, &pass) != 0
             || driver.count(cold, &same_format_pass) != 0;
-#endif
+        }
         auto duplicate = std::async(std::launch::async, [&] { @autoreleasepool { return pipeline.get(cold, &pass); } });
         auto prefetch = std::async(std::launch::async, [&] { @autoreleasepool { pipeline.build(cold, &pass); } });
         const bool waited = driver.wait_for_waiters(cold, &pass, 2);
@@ -341,7 +344,7 @@ static bool coordination_cases(MetalContext& metal, Totals& totals, NSMutableArr
         owner.get(); prefetch.get();
         const auto cold_handle = duplicate.get(), ready_handle = ready.get(), independent_handle = independent.get();
         const auto different_handle = different.get(), packed_handle = packed_variant.get(), pass_handle = pass_variant.get();
-        require(entered && ready_done && independent_done && ordered && waited && progress == bool(PROTOTYPE),
+        require(entered && ready_done && independent_done && ordered && waited && progress == exact_mode(),
                 "Actual DXVK graphics coordination ordering failed");
         require(ready_handle == warm_handle && cold_handle == driver.latest(cold, &pass), "Cached handle changed");
         require(driver.count(cold, &pass) == 1 && other_driver.count(cold, &pass) == 1, "Same identity compiled twice");
@@ -398,7 +401,7 @@ static bool publication_case(MetalContext& metal, Totals& totals, NSMutableArray
     {
         TestPipeline pipeline(driver, manager);
         VkPipeline handle;
-#if PROTOTYPE
+        if (exact_mode()) {
         driver.allocation_failures[31] = 1; driver.destroy_gate = &destroying;
         auto owner = std::async(std::launch::async, [&] { @autoreleasepool {
             try { pipeline.get(input, &pass); } catch (const std::bad_alloc&) { return true; }
@@ -415,9 +418,9 @@ static bool publication_case(MetalContext& metal, Totals& totals, NSMutableArray
         held = cleanup_entered && waiter_observed && calls == 1 && retained == 0 && published == 0;
         require(held && expected_exception && handle != VK_NULL_HANDLE && driver.count(input, &pass) == 2,
                 "Publication failure did not release the real PSO before releasing its flight");
-#else
+        } else {
         handle = pipeline.get(input, &pass);
-#endif
+        }
         render(results, @"publication_result", metal, driver, handle, 31);
     }
     require(driver.live() == 0, "Publication-case PSO ownership leaked");
@@ -437,19 +440,20 @@ int main() {
             const bool progress = coordination_cases(metal, totals, results);
             exception_retry(metal, totals, results);
             const bool held = publication_case(metal, totals, results);
-            const unsigned expected = PROTOTYPE ? 10 : 9;
+            const unsigned expected = exact_mode() ? 10 : 9;
             require(totals.created == expected && totals.released == expected && totals.live == 0,
                     "Every fixture-retained real Metal PSO must be released");
-            require(totals.rejected == 1 && totals.exceptions == 1 && totals.publication_failures == unsigned(PROTOTYPE),
+            require(totals.rejected == 1 && totals.exceptions == 1 && totals.publication_failures == unsigned(exact_mode()),
                     "Expected Metal/error injection coverage was incomplete");
             NSDictionary* report = @{
                 @"schema":@1, @"status":@"passed",
-                @"model":PROTOTYPE ? @"state_flights_prototype" : @"production_baseline",
+                @"model":exact_mode() ? @"exact_state_on" : @"exact_state_off",
                 @"scope":@"mac-metal-driver-fixture", @"pso_ownership_scope":@"fixture-retained-references",
                 @"public_only":@YES, @"metal_execution_verified":@YES,
                 @"full_dxvk_moltenvk_verified":@NO, @"physical_iphone_verified":@NO,
-                @"game_rendering_verified":@NO, @"performance_verified":@NO, @"production_enabled":@NO,
-                @"distinct_state_progress":@(progress), @"publication_allocation_failure_exercised":@(bool(PROTOTYPE)),
+                @"game_rendering_verified":@NO, @"performance_verified":@NO, @"production_default_enabled":@NO,
+                @"production_route_verified":@YES, @"exact_state_enabled":@(exact_mode()),
+                @"distinct_state_progress":@(progress), @"publication_allocation_failure_exercised":@(exact_mode()),
                 @"cleanup_kept_flight_owned":@(held),
                 @"checks":@{@"ready_hit":@YES, @"independent_owner":@YES, @"same_identity_single_generation":@YES,
                     @"full_state_identity":@YES, @"render_pass_pointer_identity":@YES, @"real_metal_cached_null":@YES,

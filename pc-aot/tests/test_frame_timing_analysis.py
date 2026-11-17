@@ -146,6 +146,21 @@ class FrameTimingAnalysisTests(unittest.TestCase):
         for bad in (part.replace('role=1','role=99'),new.replace(',2,3,0',',2,9,0')):
             self.assertEqual(analyzer.summarize([bad])['invalid_records'],1)
 
+    def test_exact_state_wait_stays_distinct_from_legacy_wait(self):
+        bins = [0] * 20; bins[14] = 1
+        old = timing('graphics_compile_wait', bins=bins)
+        new = timing('graphics_state_wait', bins=bins)
+        context = new.replace('IOS_TIMING ', 'IOS_TIMING_CONTEXT ') + ' role=1 source=0 result=1'
+        spans = stalls_v3([(0,1,100000000,300000000,0,0,0,0,0),
+                           (38,2,110000000,290000000,0,0,1,0,1)], 1, 5000000000)
+        result = analyzer.summarize([old, new, context, spans])
+        self.assertEqual(result['invalid_records'], 0)
+        for kind in ('graphics_compile_wait', 'graphics_state_wait'):
+            self.assertEqual(result['kinds'][kind]['samples'], 1)
+        self.assertEqual(result['longest_sampled_frame_gaps'][0]['overlaps'][0]['kind'], 'graphics_state_wait')
+        self.assertEqual(result['work_contexts'][0]['result'], 1)
+        self.assertEqual(analyzer.summarize([context.replace('source=0', 'source=1')])['invalid_records'], 1)
+
     def test_pipeline_role_contexts_reject_source_and_wait_result_tags(self):
         for kind in ('graphics_pipeline', 'compute_pipeline', 'mvk_convert'):
             row = timing(kind, bins=[1]+[0]*19).replace('IOS_TIMING ', 'IOS_TIMING_CONTEXT ')

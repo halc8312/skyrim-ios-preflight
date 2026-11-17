@@ -18,7 +18,8 @@ KINDS = ('frame_gap', 'present_host', 'pacer', 'hlsl', 'graphics_pipeline',
          'mvk_msl_wait', 'mvk_specialize_wait', 'mvk_pipeline_wait', 'mvk_other_wait',
          'mvk_dispatch_wait', 'mvk_dispatch_block', 'write_file', 'write_file_ex',
          'save_candidate_write', 'save_candidate_write_ex', 'save_candidate_window', 'mvk_cold_lock_wait',
-         'mvk_convert', 'pacer_runloop', 'pacer_sleep', 'ui_pump', 'pacer_overrun')
+         'mvk_convert', 'pacer_runloop', 'pacer_sleep', 'ui_pump', 'pacer_overrun',
+         'graphics_state_wait')
 U64 = (1 << 64) - 1
 UPPER = (0, 1000000, 2000000, 4000000, 8000000, 12000000, 16666667,
          20000000, 25000000, 33333334, 40000000, 50000000, 66666667,
@@ -214,7 +215,7 @@ def summarize(lines):
                 if c['role']>2 or c['source']>3 or c['result']>2: raise ValueError('invalid context')
                 row = timing(base)
                 role_only = row['kind'] in ('mvk_cold_lock_wait','graphics_pipeline','compute_pipeline','mvk_convert')
-                if row['kind'] not in ('mvk_msl_wait','graphics_compile_wait','compute_compile_wait') and not role_only:
+                if row['kind'] not in ('mvk_msl_wait','graphics_compile_wait','compute_compile_wait','graphics_state_wait') and not role_only:
                     raise ValueError('unexpected context kind')
                 if (row['kind']=='mvk_msl_wait' and c['result']) or (row['kind']!='mvk_msl_wait' and c['source']) or (role_only and c['result']):
                     raise ValueError('noncanonical context')

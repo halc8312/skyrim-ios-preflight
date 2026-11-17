@@ -147,7 +147,7 @@ class Schema:
                 role, source, result = (self.timing.unsigned(context[k]) for k in ('role', 'source', 'result'))
                 require(role <= 2 and source <= 3 and result <= 2, 'timing_context')
                 role_only = row['kind'] in ('mvk_cold_lock_wait', 'graphics_pipeline', 'compute_pipeline', 'mvk_convert')
-                require(row['kind'] in ('mvk_msl_wait', 'graphics_compile_wait', 'compute_compile_wait') or role_only,
+                require(row['kind'] in ('mvk_msl_wait', 'graphics_compile_wait', 'compute_compile_wait', 'graphics_state_wait') or role_only,
                         'timing_context_kind')
                 require(not (row['kind'] == 'mvk_msl_wait' and result) and
                         not (row['kind'] != 'mvk_msl_wait' and source) and

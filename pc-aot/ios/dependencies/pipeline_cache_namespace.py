@@ -19,6 +19,8 @@ INPUTS = (
     'ios/dependencies/patch_mvk_library.py', 'ios/dependencies/patch_mvk_compile_timing.py',
     'ios/runtime-port/performance_metrics.h', 'ios/dependencies/present_timing.py',
     'ios/dependencies/shader_inflight.cpp.in', 'ios/dependencies/prefetch_gate.h',
+    'ios/dependencies/graphics_flights.h', 'ios/dependencies/graphics_policy.h',
+    'ios/dependencies/graphics_state_methods.cpp.in',
     'ios/dependencies/pipeline_cache.h', 'ios/dependencies/pipeline_cache.cpp',
     'ios/runtime-port/prepare_runtime.py', 'ios/runtime-port/lifecycle_adapters.py',
     'ios/dependencies/lifecycle_device.py',

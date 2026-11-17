@@ -91,6 +91,16 @@ int main(void) {
     }
     skyrim_perf_record(SKYRIM_PERF_PACER, 33000000, 0, 8);
     skyrim_perf_record(SKYRIM_PERF_GRAPHICS_COMPILE_WAIT, 120000000, 0, 0);
+    /* The new route is a separate wait category, including every result/role.
+     * Keep old stall IDs stable and exercise decode through log_window too. */
+    assert(SKYRIM_PERF_GRAPHICS_COMPILE_WAIT == 7);
+    assert(SKYRIM_PERF_PACER_OVERRUN == 37);
+    assert(SKYRIM_PERF_GRAPHICS_STATE_WAIT == 38);
+    for (unsigned role = 0; role < 3; ++role) for (unsigned result = 0; result < 3; ++result) {
+        SkyrimPerfContext previous = skyrim_perf_context_set((SkyrimPerfContext){role,0,result});
+        skyrim_perf_record(SKYRIM_PERF_GRAPHICS_STATE_WAIT, 130000000 + role * 3 + result, 0, 0);
+        skyrim_perf_context_set(previous);
+    }
     skyrim_perf_log_window();
     puts("performance_histogram_boundaries_and_concurrent_drain=PASS");
     return 0;

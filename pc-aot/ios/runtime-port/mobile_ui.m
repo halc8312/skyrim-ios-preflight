@@ -191,7 +191,8 @@ static NSArray<NSDictionary *> *shaderRows(void) {
         L(@"Prioritize gameplay preparation", @"プレイ中に必要な準備を優先"),
         L(@"Save cache while settings are open", @"設定画面でキャッシュを保存"),
         L(@"Keep shader cache in app storage", @"シェーダーキャッシュをアプリ内に保持"),
-        L(@"Reuse cache after compatible updates", @"互換性のある更新後もキャッシュを再利用")];
+        L(@"Reuse cache after compatible updates", @"互換性のある更新後もキャッシュを再利用"),
+        L(@"Separate waits for drawing preparation", @"描画の準備待ちを分ける")];
     NSMutableArray *rows = [NSMutableArray arrayWithCapacity:SKYRIM_SHADER_OPTION_COUNT];
     for (unsigned i = 0; i < SKYRIM_SHADER_OPTION_COUNT; ++i)
         [rows addObject:@{@"key":[NSString stringWithUTF8String:skyrim_shader_option_key(i)],

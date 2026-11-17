@@ -1,8 +1,12 @@
-# Graphics pipeline state coordination experiment
+# Historical graphics-state coordination prototype
 
-This is an isolated host-side prototype. The shipping adapter, iPhone build,
-settings, pipeline-cache identity and compute-pipeline path do not import it.
-No game shader, asset or translated game code is used by its tests.
+This directory retains the historical prototype and its independent serial
+oracle. Production now contains both the old serial route and the reviewed
+exact-state route, implemented under `ios/dependencies`; it does not import this
+directory. The startup-only `SKYRIM_EXACT_GRAPHICS_STATE=1` setting selects the
+new route in the same binary. Absent or any other value keeps the default OFF
+route, and changing the setting requires a fresh process. No game shader, asset
+or translated game code is used by the host fixtures.
 
 The build13 extended capture contains ten required graphics compile waits over
 100 ms which end with `CREATE`: after the wait, the requested instance is still
@@ -12,6 +16,9 @@ this prototype removes those durations on Metal or identify each prior owner's
 pipeline state.
 
 ## Scope and invariants
+
+These invariants describe the historical prototype and the production ON route.
+Production constructs the coordinator only when the startup policy is ON.
 
 The coordinator belongs to one `DxvkGraphicsPipeline`. Its identity is a copied
 `DxvkGraphicsPipelineStateInfo`, compared by the unchanged upstream `operator==`,
@@ -47,40 +54,43 @@ introduced.
   started compilation is not cancelled. A driver that never completes can still
   prevent shutdown, as with the baseline; a timeout must not manufacture success.
 
-`GRAPHICS_COMPILE_WAIT` in this experiment measures same-identity flight waits,
-not the old shader-set-wide mutex wait. Admission sleep is excluded. This change
-of meaning must be recorded with any future build; the metric decreasing alone
-does not prove improved frame latency. Short table-mutex acquisition is not
-individually timed in the prototype.
+The historical prototype reused `GRAPHICS_COMPILE_WAIT` for same-identity flight
+waits. Current production keeps `GRAPHICS_COMPILE_WAIT` for the serial OFF route
+and uses the separate `GRAPHICS_STATE_WAIT` for ON. The startup
+`IOS_GRAPHICS_POLICY` record identifies the selected policy and wait scope.
+Admission sleep is excluded; a smaller wait metric alone does not prove improved
+frame latency. Short table-mutex acquisition is not individually timed.
 
 ## Running host checks
 
-With the repository's pinned, prepared DXVK dependency and a native C++17 toolchain:
+With the repository's pinned dependency and a native C++17 toolchain, these
+fixtures compile current production once and run separate OFF/ON child processes:
 
 ```sh
-python3 -m unittest tests.test_graphics_state_flights
-SKYRIM_TEST_SANITIZERS=1 python3 -m unittest tests.test_graphics_state_flights
+python3 -m unittest discover -s tests -p test_graphics_state_flights.py -v
+SKYRIM_TEST_SANITIZERS=1 python3 -m unittest discover -s tests -p test_graphics_state_flights.py -v
 SKYRIM_TEST_SANITIZERS=thread SKYRIM_TSAN_DISABLE_ASLR=1 \
-  python3 -m unittest tests.test_graphics_state_flights
+  python3 -m unittest discover -s tests -p test_graphics_state_flights.py -v
 ```
 
 The last environment option applies `setarch -R` to the test executable only
 on a compatible Linux host; it does not change system-wide settings.
 
-`patch.py` accepts an **already staged, separate copy** from
-`ios/dependencies/prepare_dxvk.py`. It validates the pinned upstream fingerprints
-and exact adapted input, accepts its own identical output on reapplication, and
-rejects changed anchors and source/vendor destinations. The generated header
-and implementation are tested together with the real packed-state equality.
+Do not apply this directory's `patch.py` to a current production stage.
+`prepare_dxvk.stage` now generates both runtime routes, so the historical patch
+intentionally rejects that input. It accepts only the old serial adapted text or
+its own identical historical output, with pinned upstream fingerprints and
+source/vendor destination protection. Current reproduction uses the production
+fixtures above and the startup environment setting, without this patch.
 
-## Limits before iPhone adoption
+## Validation boundaries
 
 ### Apple validation entry point
 
 `tests/test_graphics_state_flights_metal.py` reuses the actual generated
 coordination methods, packed state, instance class and pinned destructor with
 an authored Metal driver. It compares eight RGBA32Float GPU readbacks between
-the baseline and prototype and checks real shader compile rejection, cached null, retry,
+the production OFF and ON routes and checks real shader compile rejection, cached null, retry,
 publication failure cleanup and balanced fixture-retained PSO references.
 Controlled pre-driver gates test admission order, not internal Metal parallelism.
 
@@ -98,7 +108,10 @@ retry succeeded, and retained PSO counts balanced at 9/9 and 10/10. The
 prototype alone exercised publication-allocation cleanup. Native normal,
 ASan/UBSan and TSan checks also passed. This is not the full DXVK/MoltenVK
 rendering path, an iPhone test, or evidence of a performance gain.
-The production adapter remains unchanged.
+Run 36 is predecessor evidence for the prototype, not a pass for the later
+production integration. The integrated OFF/ON fixture has passed local normal,
+ASan/UBSan and TSan checks and complete graphics/manager source compilation;
+its updated real-Metal runner still requires a new Mac execution.
 
 Mac run 34 stopped on Apple Clang diagnostics from the unchanged packed-state
 header. Diagnostic exceptions are scoped to that header; authored code retains
@@ -109,7 +122,7 @@ is not a reliable rejection case. The revised negative uses an authored MSL
 that failure through the same cached-null publication path. It makes no claim
 of testing a PSO linker failure. Original failures and logs are retained.
 
-Verified on 2026-11-17: the normal Linux suite passed all seven tests, including
+Historical verification on 2026-11-17: the normal Linux suite passed all seven tests, including
 complete staged `dxvk_graphics.cpp` and `dxvk_pipemanager.cpp` translation-unit
 syntax checks. The native baseline/prototype fixture also passed separately
 with ASan/UBSan and TSan. Its controlled blocked-owner comparison reported
@@ -133,6 +146,7 @@ SDK build, real Metal output/failure tests, and labelled iPhone comparisons of
 frame stalls, required compiler latency, errors, memory and heat are needed.
 Cache warming and background time must be separated in those comparisons.
 
-The ordinary build path and its cache namespace are intentionally unchanged
-until the prototype is reviewed. No performance improvement on iPhone is
-claimed by this experiment.
+The production helper inputs now participate in the build's cache namespace;
+OFF/ON in the same binary keeps the same GPU arguments and cache identity.
+The setting remains default OFF. No performance improvement on iPhone is
+established by the historical prototype or the host integration checks.

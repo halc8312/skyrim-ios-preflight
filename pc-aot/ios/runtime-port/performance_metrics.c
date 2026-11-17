@@ -23,7 +23,7 @@ static const char *const names[SKYRIM_PERF_KIND_COUNT] = {
     "mvk_dispatch_wait", "mvk_dispatch_block",
     "write_file", "write_file_ex", "save_candidate_write", "save_candidate_write_ex",
     "save_candidate_window", "mvk_cold_lock_wait", "mvk_convert",
-    "pacer_runloop", "pacer_sleep", "ui_pump", "pacer_overrun"
+    "pacer_runloop", "pacer_sleep", "ui_pump", "pacer_overrun", "graphics_state_wait"
 };
 typedef struct PerfAtomic {
     _Atomic uint64_t buckets[SKYRIM_PERF_BUCKET_COUNT];
@@ -31,10 +31,11 @@ typedef struct PerfAtomic {
 } PerfAtomic;
 static PerfAtomic counters[SKYRIM_PERF_KIND_COUNT];
 /* 12 MSL (role/source), 18 DXVK waits (role/result), 3 cold-lock waits,
- * 6 Vulkan pipeline calls (graphics/compute by role), 3 SPIRV-Cross conversions.
+ * 6 Vulkan pipeline calls (graphics/compute by role), 3 SPIRV-Cross conversions,
+ * 9 exact graphics-state waits (role/result).
  * Fixed storage and the
  * existing relaxed atomic recorder; no extra clocks, locks or allocations. */
-#define CONTEXT_COUNT 42
+#define CONTEXT_COUNT 51
 static PerfAtomic context_counters[CONTEXT_COUNT];
 static _Thread_local SkyrimPerfContext work_context;
 SkyrimPerfContext skyrim_perf_context_get(void) { return work_context; }
@@ -55,6 +56,7 @@ static unsigned context_index(unsigned kind, SkyrimPerfContext c) {
     if (kind == SKYRIM_PERF_GRAPHICS_PIPELINE) return 33 + c.role;
     if (kind == SKYRIM_PERF_COMPUTE_PIPELINE) return 36 + c.role;
     if (kind == SKYRIM_PERF_MVK_CONVERT) return 39 + c.role;
+    if (kind == SKYRIM_PERF_GRAPHICS_STATE_WAIT) return 42 + c.role * 3 + c.result;
     return CONTEXT_COUNT;
 }
 static unsigned context_decode(unsigned index, SkyrimPerfContext *c) {
@@ -68,6 +70,10 @@ static unsigned context_decode(unsigned index, SkyrimPerfContext *c) {
     if (index < 33) {
         c->role = index - 30;
         return SKYRIM_PERF_MVK_COLD_LOCK_WAIT;
+    }
+    if (index >= 42) {
+        c->role = (index - 42) / 3; c->result = (index - 42) % 3;
+        return SKYRIM_PERF_GRAPHICS_STATE_WAIT;
     }
     c->role = (index - 33) % 3;
     if (index < 36) return SKYRIM_PERF_GRAPHICS_PIPELINE;

@@ -1,5 +1,17 @@
 # PC版の性能改善作業 — 2026-11-13
 
+## 2026-11-17 build14の同一アプリ比較への統合
+
+`SKYRIM_EXACT_GRAPHICS_STATE`を起動前に設定し、pipeline managerがworker開始前に厳密な文字列`1`だけを読み取って固定する。アプリの6番目の比較設定は既定OFF。OFFではCVを持つflight tableを構築せず、既存のready lookupとserial生成を残す。ONもready-hitを共通経路で返した後にのみ、新しいstate／render-pass単位の調整へ進む。従来の5設定・Compute・実GPU生成引数・guest ABI・LIFT_TSO／MEMORDER／LB_STRICT_ORDERは維持する。
+
+新しい`graphics_state_wait`（末尾に追加したkind38）は同一stateの生成合流待ちであり、従来のshader組mutex待ちと区別する。role／resultの集計・サンプル・解析・送受信schemaを追加し、起動時`IOS_GRAPHICS_POLICY`で選択経路を記録する。CREATEは待機後に生成側へ進んだことを示し、生成成功やwait所有者の因果証明ではない。OFF／ONとも同じソースidentityを使用するが、build13からは保守的にキャッシュnamespaceが変わるので初回と再訪を分けて評価する。新しい3helper／templateもnamespace入力へ含める。
+
+独立して検証したguest共通reader/writerの観測案は、元の取得・解放を再実装せず、既存のCAS失敗から成功までのepisodeとSleep回数を観測するもの。全取得時間ではなく、最初の失敗以後の区間として扱う。return PC分類・stack範囲・再入・thread初期化／終了・activity epoch・私有profileの固定入力結合が確認対象。private試作に留め、build14の性能比較へ混在させない。
+
+生成された本番OFF／ONを1つのnative binaryで検査し、通常clang18（16.113秒）、GCC ASan/UBSan（53.368秒）、GCC TSan（26.063秒）すべて成功。実graphics／manager translation unitと既存pipeline／timing adapterの6検査も成功。Metal fixtureも1binaryのOFF／ONへ変更し、source／report検証は成功したが、今回の統合形でのGPU実行はMacへ委ねる。
+
+PC側では新しい記録／解析／受信／設定を29ケース、metricsとmobile coreをGCC ASan/UBSanで確認。Linux clang18 sanitizerはruntime archive欠落でリンクできず、成功扱いにしていない。送信fixtureに追加した2番目のcontextへの期待値を更新し、拒否条件は維持した。Foundation／実Metal／iPhoneOS統合検査はApple側で行う。受信bundle内の解析directoryを別private領域へhash維持で移動し、503拒否を解消した。合成build14の送受信は実プレイ集計へ混ぜない。
+
 ## 2026-11-17 Apple検証とホスト側の独立試作
 
 **ホスト2試作のApple追加検証。** [専用run2](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc103c95b45c83b9742a7f)（公開8e7c3b7、M2、Xcode26.6／macOS SDK26.5、57秒）で通常12ケースとTSan2ケースが成功、skip0。実os_unfair_lockの待機／解除と共有stateの整合、未競合clock0、QoS無効時のAPI／log0と有効時の要求／readback、errno・ログ上限、完全CS translation unitを確認した。通常の人工競合3回のwall／CPU合計は従来136.016／83.081416 ms、blocking版138.603／0.024416 ms。CPU占有は減ったが待ち自体の短縮ではなく、iPhone性能・公平性・コア割当・発熱には外挿しない。TSanでも同じ契約を成功。run1はテストのSDK場所指定不足とmacOSの/var別名によるfake ROOT不一致で失敗したため、両compiler経路へ明示的isysrootを渡し、fixture rootだけを正規化して再実行した。製品codeを変えずに修正し、失敗／成功の原logはlocal/host-wait-mac-01／02へ保存した。

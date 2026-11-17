@@ -53,6 +53,17 @@ class NamespaceTests(unittest.TestCase):
             path.write_bytes(path.read_bytes()+b'\n# Authored change requiring a new cache.\n')
             self.assertNotEqual(self.identity(root)['reuse'], before['reuse'])
 
+    def test_graphics_coordination_sources_are_part_of_both_identities(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); self.prepare(root)
+            for name in ('graphics_flights.h', 'graphics_policy.h', 'graphics_state_methods.cpp.in'):
+                path = root/'ios/dependencies'/name
+                before = self.identity(root)
+                path.write_bytes(path.read_bytes() + b'\n/* Authored coordination change. */\n')
+                after = self.identity(root)
+                self.assertNotEqual(before['strict'], after['strict'])
+                self.assertNotEqual(before['reuse'], after['reuse'])
+
     def test_malformed_contract_and_missing_sources_cannot_reuse(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); self.prepare(root)

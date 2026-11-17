@@ -1,5 +1,11 @@
 # 開発状況
 
+**2026-11-17：build14の比較経路を製品コードへ統合。** 実Metalで検証済みのstate別生成調整を、同じアプリの起動時設定「描画の準備待ちを分ける」に接続した。既定OFF、既存5設定のIDと保存値は維持。OFFは従来のshader組ごとのmutex、ONはstate全体とrender-passが同一の要求だけを合流する。ready-hitには追加clock／待機を入れず、Compute経路・guest・メモリ順序・画質は変更しない。新しい待ちは`graphics_state_wait`として従来の`graphics_compile_wait`と分離し、診断送受信／解析器も対応。同一binaryのOFF／ON native検査、ASan/UBSan、TSan、実graphics／manager全translation unitと従来adapterの回帰検査に成功。独立reviewにblocking指摘はなく、Apple統合ビルド・署名・iPhone比較はこの時点では未完了。両手ボタンも次のアプリに含める。
+
+共通reader/writerの部分解析から、元guestのCAS／Sleep呼出しを観測する独立試作を進めている。ゲーム内部ロックの置換やnative overrideは行わない。最終guest identityとの結合・thread／activity寿命・数値sinkの統合確認が残るため、build14にはまだ入れない。
+
+診断の事前送信では、既存受信bundle内に置かれた解析フォルダが検証拒否の原因だった。解析3ファイルをhash維持で別のprivate解析領域へ移し、元受信ログを保持したまま復旧。新しい数値categoryの非公開HTTPS受信・再送・認証拒否・内容競合拒否を合成データで確認した。これは実機計測結果ではない。
+
 **2026-11-17：ホスト側2試作の実Apple API検査も完了。** [専用Mac run2](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc103c95b45c83b9742a7f)は公開`8e7c3b73afd6e5eee8db4e226d7f377327353a0f`で成功（57秒）。通常12検査とTSan2検査はskip／失敗0。generic blocking lockの排他・例外解除・待ちCPU計測、dxvk-csのQoS要求とreadback、完全CS translation unitを実Apple環境で確認した。意図的に保持した3回の待機ではCPU使用は83.081416→0.024416 msと減ったが、wallは136.016→138.603 msで短縮していない。これは人工競合でのCPU消費差であり、ゲーム性能・公平性・発熱の証明ではない。先のrun1のSDK指定／一時root fixtureの失敗と原ログも保持。試作は本番未適用、FPS0比較・iPhone採否・ゴール③は未完了。
 
 **2026-11-17：state別生成試作のApple検証が完了。** [Mac run36](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc0bf295b45c83b97428cb)は公開`ac49eaa17636eb13a9026457b6904ded704d5e69`で成功（M2、Xcode26.6／SDK26.5、7分30秒）。実Metalで8ケースのRGBA32Float readbackが従来方式と一致し、意図したMSL失敗のcached-null、例外再試行、試作の公開時確保失敗とPSO参照解放を確認。native通常・ASan/UBSan・TSanも成功。全56回のunittest実行／209ケースは204成功・環境依存5skip、失敗0。公開iPhoneOS hostもリンク成功し、両手ボタンはAppleコンパイルまで確認できた。ゲーム実行・iPhone改善・新IPA導入は未確認。試作は本番adapter未接続。原失敗run34／35と成功artifactsは保持し、run36の無料枠は263→271/500（残229分）。

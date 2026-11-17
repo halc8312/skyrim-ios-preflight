@@ -40,7 +40,9 @@ class DiagnosticUploadTests(unittest.TestCase):
         result = schema.timing.summarize(fixture["allowed"])
         self.assertEqual(result["invalid_records"], 0)
         self.assertEqual(result["kinds"]["frame_gap"]["over_100ms"], 1)
-        self.assertEqual(len(result["work_contexts"]), 1)
+        self.assertEqual(len(result["work_contexts"]), 2)
+        self.assertEqual({row["kind"] for row in result["work_contexts"]},
+                         {"mvk_msl_wait", "graphics_state_wait"})
         self.assertEqual(result["work_contexts"][0]["over_100ms"], 1)
         # Actual receiver contract also accepts separately identified old-build
         # settings. A current build must never relabel the previous session.

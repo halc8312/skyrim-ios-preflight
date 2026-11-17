@@ -31,7 +31,13 @@
     "IOS_PIPE_CACHE event=foreground_admit ticket=1 quiet_ns=10000000000 cooldown_ns=60000000000",
     "IOS_PIPE_CACHE event=checkpoint_all ticket=1 cancelled=0 caches=1",
     "IOS_PIPE_CACHE event=checkpoint_all ticket=2 busy=1 caches=0",
-    "IOS_LIFECYCLE schema=1 event=0 generation=1 phase=1 active_calls=0 requested=1 monotonic_ns=100 elapsed_ns=0 result=0"
+    "IOS_LIFECYCLE schema=1 event=0 generation=1 phase=1 active_calls=0 requested=1 monotonic_ns=100 elapsed_ns=0 result=0",
+    "IOS_SHADER_OPTION option=5 enabled=0",
+    "IOS_SHADER_OPTION option=5 enabled=1",
+    "IOS_GRAPHICS_POLICY schema=1 exact_state=0 wait_scope=0",
+    "IOS_GRAPHICS_POLICY schema=1 exact_state=1 wait_scope=1",
+    "IOS_TIMING schema=1 approximate_window=1 end_ns=6000000000 window_ns=5000000000 kind=graphics_state_wait samples=1 total_ns=150000000 max_ns=150000000 failures_known=1 failures=0 sleep_calls=0 bins=0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0",
+    "IOS_TIMING_CONTEXT schema=1 approximate_window=1 end_ns=6000000000 window_ns=5000000000 kind=graphics_state_wait samples=1 total_ns=150000000 max_ns=150000000 failures_known=1 failures=0 sleep_calls=0 bins=0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0 role=1 source=0 result=1"
   ],
   "excluded": [
     "Game input: /private/authored-fixture/game",
@@ -44,6 +50,9 @@
     "IOS_SHADER_OPTION option=0 enabled=1\u0000",
     "IOS_DIAG_SETTING key=0 value=NaN",
     "IOS_NOT_ALLOWLISTED number=123",
-    "日本語の秘密情報"
+    "日本語の秘密情報",
+    "IOS_SHADER_OPTION option=6 enabled=1",
+    "IOS_GRAPHICS_POLICY schema=1 exact_state=1 wait_scope=0",
+    "IOS_GRAPHICS_POLICY schema=1 exact_state=1 wait_scope=1 shader=AUTHORED_SECRET"
   ]
 }

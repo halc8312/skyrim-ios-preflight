@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Isolated per-state graphics compilation experiment; production never imports it.
+"""Retained historical graphics-state patch and independent serial oracle.
 
-Apply only to a separately staged tree created by prepare_dxvk.stage. Original
-vendor, production adapter, cache namespace and build switches stay unchanged.
+Current production stages already contain startup-selected OFF/ON routes and are
+intentionally rejected by this historical patch. Reproduce the current route
+with test_graphics_state_flights.py / test_graphics_state_flights_metal.py;
+SKYRIM_EXACT_GRAPHICS_STATE=1 is the exact startup opt-in, default OFF.
+This patch accepts only a separate historical serial baseline or its own output.
+Production imports no files from this experiment directory.
 """
 from __future__ import annotations
 import argparse
@@ -28,7 +32,10 @@ def baseline(name: str) -> str:
     text = source.read_text(encoding='utf-8')
     if hashlib.sha256(text.encode()).hexdigest() != adapter.EXPECTED[name]:
         raise ValueError('Pinned graphics source fingerprint changed')
-    return adapter.adapt(name, text)
+    # Historical independent serial baseline. Production now contains both
+    # startup-selected routes; never feed that composition back into this patch.
+    serial = adapter.adapt_pipeline_locking_baseline(name, text)
+    return adapter.adapt_timing(name, serial) if name.endswith('.cpp') else serial
 
 
 def candidate(name: str, text: str) -> str:

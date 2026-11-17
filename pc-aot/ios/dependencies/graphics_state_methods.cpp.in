@@ -1,0 +1,121 @@
+  VkPipeline DxvkGraphicsPipeline::getPipelineHandleExact(
+    const DxvkGraphicsPipelineStateInfo& state,
+    const DxvkRenderPass* renderPass) {
+    // The common ready-hit lookup already missed; recheck under the table below.
+    SkyrimPerfContextScope iosRequest(SKYRIM_PERF_ROLE_DRAW, SKYRIM_PERF_CONTEXT_KEEP);
+    std::optional<VkPipeline> pipeline;
+    {
+      skyrim::PrefetchGate::RequiredScope iosRequired(m_pipeMgr->iosPrefetchGate());
+      skyrim::GraphicsFlights<DxvkGraphicsPipelineStateInfo, DxvkRenderPass>::Ticket
+        flight(*m_compileFlights, state, renderPass);
+      uint64_t waitStartedNs = 0, waitEndedNs = 0;
+      auto recordWait = [&](unsigned result) {
+        if (!waitStartedNs) return;
+        SkyrimPerfContext context = skyrim_perf_context_get();
+        context.result = result;
+        skyrim_perf_interval_context(SKYRIM_PERF_GRAPHICS_STATE_WAIT,
+            waitStartedNs, waitEndedNs, 0, 0, context);
+        waitStartedNs = 0;
+      };
+      {
+        auto flightLock = m_compileFlights->lock();
+        for (;;) {
+          // The initial ready miss may have become stale before table entry.
+          // This second lookup is inseparable from flight registration.
+          { std::lock_guard<sync::Spinlock> lock(m_mutex);
+            if (auto* instance = this->findInstance(flight.state(), flight.pass())) {
+              pipeline = instance->pipeline();
+            }
+          }
+          if (pipeline) break; // optional(null) is still a cached result
+          if (!flight.busy(flightLock)) {
+            flight.begin(flightLock);
+            break;
+          }
+          // One real CV interval per sample. Predicate wait keeps the table
+          // locked through recheck/claim, so normally this has no prior sample.
+          recordWait(SKYRIM_PERF_WAIT_UNKNOWN);
+          waitStartedNs = skyrim_perf_now_ns();
+          flight.wait(flightLock);
+          waitEndedNs = skyrim_perf_now_ns();
+        }
+      }
+      if (pipeline) { recordWait(SKYRIM_PERF_WAIT_HIT); return *pipeline; }
+      recordWait(SKYRIM_PERF_WAIT_CREATE);
+      pipeline = this->createInstanceExact(flight.state(), flight.pass());
+      // Destroying flight unlinks/notifies after publication or on exceptions.
+    }
+    if (!pipeline) return VK_NULL_HANDLE; // invalid state, not cached failure
+    // Reentrant state-cache callbacks run outside locks and RequiredScope.
+    this->writePipelineStateToCache(state, renderPass->format());
+    return *pipeline;
+  }
+
+
+  void DxvkGraphicsPipeline::compilePipelineExact(
+    const DxvkGraphicsPipelineStateInfo& state,
+    const DxvkRenderPass* renderPass) {
+    SkyrimPerfContextScope iosRequest(SKYRIM_PERF_ROLE_PREFETCH, SKYRIM_PERF_CONTEXT_KEEP);
+    skyrim::PrefetchGate::Attempt iosAdmission(m_pipeMgr->iosPrefetchGate());
+    skyrim::GraphicsFlights<DxvkGraphicsPipelineStateInfo, DxvkRenderPass>::Ticket
+      flight(*m_compileFlights, state, renderPass);
+    uint64_t waitStartedNs = 0, waitEndedNs = 0;
+    auto recordWait = [&](unsigned result) {
+      if (!waitStartedNs) return;
+      SkyrimPerfContext context = skyrim_perf_context_get();
+      context.result = result;
+      skyrim_perf_interval_context(SKYRIM_PERF_GRAPHICS_STATE_WAIT,
+          waitStartedNs, waitEndedNs, 0, 0, context);
+      waitStartedNs = 0;
+    };
+    for (;;) {
+      // A parked prefetch never owns a flight that a required draw could need.
+      iosAdmission.wait();
+      bool ready = false, admitted = false;
+      {
+        auto flightLock = m_compileFlights->lock();
+        for (;;) {
+          { std::lock_guard<sync::Spinlock> lock(m_mutex);
+            ready = this->findInstance(flight.state(), flight.pass()) != nullptr;
+          }
+          if (ready) break;
+          // Check again after table entry / wake before registering ownership.
+          if (!iosAdmission.mayStart()) break;
+          if (!flight.busy(flightLock)) {
+            flight.begin(flightLock);
+            admitted = true;
+            break;
+          }
+          recordWait(SKYRIM_PERF_WAIT_UNKNOWN);
+          waitStartedNs = skyrim_perf_now_ns();
+          flight.wait(flightLock);
+          waitEndedNs = skyrim_perf_now_ns();
+        }
+      }
+      if (ready) { recordWait(SKYRIM_PERF_WAIT_HIT); return; }
+      if (admitted) { recordWait(SKYRIM_PERF_WAIT_CREATE); break; }
+      // Keep admission sleep out of the same-identity wait interval.
+      recordWait(SKYRIM_PERF_WAIT_UNKNOWN);
+    }
+    this->createInstanceExact(flight.state(), flight.pass());
+  }
+
+
+  std::optional<VkPipeline> DxvkGraphicsPipeline::createInstanceExact(
+    const DxvkGraphicsPipelineStateInfo& state,
+    const DxvkRenderPass* renderPass) {
+    if (!this->validatePipelineState(state)) return std::nullopt;
+    VkPipeline pipeline = this->createPipeline(state, renderPass);
+    try {
+      std::lock_guard<sync::Spinlock> lock(m_mutex);
+      // The registered flight excludes only duplicate identity writers.
+      // Never expose a vector element across this lock or a cache callback.
+      auto& instance = m_pipelines.emplace_back(state, renderPass, pipeline);
+      m_pipeMgr->m_numGraphicsPipelines += 1;
+      return instance.pipeline();
+    } catch (...) {
+      // Allocation failure after successful GPU creation must not leak a handle.
+      if (pipeline != VK_NULL_HANDLE) this->destroyPipeline(pipeline);
+      throw;
+    }
+  }

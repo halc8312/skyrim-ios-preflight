@@ -212,7 +212,7 @@ def adapt_workers(text: str) -> str:
     return text
 
 
-def adapt_pipeline_locking(name: str, text: str) -> str:
+def adapt_pipeline_locking_baseline(name: str, text: str) -> str:
     """Keep ready lookups independent of compilation of another state variant.
 
     Writers take compileMutex before the short instance-list lock. Readers only
@@ -336,6 +336,45 @@ def adapt_pipeline_locking(name: str, text: str) -> str:
 
 """
     return text[:begin] + methods + text[end:]
+
+
+def adapt_pipeline_locking(name: str, text: str) -> str:
+    """Keep the serial route and add a startup-fixed exact-state route."""
+    text = adapt_pipeline_locking_baseline(name, text)
+    if "dxvk_graphics." not in name:
+        return text
+    if name.endswith(".h"):
+        text = once(text, "#include <mutex>",
+            '#include <mutex>\n#include <optional>\n#include "graphics_flights.h"')
+        text = once(text, "    dxvk::mutex m_compileMutex;",
+            "    dxvk::mutex m_compileMutex;\n"
+            "    // OFF constructs no table mutex/condition variable. Fixed at construction.\n"
+            "    std::optional<skyrim::GraphicsFlights<DxvkGraphicsPipelineStateInfo, DxvkRenderPass>> m_compileFlights;")
+        return once(text, "    VkPipeline createPipeline(", """    VkPipeline getPipelineHandleExact(
+      const DxvkGraphicsPipelineStateInfo& state,
+      const DxvkRenderPass*                renderPass);
+
+    void compilePipelineExact(
+      const DxvkGraphicsPipelineStateInfo& state,
+      const DxvkRenderPass*                renderPass);
+
+    std::optional<VkPipeline> createInstanceExact(
+      const DxvkGraphicsPipelineStateInfo& state,
+      const DxvkRenderPass*                renderPass);
+
+    VkPipeline createPipeline(""")
+    text = once(text, "    m_shaders(std::move(shaders)) {",
+        "    m_shaders(std::move(shaders)) {\n"
+        "    if (m_pipeMgr->iosExactGraphicsState()) m_compileFlights.emplace();")
+    text = once(text, "    SkyrimPerfContextScope iosRequest(SKYRIM_PERF_ROLE_DRAW, SKYRIM_PERF_CONTEXT_KEEP);",
+        "    if (m_compileFlights) return this->getPipelineHandleExact(state, renderPass);\n\n"
+        "    SkyrimPerfContextScope iosRequest(SKYRIM_PERF_ROLE_DRAW, SKYRIM_PERF_CONTEXT_KEEP);")
+    text = once(text, "    SkyrimPerfContextScope iosRequest(SKYRIM_PERF_ROLE_PREFETCH, SKYRIM_PERF_CONTEXT_KEEP);",
+        "    if (m_compileFlights) { this->compilePipelineExact(state, renderPass); return; }\n\n"
+        "    SkyrimPerfContextScope iosRequest(SKYRIM_PERF_ROLE_PREFETCH, SKYRIM_PERF_CONTEXT_KEEP);")
+    marker = "  DxvkGraphicsPipelineInstance* DxvkGraphicsPipeline::findInstance("
+    methods = (Path(__file__).parent / "graphics_state_methods.cpp.in").read_text(encoding="utf-8").rstrip() + "\n\n\n"
+    return once(text, marker, methods + marker)
 
 
 def adapt_timing(name: str, text: str) -> str:
@@ -494,11 +533,13 @@ def adapt(name: str, text: str) -> str:
     if name.endswith(("dxvk_graphics.h", "dxvk_compute.h")):
         return adapt_pipeline_locking(name, text)
     if name.endswith("dxvk_pipemanager.h"):
-        text = '#include "prefetch_gate.h"\n' + text
+        text = '#include "prefetch_gate.h"\n#include "graphics_policy.h"\n' + text
         text = once(text, '    void stopWorkerThreads() const;',
-            '    void stopWorkerThreads() const;\n    skyrim::PrefetchGate& iosPrefetchGate() const { return m_iosPrefetchGate; }')
+            '    void stopWorkerThreads() const;\n    skyrim::PrefetchGate& iosPrefetchGate() const { return m_iosPrefetchGate; }\n'
+            '    bool iosExactGraphicsState() const { return m_iosExactGraphicsState; }')
         return once(text, '    const DxvkDevice*         m_device;',
             '    // Construct before and destroy after the state cache/workers.\n'
+            '    const bool m_iosExactGraphicsState = skyrim::exactGraphicsStateEnabled();\n'
             '    mutable skyrim::PrefetchGate m_iosPrefetchGate;\n    const DxvkDevice*         m_device;')
     if name.endswith("dxvk_pipemanager.cpp"):
         return once(text, "new DxvkPipelineCache(device->vkd())",

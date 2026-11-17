@@ -30,13 +30,22 @@ class PerformanceTests(unittest.TestCase):
             subprocess.run(command, check=True, timeout=60)
             result = subprocess.run([str(binary)], check=True, text=True, capture_output=True, timeout=15)
             self.assertIn("concurrent_drain=PASS", result.stdout)
-            self.assertEqual(result.stderr.count("IOS_TIMING "), 2)
+            self.assertEqual(result.stderr.count("IOS_TIMING "), 3)
             self.assertIn("kind=pacer samples=1", result.stderr)
             self.assertIn("sleep_calls=8", result.stderr)
             wait_line = next(line for line in result.stderr.splitlines() if "kind=graphics_compile_wait" in line)
             self.assertIn("samples=1", wait_line)
             self.assertIn("total_ns=120000000", wait_line)
             self.assertIn("failures_known=0", wait_line)
+            state = [line for line in result.stderr.splitlines() if "kind=graphics_state_wait" in line]
+            self.assertEqual(len(state), 10)
+            self.assertIn("samples=9", state[0])
+            self.assertIn("total_ns=1170000036", state[0])
+            for role in range(3):
+                for outcome in range(3):
+                    row = next(line for line in state[1:] if line.endswith(f"role={role} source=0 result={outcome}"))
+                    self.assertIn(f"total_ns={130000000 + role * 3 + outcome}", row)
+                    self.assertIn("failures_known=0", row)
 
     def test_real_adapter_preserves_every_api_argument_and_failure_branch(self):
         for name in adapter.EXPECTED:
