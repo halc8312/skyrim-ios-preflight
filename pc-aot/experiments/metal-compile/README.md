@@ -46,8 +46,11 @@ product (macOS 15 / MSL 2.4, 11,352 bytes, SHA-256 pinned in the script) and the
 matching source hash, then runs the existing three-route GPU comparison. The
 binary/base64 stays in private build input and ignored evidence; no generated
 library is committed. A matching hash establishes content identity, not a
-signature or reconstructed compiler options. Omitting the input leaves this
-additional unit unrequested. [Codemagic build inputs](https://docs.codemagic.io/knowledge-codemagic/build-inputs/)
+signature or reconstructed compiler options. Leave the input at `none` to keep
+this additional unit unrequested. An explicitly empty resolved environment value
+was rejected by Codemagic before any build step in run10; the nonempty sentinel
+is handled only by the workflow guard, not accepted as a library by the verifier.
+[Codemagic build inputs](https://docs.codemagic.io/knowledge-codemagic/build-inputs/)
 documents the manual per-workflow input mechanism.
 
 Run 9 (`5e37c51`, 2026-11-18 JST) verified that pinned Windows product on the Mac

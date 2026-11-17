@@ -221,7 +221,7 @@ run_experiment metal4-archive-sdk 120 experiments/metal-compile/archive_metal4.p
 run_experiment mrc-lifetime 180 experiments/metal-compile/mrc_lifetime.py --output "$RUN/mrc-lifetime"
 run_experiment mrc-metal 180 experiments/metal-compile/mrc_metal.py --output "$RUN/mrc-metal"
 run_experiment mrc-metal-parallel 180 experiments/metal-compile/mrc_metal.py --parallel-cases --output "$RUN/mrc-metal-parallel"
-if [[ -n "${SKYRIM_AUTHORED_WINDOWS_LIBRARY:-}" ]]; then
+if [[ -n "${SKYRIM_AUTHORED_WINDOWS_LIBRARY:-}" && "${SKYRIM_AUTHORED_WINDOWS_LIBRARY:-}" != none ]]; then
   # A manual-only input containing one pinned authored Windows product. It is
   # consumed from the environment, never interpolated into shell command text.
   run_experiment windows-library 120 experiments/metal-compile/windows_fixture.py --output "$RUN/windows-library"

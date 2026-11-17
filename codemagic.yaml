@@ -7,9 +7,9 @@ workflows:
     max_build_duration: 15
     inputs:
       authored_windows_library:
-        description: Optional base64 of the pinned authored Windows fixture only (not game data)
+        description: Pinned authored Windows fixture base64, or none to omit (not game data)
         type: string
-        default: ""
+        default: "none"
     environment:
       xcode: "26.6"
       vars:

@@ -1,5 +1,7 @@
 # 開発状況
 
+**run10はCI設定の検証段階で停止。** [実行run10](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afccddfd133a39c4a126642)は公開`f42d762`。Windows生成物を省略した空入力がCodemagicの環境変数要件（1文字以上）に反し、Mac試験は一つも実行されていない。既定値を`none`とし、shell側でその値のみ未指定として扱う。固定hashのlibrary検証は緩めない。前run9の警告未観測も未解決のまま保持する。
+
 **夜間run9：Windows生成物のMac GPU動作を確認。警告条件は未確認。** [実行run9](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcca58d133a39c4a126500)は公開`5e37c51`。Mac全290検査は23.003秒で成功、skipなし。Windows6.2生成の固定自作libraryをMacのApple Paravirtual GPUで読み込み、source／非同期source／Windows生成物の各3回で描画64語・計算16語が完全一致した。実Metal MRC試験は正常・不正source・通知延期の3caseがnormalで成功したが、4case目の`#warning`で期待したNSErrorが通知されず、workflow全体は失敗として保持した。メモリ管理不良と断定せず、警告検査を厳密な任意指定へ分離し、core3caseのnormal／ASan+UBSanと別設定の同時要求を次に実行する。原artifactは`local/metal-compile/mac-run-09/`。Metal4実GPU・iPhone改善・製品適用の証拠ではない。
 
 **実MetalのMRC保持とWindows生成物のGPU比較を準備。** `mrc_metal.py/.mm`は実legacy非同期APIで成功・不正source・通知延期・警告付き成功の4caseを検査し、元library／NSErrorと自作ownerの寿命、成功時16語readbackを要求する。通常／ASan+UBSanの2実行で、実timeout／Metal4 task／製品適用は対象外。`windows_fixture.py`は既にWindows6.2で作成した自作macOS15／MSL2.4 library（11,352 bytes）の固定hashだけをmanual build inputから受け入れ、base64を子envやlogへ渡さず既存9sample GPU比較へ接続する。binaryはGitへ入れない。WSL全290検査が50.223秒で成功、Darwin TSanのみ1skip。新2unitの実Mac結果は未確認。公式Codemagic schema、公開source検査、shell構文確認済み。
