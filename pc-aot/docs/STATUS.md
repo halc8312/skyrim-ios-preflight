@@ -1,6 +1,6 @@
 # 開発状況
 
-**終了処理の引き渡しをCPUモデルで追加検証。** `--retirement-handoff-only`は通知が早い／遅い2caseと、通知threadでのjoinを検出するnegative control1件を追加。WSL通常／ASan+UBSanで成功（専用Python検査16.249秒）。既存`OwnerRetirement`本体と既定のmodel出力は変更せず、fake taskの移動・待機・解放順だけを検証している。実Metal4 taskの証明ではない。新経路のMac／TSan結果は次の独立CIで確認する。
+**夜間の最終検証run12成功。** [実行run12](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcd2f5d133a39c4a126814)は公開`b8598ac`。Mac全294検査が30.249秒で成功、skipなし、独立10unitも全成功。追加の終了処理モデルは早期／遅延通知の2caseと誤threadでのjoin対照1件を、Mac通常・ASan+UBSan・TSanの各実行で確認し、各stderrは空。記録したfixture2fileはmain `60c3c40`とbyte一致。fake taskのCPU上の引き渡し検証であり、実Metal4 taskの待機・解放の証明ではない。原artifactは`local/metal-compile/mac-run-12/`（620,067 bytes、SHA-256 `f010a97072ea247ed577dd37d068d467b5e73044ac0ebccee0aa8249e48e31d3`）。Windows生成物のMac GPU一致は変更のないrun9証拠を再利用。今夜は隔離実験・検査・文書・手動CIのみ。アプリbuild・端末更新・製品既定値の変更はなく、Metal4対応実GPU／iPhone性能は未確認。
 
 **夜間run11成功：実Metalの保持・並列要求まで確認。** [実行run11](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcce73d133a39c4a126676)は公開`ad5739b`。Mac全293検査が28.289秒で成功、skipなし。独立10unitも全成功。MRC core3caseを逐次／並列、それぞれ通常／ASan+UBSanの別processで実行し、計12caseの元library／NSError保持・通知1回・launch終了後のowner解放、成功8caseの16語GPU出力を確認した。並列要求の設定値3／13は混線せず、sanitizer実行では呼出し復帰前の通知も2caseで実際に観測。両unitのstderr計14fileは空。全体のリーク検証ではなく、警告caseも再実行していない。Windows→Mac GPU一致はrun9の既存証拠を再利用する。原artifactは`local/metal-compile/mac-run-11/`（616,149 bytes）。Metal4実GPU／実taskとiPhone性能は未確認。夜間の変更は隔離実験・検査・文書・手動CIのみで、アプリbuild／端末更新／製品既定値の変更なし。
 

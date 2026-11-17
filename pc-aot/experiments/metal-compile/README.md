@@ -202,9 +202,10 @@ duplicate-compilation skipping is enabled.
 `--retirement-handoff-only` adds two CPU-only cases and one wrong-thread join
 control. An owned fake task is transferred to a waiter before joining; early
 notification stays immediate, and a logical destruction request does not cancel
-pending work. WSL normal/ASan/UBSan runs passed. The dedicated Python control also
-requests the new mode under Darwin TSan, independently of the existing default
-models. This is a proposed ownership protocol test, not Metal task execution.
+pending work. WSL normal/ASan/UBSan runs passed. Run12 also passed this mode
+on Mac in normal, ASan/UBSan and Darwin TSan binaries, with empty stderr in all
+three runs. The committed fixture and recorded input hashes match. This is a
+proposed ownership protocol test, not Metal task execution.
 
 `request_lifetime.h` is a separate portable model, not connected to the runtime
 fixture or production. It waits for both factory return and callback receipt
@@ -248,13 +249,15 @@ external Apple compiler services have stopped.
 
 ## Verification status
 
-Latest completed run: [run11](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcce73d133a39c4a126676),
-public source `ad5739b9b9204c04a9015497d7cf3ab00c268ec3`, 2026-11-18 JST.
-All 293 Mac controls passed in 28.289 seconds without skips, and all ten requested
+Latest completed run: [run12](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcd2f5d133a39c4a126814),
+public source `b8598ac44f0098e88addacc61b101b859458e528`, 2026-11-18 JST.
+All 294 Mac controls passed in 30.249 seconds without skips, and all ten requested
 independent units passed. The optional Windows product was omitted; its unchanged
 cross-host GPU evidence comes from run9. Run10 stopped at Codemagic configuration
 validation before any Mac command; the `none` default fixed that separate issue.
-Evidence: `local/metal-compile/mac-run-11/`. Original failures remain preserved.
+Evidence: `local/metal-compile/mac-run-12/` (original artifact 620,067 bytes;
+SHA-256 `f010a97072ea247ed577dd37d068d467b5e73044ac0ebccee0aa8249e48e31d3`).
+Original failures remain preserved.
 No result below establishes Metal 4 runtime or iPhone gameplay improvement.
 
 On 2026-11-18, the integrated WSL control suite passed 105 tests, with the one

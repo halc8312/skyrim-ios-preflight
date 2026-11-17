@@ -102,8 +102,9 @@ update; the rejected GPU admission changes remain excluded.
   adapter. The next hardware check should use the existing ARC comparison first.
   The separate `--retirement-handoff-only` CPU model now covers early/late callback
   handoff to a waiter and rejects a join on the producer thread. WSL normal and
-  ASan/UBSan controls passed. It uses fake tasks and does not supply the missing
-  Metal 4 wait/release contract; the new mode's Mac/TSan check is still pending.
+  ASan/UBSan controls passed; run12 additionally passed Mac normal, ASan/UBSan
+  and Darwin TSan, with empty stderr. It uses fake tasks and does not supply the
+  missing Metal 4 wait/release contract, which still requires device validation.
 
 ## Failure routing and diagnostics
 
