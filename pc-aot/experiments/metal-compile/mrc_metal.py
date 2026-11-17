@@ -26,11 +26,19 @@ batch = load("mrc_metal_io", "batch.py")
 SCOPE = "authored-legacy-metal-mrc-owner-retirement"
 FALSE_EVIDENCE = ("metal4_task_semantics_verified", "real_compile_timeout_verified", "compiler_cancellation_verified",
                   "production_options_parity_verified", "production_adapter_verified", "physical_iphone_verified",
-                  "game_rendering_verified", "performance_improvement_verified")
-CASES = ("success", "invalid_source", "controlled_publication", "warning_source")
+                  "game_rendering_verified", "performance_improvement_verified", "internal_compiler_parallelism_verified")
+CASES = ("success", "invalid_source", "controlled_publication")
 WARNING_MARKER = "authored_nonfatal_diagnostic"
 VARIANTS = {"normal": [], "asan-ubsan": ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]}
 EXPECTED_WORDS = [value for index in range(4) for value in (index + 3, (index + 1) * 7, 10, 0x12345678)]
+
+
+def expected_bias(name, parallel):
+    return {"controlled_publication": 13, "warning_source": 23}.get(name, 3) if parallel else 3
+
+
+def expected_words(bias):
+    return [value for index in range(4) for value in (index + bias, (index + 1) * 7, 10, 0x12345678)]
 
 
 def require(value, message):
@@ -49,11 +57,13 @@ def error_info(value, *, required=False):
             require(type(value.get(key)) is str and len(value[key]) <= 262144, "NSError diagnostic missing or oversized")
 
 
-def validate_native(native, unsupported=False):
+def validate_native(native, unsupported=False, *, parallel=False, warning_source=False):
     require(type(native) is dict and type(native.get("schema")) is int and native["schema"] == 1
             and native.get("scope") == SCOPE and native.get("manual_reference_counting") is True, "native scope/MRC mismatch")
     for key in FALSE_EVIDENCE:
         require(native.get(key) is False, "unsupported evidence claim: " + key)
+    require(native.get("execution_mode") == ("parallel" if parallel else "sequential")
+            and native.get("warning_source_requested") is warning_source, "execution mode/optional warning differs")
     if unsupported:
         require(native.get("status") == "unsupported" and native.get("reason") == "no_default_metal_device"
                 and native.get("cases") == [] and native.get("legacy_async_library_verified") is False
@@ -65,10 +75,15 @@ def validate_native(native, unsupported=False):
     require(type(device) is dict and set(device) == {"name"} and type(device.get("name")) is str,
             "native device observation missing")
     cases = native.get("cases")
-    require(type(cases) is list and len(cases) == len(CASES), "native cases incomplete")
-    for row, name in zip(cases, CASES):
+    names = CASES + (("warning_source",) if warning_source else ())
+    require(type(cases) is list and len(cases) == len(names), "native cases incomplete")
+    for row, name in zip(cases, names):
         require(type(row) is dict and row.get("case") == name and row.get("status") == "passed", "case identity/status mismatch")
         controlled, invalid = name == "controlled_publication", name == "invalid_source"
+        bias = expected_bias(name, parallel)
+        require(type(row.get("bias")) is int and row["bias"] == bias and row.get("macros") == {
+            "AUTHORED_BIAS": str(bias) + "u", "AUTHORED_WARNING": "1" if name == "warning_source" else "0"},
+            "per-request macro/bias differs")
         for key in ("library_compile_attempts", "callbacks", "notifications", "retirements"):
             require(type(row.get(key)) is int and row[key] == 1, "callback/retirement count mismatch: " + key)
         for key in ("caller_pool_expired_before_launch", "retirement_after_launch_exit", "tracked_owner_retired",
@@ -90,7 +105,7 @@ def validate_native(native, unsupported=False):
         if invalid:
             require("compute_words" not in row and "command_completed" not in row, "invalid library executed GPU work")
         else:
-            require(row.get("command_completed") is True and row.get("compute_words") == EXPECTED_WORDS
+            require(row.get("command_completed") is True and row.get("compute_words") == expected_words(bias)
                     and all(type(word) is int for word in row["compute_words"]), "exact GPU words differ")
             error_info(row.get("pipeline_error"))
             error_info(row.get("command_error"))
@@ -111,6 +126,9 @@ def run(args):
               "legacy_async_library_verified": False, "exact_compute_readback_verified": False,
               **{key: False for key in FALSE_EVIDENCE}, "budget_seconds": args.budget,
               "requested_variants": args.variants,
+              "execution_mode": "parallel" if args.parallel_cases else "sequential",
+              "warning_source_requested": args.warning_source,
+              "prior_warning_boundary": "Mac run 9 created a library but no NSError for #warning; its strict failed expectation is retained, not reclassified.",
               "control_scope": "Controlled publication after actual completion; not a compiler timeout/cancel test.",
               "ownership_scope": "One authored owner plus explicit retained library/NSError; not Foundation/Metal-wide leak proof.",
               "runtime_stderr_policy": "Any nonempty stderr requires review and prevents pass, even if it duplicates the expected source NSError.",
@@ -161,11 +179,16 @@ def run(args):
                 control.validate_artifact(binary)
                 row.update(native_compilation_verified=True, binary=control.file_info(binary))
                 native_path = output / (variant + "-native.json")
-                event, _, runtime_stderr = command([binary, "--report", native_path], variant + "-run", False)
+                native_args = [binary, "--report", native_path]
+                if args.parallel_cases:
+                    native_args.append("--parallel-cases")
+                if args.warning_source:
+                    native_args.append("--warning-source")
+                event, _, runtime_stderr = command(native_args, variant + "-run", False)
                 if event.get("returncode") == 78 and not event.get("timed_out") and not event.get("interrupted"):
                     native, _ = batch.read_json(native_path)
                     row["native"] = native
-                    validate_native(native, unsupported=True)
+                    validate_native(native, unsupported=True, parallel=args.parallel_cases, warning_source=args.warning_source)
                     require(not runtime_stderr.strip(), "unsupported runtime emitted diagnostics; inspect stderr")
                     row.update(status="unsupported")
                     report.update(status="unsupported_device", reason=native["reason"])
@@ -174,7 +197,7 @@ def run(args):
                 native, _ = batch.read_json(native_path)
                 row["native"] = native
                 require(not runtime_stderr.strip(), "native runtime emitted diagnostics; inspect retained stderr")
-                validate_native(native)
+                validate_native(native, parallel=args.parallel_cases, warning_source=args.warning_source)
                 row.update(status="passed", legacy_async_library_verified=True, exact_compute_readback_verified=True)
             except (KeyboardInterrupt, SystemExit):
                 row["status"] = "interrupted"
@@ -198,6 +221,8 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--variants", nargs="+", choices=VARIANTS, default=["normal", "asan-ubsan"])
+    parser.add_argument("--parallel-cases", action="store_true", help="Start independent authored requests on separate threads; no compiler parallelism claim")
+    parser.add_argument("--warning-source", action="store_true", help="Also require a real marked NSError warning; prior Mac observation failed this expectation")
     parser.add_argument("--timeout", type=float, default=60)
     parser.add_argument("--budget", type=float, default=180)
     args = parser.parse_args(argv)

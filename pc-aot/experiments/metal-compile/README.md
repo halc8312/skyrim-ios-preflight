@@ -25,12 +25,19 @@ cannot substitute for those native runs.
 
 `mrc_metal.py --output NEW_DIRECTORY` connects the same owner-retirement model
 to the actual legacy asynchronous library API under manual retain/release.
-Its success, invalid-source, controlled-publication and warning-source cases
-require retained callback objects and exact compute readbacks where applicable.
-The warning case specifically requires a usable library plus the original
-diagnostic. Normal and ASan/UBSan runs remain separate. Controlled publication
+Its three core cases (success, invalid source and controlled publication) require
+retained callback objects and exact compute readbacks where applicable. Optional
+`--parallel-cases` launches these on separate host threads, with distinct macro
+values checked against the GPU results. It does not establish internal compiler
+parallelism. Normal and ASan/UBSan runs remain separate. Controlled publication
 is delayed after actual completion; it does not prove compiler cancellation or
 a real compilation timeout. Metal 4 task behavior remains unverified.
+
+Run 9 passed the original three core cases in the normal binary, but its fourth
+case failed: `#warning` produced a usable library without the expected NSError.
+The raw failure remains in `local/metal-compile/mac-run-09/`; the requested
+warning-notification boundary is unverified. `--warning-source` retains that
+strict opt-in expectation. A successful core-only run cannot validate it.
 
 The legacy-only CI workflow accepts an optional `authored_windows_library` build
 input. It passes this through an environment variable, never shell-source
@@ -42,6 +49,12 @@ library is committed. A matching hash establishes content identity, not a
 signature or reconstructed compiler options. Omitting the input leaves this
 additional unit unrequested. [Codemagic build inputs](https://docs.codemagic.io/knowledge-codemagic/build-inputs/)
 documents the manual per-workflow input mechanism.
+
+Run 9 (`5e37c51`, 2026-11-18 JST) verified that pinned Windows product on the Mac
+Apple Paravirtual GPU: three iterations of source, asynchronous source, and
+Windows-library loading each matched all 64 render and 16 compute words. This
+closes the authored Windows-to-Mac compatibility check only; it does not establish
+Metal 4 execution, iPhone performance or production shader coverage.
 
 | Environment | Can establish | Cannot establish |
 | --- | --- | --- |

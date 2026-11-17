@@ -128,9 +128,13 @@ update; the rejected GPU admission changes remain excluded.
    with separate normal, ASan/UBSan and TSan binaries. Its portable controls pass;
    all seven cases also passed real Mac execution in normal, ASan/UBSan and TSan
    binaries (run8, 2026-11-18). Fake task lifetime and dictionary copies do not
-   establish Metal task behavior or `MTLCompileOptions` parity. Connecting the
-   same ownership model to an actual legacy asynchronous Metal library provider
-   is the next isolated check; the new compiler's task semantics remain separate.
+   establish Metal task behavior or `MTLCompileOptions` parity. In run9 the actual
+   legacy asynchronous provider passed normal success, invalid-source and controlled
+   publication cases, including retained original results/errors and GPU readback.
+   Its additional warning case returned a library without the expected NSError;
+   that strict failed expectation remains unverified and is now opt-in. Separate
+   core normal/ASan/UBSan and concurrent distinct-macro checks are the next checks.
+   The new compiler's task semantics remain separate.
 2. On capable OS-26 hardware, verify real async task retirement and compare both
    library backends through legacy function specialization, PSOs, and exact authored
    GPU readbacks, including existing macro/math/invariance edge cases. SDK compilation

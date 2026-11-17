@@ -13,6 +13,8 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <vector>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -37,15 +39,13 @@ private:
 };
 
 static NSString* const SuccessSource = @"#include <metal_stdlib>\nusing namespace metal;\n"
+    "#if AUTHORED_WARNING\n#warning authored_nonfatal_diagnostic\n#endif\n"
     "kernel void probe(device uint4* output [[buffer(0)]], uint id [[thread_position_in_grid]]) {\n"
-    "if (id < 4) output[id] = uint4(id + 3u, (id + 1u) * 7u, 10u, 0x12345678u); }\n";
+    "if (id < 4) output[id] = uint4(id + AUTHORED_BIAS, (id + 1u) * 7u, 10u, 0x12345678u); }\n";
 static NSString* const InvalidSource = @"#include <metal_stdlib>\nusing namespace metal;\n"
     "kernel void probe(device uint* output [[buffer(0)]]) { output[0] = definitely_missing_authored_identifier; }\n";
 static NSString* const WarningMarker = @"authored_nonfatal_diagnostic";
-static NSString* authoredSource(bool invalid, bool warning) {
-    if (invalid) return InvalidSource;
-    return warning ? [@"#warning authored_nonfatal_diagnostic\n" stringByAppendingString:SuccessSource] : SuccessSource;
-}
+static NSString* authoredSource(bool invalid) { return invalid ? InvalidSource : SuccessSource; }
 
 static NSDictionary* errorInfo(NSError* error) {
     if (!error) return @{ @"present": @NO };
@@ -72,7 +72,7 @@ struct Owner {
     Held<id<MTLDevice>> device;
     Held<NSString*> source;
     Held<MTLCompileOptions*> options;
-    Owner(std::shared_ptr<State> stateIn, id<MTLDevice> deviceIn, NSString* sourceIn)
+    Owner(std::shared_ptr<State> stateIn, id<MTLDevice> deviceIn, NSString* sourceIn, unsigned bias, bool warning)
         : state(std::move(stateIn)), device(deviceIn), source(Held<NSString*>::adopt([sourceIn copy])),
           options(Held<MTLCompileOptions*>::adopt([MTLCompileOptions new])) {
         ++state->liveOwners;
@@ -80,7 +80,8 @@ struct Owner {
         value.languageVersion = MTLLanguageVersion2_4;
         value.preserveInvariance = NO;
         value.optimizationLevel = MTLLibraryOptimizationLevelDefault;
-        value.preprocessorMacros = @{};
+        value.preprocessorMacros = @{ @"AUTHORED_BIAS": [NSString stringWithFormat:@"%uu", bias],
+                                      @"AUTHORED_WARNING": warning ? @"1" : @"0" };
         if (@available(macOS 15.0, *)) {
             value.mathMode = MTLMathModeSafe;
             value.mathFloatingPointFunctions = MTLMathFloatingPointFunctionsPrecise;
@@ -105,7 +106,7 @@ static void asyncFailure(const std::shared_ptr<State>& state, const char* messag
     state->changed.notify_all();
 }
 
-static void readback(id<MTLDevice> device, id<MTLLibrary> library, NSMutableDictionary* result) {
+static void readback(id<MTLDevice> device, id<MTLLibrary> library, unsigned bias, NSMutableDictionary* result) {
     auto function = Held<id<MTLFunction>>::adopt([library newFunctionWithName:@"probe"]);
     require(function.get() != nil, "compiled authored kernel missing");
     NSError* error = nil;
@@ -145,7 +146,7 @@ static void readback(id<MTLDevice> device, id<MTLLibrary> library, NSMutableDict
     const uint32_t* actual = static_cast<const uint32_t*>([buffer.get() contents]);
     bool matches = true;
     for (uint32_t index = 0; index < 4; ++index) {
-        const uint32_t expected[4] = {index + 3u, (index + 1u) * 7u, 10u, 0x12345678u};
+        const uint32_t expected[4] = {index + bias, (index + 1u) * 7u, 10u, 0x12345678u};
         for (uint32_t component = 0; component < 4; ++component) {
             [values addObject:@(actual[4 * index + component])];
             matches = matches && actual[4 * index + component] == expected[component];
@@ -156,7 +157,31 @@ static void readback(id<MTLDevice> device, id<MTLLibrary> library, NSMutableDict
     result[@"exact_compute_readback_verified"] = @YES;
 }
 
-static void runCase(id<MTLDevice> device, NSString* name, NSMutableDictionary* result) {
+// Only the caller-side start boundary is synchronized. This cannot establish
+// how many compiler/GPU jobs Metal actually executes simultaneously.
+class LaunchBarrier {
+public:
+    explicit LaunchBarrier(unsigned participants) : participants_(participants) {}
+    void arrive() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        ++arrived_;
+        changed_.notify_all();
+        if (!changed_.wait_for(lock, std::chrono::seconds(10), [&] { return cancelled_ || arrived_ == participants_; })) {
+            cancelled_ = true;
+            changed_.notify_all();
+            throw std::runtime_error("parallel launch barrier budget expired");
+        }
+        require(!cancelled_, "parallel launch barrier canceled after another case failed");
+    }
+    void cancel() { std::lock_guard<std::mutex> lock(mutex_); cancelled_ = true; changed_.notify_all(); }
+private:
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    unsigned participants_, arrived_ = 0;
+    bool cancelled_ = false;
+};
+
+static void runCase(id<MTLDevice> device, NSString* name, unsigned bias, LaunchBarrier* barrier, NSMutableDictionary* result) {
     const bool invalid = [name isEqualToString:@"invalid_source"];
     const bool controlled = [name isEqualToString:@"controlled_publication"];
     const bool warning = [name isEqualToString:@"warning_source"];
@@ -165,15 +190,17 @@ static void runCase(id<MTLDevice> device, NSString* name, NSMutableDictionary* r
     Owner* raw = nullptr;
     CompletionHolder completion;
     @autoreleasepool {
-        NSMutableString* callerSource = [NSMutableString stringWithString:authoredSource(invalid, warning)];
-        auto owner = std::make_shared<Owner>(state, device, callerSource);
+        NSMutableString* callerSource = [NSMutableString stringWithString:authoredSource(invalid)];
+        auto owner = std::make_shared<Owner>(state, device, callerSource, bias, warning);
         raw = owner.get();
         bridge = Bridge::create(
-            [state, raw, invalid, warning](Payload payload) {
-                require(state->callerPoolExpired && [raw->source.get() isEqualToString:authoredSource(invalid, warning)],
+            [state, raw, invalid, warning, bias](Payload payload) {
+                require(state->callerPoolExpired && [raw->source.get() isEqualToString:authoredSource(invalid)],
                         "owned source snapshot changed or caller pool still active");
                 require([raw->options.get() languageVersion] == MTLLanguageVersion2_4 &&
-                        [[raw->options.get() preprocessorMacros] count] == 0, "owned options changed");
+                        [[raw->options.get() preprocessorMacros] isEqualToDictionary:@{
+                            @"AUTHORED_BIAS": [NSString stringWithFormat:@"%uu", bias],
+                            @"AUTHORED_WARNING": warning ? @"1" : @"0" }], "owned options changed");
                 std::lock_guard<std::mutex> lock(state->mutex);
                 ++state->notifications;
                 state->beforeLaunchExit = !state->launchExited;
@@ -214,6 +241,7 @@ static void runCase(id<MTLDevice> device, NSString* name, NSMutableDictionary* r
     }
     state->callerPoolExpired = true; // Set before the only provider launch.
     result[@"caller_pool_expired_before_launch"] = @YES;
+    if (barrier) barrier->arrive();
     result[@"library_compile_attempts"] = @1;
     @autoreleasepool {
         [raw->device.get() newLibraryWithSource:raw->source.get() options:raw->options.get() completionHandler:completion.value];
@@ -277,22 +305,53 @@ static void runCase(id<MTLDevice> device, NSString* name, NSMutableDictionary* r
         require(published.library.get() != nil, "valid authored source returned no library");
         // A nonnil library may also carry a warning; keep it without converting
         // that warning into a nil result or silently discarding the NSError.
-        readback(device, published.library.get(), result);
+        readback(device, published.library.get(), bias, result);
     }
     result[@"status"] = @"passed";
 }
 
+static void guardedCase(id<MTLDevice> device, NSString* name, unsigned bias, LaunchBarrier* barrier, NSMutableDictionary* result) {
+    @autoreleasepool {
+        @try {
+            try { runCase(device, name, bias, barrier, result); }
+            catch (const std::exception& error) {
+                result[@"status"] = @"failed";
+                result[@"reason"] = [NSString stringWithUTF8String:error.what()];
+                if (barrier) barrier->cancel();
+            } catch (...) {
+                result[@"status"] = @"failed";
+                result[@"reason"] = @"unknown C++ exception";
+                if (barrier) barrier->cancel();
+            }
+        } @catch (NSException* error) {
+            result[@"status"] = @"failed";
+            result[@"reason"] = [error description];
+            if (barrier) barrier->cancel();
+        }
+    }
+}
+
 int main(int argc, const char* argv[]) {
     @autoreleasepool {
-        if (argc != 3 || std::string(argv[1]) != "--report") { std::fprintf(stderr, "usage: mrc-metal --report NEW.json\n"); return 2; }
+        const char* reportArgument = nullptr;
+        bool parallel = false, warningSource = false;
+        for (int index = 1; index < argc; ++index) {
+            if (std::string(argv[index]) == "--report" && index + 1 < argc && !reportArgument) reportArgument = argv[++index];
+            else if (std::string(argv[index]) == "--parallel-cases" && !parallel) parallel = true;
+            else if (std::string(argv[index]) == "--warning-source" && !warningSource) warningSource = true;
+            else { std::fprintf(stderr, "invalid argument\n"); return 2; }
+        }
+        if (!reportArgument) { std::fprintf(stderr, "usage: mrc-metal --report NEW.json [--parallel-cases] [--warning-source]\n"); return 2; }
         struct stat existing {};
-        if (lstat(argv[2], &existing) == 0) return 2;
+        if (lstat(reportArgument, &existing) == 0) return 2;
         if (errno != ENOENT) { std::perror("report path check"); return 2; }
-        NSString* path = [NSString stringWithUTF8String:argv[2]];
+        NSString* path = [NSString stringWithUTF8String:reportArgument];
         if (!path) return 2;
         NSMutableDictionary* report = [NSMutableDictionary dictionaryWithDictionary:@{
             @"schema": @1, @"scope": @"authored-legacy-metal-mrc-owner-retirement", @"status": @"running",
             @"process_id": @(getpid()), @"manual_reference_counting": @YES,
+            @"execution_mode": parallel ? @"parallel" : @"sequential", @"warning_source_requested": @(warningSource),
+            @"internal_compiler_parallelism_verified": @NO,
             @"legacy_async_library_verified": @NO, @"exact_compute_readback_verified": @NO,
             @"metal4_task_semantics_verified": @NO, @"real_compile_timeout_verified": @NO,
             @"compiler_cancellation_verified": @NO, @"production_options_parity_verified": @NO,
@@ -301,7 +360,7 @@ int main(int argc, const char* argv[]) {
             @"control_scope": @"Controlled publication follows actual completion; it is not a compiler timeout or cancellation.",
             @"ownership_scope": @"Only the authored Owner counter and retained callback payload; not Metal-wide release/leak proof.",
             @"options": @{ @"language": @"2.4", @"math": @"safe/precise (legacy fastMath=false fallback)",
-                           @"preserve_invariance": @NO, @"optimization": @"default", @"macros": @{} } }];
+                           @"preserve_invariance": @NO, @"optimization": @"default", @"macros_recorded_per_case": @YES } }];
         NSMutableArray* cases = [NSMutableArray array];
         report[@"cases"] = cases;
         @try {
@@ -312,15 +371,44 @@ int main(int argc, const char* argv[]) {
                     report[@"reason"] = @"no_default_metal_device";
                 } else {
                     report[@"device"] = @{ @"name": [device.get() name] ?: @"" };
-                    for (NSString* name in @[ @"success", @"invalid_source", @"controlled_publication", @"warning_source" ]) {
+                    NSMutableArray* names = [NSMutableArray arrayWithArray:@[ @"success", @"invalid_source", @"controlled_publication" ]];
+                    if (warningSource) [names addObject:@"warning_source"];
+                    for (NSString* name in names) {
+                        const unsigned bias = parallel && [name isEqualToString:@"controlled_publication"] ? 13u :
+                            parallel && [name isEqualToString:@"warning_source"] ? 23u : 3u;
                         NSMutableDictionary* result = [NSMutableDictionary dictionaryWithDictionary:@{
                             @"case": name, @"status": @"running", @"library_compile_attempts": @0,
+                            @"bias": @(bias), @"macros": @{ @"AUTHORED_BIAS": [NSString stringWithFormat:@"%uu", bias],
+                                @"AUTHORED_WARNING": [name isEqualToString:@"warning_source"] ? @"1" : @"0" },
                             @"exact_compute_readback_verified": @NO,
                             @"controlled_publication": @([name isEqualToString:@"controlled_publication"]),
                             @"destroy_requested_before_controlled_publication": @NO }];
                         [cases addObject:result];
-                        runCase(device.get(), name, result);
                     }
+                    if (parallel) {
+                        LaunchBarrier barrier(static_cast<unsigned>([cases count]));
+                        std::vector<std::thread> threads;
+                        threads.reserve([cases count]);
+                        try {
+                            for (NSMutableDictionary* result in cases) {
+                                NSString* name = result[@"case"];
+                                const unsigned bias = [result[@"bias"] unsignedIntValue];
+                                threads.emplace_back([&, result, name, bias] { guardedCase(device.get(), name, bias, &barrier, result); });
+                            }
+                        } catch (...) {
+                            barrier.cancel();
+                            for (auto& thread : threads) if (thread.joinable()) thread.join();
+                            throw;
+                        }
+                        for (auto& thread : threads) thread.join();
+                    } else {
+                        for (NSMutableDictionary* result in cases) {
+                            guardedCase(device.get(), result[@"case"], [result[@"bias"] unsignedIntValue], nullptr, result);
+                            if (![result[@"status"] isEqualToString:@"passed"]) break;
+                        }
+                    }
+                    for (NSDictionary* result in cases) require([result[@"status"] isEqualToString:@"passed"],
+                        "one or more authored cases failed; inspect individual case diagnostics");
                     report[@"status"] = @"passed";
                     report[@"legacy_async_library_verified"] = @YES;
                     report[@"exact_compute_readback_verified"] = @YES;

@@ -220,6 +220,7 @@ run_experiment archive-specialized 180 experiments/metal-compile/archive.py --sp
 run_experiment metal4-archive-sdk 120 experiments/metal-compile/archive_metal4.py --compile-only --output "$RUN/metal4-archive-sdk"
 run_experiment mrc-lifetime 180 experiments/metal-compile/mrc_lifetime.py --output "$RUN/mrc-lifetime"
 run_experiment mrc-metal 180 experiments/metal-compile/mrc_metal.py --output "$RUN/mrc-metal"
+run_experiment mrc-metal-parallel 180 experiments/metal-compile/mrc_metal.py --parallel-cases --output "$RUN/mrc-metal-parallel"
 if [[ -n "${SKYRIM_AUTHORED_WINDOWS_LIBRARY:-}" ]]; then
   # A manual-only input containing one pinned authored Windows product. It is
   # consumed from the environment, never interpolated into shell command text.

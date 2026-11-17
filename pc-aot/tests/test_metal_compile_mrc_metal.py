@@ -17,12 +17,14 @@ def diagnostic():
             "full_description": "original synthetic diagnostic", "user_info_description": "{synthetic = true;}"}
 
 
-def synthetic_native(unsupported=False):
+def synthetic_native(unsupported=False, *, parallel=False, warning_source=False):
     rows = []
     if not unsupported:
-        for name in probe.CASES:
+        for name in probe.CASES + (("warning_source",) if warning_source else ()):
             controlled, invalid = name == "controlled_publication", name == "invalid_source"
+            bias = probe.expected_bias(name, parallel)
             row = {"case": name, "status": "passed", "library_compile_attempts": 1, "callbacks": 1,
+                   "bias": bias, "macros": {"AUTHORED_BIAS": str(bias) + "u", "AUTHORED_WARNING": "1" if name == "warning_source" else "0"},
                    "notifications": 1, "retirements": 1, "caller_pool_expired_before_launch": True,
                    "retirement_after_launch_exit": True, "tracked_owner_retired": True,
                    "callback_pool_drained_before_observation": True, "original_callback_objects_preserved": True,
@@ -35,12 +37,13 @@ def synthetic_native(unsupported=False):
                 row["library_error"]["description"] += " " + probe.WARNING_MARKER
                 row["warning_marker_present"] = True
             if not invalid:
-                row.update(command_completed=True, compute_words=list(probe.EXPECTED_WORDS),
+                row.update(command_completed=True, compute_words=probe.expected_words(bias),
                            pipeline_error={"present": False}, command_error={"present": False})
             rows.append(row)
     result = {"schema": 1, "scope": probe.SCOPE, "manual_reference_counting": True,
               "status": "unsupported" if unsupported else "passed", "cases": rows,
               "legacy_async_library_verified": not unsupported, "exact_compute_readback_verified": not unsupported,
+              "execution_mode": "parallel" if parallel else "sequential", "warning_source_requested": warning_source,
               **{key: False for key in probe.FALSE_EVIDENCE}}
     if unsupported:
         result["reason"] = "no_default_metal_device"
@@ -76,7 +79,7 @@ class MrcMetalReportTests(unittest.TestCase):
 
     def test_explicit_warning_case_requires_real_error_and_its_marker(self):
         for missing in ("error", "marker", "library"):
-            native = synthetic_native()
+            native = synthetic_native(warning_source=True)
             row = native["cases"][3]
             if missing == "error":
                 row["library_error"] = {"present": False}
@@ -85,7 +88,29 @@ class MrcMetalReportTests(unittest.TestCase):
             else:
                 row["library_created"] = False
             with self.subTest(missing=missing), self.assertRaises(ValueError):
-                probe.validate_native(native)
+                probe.validate_native(native, warning_source=True)
+
+    def test_parallel_request_macro_or_library_mixup_is_detected(self):
+        native = synthetic_native(parallel=True)
+        probe.validate_native(native, parallel=True)
+        native["cases"][2]["compute_words"] = list(probe.EXPECTED_WORDS)
+        with self.assertRaisesRegex(ValueError, "GPU words"):
+            probe.validate_native(native, parallel=True)
+        native = synthetic_native(parallel=True)
+        native["cases"][2]["macros"]["AUTHORED_BIAS"] = "3u"
+        with self.assertRaisesRegex(ValueError, "macro/bias"):
+            probe.validate_native(native, parallel=True)
+
+    def test_warning_is_opt_in_and_never_dropped_when_requested(self):
+        native = synthetic_native()
+        probe.validate_native(native)
+        with self.assertRaises(ValueError):
+            probe.validate_native(native, warning_source=True)
+        native = synthetic_native(parallel=True, warning_source=True)
+        probe.validate_native(native, parallel=True, warning_source=True)
+        native["cases"].pop()
+        with self.assertRaises(ValueError):
+            probe.validate_native(native, parallel=True, warning_source=True)
 
     def test_controlled_publication_cannot_claim_real_timeout_or_cancellation(self):
         for key, value in (("destroy_requested_before_controlled_publication", False),
@@ -140,7 +165,8 @@ class MrcMetalRunnerTests(unittest.TestCase):
                 if unsupported:
                     event["returncode"] = 78
                 Path(argv[argv.index("--report") + 1]).write_text(
-                    '{"schema":1,"schema":1}' if malformed else json.dumps(synthetic_native(unsupported)), encoding="utf-8")
+                    '{"schema":1,"schema":1}' if malformed else json.dumps(synthetic_native(
+                        unsupported, parallel="--parallel-cases" in argv, warning_source="--warning-source" in argv)), encoding="utf-8")
                 return event, "", stderr
             return event, "", ""
         return execute
@@ -182,6 +208,26 @@ class MrcMetalRunnerTests(unittest.TestCase):
                     self.assertEqual("-fsanitize=address,undefined" in argv, label.startswith("asan-ubsan"))
             for key in probe.FALSE_EVIDENCE:
                 self.assertIs(report[key], False)
+            for argv, label, *_ in calls:
+                if label.endswith("-run"):
+                    self.assertNotIn("--parallel-cases", argv)
+                    self.assertNotIn("--warning-source", argv)
+
+    def test_optional_modes_are_explicit_in_each_native_process(self):
+        for flags in (["--parallel-cases"], ["--warning-source"], ["--parallel-cases", "--warning-source"]):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as directory:
+                sdk = Path(directory)
+                calls = []
+                with patch.object(probe.platform, "system", return_value="Darwin"), \
+                        patch.object(probe.control, "run_command", side_effect=self.fake_commands(sdk, calls)):
+                    report = probe.run(probe.parse_args(["--output", str(sdk / "fresh"), *flags]))
+                self.assertEqual(report["status"], "passed")
+                self.assertEqual(report["execution_mode"], "parallel" if "--parallel-cases" in flags else "sequential")
+                self.assertIs(report["warning_source_requested"], "--warning-source" in flags)
+                for argv, label, *_ in calls:
+                    if label.endswith("-run"):
+                        for flag in ("--parallel-cases", "--warning-source"):
+                            self.assertEqual(flag in argv, flag in flags)
 
     def test_native_unsupported_stops_without_claiming_unrun_variant(self):
         with tempfile.TemporaryDirectory() as directory:
