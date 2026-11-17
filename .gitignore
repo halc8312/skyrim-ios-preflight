@@ -2,6 +2,23 @@
 !/.gitignore
 !/.gitattributes
 !/codemagic.yaml
+
+# Reviewed PC-port Metal compiler experiments; no generated library payloads.
+!/pc-aot/
+!/pc-aot/docs/
+!/pc-aot/docs/STATUS.md
+!/pc-aot/experiments/
+!/pc-aot/experiments/metal-compile/
+!/pc-aot/experiments/metal-compile/README.md
+!/pc-aot/experiments/metal-compile/fixture.metal
+!/pc-aot/experiments/metal-compile/offline.py
+!/pc-aot/experiments/metal-compile/runtime.mm
+!/pc-aot/experiments/metal-compile/runtime.py
+!/pc-aot/scripts/
+!/pc-aot/scripts/check-metal-compile-mac.sh
+!/pc-aot/tests/
+!/pc-aot/tests/test_metal_compile_offline.py
+!/pc-aot/tests/test_metal_compile_runtime.py
 !/.github/
 !/.github/workflows/
 !/.github/workflows/ios-preflight.yml
