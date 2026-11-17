@@ -39,6 +39,12 @@ getter type does not recover the original declaration. Value loss, if observed,
 is reported rather than silently repaired. Neither these bit patterns nor
 NSNumber's type prove how Metal converts the value to preprocessor text.
 
+The separate run-6 [integer GPU probe](MACROS.md) illustrates this distinction:
+an authored unsigned 32-bit NSNumber input appeared as signed 64-bit getter
+storage while retaining its numeric value. Its GPU size/comparison observations
+differed from an explicitly unsigned string. These are observations on one
+virtual Mac device, not original-type recovery or production parity.
+
 Nil and empty macro/library collections remain distinct. Nonempty linked
 libraries have no established binary identity in this probe and cannot be
 declared equivalent. Unsupported macro classes are explicit failures of value
@@ -61,8 +67,9 @@ constant index/type/raw bytes, unset/default distinctions and applicable
 workgroup metadata. This Mac header is not an iPhone capture implementation.
 
 The fixed MoltenVK path also permits a nonnil library with an NSError warning.
-The authored fixtures require diagnostic-free success for their own known
-inputs; that stricter fixture assertion must not replace production warning,
+Some archive and PSO controls require diagnostic-free success for their own known
+inputs. The runtime and macro-value library paths retain warnings and accept a
+nonnil library. Stricter fixture assertions must not replace production warning,
 late-completion ownership or failed-variant retry behavior during an API change.
 
 Primary references:

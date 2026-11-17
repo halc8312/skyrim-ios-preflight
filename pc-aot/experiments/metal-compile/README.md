@@ -256,7 +256,8 @@ The archive fixture failed to link because its runner resolved the `clang++`
 symlink to `clang`, changing driver mode and omitting automatic C++ runtime
 linking. The runner now preserves the reported executable spelling, with a
 symlink regression control. The original failed archive evidence is retained in
-`local/metal-compile/mac-run-03/`; corrected Apple execution remains pending.
+`local/metal-compile/mac-run-03/`; corrected legacy archive execution was
+subsequently verified in run 5.
 
 Run 4 at public source `c86a082` passed all 177 controls, including Darwin TSan.
 The two-float macro probe completed actual compute readback and confirmed both
@@ -268,15 +269,16 @@ offline vertex lookup. Neither full comparison passed. The linker invocation
 used resolved `air-lld` rather than `metallib`. Actual symbol inspection found the
 entry points in AIR and none in the 92-byte libraries. The runner now preserves
 the invocation name and records the resolved binary separately; a symlink
-regression covers discovery, version probes and linking. Corrected Mac execution
-remains pending. Original evidence and both installed pipeline-script manuals
-are retained in `local/metal-compile/mac-run-04/`.
+regression covers discovery, version probes and linking. The corrected legacy
+comparison and archive execution passed in run 5. Original evidence and both
+installed pipeline-script manuals are retained in `local/metal-compile/mac-run-04/`.
 
 Run 5 at public source `fb225fe` passed all 184 controls without a skip. After the
 linker fix, legacy synchronous source, asynchronous source and offline-library
 routes completed three iterations each with identical 64-word render and
-16-word compute readbacks. Controlled async retention and invalid-source checks
-also passed. The archive fixture saved one kernel and, in a different process,
+16-word compute readbacks. The offline IR was generated on that Mac with Metal
+compiler 32023.883; no Windows-built library was loaded. Controlled async retention
+and invalid-source checks also passed. The archive fixture saved one kernel and, in a different process,
 strictly found it, strictly rejected an unrecorded kernel, explicitly compiled
 the fallback and verified both outputs. Empty/malformed archives were rejected
 and saved bytes stayed unchanged. Each native archive process made zero source
@@ -285,6 +287,57 @@ library compiles and one IR-library URL load. Evidence is in
 GPU, not Metal 4 or iPhone gameplay validation. The first and subsequent routes
 have different OS-cache histories; their elapsed-time ratio is not a speedup
 measurement.
+
+Run 6 at public source `c3c12ae` passed all 214 controls in 18.904 seconds without
+a skip, and all six independent units passed. The specialized archive restored
+constant 7 strictly, rejected constant 11 for the same kernel name, and produced
+the different prescribed output through the explicit value-11 fallback. The
+integer macro probe observed `(4294967295, 8, 1)` for NSNumber and the unsuffixed
+string, versus `(4294967295, 4, 0)` for the explicit uint string; see
+[the three-expression comparison](MACROS.md). The `Apple Paravirtual device`
+reported architecture `air64_v27`. Offline IR was generated on that Mac
+with Metal compiler 32023.883, not on Windows. Evidence is retained in
+`local/metal-compile/mac-run-06/` and [the run log](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcb807d133a39c4a125e73).
+These legacy API observations do not establish Metal 4 runtime support, iPhone
+behavior, production parity or a performance improvement.
+
+## Direct Metal 4 archive boundary (runtime pending)
+
+`archive_metal4.py` prepares a narrower future experiment for a macOS 26 host
+with a Metal 4 device. It uses the observed `device.architecture.name`, checks
+that exact architecture against the installed offline tool's macOS 26 query,
+and generates an archive containing only `archive_recorded` from an authored
+IR library containing both `archive_recorded` and `archive_unrecorded`.
+
+Each recorded/unrecorded × supplied/nil-library lookup runs in a separate
+process. Nil cases reject any library-path argument and never create an
+MTLLibrary in application code. All cases call the archive directly; no
+MTL4Compiler or compiler fallback is available. Recorded success additionally
+requires exact compute readback through an ordinary Metal command encoder.
+Unrecorded names must be rejected explicitly. A recorded nil-library rejection
+remains a non-success result (exit 3), and an unsupported device remains exit 78.
+
+```sh
+# API compilation only; no device query, shader compilation, or GPU execution:
+python3 experiments/metal-compile/archive_metal4.py --compile-only --output local/metal-compile/m4-archive-sdk-01
+# Future execution requires an actual Metal 4 capable Mac:
+python3 experiments/metal-compile/archive_metal4.py --output local/metal-compile/m4-archive-runtime-01
+```
+
+The manual Mac workflow includes only the first command. This compiles a Mac
+executable and an iPhone SDK object without creating an iPhone application.
+The existing cloud GPU is unsupported for the second command; repeating it
+cannot supply that missing hardware. Native SDK compilation of this new probe
+is pending. Portable controls verify process separation, failed command
+preservation, fresh output ownership, and report interpretation; they are not
+Metal execution evidence.
+
+`library_free_lookup_verified` means no application-created MTLLibrary was
+loaded or supplied in that lookup process. It does not establish that the
+driver performed no internal compilation or file loading. Descriptors omitted
+from the authored script use SDK defaults, so a failed lookup alone does not
+identify the cause. This Mac-generated archive also does not validate the
+separate Windows-generated iOS archive or production options.
 
 ## Binary archive boundary
 
@@ -295,7 +348,9 @@ strictly, and an explicit ordinary value-11 fallback to produce its different
 16-word output. Function creation, constant type/index/value, separate process
 identity, unchanged saved bytes and invalid archive controls remain checked.
 This case requires macOS 15 or newer for device serialization of specialized
-functions. Portable controls passed; actual Apple execution is pending.
+functions. Portable controls and actual Apple execution passed in run 6: both
+16-word readbacks matched, the saved 5,899-byte archive stayed unchanged, and
+the empty/malformed archive controls were rejected.
 The existing constant-free fixture and its evidence remain separate.
 
 `archive.py` tests two authored compute kernels through ordinary Metal APIs,
@@ -316,7 +371,7 @@ Each blocking native phase is logged before entering the API. The runner limits
 child time, preserves failures, compares process/device identities and archive
 hashes, and never calls a source-library factory in the reload process. This
 tests archive plus separately supplied IR, not the export of runtime MTLLibrary
-bytes. Apple execution of this new boundary is pending.
+bytes. This constant-free boundary passed on the Paravirtual Mac GPU in run 5.
 
 A separate actual Windows Metal 6.2 smoke test produced a 13,680-byte legacy GPU
 archive from one authored compute kernel, using iOS 18 and explicit Apple9
@@ -394,8 +449,11 @@ python -m unittest discover -s tests -p 'test_metal_compile_*.py' -v
 ## Before integrating with MoltenVK
 
 1. Establish actual Apple compilation and matching render/compute readbacks for
-   the authored source. Then repeat with privately held representative generated
-   MSL and its exact production options. Synthetic colors are not game fidelity.
+   the authored source through the chosen API route. A later representative-MSL
+   comparison also needs exact production options. Additional game-data conversion
+   was rejected by automatic approval review and remains unperformed; current work
+   uses authored inputs or reads existing outputs. Synthetic colors are not game
+   fidelity.
 2. Preserve the existing source, macros, language version, fast-math settings,
    failures, ownership, and callback lifetime. Do not put a synchronous Metal 4
    compile under the existing device monitor: that would hold the monitor for
@@ -423,8 +481,9 @@ children used guard pages, UBSan and OS limits; no SPIR-V compilation or GPU wor
 was performed. The actual device `.dxvk-cache` has not been located in the
 available local files; current numeric diagnostics do not contain that cache.
 
-The next input study therefore classifies and validates candidates, reconstructs
-DXVK stage/hash keys, and compares them with a private device-cache copy. Generated
+The next input study would compare existing candidate records and DXVK stage/hash
+keys with a private device-cache copy once available. Any new game-data conversion
+still needs resolution of the approval-review block above. Generated
 fixed-function shaders and unresolved keys remain separate categories. Only then
 can a small, known recipe set test early library or final-pipeline preparation.
 History-based weights can refine that set later; they cannot supply missing

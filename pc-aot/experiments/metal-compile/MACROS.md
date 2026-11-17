@@ -53,7 +53,8 @@ observed all eight expansions through the Apple Paravirtual device, Xcode 26.6 /
 SDK 26.5 / Metal compiler 32023.883. The NSString route matched the explicit CLI
 tokens in all eight cases. NSNumber tokens differed from the string controls in
 seven cases; some differences were integer suffixes, not established value
-changes. Two floating-point observations need an additional GPU value check:
+changes. At that point, two floating-point observations still needed a GPU
+value check:
 
 | Authored value | NSNumber token | NSString / CLI token |
 | --- | --- | --- |
@@ -73,9 +74,11 @@ Both routes passed the direct-literal, buffer-input and unwritten-guard controls
 This establishes a difference for these two authored cases on that Paravirtual
 Mac device. It does not establish a Skyrim bug or all-type equivalence.
 Replacing NSNumber with more precise strings could change existing semantics;
-do not automatically make that a production precision fix. The original native
-report and compiler diagnostics remain under
-`local/metal-compile/mac-run-03/evidence/macro-diagnostics/`.
+do not automatically make that a production precision fix. Token reports and
+compiler diagnostics remain under
+`local/metal-compile/mac-run-03/evidence/macro-diagnostics/`. GPU value reports
+are under `local/metal-compile/mac-run-04/evidence/macro-values/`, with the same
+results confirmed in `local/metal-compile/mac-run-05/evidence/macro-values/`.
 
 `macro_value.py` follows those two authored float cases through ordinary Metal
 compute readback. It keeps original bits, numeric getters, diagnostic tokens and
@@ -95,7 +98,28 @@ explicit uint case has a fixed expected expression triple; the other two are
 observations. It does not recapture NSNumber's expansion token or infer the
 original type from the three expressions. A rejected case retains its raw
 compiler error and makes the aggregate fail even when later controls pass.
-Its 12 portable controls passed; actual Apple execution is pending.
+Its 12 portable controls and actual Apple execution passed in run 6.
+
+[Run 6](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcb807d133a39c4a125e73)
+at public source `c3c12ae` observed the following on the Apple Paravirtual device,
+macOS 26.5.1 / SDK 26.5. Every library, pipeline and GPU command succeeded without
+an error, and all literal, input-buffer, signature and unwritten-guard controls
+matched. This probe compiled authored source through the Mac legacy runtime;
+it did not load a Windows-built library.
+
+| Macro input | `uint(value)` | `sizeof(value)` bytes | `-1 < value` |
+| --- | --- | --- | --- |
+| `numberWithUnsignedInt(0xffffffff)` | 4294967295 | 8 | 1 |
+| NSString `"4294967295"` | 4294967295 | 8 | 1 |
+| NSString `"4294967295u"` | 4294967295 | 4 | 0 |
+
+The NSNumber getter reported signed 64-bit storage (`objCType=q`) while
+`unsignedIntValue` retained `ffffffff`; the authored constructor still took an
+unsigned 32-bit input. Getter representation, the fixed string inputs and GPU
+expressions remain separate observations. The equal uint conversions do not
+erase the different size and comparison results. This is not general type
+equivalence, a production fix, Metal 4 runtime or iPhone performance evidence.
+Original reports are in `local/metal-compile/mac-run-06/evidence/macro-integers/`.
 
 ```sh
 python3 experiments/metal-compile/macro_integer.py --output local/metal-compile/macro-integer-new --budget 90

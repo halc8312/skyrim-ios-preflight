@@ -217,6 +217,7 @@ print(f'METAL_TOOL_REFERENCE captured={sum(row["status"] == "captured" for row i
 PY
 run_experiment archive 180 experiments/metal-compile/archive.py --output "$RUN/archive"
 run_experiment archive-specialized 180 experiments/metal-compile/archive.py --specialized --output "$RUN/archive-specialized"
+run_experiment metal4-archive-sdk 120 experiments/metal-compile/archive_metal4.py --compile-only --output "$RUN/metal4-archive-sdk"
 run_experiment macro-diagnostics 90 experiments/metal-compile/macro_probe.py --timeout 30 --output "$RUN/macro-diagnostics"
 run_experiment macro-values 90 experiments/metal-compile/macro_value.py --timeout 30 --output "$RUN/macro-values"
 run_experiment macro-integers 90 experiments/metal-compile/macro_integer.py --timeout 30 --output "$RUN/macro-integers"
