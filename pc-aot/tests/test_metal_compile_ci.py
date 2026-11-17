@@ -23,10 +23,19 @@ BASH = shutil.which("bash")
 def shell_function(script, name):
     """Take the actual top-level function verbatim, including its Python body."""
     start = script.index(name + "() {\n")
-    end = re.search(r"(?m)^}\s*$", script[start:])
-    if end is None:
-        raise ValueError("CI helper closing line missing: " + name)
-    return script[start:start + end.end()] + "\n"
+    captured, heredoc = [], None
+    for line in script[start:].splitlines(keepends=True):
+        captured.append(line)
+        if heredoc:
+            if line.rstrip("\r\n") == heredoc:
+                heredoc = None
+            continue
+        delimiter = re.search(r"<<\s*['\"]?([A-Za-z_]\w*)['\"]?", line)
+        if delimiter:
+            heredoc = delimiter.group(1)
+        elif line.rstrip("\r\n") == "}":
+            return "".join(captured)
+    raise ValueError("CI helper closing line missing: " + name)
 
 
 @unittest.skipUnless(os.name == "posix" and BASH, "actual CI bash functions require a POSIX host; not Metal evidence")
@@ -41,7 +50,8 @@ class MetalCiShellTests(unittest.TestCase):
         cls.output.mkdir(parents=True, exist_ok=False)
         script = SCRIPT.read_text(encoding="utf-8")
         (cls.output / "tested-check-metal-compile-mac.sh").write_text(script, encoding="utf-8")
-        cls.helpers = shell_function(script, "run_bounded") + "\n" + shell_function(script, "compile_probe")
+        cls.helpers = "\n".join(shell_function(script, name) for name in (
+            "run_bounded", "compile_probe", "remaining_budget", "run_experiment", "write_unit_summary"))
         cls.source_sha256 = hashlib.sha256(script.encode("utf-8")).hexdigest()
 
     def run_shell(self, name, body, *, fake=None, budget=15, workflow_budget=30):
@@ -59,6 +69,7 @@ class MetalCiShellTests(unittest.TestCase):
                            + "RUN=" + shlex.quote(str(output)) + "\n"
                            + f"READINESS_DEADLINE=$((SECONDS + {budget}))\n"
                            + f"WORKFLOW_DEADLINE=$((SECONDS + {workflow_budget}))\n"
+                           + "MODE=legacy-boundaries\nUNIT_RESULTS=()\n"
                            + self.helpers + "\n" + body + "\n", encoding="utf-8")
         environment = os.environ.copy()
         environment["PATH"] = str(fakebin) + os.pathsep + environment.get("PATH", "")
@@ -147,6 +158,46 @@ print(json.dumps({'source': str(sources[0]), 'cwd': str(pathlib.Path.cwd()), 'ou
         self.assertEqual(result.returncode, 124)
         self.assertFalse((output / "000-workflow-never-started.json").exists())
         self.assertIn("budget exhausted", result.stderr.decode())
+
+    def test_failed_unit_does_not_hide_later_independent_result(self):
+        later = "from pathlib import Path; Path('later-observed').write_text('authored')"
+        body = "run_experiment first 5 -c 'raise SystemExit(7)'\n" \
+               + "run_experiment second 5 -c " + shlex.quote(later) + "\nwrite_unit_summary"
+        output, result, _ = self.run_shell("independent-failure", body)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual((output / "later-observed").read_text(), "authored")
+        summary = json.loads((output / "unit-summary.json").read_text())
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["units"], [{"name": "first", "exit_code": 7}, {"name": "second", "exit_code": 0}])
+
+    def test_unsupported_runtime_remains_non_success_in_full_mode(self):
+        body = "MODE=full\nrun_experiment runtime 5 -c 'raise SystemExit(78)'\n" \
+               + "run_experiment independent 5 -c 'raise SystemExit(0)'\nwrite_unit_summary"
+        output, result, _ = self.run_shell("unit-unsupported", body)
+        self.assertEqual(result.returncode, 78)
+        summary = json.loads((output / "unit-summary.json").read_text())
+        self.assertEqual(summary["status"], "unsupported")
+        self.assertTrue(summary["metal4_runtime_requested"])
+
+    def test_legacy_units_do_not_claim_metal4_or_iphone_validation(self):
+        body = "run_experiment authored 5 -c 'raise SystemExit(0)'\nwrite_unit_summary"
+        output, result, _ = self.run_shell("legacy-unit-pass", body)
+        self.assertEqual(result.returncode, 0)
+        summary = json.loads((output / "unit-summary.json").read_text())
+        self.assertEqual(summary["status"], "passed")
+        self.assertFalse(summary["metal4_runtime_requested"])
+        self.assertFalse(summary["physical_iphone_verified"])
+        self.assertFalse(summary["gameplay_improvement_verified"])
+
+    def test_expired_unit_budget_is_recorded_without_launch(self):
+        child = "from pathlib import Path; Path('should-not-exist').write_text('bad')"
+        body = "run_experiment expired 5 -c " + shlex.quote(child) + "\nwrite_unit_summary"
+        output, result, _ = self.run_shell("unit-expired", body, workflow_budget=0)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse((output / "should-not-exist").exists())
+        summary = json.loads((output / "unit-summary.json").read_text())
+        self.assertEqual(summary["units"], [{"name": "expired", "exit_code": 124}])
+        self.assertEqual(summary["status"], "failed")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ The MSL specification defines language versions and -fno-fast-math:
 https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf
 """
 import argparse
+import contextlib
 import hashlib
 import json
 import math
@@ -19,6 +20,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 HERE = Path(__file__).resolve().parent
@@ -145,6 +147,37 @@ def command_deadline(deadline, env):
     return inherited if deadline is None else min(deadline, inherited)
 
 
+@contextlib.contextmanager
+def defer_sigint_during_creation():
+    """Keep a Python SIGINT handler from interrupting Popen ownership assignment.
+
+    The caller must put both Popen and its assignment inside this scope. Defer
+    callable handlers only, then restore and invoke that same handler. SIG_IGN,
+    SIG_DFL and non-main threads remain untouched. No blocked signal mask is
+    inherited by the child. Repeated pending SIGINTs coalesce into one delivery.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.getsignal(signal.SIGINT)
+    if not callable(previous):
+        yield
+        return
+    pending = None
+
+    def remember(signum, frame):
+        nonlocal pending
+        pending = (signum, frame)
+
+    signal.signal(signal.SIGINT, remember)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        if pending is not None:
+            previous(*pending)
+
+
 def run_command(command, label, output, report, env, timeout, deadline=None):
     """Write raw logs directly to files; inherited child handles cannot block EOF."""
     command = [str(value) for value in command]
@@ -174,10 +207,11 @@ def run_command(command, label, output, report, env, timeout, deadline=None):
                     event["budget_exhausted"] = True
                     event["error"] = "overall tool wall budget exhausted before launch"
                     raise BudgetExhausted(label + ": " + event["error"])
-            process = subprocess.Popen(command, cwd=output, env=env, shell=False,
-                                       stdout=stdout, stderr=stderr, **options)
-            event["pid"] = process.pid
-            event["process_started"] = True
+            with defer_sigint_during_creation():
+                process = subprocess.Popen(command, cwd=output, env=env, shell=False,
+                                           stdout=stdout, stderr=stderr, **options)
+                event["pid"] = process.pid
+                event["process_started"] = True
             # Popen itself may consume time; it is not a cancellable operation.
             wait_timeout = timeout if deadline is None else max(0.0, min(timeout, deadline - time.monotonic()))
             event["wait_timeout_seconds"] = wait_timeout
@@ -188,7 +222,7 @@ def run_command(command, label, output, report, env, timeout, deadline=None):
         event["error"] = "command timed out"
         if process is not None:
             event["termination"] = terminate_tree(process, output, prefix)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         event["interrupted"] = True
         event["error"] = "command interrupted"
         if process is not None:
@@ -196,6 +230,15 @@ def run_command(command, label, output, report, env, timeout, deadline=None):
         raise
     except OSError as error:
         event["error"] = f"{type(error).__name__}: {error}"
+        if process is not None:
+            event["termination"] = terminate_tree(process, output, prefix)
+    except BaseException as error:
+        # A caller's custom SIGINT handler may raise a different exception.
+        # Preserve that exception after cleaning up the now-owned child.
+        event.setdefault("error", f"{type(error).__name__}: {error}")
+        if process is not None:
+            event["termination"] = terminate_tree(process, output, prefix)
+        raise
     finally:
         event["duration_ns"] = time.perf_counter_ns() - started
         stdout_text, event["stdout_bytes"], event["stdout_preview_truncated"] = log_preview(stdout_path)

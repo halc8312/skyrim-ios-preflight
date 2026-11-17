@@ -3,6 +3,8 @@
 This isolated experiment compares ways to prepare an **authored** shader library.
 It is not connected to the application, MoltenVK patches, or shader settings.
 The manual `pc2011-metal-compile-checks` workflow runs authored checks only.
+The separate `pc2011-metal-legacy-checks` workflow runs archive and option-token
+boundaries without requesting a Metal 4 runtime. Neither workflow builds the app.
 The tracked experiment contains no Skyrim shaders or game data.
 
 The immediate question is whether a library produced by `MTL4Compiler` or by an
@@ -147,6 +149,10 @@ callback. The WSL TSan run could not start because of an unexpected memory
 mapping; it is not a race-detector pass. Actual Metal task retirement still
 needs validation on Apple hardware.
 
+The second Apple-host run passed both models with Darwin TSan, alongside the
+normal and ASan/UBSan controls. That closes the model's race-detector gap on this
+host, but does not establish actual Metal callback ownership or game behavior.
+
 The Apple workflow additionally runs both safe models with TSan. The portable
 test supervisor bounds the entire unittest worker, permits cooperative child
 cleanup before a limited process-group termination fallback, and preserves the
@@ -160,6 +166,11 @@ Darwin-only TSan check explicitly skipped. Earlier Windows controls and targeted
 POSIX process-control checks also passed. These exercise failure handling,
 time limits, retained evidence, expected-output validation, and refusal to promote
 synthetic results into Apple GPU evidence. They do not compile the native fixture.
+After adding archive/token boundaries and interrupt ownership fixes, the expanded
+WSL suite passed 150 of 151 checks; the same Darwin-only check was skipped.
+The first expanded run exposed a test-harness heredoc extraction error, which
+was corrected; its original failed evidence was preserved. The new aggregate
+CI helper keeps independent results and never turns unsupported into success.
 
 Apple's signed Metal Developer Tools for Windows 6.2 was subsequently installed
 in an ignored project-local directory. Its README identifies Xcode 26.2 as the
@@ -191,11 +202,55 @@ control tests, three offline macOS compile/link trials and native Objective-C++
 compilation with Xcode 26.6 / SDK 26.5. Runtime returned explicit `unsupported`
 because the default device did not pass the Metal 4 family check. The original
 report did not record the device name or distinguish a missing device from an
-unsupported family; the next fixture adds those diagnostics. This is not a GPU pass.
+unsupported family. This is not a GPU pass.
 The Mac generated its own offline library, so it also does not validate a
 Windows-produced artifact on a GPU. Original evidence is retained in
 `local/metal-compile/mac-run-01/`. No production default, app build or deployment
 was changed.
+
+The second Apple-host run at public source `68a6963` passed all 106 controls,
+including Darwin TSan, the actual option-getter probe, offline macOS compilation,
+and the adapter's `arm64-apple-ios26.0` object compilation. The only device was
+`Apple Paravirtual device`: Mac2 supported, Metal3/Metal4/Apple7/8/9 unsupported.
+The explicit Metal 4 compiler factory also returned nil with
+`MTLDeviceErrorDomain` code 1. The normal runtime stayed `unsupported` (78);
+no Metal 4 library, pipeline, or GPU comparison ran. Evidence remains under
+`local/metal-compile/mac-run-02/`. This environment can still test legacy Metal
+boundaries, but cannot validate the proposed Metal 4 runtime on an iPhone.
+
+The getter probe preserved all 14 authored numeric macro values, including
+negative zero, but getters alone do not expose preprocessor token spelling.
+The separate [macro diagnostic probe](MACROS.md) observes that next boundary
+through intentional compiler rejection; it does not infer original numeric types.
+
+## Binary archive boundary
+
+`archive.py` tests two authored compute kernels through ordinary Metal APIs,
+without requiring Metal 4. It compiles a macOS IR library, harvests one kernel
+into a device-built archive, then starts another process to reload both files.
+The reload must create that PSO with `FailOnBinaryArchiveMiss` and produce the
+exact prescribed integers. The unrecorded second kernel must be rejected by the
+strict route before an explicit archive-free fallback succeeds. Empty and
+malformed archives must be rejected. An arbitrary NSError is not mislabeled as
+a specific archive-miss error, and nil device is explicit unsupported.
+
+```sh
+python3 experiments/metal-compile/archive.py --output local/metal-compile/archive-new --budget 180
+bash scripts/check-metal-compile-mac.sh --legacy-boundaries
+```
+
+Each blocking native phase is logged before entering the API. The runner limits
+child time, preserves failures, compares process/device identities and archive
+hashes, and never calls a source-library factory in the reload process. This
+tests archive plus separately supplied IR, not the export of runtime MTLLibrary
+bytes. Apple execution of this new boundary is pending.
+
+A separate actual Windows Metal 6.2 smoke test produced a 13,680-byte legacy GPU
+archive from one authored compute kernel, using iOS 18 and explicit Apple9
+targets. `metal-lipo` reported the requested g16p/g16g targets. Its `.mtlp-json`
+script and IR are not Metal 4 `.mtl4-json` serialization. The subsequent
+`metal-source` extraction emitted an empty file and is retained as an unsupported
+extraction result. Neither result validates the Windows archive on a device.
 
 ```sh
 python -m unittest discover -s tests -p 'test_metal_compile_*.py' -v
@@ -226,8 +281,11 @@ inputs. The bounded private inventory in `experiments/shader-inputs/` identified
 10,475 candidate records across 122 FXP entries, with 6,659 distinct stage/hash
 keys (309 VS and 6,350 FS). An authored-only pinned DXSO oracle agrees on 21
 synthetic consumption/stage/hash cases under ASan/UBSan. This is not complete FXP
-grammar validation, native safety for game candidates, or measured runtime
-pipeline coverage. The actual device `.dxvk-cache` has not been located in the
+grammar validation or measured runtime pipeline coverage. A subsequent bounded
+native check matched consumption/stage/hash for 32 real candidates (16 VS and
+16 PS, 61,392 bytes), after 28 authored boundary/limit controls passed. These
+children used guard pages, UBSan and OS limits; no SPIR-V compilation or GPU work
+was performed. The actual device `.dxvk-cache` has not been located in the
 available local files; current numeric diagnostics do not contain that cache.
 
 The next input study therefore classifies and validates candidates, reconstructs

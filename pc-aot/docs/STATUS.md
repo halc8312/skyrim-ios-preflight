@@ -1,6 +1,12 @@
 # 開発状況
 
-**夜間検証の追加：独立したMetal比較・設定観測・終了処理を統合し、WSLで106件中105成功・Darwin専用TSan1skip。** 実行証拠は`local/metal-compile/controls-20261118-04/`。Windowsの自作MSLは、iOS18／MSL3.2、iOS26／MSL4.0、macOS15／MSL3.2、macOS26／MSL4.0の追加4条件でもcompile・link成功、stderrなし。Macの次回検査にはGPU不要のcompile option観測、iPhone SDK向けの独立adapter object compile、非対応deviceの詳細と明示library factory probeを加えた。factory probeの成功だけをGPU対応やゲーム改善と扱わず、通常のMetal4条件とunsupported終了を維持する。Apple SDK／実APIでの追加分は次回実行待ち。
+**夜間検証run3準備：archive再利用・macro token・中断時のprocess所有を独立検査へ追加。** 統合WSL検査は151件中150成功、Darwin専用TSan1skip（`local/metal-compile/controls-20261118-06/`）。最初の統合実行で検査用Bash抽出のheredoc不備が出たため修正し、失敗ログを保持した。新しい手動legacy workflowはMetal4 runtimeを要求せず、archive／macroの失敗・未対応を独立に保存する。macOS26／SDK26の前提は維持。実データの追加SPIR-V変換試作は作業用AIの自動審査でサイバーセキュリティ懸念として停止されたため未実施。既存32件の読取り検査と自作Metal検査は別の完了済み範囲として保持する。
+
+**夜間検証run2：Apple SDK・設定getter・全106検査は成功。Metal 4実行は仮想GPU非対応と確認。** [実行run2](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc9df8d133a39c4a125505)は公開`68a6963`、Xcode26.6／SDK26.5／macOS26.5.1。Darwin TSanを含む106検査にskip／失敗なし、iPhoneOS26.0向けadapter object compileとMac offline生成も成功した。全14件の自作macro値はgetterで保持され、負のゼロも確認したが、元の型やpreprocessor tokenの一致は別問題。deviceは`Apple Paravirtual device`のみでMac2対応・Metal3／4／Apple7〜9非対応。明示MTL4Compiler factoryもnil＋MTLDeviceErrorDomain code1のため通常runtimeはunsupported78、Metal4 library／PSO／GPU比較は未実行。原artifactは`local/metal-compile/mac-run-02/`。無料枠282/500使用、残218分を確認。次は従来Metal APIで可能なarchive再利用とmacro token観測を独立workflowで検証する。アプリbuild・署名・配布・製品設定変更はない。
+
+実入力の次段階として、所有BSAの候補32件（VS16＋PS16、計61,392 bytes）のnative analyze／stage／keyが全件一致した。自作の境界・異常・資源制限28検査を先に通し、各候補をguard page・UBSan・OSのCPU／メモリ／出力上限つき別processで処理した。timeout／stderr診断0、原本hash前後不変。証拠は`private/analysis/candidate-actual-20261118-01/`。最初の自作負例分類の失敗も保持。SPIR-V生成・描画・全候補の安全性・runtime網羅率・速度改善は未確認。
+
+Windows Metal6.2の別の自作compute検査ではiOS18／Apple9向けlegacy GPU archive 13,680 bytesを生成し、要求したg16p／g16g対象を確認した。`.mtlp-json`とIRの組であり、Metal4の`.mtl4-json`とは区別する。逆抽出は空ファイルになったため成功扱いにせず原結果を保持。Windows生成archiveの実GPU読込みは未確認。独立したMac archive fixtureは別processでの厳格hit・未収録kernel拒否・明示fallback・破損拒否を検査し、実行待ち。
 
 **2026-11-18 夜間検証：Windowsの実シェーダー候補48件をコンパイルでき、入力・寿命検査を拡張。Apple SDK検査は成功、Metal 4実GPU比較は環境非対応。** 既存の私有生成MSL48件（803,016 bytes、固有source29件）を、明示したiOS18.0／MSL3.1／safe・precise／invarianceなし／macroなしの条件で順番にcompile・linkし、全件成功した。全件に同じ未使用定数のwarningがある。実ゲームの実効compile設定を採取したものではなく、描画一致・速度改善は未確認。`batch.py`は入力hashと全設定を実行前に検証し、件数・サイズ・時間を制限、失敗証拠を保持する。子compilerのRAM上限を保証しない。Windows制御検査は75件中67成功・POSIX専用8skip。
 

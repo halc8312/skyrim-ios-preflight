@@ -1,6 +1,19 @@
 # Run manually from a personal Codemagic account with free M2 minutes remaining.
 # No code-signing credentials, game data, or generated game code are inputs.
 workflows:
+  pc2011-metal-legacy-checks:
+    name: Skyrim isolated Metal cache and option checks
+    instance_type: mac_mini_m2
+    max_build_duration: 15
+    environment:
+      xcode: "26.6"
+    # Manual only; supports a legacy Metal device, does not request Metal 4 runtime.
+    scripts:
+      - name: Check binary archive reuse and compiler option tokens
+        script: bash pc-aot/scripts/check-metal-compile-mac.sh --legacy-boundaries
+    artifacts:
+      - pc-aot/local/metal-compile-mac/*/checks.log
+      - pc-aot/local/metal-compile-mac/*/metal-compile-checks.zip
   pc2011-metal-compile-checks:
     name: Skyrim isolated Metal library comparison
     instance_type: mac_mini_m2

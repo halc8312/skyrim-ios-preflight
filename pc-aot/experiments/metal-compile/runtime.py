@@ -6,6 +6,7 @@ The optional library must target macOS; its original compile flags are not infer
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -18,6 +19,9 @@ import sys
 import time
 
 HERE = Path(__file__).resolve().parent
+CONTROL_SPEC = importlib.util.spec_from_file_location("metal_runtime_process_control", HERE / "offline.py")
+control = importlib.util.module_from_spec(CONTROL_SPEC)
+CONTROL_SPEC.loader.exec_module(control)
 TEST_DEADLINE_ENV = "SKYRIM_METAL_TEST_DEADLINE"
 SCOPE = "authored-metal-library-api-and-readback"
 FACTORY_PROBE_SCOPE = "metal4-factory-and-authored-library-only"
@@ -140,10 +144,11 @@ def run_command(command, label, output, report, env, timeout, deadline=None):
                     event["status"] = "budget_exhausted"
                     event["error"] = "overall tool wall budget exhausted before launch"
                     raise BudgetExhausted(label + ": " + event["error"])
-            process = subprocess.Popen(event["argv"], cwd=output, env=env, stdin=subprocess.DEVNULL,
-                                       stdout=stdout, stderr=stderr, shell=False,
-                                       start_new_session=(os.name == "posix"))
-            event["process_started"] = True
+            with control.defer_sigint_during_creation():
+                process = subprocess.Popen(event["argv"], cwd=output, env=env, stdin=subprocess.DEVNULL,
+                                           stdout=stdout, stderr=stderr, shell=False,
+                                           start_new_session=(os.name == "posix"))
+                event["process_started"] = True
             try:
                 # Process startup can consume the remaining allowance too.
                 wait_timeout = timeout if deadline is None else max(0.0, min(timeout, deadline - time.monotonic()))
@@ -170,6 +175,15 @@ def run_command(command, label, output, report, env, timeout, deadline=None):
         event["status"] = "process_error" if process is not None else "launch_failed"
         event["error"] = str(error)
         if process is not None:
+            stop_process(process, event)
+            event["returncode"] = process.returncode
+        raise
+    except BaseException as error:
+        # A deferred custom SIGINT handler can raise another exception type.
+        # Timeout handling already owns cleanup once it changes the status.
+        if process is not None and event["status"] == "running":
+            event["status"] = "process_error"
+            event["error"] = type(error).__name__ + ": " + str(error)
             stop_process(process, event)
             event["returncode"] = process.returncode
         raise

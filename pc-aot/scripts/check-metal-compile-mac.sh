@@ -1,7 +1,14 @@
 #!/bin/bash
-# Authored library-factory comparison only; no app, game, signing or phone inputs.
+# Authored compiler/cache checks only; no app, game, signing or phone inputs.
 set -euo pipefail
 umask 077
+MODE=full
+if (( $# > 1 )); then echo 'Expected at most --legacy-boundaries' >&2; exit 2; fi
+case "${1:-}" in
+  '') ;;
+  --legacy-boundaries) MODE=legacy-boundaries ;;
+  *) echo 'Unknown Metal check mode' >&2; exit 2 ;;
+esac
 [[ "$(uname -s)" == Darwin ]] || { echo 'Apple host required' >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -52,6 +59,44 @@ remaining_budget() {
   local remaining=$((WORKFLOW_DEADLINE - SECONDS))
   (( remaining > 0 )) || { echo 'Metal workflow budget exhausted' >&2; return 124; }
   printf '%s\n' "$remaining"
+}
+
+# Collect independent boundaries even if another boundary fails or is unsupported.
+# An unsupported Metal 4 runtime remains a non-success result in full mode.
+UNIT_RESULTS=()
+run_experiment() {
+  local label="$1" cap="$2" budget status=0
+  shift 2
+  budget="$(remaining_budget)" || status=$?
+  if (( status == 0 )); then
+    (( budget <= cap )) || budget=$cap
+    python3 "$@" --budget "$budget" || status=$?
+  fi
+  UNIT_RESULTS+=("$label=$status")
+  echo "METAL_UNIT label=$label status=$status"
+}
+
+write_unit_summary() {
+  python3 - "$RUN" "$MODE" "${UNIT_RESULTS[@]}" <<'PY'
+from pathlib import Path
+import json, sys
+root, mode, *items = sys.argv[1:]
+units = [{'name': name, 'exit_code': int(code)} for name, code in (item.split('=') for item in items)]
+failed = any(unit['exit_code'] not in (0, 78) for unit in units)
+unsupported = any(unit['exit_code'] == 78 for unit in units)
+status = 'failed' if failed else 'unsupported' if unsupported else 'passed'
+report = {
+    'scope': 'authored independent compiler and cache boundaries', 'mode': mode,
+    'status': status, 'units': units, 'prerequisite_checks_passed': True,
+    'metal4_runtime_requested': mode == 'full',
+    'app_built': False, 'physical_iphone_verified': False,
+    'gameplay_improvement_verified': False,
+}
+temporary = Path(root) / 'unit-summary.json.tmp'
+temporary.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+temporary.replace(Path(root) / 'unit-summary.json')
+raise SystemExit(1 if failed else 78 if unsupported else 0)
+PY
 }
 
 run_bounded host-version 20 sw_vers
@@ -128,6 +173,11 @@ PY
 python3 experiments/metal-compile/options_probe.py --budget "$(remaining_budget)" --output "$RUN/options"
 python3 experiments/metal-compile/offline.py --target macos --deployment 15.0 \
   --repeat 3 --timeout 30 --budget "$(remaining_budget)" --output "$RUN/offline"
-python3 experiments/metal-compile/runtime.py --repeat 3 --async-library --probe-library-factory --budget "$(remaining_budget)" --output "$RUN/runtime" \
-  --library "$RUN/offline/trial-01/fixture.metallib"
-echo 'METAL_COMPILE_CHECKS authored_library_comparison=passed iphone_verified=0 performance_improvement_verified=0'
+run_experiment archive 180 experiments/metal-compile/archive.py --output "$RUN/archive"
+run_experiment macro-diagnostics 90 experiments/metal-compile/macro_probe.py --timeout 30 --output "$RUN/macro-diagnostics"
+if [[ "$MODE" == full ]]; then
+  run_experiment runtime 240 experiments/metal-compile/runtime.py --repeat 3 --async-library --probe-library-factory --output "$RUN/runtime" \
+    --library "$RUN/offline/trial-01/fixture.metallib"
+fi
+write_unit_summary
+echo "METAL_COMPILE_CHECKS mode=$MODE requested_authored_boundaries=passed iphone_verified=0 performance_improvement_verified=0"

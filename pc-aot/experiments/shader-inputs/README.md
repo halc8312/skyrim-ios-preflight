@@ -47,6 +47,35 @@ This establishes agreement for the synthetic cases, not semantic validity or
 native safety for every accepted game candidate. Real game data is never passed
 to that oracle. Compilation and execution logs remain in the fresh private run.
 
+`candidate_check.py` is a separate, explicitly bounded Linux/WSL **analyze/key**
+probe for an owned archive. It first runs 21 authored analyzer cases and seven
+malformed/resource controls. Only then does it select 32 unique candidates:
+eight smallest and eight largest in each VS/PS stage, ordered by `(bytes, key)`.
+This deterministic size sample is not a gameplay-frequency or opcode-coverage
+sample. Each candidate runs in a fresh process; its exact end abuts an unreadable
+guard page and its input mapping becomes read-only before the pinned analyzer.
+No SPIR-V compilation, runtime shader options, VS/PS linking, device or GPU is used.
+
+```sh
+python3 -m unittest discover -s tests -p test_shader_candidate_check.py -v
+python3 experiments/shader-inputs/candidate_check.py --archive '<private owned Shaders.bsa copy>' --output private/analysis/shader-candidate-check-01
+```
+
+Native children enforce 512 MiB address space, CPU soft/hard limits of 2/3 seconds,
+1 MiB per output file, 32 open files and disabled core dumps/dumpability. The
+parent adds a five-second wall deadline, process-group cleanup, and a 180-second
+aggregate native-sample budget. Inputs are capped at 1 MiB each/16 MiB selected.
+Building the small probe uses separate compiler limits and a 300-second tool
+budget; these are not application-build or GPU checks.
+Failure to establish limits stops the sample; there is no unbounded fallback.
+UBSan halts on its first diagnostic. Actual-input ASan is deferred because its
+shadow address space conflicts with the small address-space limit. These are
+resource and memory-access checks, not a hostile-code security sandbox or proof
+of complete native safety. The original archive is checked read-only before and
+after; selected bytes, keys, original failures and source/binary hashes stay in
+the fresh private output. A match means only consumption length, stage and key
+agreement for those selected inputs. `--authored-only` performs no archive read.
+
 The output path must be new and below this repository's ignored
 `private/analysis/`. `--extract` optionally writes deduplicated `.dxso` candidates
 there, using stage/hash filenames, never embedded archive paths. An existing
