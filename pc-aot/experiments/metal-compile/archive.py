@@ -180,8 +180,9 @@ def load_native(path):
 def run(args):
     started = time.monotonic()
     deadline = started + args.budget
-    output = args.output.expanduser().resolve()
+    output = args.output.expanduser().absolute()
     output.mkdir(parents=True, exist_ok=False)
+    output = output.resolve()
     options = OPTIONS.copy()
     if args.specialized:
         options.update(target="air64-apple-macosx15.0",

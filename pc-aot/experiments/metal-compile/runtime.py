@@ -381,8 +381,9 @@ def validate_native(report, repeats, with_library, async_library=False, legacy_o
 
 
 def run_experiment(args):
-    output = args.output.resolve()
+    output = args.output.absolute()
     output.mkdir(parents=True, exist_ok=False)
+    output = output.resolve()
     report = {
         "schema": 1, "status": "running", "scope": SCOPE, "source_options": SOURCE_OPTIONS,
         "repeat": args.repeat, "commands": [], "inputs": {},

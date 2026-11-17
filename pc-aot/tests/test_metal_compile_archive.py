@@ -419,6 +419,29 @@ class ArchiveRunnerTests(unittest.TestCase):
         child.assert_not_called()
         self.assertEqual((report["status"], code), ("unsupported", 78))
 
+    def test_existing_and_dangling_output_symlinks_are_rejected_before_work(self):
+        for existing in (True, False):
+            with self.subTest(target_exists=existing):
+                target = self.root / ("existing-link-target" if existing else "absent-link-target")
+                if existing:
+                    target.mkdir()
+                    (target / "keep").write_bytes(b"retained evidence")
+                self.output = self.root / ("existing-output-link" if existing else "dangling-output-link")
+                try:
+                    self.output.symlink_to(target, target_is_directory=True)
+                except (OSError, NotImplementedError) as error:
+                    self.skipTest("directory symlink creation unavailable: " + str(error))
+                with patch.object(archive.platform, "system", return_value="Windows"), \
+                        patch.object(archive.offline, "run_command") as launch, self.assertRaises(FileExistsError):
+                    archive.run(self.args())
+                launch.assert_not_called()
+                self.assertTrue(self.output.is_symlink())
+                if existing:
+                    self.assertEqual(list(target.iterdir()), [target / "keep"])
+                    self.assertEqual((target / "keep").read_bytes(), b"retained evidence")
+                else:
+                    self.assertFalse(target.exists())
+
     def test_budget_bounds_and_native_source_contract(self):
         for value in ("0", "-1", "nan", "inf", "181"):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

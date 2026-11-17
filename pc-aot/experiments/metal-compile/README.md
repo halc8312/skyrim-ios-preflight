@@ -327,8 +327,10 @@ python3 experiments/metal-compile/archive_metal4.py --output local/metal-compile
 The manual Mac workflow includes only the first command. This compiles a Mac
 executable and an iPhone SDK object without creating an iPhone application.
 The existing cloud GPU is unsupported for the second command; repeating it
-cannot supply that missing hardware. Native SDK compilation of this new probe
-is pending. Portable controls verify process separation, failed command
+cannot supply that missing hardware. Run 7 compiled this probe with Xcode 26.6 /
+SDK 26.5 for Mac and iPhone with zero warnings. All 235 controls passed on that
+Mac, including Darwin TSan. The compile-only report has no native runs or GPU
+work. Portable controls verify process separation, failed command
 preservation, fresh output ownership, and report interpretation; they are not
 Metal execution evidence.
 
@@ -338,6 +340,14 @@ driver performed no internal compilation or file loading. Descriptors omitted
 from the authored script use SDK defaults, so a failed lookup alone does not
 identify the cause. This Mac-generated archive also does not validate the
 separate Windows-generated iOS archive or production options.
+
+A separate Windows 6.2 authored preparation used this same two-kernel source
+and one-recorded-kernel script for macOS 26 / explicit `applegpu_g13g`. It
+produced a 10,032-byte Metal 4 archive in a 28.6-second command sequence; AIR
+symbol inspection retained both control functions, and archive architecture
+inspection reported only g13g. No matching physical device was observed or
+used. Evidence is under `local/metal-compile/archive-macos26-windows-01/`;
+this establishes offline script/tool acceptance, not runtime lookup.
 
 ## Binary archive boundary
 
@@ -447,6 +457,10 @@ python -m unittest discover -s tests -p 'test_metal_compile_*.py' -v
 ```
 
 ## Before integrating with MoltenVK
+
+The [pinned integration plan](MOLTENVK_PLAN.md) identifies the asynchronous
+library boundary, manual ownership requirements, and the remaining runtime
+gates. It is a reviewed design, not an applied production patch.
 
 1. Establish actual Apple compilation and matching render/compute readbacks for
    the authored source through the chosen API route. A later representative-MSL

@@ -383,6 +383,52 @@ constant float scale = 1.0'5e+2;
             with self.subTest(path=path), self.assertRaises(batch.BatchError):
                 batch.private_destination(path)
 
+    def test_existing_and_dangling_output_symlinks_are_not_fresh(self):
+        for existing in (True, False):
+            with self.subTest(target_exists=existing):
+                target = self.directory / ("existing-link-target" if existing else "absent-link-target")
+                if existing:
+                    target.mkdir()
+                    (target / "keep").write_bytes(b"retained evidence")
+                link = self.directory / ("existing-output-link" if existing else "dangling-output-link")
+                try:
+                    link.symlink_to(target, target_is_directory=True)
+                except (OSError, NotImplementedError) as error:
+                    self.skipTest("directory symlink creation unavailable: " + str(error))
+                with self.assertRaises(FileExistsError):
+                    batch.fresh_directory(link)
+                self.assertTrue(link.is_symlink())
+                if existing:
+                    self.assertEqual(list(target.iterdir()), [target / "keep"])
+                    self.assertEqual((target / "keep").read_bytes(), b"retained evidence")
+                else:
+                    self.assertFalse(target.exists())
+
+    def test_fresh_output_keeps_private_restrictions_and_valid_parent_links(self):
+        checkout = self.directory / "authored-checkout"
+        checkout.mkdir()
+        local, private, vendor = [checkout / name for name in ("local", "private", "vendor")]
+        for directory in (local, private, vendor):
+            directory.mkdir()
+        parent = private / "real-parent"
+        parent.mkdir()
+        try:
+            (local / "allowed-parent").symlink_to(parent, target_is_directory=True)
+            (local / "restricted-parent").symlink_to(vendor, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest("directory symlink creation unavailable: " + str(error))
+        with patch.object(batch, "ROOT", checkout.resolve()):
+            for path in (local / "fresh", private / "nested/fresh", self.directory / "outside-checkout/fresh",
+                         local / "allowed-parent/nested/fresh"):
+                with self.subTest(allowed=path):
+                    self.assertEqual(batch.fresh_directory(path), path.resolve())
+                    self.assertTrue(path.is_dir())
+            for path in (vendor / "not-created", local / "restricted-parent/not-created"):
+                with self.subTest(rejected=path), self.assertRaises(batch.BatchError):
+                    batch.fresh_directory(path)
+                self.assertFalse(path.exists())
+        self.assertEqual(list(vendor.iterdir()), [])
+
     def test_cli_budget_and_repeat_bounds_are_finite(self):
         for flag, value in (("--repeat", "0"), ("--repeat", "4"), ("--budget", "nan"),
                             ("--budget", "3601"), ("--timeout", "0"), ("--timeout", "121")):

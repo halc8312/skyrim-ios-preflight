@@ -61,9 +61,12 @@ def private_destination(path):
 
 
 def fresh_directory(path):
-    path = private_destination(path)
+    path = Path(path).expanduser().absolute()
+    # Validate the canonical destination, but create the original named entry:
+    # resolving it first would accept an existing symlink to a missing target.
+    private_destination(path)
     path.mkdir(parents=True, exist_ok=False)
-    return path
+    return path.resolve()
 
 
 def read_bounded(path, limit):

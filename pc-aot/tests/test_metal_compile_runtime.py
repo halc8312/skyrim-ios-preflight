@@ -453,6 +453,29 @@ class MetalRuntimeControlTests(unittest.TestCase):
             runtime.run_experiment(self.arguments())
         self.assertEqual(before, (self.output / "result.json").read_bytes())
 
+    def test_existing_and_dangling_output_symlinks_are_rejected_before_work(self):
+        for existing in (True, False):
+            with self.subTest(target_exists=existing):
+                target = self.directory / ("existing-link-target" if existing else "absent-link-target")
+                if existing:
+                    target.mkdir()
+                    (target / "keep").write_bytes(b"retained evidence")
+                self.output = self.directory / ("existing-output-link" if existing else "dangling-output-link")
+                try:
+                    self.output.symlink_to(target, target_is_directory=True)
+                except (OSError, NotImplementedError) as error:
+                    self.skipTest("directory symlink creation unavailable: " + str(error))
+                with patch.object(runtime.platform, "system", return_value="Windows"), \
+                        patch.object(runtime, "run_command") as launch, self.assertRaises(FileExistsError):
+                    runtime.run_experiment(self.arguments())
+                launch.assert_not_called()
+                self.assertTrue(self.output.is_symlink())
+                if existing:
+                    self.assertEqual(list(target.iterdir()), [target / "keep"])
+                    self.assertEqual((target / "keep").read_bytes(), b"retained evidence")
+                else:
+                    self.assertFalse(target.exists())
+
     def test_old_mac_os_is_unsupported_before_compilation(self):
         with patch.object(runtime.platform, "system", return_value="Darwin"), \
                 patch.object(runtime.platform, "mac_ver", return_value=("15.7", (), "")), \
