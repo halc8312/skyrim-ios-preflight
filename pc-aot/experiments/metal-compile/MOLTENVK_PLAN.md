@@ -80,7 +80,7 @@ update; the rejected GPU admission changes remain excluded.
   have finished and destruction was requested. Finish launch after task adoption,
   device-monitor exit, and autorelease-pool cleanup, with no later owner access.
 - Do not substitute `request_lifetime.h:71–86`: its factory-return barrier delays
-  notification when a callback arrives early. README:148–170 explains why those
+  notification when a callback arrives early. [Request lifetime models](README.md#request-lifetime-models) explains why those
   model passes do not make that barrier a drop-in MoltenVK change.
 - Production uses manual retain/release (`MVKShaderModule.mm:233–248,594,659–664,709–710`).
   ARC fields in `runtime.mm:196–285` are not equivalent ownership code. Explicitly
@@ -94,6 +94,12 @@ update; the rejected GPU admission changes remain excluded.
   a task from its callback or while holding completion/catalog/device locks.
   The fixture's unconditional `drain()` is not a bounded production timeout.
   Define and validate the task release/join point without delaying notification.
+  In particular, replacing `NoTask` in `mrc_metal.mm` with an actual task is not
+  sufficient: the retirement action can run on the callback thread. Transfer
+  ownership to a separately validated waiter/retirement context before joining.
+  Apple's [task API](https://developer.apple.com/documentation/metal/mtl4compilertask)
+  documents a blocking wait; it does not prove callback/release ordering for this
+  adapter. The next hardware check should use the existing ARC comparison first.
 
 ## Failure routing and diagnostics
 
@@ -133,8 +139,14 @@ update; the rejected GPU admission changes remain excluded.
    publication cases, including retained original results/errors and GPU readback.
    Its additional warning case returned a library without the expected NSError;
    that strict failed expectation remains unverified and is now opt-in. Separate
-   core normal/ASan/UBSan and concurrent distinct-macro checks are the next checks.
-   The new compiler's task semantics remain separate.
+   core normal/ASan/UBSan and concurrent distinct-macro checks all passed in run11
+   (public `ad5739b`). Twelve case executions preserved original callback objects
+   and single notification/retirement; eight successful GPU cases matched their
+   expected words. The two sanitized success cases observed callbacks before
+   launch exit. These checks do not cover real Metal 4 task retirement, a whole-
+   process leak audit, production options, actual timeout/cancel, or the unobserved
+   warning case. Do not add an unexecutable MRC Metal 4 branch just to duplicate
+   the existing SDK type/selector evidence.
 2. On capable OS-26 hardware, verify real async task retirement and compare both
    library backends through legacy function specialization, PSOs, and exact authored
    GPU readbacks, including existing macro/math/invariance edge cases. SDK compilation

@@ -1,5 +1,7 @@
 # 開発状況
 
+**夜間run11成功：実Metalの保持・並列要求まで確認。** [実行run11](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcce73d133a39c4a126676)は公開`ad5739b`。Mac全293検査が28.289秒で成功、skipなし。独立10unitも全成功。MRC core3caseを逐次／並列、それぞれ通常／ASan+UBSanの別processで実行し、計12caseの元library／NSError保持・通知1回・launch終了後のowner解放、成功8caseの16語GPU出力を確認した。並列要求の設定値3／13は混線せず、sanitizer実行では呼出し復帰前の通知も2caseで実際に観測。両unitのstderr計14fileは空。全体のリーク検証ではなく、警告caseも再実行していない。Windows→Mac GPU一致はrun9の既存証拠を再利用する。原artifactは`local/metal-compile/mac-run-11/`（616,149 bytes）。Metal4実GPU／実taskとiPhone性能は未確認。夜間の変更は隔離実験・検査・文書・手動CIのみで、アプリbuild／端末更新／製品既定値の変更なし。
+
 **run10はCI設定の検証段階で停止。** [実行run10](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afccddfd133a39c4a126642)は公開`f42d762`。Windows生成物を省略した空入力がCodemagicの環境変数要件（1文字以上）に反し、Mac試験は一つも実行されていない。既定値を`none`とし、shell側でその値のみ未指定として扱う。固定hashのlibrary検証は緩めない。前run9の警告未観測も未解決のまま保持する。
 
 **夜間run9：Windows生成物のMac GPU動作を確認。警告条件は未確認。** [実行run9](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcca58d133a39c4a126500)は公開`5e37c51`。Mac全290検査は23.003秒で成功、skipなし。Windows6.2生成の固定自作libraryをMacのApple Paravirtual GPUで読み込み、source／非同期source／Windows生成物の各3回で描画64語・計算16語が完全一致した。実Metal MRC試験は正常・不正source・通知延期の3caseがnormalで成功したが、4case目の`#warning`で期待したNSErrorが通知されず、workflow全体は失敗として保持した。メモリ管理不良と断定せず、警告検査を厳密な任意指定へ分離し、core3caseのnormal／ASan+UBSanと別設定の同時要求を次に実行する。原artifactは`local/metal-compile/mac-run-09/`。Metal4実GPU・iPhone改善・製品適用の証拠ではない。

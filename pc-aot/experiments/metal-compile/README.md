@@ -39,6 +39,15 @@ The raw failure remains in `local/metal-compile/mac-run-09/`; the requested
 warning-notification boundary is unverified. `--warning-source` retains that
 strict opt-in expectation. A successful core-only run cannot validate it.
 
+Run 11 (`ad5739b`) passed both core modes, each in separate normal and
+ASan/UBSan processes. All 12 case executions retained their original result/error,
+notified once and retired the tracked owner after launch exit; the eight successful
+GPU cases matched all 16 words. Parallel requests kept their distinct bias values.
+Both sanitized success cases actually notified before launch exit. All 14 compiler
+and runtime stderr files for these two units were empty. LeakSanitizer is disabled;
+the owner counter is not a whole-Metal leak proof. The optional warning case was
+not rerun and remains unverified.
+
 The legacy-only CI workflow accepts an optional `authored_windows_library` build
 input. It passes this through an environment variable, never shell-source
 interpolation. `windows_fixture.py` accepts only one fixed, authored Windows 6.2
@@ -231,6 +240,15 @@ worker log. It does not scan or terminate unrelated processes or prove that
 external Apple compiler services have stopped.
 
 ## Verification status
+
+Latest completed run: [run11](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcce73d133a39c4a126676),
+public source `ad5739b9b9204c04a9015497d7cf3ab00c268ec3`, 2026-11-18 JST.
+All 293 Mac controls passed in 28.289 seconds without skips, and all ten requested
+independent units passed. The optional Windows product was omitted; its unchanged
+cross-host GPU evidence comes from run9. Run10 stopped at Codemagic configuration
+validation before any Mac command; the `none` default fixed that separate issue.
+Evidence: `local/metal-compile/mac-run-11/`. Original failures remain preserved.
+No result below establishes Metal 4 runtime or iPhone gameplay improvement.
 
 On 2026-11-18, the integrated WSL control suite passed 105 tests, with the one
 Darwin-only TSan check explicitly skipped. Earlier Windows controls and targeted
