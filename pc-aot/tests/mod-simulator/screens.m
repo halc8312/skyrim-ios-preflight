@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #import <XCTest/XCTest.h>
+#import <CoreGraphics/CoreGraphics.h>
 
 @interface ModScreensTests : XCTestCase
 @property(nonatomic,strong) XCUIApplication *app;
@@ -19,14 +20,35 @@
     [self addAttachment:attachment];
 }
 
-- (XCUIElement *)findRow:(NSString *)label direction:(BOOL)up {
+- (XCUIElement *)findRow:(NSString *)label {
     XCUIElement *table = self.app.tables.firstMatch;
     XCTAssertTrue([table waitForExistenceWithTimeout:12], @"No active table for %@", label);
-    XCUIElement *row = table.staticTexts[label];
-    for (NSUInteger i = 0; !row.hittable && i < 22; ++i) {
-        if (up) [table swipeUp]; else [table swipeDown];
+    // UIKit reports real offscreen cell frames even when all their child labels
+    // have the same placeholder Y. Use the cell for scrolling and the final tap.
+    XCUIElement *row = [table.cells containingType:XCUIElementTypeStaticText identifier:label].firstMatch;
+    XCTAssertTrue([row waitForExistenceWithTimeout:15], @"Missing row %@. %@", label, table.debugDescription);
+    XCUIElement *nav = self.app.navigationBars.firstMatch;
+    CGFloat previousY = CGFLOAT_MAX;
+    for (NSUInteger i = 0; i < 16; ++i) {
+        CGRect bounds = table.frame;
+        CGFloat top = CGRectGetMinY(bounds) + 10;
+        if (nav.exists) top = MAX(top, CGRectGetMaxY(nav.frame) + 8);
+        CGFloat bottom = CGRectGetMaxY(bounds) - 22;
+        CGFloat y = CGRectGetMidY(row.frame);
+        if (y >= top && y <= bottom && row.hittable) return row;
+        if (bottom <= top || ABS(y - previousY) < 1) break;
+        previousY = y;
+        CGFloat middle = (top + bottom) / 2;
+        CGFloat limit = (bottom - top) * .65;
+        CGFloat drag = MIN(MAX(y - middle, -limit), limit);
+        CGFloat from = (middle + drag / 2 - CGRectGetMinY(bounds)) / CGRectGetHeight(bounds);
+        CGFloat to = (middle - drag / 2 - CGRectGetMinY(bounds)) / CGRectGetHeight(bounds);
+        XCUICoordinate *start = [table coordinateWithNormalizedOffset:CGVectorMake(.5, from)];
+        XCUICoordinate *end = [table coordinateWithNormalizedOffset:CGVectorMake(.5, to)];
+        [start pressForDuration:.08 thenDragToCoordinate:end withVelocity:420 thenHoldForDuration:.2];
     }
-    XCTAssertTrue(row.hittable, @"Table row %@ is unavailable. %@",label,table.debugDescription);
+    [self capture:@"row-unavailable"];
+    XCTFail(@"Could not bring the row %@ onscreen. %@", label, table.debugDescription);
     return row;
 }
 - (void)goBack {
@@ -36,7 +58,7 @@
 - (void)openHub {
     XCUIElement *settings = self.app.navigationBars[@"SkyrimIOS Settings"];
     XCTAssertTrue([settings waitForExistenceWithTimeout:20]);
-    [[self findRow:@"Manage MODs" direction:YES] tap];
+    [[self findRow:@"Manage MODs"] tap];
     XCTAssertTrue([self.app.navigationBars[@"MOD"] waitForExistenceWithTimeout:8]);
 }
 - (void)fillName:(NSString *)name replacing:(NSString *)initial {
@@ -54,14 +76,13 @@
 // directory. Select via its visible accessibility labels, including builds of
 // Files that hide recognized extensions. No importer callback is substituted.
 - (XCUIElement *)pickerItem:(NSString *)name {
-    NSArray *names = name.pathExtension.length ? @[name, name.stringByDeletingPathExtension] : @[name];
-    for (NSString *n in names) {
-        NSPredicate *matches = [NSPredicate predicateWithFormat:@"label ==[c] %@ OR label BEGINSWITH[c] %@",n,[n stringByAppendingString:@","]];
-        for (XCUIElementQuery *query in @[self.app.cells, self.app.buttons, self.app.staticTexts, self.app.otherElements]) {
-            XCUIElement *found = [query matchingPredicate:matches].firstMatch;
-            if (found.exists && found.hittable) return found;
-        }
-    }
+    NSString *shortName = name.stringByDeletingPathExtension;
+    NSPredicate *matches = [NSPredicate predicateWithFormat:
+        @"label ==[c] %@ OR label ==[c] %@ OR label BEGINSWITH[c] %@ OR label BEGINSWITH[c] %@",
+        name, shortName, [name stringByAppendingString:@","], [shortName stringByAppendingString:@","]];
+    XCUIElementQuery *items = [[self.app descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:matches];
+    for (XCUIElement *item in items.allElementsBoundByIndex)
+        if (item.hittable) return item;
     return nil;
 }
 - (void)pick:(NSString *)name folder:(BOOL)folder {
@@ -72,14 +93,13 @@
     while (!item && [deadline timeIntervalSinceNow]>0) {
         item = [self pickerItem:name];
         if (item) break;
-        XCUIElement *samples=[self pickerItem:@"UI Samples"];
-        XCUIElement *host=[self pickerItem:@"MOD Screen Test"];
-        XCUIElement *local=[self pickerItem:@"On My iPhone"];
-        XCUIElement *browse=[self pickerItem:@"Browse"];
-        if (!sawSamples && samples) { [samples tap]; sawSamples=YES; }
-        else if (!sawHost && host) { [host tap]; sawHost=YES; }
-        else if (!sawLocal && local) { [local tap]; sawLocal=YES; }
-        else if (!sawBrowse && browse) { [browse tap]; sawBrowse=YES; }
+        // Files can ignore its initial directory until the local provider has
+        // appeared. Look up a fallback location only as far as the first match.
+        XCUIElement *place;
+        if (!sawSamples && (place=[self pickerItem:@"UI Samples"])) { [place tap]; sawSamples=YES; }
+        else if (!sawHost && (place=[self pickerItem:@"MOD Screen Test"])) { [place tap]; sawHost=YES; }
+        else if (!sawLocal && (place=[self pickerItem:@"On My iPhone"])) { [place tap]; sawLocal=YES; }
+        else if (!sawBrowse && (place=[self pickerItem:@"Browse"])) { [place tap]; sawBrowse=YES; }
         else [NSThread sleepForTimeInterval:.2];
     }
     XCTAssertNotNil(item, @"Files could not locate %@: %@",name,self.app.debugDescription);
@@ -87,8 +107,17 @@
     [item tap];
     // Folders must be opened then chosen; multi-select archives may require
     // an explicit Open. A single-select JSON picker dismisses on selection.
-    XCUIElement *confirm = self.app.buttons[@"Open"];
-    if ([confirm waitForExistenceWithTimeout:folder ? 6 : 1.5] && confirm.hittable) [confirm tap];
+    if (folder || [name.pathExtension.lowercaseString isEqualToString:@"zip"]) {
+        NSPredicate *confirmLabels = [NSPredicate predicateWithFormat:@"label IN %@", @[@"Open", @"Choose"]];
+        XCUIElementQuery *choices = [self.app.buttons matchingPredicate:confirmLabels];
+        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:6];
+        do {
+            for (XCUIElement *confirm in choices.allElementsBoundByIndex)
+                if (confirm.hittable && confirm.enabled) { [confirm tap]; return; }
+            if (self.app.navigationBars[@"MOD"].buttons[@"Reorder"].hittable) return;
+            [NSThread sleepForTimeInterval:.15];
+        } while (until.timeIntervalSinceNow > 0);
+    }
 }
 - (void)testActualSettingsModScreens {
     [self.app launch];
@@ -96,43 +125,47 @@
     [self openHub];
     XCTAssertTrue(self.app.staticTexts[@"No MODs yet"].exists);
     [self capture:@"empty-hub"];
-    [[self findRow:@"Save check" direction:YES] tap];
-    XCTAssertTrue(self.app.staticTexts[@"Authored Save"].exists);
+    [[self findRow:@"Save check"] tap];
+    [self findRow:@"Authored Save"];
     NSPredicate *missingPlugin = [NSPredicate predicateWithFormat:@"label CONTAINS %@", @"UnavailableFixture.esp"];
     XCTAssertTrue([self.app.staticTexts matchingPredicate:missingPlugin].count > 0);
     [self capture:@"save-check"]; [self goBack];
 
-    [[self findRow:@"Add a zip file" direction:NO] tap];
+    [[self findRow:@"Add a zip file"] tap];
     [self pick:@"AuthoredZip.zip" folder:NO];
-    XCTAssertTrue([self.app.staticTexts[@"AuthoredZip"] waitForExistenceWithTimeout:15]);
+    [self findRow:@"AuthoredZip"];
     [self capture:@"zip-imported"];
-    [[self findRow:@"Add a folder" direction:YES] tap];
+    [[self findRow:@"Add a folder"] tap];
     [self pick:@"AuthoredFolder" folder:YES];
-    XCTAssertTrue([self.app.staticTexts[@"AuthoredFolder"] waitForExistenceWithTimeout:15]);
+    [self findRow:@"AuthoredFolder"];
     [self capture:@"folder-imported"];
-    [[self findRow:@"Add a zip file" direction:YES] tap];
+    [[self findRow:@"Add a zip file"] tap];
     [self pick:@"AuthoredInstaller.zip" folder:NO];
     XCTAssertTrue([self.app.navigationBars[@"Choose a colour"] waitForExistenceWithTimeout:15]);
-    [self.app.staticTexts[@"Blue"] tap];
+    [[self findRow:@"Blue"] tap];
     [self capture:@"fomod-options"];
     [self.app.buttons[@"Install"] tap];
-    XCTAssertTrue([self.app.staticTexts[@"AuthoredInstaller"] waitForExistenceWithTimeout:15]);
+    [self findRow:@"AuthoredInstaller"];
 
-    [[self findRow:@"Default" direction:NO] tap];
+    [[self findRow:@"Default"] tap];
     [self.app.navigationBars.buttons[@"Add"] tap];
     [self fillName:@"Trial" replacing:@"MOD"];
-    XCUIElement *trial=[self.app.cells containingType:XCUIElementTypeStaticText identifier:@"Trial"].firstMatch;
-    XCTAssertTrue([trial waitForExistenceWithTimeout:6]); [trial swipeLeft];
-    if (!self.app.alerts[@"Rename"].exists) [self.app.buttons[@"Rename"] tap];
+    XCUIElement *trial = [self findRow:@"Trial"];
+    [trial swipeLeft];
+    if (![self.app.alerts[@"Rename"] waitForExistenceWithTimeout:1]) {
+        XCUIElement *rename = self.app.buttons[@"Rename"];
+        XCTAssertTrue([rename waitForExistenceWithTimeout:6]);
+        [rename tap];
+    }
     [self fillName:@"Trial Two" replacing:@"Trial"];
-    [self.app.staticTexts[@"Trial Two"] tap]; [self capture:@"profile-renamed-selected"];
+    [[self findRow:@"Trial Two"] tap]; [self capture:@"profile-renamed-selected"];
     [self goBack];
-    [[self findRow:@"Find on Nexus Mods" direction:YES] tap];
+    [[self findRow:@"Find on Nexus Mods"] tap];
     XCTAssertTrue([self.app.navigationBars[@"Nexus Mods"] waitForExistenceWithTimeout:10]);
     XCTAssertTrue([self.app.webViews.firstMatch waitForExistenceWithTimeout:12]);
     [self capture:@"nexus-browser"]; [self goBack];
 
-    [[self findRow:@"Share this MOD list" direction:YES] tap];
+    [[self findRow:@"Share this MOD list"] tap];
     // The activity sheet is genuine. The simulator host later copies this
     // exact exported file to its Files documents for deterministic re-import.
     XCTAssertTrue([self.app.buttons[@"Copy"] waitForExistenceWithTimeout:10] ||
@@ -144,19 +177,21 @@
     [self.app terminate];
     self.app.launchArguments=[self.app.launchArguments arrayByAddingObject:@"-ReimportAuthoredExport"];
     [self.app launch]; [self openHub];
-    XCTAssertTrue(self.app.staticTexts[@"Trial Two"].exists);
-    [[self findRow:@"Conflicts" direction:YES] tap];
+    [self findRow:@"Trial Two"];
+    [[self findRow:@"Conflicts"] tap];
     XCUIElement *conflict=[self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"label CONTAINS %@ AND label CONTAINS %@",@"AuthoredFolder",@"AuthoredZip"]].firstMatch;
-    XCTAssertTrue([conflict waitForExistenceWithTimeout:6]); [self capture:@"conflict-summary"]; [conflict tap];
+    XCTAssertTrue([conflict waitForExistenceWithTimeout:6]);
+    XCUIElement *conflictRow = [self findRow:conflict.label];
+    [self capture:@"conflict-summary"]; [conflictRow tap];
     XCUIElement *file=[self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"label ENDSWITH[c] %@",@"shared.txt"]].firstMatch;
-    XCTAssertTrue(file.exists); [self capture:@"conflict-files"]; [self goBack]; [self goBack];
-    [[self findRow:@"Save check" direction:YES] tap];
-    XCTAssertTrue(self.app.staticTexts[@"No saves in this profile"].exists);
+    XCTAssertTrue(file.exists); [self findRow:file.label]; [self capture:@"conflict-files"]; [self goBack]; [self goBack];
+    [[self findRow:@"Save check"] tap];
+    [self findRow:@"No saves in this profile"];
     [self capture:@"separate-profile-saves"]; [self goBack];
-    [[self findRow:@"Load a MOD list" direction:YES] tap];
+    [[self findRow:@"Load a MOD list"] tap];
     [self pick:@"Trial Two.skyrimios-modlist.json" folder:NO];
-    [[self findRow:@"Trial Two" direction:NO] tap];
-    XCTAssertTrue([self.app.staticTexts[@"Trial Two (imported)"] waitForExistenceWithTimeout:10]);
+    [[self findRow:@"Trial Two"] tap];
+    [self findRow:@"Trial Two (imported)"];
     [self capture:@"imported-profile"];
 }
 @end

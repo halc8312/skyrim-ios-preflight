@@ -2,11 +2,34 @@
  * Simulator-only host for the shipping Settings and MOD controllers.
  * Only synthetic data in this dedicated bundle's sandbox is used. */
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 #include "mobile_ui.h"
 #include "mod_manager.h"
 
 static NSURL *directory(NSSearchPathDirectory kind) {
     return [NSFileManager.defaultManager URLsForDirectory:kind inDomains:NSUserDomainMask].firstObject;
+}
+
+// Supply a reproducible starting directory to the real Files picker. Only this
+// test bundle's MOD hub gets the override; its original picker, delegate and
+// presentation still handle every selection, security-scoped URL and import.
+static void configureFixturePicker(void) {
+    Class hub = NSClassFromString(@"SKModHub");
+    SEL action = @selector(presentViewController:animated:completion:);
+    Method inherited = class_getInstanceMethod(hub, action);
+    if (!inherited) [NSException raise:NSInternalInconsistencyException format:@"Missing MOD hub presentation"];
+    typedef void (*Present)(id, SEL, UIViewController *, BOOL, void (^)(void));
+    Present present = (Present)method_getImplementation(inherited);
+    IMP withDirectory = imp_implementationWithBlock(^(UIViewController *host, UIViewController *controller,
+                                                       BOOL animated, void (^completion)(void)) {
+        if ([controller isKindOfClass:UIDocumentPickerViewController.class]) {
+            UIDocumentPickerViewController *picker = (UIDocumentPickerViewController *)controller;
+            picker.directoryURL = [directory(NSDocumentDirectory) URLByAppendingPathComponent:@"UI Samples" isDirectory:YES];
+        }
+        present(host, action, controller, animated, completion);
+    });
+    if (!class_addMethod(hub, action, withDirectory, method_getTypeEncoding(inherited)))
+        [NSException raise:NSInternalInconsistencyException format:@"MOD hub now implements its own presentation"];
 }
 
 static void prepareDirectory(NSURL *url) {
@@ -81,5 +104,8 @@ static void copyFixture(NSURL *source, NSURL *destination) {
 @interface SKFixtureDelegate : UIResponder <UIApplicationDelegate> @end
 @implementation SKFixtureDelegate @end
 int main(int argc, char **argv) {
-    @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(SKFixtureDelegate.class)); }
+    @autoreleasepool {
+        configureFixturePicker();
+        return UIApplicationMain(argc, argv, nil, NSStringFromClass(SKFixtureDelegate.class));
+    }
 }
