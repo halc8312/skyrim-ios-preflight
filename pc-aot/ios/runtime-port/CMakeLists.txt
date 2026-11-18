@@ -90,14 +90,19 @@ set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/mod_optimize.c" PROPERT
 target_link_libraries(skyrim_ios_runtime PUBLIC z "-framework UniformTypeIdentifiers" "-framework WebKit")
 # 7z / rar: libarchive (+ liblzma for 7z) from the prepared dependency prefix.
 # Without them the app still builds; 7z/rar imports then show a message.
-if(DEFINED SKYRIM_IOS_DEPS_PREFIX AND EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/lib/libarchive.a")
+if(EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/lib/libarchive.a"
+    AND EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/lib/liblzma.a"
+    AND EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/include/archive.h"
+    AND EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/include/archive_entry.h"
+    AND EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/share/skyrim-ios/ModArchiveLicenses.txt")
     target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/mod_libarchive.c")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_HAVE_LIBARCHIVE=1)
     target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_DEPS_PREFIX}/include")
     target_link_libraries(skyrim_ios_runtime PUBLIC "${SKYRIM_IOS_DEPS_PREFIX}/lib/libarchive.a"
-        "${SKYRIM_IOS_DEPS_PREFIX}/lib/liblzma.a" bz2 iconv)
+        "${SKYRIM_IOS_DEPS_PREFIX}/lib/liblzma.a" z iconv)
+    set(_mod_archive_notice "${SKYRIM_IOS_DEPS_PREFIX}/share/skyrim-ios/ModArchiveLicenses.txt")
 else()
-    message(WARNING "libarchive not in the dependency prefix: 7z/rar MOD import disabled")
+    message(STATUS "Optional MOD archive dependency prefix incomplete: 7z/rar import disabled")
 endif()
 
 if(SKYRIM_IOS_BUILD_APP)
@@ -109,6 +114,10 @@ if(SKYRIM_IOS_BUILD_APP)
     endif()
     add_executable(SkyrimIOS MACOSX_BUNDLE "${CMAKE_CURRENT_SOURCE_DIR}/ios_entry.m"
         ${SKYRIM_IOS_BINDING_SOURCES})
+    if(_mod_archive_notice)
+        target_sources(SkyrimIOS PRIVATE "${_mod_archive_notice}")
+        set_source_files_properties("${_mod_archive_notice}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    endif()
     target_include_directories(SkyrimIOS PRIVATE "${SKYRIM_IOS_BINDING_INCLUDE_DIR}")
     target_compile_options(SkyrimIOS PRIVATE "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>")
     target_link_libraries(SkyrimIOS PRIVATE SDL2::SDL2main skyrim_ios_runtime skyrim_ios_dependencies)

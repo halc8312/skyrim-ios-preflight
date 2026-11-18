@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * 7z / RAR (and other libarchive formats) for MOD import, with the same path
+ * 7z / RAR / RAR5 for MOD import, with the same path
  * rules and limits as the zip reader. Uses libarchive (BSD-2-Clause). */
 #define _DEFAULT_SOURCE
 #define _DARWIN_C_SOURCE
@@ -18,13 +18,14 @@
 static struct archive *open_reader(const char *path) {
     struct archive *a = archive_read_new();
     if (!a) return NULL;
-    archive_read_support_format_7zip(a);
-    archive_read_support_format_rar(a);
-    archive_read_support_format_rar5(a);
-    archive_read_support_format_zip(a);
-    archive_read_support_format_tar(a);
-    archive_read_support_filter_all(a);
-    if (archive_read_open_filename(a, path, 1 << 16) != ARCHIVE_OK) { archive_read_free(a); return NULL; }
+    if (archive_read_support_filter_none(a) != ARCHIVE_OK ||
+        archive_read_support_format_7zip(a) != ARCHIVE_OK ||
+        archive_read_support_format_rar(a) != ARCHIVE_OK ||
+        archive_read_support_format_rar5(a) != ARCHIVE_OK ||
+        archive_read_open_filename(a, path, 1 << 16) != ARCHIVE_OK) {
+        archive_read_free(a);
+        return NULL;
+    }
     return a;
 }
 

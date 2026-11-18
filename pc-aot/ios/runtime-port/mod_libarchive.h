@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 
-/* 7z / RAR / RAR5 (and zip, tar) through libarchive. Status values are the
+/* 7z / RAR / RAR5 through libarchive. Status values are the
  * SKYRIM_ZIP_* codes from mod_archive.h; the same path normalization,
  * link/encryption refusal, duplicate and size limits apply. */
 typedef struct { char **paths; size_t count, skipped; uint64_t total; } SkyrimArchiveList;
