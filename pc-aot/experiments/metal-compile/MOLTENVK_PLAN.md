@@ -192,7 +192,7 @@ speedup. Do not turn a blocking task join into a timeout or cancellation claim.
 
 The isolated UIKit host is implemented in `ios/main.mm` with a callable
 comparison API and atomic result store. Apple SDK builds, simulator UI review
-and dedicated-device signing verification have passed. The private signed IPA
+and dedicated-device signing verification have passed. The build-1 private signed IPA
 is 74,013 bytes, with evidence under
 `private/metal-probe-signing/run-20261117T233201Z-d9d6ec7f85/`.
 Private OTA delivery is verified: page, manifest and full IPA returned 200 over
@@ -201,10 +201,16 @@ returned 404. The three existing routes were preserved and Funnel remains off.
 The user installed the app and supplied two completed physical runs. Both
 synchronous and asynchronous timing rankings reverse between runs; a single
 small reused source with three samples per route does not establish a speedup.
-The next smallest experiment is a serial set of more complex authored shaders,
-with runtime-dependent inputs, fixed expected GPU outputs and all four routes
-balanced across execution positions. Preserve initial/repeated observations and
-make no cold-cache claim. Parallel contention and actual Metal 4 MRC task
+Build 2 now implements the next serial experiment: three more complex authored
+integer workloads with runtime-dependent inputs, fixed expected GPU outputs and
+all four routes balanced across execution positions (48 normal samples).
+Phone workflow run 5 (`19adfba`) passed 59 controls without skips, both Apple SDK
+targets, and six legacy-Metal readbacks on the Apple Paravirtual device. The
+dedicated signed build-2 IPA is 85,754 bytes, with evidence under
+`private/metal-probe-signing/run-20261118T012351Z-a95e13d8d6/`; the existing private
+comparison-app link now serves that verified package. Physical build-2 results
+remain pending. Preserve initial/repeated observations and make no cold-cache
+claim. Parallel contention and actual Metal 4 MRC task
 retirement should then be evaluated independently. The production gate stays
 open until those lifetime/options checks pass; neither an ARC fixture nor its
 short thermal-zero run proves game performance or long-session stability.

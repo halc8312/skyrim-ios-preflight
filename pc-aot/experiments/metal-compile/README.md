@@ -48,7 +48,30 @@ JSON; the initial backend is selectable. The OS/compiler cache
 is not cleared, so first-observed and repeated samples are reported separately
 without claiming a cold cache or a measured game performance improvement.
 
-Phone workflow run 4 (`9af993d`, 2026-11-18 JST) passed all 56 relevant test
+Build-2 phone workflow run 5 (`19adfba`, 2026-11-18 JST) passed 59 relevant
+test methods without skips under Xcode 26.6 / SDK 26.5. The Apple Paravirtual
+device exercised all three workloads through legacy Metal with both original
+and changed runtime inputs: six GPU readbacks, 768 words, all matching the CPU
+oracle. Twelve native stderr files were empty. This virtual-GPU evidence does
+not establish Metal 4 or physical build-2 execution. Both ARM64 device and
+simulator products were built; their twelve source snapshots matched main
+`57b800a` byte for byte. The four simulator screens were visually reviewed; a
+transient system notification on the result capture was absent from the restored
+result capture. Original visual-review flags remain unchanged.
+
+Evidence is retained under `local/metal-probe-ios-ci/run-05/`. The unsigned IPA
+is 71,503 bytes; the separately signed and cryptographically verified IPA is
+85,754 bytes (SHA-256
+`f5b611c5a57ff1f34f3378fcd4d293a132917c41764815ae20e74cb56edf77a7`),
+under `private/metal-probe-signing/run-20261118T012351Z-a95e13d8d6/`.
+The existing private comparison-app route now serves build 2. Real HTTPS page,
+manifest and package checks passed, including the complete signed-package hash.
+Unauthenticated requests returned 404; the other three routes and disabled
+Funnel setting were preserved. Fresh live 390 px light/dark screenshots were
+visually reviewed. Physical installation and the build-2 JSON result are pending;
+one comparison runs the complete balanced 48-sample sequence.
+
+Earlier build-1 phone workflow run 4 (`9af993d`, 2026-11-18 JST) passed all 56 relevant test
 methods on Apple hardware, including four native entry controls and ten store
 cases in normal and ASan/UBSan builds. Xcode 26.6 / SDK 26.5 built the ARM64
 device and simulator products without compiler warnings. The initial, explicit
@@ -81,8 +104,9 @@ is retained in the private signing run. The allowlisted `/metal-probe` OTA produ
 is separately deployed. Real private HTTPS page/manifest/package requests returned
 200, the complete delivered IPA matched the signed hash, and unauthenticated
 requests returned 404. All three pre-existing routes were unchanged and Funnel
-remains disabled. Existing light/dark visual evidence was reused; a fresh live
-screenshot after the version/size substitution was not obtained. The installation
+remains disabled. At build-1 delivery, existing light/dark visual evidence was
+reused; a fresh live screenshot after the version/size substitution was not
+obtained. Build-2 live-page review is recorded above. The build-1 installation
 link was sent to the user and two completed physical-phone reports were received.
 No link token, account or unique device identifier is recorded in this document.
 The live Skyrim updater was not replaced.
@@ -130,8 +154,9 @@ expected outputs. These are integer compiler workloads, not representative
 Skyrim shaders or a cold-cache benchmark. Position balancing does not balance
 uncontrolled compiler-cache misses, and four repeats do not establish a tail
 latency distribution. Keep first-observed and repeated samples separate.
-Apple compilation, GPU validation and physical build-2 results must be recorded
-separately from the successful build-1 results above. Parallel contention and actual Metal 4
+Build-2 Apple compilation and virtual-GPU oracle checks passed as recorded above;
+its physical results remain pending and separate from successful build 1.
+Parallel contention and actual Metal 4
 MRC lifetime checks are later, independent gates; this ARC probe does not close
 them or validate a MoltenVK integration.
 
