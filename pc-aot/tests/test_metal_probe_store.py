@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "METAL_PROBE_STORE cases=10 foundation_verified=1 metal_api_verified=0 physical_iphone_verified=0"
+EXPECTED = "METAL_PROBE_STORE cases=13 foundation_verified=1 metal_api_verified=0 physical_iphone_verified=0"
 
 
 @unittest.skipUnless(platform.system() == "Darwin", "requires real Apple Foundation; not a portable substitute")

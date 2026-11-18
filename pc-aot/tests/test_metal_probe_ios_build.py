@@ -45,7 +45,15 @@ class MetalPhoneBuildControls(unittest.TestCase):
             self.assertNotIn("SKYRIM_PROFILE_PATH", env)
             if label.startswith("compile-"):
                 self.assertIn("-DSKYRIM_METAL_RUNTIME_NO_MAIN", argv)
-                self.assertIn("-fobjc-arc", argv)
+                self.assertIn("-fblocks", argv)
+                self.assertIn("-fexceptions", argv)
+                self.assertIn("-fobjc-exceptions", argv)
+                if label == "compile-contention":
+                    self.assertIn("-fno-objc-arc", argv)
+                    self.assertNotIn("-fobjc-arc", argv)
+                else:
+                    self.assertIn("-fobjc-arc", argv)
+                    self.assertNotIn("-fno-objc-arc", argv)
                 self.assertIn("-Werror", argv)
                 Path(argv[-1]).write_bytes(b"synthetic object")
             if label == "link-app":
@@ -75,10 +83,10 @@ class MetalPhoneBuildControls(unittest.TestCase):
             self.assertEqual(set(archive.namelist()), {"Payload/MetalProbe.app/" + name for name in build.APP_FILES})
             info = plistlib.loads(archive.read("Payload/MetalProbe.app/Info.plist"))
             self.assertEqual(info["CFBundleIdentifier"], build.DEFAULT_BUNDLE)
-            self.assertEqual(info["CFBundleVersion"], "3")
+            self.assertEqual(info["CFBundleVersion"], "4")
             self.assertEqual(info["MinimumOSVersion"], "26.0")
             provenance = json.loads(archive.read("Payload/MetalProbe.app/BuildInfo.json"))
-            self.assertEqual(len(provenance["inputs"]), 12)
+            self.assertEqual(len(provenance["inputs"]), 14)
             self.assertEqual(set(provenance["inputs"]), set(build.INPUTS))
             self.assertEqual(len(archive.infolist()), 5)
             self.assertEqual(archive.getinfo("Payload/MetalProbe.app/MetalProbe").external_attr >> 16 & 0o777, 0o755)
@@ -95,7 +103,7 @@ class MetalPhoneBuildControls(unittest.TestCase):
         self.assertFalse(list((run / "artifacts").glob("*.ipa")))
         with zipfile.ZipFile(run / "artifacts/MetalProbe-simulator.app.zip") as archive:
             self.assertIn("MetalProbe.app/MetalProbe", archive.namelist())
-            self.assertEqual(plistlib.loads(archive.read("MetalProbe.app/Info.plist"))["CFBundleVersion"], "3")
+            self.assertEqual(plistlib.loads(archive.read("MetalProbe.app/Info.plist"))["CFBundleVersion"], "4")
         compile_calls = [args for args, label, *_ in self.calls if label.startswith("compile-")]
         self.assertTrue(all("arm64-apple-ios26.0-simulator" in args for args in compile_calls))
 
@@ -127,10 +135,30 @@ class MetalPhoneBuildControls(unittest.TestCase):
         run, = (self.root / "local/metal-probe-ios").iterdir()
         self.assertFalse(list((run / "artifacts").glob("*.ipa")))
 
+    def test_contention_uses_separate_mrc_object_and_stays_in_evidence(self):
+        run = self.invoke()
+        compiles = [(argv, label) for argv, label, *_ in self.calls if label.startswith("compile-")]
+        self.assertEqual([label for _, label in compiles],
+                         ["compile-runtime", "compile-host", "compile-store", "compile-contention"])
+        contention, = [argv for argv, label in compiles if label == "compile-contention"]
+        self.assertTrue(any(arg.endswith("/phone_contention.mm") or arg.endswith("\\phone_contention.mm")
+                            for arg in contention))
+        link, = [argv for argv, label, *_ in self.calls if label == "link-app"]
+        self.assertIn(str(run / "objects/contention.o"), link)
+        with zipfile.ZipFile(run / "artifacts/metal-probe-build-evidence.zip") as archive:
+            for name in ("phone_contention.h", "phone_contention.mm"):
+                self.assertIn("inputs/experiments/metal-compile/" + name, archive.namelist())
+
+    def test_changed_contention_source_snapshot_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "source snapshot changed"):
+            self.invoke(mutate="phone_contention.mm")
+        run, = (self.root / "local/metal-probe-ios").iterdir()
+        self.assertFalse(list((run / "artifacts").glob("*.ipa")))
+
     def test_old_bundle_version_is_refused(self):
         template = self.root / "experiments/metal-compile/ios/Info.plist"
         value = plistlib.loads(template.read_bytes())
-        value["CFBundleVersion"] = "2"
+        value["CFBundleVersion"] = "3"
         template.write_bytes(plistlib.dumps(value))
         with self.assertRaisesRegex(ValueError, "metadata mismatch: CFBundleVersion"):
             self.invoke()

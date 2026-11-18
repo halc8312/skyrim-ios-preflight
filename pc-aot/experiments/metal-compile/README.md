@@ -12,7 +12,7 @@ The tracked experiment contains no Skyrim shaders or game data.
 The `pc2011-metal-phone-probe` manual workflow builds an isolated UIKit app,
 `MetalProbe` (`org.skyrimios.metalprobe`, iOS 26 or later). It compares the legacy
 and Metal 4 library APIs, synchronously and asynchronously, through legacy
-render/compute pipelines. Build 3 uses three bounded authored workload families:
+render/compute pipelines. Builds 3 and 4 use three bounded authored workload families:
 branching arithmetic, dependent table lookups, and coupled mixing rounds, with
 four semantic variants each (twelve cases). Variants change integer expressions
 and constants, not just names. Each family assigns every route first exactly
@@ -50,6 +50,30 @@ Initial/final store calls and the final return snapshot are explicitly excluded,
 so the immutable final file does not pretend to know its own write duration.
 Library/specialization/PSO clocks exclude these progress intervals.
 
+Build 4 keeps the 192 serial samples, checks stop requests at every operation
+boundary and saves intermediate results after each four completed samples and
+at control boundaries. A normal full run makes 73 progress callbacks. The
+final save includes every completed sample. Schema 4 writes sorted, compact
+JSON within the existing 2 MiB store limit. An abrupt process kill can lose the
+last four completed serial samples plus work in progress. The separate
+scheduling check is saved when it returns.
+
+The scheduling check submits two prefetch requests and one urgent request in
+32 trials. In the idle condition both prefetch requests finish before the urgent
+request starts. In the contended condition the urgent request follows the two
+prefetch submissions. Each trial records how many were actually outstanding at
+urgent submission, their overlap and the time from urgent submission to callback.
+The GPU verifies each returned library against the same integer calculation.
+The adapter keeps the original callback results and errors alive through its
+worker's checks and drains each returned Metal 4 task before releasing it.
+
+Compare legacy and Metal 4 within the same source bank, scheduling profile and
+cache history. The two scheduling profiles use different semantic salts, so a
+difference between profiles also includes a workload difference. Host timestamps
+show when the app was waiting. Internal compiler scheduling and resulting game
+frame rates each require separate evidence. See the [gameplay scenarios and
+developer reports](MOLTENVK_PLAN.md#when-metal-4-could-shorten-a-skyrim-frame).
+
 Build-3 preparation passed Windows Metal 6.2 compilation/linking for all twelve
 cases without diagnostics, portable CPU golden/sensitivity/order controls in
 normal and ASan/UBSan builds, fifteen packaging and twenty-three signing tests,
@@ -65,7 +89,7 @@ after collection, leaving the original `visual_review_pending` evidence intact.
 Evidence is under `local/metal-probe-ios-ci/run-06/`. The dedicated signed build-3
 IPA is 89,640 bytes, SHA-256
 `ece5572607e8be9c058d6fe3fe2122202e9947e3612c2423637a653486d7ba27`.
-The existing private comparison-app route serves it; live HTTPS transfer/hash and
+The private comparison-app route served this build at delivery. Live HTTPS transfer/hash and
 390-pixel light/dark page checks passed. Two subsequent physical build-3 runs
 validated all 384 normal samples; their findings appear below. Metal 4 speedup,
 parallel contention and production lifetime remain unverified. Earlier build

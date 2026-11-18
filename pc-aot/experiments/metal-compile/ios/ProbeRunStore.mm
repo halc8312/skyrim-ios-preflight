@@ -39,8 +39,15 @@ static NSData *Encode(NSDictionary *record, NSError **error) {
             StoreError(error, 3, @"結果に保存できない値が含まれています。");
             return nil;
         }
-        NSData *data = [NSJSONSerialization dataWithJSONObject:record
-                              options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:error];
+        // Schema 4 adds the separately retained scheduling trials. Keep the
+        // same sorted keys and full data while avoiding indentation overhead;
+        // older records retain their existing serialization and read contract.
+        NSDictionary *comparison = record[@"comparison"];
+        const BOOL compact = [comparison isKindOfClass:NSDictionary.class] &&
+                             [comparison[@"schema"] isEqual:@4];
+        NSJSONWritingOptions options = NSJSONWritingSortedKeys;
+        if (!compact) options |= NSJSONWritingPrettyPrinted;
+        NSData *data = [NSJSONSerialization dataWithJSONObject:record options:options error:error];
         if (data.length > kRecordLimit) {
             StoreError(error, 3, @"結果ファイルの上限を超えました。");
             return nil;

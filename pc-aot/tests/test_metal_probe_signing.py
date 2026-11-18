@@ -79,8 +79,8 @@ class ProbeSigningAdmissionTests(unittest.TestCase):
 
     def test_only_authored_five_file_device_app_is_accepted(self):
         self.assertEqual(signer.read_unsigned(write_ipa(self.root / "probe.ipa").read_bytes()), members())
-        self.assertEqual(len(signer.PROVENANCE_INPUTS), 12)
-        self.assertEqual(plistlib.loads(members()["Info.plist"])["CFBundleVersion"], "3")
+        self.assertEqual(len(signer.PROVENANCE_INPUTS), 14)
+        self.assertEqual(plistlib.loads(members()["Info.plist"])["CFBundleVersion"], "4")
 
     def test_phone_fixture_mutation_is_refused_even_with_matching_metadata(self):
         files = members()
@@ -122,11 +122,11 @@ class ProbeSigningAdmissionTests(unittest.TestCase):
                         self.assertRaisesRegex(signer.Refusal, "phone_.*provenance"):
                     signer.bundle_contract(files)
 
-    def test_all_twelve_source_provenance_keys_and_hashes_are_required(self):
+    def test_all_fourteen_source_provenance_keys_and_hashes_are_required(self):
         base = json.loads(members()["BuildInfo.json"])["inputs"]
         missing = dict(base)
-        del missing["experiments/metal-compile/runtime.mm"]
-        invalid = dict(base, **{"experiments/metal-compile/runtime.mm": "not a SHA256"})
+        del missing["experiments/metal-compile/phone_contention.mm"]
+        invalid = dict(base, **{"experiments/metal-compile/phone_contention.h": "not a SHA256"})
         for value in (None, [], missing, invalid, dict(base, **{"extra/private.bin": "0" * 64})):
             files = members()
             provenance = json.loads(files["BuildInfo.json"])
@@ -139,7 +139,7 @@ class ProbeSigningAdmissionTests(unittest.TestCase):
     def test_foreign_app_simulator_forged_success_and_fixture_are_refused(self):
         for field, value in (("CFBundleIdentifier", "org.skyrimios.title"),
                              ("CFBundleIdentifier", "org.skyrimios.probe"),
-                             ("CFBundleVersion", "2"),
+                             ("CFBundleVersion", "3"),
                              ("CFBundleExecutable", "SkyrimIOS"),
                              ("CFBundleSupportedPlatforms", ["iPhoneSimulator"]),
                              ("MinimumOSVersion", "18.0")):

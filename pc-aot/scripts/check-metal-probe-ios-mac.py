@@ -37,7 +37,7 @@ def fresh_unsupported_record(path, prior_paths, source_revision):
             raise RuntimeError("Simulator incorrectly claimed or omitted device/GPU evidence")
     if comparison.get("samples") != []:
         raise RuntimeError("Simulator ran unexpected comparison samples")
-    if comparison.get("schema") != 3 or comparison.get("total_cases") != 12 or comparison.get("total_samples") != 192:
+    if comparison.get("schema") != 4 or comparison.get("total_cases") != 12 or comparison.get("total_samples") != 192:
         raise RuntimeError("Simulator did not run the current balanced comparison design")
     # The unsupported simulator path completes exactly the device checkpoint.
     # Its actual host-store duration must be nested in the progress callback,
@@ -46,6 +46,14 @@ def fresh_unsupported_record(path, prior_paths, source_revision):
     host = comparison.get("host_timing", {})
     if not isinstance(timing, dict) or not isinstance(host, dict):
         raise RuntimeError("Missing current progress timing evidence")
+    counts = [timing.get(key) for key in ("considered_count", "completed_count", "skipped_count", "incomplete_count")]
+    if (any(type(value) is not int or value < 0 for value in counts) or
+            counts[0] != sum(counts[1:]) or counts != [1, 1, 0, 0] or timing.get("callback_present") is not True):
+        raise RuntimeError("Simulator checkpoint disposition counters are inconsistent")
+    contention = comparison.get("contention_control")
+    if (not isinstance(contention, dict) or contention.get("status") != "not_run" or
+            contention.get("scope") != "separate authored MRC scheduling control"):
+        raise RuntimeError("Simulator must not run or claim the independent contention control")
     intervals = [timing.get("snapshot_serialization"), timing.get("synchronous_callback"), host.get("progress_store")]
     for interval in intervals:
         if not isinstance(interval, dict) or any(type(interval.get(key)) is not int or interval[key] < 0
@@ -80,6 +88,8 @@ def main():
               "gameplay_improvement_verified": False, "commands": []}
     native_groups = (("phone-runtime", "local/tests/phone-runtime-*"),
                      ("phone-workloads", "local/tests/phone-workloads-*"),
+                     ("phone-progress", "local/tests/phone-progress-*"),
+                     ("phone-contention", "local/tests/phone-contention-*"),
                      ("store", "local/metal-probe-store/run-*"))
     prior_native = {group: set(ROOT.glob(pattern)) for group, pattern in native_groups}
 
@@ -129,7 +139,11 @@ def main():
 
     try:
         call("preflight", [sys.executable, str(ROOT / "scripts/check-public-tree.py")])
-        for suite in ("test_metal_probe_ios_build.py", "test_metal_probe_ui_driver.py", "test_metal_phone_workloads.py", "test_metal_phone_runtime.py", "test_metal_probe_store.py", "test_metal_compile_runtime.py"):
+        for suite in ("test_metal_probe_ios_build.py", "test_metal_probe_signing.py", "test_metal_probe_ui_driver.py",
+                      "test_metal_phone_workloads.py", "test_metal_phone_progress.py", "test_metal_phone_runtime.py",
+                      "test_metal_phone_contention.py", "test_metal_probe_store.py", "test_metal_compile_runtime.py"):
+            if not (ROOT / "tests" / suite).is_file() or (ROOT / "tests" / suite).is_symlink():
+                raise RuntimeError("Required native/control test suite missing or linked: " + suite)
             call(suite.removesuffix(".py"), [sys.executable, "-m", "unittest", "discover", "-s", str(ROOT / "tests"), "-p", suite, "-v"], 180)
         build(False)
         simulator_app = build(True)

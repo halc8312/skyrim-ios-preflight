@@ -94,7 +94,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
         [content.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-20],
         [content.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-40]
     ]];
-    [content addArrangedSubview:makeLabel(@"初回の準備も4方式で比較", UIFontTextStyleTitle2)];
+    [content addArrangedSubview:makeLabel(@"先読み中の待ち時間を比較", UIFontTextStyleTitle2)];
     UILabel* intro = makeLabel(@"自作のテストで、描画の準備時間と結果を比べます。測定中は画面を開いたままお待ちください。", UIFontTextStyleBody);
     intro.textColor = UIColor.secondaryLabelColor;
     [content addArrangedSubview:intro];
@@ -104,7 +104,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
     self.orderControl.accessibilityLabel = @"最初に試す方式";
     [self.orderControl.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
     [content addArrangedSubview:self.orderControl];
-    UILabel* orderHint = makeLabel(@"3種類の負荷を4パターンずつ試します。最初の担当も各方式に均等に分け、合計192回測定します。", UIFontTextStyleSubheadline);
+    UILabel* orderHint = makeLabel(@"3種類の負荷を4パターンずつ、合計192回比較します。その後、先読みと同時に描画を準備したときの待ち時間を確認します。", UIFontTextStyleSubheadline);
     orderHint.textColor = UIColor.secondaryLabelColor;
     [content addArrangedSubview:orderHint];
     self.stateLabel = makeLabel(@"準備できています", UIFontTextStyleHeadline);
@@ -129,7 +129,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
     self.resultLabel = makeLabel(@"まだ測定していません", UIFontTextStyleBody);
     self.resultLabel.accessibilityIdentifier = @"probe.result";
     [content addArrangedSubview:self.resultLabel];
-    self.savedLabel = makeLabel(@"結果はこのアプリ内に保存されます。", UIFontTextStyleFootnote);
+    self.savedLabel = makeLabel(@"比較結果は4回ごとに保存します。強制終了時は直前の最大4回分と、実行中の確認が残らないことがあります。", UIFontTextStyleFootnote);
     self.savedLabel.textColor = UIColor.secondaryLabelColor;
     [content addArrangedSubview:self.savedLabel];
     self.shareButton = makeButton(@"結果を共有", NO);
@@ -208,7 +208,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
     self.stateLabel.text = @"対応状況を確認しています";
     self.detailLabel.text = @"画面を開いたままお待ちください。";
     self.resultLabel.text = @"測定中";
-    self.savedLabel.text = @"経過を端末に保存しています。";
+    self.savedLabel.text = @"比較は4回ごとに保存します。先読みの確認や停止時は、実行中の処理が戻ってから保存します。";
     UIApplication.sharedApplication.idleTimerDisabled = YES;
     ProbeRunStore* store = self.store;
     // The retained controller/run objects survive callbacks. UI never joins a task.
@@ -239,6 +239,11 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
                         NSUInteger total = [snapshot[@"total_samples"] unsignedIntegerValue];
                         if (total) self.progressView.progress = float(done) / float(total);
                         if (control->load()) {
+                            if ([snapshot[@"phase"] hasPrefix:@"contention_control_"]) {
+                                self.stateLabel.text = @"先読み中の待ち時間を測っています";
+                                self.detailLabel.text = @"先読みと同時に描画を準備しています。画面を開いたままお待ちください。";
+                                return;
+                            }
                             self.stateLabel.text = @"比較しています";
                             NSUInteger caseIndex = [snapshot[@"active_case_index"] unsignedIntegerValue];
                             NSUInteger totalCases = [snapshot[@"total_cases"] unsignedIntegerValue];
@@ -320,12 +325,16 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
     if (passed) {
         self.stateLabel.text = @"比較が完了しました";
         NSUInteger totalCases = [comparison[@"total_cases"] unsignedIntegerValue];
-        self.detailLabel.text = totalCases > 1
+        self.detailLabel.text = [comparison[@"schema"] unsignedIntegerValue] >= 4
+            ? @"描画・計算結果は一致しました。先読み中の待ち時間も記録しました。"
+            : totalCases > 1
             ? [NSString stringWithFormat:@"%luパターンで、描画・計算結果の一致を確認しました。", (unsigned long)totalCases]
             : @"テスト用の描画・計算結果は一致しました。";
     } else if ([status isEqual:@"unsupported"]) {
         self.stateLabel.text = @"この環境では比較できません";
-        self.detailLabel.text = @"Metal 4の対応条件を満たしていません。対応状況を結果に保存しました。";
+        self.detailLabel.text = [comparison[@"serial_comparison_verified"] boolValue]
+            ? @"通常の比較は完了しましたが、先読みの確認には対応していません。詳細を結果に保存しました。"
+            : @"Metal 4の対応条件を満たしていません。対応状況を結果に保存しました。";
     } else if ([status isEqual:@"interrupted"] || [status isEqual:@"running"]) {
         self.stateLabel.text = @"比較は途中で終了しました";
         self.detailLabel.text = @"完了した結果としては扱いません。保存済みの経過を共有できます。";
@@ -385,6 +394,46 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
         : @"\n\n各方式のライブラリ準備時間の中央値です。描画性能や初回キャッシュの速さを示すものではありません。";
     self.resultLabel.text = groups.count ? [[groups componentsJoinedByString:@"\n\n"] stringByAppendingString:explanation]
                                       : @"比較できた測定値はありません";
+    if ([comparison[@"schema"] unsignedIntegerValue] >= 4) {
+        NSDictionary* control = [comparison[@"contention_control"] isKindOfClass:NSDictionary.class]
+            ? comparison[@"contention_control"] : @{};
+        NSString* controlStatus = control[@"status"];
+        NSString* controlSummary = @"未実施";
+        if ([controlStatus isEqual:@"passed"]) controlSummary = @"記録済み";
+        else if ([controlStatus isEqual:@"incomplete"] || [controlStatus isEqual:@"running"]) controlSummary = @"未完了";
+        else if ([controlStatus isEqual:@"stopped"] || [controlStatus isEqual:@"interrupted"]) controlSummary = @"途中で停止";
+        else if ([controlStatus isEqual:@"unsupported"]) controlSummary = @"この環境では未対応";
+        else if ([controlStatus isEqual:@"failed"]) controlSummary = @"確認が必要な結果";
+        NSMutableArray<NSString*>* controlLines = [NSMutableArray arrayWithObject:
+            [NSString stringWithFormat:@"先読み中の待ち時間：%@", controlSummary]];
+        if ([controlStatus isEqual:@"passed"]) {
+            NSArray* trials = [control[@"trials"] isKindOfClass:NSArray.class] ? control[@"trials"] : @[];
+            NSUInteger measured = 0, prefetchPending = 0;
+            NSMutableDictionary<NSString*, NSNumber*>* maxima = [NSMutableDictionary new];
+            for (NSDictionary* trial in trials) {
+                if (![trial[@"status"] isEqual:@"passed"] || ![trial[@"mode"] isEqual:@"contended"] ||
+                    ![trial[@"urgent_enqueue_to_callback_ns"] isKindOfClass:NSNumber.class] ||
+                    ![trial[@"prefetch_inflight_at_urgent_api_enter"] isKindOfClass:NSNumber.class]) continue;
+                NSString* api = trial[@"api"];
+                if (![api isEqual:@"legacy_async"] && ![api isEqual:@"metal4_async"]) continue;
+                ++measured;
+                if ([trial[@"prefetch_inflight_at_urgent_api_enter"] unsignedIntegerValue] > 0) ++prefetchPending;
+                NSNumber* duration = trial[@"urgent_enqueue_to_callback_ns"];
+                if (!maxima[api] || duration.unsignedLongLongValue > maxima[api].unsignedLongLongValue)
+                    maxima[api] = duration;
+            }
+            if (measured) {
+                [controlLines addObject:@"描画準備の完了まで（最大・開始待ちを含む）"];
+                for (NSString* api in @[@"legacy_async", @"metal4_async"])
+                    if (maxima[api]) [controlLines addObject:[NSString stringWithFormat:@"%@　%.2f ms",
+                        [api isEqual:@"legacy_async"] ? @"従来" : @"Metal 4", maxima[api].doubleValue / 1e6]];
+                [controlLines addObject:[NSString stringWithFormat:@"開始時に先読みが未完了：%lu / %lu回",
+                    (unsigned long)prefetchPending, (unsigned long)measured]];
+            }
+        }
+        self.resultLabel.text = [NSString stringWithFormat:@"%@\n\n%@",
+            [controlLines componentsJoinedByString:@"\n"], self.resultLabel.text];
+    }
     self.savedLabel.text = [record[@"recovered_incomplete"] boolValue]
         ? @"前回の途中経過を表示しています。新しい比較も開始できます。"
         : @"結果を保存しました。共有から、このチャットへ送れます。";

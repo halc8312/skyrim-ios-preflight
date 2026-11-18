@@ -99,7 +99,49 @@ int main(int argc, const char *argv[]) {
             check(recovered != nil, "discovery failed on invalid linked evidence");
             check([recovered.latestReportURL isEqual:first], "unsafe linked evidence was discovered as latest");
             check([finalBytes isEqual:bytes(first)], "discovery damaged older run");
-            std::puts("METAL_PROBE_STORE cases=10 foundation_verified=1 metal_api_verified=0 physical_iphone_verified=0");
+
+            // Synthetic dense data tests the actual Foundation encoding and
+            // persisted size limit; it is not a Metal sample or GPU claim.
+            NSURL *compactRoot = [root URLByAppendingPathComponent:@"schema4-controls" isDirectory:YES];
+            ProbeRunStore *compactStore = [[ProbeRunStore alloc] initWithRootURL:compactRoot error:&error];
+            check(compactStore != nil, "compact store initialization");
+            NSURL *compactURL = [compactStore beginRunWithMetal4First:NO error:&error];
+            check(compactURL != nil, "compact run");
+            NSData *compactInitial = bytes(compactURL);
+            NSMutableArray *values = [NSMutableArray arrayWithCapacity:192000];
+            for (NSUInteger i = 0; i < 192000; ++i) [values addObject:@0];
+            NSMutableDictionary *dense = [@{ @"schema": @3, @"status": @"running",
+                @"synthetic": @{ @"rows": @{ @"values": values } } } mutableCopy];
+            check(![compactStore writeSnapshot:dense toURL:compactURL finished:NO error:&error],
+                  "legacy schema unexpectedly switched to compact encoding");
+            check([compactInitial isEqual:bytes(compactURL)], "legacy oversized write damaged prior evidence");
+            dense[@"schema"] = @4;
+            check([compactStore writeSnapshot:dense toURL:compactURL finished:NO error:&error],
+                  "schema4 compact record below byte limit was refused");
+            NSDictionary *compactRecord = [compactStore readRecordAtURL:compactURL error:&error];
+            check([compactRecord[@"comparison"] isEqual:dense], "compact encoding changed recorded content");
+            NSData *compactBytes = bytes(compactURL);
+            NSData *prettyBytes = [NSJSONSerialization dataWithJSONObject:compactRecord
+                options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:&error];
+            NSData *sortedCompact = [NSJSONSerialization dataWithJSONObject:compactRecord
+                options:NSJSONWritingSortedKeys error:&error];
+            check(prettyBytes.length > 2 * 1024 * 1024 && compactBytes.length <= 2 * 1024 * 1024,
+                  "synthetic record did not straddle the formatting size limit");
+            check([sortedCompact isEqual:compactBytes], "compact record changed sorted key serialization");
+
+            check(![compactStore writeSnapshot:@{ @"schema": @4, @"status": @"failed", @"large": large }
+                                       toURL:compactURL finished:YES error:&error], "oversized compact record accepted");
+            check([compactBytes isEqual:bytes(compactURL)], "oversized compact write damaged prior evidence");
+            dense[@"status"] = @"passed";
+            check([compactStore writeSnapshot:dense toURL:compactURL finished:YES error:&error], "compact terminal save");
+            ProbeRunStore *compactReopened = [[ProbeRunStore alloc] initWithRootURL:compactRoot error:&error];
+            NSDictionary *compactRestored = [compactReopened readRecordAtURL:compactURL error:&error];
+            check([compactReopened.latestReportURL isEqual:compactURL] &&
+                  [compactRestored[@"comparison"] isEqual:dense] && [compactRestored[@"finished"] boolValue],
+                  "compact final record did not survive reopening");
+            check([finalBytes isEqual:bytes(first)] && [recovered readRecordAtURL:first error:&error] != nil,
+                  "schema4 save affected legacy record readability");
+            std::puts("METAL_PROBE_STORE cases=13 foundation_verified=1 metal_api_verified=0 physical_iphone_verified=0");
             return 0;
         } catch (const std::exception &error) {
             std::fprintf(stderr, "%s\n", error.what());

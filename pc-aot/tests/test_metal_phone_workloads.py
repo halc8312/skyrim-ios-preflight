@@ -13,6 +13,32 @@ EXPERIMENT = ROOT / "experiments/metal-compile"
 CXX = shutil.which(os.environ.get("CXX", "c++"))
 
 
+def mac_gpu_build_commands(directory, executable):
+    common = ["xcrun", "--sdk", "macosx", "clang++", "-std=c++17", "-O1", "-g",
+              "-fblocks", "-fexceptions", "-fobjc-exceptions", "-mmacosx-version-min=26.0",
+              "-Wall", "-Wextra", "-Werror", "-I", str(EXPERIMENT)]
+    manual_object = directory / "phone-contention.o"
+    return [
+        common + ["-fno-objc-arc", "-c", str(EXPERIMENT / "phone_contention.mm"), "-o", str(manual_object)],
+        common + ["-fobjc-arc", str(ROOT / "tests/native/test_metal_phone_workloads_gpu.mm"), str(manual_object),
+                  "-framework", "Foundation", "-framework", "Metal", "-o", str(executable)],
+    ]
+
+
+class MacWorkloadBuildControls(unittest.TestCase):
+    def test_mrc_contention_object_is_linked_into_arc_legacy_gpu_control(self):
+        manual, host = mac_gpu_build_commands(Path("synthetic-output"), Path("synthetic-output/gpu"))
+        self.assertIn("-fno-objc-arc", manual)
+        self.assertNotIn("-fobjc-arc", manual)
+        self.assertIn("-fobjc-arc", host)
+        self.assertNotIn("-fno-objc-arc", host)
+        self.assertIn(manual[-1], host)
+        for command in (manual, host):
+            self.assertIn("-fblocks", command)
+            self.assertIn("-fexceptions", command)
+            self.assertIn("-fobjc-exceptions", command)
+
+
 class LoggedNativeTest(unittest.TestCase):
     def directory(self, label):
         result = ROOT / "local/tests" / f"phone-workloads-{label}-{time.time_ns()}-{os.getpid()}"
@@ -49,10 +75,8 @@ class MacLegacyWorkloadGPUTests(LoggedNativeTest):
         directory = self.directory("mac-gpu")
         executable = directory / "gpu-controls"
         report = directory / "gpu-report.json"
-        self.run_logged(directory, "compile", ["xcrun", "--sdk", "macosx", "clang++", "-std=c++17", "-O1", "-g",
-            "-fobjc-arc", "-fblocks", "-mmacosx-version-min=26.0", "-Wall", "-Wextra", "-Werror",
-            "-I", str(EXPERIMENT), str(ROOT / "tests/native/test_metal_phone_workloads_gpu.mm"),
-            "-framework", "Foundation", "-framework", "Metal", "-o", str(executable)])
+        for label, command in zip(("compile-contention", "compile-host"), mac_gpu_build_commands(directory, executable)):
+            self.run_logged(directory, label, command)
         output = self.run_logged(directory, "run", [str(executable), str(EXPERIMENT / "phone_fixture.metal"), str(report)], 180)
         self.assertEqual(output, "PHONE_WORKLOAD_MAC_LEGACY families=3 cases=12 input_variants=2 readbacks=24 physical_iphone_verified=0 metal4_verified=0")
         data = json.loads(report.read_text())

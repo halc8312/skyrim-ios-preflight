@@ -19,7 +19,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_NAME = "MetalProbe"
-APP_VERSION = "3"
+APP_VERSION = "4"
 DEFAULT_BUNDLE = "org.skyrimios.metalprobe"
 # The second name is the pre-existing, separate diagnostic app, never SkyrimIOS.
 ALLOWED_BUNDLES = {DEFAULT_BUNDLE, "org.skyrimios.probe"}
@@ -29,6 +29,8 @@ INPUTS = (
     "experiments/metal-compile/fixture.metal",
     "experiments/metal-compile/phone_fixture.metal",
     "experiments/metal-compile/phone_workloads.h",
+    "experiments/metal-compile/phone_contention.h",
+    "experiments/metal-compile/phone_contention.mm",
     "experiments/metal-compile/ios/main.mm",
     "experiments/metal-compile/ios/ProbeRunStore.h",
     "experiments/metal-compile/ios/ProbeRunStore.mm",
@@ -238,15 +240,18 @@ def execute(root, simulator=False, bundle=DEFAULT_BUNDLE, command=None):
         objects.mkdir()
         base = snapshot / "experiments/metal-compile"
         triple = "arm64-apple-ios26.0" + ("-simulator" if simulator else "")
-        common = [compiler, "-target", triple, "-isysroot", sdk_path, "-std=c++17", "-fobjc-arc", "-fblocks",
+        common = [compiler, "-target", triple, "-isysroot", sdk_path, "-std=c++17", "-fblocks",
+                  "-fexceptions", "-fobjc-exceptions",
                   "-O2", "-gline-tables-only", "-Wall", "-Wextra", "-Werror", "-I", str(base)]
         for name, source in (("runtime", base / "runtime.mm"), ("host", base / "ios/main.mm"),
                              ("store", base / "ios/ProbeRunStore.mm")):
-            call(common + ["-DSKYRIM_METAL_RUNTIME_NO_MAIN", "-c", str(source), "-o", str(objects / (name + ".o"))],
+            call(common + ["-fobjc-arc", "-DSKYRIM_METAL_RUNTIME_NO_MAIN", "-c", str(source), "-o", str(objects / (name + ".o"))],
                  "compile-" + name, 180)
+        call(common + ["-fno-objc-arc", "-DSKYRIM_METAL_RUNTIME_NO_MAIN", "-c", str(base / "phone_contention.mm"),
+                       "-o", str(objects / "contention.o")], "compile-contention", 180)
         app = run / "Payload" / (APP_NAME + ".app")
         app.mkdir(parents=True)
-        call(common + [str(objects / (name + ".o")) for name in ("runtime", "host", "store")] + ["-framework", "Foundation",
+        call(common + ["-fobjc-arc"] + [str(objects / (name + ".o")) for name in ("runtime", "host", "store", "contention")] + ["-framework", "Foundation",
                        "-framework", "Metal", "-framework", "UIKit", "-Wl,-no_adhoc_codesign",
                        "-o", str(app / APP_NAME)], "link-app", 120)
         (app / APP_NAME).chmod(0o755)

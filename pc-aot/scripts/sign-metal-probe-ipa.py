@@ -26,7 +26,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = "org.skyrimios.metalprobe"
-APP_VERSION = "3"
+APP_VERSION = "4"
 APP = "Payload/MetalProbe.app"
 UNSIGNED_FILES = {"MetalProbe", "Info.plist", "fixture.metal", "phone_fixture.metal", "BuildInfo.json"}
 SIGNED_FILES = UNSIGNED_FILES | {"embedded.mobileprovision", "_CodeSignature/CodeResources"}
@@ -42,6 +42,8 @@ PROVENANCE_INPUTS = {
     "experiments/metal-compile/fixture.metal",
     "experiments/metal-compile/phone_fixture.metal",
     "experiments/metal-compile/phone_workloads.h",
+    "experiments/metal-compile/phone_contention.h",
+    "experiments/metal-compile/phone_contention.mm",
     "experiments/metal-compile/ios/main.mm",
     "experiments/metal-compile/ios/ProbeRunStore.h",
     "experiments/metal-compile/ios/ProbeRunStore.mm",

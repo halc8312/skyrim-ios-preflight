@@ -5,6 +5,7 @@
 
 #ifdef SKYRIM_METAL_RUNTIME_NO_MAIN
 #import "runtime_host.h"
+#import "phone_contention.h"
 #include "phone_workloads.h"
 #import <CommonCrypto/CommonDigest.h>
 #include <mach/mach.h>
@@ -755,6 +756,11 @@ static NSMutableDictionary* phoneProgressTiming() {
         @"scope": @"phoneCheckpoint wall intervals for callbacks that returned normally; final return snapshot excluded; intervals are outside library/specialization/PSO clocks",
         @"snapshot_scope": @"JSON encode plus immutable JSON decode; snapshot contains prior completed checkpoint totals",
         @"callback_scope": @"synchronous progress callback including caller storage and UI enqueue; nested host storage time must not be added again",
+        @"considered_count": @0, @"completed_count": @0, @"skipped_count": @0, @"incomplete_count": @0,
+        @"count_scope": @"considered after entry stop guard; completed is normal callback return; skipped is coalesced or nil callback; incomplete has not returned normally, including the current callback in its immutable snapshot; a final nonzero value is an aborted attempt; considered=completed+skipped+incomplete",
+        @"policy": @"full snapshot every four completed serial samples, each case start and all control boundaries; no deep JSON or callback at skipped boundaries; stop guards still run before and after every boundary",
+        @"serial_snapshot_stride": @(SkyrimPhoneProgress::SnapshotStride),
+        @"recovery_scope": @"forced kill before a successful checkpoint may lose up to four completed serial samples plus unfinished work; separate contention control is recovered only after return; terminal stop/error returns all in-memory evidence; persistence requires a successful host callback",
         @"snapshot_serialization": @{ @"count": @0, @"total_ns": @0, @"max_ns": @0 },
         @"synchronous_callback": @{ @"count": @0, @"total_ns": @0, @"max_ns": @0 }
     } mutableCopy];
@@ -773,7 +779,16 @@ static void phoneCheckpoint(NSMutableDictionary* report, NSString* phase,
                             BOOL (^shouldContinue)(void), void (^progress)(NSDictionary*)) {
     report[@"phase"] = phase;
     checkContinue(shouldContinue);
-    if (progress) {
+    NSMutableDictionary* timing = report[@"progress_timing"];
+    timing[@"considered_count"] = @([timing[@"considered_count"] unsignedLongLongValue] + 1);
+    SkyrimPhoneProgress::Boundary boundary = SkyrimPhoneProgress::Boundary::Control;
+    if ([phase isEqual:@"library"] || [phase isEqual:@"gpu_readback"])
+        boundary = SkyrimPhoneProgress::Boundary::Operation;
+    else if ([phase isEqual:@"sample_complete"])
+        boundary = SkyrimPhoneProgress::Boundary::SampleComplete;
+    const bool emit = SkyrimPhoneProgress::fullSnapshot(boundary, [report[@"completed_samples"] unsignedLongLongValue]);
+    if (progress && emit) {
+        timing[@"incomplete_count"] = @([timing[@"incomplete_count"] unsignedLongLongValue] + 1);
         const auto snapshotStarted = Clock::now();
         NSDictionary* snapshot = phoneSnapshot(report);
         const uint64_t snapshotNs = elapsed(snapshotStarted);
@@ -784,6 +799,10 @@ static void phoneCheckpoint(NSMutableDictionary* report, NSString* phase,
         // independent interval counters only after it returned normally.
         phoneRecordProgressInterval(report, @"snapshot_serialization", snapshotNs);
         phoneRecordProgressInterval(report, @"synchronous_callback", callbackNs);
+        timing[@"completed_count"] = @([timing[@"completed_count"] unsignedLongLongValue] + 1);
+        timing[@"incomplete_count"] = @([timing[@"incomplete_count"] unsignedLongLongValue] - 1);
+    } else {
+        timing[@"skipped_count"] = @([timing[@"skipped_count"] unsignedLongLongValue] + 1);
     }
     // Persistence may take time or request a stop; recheck before issuing work.
     checkContinue(shouldContinue);
@@ -951,13 +970,15 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
 #endif
         auto started = Clock::now();
         NSMutableDictionary* report = [@{
-            @"schema": @3, @"scope": @"authored-iphone-metal-workload-comparison",
+            @"schema": @4, @"scope": @"authored-iphone-metal-workload-comparison",
             @"status": @"running", @"phase": @"prepare", @"repeat": @(repeats),
             @"metal4_first_requested": @(metal4First), @"completed_samples": @0,
             @"total_samples": @0, @"total_cases": @(SkyrimPhoneWorkloads::CaseCount),
             @"total_families": @(SkyrimPhoneWorkloads::FamilyCount), @"variants_per_family": @(SkyrimPhoneWorkloads::VariantCount),
             @"control_source_options": sourceOptions(), @"workloads": [NSMutableArray new],
             @"progress_timing": phoneProgressTiming(),
+            @"serial_comparison_verified": @NO, @"contention_control_verified": @NO,
+            @"contention_control": @{ @"status": @"not_run", @"scope": @"separate authored MRC scheduling control" },
             @"samples": [NSMutableArray new], @"rejections": [NSMutableArray new],
             @"async_retention_checks": [NSMutableArray new],
             @"gpu_execution_verified": @NO, @"metal4_library_verified": @NO,
@@ -976,6 +997,7 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
             @"stop_scope": @"cooperative boundaries only; issued compiler tasks and GPU work drain on worker without cancellation",
             @"environment_before": phoneEnvironment()
         } mutableCopy];
+        report[@"progress_timing"][@"callback_present"] = @(progress != nil);
         @try {
             try {
                 require(!NSThread.isMainThread, "phone comparison must run off the main thread");
@@ -1069,6 +1091,8 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                     report[@"active_family_id"] = workload[@"family_id"];
                     report[@"active_family_index"] = workload[@"family_index"];
                     report[@"active_variant_index"] = workload[@"variant_index"];
+                    report[@"active_api"] = workload[@"case_first_api"];
+                    phoneCheckpoint(report, @"case_start", shouldContinue, progress);
                     for (unsigned iteration = 0; iteration < repeats; ++iteration) {
                         for (unsigned slot = 0; slot < routes.count; ++slot) {
                             @autoreleasepool {
@@ -1141,6 +1165,37 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                                         report[@"async_retention_checks"], shouldContinue);
                 }
                 checkContinue(shouldContinue);
+                report[@"serial_comparison_verified"] = @YES;
+                report[@"active_case_id"] = @"contention_control";
+                report[@"active_case_index"] = @0;
+                report[@"active_family_id"] = @"contention_control";
+                report[@"active_family_index"] = @0;
+                report[@"active_variant_index"] = @0;
+                report[@"contention_control"] = @{
+                    @"status": @"incomplete", @"scope": @"separate authored MRC scheduling control",
+                    @"reason": @"entered control boundary; no completed result yet; submission or execution is not asserted"
+                };
+                phoneCheckpoint(report, @"contention_control_start", shouldContinue, progress);
+                NSDictionary* contention = SkyrimMetalRunPhoneContention(sourcePath, metal4First, shouldContinue);
+                if (![contention isKindOfClass:NSDictionary.class]) {
+                    report[@"contention_control"] = @{
+                        @"status": @"failed", @"scope": @"separate authored MRC scheduling control",
+                        @"failure": @"control returned no dictionary result"
+                    };
+                    throw std::runtime_error("contention control returned no result");
+                }
+                report[@"contention_control"] = contention;
+                phoneCheckpoint(report, @"contention_control_complete", shouldContinue, progress);
+                NSString* contentionStatus = contention[@"status"];
+                if ([contentionStatus isEqual:@"stopped"] || [contentionStatus isEqual:@"interrupted"])
+                    throw ProbeInterrupted();
+                if ([contentionStatus isEqual:@"unsupported"]) {
+                    report[@"status"] = @"unsupported";
+                    report[@"unsupported_reason"] = @"contention_control_unsupported";
+                    throw std::runtime_error("separate contention control is unsupported; see nested result");
+                }
+                require([contentionStatus isEqual:@"passed"], "separate contention control failed; see nested result");
+                report[@"contention_control_verified"] = @YES;
                 report[@"gpu_execution_verified"] = @YES;
                 report[@"metal4_library_verified"] = @YES;
                 report[@"metal4_async_adapter_verified"] = @YES;

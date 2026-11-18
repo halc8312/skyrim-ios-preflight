@@ -18,11 +18,14 @@ class PreviewEvidenceTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / "record.json"
         self.record = {"finished": True, "status": "unsupported", "comparison": {
-            "schema": 3, "total_cases": 12, "total_samples": 192, "elapsed_ns": 2000,
+            "schema": 4, "total_cases": 12, "total_samples": 192, "elapsed_ns": 2000,
             "status": "unsupported", "host_build": {"source_revision": "authored-revision"},
             "physical_iphone_verified": False, "gpu_execution_verified": False,
             "metal4_library_verified": False, "samples": [],
+            "contention_control": {"status": "not_run", "scope": "separate authored MRC scheduling control"},
             "progress_timing": {
+                "considered_count": 1, "completed_count": 1, "skipped_count": 0,
+                "incomplete_count": 0, "callback_present": True,
                 "snapshot_serialization": {"count": 1, "total_ns": 100, "max_ns": 100},
                 "synchronous_callback": {"count": 1, "total_ns": 1000, "max_ns": 1000}},
             "host_timing": {"initial_store_included": False, "final_store_included": False,
@@ -63,7 +66,7 @@ class PreviewEvidenceTests(unittest.TestCase):
                 if change == "missing": del bad["comparison"]["host_timing"]
                 elif change == "wrong_count": bad["comparison"]["progress_timing"]["synchronous_callback"]["count"] = 0
                 elif change == "invalid_duration": bad["comparison"]["host_timing"]["progress_store"]["total_ns"] = True
-                else: bad["comparison"]["schema"] = 2
+                else: bad["comparison"]["schema"] = 3
                 self.write(bad)
                 with self.assertRaises(RuntimeError):
                     driver.fresh_unsupported_record(self.path, set(), "authored-revision")
@@ -81,6 +84,27 @@ class PreviewEvidenceTests(unittest.TestCase):
                 self.write(bad)
                 with self.assertRaises(RuntimeError):
                     driver.fresh_unsupported_record(self.path, set(), "authored-revision")
+
+    def test_checkpoint_disposition_counters_are_exact_for_unsupported_path(self):
+        changes = ({"considered_count": 2}, {"completed_count": True}, {"skipped_count": -1},
+                   {"callback_present": False}, {"callback_present": 1}, {"incomplete_count": None},
+                   {"considered_count": 2, "skipped_count": 1},
+                   {"considered_count": 2, "incomplete_count": 1})
+        for change in changes:
+            bad = copy.deepcopy(self.record)
+            bad["comparison"]["progress_timing"].update(change)
+            self.write(bad)
+            with self.subTest(change=change), self.assertRaisesRegex(RuntimeError, "disposition"):
+                driver.fresh_unsupported_record(self.path, set(), "authored-revision")
+
+    def test_simulator_cannot_claim_independent_contention_execution(self):
+        for value in (None, {}, {"status": "passed", "scope": "separate authored MRC scheduling control"},
+                      {"status": "not_run", "scope": "unrelated"}):
+            bad = copy.deepcopy(self.record)
+            bad["comparison"]["contention_control"] = value
+            self.write(bad)
+            with self.subTest(value=value), self.assertRaisesRegex(RuntimeError, "contention control"):
+                driver.fresh_unsupported_record(self.path, set(), "authored-revision")
 
 
 if __name__ == "__main__":
