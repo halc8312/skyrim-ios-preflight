@@ -1,0 +1,12 @@
+diff --git a/runtime/lift_prelude.h b/runtime/lift_prelude.h
+--- a/runtime/lift_prelude.h
++++ b/runtime/lift_prelude.h
+@@ -62,7 +62,7 @@
+     T v; memcpy(&v, MEM + a, sizeof v); __atomic_thread_fence(__ATOMIC_ACQUIRE); return v; } \
+ static inline void TS##n(uint32_t a, T v) { \
+     if (__builtin_expect(!(a & mask), 1)) { __atomic_store_n((T *)(MEM + a), v, __ATOMIC_RELEASE); return; } \
+-    __atomic_thread_fence(__ATOMIC_RELEASE); memcpy(MEM + a, &v, sizeof v); }
++    __atomic_thread_fence(__ATOMIC_RELEASE); __builtin_memcpy(MEM + a, &v, sizeof v); }
+ TSO_PAIR(16, uint16_t, 1)
+ TSO_PAIR(32, uint32_t, 3)
+ #endif

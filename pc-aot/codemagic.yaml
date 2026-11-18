@@ -1,0 +1,101 @@
+# Manual builds only. No triggers, publishing, uploads of game inputs, or caches.
+workflows:
+  pc2011-metal-phone-probe:
+    name: Metal phone probe - unsigned app and simulator UI
+    instance_type: mac_mini_m2
+    max_build_duration: 15
+    environment:
+      xcode: "26.6"
+    # Manual authored probe only; no signing, game inputs, or phone execution.
+    scripts:
+      - name: Validate isolated iPhone package and preview UI
+        script: python3 scripts/check-metal-probe-ios-mac.py
+    artifacts:
+      - local/metal-probe-ios-checks/*/MetalProbe-unsigned.ipa
+      - local/metal-probe-ios-checks/*/metal-probe-ios-checks.zip
+  pc2011-metal-legacy-checks:
+    name: Skyrim isolated Metal cache and option checks
+    instance_type: mac_mini_m2
+    max_build_duration: 15
+    inputs:
+      authored_windows_library:
+        description: Pinned authored Windows fixture base64, or none to omit (not game data)
+        type: string
+        default: "none"
+    environment:
+      xcode: "26.6"
+      vars:
+        SKYRIM_AUTHORED_WINDOWS_LIBRARY: ${{ inputs.authored_windows_library }}
+    # Manual only; supports a legacy Metal device, does not request Metal 4 runtime.
+    scripts:
+      - name: Check binary archive reuse and compiler option tokens
+        script: bash scripts/check-metal-compile-mac.sh --legacy-boundaries
+    artifacts:
+      - local/metal-compile-mac/*/checks.log
+      - local/metal-compile-mac/*/metal-compile-checks.zip
+  pc2011-metal-compile-checks:
+    name: Skyrim isolated Metal library comparison
+    instance_type: mac_mini_m2
+    max_build_duration: 15
+    environment:
+      xcode: "26.6"
+    # Manual only; authored shaders, no app build or iPhone performance claim.
+    scripts:
+      - name: Compare legacy Metal and Metal 4 library creation
+        script: bash scripts/check-metal-compile-mac.sh
+    artifacts:
+      - local/metal-compile-mac/*/checks.log
+      - local/metal-compile-mac/*/metal-compile-checks.zip
+  pc2011-host-wait-checks:
+    name: Skyrim isolated Apple lock and thread checks
+    instance_type: mac_mini_m2
+    max_build_duration: 10
+    environment:
+      xcode: "26.6"
+    # Manual only; authored host checks, not an app build or iPhone comparison.
+    scripts:
+      - name: Check independent lock and thread trials with Apple APIs
+        script: bash scripts/check-host-wait-mac.sh
+    artifacts:
+      - local/host-wait-checks/*/*.log
+  probe-unsigned:
+    name: Probe - unsigned iPhoneOS ARM64 compile and link
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: "26.6"
+    scripts:
+      - name: Validate source and CI helpers
+        script: |
+          set -euo pipefail
+          python3 scripts/check-public-tree.py
+          python3 -m unittest discover -s tests -p 'test_ci*.py' -v
+      - name: Compile, link, and validate unsigned probe
+        script: bash scripts/build-ios.sh unsigned
+    artifacts:
+      - local/ci/*/artifacts/*
+
+  probe-ad-hoc:
+    name: Probe - private registered-device ad hoc IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: "26.6"
+      groups:
+        - skyrim_probe_signing
+      ios_signing:
+        provisioning_profiles:
+          - profile: skyrim-probe-ad-hoc
+            environment_variable: SKYRIM_PROFILE_PATH
+        certificates:
+          - certificate: skyrim-probe-distribution
+    scripts:
+      - name: Validate source and CI helpers
+        script: |
+          set -euo pipefail
+          python3 scripts/check-public-tree.py
+          python3 -m unittest discover -s tests -p 'test_ci*.py' -v
+      - name: Archive, export, and verify private ad hoc IPA
+        script: bash scripts/build-ios.sh ad-hoc
+    artifacts:
+      - local/ci/*/artifacts/*

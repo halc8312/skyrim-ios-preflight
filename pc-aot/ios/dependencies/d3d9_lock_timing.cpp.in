@@ -1,0 +1,136 @@
+  // D3D9-only copy of the pinned RecursiveSpinlock algorithm. Keep spin(2000),
+  // weak acquire CAS, recursion count, and final release store unchanged.
+  // Owner metadata is one atomic sample, not proof of an entire wait's cause.
+  class D3D9ObservedRecursiveSpinlock {
+  public:
+    bool lock(unsigned operation) {
+      bool outer = false;
+      bool contended = false;
+      uint64_t started = 0, cpuStarted = 0, ownerSample = 0;
+      sync::spin(2000, [&] {
+        uint32_t threadId = dxvk::this_thread::get_id();
+        uint32_t expected = 0;
+        bool status = m_owner.compare_exchange_weak(
+          expected, threadId, std::memory_order_acquire);
+        if (status) {
+          outer = true;
+          const uint64_t ordinal = skyrim_perf_thread_ordinal();
+          // Reserve eight bits for the operation. An unrepresentable anonymous
+          // ordinal becomes unknown rather than wrapping to another owner.
+          const uint64_t sample = ordinal <= (UINT64_MAX >> 8)
+            ? (ordinal << 8) | (uint64_t(operation) & 255u) : 0;
+          m_ownerSample.store(sample, std::memory_order_relaxed);
+          return true;
+        }
+        if (expected == threadId) {
+          m_counter += 1;
+          return true;
+        }
+        // A spurious weak-CAS failure with expected==0 is not a competing
+        // owner. Start clocks only after observing a different, nonzero owner.
+        if (expected && !contended) {
+          contended = true;
+          ownerSample = m_ownerSample.load(std::memory_order_relaxed);
+          started = skyrim_perf_now_ns();
+          cpuStarted = skyrim_lock_cpu_now_ns();
+        }
+        return false;
+      });
+      if (contended) {
+        SkyrimLockEvent event {};
+        event.start_ns = started;
+        const uint64_t cpuEnded = skyrim_lock_cpu_now_ns();
+        event.end_ns = skyrim_perf_now_ns();
+        event.instance = m_instance;
+        event.thread = skyrim_perf_thread_ordinal();
+        event.owner_thread = ownerSample >> 8;
+        event.owner_operation = unsigned(ownerSample & 255u);
+        event.lock = SKYRIM_LOCK_D3D9;
+        event.phase = SKYRIM_LOCK_WAIT;
+        event.operation = operation;
+        event.cpu_valid = cpuStarted && cpuEnded >= cpuStarted;
+        event.cpu_ns = event.cpu_valid ? cpuEnded - cpuStarted : 0;
+        skyrim_lock_record(&event);
+      }
+      return outer;
+    }
+
+    void unlock() {
+      if (likely(m_counter == 0)) {
+        m_ownerSample.store(0, std::memory_order_relaxed);
+        m_owner.store(0, std::memory_order_release);
+      } else {
+        m_counter -= 1;
+      }
+    }
+
+    uint64_t instance() const { return m_instance; }
+
+  private:
+    std::atomic<uint32_t> m_owner { 0u };
+    uint32_t m_counter { 0u };
+    std::atomic<uint64_t> m_ownerSample { 0u };
+    inline static std::atomic<uint64_t> s_instance { 0u };
+    static uint64_t nextInstance() {
+      uint64_t value = s_instance.load(std::memory_order_relaxed);
+      while (value != UINT64_MAX) {
+        if (s_instance.compare_exchange_weak(value, value + 1, std::memory_order_relaxed))
+          return value + 1;
+      }
+      return 0; // Exhaustion means unknown; never alias another device.
+    }
+    const uint64_t m_instance = nextInstance();
+  };
+
+  class D3D9DeviceLock {
+  public:
+    D3D9DeviceLock() : m_mutex(nullptr), m_presentStarted(0) { }
+
+    D3D9DeviceLock(D3D9ObservedRecursiveSpinlock& mutex,
+        unsigned operation = SKYRIM_LOCK_OP_D3D9_OTHER)
+      : m_mutex(&mutex), m_presentStarted(0) {
+      const bool outer = mutex.lock(operation);
+      if (outer && operation == SKYRIM_LOCK_OP_D3D9_PRESENT)
+        m_presentStarted = skyrim_perf_now_ns();
+    }
+
+    D3D9DeviceLock(D3D9DeviceLock&& other)
+      : m_mutex(other.m_mutex), m_presentStarted(other.m_presentStarted) {
+      other.m_mutex = nullptr;
+      other.m_presentStarted = 0;
+    }
+
+    D3D9DeviceLock& operator=(D3D9DeviceLock&& other) {
+      release();
+      m_mutex = other.m_mutex;
+      m_presentStarted = other.m_presentStarted;
+      other.m_mutex = nullptr;
+      other.m_presentStarted = 0;
+      return *this;
+    }
+
+    ~D3D9DeviceLock() { release(); }
+
+  private:
+    void release() {
+      if (!m_mutex) return;
+      SkyrimLockEvent event {};
+      if (m_presentStarted) {
+        event.start_ns = m_presentStarted;
+        event.end_ns = skyrim_perf_now_ns();
+        event.instance = m_mutex->instance();
+        event.thread = skyrim_perf_thread_ordinal();
+        event.lock = SKYRIM_LOCK_D3D9;
+        event.phase = SKYRIM_LOCK_HOLD;
+        event.operation = SKYRIM_LOCK_OP_D3D9_PRESENT;
+      }
+      m_mutex->unlock();
+      // Release the device before recording. Present hold excludes acquisition
+      // wait and this observer's record call. Ordinary hot API holds have no
+      // clock calls; recursive API entries do not replace the outer owner tag.
+      if (m_presentStarted) skyrim_lock_record(&event);
+    }
+
+    D3D9ObservedRecursiveSpinlock* m_mutex;
+    uint64_t m_presentStarted;
+  };

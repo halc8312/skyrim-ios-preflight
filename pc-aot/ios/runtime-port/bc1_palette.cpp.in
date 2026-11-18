@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Same endpoint expansion, integer rounding and transparency as decode_block.
+static void ios_decode_bc1(const uint8_t *b, uint8_t *out, int pitch, int w, int h) {
+    uint16_t c0 = (uint16_t)(b[0] | b[1] << 8), c1 = (uint16_t)(b[2] | b[3] << 8);
+    uint8_t col[4][4];
+    rgb565(c0, col[0]); rgb565(c1, col[1]);
+    col[0][3] = col[1][3] = col[2][3] = col[3][3] = 255;
+    if (c0 > c1) {
+        for (int k = 0; k < 3; k++) {
+            col[2][k] = (uint8_t)((2 * col[0][k] + col[1][k]) / 3);
+            col[3][k] = (uint8_t)((col[0][k] + 2 * col[1][k]) / 3);
+        }
+    } else {
+        for (int k = 0; k < 3; k++) { col[2][k] = (uint8_t)((col[0][k] + col[1][k]) / 2); col[3][k] = 0; }
+        col[3][3] = 0;
+    }
+    uint32_t packed[4];
+    for (int k = 0; k < 4; k++) {
+        const uint8_t bgra[4] = {col[k][2], col[k][1], col[k][0], col[k][3]};
+        memcpy(&packed[k], bgra, 4);
+    }
+    uint32_t idx = (uint32_t)b[4] | (uint32_t)b[5] << 8 | (uint32_t)b[6] << 16 | (uint32_t)b[7] << 24;
+    for (int y = 0; y < h && y < 4; y++) {
+        uint8_t *row = out + y * pitch;
+        for (int x = 0; x < w && x < 4; x++) {
+            const uint32_t pixel = packed[(idx >> (2 * (y * 4 + x))) & 3];
+            memcpy(row + 4 * x, &pixel, 4);
+        }
+    }
+}

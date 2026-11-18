@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "audited_on": "2026-11-12",
+  "recommended_foundation": "skydream",
+  "ios_gameplay_verified": false,
+  "sources": [
+    {
+      "name": "skydream",
+      "url": "https://github.com/meizfl/skydream.git",
+      "path": "vendor/skydream",
+      "revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+      "tree": "751ef9fedf94716668a68fe08e239802d785a7f5",
+      "branch_at_audit": "main",
+      "latest_release_tag": "2026-11-09-desktop",
+      "latest_release_tag_revision": "55a9dc3d4d3fb40377ad5ce0d6cb74e65ab2c377",
+      "release_binary_correspondence": "Not verified; binary archives were not downloaded. Published Mac/Windows CI runs use earlier source revisions.",
+      "license": "GPL-3.0-only for original Skydream contributions; inherited runtime/recompiler permission unresolved; third-party licenses separate",
+      "generation_inputs": ["TESV_unpacked.exe"],
+      "legacy_dll_inputs_required": [],
+      "python_requirements": {"capstone": "5.0.9", "pefile": "2024.8.26"},
+      "patches": [
+        {
+          "path": "patches/skydream/0001-auxiliary-carry.patch",
+          "sha256": "110850aabfe70b26220557f528e54fe75a13ef5b38cb4ace7fbbd4ac9e5035ad",
+          "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+          "purpose": "Preserve defined auxiliary-carry behavior in arithmetic and flag transport; clear AF for x87/SSE comparisons",
+          "validation": "docs/CPU_VALIDATION.md; 40632 synthetic native-x86 comparisons per O0/O2 variant, patched zero mismatches; no ARM64/game proof"
+        },
+        {
+          "path": "patches/skydream/0002-report-empty-jump-tables.patch",
+          "sha256": "6fe5ca6e3704184e865ec58a10d21628d53a267e6d098c3b33b16f6658c84a06",
+          "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+          "purpose": "Report empty inferred jump tables as unresolved; no target recovery or control-flow changes",
+          "validation": "tests/test_discovery_empty_tables.py; baseline miss reproduced, patched serial/parallel diagnostics agree with unchanged graph"
+        },
+        {
+          "path": "patches/skydream/0003-negative-index-candidate-roots.patch",
+          "sha256": "21f610a0af715992a6b16b2adcacd0924e4d020cc7c7cd6c88beabc9338668e3",
+          "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+          "purpose": "Recover bounded negative-index destination candidates after local predecessor checks; retain unresolved status and preserve zero-based table/range metadata",
+          "validation": "tests/test_discovery_negative_tables.py; synthetic joins, clobbers, input bounds and serial/parallel checks; not complete target resolution or game proof"
+        },
+        {
+          "path": "patches/skydream/0004-preserve-native-audio-source.patch",
+          "sha256": "24e8e69260880dc5c5fd9b6d6ca35e405c9cde5ad3898ea59695a9b15254cee4",
+          "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+          "purpose": "Keep F3DAudio in the runtime source list when experimental SKSE compatibility is disabled",
+          "validation": "tests/test_desktop_audio_sources.py; baseline omission reproduced, five CMake source-property configurations checked; no runtime compile or iPhoneOS link"
+        },
+        {
+          "path": "patches/skydream/0005-call-flags.patch",
+          "sha256": "46e851fbc3a01ee44615a1f85b3e40713704eb5221609a2c1aabfd973ac28434",
+          "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+          "purpose": "Carry guest arithmetic flags across translated calls in the CPU context instead of resetting them per function",
+          "validation": "tests/test_call_flags.py; eight synthetic actual-lifter/native-x86 comparisons, baseline fails and patched passes for both entry modes; iOS execution not yet verified"
+        },
+        {
+          "path": "patches/skydream/0006-inline-ordered-stores.patch",
+          "sha256": "a60bc19fa0c0e487c5d3e28af4ffd50cdd625102dcd5cea86ce1442665d7da1b",
+          "base_revision": "ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a",
+          "purpose": "Avoid address-escaping stack spills in strict ordered 16/32-bit store helpers while preserving aligned release atomics and unaligned release fences",
+          "validation": "tests/test_ordered_stores.py; 524288 byte-oracle cases per old/new helper; real iOS ARM64 assembly retains atomics/fences with no stack spill; physical iPhone effect unmeasured"
+        }
+      ],
+      "documented_input_sha1": "67a597df3bb8c5db94b9032f8179d29631b1145d",
+      "documented_input_sha1_status": "Upstream README exercised TESV hash; not a verified local input allowlist. write_inputs.py labels the unpacked generation input TESV.exe.",
+      "upstream_claimed_parent": "Skyrim_Android 0.30.6"
+    },
+    {
+      "name": "Skyrim_Android",
+      "url": "https://github.com/ttom795/Skyrim_Android.git",
+      "path": "vendor/Skyrim_Android",
+      "revision": "4cd7686a9a4d801a4176afbdae062a2cbecbb2bb",
+      "tree": "ced8ac5653354c13f633291bf4f259329e7c9026",
+      "branch_at_audit": "main",
+      "latest_release_tag": "0.30.15",
+      "latest_release_tag_revision": "4cd7686a9a4d801a4176afbdae062a2cbecbb2bb",
+      "release_binary_correspondence": "Not verified; source differs from 0.30.6 by README only, build.gradle still declares 0.21, source rejects packed SteamStub despite newer release notes.",
+      "license": "No top-level runtime/recompiler license grant found; bundled SDL2 and DXVK retain separate licenses",
+      "generation_inputs": ["TESV_unpacked.exe", "d3dx9_42.dll", "binkw32.dll", "X3DAudio1_7.dll"],
+      "python_requirements": {"capstone": "5.0.9", "pefile": "2024.8.26"},
+      "optional_differential_test_requirement": {"unicorn": "2.0.1.post1"},
+      "documented_game_version": "TESV 1.9.32.0.8 (2011 Steam)",
+      "documented_original_sha1_prefix": "f39aeceb"
+    }
+  ],
+  "research_only_dependencies": [
+    {
+      "name": "MoltenVK",
+      "url": "https://github.com/KhronosGroup/MoltenVK",
+      "revision": "5189f8de86ec365860f63bf1da736815cfaea5cd",
+      "branch_at_audit": "main",
+      "license": "Apache-2.0; external components retain their own notices",
+      "source_downloaded": false,
+      "built": false,
+      "role": "Candidate Vulkan-to-Metal implementation for an iPhoneOS build; not yet integrated",
+      "spirv_cross_revision": "aa217aeb6c9f0ace7a0ab233b28807edf45eb165",
+      "upstream_ios_deployment_target": "15.0",
+      "upstream_library_ci_minimum_xcode": "15.0.1",
+      "device_toolchain_requirement": "Use Xcode/iPhoneOS SDK supporting the actual iPhone 17 Pro Max and installed iOS; the upstream library minimum alone is insufficient.",
+      "maintenance_status": "Current README says Khronos-deprecated and community-maintained best effort; still recommended there for iOS and Intel Macs.",
+      "required_review": "Resolve full ExternalRevisions dependency/configuration lock and test DXVK feature/format/shader parity on physical iPhone before adoption."
+    }
+  ],
+  "generation_fidelity_settings_to_validate": {"LIFT_MEMORDER": "1", "LIFT_TSO": "1", "LB_STRICT_ORDER": "ON", "LB_GEN_JOBS": "2"},
+  "game_inputs": "Not included; preserve original and unpacked identities independently under private storage.",
+  "dependency_downloads": "Initial audit installed none. Subsequently the user approved exactly capstone 5.0.9 and pefile 2024.8.26; official PyPI Linux x86_64 wheels were hash-verified and installed into a private WSL environment, not globally. Other source clones include only their tracked third-party source.",
+  "translation_dependency_lock": "requirements.translation-linux-x86_64.txt",
+  "unpack_tool": {
+    "name": "Steamless",
+    "url": "https://github.com/atom0s/Steamless",
+    "revision": "cd770bf9749d3e4f438d23ac643917ad1a804257",
+    "path": "vendor/Steamless",
+    "license": "CC-BY-NC-ND-4.0; local tool build retained privately",
+    "cli_version": "3.1.0.0",
+    "required_variant": "SteamStub 2.1 x86",
+    "plugin_version": "1.0.0.9",
+    "build_target_override": ".NETFramework v4.8 using installed reference assemblies; no project/source edit or NuGet restore",
+    "tracked_sharpdisasm_sha256": "6d3ce990cdf58da228697d25416d16d15994135c5f66571fe1e00e9c975bc2cf",
+    "tracked_sharpdisasm_provenance": "Bundled pinned-repository binary; exact source-build correspondence not verified",
+    "audit": "docs/UNPACKING.md"
+  },
+  "audit": "docs/SOURCE_AUDIT.md"
+}

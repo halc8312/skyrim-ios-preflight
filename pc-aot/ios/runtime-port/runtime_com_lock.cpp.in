@@ -1,0 +1,71 @@
+/* Registry lookup's uncontended fast path has no clock reads or recording.
+ * wrap/forget and contended lookups are timed. The underlying recursive mutex,
+ * its lifetime, recursive acquisitions and Release's unlocked call stay intact.
+ * A failed std::recursive_mutex::try_lock may be spurious: WAIT is an observed
+ * acquisition interval, not proof of a particular owner's responsibility. */
+static_assert(std::atomic<uint64_t>::is_always_lock_free,
+    "COM observations require lock-free owner publication");
+
+static std::atomic<uint64_t> ios_com_lock_owner{0};
+static thread_local struct {
+    unsigned depth = 0, operation = 0;
+    uint64_t start = 0, wait_start = 0, wait_end = 0, wait_owner = 0, owner = 0;
+} ios_com_lock_state;
+
+class IosComLock {
+public:
+    explicit IosComLock(unsigned operation, bool time_hold) {
+        uint64_t wait_start = 0, wait_end = 0, owner = 0;
+        if (!g_lock.try_lock()) {
+            wait_start = ios_runtime_lock_now();
+            owner = ios_com_lock_owner.load(std::memory_order_relaxed);
+            g_lock.lock();
+            wait_end = ios_runtime_lock_now();
+        }
+        if (ios_com_lock_state.depth++ == 0) {
+            ios_com_lock_state.operation = operation;
+            ios_com_lock_state.start = time_hold
+                ? (wait_start ? wait_end : ios_runtime_lock_now()) : 0;
+            ios_com_lock_state.wait_start = wait_start;
+            ios_com_lock_state.wait_end = wait_end;
+            ios_com_lock_state.wait_owner = owner;
+            ios_com_lock_state.owner = ios_runtime_lock_owner(operation);
+            ios_com_lock_owner.store(ios_com_lock_state.owner, std::memory_order_relaxed);
+        }
+    }
+    ~IosComLock() {
+        if (--ios_com_lock_state.depth != 0) {
+            g_lock.unlock();
+            return;
+        }
+        const uint64_t end = ios_com_lock_state.start ? ios_runtime_lock_now() : 0;
+        ios_com_lock_owner.store(0, std::memory_order_relaxed);
+        g_lock.unlock();
+        if (ios_com_lock_state.wait_start)
+            ios_runtime_lock_report(SKYRIM_LOCK_COM, SKYRIM_LOCK_WAIT,
+                ios_com_lock_state.operation, ios_com_lock_state.wait_start,
+                ios_com_lock_state.wait_end, ios_com_lock_state.wait_owner);
+        if (ios_com_lock_state.start)
+            ios_runtime_lock_report(SKYRIM_LOCK_COM, SKYRIM_LOCK_HOLD,
+                ios_com_lock_state.operation, ios_com_lock_state.start, end,
+                ios_com_lock_state.owner);
+    }
+    IosComLock(const IosComLock&) = delete;
+    IosComLock& operator=(const IosComLock&) = delete;
+};
+
+/* Includes the child lock wait and cleanup work. It is not a measurement of
+ * the child lock's owner or hold time and must not be added to COM's hold. */
+class IosComCleanupSpan {
+    unsigned category_, operation_;
+    uint64_t start_;
+public:
+    IosComCleanupSpan(unsigned category, unsigned operation)
+        : category_(category), operation_(operation), start_(ios_runtime_lock_now()) {}
+    ~IosComCleanupSpan() {
+        ios_runtime_lock_report(category_, SKYRIM_LOCK_WORK, operation_, start_,
+                                ios_runtime_lock_now(), 0);
+    }
+    IosComCleanupSpan(const IosComCleanupSpan&) = delete;
+    IosComCleanupSpan& operator=(const IosComCleanupSpan&) = delete;
+};

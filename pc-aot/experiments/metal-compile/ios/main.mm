@@ -1,0 +1,485 @@
+// Authored Metal comparison UI. No Skyrim files, account or network access.
+#import <UIKit/UIKit.h>
+#import <TargetConditionals.h>
+#import "../runtime_host.h"
+#import "ProbeRunStore.h"
+#include <atomic>
+#include <memory>
+
+static NSString* apiName(NSString* api) {
+    if (![api isKindOfClass:NSString.class]) return @"準備中";
+    NSDictionary* names = @{@"legacy_source": @"従来方式", @"metal4_source": @"Metal 4",
+                            @"legacy_async_source": @"従来方式・非同期", @"metal4_async_source": @"Metal 4・非同期"};
+    return names[api] ?: @"準備中";
+}
+
+static NSString* caseName(NSString* caseID) {
+    if (![caseID isKindOfClass:NSString.class]) return @"テスト用の負荷";
+    NSDictionary* names = @{@"branch_mix": @"分岐と演算", @"table_permute": @"表参照と並べ替え",
+                            @"coupled_rounds": @"連続する演算", @"control_fixture": @"基本テスト"};
+    return names[caseID] ?: @"追加の負荷";
+}
+
+static NSDictionary* hostTiming(uint64_t count, uint64_t successful, uint64_t total, uint64_t maximum) {
+    return @{ @"schema": @1,
+        @"progress_store": @{ @"count": @(count), @"successful_count": @(successful),
+            @"failed_count": @(count - successful), @"total_ns": @(total), @"max_ns": @(maximum) },
+        @"initial_store_included": @NO, @"final_store_included": @NO,
+        @"scope": @"completed progress writeSnapshot wall calls including validation, JSON, lock and file I/O; nested inside runtime synchronous_callback, not additive; initial/final writes excluded; checkpoint contains only earlier completed writes" };
+}
+
+#if TARGET_OS_SIMULATOR
+static NSDictionary* authoredDisplayExample() {
+    // UI layout data only. No compiler is called, no store is opened, and this
+    // dictionary must never enter the report-sharing or runtime evidence path.
+    NSMutableArray* trials = [NSMutableArray new];
+    for (NSString* api in @[@"legacy_async", @"metal4_async"])
+        for (NSString* mode in @[@"idle", @"contended"])
+            for (NSUInteger i = 0; i < 8; ++i)
+                [trials addObject:@{ @"status": @"passed", @"api": api, @"mode": mode,
+                    @"first_assigned_in_run": @YES,
+                    @"host_overlap_observed": @([mode isEqual:@"contended"] && [api isEqual:@"legacy_async"] && i < 3),
+                    @"urgent_request_to_callback_ns": @((i + 1) * 1000000ULL) }];
+    return @{ @"schema": @5, @"preview_only": @YES,
+        @"scope": @"authored_display_example_not_execution",
+        @"physical_iphone_verified": @NO, @"gpu_execution_verified": @NO,
+        @"metal4_library_verified": @NO, @"performance_improvement_verified": @NO,
+        @"contention_control": @{ @"schema": @2, @"status": @"passed", @"trials": trials } };
+}
+#endif
+
+static UILabel* makeLabel(NSString* text, UIFontTextStyle style) {
+    UILabel* label = [UILabel new];
+    label.text = text;
+    label.font = [UIFont preferredFontForTextStyle:style];
+    label.adjustsFontForContentSizeCategory = YES;
+    label.numberOfLines = 0;
+    return label;
+}
+
+static UIButton* makeButton(NSString* title, BOOL filled) {
+    UIButtonConfiguration* configuration = filled ? [UIButtonConfiguration filledButtonConfiguration]
+                                                    : [UIButtonConfiguration tintedButtonConfiguration];
+    configuration.title = title;
+    configuration.cornerStyle = UIButtonConfigurationCornerStyleLarge;
+    configuration.contentInsets = NSDirectionalEdgeInsetsMake(15, 16, 15, 16);
+    UIButton* button = [UIButton buttonWithConfiguration:configuration primaryAction:nil];
+    button.titleLabel.adjustsFontForContentSizeCategory = YES;
+    button.accessibilityLabel = title;
+    return button;
+}
+
+@interface MetalProbeController : UIViewController {
+    std::shared_ptr<std::atomic<bool>> _continueRun;
+    BOOL _running;
+#if TARGET_OS_SIMULATOR
+    BOOL _previewStarted;
+#endif
+}
+@property(nonatomic, strong) ProbeRunStore* store;
+@property(nonatomic, strong) NSURL* reportURL;
+@property(nonatomic, strong) UILabel* stateLabel;
+@property(nonatomic, strong) UILabel* detailLabel;
+@property(nonatomic, strong) UILabel* resultLabel;
+@property(nonatomic, strong) UILabel* savedLabel;
+@property(nonatomic, strong) UISegmentedControl* orderControl;
+@property(nonatomic, strong) UIProgressView* progressView;
+@property(nonatomic, strong) UIButton* startButton;
+@property(nonatomic, strong) UIButton* stopButton;
+@property(nonatomic, strong) UIButton* shareButton;
+@end
+
+@implementation MetalProbeController
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"Metal 比較";
+    self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.navigationController.navigationBar.prefersLargeTitles = YES;
+    UIScrollView* scroll = [UIScrollView new];
+    scroll.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:scroll];
+    UIStackView* content = [UIStackView new];
+    content.axis = UILayoutConstraintAxisVertical;
+    content.spacing = 18;
+    content.translatesAutoresizingMaskIntoConstraints = NO;
+    [scroll addSubview:content];
+    [NSLayoutConstraint activateConstraints:@[
+        [scroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
+        [scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [scroll.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [content.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:20],
+        [content.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-28],
+        [content.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:20],
+        [content.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-20],
+        [content.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-40]
+    ]];
+    [content addArrangedSubview:makeLabel(@"先読み中の待ち時間を比較", UIFontTextStyleTitle2)];
+    UILabel* intro = makeLabel(@"自作のテストで、描画の準備時間と結果を比べます。まずは標準セットで1回実行し、測定中は画面を開いたままお待ちください。", UIFontTextStyleBody);
+    intro.textColor = UIColor.secondaryLabelColor;
+    [content addArrangedSubview:intro];
+    [content addArrangedSubview:makeLabel(@"テストセット", UIFontTextStyleHeadline)];
+    self.orderControl = [[UISegmentedControl alloc] initWithItems:@[@"標準", @"別セット"]];
+    self.orderControl.selectedSegmentIndex = 0;
+    self.orderControl.accessibilityLabel = @"テストセット";
+    [self.orderControl.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
+    [content addArrangedSubview:self.orderControl];
+    UILabel* orderHint = makeLabel(@"どちらも従来方式とMetal 4を比較します。別セットでは、先読みテストの内容と開始順が変わります。同じセットの再測定では内容を再利用します。", UIFontTextStyleSubheadline);
+    orderHint.textColor = UIColor.secondaryLabelColor;
+    [content addArrangedSubview:orderHint];
+    self.stateLabel = makeLabel(@"準備できています", UIFontTextStyleHeadline);
+    self.stateLabel.accessibilityIdentifier = @"probe.status";
+    [content addArrangedSubview:self.stateLabel];
+    self.detailLabel = makeLabel(@"開始すると、対応状況を確認して比較を進めます。", UIFontTextStyleSubheadline);
+    self.detailLabel.textColor = UIColor.secondaryLabelColor;
+    [content addArrangedSubview:self.detailLabel];
+    self.progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+    self.progressView.accessibilityLabel = @"測定の進み具合";
+    [content addArrangedSubview:self.progressView];
+    self.startButton = makeButton(@"比較を開始", YES);
+    self.startButton.accessibilityIdentifier = @"probe.start";
+    [self.startButton addTarget:self action:@selector(startRun) forControlEvents:UIControlEventTouchUpInside];
+    [content addArrangedSubview:self.startButton];
+    self.stopButton = makeButton(@"停止", NO);
+    self.stopButton.enabled = NO;
+    self.stopButton.accessibilityIdentifier = @"probe.stop";
+    [self.stopButton addTarget:self action:@selector(stopRun) forControlEvents:UIControlEventTouchUpInside];
+    [content addArrangedSubview:self.stopButton];
+    [content addArrangedSubview:makeLabel(@"今回の結果", UIFontTextStyleHeadline)];
+    self.resultLabel = makeLabel(@"まだ測定していません", UIFontTextStyleBody);
+    self.resultLabel.accessibilityIdentifier = @"probe.result";
+    [content addArrangedSubview:self.resultLabel];
+    self.savedLabel = makeLabel(@"比較結果は4回ごとに保存します。強制終了時は直前の最大4回分と、実行中の確認が残らないことがあります。", UIFontTextStyleFootnote);
+    self.savedLabel.textColor = UIColor.secondaryLabelColor;
+    [content addArrangedSubview:self.savedLabel];
+    self.shareButton = makeButton(@"結果を共有", NO);
+    self.shareButton.enabled = NO;
+    self.shareButton.accessibilityIdentifier = @"probe.share";
+    [self.shareButton addTarget:self action:@selector(shareReport) forControlEvents:UIControlEventTouchUpInside];
+    [content addArrangedSubview:self.shareButton];
+    UILabel* scope = makeLabel(@"これはSkyrimの動作速度を測るテストではありません。ゲーム本体やセーブにはアクセスしません。", UIFontTextStyleFootnote);
+    scope.textColor = UIColor.secondaryLabelColor;
+    [content addArrangedSubview:scope];
+
+#if TARGET_OS_SIMULATOR
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--probe-ui-authored-layout"]) {
+        _previewStarted = YES;
+        self.stateLabel.text = @"表示確認用のサンプル";
+        self.detailLabel.text = @"以下は架空の表示例です。実測結果ではありません。";
+        self.resultLabel.text = [@"表示例（実測ではありません）\n\n" stringByAppendingString:
+            SkyrimMetalPhoneContentionResultText(authoredDisplayExample())];
+        self.savedLabel.text = @"表示確認のみ。測定・保存・共有は行いません。";
+        self.orderControl.enabled = NO;
+        self.startButton.enabled = NO;
+        self.stopButton.enabled = NO;
+        self.shareButton.enabled = NO;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.view layoutIfNeeded];
+            CGRect example = [self.resultLabel convertRect:self.resultLabel.bounds toView:scroll];
+            [scroll scrollRectToVisible:example animated:NO];
+        });
+        return; // Keep this path completely outside ProbeRunStore.
+    }
+#endif
+
+    NSError* error = nil;
+    NSURL* support = [NSFileManager.defaultManager URLForDirectory:NSApplicationSupportDirectory
+                                                        inDomain:NSUserDomainMask appropriateForURL:nil create:YES error:&error];
+    if (support) self.store = [[ProbeRunStore alloc] initWithRootURL:[support URLByAppendingPathComponent:@"MetalProbe" isDirectory:YES] error:&error];
+    if (!self.store) {
+        self.stateLabel.text = @"保存先を用意できませんでした";
+        self.detailLabel.text = error.localizedDescription ?: @"アプリを起動し直してください。";
+        self.startButton.enabled = NO;
+    } else {
+        self.reportURL = self.store.latestReportURL;
+        if (self.reportURL) {
+            NSDictionary* record = [self.store readRecordAtURL:self.reportURL error:&error];
+            if (record) [self showRecord:record];
+            else self.reportURL = nil;
+            self.shareButton.enabled = self.reportURL != nil;
+        }
+    }
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(leavingActive:)
+                                               name:UIApplicationWillResignActiveNotification object:nil];
+}
+
+- (void)dealloc {
+    [NSNotificationCenter.defaultCenter removeObserver:self];
+    if (_continueRun) _continueRun->store(false);
+}
+
+- (void)startRun {
+    if (_running || !self.store || UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
+    if (NSProcessInfo.processInfo.thermalState >= NSProcessInfoThermalStateSerious) {
+        self.stateLabel.text = @"端末が冷めてから始めてください";
+        self.detailLabel.text = @"高温時は測定を開始しません。少し時間を置いてお試しください。";
+        return;
+    }
+    NSString* source = [NSBundle.mainBundle pathForResource:@"phone_fixture" ofType:@"metal"];
+    if (!source) {
+        self.stateLabel.text = @"テストデータが見つかりません";
+        self.detailLabel.text = @"検証アプリの構成を確認する必要があります。";
+        return;
+    }
+    const BOOL metal4First = self.orderControl.selectedSegmentIndex == 1;
+    NSError* error = nil;
+    NSURL* buildURL = [NSBundle.mainBundle URLForResource:@"BuildInfo" withExtension:@"json"];
+    NSData* buildBytes = buildURL ? [NSData dataWithContentsOfURL:buildURL options:0 error:&error] : nil;
+    NSDictionary* buildInfo = buildBytes ? [NSJSONSerialization JSONObjectWithData:buildBytes options:0 error:&error] : nil;
+    if (![buildInfo isKindOfClass:NSDictionary.class] || ![buildInfo[@"source_revision"] isKindOfClass:NSString.class]) {
+        self.stateLabel.text = @"アプリの検証情報が見つかりません";
+        self.detailLabel.text = @"どの版で測定したか確認できないため、開始を見合わせます。";
+        return;
+    }
+    NSURL* reportURL = [self.store beginRunWithMetal4First:metal4First error:&error];
+    if (!reportURL) {
+        self.stateLabel.text = @"結果の保存を開始できませんでした";
+        self.detailLabel.text = error.localizedDescription;
+        return;
+    }
+    _continueRun = std::make_shared<std::atomic<bool>>(true);
+    const auto control = _continueRun;
+    _running = YES;
+    self.reportURL = reportURL;
+    self.startButton.enabled = NO;
+    self.orderControl.enabled = NO;
+    self.stopButton.enabled = YES;
+    self.shareButton.enabled = NO;
+    self.progressView.progress = 0;
+    self.stateLabel.text = @"対応状況を確認しています";
+    self.detailLabel.text = @"画面を開いたままお待ちください。";
+    self.resultLabel.text = @"測定中";
+    self.savedLabel.text = @"比較は4回ごとに保存します。先読みの確認や停止時は、実行中の処理が戻ってから保存します。";
+    UIApplication.sharedApplication.idleTimerDisabled = YES;
+    ProbeRunStore* store = self.store;
+    // The retained controller/run objects survive callbacks. UI never joins a task.
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        @autoreleasepool {
+            __block NSError* saveError = nil;
+            __block uint64_t storeCount = 0, storeSuccessful = 0, storeTotal = 0, storeMaximum = 0;
+            NSDictionary* comparison = SkyrimMetalRunPhoneComparison(source, 4, metal4First,
+                ^BOOL { return control->load(); }, ^(NSDictionary* snapshot) {
+                    NSError* checkpointError = nil;
+                    NSMutableDictionary* savedSnapshot = [snapshot mutableCopy];
+                    savedSnapshot[@"host_build"] = buildInfo;
+                    savedSnapshot[@"host_timing"] = hostTiming(storeCount, storeSuccessful, storeTotal, storeMaximum);
+                    uint64_t storeElapsed = 0;
+                    BOOL checkpointStored = [store writeSnapshot:savedSnapshot toURL:reportURL finished:NO
+                                              elapsedNanoseconds:&storeElapsed error:&checkpointError];
+                    ++storeCount;
+                    storeSuccessful += checkpointStored ? 1 : 0;
+                    storeTotal += storeElapsed;
+                    if (storeElapsed > storeMaximum) storeMaximum = storeElapsed;
+                    if (!checkpointStored) {
+                        saveError = checkpointError;
+                        control->store(false);
+                    }
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        if (!self->_running) return;
+                        NSUInteger done = [snapshot[@"completed_samples"] unsignedIntegerValue];
+                        NSUInteger total = [snapshot[@"total_samples"] unsignedIntegerValue];
+                        if (total) self.progressView.progress = float(done) / float(total);
+                        if (control->load()) {
+                            if ([snapshot[@"phase"] hasPrefix:@"contention_control_"]) {
+                                self.stateLabel.text = @"先読み中の待ち時間を測っています";
+                                self.detailLabel.text = @"先読みあり・なしで、描画の準備時間を比べています。画面を開いたままお待ちください。";
+                                return;
+                            }
+                            self.stateLabel.text = @"比較しています";
+                            NSUInteger caseIndex = [snapshot[@"active_case_index"] unsignedIntegerValue];
+                            NSUInteger totalCases = [snapshot[@"total_cases"] unsignedIntegerValue];
+                            NSString* progress = [NSString stringWithFormat:@"%@　%lu / %lu回", apiName(snapshot[@"active_api"]),
+                                                  (unsigned long)done, (unsigned long)total];
+                            NSString* familyID = snapshot[@"active_family_id"] ?: snapshot[@"active_case_id"];
+                            self.detailLabel.text = caseIndex && totalCases
+                                ? [NSString stringWithFormat:@"負荷 %lu / %lu　%@\n%@", (unsigned long)caseIndex,
+                                   (unsigned long)totalCases, caseName(familyID), progress]
+                                : progress;
+                        }
+                    });
+                });
+            NSError* finalError = nil;
+            NSMutableDictionary* finalSnapshot = [comparison mutableCopy];
+            finalSnapshot[@"host_build"] = buildInfo;
+            // All completed progress calls are now known. The final immutable
+            // record cannot contain the duration of its own forthcoming write.
+            finalSnapshot[@"host_timing"] = hostTiming(storeCount, storeSuccessful, storeTotal, storeMaximum);
+            if (saveError) {
+                finalSnapshot[@"host_save_error"] = @{@"domain": saveError.domain, @"code": @(saveError.code),
+                                                       @"description": saveError.localizedDescription ?: @""};
+            }
+            BOOL stored = [store writeSnapshot:finalSnapshot toURL:reportURL finished:YES error:&finalError];
+            NSDictionary* record = stored ? [store readRecordAtURL:reportURL error:&finalError] : nil;
+            NSError* preservedError = finalError ?: saveError;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self->_running = NO;
+                UIApplication.sharedApplication.idleTimerDisabled = NO;
+                self.startButton.enabled = YES;
+                self.orderControl.enabled = YES;
+                self.stopButton.enabled = NO;
+                self.shareButton.enabled = YES;
+                if (record) [self showRecord:record];
+                else {
+                    self.stateLabel.text = @"結果を保存できませんでした";
+                    self.detailLabel.text = preservedError.localizedDescription ?: @"最後に保存できた経過を共有できます。";
+                    self.savedLabel.text = @"共有されるファイルは途中経過です。";
+                }
+            });
+        }
+    });
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+#if TARGET_OS_SIMULATOR
+    // Preview arguments are compiled out of the physical-device app.
+    if (!_previewStarted && [NSProcessInfo.processInfo.arguments containsObject:@"--probe-ui-smoke"]) {
+        _previewStarted = YES;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [self startRun]; });
+    }
+    if (!_previewStarted && [NSProcessInfo.processInfo.arguments containsObject:@"--probe-ui-share"] && self.reportURL) {
+        _previewStarted = YES;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [self shareReport]; });
+    }
+#endif
+}
+
+- (void)stopRun {
+    if (!_running || !_continueRun) return;
+    _continueRun->store(false);
+    self.stopButton.enabled = NO;
+    self.stateLabel.text = @"停止を待っています";
+    self.detailLabel.text = @"新しい処理を止めました。実行中の処理が戻り次第、結果を保存します。";
+}
+
+- (void)leavingActive:(NSNotification*)notification {
+    (void)notification;
+    [self stopRun];
+    UIApplication.sharedApplication.idleTimerDisabled = NO;
+}
+
+- (void)showRecord:(NSDictionary*)record {
+    NSString* status = record[@"status"];
+    NSDictionary* comparison = record[@"comparison"];
+    BOOL passed = [status isEqual:@"passed"];
+    self.progressView.progress = passed ? 1 : self.progressView.progress;
+    if (passed) {
+        self.stateLabel.text = @"比較が完了しました";
+        NSUInteger totalCases = [comparison[@"total_cases"] unsignedIntegerValue];
+        self.detailLabel.text = [comparison[@"schema"] unsignedIntegerValue] >= 5
+            ? @"描画・計算結果は一致しました。先読みあり・なしの待ち時間も記録しました。"
+            : [comparison[@"schema"] unsignedIntegerValue] >= 4
+            ? @"描画・計算結果は一致しました。先読み中の待ち時間も記録しました。"
+            : totalCases > 1
+            ? [NSString stringWithFormat:@"%luパターンで、描画・計算結果の一致を確認しました。", (unsigned long)totalCases]
+            : @"テスト用の描画・計算結果は一致しました。";
+    } else if ([status isEqual:@"unsupported"]) {
+        self.stateLabel.text = @"この環境では比較できません";
+        self.detailLabel.text = [comparison[@"serial_comparison_verified"] boolValue]
+            ? @"通常の比較は完了しましたが、先読みの確認には対応していません。詳細を結果に保存しました。"
+            : @"Metal 4の対応条件を満たしていません。対応状況を結果に保存しました。";
+    } else if ([status isEqual:@"interrupted"] || [status isEqual:@"running"]) {
+        self.stateLabel.text = @"比較は途中で終了しました";
+        self.detailLabel.text = @"完了した結果としては扱いません。保存済みの経過を共有できます。";
+    } else {
+        self.stateLabel.text = @"確認が必要な結果です";
+        self.detailLabel.text = @"エラーの内容と途中までの結果を共有してください。";
+    }
+    if (comparison[@"host_save_error"]) {
+        self.stateLabel.text = @"途中経過の保存で問題がありました";
+        self.detailLabel.text = @"その時点で測定を止め、保存エラーの情報を最終結果に残しました。";
+    }
+    NSArray* samples = [comparison[@"samples"] isKindOfClass:NSArray.class] ? comparison[@"samples"] : @[];
+    BOOL firstUseDesign = [comparison[@"schema"] unsignedIntegerValue] >= 3;
+    NSString* groupingKey = firstUseDesign ? @"family_id" : @"case_id";
+    NSMutableArray<NSString*>* caseIDs = [NSMutableArray new];
+    for (NSDictionary* sample in samples) {
+        NSString* caseID = [sample[groupingKey] isKindOfClass:NSString.class] ? sample[groupingKey] : @"";
+        if (![caseIDs containsObject:caseID]) [caseIDs addObject:caseID];
+    }
+    NSMutableArray<NSString*>* groups = [NSMutableArray new];
+    for (NSString* caseID in caseIDs) {
+        NSMutableArray<NSString*>* lines = [NSMutableArray new];
+        for (NSString* api in @[@"legacy_source", @"metal4_source", @"legacy_async_source", @"metal4_async_source"]) {
+            NSMutableArray<NSNumber*>* durations = [NSMutableArray new];
+            for (NSDictionary* sample in samples) {
+                NSString* sampleCase = [sample[groupingKey] isKindOfClass:NSString.class] ? sample[groupingKey] : @"";
+                if ([sampleCase isEqual:caseID] && [sample[@"status"] isEqual:@"passed"] && [sample[@"api"] isEqual:api]
+                    && [sample[@"library_ns"] isKindOfClass:NSNumber.class] && [sample[@"command_status"] isEqual:@"completed"]) {
+                    if (firstUseDesign) {
+                        if ([sample[@"iteration"] unsignedIntegerValue] != 1 || [sample[@"slot"] unsignedIntegerValue] != 1) continue;
+                        uint64_t preparation = 0;
+                        BOOL valid = YES;
+                        for (NSString* key in @[@"library_ns", @"specialization_ns", @"render_pso_ns", @"compute_pso_ns"]) {
+                            if (![sample[key] isKindOfClass:NSNumber.class]) { valid = NO; break; }
+                            preparation += [sample[key] unsignedLongLongValue];
+                        }
+                        if (valid) [durations addObject:@(preparation)];
+                    } else [durations addObject:sample[@"library_ns"]];
+                }
+            }
+            [durations sortUsingSelector:@selector(compare:)];
+            if (durations.count) {
+                NSUInteger middle = durations.count / 2;
+                double median = durations[middle].doubleValue;
+                if (durations.count % 2 == 0) median = (median + durations[middle - 1].doubleValue) / 2;
+                median /= 1e6;
+                [lines addObject:[NSString stringWithFormat:@"%@　%.2f ms（%lu回）", apiName(api), median, (unsigned long)durations.count]];
+            }
+        }
+        if (lines.count) {
+            NSString* values = [lines componentsJoinedByString:@"\n"];
+            [groups addObject:caseID.length ? [NSString stringWithFormat:@"%@\n%@", caseName(caseID), values] : values];
+        }
+    }
+    NSString* explanation = firstUseDesign
+        ? @"\n\nこの測定で各パターンを最初に担当した方式の準備時間です。保存時間は含みません。端末内の準備済みデータは消去していません。条件も方式ごとに異なるため、この数値だけで優劣は決まりません。再測定の値も共有結果に含まれます。"
+        : @"\n\n各方式のライブラリ準備時間の中央値です。描画性能や初回キャッシュの速さを示すものではありません。";
+    self.resultLabel.text = groups.count ? [[groups componentsJoinedByString:@"\n\n"] stringByAppendingString:explanation]
+                                      : @"比較できた測定値はありません";
+    NSString* contentionText = SkyrimMetalPhoneContentionResultText(comparison);
+    if (contentionText.length)
+        self.resultLabel.text = [NSString stringWithFormat:@"%@\n\n%@", contentionText, self.resultLabel.text];
+    self.savedLabel.text = [record[@"recovered_incomplete"] boolValue]
+        ? @"前回の途中経過を表示しています。新しい比較も開始できます。"
+        : @"結果を保存しました。共有から、このチャットへ送れます。";
+}
+
+- (void)shareReport {
+    if (_running || !self.reportURL) return;
+    UIActivityViewController* share = [[UIActivityViewController alloc] initWithActivityItems:@[self.reportURL] applicationActivities:nil];
+    share.popoverPresentationController.sourceView = self.shareButton;
+    share.popoverPresentationController.sourceRect = self.shareButton.bounds;
+    [self presentViewController:share animated:YES completion:nil];
+}
+@end
+
+@interface MetalProbeScene : UIResponder <UIWindowSceneDelegate>
+@property(nonatomic, strong) UIWindow* window;
+@end
+
+@implementation MetalProbeScene
+- (void)scene:(UIScene*)scene willConnectToSession:(UISceneSession*)session options:(UISceneConnectionOptions*)options {
+    (void)session; (void)options;
+    if (![scene isKindOfClass:UIWindowScene.class]) return;
+    self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene*)scene];
+    MetalProbeController* controller = [MetalProbeController new];
+    self.window.rootViewController = [[UINavigationController alloc] initWithRootViewController:controller];
+    [self.window makeKeyAndVisible];
+}
+@end
+
+@interface MetalProbeApp : UIResponder <UIApplicationDelegate>
+@end
+@implementation MetalProbeApp
+- (UISceneConfiguration*)application:(UIApplication*)application configurationForConnectingSceneSession:(UISceneSession*)session options:(UISceneConnectionOptions*)options {
+    (void)application; (void)options;
+    UISceneConfiguration* configuration = [[UISceneConfiguration alloc] initWithName:@"Metal Probe" sessionRole:session.role];
+    configuration.delegateClass = MetalProbeScene.class;
+    return configuration;
+}
+@end
+
+int main(int argc, char* argv[]) {
+    @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(MetalProbeApp.class)); }
+}

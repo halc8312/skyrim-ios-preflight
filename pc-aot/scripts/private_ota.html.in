@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>SkyrimIOS Update</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#11191d;color:#f1f3ed;font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100svh;padding:24px 20px 40px}main{max-width:480px;margin:5vh auto}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:42px}.brand{font-size:13px;letter-spacing:.16em;color:#bdc7c8}.language{border:1px solid #596669;border-radius:20px;color:#e8efec;background:transparent;padding:8px 15px;font:inherit;font-size:13px;min-height:44px}h1{font-size:38px;font-weight:600;letter-spacing:-.04em;line-height:1.2;margin:0 0 16px}p{color:#bcc7c9;margin:0 0 24px}.meta{display:flex;gap:10px;margin:25px 0}.pill{border:1px solid #3b494c;border-radius:6px;padding:5px 11px;color:#d7e0dc;font-size:13px}.notice{padding:17px 19px;border-left:3px solid #bfaa76;background:#1e272a;border-radius:0 8px 8px 0;margin:26px 0;color:#e0d8c1;font-size:14px}.steps{padding:0;list-style:none;margin:28px 0}.steps li{display:flex;align-items:baseline;gap:14px;margin:17px 0;color:#d0d9d6}.number{font:12px/26px -apple-system,sans-serif;border:1px solid #586365;width:28px;min-width:28px;text-align:center;border-radius:50%;color:#c6d7d4}.install{display:block;text-align:center;border-radius:9px;padding:16px;background:#bfe1d3;color:#152823;text-decoration:none;font-weight:650;min-height:56px}.install:focus-visible,.language:focus-visible{outline:3px solid #fff;outline-offset:4px}.fine{font-size:13px;margin-top:20px;line-height:1.7;color:#a7b6b9}footer{border-top:1px solid #334246;padding-top:22px;margin-top:33px;color:#b4c8c1;font-size:13px}.dot{display:inline-block;width:7px;height:7px;background:#bfe1d3;border-radius:50%;margin-right:8px}html[lang=ja] [lang=en],html[lang=en] [lang=ja]{display:none}@media(max-width:360px){body{padding:18px 16px}h1{font-size:32px}header{margin-bottom:30px}}
+</style>
+<main>
+<header><span class="brand">SKYRIMIOS</span><button class="language" id="language" type="button">日本語</button></header>
+<h1><span lang="en">Update SkyrimIOS</span><span lang="ja">SkyrimIOSを更新</span></h1>
+<p><span lang="en">Install directly on your iPhone with your existing developer signature.</span><span lang="ja">いつもの開発者署名で<br>iPhoneから直接インストールできます。</span></p>
+<div class="meta"><span class="pill">Build @@BUILD@@</span><span class="pill">@@SIZE@@ MB</span><span class="pill">iOS 18+</span></div>
+<div class="notice"><span lang="en">Build @@BUILD@@ adds a button for both hands and a shader comparison setting, “Separate waits for drawing preparation” (off by default). Restart the app after changing this setting. Its effect on iPhone performance is still being evaluated.</span><span lang="ja">build @@BUILD@@は「両手」ボタンと、比較設定「描画の準備待ちを分ける」を追加します。設定は最初OFFで、変更後はアプリの再起動が必要です。iPhoneでの改善効果は、これから確認します。</span></div>
+<ol class="steps">
+<li><span class="number">1</span><span lang="en">Save your game and fully close SkyrimIOS.</span><span lang="ja">ゲーム内で保存してアプリを完全に終了</span></li>
+<li><span class="number">2</span><span lang="en">Tap Install and confirm the iPhone prompt.</span><span lang="ja">インストールを押し、iPhoneの確認画面で許可</span></li>
+<li><span class="number">3</span><span lang="en">Wait for installation, then open SkyrimIOS.</span><span lang="ja">完了後にSkyrimIOSを起動</span></li>
+</ol>
+<a class="install" href="@@INSTALL@@"><span lang="en">Install build @@BUILD@@</span><span lang="ja">build @@BUILD@@をインストール</span></a>
+<p class="fine"><span lang="en">Keep the existing app installed to retain its game data and saves. Leave Tailscale connected during installation. If an error appears, keep the app and report the message.</span><span lang="ja">セーブとゲームデータを残すため、今のアプリは削除しないでください。完了までTailscaleを接続したままにします。エラーが出た場合もアプリを残し、表示内容を教えてください。</span></p>
+<footer><span class="dot"></span><span lang="en">Private connection · Delivered from your PC</span><span lang="ja">プライベート接続 · あなたのPCから配布</span></footer>
+</main>
+<script>document.getElementById('language').addEventListener('click',function(){const ja=document.documentElement.lang!=='ja';document.documentElement.lang=ja?'ja':'en';this.textContent=ja?'English':'日本語';document.title=ja?'SkyrimIOS 更新':'SkyrimIOS Update'});</script>
+</html>

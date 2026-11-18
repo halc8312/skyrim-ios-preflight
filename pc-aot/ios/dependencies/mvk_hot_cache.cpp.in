@@ -1,0 +1,73 @@
+// Keep one cold compilation per cache, but let already prepared libraries and
+// snapshots proceed while that compilation waits on SPIRV-Cross / Metal.
+// Cache publication and invalidation of its serialized size stay atomic.
+MVKShaderLibrary* MVKPipelineCache::getShaderLibrary(SPIRVToMSLConversionConfiguration* pContext,
+                                                     MVKShaderModule* shaderModule,
+                                                     MVKPipeline* pipeline,
+                                                     VkPipelineCreationFeedback* pShaderFeedback,
+                                                     uint64_t startTime) {
+    if (_isExternallySynchronized) {
+        return getShaderLibraryImpl(pContext, shaderModule, pipeline, pShaderFeedback, startTime);
+    }
+    MVKShaderLibraryCache* slCache;
+    {
+        lock_guard<mutex> lock(_shaderCacheLock);
+        slCache = getShaderLibraryCache(shaderModule->getKey());
+        MVKShaderLibrary* ready = slCache->findShaderLibrary(pContext, pShaderFeedback, startTime);
+        if (ready) {
+            if (pShaderFeedback) mvkEnableFlags(pShaderFeedback->flags, VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT);
+            return ready;
+        }
+        if (pipeline->shouldFailOnPipelineCompileRequired()) {
+            // Preserve the upstream compile-required and feedback behavior.
+            return getShaderLibraryImpl(pContext, shaderModule, pipeline, pShaderFeedback, startTime);
+        }
+    }
+    // Never acquire this while holding _shaderCacheLock. A cold compiler must
+    // reacquire that short lock to publish, and another request may have filled
+    // this same key while we were waiting here.
+    unique_lock<mutex> compileLock(_shaderCompileLock, defer_lock);
+    if (!compileLock.try_lock()) {
+        const uint64_t waitStarted = skyrim_perf_now_ns();
+        compileLock.lock();
+        skyrim_perf_end(SKYRIM_PERF_MVK_COLD_LOCK_WAIT, waitStarted, 0);
+    }
+    {
+        lock_guard<mutex> lock(_shaderCacheLock);
+        MVKShaderLibrary* ready = slCache->findShaderLibrary(pContext, pShaderFeedback, startTime);
+        if (ready) {
+            if (pShaderFeedback) mvkEnableFlags(pShaderFeedback->flags, VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT);
+            return ready;
+        }
+    }
+    SPIRVToMSLConversionResult conversionResult;
+    // Measure conversion separately from cold-lock waiting and Metal library
+    // construction. Ready hits and compile-required refusals never enter here.
+    const uint64_t conversionStarted = skyrim_perf_now_ns();
+    const bool converted = shaderModule->convert(pContext, conversionResult);
+    skyrim_perf_end(SKYRIM_PERF_MVK_CONVERT, conversionStarted, !converted);
+    if (!converted) {
+        // Existing getShaderLibraryImpl sets this flag when nothing was added,
+        // including a conversion failure. Do not redefine its feedback API here.
+        if (pShaderFeedback) mvkEnableFlags(pShaderFeedback->flags, VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT);
+        return nullptr;
+    }
+    auto destroyLibrary = [](MVKShaderLibrary* lib) { lib->destroy(); };
+    unique_ptr<MVKShaderLibrary, decltype(destroyLibrary)> candidate(
+        new MVKShaderLibrary(this, conversionResult), destroyLibrary);
+    {
+        lock_guard<mutex> lock(_shaderCacheLock);
+        // Internally synchronized cache merging can have inserted this key
+        // during compilation. The completed candidate remains privately owned
+        // and is destroyed after unlocking when an existing library wins.
+        MVKShaderLibrary* ready = slCache->findShaderLibrary(pContext, pShaderFeedback, startTime);
+        if (ready) {
+            if (pShaderFeedback) mvkEnableFlags(pShaderFeedback->flags, VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT);
+            return ready;
+        }
+        slCache->_shaderLibraries.emplace_back(*pContext, candidate.get());
+        markDirty();
+        if (pShaderFeedback) pShaderFeedback->duration += mvkGetElapsedNanoseconds(startTime);
+        return candidate.release();
+    }
+}

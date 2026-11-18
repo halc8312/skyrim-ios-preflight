@@ -1,0 +1,152 @@
+/* SPDX-License-Identifier: GPL-3.0-only
+ * Only dispatch/Metal/NSError boundaries are authored. The compiler wait body
+ * is extracted from the pinned source, before and after observation hooks. */
+#include "performance_metrics.h"
+#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <cstdio>
+#include <functional>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+using namespace std;
+#define MVKAssert(condition, ...) assert(condition)
+using dispatch_block_t = function<void()>;
+constexpr int DISPATCH_QUEUE_PRIORITY_DEFAULT = 0;
+constexpr uint64_t kMVKUndefinedLargeUInt64 = UINT64_MAX/2;
+static atomic<unsigned> destroyed, errors, completed, timed_out, original_intervals;
+struct Tracker {};
+struct Stats { struct { Tracker mslCompile, functionSpecialization, pipelineCompile, other; } shaderCompilation; };
+static Stats statistics;
+static struct { uint64_t metalCompileTimeout = 0; } config;
+static auto& getMVKConfig() { return config; }
+static int fixture_timeout_error() { ++timed_out; return 2; }
+static vector<thread> dispatched;
+static atomic<bool> admit;
+static thread_local SkyrimPerfContext workContext{};
+static int dispatch_get_global_queue(int priority, int flags) {
+    assert(priority == DISPATCH_QUEUE_PRIORITY_DEFAULT && flags == 0);
+    return 1;
+}
+static void dispatch_async(int queue, dispatch_block_t block) {
+    assert(queue == 1);
+    dispatched.emplace_back([block] {
+        while (!admit.load()) this_thread::yield();
+        assert(!workContext.role && !workContext.source);
+        block();
+        assert(!workContext.role && !workContext.source);
+    });
+}
+static void drain() { for (auto& thread : dispatched) thread.join(); dispatched.clear(); }
+struct Record { unsigned kind; uint64_t start, end; SkyrimPerfContext context; };
+static mutex records_mutex;
+static vector<Record> records;
+extern "C" SkyrimPerfContext skyrim_perf_context_get() { return workContext; }
+extern "C" SkyrimPerfContext skyrim_perf_context_set(SkyrimPerfContext c) {
+    auto old = workContext; workContext = c; return old;
+}
+extern "C" uint64_t skyrim_perf_now_ns(void) {
+    return chrono::duration_cast<chrono::nanoseconds>(chrono::steady_clock::now().time_since_epoch()).count();
+}
+extern "C" void skyrim_perf_interval_context(unsigned kind, uint64_t start, uint64_t end, int failed, uint64_t sleeps, SkyrimPerfContext context) {
+    assert(kind < SKYRIM_PERF_KIND_COUNT && start && end >= start && !failed && !sleeps);
+    lock_guard<mutex> guard(records_mutex);
+    records.push_back({kind,start,end,context});
+}
+extern "C" void skyrim_perf_end(unsigned kind, uint64_t start, int failed) {
+    skyrim_perf_interval_context(kind, start, skyrim_perf_now_ns(), failed, 0, workContext);
+}
+class MVKMetalCompiler {
+public:
+    mutex _completionLock;
+    condition_variable _blocker;
+    bool _isCompileDone = false, _isDestroyed = false;
+    uint64_t _startTime = 0;
+    string _compilerType = "authored boundary";
+    Tracker* _pPerformanceTracker;
+    int _compileError = 0;
+    explicit MVKMetalCompiler(Tracker* tracker) : _pPerformanceTracker(tracker) {}
+    ~MVKMetalCompiler() { ++destroyed; }
+    auto& getPerformanceStats() { return statistics; }
+    uint64_t getPerformanceTimestamp() { return skyrim_perf_now_ns(); }
+    void addPerformanceInterval(Tracker&, uint64_t) { ++original_intervals; }
+    void handleError() { ++errors; }
+    void compile(unique_lock<mutex>&, dispatch_block_t);
+    void run(int completion_error) {
+        unique_lock<mutex> lock(_completionLock);
+        compile(lock, [this, completion_error] {
+            bool late;
+            {
+                lock_guard<mutex> callback_lock(_completionLock);
+                _compileError = completion_error;
+                _isCompileDone = true;
+                _blocker.notify_all();
+                late = _isDestroyed;
+                ++completed;
+            }
+            if (late) delete this;
+        });
+    }
+    void destroy() {
+        bool ready;
+        {
+            lock_guard<mutex> lock(_completionLock);
+            _isDestroyed = true;
+            ready = _isCompileDone;
+        }
+        if (ready) delete this;
+    }
+};
+
+/* ACTUAL_COMPILER_METHOD */
+
+int main() {
+    Tracker* trackers[] = {&statistics.shaderCompilation.mslCompile,
+        &statistics.shaderCompilation.functionSpecialization,
+        &statistics.shaderCompilation.pipelineCompile, &statistics.shaderCompilation.other};
+    for (unsigned kind = 0; kind < 4; ++kind) {
+        for (unsigned mode = 0; mode < 3; ++mode) {
+            records.clear();
+            unsigned before_destroy = destroyed, before_error = errors, before_complete = completed;
+            const bool timeout = mode == 2;
+            config.metalCompileTimeout = timeout ? 1000000 : 2000000000;
+            admit = !timeout;
+            auto* compiler = new MVKMetalCompiler(trackers[kind]);
+            {
+                SkyrimPerfContextScope role(SKYRIM_PERF_ROLE_PREFETCH, SKYRIM_PERF_CONTEXT_KEEP);
+                SkyrimPerfContextScope source(SKYRIM_PERF_CONTEXT_KEEP, SKYRIM_PERF_SOURCE_MACRO);
+                compiler->run(mode == 1 ? 1 : 0);
+            }
+            assert(workContext.role == 0 && workContext.source == 0);
+            assert(compiler->_isCompileDone == !timeout);
+            assert(compiler->_compileError == (timeout ? 2 : mode == 1 ? 1 : 0));
+            compiler->destroy();
+            if (timeout) assert(destroyed == before_destroy);
+            admit = true;
+            drain();
+            assert(destroyed == before_destroy+1 && completed == before_complete+1);
+            assert(errors == before_error+(mode != 0));
+            if (OBSERVED) {
+                assert(records.size() == 3);
+                Record values[3]{};
+                for (const auto& r : records) {
+                    unsigned slot = r.kind == SKYRIM_PERF_MVK_MSL_WAIT+kind ? 0 :
+                        r.kind == SKYRIM_PERF_MVK_DISPATCH_WAIT ? 1 : 2;
+                    assert(slot != 2 || r.kind == SKYRIM_PERF_MVK_DISPATCH_BLOCK);
+                    assert(r.context.role == SKYRIM_PERF_ROLE_PREFETCH && r.context.source == SKYRIM_PERF_SOURCE_MACRO);
+                    assert(!values[slot].start); values[slot] = r;
+                }
+                assert(values[0].start == values[1].start);
+                assert(values[1].end == values[2].start);
+                if (timeout) assert(values[0].end <= values[1].end);
+            } else assert(records.empty());
+        }
+    }
+    assert(destroyed == 12 && completed == 12 && timed_out == 4 && original_intervals == 12);
+    puts("actual_compile_wait_and_late_callback=PASS cases=12 queue_policy_unchanged=1");
+}

@@ -1,0 +1,24 @@
+  // Isolated Apple host trial. Never relocate an owned/waited-on lock.
+  // Noncopyable storage also prevents implicit move construction/assignment.
+  class Spinlock {
+  public:
+    Spinlock() = default;
+    ~Spinlock() = default;
+    Spinlock(const Spinlock&) = delete;
+    Spinlock& operator=(const Spinlock&) = delete;
+
+    void lock() {
+      if (!os_unfair_lock_trylock(&m_lock)) {
+        skyrim::host_wait::LockWaitSample sample;
+        os_unfair_lock_lock(&m_lock);
+      }
+    }
+    bool try_lock() {
+      return os_unfair_lock_trylock(&m_lock);
+    }
+    void unlock() {
+      os_unfair_lock_unlock(&m_lock);
+    }
+  private:
+    os_unfair_lock m_lock = OS_UNFAIR_LOCK_INIT;
+  };

@@ -1,6 +1,89 @@
 # Run manually from a personal Codemagic account with free M2 minutes remaining.
 # No code-signing credentials, game data, or generated game code are inputs.
 workflows:
+  pc2011-metal-phone-probe:
+    name: Metal phone probe - unsigned app and simulator UI
+    instance_type: mac_mini_m2
+    max_build_duration: 15
+    environment:
+      xcode: "26.6"
+    # Manual authored probe only; no signing, game inputs, or phone execution.
+    scripts:
+      - name: Validate isolated iPhone package and preview UI
+        script: python3 pc-aot/scripts/check-metal-probe-ios-mac.py
+    artifacts:
+      - pc-aot/local/metal-probe-ios-checks/*/MetalProbe-unsigned.ipa
+      - pc-aot/local/metal-probe-ios-checks/*/metal-probe-ios-checks.zip
+  pc2011-metal-legacy-checks:
+    name: Skyrim isolated Metal cache and option checks
+    instance_type: mac_mini_m2
+    max_build_duration: 15
+    inputs:
+      authored_windows_library:
+        description: Pinned authored Windows fixture base64, or none to omit (not game data)
+        type: string
+        default: "none"
+    environment:
+      xcode: "26.6"
+      vars:
+        SKYRIM_AUTHORED_WINDOWS_LIBRARY: ${{ inputs.authored_windows_library }}
+    # Manual only; supports a legacy Metal device, does not request Metal 4 runtime.
+    scripts:
+      - name: Check binary archive reuse and compiler option tokens
+        script: bash pc-aot/scripts/check-metal-compile-mac.sh --legacy-boundaries
+    artifacts:
+      - pc-aot/local/metal-compile-mac/*/checks.log
+      - pc-aot/local/metal-compile-mac/*/metal-compile-checks.zip
+  pc2011-metal-compile-checks:
+    name: Skyrim isolated Metal library comparison
+    instance_type: mac_mini_m2
+    max_build_duration: 15
+    environment:
+      xcode: "26.6"
+    # Manual only; authored shaders, no app build or iPhone performance claim.
+    scripts:
+      - name: Compare legacy Metal and Metal 4 library creation
+        script: bash pc-aot/scripts/check-metal-compile-mac.sh
+    artifacts:
+      - pc-aot/local/metal-compile-mac/*/checks.log
+      - pc-aot/local/metal-compile-mac/*/metal-compile-checks.zip
+  pc2011-host-wait-checks:
+    name: Skyrim isolated Apple lock and thread checks
+    instance_type: mac_mini_m2
+    max_build_duration: 10
+    environment:
+      xcode: "26.6"
+    # Manual only; authored host checks, not an app build or iPhone comparison.
+    scripts:
+      - name: Check independent lock and thread trials with Apple APIs
+        script: bash pc-aot/scripts/check-host-wait-mac.sh
+    artifacts:
+      - pc-aot/local/host-wait-checks/*/*.log
+  pc2011-self-build-tools:
+    name: Skyrim owned-copy helper checks
+    instance_type: mac_mini_m2
+    max_build_duration: 10
+    environment:
+      xcode: "26.6"
+    # Manual only. Synthetic fixtures; no game, account, profile or key inputs.
+    scripts:
+      - name: Check guest linker and signing helpers with real Apple tools
+        script: |
+          set -euo pipefail
+          mkdir -p out/self-build-checks
+          exec > >(tee out/self-build-checks/checks.log) 2>&1
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          python3 --version
+          cd pc-aot
+          python3 scripts/check-public-tree.py
+          status=0
+          for suite in test_build_title_guest.py test_title_assembly.py test_title_signing.py test_owned_data.py; do
+            python3 -m unittest discover -s tests -p "$suite" -v || status=1
+          done
+          exit "$status"
+    artifacts:
+      - out/self-build-checks/*.log
   ios-audio-environment-diagnostic:
     name: iOS minimal audio environment diagnostic
     instance_type: mac_mini_m2
@@ -254,3 +337,59 @@ workflows:
       - out/owned-host/gpu-framework/*.txt
       - out/owned-host/gpu-framework/*-export-policy/*.json
       - out/owned-host/gpu-framework/*-export-policy/*.txt
+  skyrim-pc-aot-probe-unsigned:
+    name: Skyrim 2011 PC AOT - native probe compile only
+    instance_type: mac_mini_m2
+    max_build_duration: 15
+    environment:
+      xcode: "26.6"
+    # Manual-only, private, no original or generated game inputs.
+    scripts:
+      - name: Validate and build independent PC AOT probe
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR/pc-aot"
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          bash scripts/build-ios.sh unsigned
+    artifacts:
+      - pc-aot/local/ci/*/artifacts/*
+# Append this manual workflow under workflows in the existing private harness.
+  pc2011-title-host:
+    name: Skyrim PC 2011 original-guest iPhoneOS host
+    instance_type: mac_mini_m2
+    max_build_duration: 65
+    environment:
+      xcode: "26.6"
+      vars:
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+        JOBS: "2"
+    cache:
+      cache_paths:
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-displayfix
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-cachefix
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build6
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build7
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-shader-trials-v1
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build9
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build15
+    scripts:
+      - name: Prepare public iPhoneOS build tools
+        script: |
+          set -euo pipefail
+          brew install bison make cmake
+      - name: Build public SDL DXVK Metal runtime without game inputs
+        script: |
+          set -euo pipefail
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix make)/libexec/gnubin:$PATH"
+          bash pc-aot/scripts/build-title-host.sh
+    artifacts:
+      - pc-aot/local/title-host/*/artifacts/*
+      - pc-aot/local/ios-dependencies/logs/*/*.log
+      - pc-aot/local/ios-dependencies-displayfix/logs/*/*.log
+      - pc-aot/local/ios-dependencies-cachefix/logs/*/*.log
+      - pc-aot/local/ios-dependencies-build6/logs/*/*.log
+      - pc-aot/local/ios-dependencies-build7/logs/*/*.log
+      - pc-aot/local/ios-dependencies-shader-trials-v1/logs/*/*.log
+      - pc-aot/local/ios-dependencies-build9/logs/*/*.log
+      - pc-aot/local/ios-dependencies-build15/logs/*/*.log

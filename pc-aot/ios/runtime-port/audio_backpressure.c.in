@@ -1,0 +1,17 @@
+/* SDL's queued bytes have not yet reached hardware. Keep the existing four-
+ * pass reserve; wait for at most half of its excess, capped at 5 ms. This is
+ * polling with fewer wakeups, not an audio callback/real-time deadline API.
+ * Unknown or large hardware quanta retain the original 1 ms polling. */
+static unsigned ios_audio_device_samples;
+static int ios_audio_device_rate;
+static useconds_t ios_audio_backpressure_delay(Uint32 queued, int frames, int rate) {
+    if (frames <= 0 || rate < 8000 || rate > 192000 || !ios_audio_device_samples ||
+        (uint64_t)ios_audio_device_samples > (uint64_t)frames * 3)
+        return 1000;
+    const uint64_t reserve = (uint64_t)frames * 4 * 2 * sizeof(float);
+    if (queued <= reserve) return 1000;
+    const uint64_t excess_us = ((uint64_t)queued - reserve) * 1000000 /
+                               ((uint64_t)rate * 2 * sizeof(float));
+    const uint64_t half = excess_us / 2;
+    return (useconds_t)(half < 1000 ? 1000 : half > 5000 ? 5000 : half);
+}

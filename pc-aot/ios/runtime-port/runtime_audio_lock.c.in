@@ -1,0 +1,67 @@
+/* Keep the original pthread recursive mutex. Depth belongs to this one mutex,
+ * not to a voice. A nested acquisition neither resets its outer timer nor
+ * changes its owner tag. Callbacks retain the existing unlocked boundaries. */
+#include <stdatomic.h>
+_Static_assert(ATOMIC_LONG_LOCK_FREE == 2 && ATOMIC_LLONG_LOCK_FREE == 2,
+    "Audio observations require lock-free owner publication");
+
+static _Atomic uint64_t ios_audio_lock_owner;
+static _Thread_local struct {
+    unsigned depth, operation;
+    uint64_t start, wait_start, wait_end, wait_owner, owner;
+} ios_audio_lock_state;
+
+static int ios_audio_lock(unsigned operation) {
+    const int saved_errno = errno;
+    uint64_t wait_start = 0, wait_end = 0, owner = 0;
+    int result = pthread_mutex_trylock(&g_lock);
+    if (result != 0) {
+        wait_start = ios_runtime_lock_now();
+        owner = atomic_load_explicit(&ios_audio_lock_owner, memory_order_relaxed);
+        result = pthread_mutex_lock(&g_lock);
+        wait_end = ios_runtime_lock_now();
+    }
+    if (result == 0 && ios_audio_lock_state.depth++ == 0) {
+        ios_audio_lock_state.operation = operation;
+        ios_audio_lock_state.start = wait_start ? wait_end : ios_runtime_lock_now();
+        ios_audio_lock_state.wait_start = wait_start;
+        ios_audio_lock_state.wait_end = wait_end;
+        ios_audio_lock_state.wait_owner = owner;
+        ios_audio_lock_state.owner = ios_runtime_lock_owner(operation);
+        atomic_store_explicit(&ios_audio_lock_owner, ios_audio_lock_state.owner,
+                              memory_order_relaxed);
+    }
+    errno = saved_errno;
+    return result;
+}
+
+static int ios_audio_unlock(void) {
+    const int saved_errno = errno;
+    int result;
+    if (ios_audio_lock_state.depth != 1) {
+        result = pthread_mutex_unlock(&g_lock);
+        if (result == 0 && ios_audio_lock_state.depth) --ios_audio_lock_state.depth;
+    } else {
+        const uint64_t end = ios_runtime_lock_now();
+        /* Clear before unlocking, so an incoming owner's publication cannot
+         * be overwritten by this thread. The small unknown-owner window is
+         * allowed; inventing a dependency is not. */
+        atomic_store_explicit(&ios_audio_lock_owner, 0, memory_order_relaxed);
+        result = pthread_mutex_unlock(&g_lock);
+        if (result == 0) {
+            ios_audio_lock_state.depth = 0;
+            if (ios_audio_lock_state.wait_start)
+                ios_runtime_lock_report(SKYRIM_LOCK_AUDIO, SKYRIM_LOCK_WAIT,
+                    ios_audio_lock_state.operation, ios_audio_lock_state.wait_start,
+                    ios_audio_lock_state.wait_end, ios_audio_lock_state.wait_owner);
+            ios_runtime_lock_report(SKYRIM_LOCK_AUDIO, SKYRIM_LOCK_HOLD,
+                ios_audio_lock_state.operation, ios_audio_lock_state.start, end,
+                ios_audio_lock_state.owner);
+        } else {
+            atomic_store_explicit(&ios_audio_lock_owner, ios_audio_lock_state.owner,
+                                  memory_order_relaxed);
+        }
+    }
+    errno = saved_errno;
+    return result;
+}

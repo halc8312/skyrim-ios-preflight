@@ -1,0 +1,200 @@
+#!/bin/bash
+# SDK-built public host only. The owned game and generated code remain local.
+set -euo pipefail
+umask 077
+[[ "$(uname -s)" == Darwin ]] || { echo 'Apple iPhoneOS SDK required' >&2; exit 2; }
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+python3 scripts/check-public-tree.py
+mkdir -p local/title-host
+RUN="$(mktemp -d "$ROOT/local/title-host/run-XXXXXX")"
+mkdir -p "$RUN/artifacts"
+exec > >(tee "$RUN/artifacts/build.log") 2>&1
+echo "Public host build: $RUN"
+xcodebuild -version
+xcrun --sdk iphoneos --show-sdk-version
+
+# Copy only the upstream public tree. Its patches are checked before use.
+python3 - "$ROOT" "$RUN" <<'PY'
+from pathlib import Path
+import hashlib, json, subprocess, sys, tarfile
+root, run = map(Path, sys.argv[1:])
+lock = json.loads((root/'source-lock.json').read_text())['sources'][0]
+checkout = root/'vendor/skydream'
+checkout.parent.mkdir(exist_ok=True)
+if not checkout.exists():
+    subprocess.run(['git','init',str(checkout)], check=True)
+    subprocess.run(['git','-C',str(checkout),'remote','add','origin',lock['url']], check=True)
+    subprocess.run(['git','-C',str(checkout),'fetch','--depth=1','origin',lock['revision']], check=True)
+    subprocess.run(['git','-C',str(checkout),'checkout','--detach',lock['revision']], check=True)
+head=subprocess.check_output(['git','-C',str(checkout),'rev-parse','HEAD'],text=True).strip()
+if head != lock['revision']: raise SystemExit('Wrong upstream source revision')
+source=run/'source'
+source.mkdir()
+archive=run/'source.tar'
+subprocess.run(['git','-C',str(checkout),'archive','--format=tar','-o',str(archive),head],check=True)
+with tarfile.open(archive) as stream: stream.extractall(source, filter='data')
+subprocess.run(['git','init','-q',str(source)],check=True)
+for item in lock['patches']:
+    patch=root/item['path']
+    if hashlib.sha256(patch.read_bytes()).hexdigest()!=item['sha256']:
+        raise SystemExit('Changed public patch: '+item['path'])
+    subprocess.run(['git','-C',str(source),'apply','--check',str(patch)],check=True)
+    subprocess.run(['git','-C',str(source),'apply',str(patch)],check=True)
+PY
+
+# These public fixtures execute the changed helpers/texture bridge on this ARM Mac.
+# They do not contain the game or imply physical iPhone gameplay/performance.
+(
+  # The workflow exports an iPhone deployment target for the app. Native test
+  # executables must instead link against macOS and run on the build machine.
+  unset IPHONEOS_DEPLOYMENT_TARGET
+  export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+  # Run independent suites even after a failure, but never build/package a host
+  # unless every required suite passed. Preserve all diagnostics in one Mac run.
+  HOST_CHECK_STATUS=0
+  run_validation() { "$@" || HOST_CHECK_STATUS=1; }
+  run_validation python3 -m unittest discover -s tests -p 'test_build_title_guest.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_title_assembly.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_title_signing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_owned_data.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_ordered_stores.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_shadow_ranges.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_performance_metrics.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_performance_stalls.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_lock_metrics.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_lock_timing_analysis.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_d3d9_lock_timing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_runtime_lock_timing.py' -v
+  run_validation env PYTHONPATH=tests SKYRIM_TEST_SANITIZERS=thread python3 -m unittest \
+    test_lock_metrics \
+    test_d3d9_lock_timing.D3D9LockNativeTests.test_actual_lock_recursion_contention_and_hot_clock_budget \
+    test_runtime_lock_timing -v
+  run_validation python3 -m unittest discover -s tests -p 'test_save_write_probe.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_game_language.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_diagnostic_upload.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_private_diagnostics.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_lifecycle_controller.py' -v
+  run_validation env PYTHONPATH=tests SKYRIM_TEST_THREAD_SANITIZER=1 python3 -m unittest \
+    test_lifecycle_controller.LifecycleTests.test_actual_controller_preserves_producers_and_resume_races -v
+  run_validation python3 -m unittest discover -s tests -p 'test_present_timing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_frame_timing_analysis.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_shader_lead_diagnostics.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_asset_timing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_audio_submix.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_audio_backpressure.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_waiter_membership.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_xwma_buffer.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_xwma_voice_profile.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_constant_scratch.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_dds_layout.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_directory_index.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_additional_work.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_watchdog_layout.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_pipeline_cache.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_pipeline_cache_namespace.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_pipeline_locking.py' -v
+  # Graphics coordination comparison: exercise both routes on Apple. The app
+  # keeps the original route until its startup-only comparison option is ON.
+  run_validation python3 -m unittest discover -s tests -p 'test_graphics_state_flights.py' -v
+  run_validation env PYTHONPATH=tests SKYRIM_TEST_SANITIZERS=1 python3 -m unittest \
+    test_graphics_state_flights.GraphicsStateFlightNativeTests.test_actual_state_lookup_publication_admission_and_failures -v
+  run_validation env PYTHONPATH=tests SKYRIM_TEST_SANITIZERS=thread python3 -m unittest \
+    test_graphics_state_flights.GraphicsStateFlightNativeTests.test_actual_state_lookup_publication_admission_and_failures -v
+  run_validation python3 -m unittest discover -s tests -p 'test_prefetch_gate.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_state_cache_work.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_pending_work.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_resource_wait.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_device*.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_descriptor_capacity.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_mobile*.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_metal_toolchain.py' -v
+  exit "$HOST_CHECK_STATUS"
+)
+
+bash ios/dependencies/build-dependencies.sh
+# Keep this required gate, but collect independent app compiler failures in the
+# same paid-minute run instead of stopping before its build can start.
+METAL_CHECK_STATUS=0
+bash ios/dependencies/check-metal-alias.sh "$RUN/metal-alias" || METAL_CHECK_STATUS=$?
+# The fixture exercises actual coordination methods with authored Metal PSOs
+# and GPU readback. It is not a full DXVK/MoltenVK or iPhone gameplay test.
+if ! env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT \
+  SKYRIM_GRAPHICS_METAL_OUTPUT="$RUN/graphics-state-metal" python3 -m unittest \
+  discover -s tests -p 'test_graphics_state_flights_metal.py' -v \
+  2>&1 | tee "$RUN/artifacts/graphics-state-metal.log"; then
+  METAL_CHECK_STATUS=1
+fi
+python3 - "$RUN/graphics-state-metal" "$RUN/artifacts/graphics-state-metal-checks.zip" <<'PYGRAPHICS'
+from pathlib import Path
+import sys, zipfile
+source, output = map(Path, sys.argv[1:])
+with zipfile.ZipFile(output, 'x', zipfile.ZIP_DEFLATED) as archive:
+    for path in sorted(source.rglob('*')):
+        if path.is_file() and not path.is_symlink() and path.suffix in ('.mm', '.c', '.log', '.json'):
+            archive.write(path, path.relative_to(source).as_posix())
+PYGRAPHICS
+# Preserve the actual toolchain/compiler diagnostics on success and failure.
+# Only authored fixtures and text logs are included, not CMake object files.
+python3 - "$RUN/metal-alias" "$RUN/artifacts/metal-alias-checks.zip" <<'PYMETAL'
+from pathlib import Path
+import sys, zipfile
+source, output = map(Path, sys.argv[1:])
+with zipfile.ZipFile(output, 'x', zipfile.ZIP_DEFLATED) as archive:
+    for path in sorted(source.rglob('*')):
+        if path.is_file() and not path.is_symlink() and 'build' not in path.relative_to(source).parts:
+            archive.write(path, path.relative_to(source).as_posix())
+PYMETAL
+if (( METAL_CHECK_STATUS != 0 )); then
+  echo "Metal checks failed ($METAL_CHECK_STATUS); building host only to collect independent errors." >&2
+fi
+# The runtime adapter verifies its own upstream anchors. Apply it to pristine
+# upstream, then apply the CPU ABI patches to the staged runtime only.
+python3 ios/runtime-port/prepare_runtime.py --source "$ROOT/vendor/skydream" --output "$RUN/overlay/runtime"
+git -C "$RUN/overlay" init -q
+for patch in patches/skydream/0001-auxiliary-carry.patch patches/skydream/0005-call-flags.patch patches/skydream/0006-inline-ordered-stores.patch; do
+  git -C "$RUN/overlay" apply --include='runtime/*' "$ROOT/$patch"
+done
+python3 ios/private-abi/prepare_private_abi.py "$RUN/overlay"
+
+cmake -S ios/runtime-port -B "$RUN/build" -G 'Unix Makefiles' \
+  -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=18.0 -DCMAKE_BUILD_TYPE=Release \
+  -DSKYRIM_IOS_BUILD_APP=ON -DSKYRIM_IOS_BUNDLE_IDENTIFIER=org.skyrimios.pc2011 \
+  "-DSKYDREAM_SOURCE_DIR=$RUN/source" \
+  "-DSKYRIM_IOS_RUNTIME_OVERLAY_DIR=$RUN/overlay/runtime" \
+  "-DSKYRIM_IOS_BINDING_SOURCES=$ROOT/ios/private-abi/pc_guest_host.c" \
+  -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+cmake --build "$RUN/build" --parallel 2 -- -k
+if (( METAL_CHECK_STATUS != 0 )); then
+  echo 'Required Metal checks failed; no host package or success result will be published.' >&2
+  exit "$METAL_CHECK_STATUS"
+fi
+APP="$RUN/build/SkyrimIOS.app"
+test -s "$APP/SkyrimIOS"
+xcrun nm "$APP/SkyrimIOS" > "$RUN/app-symbols.txt"
+if grep -q '_skyrim_gpu_' "$RUN/app-symbols.txt"; then
+  echo 'Rejected lifecycle gate remains in the app; refusing package.' >&2; exit 1
+fi
+xcrun lipo "$APP/SkyrimIOS" -verify_arch arm64
+xcrun vtool -show-build "$APP/SkyrimIOS" | tee "$RUN/artifacts/platform.txt"
+grep -q 'platform IOS' "$RUN/artifacts/platform.txt"
+xcrun otool -L "$APP/SkyrimIOS" > "$RUN/artifacts/linked-libraries.txt"
+cp "$RUN/overlay/runtime/x86.h" "$RUN/artifacts/x86.h"
+cp "$RUN/overlay/runtime/rt_table.h" "$RUN/artifacts/rt_table.h"
+cp ios/private-abi/PcGuestABI.h "$RUN/artifacts/"
+ditto -c -k --keepParent "$APP" "$RUN/artifacts/SkyrimIOS-public-host.zip"
+python3 - "$RUN/artifacts" <<'PY'
+from pathlib import Path
+import hashlib, json, os, sys
+out=Path(sys.argv[1]); app=out/'SkyrimIOS-public-host.zip'
+(out/'result.json').write_text(json.dumps({
+ 'schema':1,'source_commit':os.environ.get('GITHUB_SHA') or os.environ.get('CM_COMMIT'),
+ 'artifact_sha256':hashlib.sha256(app.read_bytes()).hexdigest(),
+ 'target':'arm64-apple-ios','public_host_sdk_build':True,
+ 'private_guest_included':False,'game_executed':False,
+ 'physical_iphone_verified':False,'signed_for_installation':False
+},indent=2)+'\n')
+PY
+echo 'Public host built; local private-framework assembly and signing still required.'

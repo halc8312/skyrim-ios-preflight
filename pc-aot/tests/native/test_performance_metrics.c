@@ -1,0 +1,107 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#include "performance_metrics.h"
+#include <assert.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdio.h>
+
+static _Atomic unsigned finished;
+static void *produce(void *arg) {
+    uintptr_t index = (uintptr_t)arg;
+    assert(skyrim_perf_context_get().role == 0 && skyrim_perf_context_get().source == 0);
+    SkyrimPerfContext c = {1 + index / 2, 1 + index % 2, 0};
+    SkyrimPerfContext old = skyrim_perf_context_set(c);
+    for (unsigned n = 0; n < 20000; ++n) {
+        skyrim_perf_record(SKYRIM_PERF_GRAPHICS_PIPELINE, 1234567, n % 4 == 0, 3);
+        skyrim_perf_record(SKYRIM_PERF_MVK_MSL_WAIT, 2345678, 0, 0);
+    }
+    assert(skyrim_perf_context_get().role == c.role);
+    skyrim_perf_context_set(old);
+    assert(skyrim_perf_context_get().role == 0);
+    atomic_fetch_add(&finished, 1);
+    return NULL;
+}
+static uint64_t count(const SkyrimPerfWindow *w) {
+    uint64_t n = 0;
+    for (unsigned i = 0; i < SKYRIM_PERF_BUCKET_COUNT; ++i) n += w->buckets[i];
+    return n;
+}
+int main(void) {
+    SkyrimPerfWindow w;
+    /* Exact endpoint and just-over-endpoint classification, including >2 s. */
+    for (unsigned i = 0; i + 1 < SKYRIM_PERF_BUCKET_COUNT; ++i) {
+        uint64_t limit = skyrim_perf_bucket_upper_ns(i);
+        skyrim_perf_record(SKYRIM_PERF_FRAME_GAP, limit, 0, 0);
+        skyrim_perf_take(SKYRIM_PERF_FRAME_GAP, &w);
+        assert(count(&w) == 1 && w.buckets[i] == 1 && w.total_ns == limit && w.max_ns == limit);
+        skyrim_perf_record(SKYRIM_PERF_FRAME_GAP, limit + 1, 0, 0);
+        skyrim_perf_take(SKYRIM_PERF_FRAME_GAP, &w);
+        assert(count(&w) == 1 && w.buckets[i + 1] == 1 && w.total_ns == limit + 1);
+    }
+    skyrim_perf_record(SKYRIM_PERF_COMPUTE_PIPELINE, 5000, 1, 0);
+    skyrim_perf_take(SKYRIM_PERF_COMPUTE_PIPELINE, &w);
+    assert(count(&w) == 1 && w.failures == 1 && w.max_ns == 5000);
+    skyrim_perf_take(SKYRIM_PERF_COMPUTE_PIPELINE, &w);
+    assert(count(&w) == 0 && w.failures == 0 && w.max_ns == 0);
+    skyrim_perf_context_take(SKYRIM_PERF_COMPUTE_PIPELINE, (SkyrimPerfContext){0}, &w);
+    assert(count(&w) == 1 && w.failures == 1 && w.total_ns == 5000);
+    skyrim_perf_record(SKYRIM_PERF_KIND_COUNT, 7, 1, 3);
+    skyrim_perf_end(SKYRIM_PERF_HLSL, 0, 0);
+    skyrim_perf_take(SKYRIM_PERF_HLSL, &w);
+    assert(count(&w) == 0);
+    assert(skyrim_perf_now_ns() != 0);
+
+    pthread_t threads[4];
+    for (unsigned i = 0; i < 4; ++i) assert(!pthread_create(&threads[i], NULL, produce, (void*)(uintptr_t)i));
+    uint64_t samples = 0, total = 0, failures = 0, sleeps = 0;
+    uint64_t role_samples[3] = {0}, role_total[3] = {0}, role_failures[3] = {0};
+    do {
+        skyrim_perf_take(SKYRIM_PERF_GRAPHICS_PIPELINE, &w);
+        samples += count(&w); total += w.total_ns;
+        failures += w.failures; sleeps += w.sleep_calls;
+        for (unsigned role = 0; role < 3; ++role) {
+            skyrim_perf_context_take(SKYRIM_PERF_GRAPHICS_PIPELINE, (SkyrimPerfContext){role, 0, 0}, &w);
+            role_samples[role] += count(&w); role_total[role] += w.total_ns;
+            role_failures[role] += w.failures;
+        }
+    } while (atomic_load(&finished) != 4);
+    for (unsigned i = 0; i < 4; ++i) assert(!pthread_join(threads[i], NULL));
+    skyrim_perf_take(SKYRIM_PERF_GRAPHICS_PIPELINE, &w);
+    samples += count(&w); total += w.total_ns;
+    failures += w.failures; sleeps += w.sleep_calls;
+    assert(samples == 80000 && total == 80000 * UINT64_C(1234567));
+    assert(failures == 20000 && sleeps == 240000);
+    for (unsigned role = 0; role < 3; ++role) {
+        skyrim_perf_context_take(SKYRIM_PERF_GRAPHICS_PIPELINE, (SkyrimPerfContext){role, 0, 0}, &w);
+        role_samples[role] += count(&w); role_total[role] += w.total_ns;
+        role_failures[role] += w.failures;
+        uint64_t expected = role ? 40000 : 0;
+        assert(role_samples[role] == expected);
+        assert(role_total[role] == expected * UINT64_C(1234567));
+        assert(role_failures[role] == expected / 4);
+    }
+    assert(skyrim_perf_context_get().role == 0);
+    skyrim_perf_take(SKYRIM_PERF_MVK_MSL_WAIT, &w);
+    assert(count(&w) == 80000);
+    for (unsigned role = 0; role < 3; ++role) for (unsigned source = 0; source < 4; ++source) {
+        SkyrimPerfContext c = {role, source, 0};
+        skyrim_perf_context_take(SKYRIM_PERF_MVK_MSL_WAIT, c, &w);
+        uint64_t expected = role && (source == 1 || source == 2) ? 20000 : 0;
+        assert(count(&w) == expected && w.total_ns == expected * UINT64_C(2345678));
+    }
+    skyrim_perf_record(SKYRIM_PERF_PACER, 33000000, 0, 8);
+    skyrim_perf_record(SKYRIM_PERF_GRAPHICS_COMPILE_WAIT, 120000000, 0, 0);
+    /* The new route is a separate wait category, including every result/role.
+     * Keep old stall IDs stable and exercise decode through log_window too. */
+    assert(SKYRIM_PERF_GRAPHICS_COMPILE_WAIT == 7);
+    assert(SKYRIM_PERF_PACER_OVERRUN == 37);
+    assert(SKYRIM_PERF_GRAPHICS_STATE_WAIT == 38);
+    for (unsigned role = 0; role < 3; ++role) for (unsigned result = 0; result < 3; ++result) {
+        SkyrimPerfContext previous = skyrim_perf_context_set((SkyrimPerfContext){role,0,result});
+        skyrim_perf_record(SKYRIM_PERF_GRAPHICS_STATE_WAIT, 130000000 + role * 3 + result, 0, 0);
+        skyrim_perf_context_set(previous);
+    }
+    skyrim_perf_log_window();
+    puts("performance_histogram_boundaries_and_concurrent_drain=PASS");
+    return 0;
+}

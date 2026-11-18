@@ -1,0 +1,529 @@
+# 開発状況
+
+**2026-11-19　シェーダーの先読み時刻を追えるbuild 15をテスト端末向けに配布**
+
+build 14で1.371秒止まったとき、先読みがMetalに生成を依頼したのは、描画が待ち始める約60 ms前だった。build 15では、描画が50 ms以上待って先読みの結果を使ったときに、そのシェーダーの材料が揃った時刻、キューに入った時刻、担当スレッドが取り出した時刻、Metalへの依頼と完成品の公開を照合できる。
+
+Codemagicのビルド #38が成功し、Macの実GPUで「描画の準備待ちを分ける」のオン・オフともに8ケースの描画結果が一致した。本人のテスト用iPhone向けに署名し、非公開更新ページから取得したファイルの一致も確認した。実機でどの待ちを短縮できるかはbuild 15のプレイ記録で判定する。[計測の範囲と検証結果](PERFORMANCE_WORK.md#2026-11-19-シェーダー先読みの時刻計測)
+
+**2026-11-19　build 14でシェーダー設定1番目と6番目を併用したiPhoneの記録を確認**
+
+フレームを計測した33分32秒で、100 ms超の停止は28回、250 ms超は9回。前回の6番目のみONの先頭33分31秒ではそれぞれ27回、13回だった。今回は起動時に保存済みのMetalライブラリ用ソースを676件復元し、前回とキャッシュ条件が異なる。
+
+最長の1.371秒では、先読み1件のMetalライブラリ生成完了待ちと描画側のモジュール単位の待ちが1.270秒重なった。描画側が待った後に新しく変換した記録はなく、完成を待って再利用した可能性が高い。次は、その先読みが描画よりどれだけ早く開始できたかを調べる。[実機比較と残った停止の内訳](PERFORMANCE_WORK.md#2026-11-19-build-14-の実機比較)
+
+**2026-11-19　シェーダー設定1番目・6番目の組み合わせをPCで検証し、次版用にセーブ計測を追加**
+
+6番目をONに固定した実装で、1番目もONにすると、先読み3件の完了を保留しても別のシェーダーモジュールを使う描画が先へ進んだ。同じライブラリへの重複要求は各キー1回の生成で処理できた。iPhoneでの比較には今のbuild 14と前回の72分の記録を使える。
+
+実機でセーブ候補区間6.72秒に対して個別の書き込み呼び出しが合計23.8 msだったことから、次版用に最後の書き込み開始とファイルを閉じる呼び出しの前後を計測できるようにした。保存処理の戻り値・ファイル位置・コールバックと競合時の動作をPCで検査した。[検証結果と実機で確認する条件](PERFORMANCE_WORK.md#2026-11-19-build-14-の描画設定とセーブ区間の検証)
+
+**2026-11-18　本編build 14で「描画の準備待ちを分ける」だけONの長時間プレイを確認**
+
+FPS上限60で計測したフレーム間隔は合計72分05秒。100 ms超は90回（1.25回/分）、最大1,165.284 msだった。前回の全OFFで上限60の観測区間は3分31秒、100 ms超12回（3.42回/分）、最大586.509 ms。場面と観測時間が異なるため、設定単独の改善率は未確定。
+
+最大停止では、描画に必要な処理が共通のシェーダー生成ロックを948.119 ms待ち、そのうち943.221 msに先読み3件のMetalライブラリ生成待ちが順に重なった。250 ms超35回のうち18回に描画側のシェーダー準備、別の16回にセーブ候補区間が重なった。今回の6番目の設定で扱う描画側の待ちは最大38.661 ms。次の比較候補は、6番目を固定したまま1番目の「シェーダー準備を並列化」を加える条件。[実測と既存試験の範囲](PERFORMANCE_WORK.md#2026-11-18-build-14-描画待ちを分けた長時間プレイ)
+
+**2026-11-18　本編build 14の実機で比較設定OFFの基準を取得**
+
+iPhoneから届いた2回の起動記録で、6つの比較設定がすべてOFF、描画も従来の経路で動作したことを確認した。前回の14,004フレーム間隔は合計271.367秒で、100 ms超が13回、250 ms超が5回。FPS上限を途中で切り替えている。前後の観測で上限60だった42窓に絞ると、11,647間隔・合計210.605秒で100 ms超は12回だった。今回の起動は送信時点の111間隔・4.549秒分。
+
+最長586.509 msの停止はセーブ候補ファイルが開いていた区間と536.634 ms重なった。別の412.226 msと370.277 msの停止は、描画に必要なMetalライブラリ生成待ちとそれぞれ345.645 ms、337.390 ms重なった。370.277 msの停止中には、D3D9のロックを待つスレッドが347.312 msの間に340.180 msのCPU時間を使った。これらの時間は重なる。今回、描画側が従来のパイプライン生成ロックを待った最長は45.419 ms。「描画の準備待ちを分ける」の効果は、既存のOFF記録を基準にON側の実プレイで確認する。
+
+**2026-11-18　Metal比較 build 5 の実機結果**
+
+iPhone 17 Pro Max（A19 Pro・iOS 26.5.2）の標準セットが1回で完走した。従来方式・Metal 4ともに、先読み直後に発行した8回すべてで描画準備の開始時に先読み2件が進行中だった。描画準備のAPI呼び出しから完了通知までの中央値は、先読み完了後が従来6.534 ms・Metal 4が6.465 ms、先読み中が従来9.139 ms・Metal 4が9.170 ms。同じ比較ブロックで短かった回数は4対4。各8回の最大は13.253 ms・10.921 msで、10 msを超えたのは3回・4回だった。配布ビルドの14入力、先読みテスト96ソースと6,144語、通常テスト192件と24,576語を照合した。[実機の内訳](../experiments/metal-compile/README.md#standard-set-on-the-iphone-17-pro-max)
+
+当面、本編のライブラリ生成は従来方式を継続する。以前のbuild 13で1,870.729 msのフレーム停止に描画側の生成待ち1,808.043 msが重なったことを原ログから再確認した。本編では、すでに配布済みのbuild 14の「描画の準備待ちを分ける」だけを切り替えて、実プレイ中の100 ms超の停止の頻度と長さを比較できる。今回の比較アプリでゲームのフレーム時間は測定していない。[本編の設定と測定条件](PERFORMANCE_WORK.md#2026-11-17-build14の同一アプリ比較への統合)
+
+**2026-11-18　Metal比較 build 5 の初回利用テスト**
+
+署名済みbuild 5を既存のiPhone向け非公開ページで配布した。最終の[Appleビルド run 10](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afd4913d133a39c4a128a30)は公開コミット `7090f43b`。Xcode 26.6・iOS SDK 26.5で実機向けとシミュレーター向けの両方をビルドし、同梱元の14ファイルを開発コミット `e0351c02` と照合した。Apple側で105検査合格、Linux専用の3検査もWSLで合格。仮想GPUで先読みテストの384語と直列テストの3,072語を確認。開始・非対応結果・再起動復元・共有・結果の表示見本の5画面を目視し、見本が保存済みの結果を書き換えないことも確認した。
+
+HTTPSで取得した122,980 bytesが署名済みファイルと一致した（SHA-256 `986d0cffd24c575e07514c1c12900d5b1f44bca9acc500bb0d7eb8b9d5d7d569`）。署名と配布の操作はいずれも専用アプリが対象。run 8のヘッダー型宣言とrun 9の表示見本のリンク失敗は修正し、各回の原記録は保持した。最終記録は `local/metal-probe-ios-ci/run-10/`。配布時点で、build 5の実機測定結果は未受領。
+
+標準セット1回で、従来方式とMetal 4のそれぞれについて、先読み2件の完了後に描画の準備を依頼する条件と、先読み2件を依頼した直後に発行する条件を各8回測る。全32試行に異なる入力を割り当て、方式の順番と入力の割当を均した。主指標は先読み直後に発行した8回全体の中央値。先読みが実際に重なった件数と、先読み完了後の中央値も表示する。任意の別セットを含む192種類はWindowsのApple公式ツールでコンパイル・リンクでき、build 4の24種類との重複は0件。比較アプリの負荷で得た値と本編のフレーム停止は個別に評価する。[実験の条件と解析方法](../experiments/metal-compile/README.md#build-5-first-assigned-scheduling-comparison)
+
+**2026-11-18　Metal比較 build 4 の実機結果**
+
+iPhone 17 Pro Max（A19 Pro／iOS 26.5.2）で13:59の測定が完走。先読み直後に描画準備を頼んだ16試行のうち4試行では、依頼時に先読み2件がともに進行中だった。API呼び出しから完了通知まで、同じ優先度では従来13.445 ms・Metal 4は7.835 ms、先読みの優先度を下げた場合は従来8.593 ms・Metal 4は7.676 ms。各条件1件で、それぞれ異なるシェーダーの初回だった。もう一方の方式が同じ入力を使った回には先読みが先に終了し、同じ入力で両方式がともに競合した組は0。速さの優劣は保留する。
+
+通常の192回（24,576語）と追加の96要求（6,144語）のGPU出力はすべて期待値に一致した。追加試験のMetal 4タスクは失敗を意図した1件を含む49件で、完了待ちとアプリ側の参照解放を確認した。途中保存は73回すべて成功し、経過を記録する処理の合計はbuild 3の6.48～6.55秒から0.790秒に減少。今回の全体は追加試験を含め1.539秒だった。次回の比較用に、従来／Metal 4それぞれへ先読みあり・なし各8回の初出を割り当てる順序と、既出と重ならない入力を開発機で検算した。[実機集計と次の試験条件](../experiments/metal-compile/README.md#build-4-physical-iphone-result)
+
+**2026-11-18　Metal比較アプリ build 4 の先読み競合テスト**
+
+build 4の配布時には署名済みの比較アプリを既存の非公開ページで提供した。[Appleビルド run 7](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afd2e9ed133a39c4a1282b4) は公開 `4ff4bb84`、Xcode 26.6、iOS SDK 26.5。14入力を開発コミット `881725ac` と照合した。Macで93検査合格、Linux限定の署名異常系3件もWSLで合格。仮想GPUで従来方式の新しい6回・384語と既存24回・3,072語が一致した。開始済みの要求が1件および3件ある場合の停止、意図したエラーの保持、保存と再読込みも確認した。仮想GPU上では先読みとの重なりは0回。署名済み119,309 bytesと配布時にHTTPSで取得した全バイトのSHA-256は `2e640b404492b1d6f4066549732174e933e2e399d9b332da117fc8ffdea1ff0b`。Apple側の記録は `local/metal-probe-ios-ci/run-07/` に保存した。
+
+通常の192回を保ったまま、先読み2件の直後に描画用の準備を1件依頼する比較を追加した。計32試行で、同じ入力を使って、先読みを終えてから依頼する場合と、先読み中に依頼する場合の待ち時間を測る。APIを呼び出した時刻と完了通知の時刻から実際の重なりを記録し、各ライブラリで64語のGPU出力を照合する。2種類の優先度設定には別の入力群を使うため、方式と重なりの有無は同じ入力群で比較する。中間保存は通常完走時73回を想定し、停止判定は操作単位で維持した。新結果は2MiBの既存上限内で空白を省いて保存する。WindowsのApple公式ツールで新規24ソースすべてのコンパイル・リンクと、意図的に誤らせた1件の拒否を確認した。実機の優先順位判断に使う場面と公開事例は[調査記録](../experiments/metal-compile/MOLTENVK_PLAN.md#when-metal-4-could-shorten-a-skyrim-frame)にまとめた。
+
+**2026-11-18：build3の実iPhone結果2回を照合し、384sampleの正しさと記録負荷を確認。** 12:09（従来方式先行）／12:10（Metal4先行）、A19 Pro／iOS26.5.2。両BuildInfoは公開`af678912`のrun6 IPAと全文一致し、12入力hashもmain `4e91844`と一致。12case×4方式×4巡の順序・各系統の先頭担当均等を確認した。通常描画／computeの全49,152語とcontrolの320語が検証済み正解値と一致し、意図的な不正source拒否と非同期の結果保持も期待どおり。保存は各587回すべて成功した。原本は`private/metal-probe-results/20261118-120936/comparison.json`（1,178,097 bytes、SHA-256 `4cc189de0c829fc23e5152f80f497245924808cb274c8077ec483d3e9def5f1f`）と`20261118-121012/comparison.json`（1,177,985 bytes、`2e61262da03a7f81c39e892b14d6e6f79fe917fd8bc45231eb2e490ea5b7f27e`）へ無変更で保持。
+
+**今回の自作負荷でもMetal4の速度優位は未確定。** 通常192件のlibrary／特殊化／描画PSO／compute PSOの壁時計合計は740.473878ms→26.471767ms。各case先頭12件を除く180件は23.753751ms→24.203348msでほぼ同程度。最初の1件だけ208.995624ms（library128.686500ms）で、従来方式とprocess／compilerの最初の利用が交絡する。他の初回caseは同系統で4方式とも近い範囲だが、意味的な変種が異なるため同一入力の比較ではない。2回目は同じsource／optionsを経験済みで、OS cache未制御。複雑な系統では既存PSO2段の合計が約53msを占め、このprobeとゲームで観測した長いMSL待ちは負荷の内訳も異なる。
+
+全体7.530080084秒→6.751027292秒のうち、snapshot生成＋同期callbackが6.548656005秒→6.480626761秒（86.97%→95.99%）。途中保存4.730736542秒→4.635900241秒はcallbackに内包し、検証・JSON処理・lock・I/Oの複合値なので二重加算やdisk時間への断定はしない。initial／final保存と最終返却snapshotはこの集計に含まない。各386環境観測はthermal0・低電力OFFで、観測footprint最大84,083,536／68,879,256 bytes。長時間の熱・瞬間ピーク・並列競合は未検証。次は途中記録をまとめても全sampleの最終保存・停止確認・中断復元を保つ設計と、実Metal4のMRC寿命／task終了・並列競合・製品option同値の独立検査を進める。本体採用はそれらを通した後の既定OFF比較とする。今回は原本の検証・分析・記録のみで、再ビルドやSkyrim本体の変更は行っていない。
+
+**2026-11-18：初回担当を分散するMetal比較build3の署名・非公開配布を完了。** 自作3系統×4個の意味的な変種を用意し、各系統で4方式が最初の担当を1回ずつ受け持つ。系統番号も順序に加えてvariant番号との固定対応を崩し、各case内の4巡も維持する（計192sample）。実際の整数式・定数・入力seedが変わり、コメント変更だけで新規性を主張しない。OS cacheは制御せず、異なる変種の単発値で速度優位を確定しない。schema3にfamily／variant／case先頭APIを記録し、画面は系統ごとの最初の準備4区間合計を表示する。
+
+snapshotのJSON生成と同期進捗callbackを別区間で記録し、hostの途中保存時間はcallbackに内包される値として分離した。最終結果には完了済み進捗処理の累計を入れ、initial／final保存と返却用最終snapshotは対象外と明記する。失敗時の時間記録・途中復元・完成済み結果の保護は維持。Windows Metal6.2の12case／24compile-linkは警告なし（`local/metal-compile/phone-workloads-windows-04/`）。WSLの正解値24組・入力感度・先頭担当／全位置均等はnormal／ASan+UBSanで成功、梱包15・署名23・UI判定6検査も成功。独立レビューで実装上の未解決指摘なし。
+
+[phone run6](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afd114ed133a39c4a127ae5)は公開`af6789125074ce3eda34e5eb02908a63877002ef`で成功。Xcode26.6／SDK26.5の64検査はskipなし。入口5case、保存10caseとCPU oracleの通常／ASan+UBSan検査が成功し、native stderr12fileは空。Apple Paravirtualのlegacy Metalで12case×通常／変更入力の24回、計3,072語がCPU正解値と一致し、全caseで入力変更による出力変化も確認した。ARM64実機用platform2／Simulator用platform7・build3・5ファイルを照合し、同梱12sourceはmain `4e91844c190530d1746451f067890ecb98641918`とbyte一致。Simulatorでは完了checkpoint各1件、snapshot 1.087167ms・callback 3.440958ms・内包store 3.360875msの記録とinitial／final除外を確認した。これは実iPhoneの192sampleやMetal4性能の証明ではない。
+
+開始・非対応結果・再起動復元・共有の4画面を目視した。原artifactの`visual_review_pending=true`は変更せず、この後続確認を記録する。証拠ZIPは`local/metal-probe-ios-ci/run-06/`、1,909,423 bytes、SHA-256 `5483b9916a0a68259bedeb374f205add6ff0576118561455780c2796850ccef1`。未署名IPAは75,017 bytes、`71a5d40e26bd2ccbad2e8dbbaf958b160ced602fbb3c66047f80cc153c1f7203`。同じ専用profile・証明書で署名し、暗号検証と作業用key削除を確認。署名済IPAは`private/metal-probe-signing/run-20261118T025256Z-ec8ebd8a8d/MetalProbe-signed.ipa`、89,640 bytes、`ece5572607e8be9c058d6fe3fe2122202e9947e3612c2423637a653486d7ba27`。既存の非公開`/metal-probe`だけを更新し、HTTPS page／manifest／全IPAのhash一致、loopback無認証404を確認した。他3route・Funnel無効を維持し、実配布ページの390px幅light／darkを目視した。配布時点では実iPhoneのインストール・build3計測は未確認だった。その後の2回分を冒頭に記録した。Skyrim本体には未接続。
+
+**2026-11-18：build2の実iPhone比較2回を受領し、96sampleすべての正解値を確認。** 11:19の従来方式先行と11:20のMetal4先行は、同じA19 Pro／iOS26.5.2で正常完了した。公開`19adfba`のBuildInfo・同梱12source hash・3負荷の入力／設定・実行順を照合し、描画／compute計12,288語は検証済みCPU正解値と全一致。保持検査の成功4件と意図的な不正source拒否12件も期待どおり。原本は`private/metal-probe-results/20261118-111958/comparison.json`（286,847 bytes、SHA-256 `862f8544ca32363f8c7e85b580e43b78a6826627d5268dace4d078c1156151fd`）と`20261118-112019/comparison.json`（286,960 bytes、`33bb91d2a9808d8ab17dec5f2f54885075b3736493b5337c05914d674b49a44e`）に変更せず保持した。
+
+**大きな初回準備を観測したが、Metal4の速度優位は未確定。** 1回目の各負荷先頭はすべて従来方式で、library／関数特殊化／描画PSO／compute PSOの合計は301.300／33.300／91.523 ms。この3件で同runの4区間合計の96.71%を占める。以後45件の合計最大は1.182 ms、2回目48件の最大は1.603 msだった。各位置への割当は均等でも、初回の担当方式は均等ではなく、Metal4先行の2回目も同じsourceを経験済み。短い反復中央値の優劣も一貫しないため、初回生成の高速化・ゲームのframe gap改善は主張しない。
+
+全体elapsedは2.522秒→4.671秒に増えた一方、4区間合計は440.617 ms→42.261 msに減った。測定外には進捗snapshot／保存、GPU処理、control検査等があり、残差を保存時間やMetal4の遅さと断定できない。全196個の通常sample境界／run境界観測はthermal0・低電力OFFで、長時間の発熱・並列競合の証明でもない。次の最小比較は、複数の新しい自作caseで最初の担当方式を均等にし、進捗snapshot／保存時間を別計測する設計とする。並列要求と実Metal4のMRC寿命は引き続き独立した未完了項目。今回の作業は原本検証・分析・記録のみで、新build・製品設定変更は行っていない。
+
+**build2の配布時点の記録。** 分岐演算・依存する表参照・連続する混合演算の自作3種類を追加し、各4方式×4巡の計48sampleで実行順の各位置を均等にした。入力bufferとCPU側の正解値を固定し、描画／compute各64語を照合する。初回観測と再測定は分けて記録するが、OS cacheの冷温は制御しておらず、整数演算の自作負荷をSkyrimの実shaderや性能改善の証拠には扱わない。元の小さなfixtureと失敗・保持検査は維持し、製品経路には接続していない。
+
+Windows Metal6.2で3種類すべてのcompile／linkが警告なしで成功（`local/metal-compile/phone-workloads-windows-03/`）。最初の予約語に関する構文エラーと、修正後の未使用関数警告はrun01／02に保存し、名前変更と対象case限定で解消した。WSLの梱包12検査、専用署名22検査と、正解値・入力感度・実行順の通常／ASan+UBSan検査も成功。
+
+[phone run5](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcfca5d133a39c4a1274b1)は公開`19adfba`で成功。Xcode26.6／SDK26.5の関連59検査はskipなし、native stderr12fileは空。Apple Paravirtual deviceのlegacy Metalで3種類×通常／変更入力の6回、計768語の描画／compute出力がCPU正解値と一致した。これは仮想GPU上の検証であり、Metal4や実iPhoneのbuild2実行ではない。ARM64実機用／Simulator用を別々に生成し、同梱12sourceはmain `57b800a`とbyte一致。開始・非対応結果・再起動復元・共有の4画面を目視した。結果画面の一時的なシステム通知は復元画面では消えており、内容を確認できた。原記録の`visual_review_pending=true`は変更せず、ここに後続確認を記録する。証拠ZIPは`local/metal-probe-ios-ci/run-05/`、1,956,852 bytes、SHA-256 `7c0f070425324f86fc184a68e176ff9f9085128d3b32b2b5c7b60cd89f09ec78`。
+
+同じ専用profile・証明書でbuild2を署名し、暗号検証と作業用keyの削除を確認。署名済IPAは`private/metal-probe-signing/run-20261118T012351Z-a95e13d8d6/MetalProbe-signed.ipa`、85,754 bytes、SHA-256 `f5b611c5a57ff1f34f3378fcd4d293a132917c41764815ae20e74cb56edf77a7`。既存の非公開`/metal-probe`だけを更新し、実HTTPSのpage／manifest／IPA成功と全転送hash一致、無認証404を確認。既存の他3routeとFunnel無効を維持し、実配信ページを390px幅のlight／dark両方で目視した。配布時点では端末インストール・Metal4計測は未確認だった。その後の結果を冒頭に記録し、性能改善は引き続き未確認。Skyrim本体の更新は行っていない。
+
+**2026-11-18：開始順を反転した2回の実iPhone比較が成功。** A19 Pro GPU／iOS26.5.2で、Metal4先行（08:38）と従来方式先行（08:42）の原本を受領。配布buildの情報・source hash・全設定・実行順・期待出力を再検査した。通常24sampleと保持検査の成功4件、計28回で描画64語・計算16語が完全一致。意図的な不正source拒否は保持検査分も含め12件、保持検査8caseも期待どおり。ログの`wait_timed_out=true`はcallback後の公開を止めた0ms待機で、実コンパイルのタイムアウトではない。原本は`private/metal-probe-results/20261118-083859/comparison.json`（SHA-256 `83a5cbc162f2af38c776c5fad9c17771a075e5bbd3048cd696287798f066acce`）と`20261118-084250/comparison.json`（`5ad4f71b21579144ec00781ae98104d8e6cb8b2844a8624acde8535b947fe69c`）に保持。
+
+**実機でのライブラリ互換を確認し、性能の採否は保留。** 自作1KiB shaderの生成は約0.017〜0.142ms。各回の同期／非同期の中央値は両方とも速さの順位が逆転し、一貫した優位はない。OS cache未制御・各方式3回・直列で、各runは約129〜130ms、熱状態は全観測0。長いcold compile、同時要求、MoltenVKのMRC所有契約、Skyrimのカクつき改善は未検証。次は複数の複雑な自作shaderで実行順を均等にした直列比較、その後に並列負荷と実Metal4のMRC寿命を別々に検証する。今回の変更は記録と計画のみで、再ビルド・ゲーム本体・既定設定の変更はない。
+
+**実機結果受領前のビルド・画面・署名記録。** [phone run4](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcdebdd133a39c4a126be4)は公開`9af993d`。Xcode26.6／SDK26.5で実機ARM64とSimulatorを警告なしで別ビルドし、関連56検査がskipなしで成功。native入口4caseと保存10case（通常／ASan+UBSan各実行）も成功、native stderrは空。iPhone17 Pro Max Simulatorで開始・非対応結果・再起動復元・JSON共有の4画面を実際に表示して目視確認した。元記録の`visual_review_pending=true`は改変せず、本項に後続確認を記録する。Simulatorは明示的に非対応を返し、GPU／Metal4／実iPhone成功flagはfalse。自作fixture・build情報・設定・描画64語／計算16語の一致を記録する4経路×3回の比較UI、協調停止、結果保存／共有を実装済み。実機向けunsigned IPAは59,756 bytes、SHA-256 `689fa793e51d46a41d1c87c7c584cbbe71b54f282a597daa05c3bcec8845a0e9`。同梱source10fileはmain `3447be4`とbyte一致。原証拠は`local/metal-probe-ios-ci/run-04/`（ZIP SHA-256 `80b71b0e3780e54f6c8eeb2d9813fcad06376d07a5f7806639ad8a03d6e305c9`）。このAppleビルド／画面確認は、実iPhoneでのMetal4動作・性能の証明ではない。Skyrim本体のbuild／save／製品経路は変更していない。
+
+**専用署名を暗号検証済み。** Appleに登録した`org.skyrimios.metalprobe`のprofileと既存証明書・登録iPhoneを用い、追加権限なし（開発用の識別情報のみ）で署名した。署名済IPAは`private/metal-probe-signing/run-20261117T233201Z-d9d6ec7f85/MetalProbe-signed.ipa`、74,013 bytes、SHA-256 `4199fb2d503c55c12dd58534c96a0e25dec8f988046f51f685780136a928b2bc`。Apple CMS／DER／profile、49 code pages／3 resources、append-only変更と元appの一致、作業用keyのcleanupを確認。起動helperの同階層import設定はkey使用前に修正した。その後のWSLのcryptography 41.0.7に`not_valid_before_utc`がない失敗は私有署名run内に保持した。元の検証helperは変更せず、私有隔離Linux依存のcryptography 50.0.2で署名・検証が成功。専用`/metal-probe`の非公開OTAを配備し、実HTTPSでpage／manifest／IPAの200応答、IPA全転送後のSHA一致、無認証404を確認した。追加前後で既存3routeは完全一致し、Funnelは無効。既存のlight／darkページ目視証拠を再利用し、version／size置換後の新しい実配信画面のスクリーンショットは未取得。この配布時点では端末導入・実機実行は未確認だった。その後の受領結果は冒頭に記録。性能改善は引き続き未確認。
+
+**初期の失敗も保持。** phone run1は試験側の`dispatch_sync`がメインthread上で走るため拒否された。非同期workerへ修正しrun2で入口検査成功。run2は実機IPA生成成功後、Simulator SDKがMetal4型を公開しないためpreviewのcompileで停止。Simulatorの実行対象から比較専用処理を除外し、共通の停止・引数検査と非対応結果を維持してrun3で成功した。run3の共有画像は表示途中だったため、表示待ちと説明文を調整してrun4で再確認。失敗／途中画像は`local/metal-probe-ios-ci/run-01/`〜`run-03/`に残す。
+
+**夜間の最終検証run12成功。** [実行run12](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcd2f5d133a39c4a126814)は公開`b8598ac`。Mac全294検査が30.249秒で成功、skipなし、独立10unitも全成功。追加の終了処理モデルは早期／遅延通知の2caseと誤threadでのjoin対照1件を、Mac通常・ASan+UBSan・TSanの各実行で確認し、各stderrは空。記録したfixture2fileはmain `60c3c40`とbyte一致。fake taskのCPU上の引き渡し検証であり、実Metal4 taskの待機・解放の証明ではない。原artifactは`local/metal-compile/mac-run-12/`（620,067 bytes、SHA-256 `f010a97072ea247ed577dd37d068d467b5e73044ac0ebccee0aa8249e48e31d3`）。Windows生成物のMac GPU一致は変更のないrun9証拠を再利用。今夜は隔離実験・検査・文書・手動CIのみ。アプリbuild・端末更新・製品既定値の変更はなく、Metal4対応実GPU／iPhone性能は未確認。
+
+**夜間run11成功：実Metalの保持・並列要求まで確認。** [実行run11](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcce73d133a39c4a126676)は公開`ad5739b`。Mac全293検査が28.289秒で成功、skipなし。独立10unitも全成功。MRC core3caseを逐次／並列、それぞれ通常／ASan+UBSanの別processで実行し、計12caseの元library／NSError保持・通知1回・launch終了後のowner解放、成功8caseの16語GPU出力を確認した。並列要求の設定値3／13は混線せず、sanitizer実行では呼出し復帰前の通知も2caseで実際に観測。両unitのstderr計14fileは空。全体のリーク検証ではなく、警告caseも再実行していない。Windows→Mac GPU一致はrun9の既存証拠を再利用する。原artifactは`local/metal-compile/mac-run-11/`（616,149 bytes）。Metal4実GPU／実taskとiPhone性能は未確認。夜間の変更は隔離実験・検査・文書・手動CIのみで、アプリbuild／端末更新／製品既定値の変更なし。
+
+**run10はCI設定の検証段階で停止。** [実行run10](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afccddfd133a39c4a126642)は公開`f42d762`。Windows生成物を省略した空入力がCodemagicの環境変数要件（1文字以上）に反し、Mac試験は一つも実行されていない。既定値を`none`とし、shell側でその値のみ未指定として扱う。固定hashのlibrary検証は緩めない。前run9の警告未観測も未解決のまま保持する。
+
+**夜間run9：Windows生成物のMac GPU動作を確認。警告条件は未確認。** [実行run9](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcca58d133a39c4a126500)は公開`5e37c51`。Mac全290検査は23.003秒で成功、skipなし。Windows6.2生成の固定自作libraryをMacのApple Paravirtual GPUで読み込み、source／非同期source／Windows生成物の各3回で描画64語・計算16語が完全一致した。実Metal MRC試験は正常・不正source・通知延期の3caseがnormalで成功したが、4case目の`#warning`で期待したNSErrorが通知されず、workflow全体は失敗として保持した。メモリ管理不良と断定せず、警告検査を厳密な任意指定へ分離し、core3caseのnormal／ASan+UBSanと別設定の同時要求を次に実行する。原artifactは`local/metal-compile/mac-run-09/`。Metal4実GPU・iPhone改善・製品適用の証拠ではない。
+
+**実MetalのMRC保持とWindows生成物のGPU比較を準備。** `mrc_metal.py/.mm`は実legacy非同期APIで成功・不正source・通知延期・警告付き成功の4caseを検査し、元library／NSErrorと自作ownerの寿命、成功時16語readbackを要求する。通常／ASan+UBSanの2実行で、実timeout／Metal4 task／製品適用は対象外。`windows_fixture.py`は既にWindows6.2で作成した自作macOS15／MSL2.4 library（11,352 bytes）の固定hashだけをmanual build inputから受け入れ、base64を子envやlogへ渡さず既存9sample GPU比較へ接続する。binaryはGitへ入れない。WSL全290検査が50.223秒で成功、Darwin TSanのみ1skip。新2unitの実Mac結果は未確認。公式Codemagic schema、公開source検査、shell構文確認済み。
+
+**夜間検証run8成功：Foundationの実MRC境界を確認。** [実行run8](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcc678d133a39c4a126380)は公開`d7bce92`、1分46秒。Mac全261検査は23.423秒で成功、skipなし、独立8unitも全成功。新MRC fixtureはnormal／ASan+UBSan／TSanの各binaryで7caseずつ成功し、呼出し元pool終了後の保持、早期／遅延通知、Objective-C例外前後の結果維持・通知1回・終了後の解放を確認した（3.557秒）。追跡は自作owner・仮task・tokenであり、Metal task、任意のMTLCompileOptionsコピー、製品適用の証明ではない。原artifactは`local/metal-compile/mac-run-08/`。Metal4対応実GPUとiPhone性能は未検証、アプリbuild／端末更新／製品変更なし。
+
+**手動メモリ管理の実Mac検証を準備。** 新しい`mrc_lifetime.py/.mm`はFoundationのみを使い、呼出し元autorelease pool終了後の入力保持、通知前後のnil／Objective-C例外、警告、破棄要求後の遅延通知を7caseで確認する。normal／ASan+UBSan／TSanを別binaryで実行し、owner・仮task・tokenの収支と通知1回・終了後の破棄を検査する。制御12検査は成功したが、Mac実行はまだ未確認。実Metal task、一般的なMTLCompileOptionsコピー、製品適用の証明ではない。既存の無料・自作shader専用workflowへ追加し、アプリbuild／端末更新は行わない。
+
+**特殊化archiveと非同期終了の追加境界を検証。** Windows6.2の`archive_offline.py --specialized`は同一自作kernelのuint定数7／11から12,368／12,384 bytesの異なるarchiveを生成。一方、必須定数を省いたnegative controlは警告＋exit0＋archive生成となり、期待した拒否を実証できなかった。全体を`failed`として正例・失敗原logを保持し、成功へ読み替えていない。新22制御検査はこの挙動を含めて成功。追加のC++ launch/unwind 5caseは通常・ASan/UBSanで成功し、通知後nil／例外と通知中の終了で結果の維持・通知1回・破棄延期を確認した。WSL全249検査成功、Darwin専用TSan1skip。Metal4実行、Objective-C所有規則、iPhone改善の証拠にはしない。`ARCHIVE_PLAN.md`に早期PSO取得でも必要な変換結果・定数型・macro識別・起動時復元の残作業を整理した。
+
+**検証出力の保護を修正し、組込み境界を整理。** `archive.py`／`batch.py`／`runtime.py`で、存在するリンクを新しい出力先として扱う経路を修正。既存・切れたリンクの再現試験と元の証拠ファイル保護を確認した。修正後のWSL全239検査は成功、Darwin専用TSanのみ1skip。Macで確認済みなのはrun7の235検査までで、追加4件は未実行。`MOLTENVK_PLAN.md`に非同期ライブラリ生成、手動retain/release、遅延callback、失敗通知の維持条件を記録。料金ページへの直接移動でログイン画面が出たため一時中断したが、通常のUI移動では認証が有効で、Free残210分を確認した。期限切れという初期判断は訂正。製品コード・設定は未変更。
+
+**夜間検証run7成功：新Metal4 archive probeのMac／iPhone SDKコンパイルを確認。** [実行run7](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcbc20d133a39c4a125fdb)は公開`e0bdd02`、1分39秒。235検査が19.639秒で全成功、skipなし、独立7unitも成功。新probeはXcode26.6／SDK26.5でMac executable 73,976 bytesとiOS26 object 85,048 bytesを生成し、両compileのstderrは0 bytes。compile-onlyのnative_reportsは空、GPU／library-free成功flagもfalseを保持した。別のWindows6.2試験では、同じ2kernelと単一記録scriptからmacOS26／明示g13g用archive 10,032 bytesを28.6秒で生成し、AIRの2関数とarchiveの対象archを確認したが、実deviceを選んだ試験ではない。原結果は`local/metal-compile/mac-run-07/`と`archive-macos26-windows-01/`。Metal4対応GPUでのlibrary省略lookup・旧encoder実行・Windows生成物のruntime読込みは未検証。アプリbuild・端末更新・製品経路変更なし。
+
+**Metal4 archiveのライブラリ省略条件を調べる独立probeを準備。** `archive_metal4.py/.mm`は対応Macの実architectureをoffline toolのqueryで照合し、2つの自作kernelのうち1つだけをarchiveへ記録する。登録／未登録×MTLLibraryあり／なしを各別processで直接lookupし、成功時は旧compute encoderの16語readbackまで要求する。nilケースではlibrary引数自体を拒否し、compiler fallbackを持たない。nil lookup拒否はexit3、未対応は78として保持し、内部compileの省略は主張しない。`--compile-only`はMac executableとiOS26 objectだけを作り、shader／GPU処理を行わない。追加21制御検査を含む全235件がWSLで成功（Darwin専用TSan1skip）。既存出力への上書き拒否、予算切れが結果JSON欠落に隠れないことも確認した。新probeのApple SDKコンパイル・Metal4対応実GPUは未検証。製品未接続。
+
+**夜間検証run6成功：同名関数の定数別archive判定と整数macroのGPU意味差を確認。** [実行run6](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcb807d133a39c4a125e73)は公開`c3c12ae`。Macの全214制御検査が18.904秒で成功し、失敗／skipなし、独立6unitも全成功。同名kernelのuint定数index0=7だけを保存し、別processで7のstrict hit、11のstrict拒否、archiveを外した11のfallbackと異なる16語の正解値を確認した。保存archive 5,899 bytesは不変、空／破損入力も拒否。整数macroの`(uint(value), sizeof(value), -1 < value)`はNSNumberとNSString `"4294967295"`がともに`(4294967295, 8, 1)`、明示uintの`"4294967295u"`は`(4294967295, 4, 0)`で、literal・入力buffer・未書込guardも一致した。これは数値への変換が同じでも式の評価が同値とは限らない自作3条件の観測であり、元の型を復元した証拠ではない。legacy runtimeの仮想GPUは`Apple Paravirtual device`／architecture `air64_v27`、Metal4非対応。offline IRはMac上のMetal compiler 32023.883で生成した。原artifactは`local/metal-compile/mac-run-06/`。Windows生成物のGPU実行、Metal4 runtime、iPhone挙動、製品設定同値、性能改善の証明には扱わない。
+
+**WindowsのMetal4アーカイブ生成を再現できる独立検証器を追加。** 自作のcompute／render用MSLから同じIRを作り、公式`.mtl4-json`経由でiOS26・Apple9・`applegpu_g16p`向けを順番に生成する。13制御検査後の実runner1回は12コマンドすべて成功、45.8秒。compute12,704 bytes／render15,600 bytes、対象archは両方g16pのみ。入力・ツール・生成物hash、絶対予算、fresh出力・失敗保持を確認。証拠は`local/metal-compile/archive-offline-runner-windows-01/`。Mac run04で取得したApple公式manualを用いるが、Windowsツールは6.2で別versionのため同一性を仮定しない。Metal4対応実GPUでの読込み・出力一致は未確認。製品未接続。
+
+**夜間検証run5成功：事前生成IRの実GPU出力と、別processでのarchive復元を確認。** [実行run5](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcb290d133a39c4a125c74)は公開`fb225fe`、1分31秒。Darwin TSanを含む全184検査に失敗／skipなし。legacy同期source・非同期source・offline libraryの3経路を各3回実行し、全9回で描画64語＋compute16語が一致した。このoffline IRはMac上のMetal compiler 32023.883で生成したもので、Windows生成libraryのGPU実行確認ではない。制御された非同期結果保持と不正source拒否も通過。別のarchive検査は、保存したkernelを別processでstrict hit、未収録kernelをstrict拒否、archiveを外した明示fallbackで異なる正解値を確認し、空／破損archiveも拒否した。2processともsource library compileは0、IR URL loadは1。保存bytesは復元前後不変。原artifactは`local/metal-compile/mac-run-05/`。これは自作shader／Mac仮想GPUでのlegacy API検証であり、Metal4実行・Windows生成archiveのruntime読込・iPhone改善・製品設定同値の証明ではない。初回と後続はOS cache状態が異なり、時間比をAPIの速度差と解釈しない。無料枠287/500使用、残213分。
+
+**夜間検証run4：全177検査と小数macroの実GPU比較に成功。offline linkerの呼出名を修正して再検証へ。** [実行run4](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcadc2d133a39c4a125ace)は公開`c86a082`、1分51秒。Darwin TSanを含む177検査、iOS object、getter、macro値のGPU readbackが成功した。NSNumberでは元bits `3f800001`→GPU `3f800000`、`80000000`→`00000000`、精密なNSStringでは元bitsを保持した。これは自作2ケースの差であり、ゲームの不具合や精度設定変更の根拠とはしない。legacyの同期／非同期source経路は初回の描画・compute一致を確認したが、offline libraryの関数取得で停止し、全比較とarchive検査は未合格。原因は`metallib`をsymlink実体`air-lld`名で呼び、関数を持たない92 bytesを生成したrunner不備。AIRの関数残存とlibraryのsymbol不在を実ツールで確認し、呼出名保持＋別欄の実体hashへ修正した。原artifactは`local/metal-compile/mac-run-04/`へ保持。無料枠286/500使用、残214分。アプリbuild・配布・製品変更なし。
+
+**夜間検証run3：Macの151検査とmacro token観測は成功。archiveはリンク方法の不備を修正し再検証へ。** [実行run3](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afca654d133a39c4a125829)は公開`5539d19`、Xcode26.6／SDK26.5。Darwin TSanを含む全151検査、iOS object、getter、offline生成が成功した。NSNumberのfloat bits `3f800001`がtoken `1`、負のゼロが`-0`へ展開された一方、NSString／CLIは明示文字列を保持した。GPU値・ゲームへの影響は未確認なので、自動的な精度修正はしない。archive fixtureはclang++のsymlinkをclangへ解決してC++ runtime linkを失うrunner不備で失敗。呼出名を保持する修正と実symlink回帰検査17件を通し、原失敗artifactを`local/metal-compile/mac-run-03/`へ保持した。独立unitの後続macro検査は失敗に巻き込まれず実行できた。次は修正版archiveと明示legacy-onlyのsource／offline readbackを確認する。無料枠284/500使用、残216分。アプリbuild・配布・製品設定変更はない。
+
+実データの追加SPIR-V変換試作は作業用AIの自動審査でサイバーセキュリティ懸念として停止されたため未実施。既存32件の読取り検査と自作Metal検査は別の完了済み範囲として保持する。先の統合検査のheredoc抽出不備も修正し、失敗ログは保持している。
+
+**夜間検証run2：Apple SDK・設定getter・全106検査は成功。Metal 4実行は仮想GPU非対応と確認。** [実行run2](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc9df8d133a39c4a125505)は公開`68a6963`、Xcode26.6／SDK26.5／macOS26.5.1。Darwin TSanを含む106検査にskip／失敗なし、iPhoneOS26.0向けadapter object compileとMac offline生成も成功した。全14件の自作macro値はgetterで保持され、負のゼロも確認したが、元の型やpreprocessor tokenの一致は別問題。deviceは`Apple Paravirtual device`のみでMac2対応・Metal3／4／Apple7〜9非対応。明示MTL4Compiler factoryもnil＋MTLDeviceErrorDomain code1のため通常runtimeはunsupported78、Metal4 library／PSO／GPU比較は未実行。原artifactは`local/metal-compile/mac-run-02/`。無料枠282/500使用、残218分を確認。次は従来Metal APIで可能なarchive再利用とmacro token観測を独立workflowで検証する。アプリbuild・署名・配布・製品設定変更はない。
+
+実入力の次段階として、所有BSAの候補32件（VS16＋PS16、計61,392 bytes）のnative analyze／stage／keyが全件一致した。自作の境界・異常・資源制限28検査を先に通し、各候補をguard page・UBSan・OSのCPU／メモリ／出力上限つき別processで処理した。timeout／stderr診断0、原本hash前後不変。証拠は`private/analysis/candidate-actual-20261118-01/`。最初の自作負例分類の失敗も保持。SPIR-V生成・描画・全候補の安全性・runtime網羅率・速度改善は未確認。
+
+Windows Metal6.2の別の自作compute検査ではiOS18／Apple9向けlegacy GPU archive 13,680 bytesを生成し、要求したg16p／g16g対象を確認した。`.mtlp-json`とIRの組であり、Metal4の`.mtl4-json`とは区別する。逆抽出は空ファイルになったため成功扱いにせず原結果を保持。Windows生成archiveの実GPU読込みは未確認。独立したMac archive fixtureは別processでの厳格hit・未収録kernel拒否・明示fallback・破損拒否を検査し、実行待ち。
+
+**2026-11-18 夜間検証：Windowsの実シェーダー候補48件をコンパイルでき、入力・寿命検査を拡張。Apple SDK検査は成功、Metal 4実GPU比較は環境非対応。** 既存の私有生成MSL48件（803,016 bytes、固有source29件）を、明示したiOS18.0／MSL3.1／safe・precise／invarianceなし／macroなしの条件で順番にcompile・linkし、全件成功した。全件に同じ未使用定数のwarningがある。実ゲームの実効compile設定を採取したものではなく、描画一致・速度改善は未確認。`batch.py`は入力hashと全設定を実行前に検証し、件数・サイズ・時間を制限、失敗証拠を保持する。子compilerのRAM上限を保証しない。Windows制御検査は75件中67成功・POSIX専用8skip。
+
+非同期library生成の独立fixtureを追加した。入力の所有、完了後のlibrary／NSError保持、task完了、意図的に公開を遅らせた場合の待機を検査するが、本物のcompiler timeoutや製品callback寿命の実証ではない。2つのC++寿命モデルは通常／ASan・UBSanで各9ケースと各300回の並行反復に成功し、危険な対照モデルでは予想どおりuse-after-freeを検出。WSLのTSanは開始前のmemory-mappingエラーで検査不可として保持する。先着callbackをfactory返却まで遅らせるモデルは完了時刻を変えるため、そのまま製品へ採用しない。別モデルは完了通知を即時に保ち、ownerの物理破棄だけをlaunch／callback終了まで延期する。実Metal／Objective-Cの寿命契約は別途確認が必要。
+
+所有BSAのread-only調査は122 FXP／10,475候補／6,659種類のstage・SHA1キー（VS309、FS6,350）。固定DXSOとの自作21ケースの消費長・stage・hash照合はASan／UBSanで一致し、原本hashも前後不変。これは完全なFXP文法、ゲームbytecodeのnative安全性、実描画の網羅率を示さない。DXVK v10のread-only索引は実writerを用いる13検査が成功、古い版や破損を拒否する。実機cache本体が手元にないため、実際に何割を事前準備できるかはまだ算出しない。詳細は実験READMEとignored証拠。
+
+Macの自作shader比較専用workflowを追加し、[最初の実行](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc8dd3d133a39c4a124e69)を公開`7985e6f`で1件だけ投入した。run1は1分6秒で終了。37制御検査・Mac向けoffline 3回・Xcode26.6／SDK26.5でnative compileが成功したが、macOS26.5.1上のdefault deviceがMetal4 family条件を満たさずexit78（unsupported）。元reportにdevice名／device不在の区別がないため診断を追加する。実GPU比較は成功扱いにしない。原artifactはlocal/metal-compile/mac-run-01へ保持。無料枠内、署名・ゲーム入力・アプリbuildは含まない。次のfixture版は同workflow内で実行期限と非同期検査を追加する。アプリ本体・標準設定・端末・セーブは変更していない。
+
+**2026-11-18：Windows公式Metalツールを導入し、iOS／macOS向けの事前コンパイルを確認。** 本人が取得したApple署名済みMetal Developer Tools 6.2をignoredの専用フォルダへ導入した。同梱READMEはXcode26.2向け、実compiler／linkerは32023.850。installer・launcher・実compiler／linkerの署名がすべて有効で、hashと導入情報を`local/metal-compile/toolchain-6.2.json`へ保持。初回の実行で言語指定`metal2.4`が拒否されたため、MSL1／2は対象OS付き、3以降は共通表記へrunnerを修正し、関連6検査（12条件の言語指定回帰を含む）が成功した。自作MSLからiOS18.0向け／macOS15.0向けを各3回生成し、全回でAIRと11,352 bytesのmetallib生成に成功、stderr診断なし。各target内の3回のhashは一致し、target間の生成物は異なる。成功結果は`local/metal-compile/windows-ios-6.2-02/`と`windows-macos-6.2-01/`、先の未導入・指定拒否の失敗結果も保持する。
+
+`experiments/metal-compile/`には、Macで従来API／MTL4Compiler生成のlibraryを既存のfunction特殊化・render／compute PSOへ渡し、固定GPU出力を照合する独立fixtureも用意済み。Windows側の事前コンパイル成功は、Metal 4 runtime・実GPU readback・iPhone性能の成功ではない。Apple側のnative検査とSDK／配布版の整合確認が残る。準備段階のWindows制御36検査とWSL終了処理3検査は成功済みで、Windows runtime拒否の原結果も保持。アプリ・MoltenVK本体・設定・CIには接続せず、アプリbuild／配布も行っていない。３AIの共通準備案は既存私有一覧の10,475 SM3候補と48件の過去の変換例を再利用できるが、安全な候補抽出と実機`.dxvk-cache`との照合が必要。候補数を初回描画の網羅率とは扱わず、次はApple側の比較→本人所有MSLの代表例→共通準備の小規模試作へ進む。詳細は [比較実験](../experiments/metal-compile/README.md)。
+
+**2026-11-17：build14のApple検証・署名・本人向けOTA準備を完了。** 実Metalで検証済みのstate別生成調整を、同じアプリの起動時設定「描画の準備待ちを分ける」に接続した。既定OFF、既存5設定のIDと保存値は維持。OFFは従来のshader組ごとのmutex、ONはstate全体とrender-passが同一の要求だけを合流する。ready-hitには追加clock／待機を入れず、Compute経路・guest・メモリ順序・画質は変更しない。新しい待ちは`graphics_state_wait`として従来の`graphics_compile_wait`と分離し、診断送受信／解析器も対応。同一binaryのOFF／ON native検査、ASan/UBSan、TSan、実graphics／manager全translation unitと従来adapterの回帰検査に成功。独立reviewにblocking指摘はない。両手ボタンも今回のアプリに含むが、iPhoneでの起動・入力・性能比較は未確認。
+
+[Mac run37](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc250fd133a39c4a121e84)は公開`1920180e71177b62eee06c21e3b226c26d67be77`で成功（6分43秒）。211ケース中206成功・環境依存5skip・失敗0、同じproduction binaryのOFF／ONで実Metal8ケースのreadbackが一致。既存guestと共有ABI3headerの一致を確認してローカル組立し、署名済み58,724,457 bytesの暗号検証・既存profileのApple chain／登録端末／AppID対応・非公開HTTPSの全転送hashを確認した。旧版・他routeを保持し、インストール操作は本人のiPhoneで行う。初回の組立拒否はhelperのbuild13固定をbuild14へ修正し、別版拒否を含む7検査で確認した。原logは保持。無料枠273→279/500（残221分）。build13からはcache namespaceが変わるので、新版の初回だけで優劣を判断せず、build14内で再起動を挟んでOFF／ONを比較する。性能採用とゴール③は未完了。
+
+共通reader/writerの部分解析から、元guestのCAS／Sleep呼出しを観測する独立試作を完成。最初のCAS失敗後から取得成功後までの区間と実際のSleep引数を記録し、元の生成関数との比較31ケースがASan/UBSanで成功した。CPU状態・フラグ・x87／SIMD・stack／TEB／lock結果を比較し、時計取得は競合したepisodeの開始／完了だけに抑えた。最後のSleep差分も独立review済み。ゲーム内部ロックの置換やnative overrideは行わず、最終guest identityとの結合・thread／activity寿命・有界数値sink・Apple／実機負荷確認が残るため、build14には入れない。
+
+診断の事前送信では、既存受信bundle内に置かれた解析フォルダが検証拒否の原因だった。解析3ファイルをhash維持で別のprivate解析領域へ移し、元受信ログを保持したまま復旧。新しい数値categoryの非公開HTTPS受信・再送・認証拒否・内容競合拒否を合成データで確認した。これは実機計測結果ではない。
+
+**2026-11-17：ホスト側2試作の実Apple API検査も完了。** [専用Mac run2](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc103c95b45c83b9742a7f)は公開`8e7c3b73afd6e5eee8db4e226d7f377327353a0f`で成功（57秒）。通常12検査とTSan2検査はskip／失敗0。generic blocking lockの排他・例外解除・待ちCPU計測、dxvk-csのQoS要求とreadback、完全CS translation unitを実Apple環境で確認した。意図的に保持した3回の待機ではCPU使用は83.081416→0.024416 msと減ったが、wallは136.016→138.603 msで短縮していない。これは人工競合でのCPU消費差であり、ゲーム性能・公平性・発熱の証明ではない。先のrun1のSDK指定／一時root fixtureの失敗と原ログも保持。試作は本番未適用、FPS0比較・iPhone採否・ゴール③は未完了。
+
+**2026-11-17：state別生成試作のApple検証が完了。** [Mac run36](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afc0bf295b45c83b97428cb)は公開`ac49eaa17636eb13a9026457b6904ded704d5e69`で成功（M2、Xcode26.6／SDK26.5、7分30秒）。実Metalで8ケースのRGBA32Float readbackが従来方式と一致し、意図したMSL失敗のcached-null、例外再試行、試作の公開時確保失敗とPSO参照解放を確認。native通常・ASan/UBSan・TSanも成功。全56回のunittest実行／209ケースは204成功・環境依存5skip、失敗0。公開iPhoneOS hostもリンク成功し、両手ボタンはAppleコンパイルまで確認できた。ゲーム実行・iPhone改善・新IPA導入は未確認。試作は本番adapter未接続。原失敗run34／35と成功artifactsは保持し、run36の無料枠は263→271/500（残229分）。
+
+**同日：添付scannerと生成物の調査を完了し、ホスト側2試作を分離。** scannerは9検査後に所有入力へread-only実行。実生成C／既存ARM objectで一部x87 storeのST/FULL fence欠落を確認したため、LIFT_TSO等は維持。共通reader/writer同期群の取得・解放・再帰・待機境界を次の観測対象とする。generic SpinlockのApple blocking版とdxvk-csの明示QoSは、別stageへ個別適用する独立試作を用意しPC検査／TSanを通過。Apple API確認用の小さな手動workflowを追加したが、本番設定・描画・署名済みアプリへは適用しない。FPS cap0の実機ログは未受信で、cap60との比較は保留。詳細はPERFORMANCE_WORK.md。
+
+**2026-11-17：state別生成試作のApple検証を実行中。** 実際の調整処理・packed state・破棄処理に自作Metal driverを接続する独立fixtureを追加した。8ケースのGPU readback、実shader生成失敗、例外後の再試行、公開時の確保失敗と参照解放を従来方式と比較する。Mac run34は固定headerの新しいClang警告で停止し、header内だけに警告例外を限定。run35は通常7検査・native ASan/UBSan／TSanを通過したが、失敗を期待したinterpolant不一致がMetalに受理されたため、負例を実MSLコンパイルエラーへ修正した。元の失敗を保持し、GPU検査完了／iPhone改善とは扱わない。公開host workflowに検査を接続した一方、試作自体は本番adapterに接続していない。ゲーム入力・生成guestはCIへ送らない。
+
+**2026-11-17：描画条件ごとに生成待ちを分ける試作を実装・PC検証。** 本人の依頼で`experiments/dxvk-state-cold/`に独立試作を追加。graphics pipelineごとに、実際のstate全体と正確なrender-passポインタが一致する要求だけを合流させ、異なる条件の生成を並行して進める。完成済みhit経路・GPU生成本体・state照合は維持し、例外時の待機解除、公開前の確保失敗時のhandle破棄、再入callbackとvector拡張も検証した。実DXVKのpacked state／instance／lookupを使う通常7検査、native比較のASan/UBSan・TSan、graphics／manager全translation unitの構文検査に成功。意図的に一方の生成を止めた比較で、従来は別条件も停止、試作は先に完了することを確認した。これは順序の確認で、iPhoneの速度向上率ではない。
+
+本番adapter・設定・キャッシュidentity・CIは変更せず、新しいiPhoneビルドも作成していない。既存の並列化／必須優先比較は引き続き利用できる。試作を本番へ組み込む前にはApple SDK／実Metalの描画・失敗確認と、frame gap・メモリ・発熱の実機比較が必要。性能改善の採用判定とゴール③は未完了。詳細はPERFORMANCE_WORK.mdと試作README。
+
+**2026-11-17：両手操作ボタンを追加（未ビルド・未導入）。** 本人の操作要望に対応し、1本の指でLTとRTを同時入力する「両手」／`L+R`を実装。独立した入力源として合成し、別指のLT／RTを解除せず、既存の短いタップ保持・長押し、取消時の即時解除を確認した。移動スティックを含む既存配置IDは維持し、新ボタンの位置・大きさ・不透明度も既存設定で変更できる。入力／上流適用6検査、実CのASan/UBSan・TSanに成功。Apple SDKビルドと実機での表示・両手詠唱は未確認で、配布中のbuild13にはまだ入っていない。
+
+**2026-11-17：追加の通常プレイ診断で、描画を待たせるshader競合を確認。** 新送信のpreviousは前送信と同一、currentは974行の完全な続きなので、新しい再起動比較と数えない。追加68,032 frame試料に100 ms超57件、最大1,870.729 ms。後半には必須描画のcold-lock待ち1,410.833 ms、pipeline mutex待ちの重なり合計1,808.043 msを含む停止があり、短い先行送信では見えなかった先読みとの競合が現れた。100 ms超のdraw pipeline mutex待ち10件はすべて取得後も要求stateが未生成のCREATE結果。module別cold生成とstate間の生成調整を次の優先候補とするが、既存比較設定の一律ONや改善済みとは扱わない。
+
+追加57件はshader重なり19、保存候補window9、復帰直後resource／fence1、50 ms以上の記録workと重なりなし28。追加音声15区間は採取frame gapと重ならず、Presentの長い保持はshader依存待ちと重なる包囲区間なので別原因として加算しない。低電力／memory warningは0、thermalは0〜1。約51分のinactive区間は通常プレイ時間から分離した。厳密な戦闘再現は不要とし、本人の「同じ場所・敵・魔法の状況を作り直せない」という回答を踏まえ、通常プレイ診断を続ける。詳細はPERFORMANCE_WORK.md。性能修正の実機採否とゴール③は未完了。
+
+**2026-11-17：build13の実iPhone診断を受信し、残存停止を分類。** 1送信に含まれる直近2起動のmanifest・完了receipt・bundle・sessionのbyte数／SHA256／行数／許可schemaを検証した。両方build13、19設定が一致し、shader比較5項目は全OFF。解析invalid／重複とwork／lockのdropは0。100 ms超gapは先の記録6件（最大405.881 ms）、後の記録8件（最大777.984 ms）。全14件は記録されたinactive区間の外だが、ロード／メニューと操作中を厳密には分離できない。本人は2〜3回のプレイと送信を報告し、受信できた独立起動は直近2件。後の回ではホワイトランで衛兵に魔法を使った可能性を本人が報告したが、個々のgapとの対応は未確定。
+
+前の回で6,916,077 bytesを保存し、後の起動が同量を受理してroot MSL371件を復元（合計9.487 ms、最大0.065 ms）。その後44件の追加root生成があり、必須描画の5回のMSL待ちが4つの長いgapと重なる。最大777.984 ms内の2 pipeline区間の和集合は680.548 msで、内包MSL時間を二重加算しない。同じ窓の変換／dispatch開始は短く、draw cold-lock待ちの観測はなく、この4件を共有lockの巻き添えとする根拠はない。後の回の7,792,718 bytes保存も成功し、保存消失を原因とする見立ては支持されない。
+
+新しいlock観測では、音声submit保持／mixer待ちの全14区間は採取した全32件の50 ms超gapと重なりなし。COM／shadow／BCに閾値16.667 ms以上の完了標本なし。全58 device観測はthermal0／memory warning0。音声・資源管理の同期変更や無条件のshader並列化は今回の改善策として採用しない。保存・Present送信待ち・UI pumpと重なる別の停止もあり、100 ms超のうち6件は50 ms以上の記録workと重ならず未帰属。原因不明をguest CPU負荷と断定しない。次は同じbuild13・保存済みcacheで、同じ場所と魔法を再訪して初回生成と反復missを区別する。実機計測版の起動・受信は確認できたが、残存停止の改善とゴール③の採用判定は未完了。今回の分析で新build・署名・設定変更は行っていない。
+
+**2026-11-16：build13のApple検証・署名・非公開OTA準備を完了。実iPhoneの比較待ち。** [Mac build33](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afae47b90e83b09c4faf449)は公開`b44c19d8e3935d0102e2f01566d07dd810a8f062`で成功（M2、Xcode26.6／SDK26.5、12分35秒）。52回のunittest実行／197ケースは192成功・環境依存5skip・失敗0。新しい描画／音声／COM計測とTSan再実行7件、実Foundation送信・Core Foundation／Metal検査を通過し、iPhoneOS shader8件とMac GPU20ケース／80値readbackも成功。Metal Toolchain不足の初回失敗は既存の取得・再試行で回復し、原logを保持。warning526件はbuild32と同じで、新規分類なし。これはiPhone実行の証明ではない。
+
+同じprivate guestを、3共有ABI headerのLF正規化後一致を確認して再利用。署名済みbuild13は58,721,962 bytes、SHA256 `ca2a3e2123f9cdab9c88c6650a02305a9a3a21b47097d56997da6bf2567e72b8`。既存profileのApple chain・AppID・登録端末一致と2 images／39,457 code pages／4 resourcesの暗号検証を確認した。非公開HTTPS manifest・全IPA転送hash・認証なし404を検査し、他routeと旧版を保持。PC常駐受信processを更新し、合成`IOS_LOCK`のHTTPS送信・重複再送・異なる内容の拒否・解析を確認した。合成送信を本人の実機ログに数えない。無料枠239→252/500（残248分）、subscription変更なし。今回の追加は原因を判別する計測であり、性能改善やiPhoneでの署名受理・インストール成功は未確認。本人には更新後、全5比較設定OFF・同じsave／画質／動作で初回と再起動後の2回を試し、診断送信するよう依頼済み。
+
+**2026-11-16：Issue #2に沿う残存カクつき改善のゴールを本人承認で開始。** ①追加済み計測をApple環境で検証し、診断受信processを更新してbuild13を非公開OTAへ用意、②初回と再訪を分けた同条件の実機ログでCPU処理・lock待ち・素材読込み・Present待ちを判別、③寄与を確認した少数の処理を修正して正しさとframe gapを比較する。9件のnative性能候補は未採用で、現iPhoneのhotspotや全面ABI同値とは扱わない。準備時にMac TSan入口のD3D9テストクラス名の誤りを修正した。①のApple検証・署名・配布準備まで完了し、②の実機計測と③の実証済み改善は未完了。
+
+**2026-11-16：残存停止を絞る描画・音声・資源管理の計測を実装（次のiPhoneビルドは未作成）。** D3D9 deviceの実競合とPresentの最外側保持、音声のSubmit／GetState／Flush／mixer等の共有lock、COM registryとshadow／BC後始末を観測する。既存の再帰性・同期方式・保護範囲・音声callback境界を維持し、通常の非競合D3D API／COM lookupには時計取得を追加しない。16.667 ms以上の完了区間は固定16枠へ記録し、満杯時は長い区間を優先して欠落数も残す。送信許可規則・受信検証・frame解析も対応し、所有者は一時点の観測、未完了区間は未確認として扱う。新規17＋関連既存55項目のうちPCで70を確認、Apple専用2項目は未実施。新native計測のASan/UBSan・TSan、実ミキサー132ケースの一致も確認。これは原因を特定するための実装であり、戦闘時の体感改善を実証したものではない。詳細・計測限界・次配布時の受信process更新はPERFORMANCE_WORK.mdに記録した。
+
+**2026-11-16：build12の保存→再起動→復元を実機で確認し、3段階の機能検証を完了。** 新しい手動診断2件のpayload・manifest・sessionのbyte数／SHA256／行数と対応を検証した。先の送信のcurrentは後の送信のcurrentの完全なprefixで、previousも同一なので、独立した4起動とは数えない。前回の8,745,777 bytes保存成功に続き、次回起動で同じサイズを空cacheへの再試行なしに受理し、RESTORE由来MSL458件（合計38.648 ms、最大0.287 ms）を実行した。単なるoffered_bytesだけでなく、実際の復元経路を確認できた。全5実験設定OFFでも通常の同一build cache再利用は有効。日本語テキスト／音声も要求値と適用値が一致した。ログの手動送信・Home復帰・cache保存／次回復元の受入確認を満たしたが、全シェーダーの事前準備、PSOバイナリ永続化、iOSからの終了防止を意味しない。
+
+最新起動は約44分38秒。18回のinactive休止／復帰のうち実際のbackgroundは1回（10.007110秒）で、以後も同一processで約43分14秒継続した。GPU退役は全成功（最大39.852 ms）、期限未達／失敗eventは0、音声休止／再開呼出しは各18回。全527 device観測でthermal0／memory warning0、最小headroom3,954,193,568 bytes。音声呼出しの記録だけを可聴出力の証明とは扱わない。
+
+**戦闘時を含む残存カクつきは別の未解決課題。** 100 ms超gapはhistogram75件、区間を採取できた67件のうちshader処理との重なり21件・保存候補windowとの重なり6件・50 ms以上の記録workとの重なりなし40件。67件はいずれも記録されたinactive区間と重ならないが、ロード画面／ゲームメニューとの厳密な分離ではない。最大2,152.840 msでは必須描画のpipeline／cold-lock待ちと先読みroot MSLが連続し、+27〜29分にはshader重なりのない最大978.746 msも残る。stall枠のdrop27件があり、記録のない仕事を除外できない。生ログと解析はignored private内に保持。製品code・設定・画質・ゲーム／saveは変更せず、追加buildも行っていない。詳細と次の比較条件はPERFORMANCE_WORK.md先頭。
+
+**2026-11-16：所有者向けのセルフビルド導線を公開し、Mac helper検査を完了。** 既存公開リポジトリのactive branchを入口に、英語READMEと`BUILD_YOUR_COPY.md`へ、所有英語LE入力の準備・生成・Apple host/guestビルド・本人署名・Data転送・初回確認をまとめた。PC環境未定の友人には、Windowsでの入力準備が一度必要で、その後Macを使う現時点の手順を明示する。既存の固定PCパスを除いたguest compiler、入力／ABI結合を検証する組立、元Dataを変更しないallowlistコピー、Mac keychainによる署名helperを追加。署名済みIPAやゲーム由来データ・本人の診断pairingは公開しない。
+
+WSLの新規4suite／47ケースは45成功・Apple専用2skipで失敗0。Windows LLVMの実合成guestもARM64 iOS18向けにstrict link成功し、所有入力の読取り専用前提検査も成功。[Mac helper検査1](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa430990e83b09c4fac6ad)は公開`6e7f567735b0bed1c0c3b90bc1925ba2281555c5`で成功（M2、Xcode26.6／SDK26.5、35秒）。47ケースは46成功、case-sensitive FS専用1skipはWSLで成功済み。実SDKによるARM64 iOS18合成guestのstrict link・libSystem import・export・load-command確認と、実codesignのローカル署名／entitlement読戻しを含む。後者の`-`署名は端末配布用証明書ではない。実ログはignored `local/self-build-mac-20261116-01/`へ保持。無料枠238→239/500（残261分）、subscription変更なし。公開READMEのPC／390px表示と内部リンクを確認した。新しい全512TU guestのMacビルド、正規profileによる新helper署名、初見利用者の一連の手順、iPhone 15 Pro Maxの起動・性能は未検証。実アプリbuild12の追加ビルド・更新は行っていない。
+
+**2026-11-16：build12の実iPhone診断を初受信し、Homeからの復帰とcache保存を確認。** 本人の手動送信でbuild12の今回ログとbuild11の前回ログを受信し、受信manifestと各sessionのbyte数・SHA256・行数が一致。今回591 timing／165 context／9 stall記録は解析エラー・重複・記録枠欠落0。非アクティブ化からの休止／復帰は3回で、GPU退役31.424／3.621／37.339 msは全成功。実際の背景移行1回は20.669837秒後に同一ログ内でACTIVEへ戻り、以後約111.9秒の描画継続を確認した。背景境界より748.758 ms前に休止済みで、期限未達event5・失敗event6は0。音声休止／再開呼出し各3回を確認したが、音が聞こえたこと自体の機械的証明ではない。
+
+同起動では4,997,179 bytes／世代3385のcacheを170.652 msで保存成功（outcome0／stored1／vk0／errno0／budget_expired0）。snapshot attempts1はfsync割込み回数を表さない。起動時offered_bytes0で5実験設定は全OFF、前回ログはbuild11のため、**build12で保存したcacheの次回起動時の復元だけは未確認**。本人へ完全終了・再起動後の再送を依頼した。復帰後の完全な22窓／5,504 frame gap試料は100 ms超0（最大94.249 ms）だが、起動全体には100 ms超5件（最大415.828 ms）が残る。inactive時間を含むFPS窓はプレイ中の停止に数えず、旧版との同条件A/Bや長時間性能の改善とは主張しない。thermalは0〜1、memory warning0。製品コード変更・追加build・署名は行わず、実機再利用確認までゴール完了を保留する。
+
+**2026-11-16：3段階の実装・Mac検証を終え、build12を非公開OTAへ配布。実iPhoneの確認待ち。** ①設定の診断送信ボタンから今回／前回の数値ログだけをTailscale経由で本人PCへ送る。共有の厳密な許可表でraw文字列・パス・ゲームデータ・セーブを除き、認証・容量制限・原子的な完了公開・同一内容の再送を検査した。②D3D/D3DX入口で新規仕事を休止し、既に入った呼出しを終えて全producerをflushしてからGPU完了を待つ。UIKitは待ちで塞がず、音声queueを保った休止／復帰を追加。③cache保存のfsync割込みを、取消と既存予算を守って最大3回まで再試行する。過去の停止や保存未完了がこの割込みに起因したとは未確認。iOSのメモリ回収／終了を防ぐ保証や、全guest時計・workerの凍結ではない。
+
+[Mac build32](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa337590e83b09c4fac1d2)は公開`3f3f819bb3ca11f207f3b4606fcbd8b67985bba6`で成功（5分57秒）。43回のunittest実行／126ケースは122成功・従来と同じ環境依存4skip・失敗0。実Foundation送信・受信13検査・lifecycle6検査（CFRunLoopと実Metal依存関係）・controller TSanを通過し、iPhoneOS shader8件とMac GPU20ケース／80値の一致も確認。3共有ABI headerはbuild11とbyte一致、compiler warning526件／44種類も増減なし。これは実iPhoneの成功とは区別する。
+
+署名済みbuild12は58,717,120 bytes、SHA256 `a743e4547bf964b60d1851bf7bd6b285097b6f82c153508b8773c70f26e84588`。既存の登録端末profileで2 images／39,453 pages／4 resourcesとApple chain・AppID・端末一致を検証した。診断送信の認証設定はPC内の最終組立時だけに追加し、公開host／CIには含めない。非公開HTTPS manifestと全IPA転送後hash一致、他route保持、Funnel無効を確認し、旧build11を保持。PC受信口のHTTPS検証は合成データであり実機送信ではない。無料枠は今回開始前227→238/500（残262分）、subscription未有効。**本人へ更新・Home20秒からの復帰・手動診断送信を依頼済み。実機の性能、復帰、送受信、cache再利用の判定と開発ゴール完了はその結果まで保留する。**
+
+**2026-11-16：本人がbuild11での日本語化成功を報告。** 表示成功は本人の確認として扱い、音声・長時間性能・端末build番号の新たな機械検証は別に残す。
+
+**build12のApple検証は進行中。** [Mac build28](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa2e8d90e83b09c4fac031)（公開`fc585a254fd0e95c94ac9cdf349f8ba4775e9e92`）は87秒で失敗した。Foundation送信fixtureが実clientをコンパイルした際、NSString型`hash`がNSObjectのNSUInteger型`hash`と衝突したためで、プロパティ名と全参照を`contentSHA256`へ修正した。通信形式は変更せず、原ログを`local/codemagic-title28/`に保持。Mac送受信・休止／復帰fixtureとiPhone動作は未検証で、build12はまだ配布していない。
+
+[Mac build29](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa309c90e83b09c4fac0e1)は検査開始前にこちらで取消。独立レビューでMetal fixtureの非保持registry pointerにARC寿命の不足が見つかり、fixture localに`objc_precise_lifetime`を付けて非同期処理の終了まで保持する修正を同じ検査へ含めるため。製品側の寿命設計を変更したものではない。
+
+[Mac build30](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa310190e83b09c4fac0fd)（公開`916a32e223b9c00204930de682068c82290660f1`）ではFoundation実clientの収集・模擬通信3検査が成功。受信側13検査はMacの`/var` symlinkをfixture rootが含むためsetUpで失敗した。テスト所有の一時rootだけを正規化し、実receiverのsymlink拒否は維持。修正後WSL13検査が成功した。Macでは独立した35 suite呼出しをすべて集め、いずれか失敗すればホストビルド／配布に進まない制御へ変更し、失敗注入で全実行と後段拒否を確認した。iPhone送信の証拠には扱わない。
+
+[Mac build31](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afa323790e83b09c4fac169)（公開`635c314e9b958962cb90ddc9bd89ed00271a5936`）では送信3・受信13・lifecycle6検査（実CFRunLoop／Metalを含む）とcontrollerのTSan検査1件が成功。全独立suiteを実行した結果、既存UI pump fixtureに新しい`skyrim_lifecycle_main_checkpoint`のテスト用受け口がない1件だけ失敗した。製品コードを変更せず、呼出し順・再入・間引き・epoch無効化も検査する受け口を補い、WSLの対象suiteで4成功・Apple専用1skipを確認。iPhoneOSアプリ本体ビルドと実機は未完了。
+
+**次の開発ゴール（本人承認、進行中）：①iPhone→本人PCの非公開診断送信、②ホーム移行・復帰の安定化、③シェーダーキャッシュ保存・再利用の安定化。** 診断は手動送信とし、今回・前回の起動の数値記録だけを許可表で抽出する。ゲームデータ・セーブ・rawログ・パスを送らず、受信側は既存OTAと独立させる。復帰は開始済みのGPU仕事とproducerの依存関係を保って退役させる方式を検証中で、以前失敗した低層submission gateは再導入しない。OSのメモリ回収による終了を完全に防げるとは扱わない。cacheではfsync割込みによる保存断念を再現し、取消・既存予算付き最大3回の再試行を実装、旧保存保持と次回回復を通常／ASan・UBSan／TSanで確認した。過去の実機保存未完了の原因がこの割込みだった証拠はない。新しいAppleビルド・非公開配布・iPhoneでの送受信／復帰確認はこれから。
+
+**2026-11-16：日本語設定の保存先を修正したbuild11を非公開OTAへ配布。** 固定ゲームが要求する`Skyrim.INI`に対し、build10の設定画面は別名の`Skyrim.ini`へ書いていた。過去の実端末profileは大文字拡張子を使用し、両ファイル共存時はruntimeのexact-path優先によって古い英語設定を読む。旧fixtureは小文字のファイルしか作らず、この条件を検査できていなかった。canonical名を優先し、なければ単一の既存case variantを再利用するresolverへ変更し、不要な方のファイルは削除しない。Linuxのcase-sensitive FS上で実runtimeのpath／INI readerを使い、旧挙動の再現・日本語反映・英語への復帰を通常／ASan・UBSanで確認した。毎frameの処理追加はない。
+
+[Mac build27](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af9cfdf90e83b09c4fa9e3d)は公開`3d0630210e3f5910b92d343db970b3e0808a5f59`で成功（7分24秒）。39組103検査のうち99成功・環境依存4skip、Foundation起動処理・iPhoneOS shader8件・実Mac GPU20ケースを確認。大小文字共存のMac検査はvolume特性によりskipで、上記Linux検査を根拠とする。3共有ABI headerはbuild10と一致し、新規warningなし。署名済みIPAは58,688,390 bytes、SHA256 `5be9e96c90f8469bea558c94d129e8c4deb1fba570e657913469b18d364a993e`。同じ登録端末profileで署名・暗号検証し、非公開HTTPS manifestと全IPA hash一致、他route保持を確認。無料枠は220→227/500（残273分）、subscription未有効。**端末更新・最新ログ照合・実機の日本語表示／音声は未確認。** USB再接続待ちであり、今回の報告すべてをこの原因と断定しない。既に完全転送した日本語packの再転送は不要。
+
+**2026-11-16：日本語の文字・音声packをiPhoneへ転送し、全内容とセーブ保全を確認。** 本人の保存・終了・USB接続・ロック解除後、登録端末／既存信頼／既設build10を確認。アプリの再インストールは不要だった。13ファイル／1,275,035,768 bytesを所有データから追加し、最終配置先の全SHA読み戻しと文字・音声の完了markerを検証した。転送前後のバックアップでsave8ファイルとINI1ファイル、計26,890,378 bytesが全て一致。元英語Data・exe・master・saveの上書きは行っていない。
+
+実端末AFCはhardlinkを非対応（status15）として拒否したため、旧helperと失敗logを保持し、固定Japanese名だけへの明示guarded-renameを別版で追加。既存宛先・親・stagingの直前確認と最終readbackを行い、旧25＋追加10のoffline検査が全成功した。renameと宛先不在確認の組合せはatomic no-replaceではなく、本人のapp終了と単一writerを前提にしている。途中転送済みのpayloadは再送せず利用し、READYは全payload確認後に公開。証拠はignored `private/title-update-build10-20261115-transfer01/`に保持。**転送とpack完全性は確認済み。実機での日本語表示・会話・負荷は本人による次回起動確認待ち。** Settings → LanguageでGame text／Game voicesを日本語へ選び、完全終了・再起動して反映する。
+
+**2026-11-15：言語切替入りbuild10のMac検証・署名・非公開OTA配布が完了。** Settings → LanguageでアプリUI／ゲームのテキスト／ゲームの音声を独立にEnglish・日本語から選ぶ。英語既定で、ゲーム側は完全終了・次回起動のみ反映。未設定の更新では既存profileを変更せず、選択時もapp-owned Skyrim.iniの3項目だけを編集し、他archiveを保持する。所有日本語データは別名で追加する非公開packとして準備し、元exe／master／英語Data／saveを上書きしない。起動時は小さい完了markerとファイルサイズだけを確認し、音声archive全読込み・コピー・毎frame判定は追加しない。
+
+所有日本語音声の32kHz mono profileでは既存xWMA設定が不一致だったため限定修正し、2つの低bitrate profileの再利用時noise stateもリセットする。アプリと同じFFmpeg7.1.1で、全保有formatを層別抽出した130音声（JP72／EN58）が独立CLI出力・分割入力・繰り返し再生で一致。公開audio4検査、native ASan/UBSan、言語C fixture、既存mobile6検査・namespace5検査を通過。これはiPhoneでの再生・性能同等性を証明しない。
+
+[Mac build26](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af9c2e090e83b09c4fa98ed)は公開`8e4b7aaa860a9ecb925e29dfd7dcee6fec04b1a4`で成功（5分35秒）。39組／102検査中99成功・環境依存3skip、言語の実C／Foundation起動処理、native音声設定／reset、iPhoneOS shader8件、実Mac GPU20ケースreadbackを確認した。Macの任意FFmpeg decode fixtureはskipであり、別途PCの同一pin検証と区別する。先行build25はfixtureのstrict POSIX指定でO_NOFOLLOWが宣言されず失敗、fixtureだけGNU C11に修正し原logを保持。build24と共有ABI3 headerは一致、526件の既存warningも件数・分類とも同じで、新規warningは確認されなかった。
+
+署名済みIPAは58,687,734 bytes、SHA256 `093a61e5d75491549165f31683288644026195d082e54643a4e1279252776ec4`。署名2 images／39,431 pages／4 resourcesと、profileのApple chain・AppID・登録端末一致を検証。Tailscaleの他routeと旧build9を保持し、更新ページをbuild10へ切替え、HTTPS manifest・全IPA hash一致・認証なし404を確認した。無料枠は213→214→220/500（残280分）、subscription未有効。**iPhoneは未接続のため、約1.28GBの日本語pack転送、端末更新、実機の日本語表示／会話／負荷確認は未完了。** データ未導入時は英語へ戻る。build10はbuild9の性能修正も含むが、実機効果は未確認。詳細はPERFORMANCE_WORK.md先頭。
+
+**2026-11-15：build9のMac検証・署名・非公開OTA配布が完了。** [Mac build24](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af9b9e990e83b09c4fa9593)は公開`781647ae34b2b8e4d354af066fe9ad47f8ad29b1`で成功（6分31秒）。37組／98検査中96成功・環境依存2skip、iPhoneOS shader8件compile、実Mac GPU20ケースreadbackが成功。3共有ABI headerはbuild8と一致。既存private guestをPC内で組み込み、同じ登録端末profileで署名・暗号検証。IPAは58,680,866 bytes、SHA256 `59fe29fac1b613313c03e886b1bd03a9984900de7a509e2f16d06356aa87644b`。2 images／39,431 pages／4 resources、profileのApple chain・AppID・端末一致も検証した。
+
+Tailscaleの他routeと旧build8を保持し、非公開更新ページをbuild9へ切替。HTTPS manifestのbuild9／AppIDと全IPA転送後hash一致、認証なし404を確認。**端末へのインストール・起動・実機性能は未確認。** 待機予算修正と停止の内訳計測を含み、比較設定5項目は既定OFF。無料枠は207→213/500（残287分）、subscription未有効・追加課金なし。日本語のゲーム文字／音声切替はこのbuild9に含まれず、次の変更として所有データと再生互換性を検証・実装中。
+
+**2026-11-15：残る停止を8起動の保存ログから再分析し、待機予算の修正と不足区間の計測を追加。アプリは未ビルド。** 最新の全OFF回の591.409ms gapでは、記録されたworkとの重なりの和集合は255.990ms、未観測区間は335.419ms。全停止をshader起因と断定しない。6件の長いframe待機（61.559〜88.247ms）にも5秒ごとのログ出力時刻は含まれず、出力処理が主因とは確認できなかった。UI処理で待機予算を使い切った後にさらにsleepを要求する経路を修正し、再現検査では余分な4ms要求が0になることを確認した。ただし実機の長い停止が同経路だった証拠はまだない。変換時間、run loop／sleep／UI pump／期限超過、cache保存のworker入口と各段階を分けて記録し、固定slow-span枠を16→40へ拡張。新旧ログを読める解析器で記録落ちと未観測時間を区別する。PCの対象検査・ASan/UBSan・既存8ログの旧集計一致を確認。Apple SDK／実Metal／実機効果の検証は未実施で、build・push・配布・端末変更・比較設定の標準ON化は行わない。詳細はPERFORMANCE_WORK.md先頭。
+
+**2026-11-15：同じ場所・動きの全OFF基準を追加回収し、前5回と比較。** 本人は後半5回もほぼ同じ動きだったと補足し、追加の全OFF試遊を完了。22:18:10／22:18:26 JSTの新規2 fileだけをUSBで取得（366,047 bytes、前後stat一致、端末書込み0）。短い起動07は互換再利用ONのままなので基準から除外、起動08は5項目全OFFを確認した。08は記録frame時間197.492秒、100ms超gap3件／最大591.409msで、3件とも最初の計測窓開始から約9.7〜15.4秒に収まり、その後の記録では100ms超0件。6,084,940 bytesを読み込み、復元MSL334件／新規root16件。比較の前提が揃った一方、保存cacheなしのparallel／priority回とのcache条件差は残る。失敗metric0、thermal／memory警告0。標準ONへの変更や追加buildはせず、詳細・採否はPERFORMANCE_WORK.md先頭に記録。
+
+**2026-11-15：build8の6回の実機比較ログをUSBで回収・解析。** 本人は毎回完全終了・再起動、初回だけ別の場所・全OFFでクイックセーブ、後の5回はおおむね同じ場所と報告。登録済みiPhone・既存信頼・実端末build8を確認し、6 file／2,107,215 bytesを読み取り専用で取得、前後stat一致と各hashを保持した。起動時設定は全OFF→parallel→priority→settings-save→persistent-storage→compatible-reuseの各1項目だけONと一致。全400 device観測でcap60／thermal0／low_power0／memory_warning0。settings内保存2回と次回の6,084,940 bytes読込、priority gateの期限超過・無効化0を確認。初回は保存候補期間と重なる429.400／530.328msのgapがあり、別場所・cache蓄積・時間長の違いもあるため他回との改善率は算出しない。詳細はPERFORMANCE_WORK.md先頭。新build・端末変更・標準ONへの採用は行っていない。
+
+**2026-11-15：build8のMac検証・署名・非公開OTA配布が完了。** [Mac build23](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af99e8c90e83b09c4fa8baa)は公開`37f0f1002b2dca3812d184b8b3a65fb41506702d`で成功、5分55秒。37組／93検査中91成功・環境依存2skip、iPhoneOS shader8件compile、実Mac GPU20ケースreadbackが成功した。3共有ABI headerはbuild7と一致。既存private guestを再生成せずPC内で組み込み、既存profileで署名した。署名済みIPAは58,680,582 bytes、SHA256 `667c155c8d7047802e0fcf8ba4de12d465b671b544a0b9e2fa630749eb7e75bb`。2 images／39,431 pages／4 resources、暗号署名とprofileのApple chain・AppID・登録端末を検証済み。
+
+既存のTailscale更新URLをbuild8へ切替え、HTTPS manifestのbuild8／AppIDと、全IPA転送後のhash一致を確認した。旧server停止は自動承認チェックで拒否されたため、旧配信を保持した別loopback serverを検証してSkyrimIOS routeだけを切替えた。他route・旧build7 IPA・game／saveは保持。**新しい比較設定5項目は全て既定OFF・次回起動反映。本人によるiPhoneへの更新・起動・save確認と、同条件の性能／発熱比較は未実施。** 実Metalの新しい並行root／specializer失敗注入も未実施で、既存のMetal arithmetic検証と区別する。無料枠は今回198→201→207/500（残293分）、追加課金なし。詳細・原logは`local/codemagic-title23/`、署名成果物はignored private内に保持した。
+
+**2026-11-15：build8のMac build22は既存fixtureの想定差で停止。** 公開`ac436212227ce7acbdd72f4db69f81e294507d7f`、実行2分28秒。新cache／namespace／prefetch検査を含む前段は通ったが、device-memoryのworker adapter復元検査が新しいshutdown通知行を除去せず、旧sourceとの完全一致で失敗した。製品のコンパイル成功やMetal検証成功とは扱わない。原artifact／build.logは`local/codemagic-title22/`へ保持。fixtureだけ7行修正し、WSLのdevice4成功／Apple専用1skip、descriptor2・mobile6・toolchain制御2成功を確認した。製品コードを変えず、無料枠201/500（残299分）で修正版を再実行する。旧build7配布は維持。
+
+**2026-11-15：本人GOを受け、build8のMac検証・非公開OTA準備を開始。** 3系統の切替付き試作と役割別計測を収録し、比較設定は既定OFFのまま。build番号とPC内assemblyの検査値を8へ揃え、旧build7・private guest・ゲーム／saveを保持。開始前の無料枠198/500（残302分）、課金subscriptionなしを画面で確認。公開sourceだけを既存manual workflowへ送り、署名／private guest組込みはPC内で行う。開始・Apple検証・署名・OTA反映・実機確認はまだ未完了。
+
+**2026-11-15：依頼された3系統の試作を本体へ切替付きで組み込み、PC検証を完了。** module単位のcold生成、設定画面内だけの条件付きcache保存＋保持／互換再利用、描画優先・高温時の先読み制御を実装した。英語／日本語の設定5項目を追加し、既定OFF・次回起動反映。元の経路へ同一binaryで戻せる。旧cache・game/save/IPAは保持。通常・ASan/UBSan・TSanの関連検査、生成DXVK 6unitの構文、namespace／CMake定義5検査、既存overlay／stall検査、source preflightが成功。細部はPERFORMANCE_WORK.md先頭。**Apple SDKによる新アプリbuild・Metal実機検査・iPhone比較・push・端末更新は未実施。GOまでは行わない。** 実機での効果量／発熱の改善は未確認で、標準ONへの採用判断もまだ行っていない。
+
+**2026-11-15：Gemini回答をFable review・固定ソースと照合し、最小の比較計測を追加。** graphics／computeのVulkan pipeline生成時間・失敗数を必須描画／先読み／その他で集計し、解析器も対応した。既存の役割scopeを使い、追加の時計読取り・lock・heap確保はない。キャッシュ名前空間の17入力とSDK／compiler設定は不変。module分離試作は未接続のまま。GeminiのOS互換案には、MoltenVKのdeviceID／pipelineCacheUUID自体がOS版を含む見落としがある。静穏時保存・名前空間縮小・保存先移動・OS条件緩和を一括採用せず、別々に検証する。関連12検査成功。新しいMac／iPhone build・push・端末更新は行っていない。詳細と採用条件はPERFORMANCE_WORK.md先頭。
+
+**2026-11-15：Fableの独立reviewを固定ソース・一次仕様と照合。** module分離は候補として維持し、実機採用は保留。試験のmerge相当処理を「catalog保護された競合公開」と明記・改名し、実vkMergePipelineCaches検証とは扱わない。診断mutexはmodule object単位で、同内容の別objectのdump全体を保護しない点も訂正。実converterへ空の自作SPIR-Vを直接渡す限定probeで、エラー記録・空MSLなのにtrue返却を再現した（製品修正ではなく、Vulkan入力検証やvalid game shaderの到達性は未検証）。既存build6の4ログは該当エラー／Metal compile failed／graphics failure窓が各0件で、停止原因とは未同定。normal converter1検査・method2検査は成功。待ちの分類値だけで因果・改善を断定せず、発熱・失敗・frame gapと合わせて比較する方針。FIFO／QoS変更や追加計測の製品実装、cloud build／push／端末更新は行っていない。
+
+**2026-11-15：本人指定でカクつき・安定性・性能を優先し、MODとマルチプレイを保留。** 未接続のcold生成分離候補を絞り込み、通常のshader変換には追加mutexを取らず、debug／dumpだけ保護する形へ修正した。固定された実MoltenVK converter＋SPIRV-Crossを自作24条件・計512回で照合し、直列／並行でMSL・付随情報一致、入力変更なし。通常実行とTSanが成功。修正候補の実method fixtureもASan/UBSan・TSan各2検査を通過。TSanの初回mapping起動失敗は、検査子processだけASLRを無効にして実行可能とした。全system／app設定は不変。詳細と限界はPERFORMANCE_WORK.md先頭。**build7への組込み・新Macビルド・push・実機更新はしていない。** FPS／発熱への効果は未確認で、次はbuild7の実機ログと実Metal比較を根拠に採用を判断する。
+
+**2026-11-15：LE MOD／マルチプレイの将来対応を調査。** 友人提案のSPO・ragdoll・死体整理等は引き続き未導入で、MOD managerは設計段階。通常LEデータMODを最初の候補、SKSE／Windows DLLは別対応と整理。現runtime contractはSKSE／SkyUIを明示拒否する。Skyrim Together公式FAQはLE非対応、classic Tamriel OnlineはSKSE／SkyUI依存の旧作であり、そのままのiOS導入は確認できない。MOD_MANAGEMENT_DESIGN.mdに根拠・段階案を追加した。カクつき候補の固定converterも再点検し、通常経路は呼出しごとにCompilerMSLを作ることを確認。追加converter mutexの必要性は保守的な仮定として再評価し、fixtureの排他成功を実converterのrace証明と混同しない。製品code・build7・原game／saveを変更せず、cloud build／push／MOD導入なし。
+
+**2026-11-15：追加のローカル候補を作成・検証。** `experiments/mvk-module-cold/` に、MoltenVKの新規shader生成待ちをcache全体からmoduleごとへ分ける試作を追加した。同moduleのready-hit、重複生成防止、公開とsize無効化を保持。複数cache／cacheなしで共有されるconverterを保護し、並列compile失敗時の共有VkResultも短いcache lockで保護する。固定公開ソースの実methodを使うCPU fixtureで、旧方式では止まる別module要求が試作では進むこと、重複生成0、vector成長中4,096lookup、16,384error通知を確認。GCC13の通常／ASan・UBSan／TSanが成功。**アプリへの組込み・Macビルド・push・実機更新はしていない。** Metal並行処理・描画一致・iPhone FPS／発熱は未検証で、同時compile増加による混雑／memory／熱の悪化も採用前に比較する。build7とゲーム・save・旧IPAは保持。詳細はPERFORMANCE_WORK.md先頭。
+
+**2026-11-15：build7更新後の短時間プレイを本人が報告。** 60fps近くで以前より安定し、カクつきも大きく減ったように感じたとのこと。狼が出て戦おうとした時に一瞬の停止あり。起動・プレイは本人報告として確認、端末build番号の直接読取りと今回ログの回収は未実施。短時間の体感で、同条件ABではないため更新の効果量・原因は未確定。画質／場面／cache蓄積等の影響を分離してから判断する。仕事中の追加操作は依頼せず、後で当該ログを読みMSL由来・必須／先読みと停止の重なりを確認する。
+
+**2026-11-15：build7のMac検証・署名・非公開OTA配布が完了。** [Mac build21](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af9262690e83b09c4fa6edc)は公開`fdaaae1c9233dd2bc5aafeeb6c60ceec118b45e2`で成功。34組／83検査中81成功・環境依存2skip、iPhoneOS shader8件compile、実Mac GPU20ケースreadbackが成功。3共有ABI headerはbuild6と一致し、CPU header／PcGuestABIも既存private guestのcontractに一致。再生成せず同guestをPC内で組み込み、既存profile／DPAPIで署名した。署名済みIPAは58,672,647 bytes、SHA256 `1c7dd588ab5adba482a59db2836764bbc51310b1a001e311281f9bbb111e15b5`。2 images／39,426 pages／4 resources、暗号署名とprofileのApple chain・AppID・登録端末を検証。
+
+Tailscaleの既存routeを保持してbuild7へ切替。HTTPS manifestのbuild7／AppID、全IPA転送後hash一致、英語／日本語の390px表示を確認した。既存のgame／save／build6 IPAは保持。**本人へiPhoneからの保存・終了後の上書き更新と起動・save確認を依頼済みで、build7の導入・実機挙動はまだ未確認。** 改善範囲はbackground cache保存の限定retry／理由記録と停止の分類計測。初回cacheはcoldになり得るため、同画質／save／経路で反復する。無料枠の使用は193→198/500（残302分）、追加課金・新認証なし。
+
+**2026-11-15：本人GOでbuild7の一括Mac検証・非公開OTA更新へ進行。** background cache保存の限定retry／終了理由と、MSL生成由来・必須／先読みの分類計測をまとめる。CFBundleVersion・assembly・dependency stageを7へ揃え、旧build6とprivate guestを保持。無料枠は開始前193/500（残307分）を確認。追加課金・新認証なし。Mac成功・署名・build7実機更新はまだ未完了。
+
+**2026-11-15：USB不要の非公開OTA配布を準備。** 既存Tailscale接続をGUI起動で復旧し、既存配布routeを保ったままSkyrimIOS用routeを追加。loopback専用serverは同じTailscale利用者＋期限付きURLを確認し、既存の署名済みbuild6だけを配布する。IPAは58,670,330 bytes、既存署名結果のSHA256とHTTPS全転送後のSHA256が一致。公開配布・外部へのIPA／署名鍵upload・新規buildなし。iPhoneからページが開いたことに続き、本人が「インストールでき、起動・セーブも確認できた」と報告。同build6のUSBなし上書き・起動・既存saveの表示を本人確認済み。端末内fileのbyte比較は今回は行っていない。最新の性能改善コードは未収録。設定とURLはignoredのprivate/ota/config.json、配布helperはscripts/serve_private_ota.py。
+
+**2026-11-15：最初の実装をローカルで完了。** 既存background pipeline cache保存に終了理由／段階／試行数の記録、競合型の取得結果だけ最大3試行、呼出し間の取消・1秒予算確認を追加した。旧cache・世代・device寿命を保持。MSL待ちをroot／復元／macro派生と必須描画／先読みに分類し、DXVK待ち後hit／生成経路、MoltenVK cold lock待ちを低負荷の固定量計測へ接続。既存総量と分類量は別集計、stall schema1/2の両方を解析可能。通常の該当fixture、GCC ASan/UBSan 7検査、実DXVK 3unitのClang18構文検査、公開source検査を通過。ロック分離・先読みgate・foreground保存は未導入。Apple SDK／実Metal／iPhone改善は未確認。cloud build・push・署名・端末更新なし。次のGO後に一括ビルドし、同じ画質／save／経路の初回と反復を比較する。詳細はPERFORMANCE_WORK.md先頭。
+
+**2026-11-15 Claude再回答を統合し、初回範囲を限定。** 既存background cache保存の理由記録・限定retryと、MSL生成由来／必須・先読み／待ち後hit・compileの計測を優先。提示retryコードのdeadline／取消確認漏れを補正し、driver callの実時間上限とは呼ばない。2ms polling gateは起床負荷、同variantでの期限切れ二重計数、公平性の未保証があるため保留。macro生成もDXVK compile mutex内に入るため、gate対象外とは決めない。既存検証を再利用した設計reviewのみで、製品変更・cloud build・push・端末操作なし。詳細はPERFORMANCE_WORK.md先頭。
+
+**2026-11-15 Claude初回回答を照合。** 固定MoltenVKのサイズ取得→新library公開→データ取得で0容量になり、Cereal書出し境界がVK_INCOMPLETE／0 bytesとなる経路を限定fixtureで再現。fresh size queryからの再試行は成功。ただし既存4ログに当該errorは見つからず、実機の保存未完了原因とは未同定。提案gateはtimeoutが4回重なり、RequiredScopeの退出もmutex待ちになり得ることを自作fixtureで確認した。WAIT_THEN_HITでも公開後の先読み横取りによる余分な待ちはあり得る。計測と保存理由／有界retryを優先し、gate／下層lock分離／snapshot再設計は別変更にする。詳細はPERFORMANCE_WORK.md先頭。製品変更・cloud build・端末操作なし。
+
+**2026-11-15 Gemini再回答の設計を追加確認。** 既存の変換後cache比較を未変換in-flightキーへ流用すると、異なるinput／output／resource設定が同じ待ちとして扱われることを実比較関数の3自作ケースで確認。macro派生の生成はcache全体compile lockの外にもあり、計測上の起点を分ける必要がある。holder IDの事後読取だけで待ち相手は確定せず、snapshot／先読み再キューにも別の整合条件が残る。計測→ready-hitを保ったmodule間分離→snapshot等の別変更、の順へ絞る。詳細・限定probeはPERFORMANCE_WORK.md先頭。製品変更・cloud build・push・端末操作なし。
+
+**2026-11-15 Gemini回答を照合。** 固定MoltenVKのcache単位cold生成lockと、永続cacheが圧縮MSL中心で完成PSOを保存しない点を確認。起動4ではMSL完了待ち最大901.934ms／100ms超182件に対し、function specialization最大23.326ms、GCD開始待ち4.340ms、drawable取得3.414ms。MSL待ちと必須描画へ伝播する共有待ちを優先するが、個別の因果は未確定。紹介されたissue #2863は別環境の未検証部分を残す提案で、そのまま移すと現在の同module ready-hitをcold待ちへ戻し得る。統計のGPU時間／cache命中の意味と、save候補区間が最初の観測write〜closeであることも補正した。詳細と一次資料はPERFORMANCE_WORK.md先頭。既存4ログと公開ソースのみで調査し、製品変更・Mac build・push・端末操作なし。Claudeの独立reviewと合わせて候補を絞る。
+
+**2026-11-15 追記：録画前からの停止・時間経過後の再発を本人が補足。** 録画は必須の発生条件ではないと扱い、地形／event等の初遭遇を疑う体感は仮説として保持する。現在のDXVKでは作成済みpipeline／shaderを時間だけで削除する処理は確認できなかった。一方、同じshader組の別variantを先読みで生成している間、まだ作っていない必須variantも同じcompile mutexで待つことを、実際の現行lookup／publication関数と自作driver gateでGraphics／Compute双方に再現した。完成済みhit・独立shader組は進み、解除後のhandle／作成回数は一致。`local/performance-20261115/pipeline-wait-probe/`に保持。これは待ち構造の再現で、実Metal／iPhone改善の証明ではない。製品コード・Mac build・端末更新は未実施。本人へUSBを外してよいと回答し、直近1ログは未回収のまま次回へ残す。
+
+**2026-11-15 01:10：build6の引っ掛かり報告を受け、終了済み4起動のログをローカル解析。** 本人は画質変更と画面録画を含む複数回のプレイ後、「前よりかくつきが増えたかもしれない」と報告。USBの既存信頼・build6を確認し、更新後5起動を識別。直近1起動は新しい保存・終了確認待ちとし、それ以前の4起動だけを読み取り、取得前後のsize／mtime／birthtime一致を確認した（計1,759,588 bytes、端末書込み0）。記録は`private/iphone-build6-20261115-0102/`。最長の約19分では0.1秒超のframe gapが100回、10分以降にも27回。約12分32秒の990ms区間では同threadのsubmission待ち974msと別threadのpipeline生成／compile-lock待ちが重なり、起動直後だけの問題ではない。保存候補handle区間と重なる338〜605msのgapも6回あるが、write syscall自体は最大0.696msで、オートセーブやdiskが原因とは断定しない。録画状態・場面・全画質設定はログだけでは復元できず、旧build5との同条件ABではない。**停止は確認できたが、build6の回帰や録画の寄与率は未確定。** 約19分の222観測はthermal=0／memory_warning=0、OS追加headroom最小約3.92GiB。shader cacheの保存・再利用と必須描画のcompile待ちを次の調査優先にする。今回は解析と記録のみ、製品コード・build・署名・端末更新なし。
+
+**2026-11-14 23:56：build6のMac検証・ローカル署名・iPhoneへの5→6更新が完了。** [Mac build20](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af873d290e83b09c4fa38fc)は公開`6e0f5bafc879aabbbaf73d36c526d664f8296396`で成功。34組／82検査中80成功・対象外2skip、iPhoneOS Metal shader8件compile、実Mac GPUのfast／safe20ケース数値readbackが成功した。公開host SHA256 `c5c29a7b572b0d5288948bbbae13d0d355552770b900aee2d2fde256cd6bd6b7`。3つの共有ABI headerが導入済みbuild5と一致し、CPU headerもprivate guestの固定値と一致。失敗したGPU休止gateは製品から除外されたまま。他の軽量化／操作／言語／保存設定／float互換候補を保持した。
+
+公開成果物を通常ブラウザ操作で`local/codemagic-title20`へ保存し、検証済みprivate guestをPC内で組み立て、既存profile／DPAPIで署名した。2 images／39,426 code pages／4 resources、CMS／DER／profileのApple chain・AppID・端末・3メモリ権限を検証。`private/title-signing-20261112/SkyrimIOS-PC2011-build6-signed.ipa`を保持。本人の新しい保存・終了・ロック解除確認後、既存USB信頼だけでUpgradeし、端末build6／Team／AppIDを確認。ゲーム26ファイル計5,909,061,966 bytesの名前・サイズ、profile11ファイル計26,192,975 bytesの全SHA256が前後一致。ゲーム再コピー0、元game／旧IPAを保持。最小profile保護と比較は`private/title-update-build6-20261114-01/before`／`after`。**更新後の起動・ゲームプレイ・水中表示・FPS・熱・ホーム復帰は未確認。** Free画面の最終確認は`193 / 500`（残307分）、有料変更・新認証なし。
+
+次の実機確認は同じsave／画質で起動し、記号ボタン・Language・視点操作を試し、魔法／カメラ／水中で比較する。オートセーブ既定はKeep current、変更の適用は次回起動。長いログの前回問題を踏まえ、再度読む場合は対象範囲を限定する。ホーム復帰のdevice lossは未解決、cold shader compileの停止解消や実機FPS向上は保証しない。
+
+**2026-11-14 23:37開始のMac build19：休止gate撤回は検証成功、Metalツール準備直後の1件で停止。** 公開`188afae3dd5704898e23f95f0a64b8af6624f082`を取得し、host fixture／元submission4ファイル／Metal library・compile計測fixture／ARM64 app compile/linkは成功した。Apple Metal Toolchainの公式download成功直後も最初のcolor-firstだけmissingと返り、その後の7shaderはcompile成功。必須検査に従いpackageは公開せず、原ログを`local/codemagic-title19/build-step4-visible.log`へ保存。製品コードを変えず、download後に同じmissing応答のみ最大11回（sleep合計20秒）待つようrouteを修正。shaderエラーや出力欠落は即失敗、downloadは1回、各試行log保持、8shaderと20実GPU数値検査は全て必須のまま。実shell関数を自作tool状態6種で確認する2検査成功（0.348秒）。新しいMac検証・署名・端末更新は未完了。
+
+**2026-11-14 23:24開始のbuild18：実Metalで休止gateが失敗し、build6から撤回。** 公開commit `26348ab14d8bac343113bf5ca5752a5c7f9ac367`のMac実行は、先行GPU consumerが未投入producerのeventを待つ自作条件で、pause内のscheduled待ちが5,005.529msに達し、consumer／producer errorなしのassertに失敗した。アプリのARM64 compile/link自体は100%成功したが、必須gateによりIPAを公開していない。原ログは`local/codemagic-title18/build-step4-visible.log`。主張を弱めて通すことはせず、候補と失敗reproを`experiments/gpu_lifecycle_gate_test.py`へ保管し、製品からgateのpatch／link／呼出を外した。MoltenVKの4 submissionファイルを元の固定hashで検証し、archive／最終appにgate記号があれば拒否する。新dependency stageで旧cache混入も防ぐ。他の操作・描画・軽量化候補とprivate guest／ABIは維持。関連21件中20成功・Apple専用1skip、failure/error 0（Clang18、3.749秒）、shell3本のsyntax成功。背景移行時のdevice lossは未解決、iPhone FPS／熱／水中表示の改善も未確認。修正後のMac検証・署名・端末更新はまだ未完了。
+
+**2026-11-14 23:16：修正後のbuild6をMac build17で開始。** Root `90e4354`のfixture2件修正と記録を公開mirror `e59d90b2def08abbd497eef79a003f67aa2690a5`へ同期し、3ファイルのGit blob一致・公開source検査・remote読戻し・cleanを確認。失敗済みbuild16とFree表示`172 / 500`を確認し、同workflowを1回submit。[実行URL](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af86d1d90e83b09c4fa36a9)。実checkoutも同SHAに一致。初回のfixture2件はMacでも成功し、製品のiPhoneOS ARM64 compile/linkは100%完了したが、Metal libraryの自己代入fixture2ケースがClangの`-Werror,-Wself-assign-overloaded`で停止。必須gateを維持してhost IPAの公開を拒否した。原ログは`local/codemagic-title17/build-step4-visible.log`に保持。自己代入を参照alias経由で行うようfixtureだけを修正し、Ubuntu公式Clang18で旧失敗を再現後、関連8件中7成功・実Metal専用1skip（20.513秒）。warning抑制や検査削除、製品コード／private guest／署名ABIの変更はない。IPA／署名／端末更新は未完了。
+
+**2026-11-14 23:03：build6のMac build16を1回開始したが、事前fixtureの旧契約2件で停止。** 本人の新ブラウザへの既存ログイン後、Free画面`170 / 500`と旧build15までの完了、remoteを確認して一度submit。[実行URL](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af86a3390e83b09c4fa35ae)のcheckoutは公開`cc7a0e16f9470bbc392a86def35f6e0d61e9093a`に一致。pacer fixtureが旧計測APIを呼ぶことと、worker不変検査が別途検証済みのshader-tuple共有を差し戻していないことが原因。製品実装は変えず、実headerに合わせたintervalの始終点検査と、明示的な差し戻し後の全ファイル一致を保つようfixture2ファイルだけを修正。Mac routeと同じ26種類の事前fixtureをWSLで一括実行し、65件中62成功・既定の環境依存3skip、failure/error 0（411.015秒）。公開source検査も成功。原失敗ログは`local/codemagic-title16/build-step4-visible.log`に保持。同commitの再実行はしない。新IPAは未生成、署名・端末更新なし。build6専用署名helperの準備と構文／既存coreとの差分確認まで完了、旧IPAを保持。
+
+**2026-11-14 22時頃：build6公開ソース送信済み、Mac起動は未実施。** root実装`04c1cc6`を既存公開mirrorへ93ファイル同期し、公開source検査・Git blob一致・手動workflow構文・legacy workflow不変を確認。mirror `cc7a0e16f9470bbc392a86def35f6e0d61e9093a`を`codex/skyrim-pc-aot-foundation`へpushしremote読戻しとclean確認済み。追加CI helper検査は12成功／任意PyYAML1skip、WSLの実workflow YAML parseは別途成功。アプリ更新後の画面操作が`coordinate input geometry is unavailable`／`FrameArrived timed out`／`window capture timed out`となり、再取得・前面化での復旧も失敗。既存Codemagic画面の現在ジョブ・Free残時間を確認できず、重複や残枠を推測して開始しない。Macジョブのsubmitは0回、今回はApple SDK未検証、成果物／署名／端末更新は未実施。実行できる場合は同commitの重複とFree残時間を確認し、既存`pc2011-title-host`を1回だけ開始する。
+
+**2026-11-14 夜：合意した3項目を一括build向けに整理。** 派生Metal libraryの不要な圧縮ソース保持を削減。自作16 variants×1 MiBで重複保持16 MiB→0、根のpayloadとdecoded bytesは一致。通常3検査とASan/UBSan3検査、各8,000並行cache hitを通過。内部heapは元のlock付き統計入口を確認したが取得待ちに上限がなく、全writer／寿命も未証明なので定期pollを接続せず、容量維持で安全な観測の接続条件を記録。[MOD管理の最小設計](MOD_MANAGEMENT_DESIGN.md)は完成、UI実装と実MOD導入は今回の対象外。ユーザーの「3までやったらビルドする？」「ではお願いします」により、以下の過去の新GO待ちを更新し、検証後の公開host一括Mac buildを1回実行する。現在の実機build5は保持。初回shader compile待ちの解消や実機FPS改善は未確認。
+
+**2026-11-14 夜：オートセーブ切替を実装し、SPO実ファイルを解析。** Settings → SavingへKeep current／Off／Onを追加。既定は維持で、次回起動時だけ4つの既存INI項目へ反映し、手動保存・timer・画質・FPSは変えない。実INI parser／writer／seederの自作fixtureを通常＋ASan/UBSanで検証し、既存mobile overlay 5件も成功。UIKit／実機動作・停止改善は未確認。本人のNexusログイン後、classic本体のみ1.6を正規取得し、所有masterと比較。依存は適合するが、677遮蔽marker以外に7個の物体追加、既存配置・照明・所有者等の差分があるため、元版をそのまま採用しない。取得物は隔離解析のみ。内部heapはdefault側も予約／commit分離まで確認し、live不足は未証明なので増量しない。[実施計画](FRIEND_OPTIMIZATION_PLAN.md)と[詳細](PERFORMANCE_WORK.md)へ保存。**新GOまでアプリ／private guest／クラウドbuild、push、署名、端末更新を行わない。**
+
+**2026-11-14 友人案の実施計画を作成し、保存の切り分けを実装。** write syscallとsave候補handle区間を既存の固定量診断へ追加。元のwrite／APC／errno／file位置を保持し、close中の寿命・4,000並行記録・通常／ASan/UBSan、関連25検査と実kernel32.cのsyntaxを確認した。SPOはclassic1.6の本体のみ版を特定したがNexus未ログインで本体未取得。内部heapは公式SKSEの2容量変更位置を固定入力と照合し、5入口／451命令位置の限定解析まで。pool使用量／全writer契約は未確認で、増量・置換はしない。[実施計画](FRIEND_OPTIMIZATION_PLAN.md)と[根拠](PERFORMANCE_WORK.md)へ保存。実機の改善は未確認、新GOまでbuild／push／署名／端末更新を保留。
+
+**2026-11-14 友人の提案を実装せず判別。** autosaveは保存時停止の切り分け、Skyrim Project Optimizationはclassic／対象室内の描画削減の比較候補。SKSE一式の移植やheap増量は必要性未証明で保留。既存build5 prefixの205観測でOS報告の追加メモリ余裕は最小約4.55GiB、pressure正値0だったが、内部pool不足は別に未確認。cap=30／60も実ログにあり、追加FPS上限と署名メモリ権限は既存。master一覧はSkyrim.esm／Update.esmだけなのでDLC／SE版を混ぜない。根拠・反証条件・将来の比較手順を[性能記録](PERFORMANCE_WORK.md)へ保存。docsだけを更新し、MOD・INI・コード・セーブ・build・端末には変更なし。
+
+**2026-11-14 Claude追加提案を固定source・一次資料と照合し、変換器改善を独立段階へ追加。** GPR local化・既知callの直接化・site別の間接call cacheは既存機能。新候補は証明した辺だけのflags生存解析／x87 stack静的化。D3D9のFPU設定未対応は既存build5ログにも警告があり、guest CWの保持と精度再現を分けて調査する。DXVK managed texture evictionは存在するがreadback／待ちの増加があり、未有効化。macro timeout後の再生成や通知hintも無条件の速度／寿命保証とはせず、契約と測定条件を[移行設計](NATIVE_MIGRATION.md)へ追記した。今回はdocsのみ、実機改善は未確認。新GOまでbuild／push／署名／更新は行わない。
+
+**2026-11-14 追加3件：限定解析と未接続の試作を完了。** texture viewは自作2,031条件で保持mip／payload一致（4K BC1の例で再コピー2,796,216 bytes→0）。同じmacro variantの同時初回生成は、公開実関数＋自作Metal境界で8→1、warm／別keyの進行・再入・失敗／例外も確認した。両試作は通常／ASan/UBSanを通過し、`experiments/`へ本番と分離して保存。完了待ちではconstructor／destructorとread以外の状態更新を追加確認したが、全寿命／通知の証明が不足するため置換は保留。**今回は本番最適化を3件追加したという意味ではない。** 実機FPS／画質改善は未確認で、新GOまでbuild／push／署名／端末更新を行わない。[全面逆コンパイル案の照合と段階移行](NATIVE_MIGRATION.md)、[具体結果](PERFORMANCE_WORK.md)を保存した。
+
+**2026-11-14 午後：①shader／素材、②texture、③I/O／完了待ちのgoalをローカルの採否・設計まで整理。** 元命令で21入口を追加確認し、所有権・TLS・完了通知をPC内へ保存。公開DXVKの先読み重複を一つ削減し、自作96 stateを全て残したままjob96→6、state訪問1,536→96を確認した。通常／ASan/UBSanと実DXVKのsyntax検査を通過。texture payload viewと別threadの通知待ち、非同期ReadFileExは条件付き設計として保持し、未確認のゲーム関数置換は行っていない。[具体設計](REVERSE_ENGINEERING_PLAN.md)と[比較範囲](PERFORMANCE_WORK.md)を参照。**実機改善は未確認。新GOまでbuild／push／署名／更新を行わず、端末build5を維持。**
+
+**2026-11-14 午後：画質を変えないCPU画像変換を1件追加。** point拡大縮小のpixel位置を厳密に保ち、pixelごとの整数除算を削減した。自作6条件の対象処理は約25〜60%短縮、旧新10,910ケースが通常／ASan/UBSanで一致し、実ヘッダーのsyntax検査も成功。実機FPS改善率ではない。CPU helperのinline追加とBC2/BC3展開の別案は、命令同一／速度悪化で採らなかった。新Metal patchのcache世代への直接反映も補完。比較・棄却理由は[性能記録](PERFORMANCE_WORK.md)へ保存。引き続き新GOまでアプリ／private guest／クラウドbuild、push、署名、端末更新は行っていない。
+
+**2026-11-14 午後：Metal初回生成の待ち分類と派生libraryの所有権修正を追加。** MSL／function特殊化／pipeline／GCD待ちを既存の固定量診断へ追加。copyされた派生libraryの二重所有を解消し、map検索／登録を短いlockで保護した。通常／ASan/UBSanの実関数fixture、並行登録・寿命、解析器を確認。重複cold compileは残り、実機FPS改善の証明ではない。Apple compile／UIKit／Metal実行は新GO後にまとめて確認する。詳細は[性能記録](PERFORMANCE_WORK.md)冒頭。アプリbuild・push・署名・更新はまだ行っていない。
+
+**Gemini 4 Argon／高の描画分析も取得済み。** 指定された既存アカウントで相談を実行した。提示した匿名集計から、下位Metal PSO生成、UIKit mainとguest mainの待ち、同一frame内のPSO待ち集中を優先仮説として挙げた。リポジトリ独立監査の結果ではない。Rootは固定MoltenVKの「別queueへ投入した後に呼出側が待つ」実装を確認し、QoSと待ち時間を分ける論点を追加。thread移動や先行PSO生成の条件不足を補正し、[計画](REVERSE_ENGINEERING_PLAN.md)へ保存した。実装・build・push・署名・端末更新は行っていない。
+
+**包括的なClaude分析も回答取得済み。** CPU変換／thread／描画／copy／I/O／音声の8候補と、限定逆コンパイルの3系統を[計画](REVERSE_ENGINEERING_PLAN.md)へ保存。現在は独立検証前の提案を既存対策と照合する段階。C上の操作数をARM命令数やFPSに読み替えず、restrict・退避削減・memory ordering変更は未採用。新しい実装・build・push・署名・端末更新は行っていない。
+
+**Claudeの2回目レビューは取得・照合済み。** 未導入gateのscope外commitは既に入場判定で覆われるため二重対策は不要。main-threadの推移的な待ち／再入、実Metal schedulingは未確認として残す。macro所有権の元コードは自作fixtureで不正参照を再現したが、現hostでmergeの実呼出しは見つかっておらず、実機カクつきの主因とはしない。この時点では次のエンジン全体の分析依頼は送信待ちだったが、その後回答を取得済み（冒頭参照）。[分析範囲](REVERSE_ENGINEERING_PLAN.md)へ保存。コード追加・build・push・署名・更新はこの追記では行っていない。
+
+**2026-11-14 Claudeレビュー追記。** Fable 5.2／高の初回回答を公開sourceで照合。未導入の休止gateにCPU依存待ちの循環を再現し、入場前へ移して通常／ASan/UBSanで確認した。実Metal event／先行enqueueの追加fixtureは準備まで。macro variantの所有権・並行アクセスにもsource上の問題候補があり、追加レビューは送信済み。詳細と採否は[性能記録](PERFORMANCE_WORK.md)冒頭。実機改善・Apple compileは未確認で、新しいGOまでbuild／push／署名／更新は行わない。
+
+**2026-11-14 09時台：ログの4課題へ対応する次回候補を整理。** descriptor超過の個別確保、cache取得待ちの既存候補を維持し、Presentの停止を画像取得／queue present・submit／fence／結果公開待ちの5項目へ分ける計測を追加。バックグラウンド送信拒否には、MoltenVKの7 commit箇所と2 submission scopeを対象とする休止gateを実装した。通常時のGPU完了待ちや描画省略は加えない。対象15検査とASan/UBSan、DXVK実3unitのsyntaxは成功。実Metal1検査はLinuxでskipし、次回Macで必須化した。Apple compile・UIKit／実機復帰・FPS改善は未確認。詳細は[性能記録](PERFORMANCE_WORK.md)冒頭。新しいGOが出るまでbuild／push／署名／端末更新を行わず、元game／save／build5を保持。
+
+
+**09時の実機ログで優先順位を更新。** 約4.44GBのログから18範囲と先頭約17分の性能記録を回収。抽出範囲は描画用descriptor追加確保の警告がほぼ全体を占め、pipeline生成最大約572ms／生成待ち約368ms、100ms超のframe間隔122回も確認した（ロード等を含む）。回収範囲のthermal／memory警告は0。末尾のdevice lostはbackground送信拒否で、キャッシュ保存12.27MBは成功。全量回収ではなく、正確な場面と因果は未確定。詳細と次の優先順位は[比較記録](PERFORMANCE_WORK.md)冒頭に保存。夜間候補はローカルcommit `caaea07`まで検証・保存し、新ビルドや端末更新は行っていない。
+
+**最新：2026-11-14、build5の試遊結果を受けて次回候補を改善中。** 本人から「60 FPSも出た」「以前より発熱は減った」と報告。ただし長時間の熱、カメラ操作、負荷時の瞬間停止、水中の茶色表示は残る。これは体感・表示値の報告で、同条件の実機ベンチではない。朝に既存USB信頼でbuild5ログを一部回収し、その後は本人の外出に合わせて読み取りを停止。本人の次のgoまでアプリ／private guest／クラウドのbuild、push、署名、インストールを行わない。自作fixtureのhostコンパイルとローカル解析だけを進める。自動送信・サブエージェントなし。
+
+今回の候補は、①記号中心の操作ボタンとEnglish既定／Languageから日本語、②タッチ周期に合わせた視点入力の減衰、③実ログで大量発生していたdescriptor pool超過時の小オブジェクト確保を避ける切替、④既存DXSOのfloat互換演算を有効化する水描画修正候補、⑤50ms以上の停止を同じ時刻軸で比較する固定量の診断とローカル解析、⑥音声queueの余剰量に合わせた待機、⑦対象waiterがいない通知の全体走査省略。自作負荷では音声待機2,936→1,430回、無関係な待機entry比較128,000→0回。通常／ASan/UBSanの対象検査を通過。private水関連48シェーダーはPC内でSPIR-V→MSLまで変換できたが、実Metal実行と水中表示の修正は未確認。詳しい比較値・制約は[性能改善の比較記録](PERFORMANCE_WORK.md)の今回分に保存。
+
+追加の組合せ27検査も成功。水中候補はMetal fast/safe両modeの実数値が未確認のため、次回Macで実行時入力の自作20件のpixel readbackを行う検証を準備した（Apple compile・実行はまだ行っていない）。旧BC1 benchmarkの未初期化paddingを測定用コードだけで修正し、再比較を性能記録へ追記。元のゲーム／描画コードはこの訂正で変更していない。
+
+MoltenVKにも2件追加。dynamic/discrete descriptorの誤ったcache一致を上流修正で解消（自作12,288組合せで誤一致3,340→0）。さらにcold compileを1件に保ちながら、準備済みlibraryの取得とsnapshotをcompile待ちから分離した。実関数＋自作待ち境界の通常／ASan/UBSanで重複compile・公開／保存競合・失敗時を検査した。実Metal／iPhone効果は未確認。次回go用に新しい依存build stageと古いcacheを区別する設定まで準備済み。
+
+圧縮shaderのcache復元でも、実コンストラクターの余分な引数copyを削減し、保持用payload copyを3→1回にした。所有内容・呼出元の破棄後の寿命を通常／ASan/UBSanで確認。条件によって遅くなったmacro特殊化判定の追加案は採らず、結果だけ保存した。ここまで引き続きbuild・push・署名・端末更新はしていない。
+
+8時台にはMetal functionへ渡す変換結果の引数copyも省き、memberの所有copyとretain順を維持した。実metadata型の16条件、実cache containerの513設定＋並行lookupをWindows Clang／Linux GCC＋ASan/UBSanで確認。Mac検査の標準ライブラリ依存の誤判定を防ぐ計数修正も行った。次の初回compile対策は[部分解析の計画](REVERSE_ENGINEERING_PLAN.md)へ整理。ゲーム関数の追加置換・Metal 4への変更は未実装で、次回の実機計測を根拠に選ぶ。
+
+**以下のbuild5導入記録は変更していない。** 新候補は署名済みbuild5には含まれない。
+
+**最新：2026-11-14、PC版build5をiPhoneへ導入済み。** Codemagic build15（公開`b757c2bd991745638b87c544c1b3df6625c84674`）は8分40秒で成功。Macの34検査が成功し、Windows専用ARM検査と任意のhost FFmpeg検査2件は既定skip（各ローカル検証は別途完了）、Metalの自作3件も実コンパイルを通過。共有ABIを照合して既存private guestとPC内で組み立て、署名の2イメージ／39,413コードページ／4resourceと既存profileを検証した。本人の保存・終了・USB再接続後、build2→5をUpgrade。ゲーム26ファイル／5,909,061,966 bytesの名前・サイズと、プロフィール6ファイル／9,715,471 bytesのSHA256が更新前後で一致。導入時点では新buildのゲーム実行・操作・FPS／発熱改善は未確認だった。試遊報告は上の最新欄を参照。
+
+署名済みIPA：`private/title-signing-20261112/SkyrimIOS-PC2011-build5-signed.ipa`、SHA256 `c8f048e1d75fdfd22182405c18a826983899af8702d17caaa21b22136f24aec5`。公開成果物と実行記録は`local/codemagic-title15/`、更新前後のプロフィールは`private/title-build5-before/`・`private/title-build5-after/`。旧IPA、原ゲーム、private guestは保持。次は同じセーブ／画質で静止・カメラ・魔法／攻撃を比較し、FPSと瞬間停止、音声、透明表示、温度、タッチ操作を確認する。
+
+## 以下は作業履歴（当時のgo待ち・未導入表記を含む）
+
+**2026-11-14 build5準備。** 本人から「ビルドして。このあとiPhoneのほうにも」と実行指示を受領。これにより直前までのgo待ちは解除し、検証済み追加変更を一度の公開hostビルドへまとめる。旧IPA・private guest・セーブを保持し、署名後のUSB更新前に保存・終了状態を確認する。ビルド／インストールの結果と実機性能はまだ未確認。
+
+Codemagic build14（公開`0308342`）は2分6秒で失敗。APC自作fixtureの`memmove`計数マクロがApple SDKのfortifyマクロと衝突した。fixtureの計測区間だけpush/undef/popし、実memmove呼出しのSDK保護は保持する。SDK相当の既存マクロを持つ旧新版の再現条件も加え、関連3検査は通常とASan/UBSanで合格。本番コード・画質・CPU ABIは変更せず、修正版のMac再検証へ進む。
+
+**2026-11-14、追加5件の後にさらに2件を実装。** 同じD3D9 shaderの同時要求を待ち合わせ、自作8同時要求のコンパイルを8→1回へ削減。別shaderやhot cacheは進行し、失敗後の再試行・再入も保持する。読み込み完了通知は固定長ringにし、64件時の詰め直し32,256byte→0。PC自作負荷の通知処理は約11〜51％短縮した。通常／ASan/UBSan、関連検査、実3 translation unitのsyntax検査とCPU ABI不変を確認。次回実機用に`d3d_shader_wait`診断を追加した。初回shaderの単独コンパイルと同期I/Oは残り、iPhoneの改善量は未確認。[根拠と制限](PERFORMANCE_WORK.md)を参照。**go待ちを継続し、アプリ／クラウドビルド・更新は行っていない。**
+
+**2026-11-14、前回の3件に追加して5件を採用。** CTAB定数表の事前確保、ステレオ音声route、等倍point画像変換、BC1 palette出力、描画更新queueの小配列化。PC自作負荷の代表条件でそれぞれ約21/62/49/30/52％の対象処理時間削減を確認した。空queue等の小さな追加負担やNaN符号比較の制限も記録。通常/ASan/UBSan、関連検査、実5 translation unitのsyntax確認を通過。実機FPS・発熱・カクつき改善は未確認で、署名済みbuild4には未収録。[追加5件の根拠](PERFORMANCE_WORK.md)を参照。**goまでアプリ／クラウドビルドしない方針は継続。**
+
+**2026-11-14の追加指示：本人が「go」と言うまでアプリ／クラウドビルドを実行しない。** 無料枠を温存する。署名済みbuild4を保持し、追加変更は次回候補としてローカル検証だけ進める。自動送信・新しいMacジョブ・private guestの再ビルドは行わない。
+
+「明確な効果を3件まで」の追加作業は、公開hostで3件を比較・採用済み。①使わないシェーダー定数表現を作らず、大きな更新の確保2→1回。②キューブDDSの重複サイズ計算を減らし、自作6面×11段の処理8.58→3.30µs。初期案で遅くなった通常2D／volumeは元関数・呼出しを維持。③既存directory cacheに名前のbyte長の索引を付け、1,024件の反復検索11.33→1.20µs。初回構築は約75µs／索引約8KiB増える条件があり、記録に併記。出力・境界・再入／並行処理の通常／ASan/UBSanと、実変更4 translation unitのsyntax検査を通過した。すべてPC自作負荷の結果で、実機FPS向上やカクつき解消は未確認。署名済みbuild4は不変、アプリ／クラウドビルドは未実施。[3件の根拠と制限](PERFORMANCE_WORK.md)を参照。
+
+さらにD3DXの小さなシェーダー定数更新で、一時配列のheap確保を2回→0回へ削減。行列1個までの配列を呼出し内に置き、計算・変換・ゼロ埋め・転送範囲と大きな配列の処理は維持する。実変換関数の37,642ケース、再入・512並行呼出し、ASan/UBSan、実shader translation unitのsyntax検査を通過。PCの自作比較で小さな更新は約112→95ns、行列は約166→139ns。ゲーム内の呼出し頻度・実機FPSは未測定で、次回ビルド候補として保存した。**署名済みbuild4には未収録。アプリ／クラウドビルドは実行していない。**
+
+追加で、DXVKの描画データ完了待ちを、短い確認後に通知で休む方式へ変更した。元の読み書きカウンター・atomic順序・resourceサイズは維持し、画質や必要な待ちを省かない。実resourceクラスの境界・複数待機・データ可視性・アドレス再利用を通常／ASan/UBSanで検査し、実DXVK／D3D9の3 translation unitもsyntax検査を通過。PCの模擬2ms待ちでは待機threadのCPU時間が約2.23→0.078msに減る一方、完了通知からの復帰遅延は約0.7→70µsへ増えた。iPhoneの速度・発熱・描画結果は未検証。ThreadSanitizerは環境の初期化エラーで利用できなかった。**この変更も署名済みbuild4に含まれず、Mac／アプリビルドは未実施。** 詳細と計測範囲は[比較記録](PERFORMANCE_WORK.md)のGPU待機欄。
+
+追加候補として、同期xWMA展開のPCM確保を入力が残る場合だけまとめ、通常の1パケット単位の再生では確保回数を増やさない方式を実装。自作9,138ケースの旧新比較・ASan/UBSan、実FFmpegによる自作音声のPCM一致を確認。12秒／2chの一括展開では確保281→35回だが、全体時間はほぼ同等で実機カクつき改善は未確認。音声展開時間を既存の5秒診断へ追加し、次の実機で原因を識別できるようにした。**この追加分は署名済みbuild4に入っていない。** 詳細は[比較記録](PERFORMANCE_WORK.md)の2026-11-14欄。
+
+2026-11-13。**PC版build2でゲームプレイまで進めたと本人から報告を受領しました。** build1の縮小・黒画面・ロード停止を修正した後の実機結果です。新PCアプリIDは`org.skyrimios.pc2011`、表示名は`SkyrimIOS`。既存Xbox版とは別アプリです。元処理90,390関数を静的変換した構成を維持しています。所有ゲームデータ26ファイル／5,909,061,966 bytesは読み戻しSHA256照合済み。全編の互換性や長時間安定性を保証するものではありません。
+
+**現在：性能改善・端末能力への対応・モバイル操作を含むbuild4が署名済み。実機更新待ち。** [Codemagic build13](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af6f17205c8b21ba24ef53c)は4分54秒で成功し、共有ABIの照合とPC内での組み立て／署名検証を完了した。旧IPAは保持。20:28時点でインストールは未実施で、本人へ保存・アプリ終了・USB接続・ロック解除を依頼済み。視点ドラッグ、完全なタッチゲームパッド、操作設定、画質設定、FPS上限、クイックセーブ入力を継承。実機での操作感・保存・画質反映・温度／FPS改善は未確認です。詳細は[MOBILE_CONTROLS](MOBILE_CONTROLS.md)と[性能改善の比較記録](PERFORMANCE_WORK.md)。
+
+次のゲーム側最適化は[部分逆コンパイルとカクつき改善計画](REVERSE_ENGINEERING_PLAN.md)に整理。18関数を元命令で確認し、シェーダー準備、テクスチャ転送、同期的に実行される`ReadFileEx`の3系統を候補化。PC内に擬似コードと寿命・TLS・callbackを含む置換条件を保存した。対応する4種類のhost時間計測をbuild4へ追加し、実shimの結果／APC比較とASan/UBSanを通過。候補関数の本番置換、実機での主因判定はまだ行っていない。
+
+17時台の追加指示で、音声submixの全枠64回走査を、同じstage／slot順の対象列挙へ変更。132種類の自作PCM／音声構成で実mix関数の出力・callback・解放結果が旧版と一致し、ASan/UBSanも通過した。毎import更新する診断slotも128byte間隔へ分離し、記録頻度を減らさず並行writerの競合を低減。2変更とも公開hostだけで、ゲームの画質・精度・CPU ABI・private guestは変更しない。テクスチャ行コピーの一括化は64KiBの局所比較で約18％悪化したため採らず、元処理へ戻した。実機FPS・発熱・音声出力の改善は未確認。根拠と原数値は[比較記録](PERFORMANCE_WORK.md)末尾に記載。
+
+端末性能への適応は[現状調査と実装状況](HARDWARE_ADAPTATION_AUDIT.md)へ整理。19時台の追加指示で、能力情報とユーザー設定の分離、先読みcompilerのCPU数／熱・電力別QoS、実DXVK allocatorの動的pool sizingと空chunk回収、FPS待機のevent化をbuild4候補へ実装。実allocatorと自作driverの寿命・再利用・失敗・32,000並行allocation、policyの80,000並行更新、待機途中復帰の検査を通常／ASan/UBSanで通過。変更DXVK2unitは実ヘッダーでsyntax compile済み。画質・解像度・FPS選択、guest ABI、private guestは不変。実機のFPS・発熱改善は未確認で、guestの優先度互換／CPU数上限／メモリ報告値、GPU経路全体の更新は残る。
+
+20時の[Codemagic build12](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af6edd005c8b21ba24ef3d5)は公開commit `08f80fdd0c233c5e60321f28c2f652eb5f2ef8ed`を実行し、7分10秒で失敗。ARM Macでは18検査が成功し、Windows専用の機械語検査1件は既定どおりskip。Appleの実run loop起床／QoS変更も成功し、自作3シェーダーはiPhoneOS Metalコンパイルを通過した。最後のアプリコンパイルで`UIBackgroundTaskInvalid`をCのstatic initializerに使用した1件が失敗したため、main threadの起動処理で一度だけ初期化し、overlayの通知登録前に完了させる形へ訂正。原ログは`local/codemagic-title12/`へ保存。
+
+修正版build13の公開commitは`951b8d52360277c467c89bd4365ca6d99e91643c`（rootコードは`446050b8589c39dc77110c86d73d1cf51d896379`）。18検査＋Metal3件の成功とiPhoneOS18.0／SDK26.5のcompile/linkを確認。新private guestとの`x86.h`・`PcGuestABI.h`一致、`rt_table.h`は既存late binding宣言の差だけであることをbuild11とも照合した。署名済みIPAは`private/title-signing-20261112/SkyrimIOS-PC2011-build4-signed.ipa`、SHA256 `d32aa66981cc893f4c986c9f473a44c37ee88b238e181b6468b5a91de17c8750`。2イメージ／39,412コードページ／4resourceの暗号検証と、既存profileのApple chain／App ID／対象端末／3メモリ権限を検証。OSのインストール受理、ゲーム実行、FPS／発熱改善は未確認。追加のクラウドビルドは行わない。
+
+## 2026-11-13 build4 結果を維持する性能改善
+
+- 2/4バイト書き込みhelperの不要なstack退避を取り除くパッチを採用。実iOS ARM64コンパイラー出力でrelease atomic／barrierを保ったまま命令を削減。旧／新各524,288ケースのbyte比較も通過した。物理iPhoneの性能測定は未実施。
+- D3D9の永続テクスチャ更新／解放で、全objectの走査を対象objectの範囲検索へ変更。実コードの旧／新で内容・順序・ロック・寿命を比較し、ASan/UBSanも通過。局所ベンチでは探索時間が減ったが、ゲームでの呼出頻度やFPS改善量は未知。
+- SIMD固定長コピーの別案は実機械語が同一だったため棄却。heap bitmapは即時fitで遅くなる比較結果から棄却し、原実装を維持。memory fence・物理処理・画質設定を削って速度を出す変更は行っていない。
+- 追加調査でDXVKのVulkan pipeline cacheが起動間で保存されていないことを確認し、OS/GPU/変換器の一致を確認した保存・再利用を公開hostに追加。既存のDXVK state cacheは維持。保存はbackground時のworkerのみで、破損や中断された書き込みが旧cacheを壊さないようにし、読込不適合時の空cache起動を残す。実C++による自作driver検査とASan/UBSanを通過。実Metal／UIKit／iPhone上の効果は未確認。
+- frame間隔・Present・FPS cap待機とsleep回数・shader/pipeline作成時間の固定histogramを追加。毎frameのファイル出力やallocationをせず5秒ごとにまとめる。現状の引っ掛かりがcompiler由来かを次の実機ログで判断するためで、GPU時間やcache hitを測ったとは扱わない。公開DXVKの変更5 unitは実ヘッダー付きWSL syntax compileを通過した。
+- 瞬間的なカクつき対策として、DXVKの長いpipeline生成と準備済みinstanceの検索を別lockに分離。自作compilerを停止した比較では旧版が準備済みhitまで止め、新版は先に返せた。同stateの二重生成、描画省略、API引数／失敗条件の変更はない。実lookupコードの並行検査・ASan/UBSanと実5 unitのsyntax compileを通過。生成mutex待機の時間分布も追加。初回未準備shaderのコンパイル自体は残り、実機効果は未測定。
+- 本人指示で`skyrim-metal`の自動送信を削除し、今回のカクつき対策はgoalで管理。サブエージェントなし。20時前の新Macジョブは起動していない。
+- private guestを同じ入力から再生成し、90,390関数・未対応510件・生成515ファイルの内容と共有ABIが基準と一致。新helperを含めた514 unitのローカルARM64 compile/linkもexit0で完了。コンパイラー／フラグ／17個のsystem importは同じで、unsigned binaryは150,660,464→149,123,672 bytesへ縮小。FPS改善率としては扱わない。
+- 新frameworkと署名前bindingは`private/title-performance-20261113-01/arm64-ios/`に保持。SHA256は[比較記録](PERFORMANCE_WORK.md)に記載。rootの性能コードcommitは`7f12ae5`、公開ミラーは`a78312c2ba1236baa84eada9f69a0f7f3a50f8ef`として既存branchへpush・remote照合済み。新しいMacビルド・署名・実機更新はまだ行っていない。20時以降の一括ビルドまでは新しい根拠なく検査を繰り返さない。
+
+## 2026-11-13 build3 モバイル操作と設定
+
+- ゲーム画面の空き領域での視点操作、十字キー、左右トリガー／ショルダー、L3/R3、START/BACKを追加。感度・上下反転・ボタンサイズ／不透明度・ドラッグでの配置保存を実装。物理パッドの入力経路を維持する。
+- UIKitの操作画面に移し、毎フレームのD3D9 state block Capture/Applyと操作パッドの描画を取り除いた。固定SDLの`setSDLWindow:`がMetal用root viewを交換することをソースで確認し、新しいviewへ操作画面を付け直す処理も追加した。
+- 5画質プリセットと個別設定、即時反映する24/30/40/60 FPS上限、任意の高温時抑制を追加。初回は現在の画質と追加FPS制限なしを維持。通常の詳細APIログを停止し、5秒ごとの粗い性能診断を残す。実機での効率改善量は未測定。
+- クイック保存は実際のF5入力と`.ess`ファイル更新の検出。実行状態全体のステートセーブは未実装で、ゲーム側がF5を受理するかも実機確認が必要。
+- 実C入力／時間制御の検査をGCCの警告エラー化とASan/UBSanで通過。固定上流への実パッチとCPU ABI不変を含むPython 5件も通過。
+- [Codemagic build10](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af669d810a05158d81237dd)は4分34秒で成功。SDL root view対応を加えた[最終build11](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af66c4410a05158d812386a)も4分39秒で成功。最終公開commitは`0239ba2b7becbddc73a6914c95425d34be8a0295`。追加ビルドは行わない。
+- `local/codemagic-title11/`にホスト／原ログ／Metal検証を保存。iPhoneOS18.0／SDK26.5の実コンパイル・リンクと、自作3シェーダーのMetalコンパイル／AIR生成が成功。`x86.h`・`PcGuestABI.h`・`rt_table.h`はbuild2とLF正規化後に全文一致。public host ZIP SHA256 `fd1d29fbdad33e6c9b7c5e14897a03d8b911b208e97aa9a453d9e64d7e48756b`。
+- 既存private guestをPC内だけで組み合わせ、未署名IPA SHA256 `609f139cf4173cb9e8b809b10a3ca75d8da9a865811fece5625d557c990c27dd`を生成。署名済みIPAは`private/title-signing-20261112/SkyrimIOS-PC2011-build3-signed.ipa`、SHA256 `0323d9ef55bff936c0ebadcef26c004b47bdd03a2138bc47a925006bf4c5017e`。2イメージ／39,781コードページ／4resourceの暗号検証、既存profileのApple chain／端末／App IDの一致を確認。OSによるインストール時の署名受理は未確認。
+- 直近のUSB検出は0台。実機更新・新機能の実機確認は未実施。本人が保存・終了・USB接続・ロック解除を確認したら、`private/title-signing-20261112/snapshot_pc_build3.py`でプロフィールだけを保護し、同フォルダーの`phone_pc_build3.py install`でUpgradeする。元のゲーム26ファイルは再コピーせず、前後のプロフィール内容とゲームの名前／サイズを比較する。
+
+## 2026-11-13 build2 描画・画面処理の修正
+
+- 実機2実行のログを`private/iphone-display-20261113-012319/`へ回収。論理956×440に対しMetal drawableは2868×1320。ゼロ余白時にPresentの出力矩形をnullへ変える処理が、DXVKに論理サイズを選ばせていた。通常のPresentには原点0でも実ピクセル矩形を渡すよう修正。
+- 黒画面のログには`shadowSmplr`未宣言によるMetalシェーダー／パイプライン生成失敗がある。[MoltenVK #2768](https://github.com/KhronosGroup/MoltenVK/issues/2768)と一致。固定SPIRV-Crossのcombined-image aliasで既存texture参照に対応するsampler参照も生成する修正を追加。ゲーム由来シェーダーの文字列置換は行わない。
+- 自作SPIR-Vの正順alias・逆順aliasで、実際の固定コンパイラーの修正前欠落／修正後定義を確認。別bindingの対照は出力不変。Windows側の実コンパイラー比較結果は`local/ios-render-repro/fixtures/`。同じ3件をiPhoneOS Metalコンパイラーで検証する工程を次回の一括ビルドに含める。
+- ロード時は別スレッドのPresentが止まり、mainはSleepを繰り返していた。UIKitのrunloop処理をmainのSleep／PeekMessageでも行い、workerの入力処理はSDLキューの取り出しだけにする。drawable照会もmainで更新した値をworkerへ渡す。Present内部の停止位置は未確定なので5段階の進捗とUI pump時刻を記録する。
+- descriptor pool枯渇警告は動的割当へ進んでおり、RAM不足や停止原因とは断定しない。この挙動を隠す変更はしていない。build2の実機表示／ロード改善は本人の再確認待ち。Macビルド・署名・更新の結果は以下に記載。
+
+- [6回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5ee029679c85ac0af2a68)／公開cloud commit `ec032691f4ac07f233f4acc113d342ce9f259e52` は約29分のMac割当待ち後、4分01秒で停止。修正版MoltenVKのARM64/iPhoneOSビルドは成功したが、Macで動かす自作検証ツールにworkflowの`IPHONEOS_DEPLOYMENT_TARGET`が漏れ、iOS対象としてリンクされて起動時にsignal 9になった。原ログは`local/codemagic-title6/`。検証ツールのconfigure/buildだけiOS環境を外し、macOS SDK／targetを明示して、実行前にMach-O platform MACOSを確認する修正を追加。Metalコンパイラーの実検証は未完了。
+
+- [7回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5f58d9679c85ac0af2d92)／公開cloud commit `d3ef516c1fb641191d9abed8b8216d97d9010e1c` は4分42秒。修正済みMoltenVKとMac検証ツールをビルドし、Mach-O `platform MACOS`とツール起動を確認。不足していた公式Metal Toolchainも導入されたが、検証コマンドの`-std=ios-metal3.1`が無効で停止した。実コンパイラーが列挙した`-std=metal3.1`へ訂正。原ログは`local/codemagic-title7/`。次回は3件すべての検証とアプリのコンパイルを同じ実行で採取するが、検証失敗時はIPA用ホストと成功結果を出さず失敗を維持する。
+
+- [8回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5fc879679c85ac0af304d)／公開cloud commit `21b7a0554b11b5351868057a2724c70399b65aa8` は7分44秒。アプリ本体の全コンパイル・リンクは成功したが、Metal検証は公式toolchainのダウンロード後、実シェーダー検証へ進む前にstatus1で停止。再probeのstderrが非公開の一時ログだけに入り、正確な停止理由は未確定。原ログは`local/codemagic-title8/`。`--version`を判定条件から外し、実際の3シェーダーのコンパイル結果と出力ファイルで判定するよう修正。toolchain欠落が明示された場合だけ公式downloadを1回試し、その終了値と全コンパイラーログを保存する。検証失敗時のホスト配布停止は維持する。
+
+- [9回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af605e99679c85ac0af33b5)／公開cloud commit `a754d98afe7479f3c5582ab1f4d7eb5e3627fd2c` は6分57秒で成功。公式Metal Toolchain導入後、正順alias・逆順alias・別bindingの3件が実iPhoneOS Metalコンパイラーでstatus0、AIR生成まで成功。ホストはARM64／iPhoneOS18.0／SDK26.5。`x86.h`・`PcGuestABI.h`・`rt_table.h`は導入済みbuild1のSDK成果物とLF正規化後に全文一致。原ログ・3検証・ホストは`local/codemagic-title9/`へ保持。public host ZIP SHA256 `458cc129129ad5fc8a1ae9d19a4aebd4ffd778b2d08cec92aca54ba7e23bb791`。実ゲーム映像の検証ではない。
+- PC内で既存private frameworkと組み合わせ、build2未署名IPA SHA256 `e344735022b42f1b52c0595d54d55f0310851b9854be10beace8f7fbcb6aea5c`を生成。署名済みIPAは`private/title-signing-20261112/SkyrimIOS-PC2011-build2-signed.ipa`、SHA256 `ad75fbe7fa8722d49fac91ce28d7d528e3f86c6e58608eb71bb65882ade251a0`。既存profileのApple chain／端末／App ID、2イメージ／39,765コードページ／4resourceを検証し、一時平文鍵の除去も確認。
+- USBの既存信頼で`Upgrade`が100%完了し、同じPCアプリID／Teamでbuild1→2を確認。`private/iphone-pre-build2-20261113/snapshot.json`と`private/iphone-post-build2-20261113/snapshot.json`で、ゲーム26ファイルの名前／サイズ5,909,061,966 bytesと、設定3ファイル2,927 bytesのSHA256が完全一致。6 GB全体の再コピー／再ハッシュは行っていない。本人へPC版「SkyrimIOS」の全画面表示とNew Gameの進行確認を依頼済み。結果は未受領。
+
+## 2026-11-12 夜の実機タイトル到達作業
+
+- `codex/ios-title-milestone`で、固定アドレスのnative置換を使わず元のguest処理を残す診断経路を実装中。未承認の入力profileを互換性承認済みにはしていない。
+- 第5パッチで関数間のCPU flags保持を修正。小さな実リフター／native x86比較8ケースは、両入口方式とも修正前失敗・修正後成功。
+- 所有英語入力から90,390関数／512分割のC生成が448秒で完了。510候補は変換拒否として記録。元入力は不変。514 translation unitsのARM64コンパイルと未解決symbol禁止のリンクが成功。`private/title-20261112-01/arm64-ios/result.json`に記録。未署名frameworkは150,660,464 bytes、SHA256 `721bf7684148623c0cfc6c676935c3123eaf14925128e300489744228dc69665`。まだゲームは実行していない。
+- 公開iOS runtime、SDL2＋DXVK＋MoltenVK等の依存、private frameworkとのcallback ABIを用意。ゲームコードと入力はPC内で作り、クラウドは公開ホストだけをSDKビルドする。
+- 最小確認は公開ソース混入検査、overlayアンカー、共有CPUヘッダー、ABIアダプタのARM64コンパイル。private frameworkのARM64/iPhoneOS18.0構造、署名用余白、署名前内容のbindingを既存ローカル検証器で確認。Mac本ビルド、署名、実機タイトル描画は未完了。
+- Codemagicの既存認証・無料枠でPC版のmanual workflowを追加。初回 `6af59d9e9679c85ac0af08de` は2分50秒、vkd3d 2.0の `--without-metal` によるObjective-C条件の未初期化で失敗。原ログは`local/codemagic-title1/`に保持。公式configureの分岐を確認し、実iPhoneOS SDKのMetal/Objective-C検出を有効にする修正だけを加えた。
+- 2回目 `6af5a1789679c85ac0af0a5b`／公開cloud commit `7d65f484dd4399ed8b55a299b63659af977a5b3f` は5分17秒。SDL/FFmpeg/vkd3d/MoltenVKのビルド後、`lipo -verify_arch`の引数順で停止。原ログは`local/codemagic-title2/`。引数を入力ファイル→`-verify_arch arm64`へ修正し、アプリコンパイルは独立したエラーも一度に採取するよう`make -k`を指定。
+- 3回目 `6af5a56f9679c85ac0af0bdb`／公開cloud commit `eca3e393aedcc3d30a38ea9a0dd38aaabcef034b` は4分42秒。全依存のビルド・ARM64確認後、SDK外のSDL2 prefixをCMakeが再root化し、package発見に失敗。実インストール先をログで確認してexact config path＋`NO_CMAKE_FIND_ROOT_PATH`へ修正。同じroot-only検索の最小再現は修正前exit1、修正後exit0。原ログは`local/codemagic-title3/`。ゲーム由来C・入力・署名鍵は送信していない。
+
+- 4回目 `6af5a9a19679c85ac0af0d5d`／公開cloud commit `d51d761a1bb55388681e3e22d77ed2906017a688` は6分01秒。SDL2検索・全DXVKコンパイルは通過。runtimeを98%まで進めて独立エラーを採取し、失敗はdesktop debugの`LB_BISECT`撮影処理によるiOS禁止`system()`の1件のみ。iOS overlayでは同機能を要求した時だけ明示エラーへ変更し、通常描画を維持。原ログは`local/codemagic-title4/`。直前の無料枠は使用100/500分、subscription未有効。
+
+- [5回目Codemagic](https://codemagic.io/app/6ad977fcf240708df6941076/build/6af5adb89679c85ac0af0f0c)／公開cloud commit `6d6bf479fbb2ba4cb21d07ba4d26e42da842a18f` は8分21秒で成功。Xcode26.6、SDK26.5、ARM64/iPhoneOS/minOS18.0。全依存、DXVK、runtime、Objective-C入口、callback adapterをコンパイル・リンク。public host ZIP SHA256 `11f930ed9c59b36f98afbd9681912d77f88f20b7d3c4cbafb4e127f27ffe7f74`、host Mach-O12,194,488 bytes／SHA256 `8707a2d789ae749b8b4ccf1654f943782a23e5c3be2a27db2da9c2717926d097`。原成果物は`local/codemagic-title5/`。
+- SDK側`x86.h`と`PcGuestABI.h`はローカルprivate側とLF正規化後に一致。`rt_table.h`の全文一致検査は失敗したが、差は既にレビューしたhost側の一度だけ代入する`g_modules`宣言のconst解除だけと確認。FnEntry/FnModuleの定義は同じで、private frameworkのstrict-link import集合に`g_modules`はない。追加のprivate再コンパイルは不要。
+- `private/title-delivery-20261112/SkyrimIOS-PC2011-build1-unsigned.ipa`をローカル生成。SHA256 `c9c3331c72904d978339048582a2090d9389c2534fe7b758363fc4bffb70973d`、4ファイル。全ZIP CRC、2つのARM64/iPhoneOS18.0イメージの未署名構造・署名余白・terminal LINKEDIT・app identityを既存署名器の検証で確認。署名鍵は開いていない。Appleログイン画面とUSB未接続を確認して本人操作待ち。
+
+## 2026-11-13 実機導入
+
+- 本人ログインと発行直前の承認を受け、PC版専用App IDとDevelopment profileを作成。既存証明書1枚と登録済みiPhone1台だけを対象に、Extended Virtual Addressing／Increased Memory Limit／Increased Debugging Memory Limitを付与。Appleの署名チェーン、CMSと内部DERの一致、証明書・端末・App ID・有効期限・権限の完全一致をPC内で検証。
+- 既存の保護済み鍵をPC内で使い、2つのARM64イメージ・39,761コードページ・4リソースの署名と再構成を検証。署名済みIPAは`private/title-signing-20261112/SkyrimIOS-PC2011-build1-signed.ipa`、SHA256 `7ea6f152a3bfc68ec7b08481263623e1680555e5eb2f8572b8cb45c3721333c2`。原IPAとゲーム入力は保持。秘密鍵・ゲーム由来コードはクラウドへ送信していない。
+- 既存USB信頼だけで新PCアプリをInstallし、100%終了とインストール後のBundle ID・build・Team IDを確認。Xbox版へのUpgradeや削除は行っていない。アプリを開く前に所有データを転送し、全26ファイル／5,909,061,966 bytesの読み戻しSHA256照合が成功。入力PEも期待SHA256に一致。本人に「SkyrimIOS」の初回起動と表示状況を依頼済み。
+
+## 確認済み
+
+- 残る固定置換7関数とmotion4関数を静的監査した。物理schedulerは11 blocks／50命令で呼出しがなく、次の限定比較対象にできる。他のmotion4関数は195 blocks／1,616命令、109呼出し（動的29、TLS import4を含む）があり、オブジェクト状態・呼出先の比較は未完了。5箇所のclock読取は上流の期待数に一致したが、動作の一致を意味しない。
+- 上流のSKSE無効時に、CMakeがruntimeのsource一覧を置き換えてF3DAudioを落とす問題を再現し、第4パッチで保持するよう修正。元のcommand区間を使うCMake検査2件・5設定で確認した。合成の空sourceを用いたtarget属性の検査であり、音声処理の実行やiPhoneOSリンクではない。誤混入検査はこのCMakeファイルだけを追加許可し、関連13検査がWindowsで成功。
+- 負のindexから候補を回収する第3パッチを実装。12合成検査と独立した20＋8＋1検査、実入力の2関数限定解析を通過。分岐先候補8件は既知blockと一致し、元のtables／rangesは維持する。全流入経路の完全性は証明できないため未解決の表示は残す。閉じたPE mmapを参照した原失敗も保存し、入力バイトを保持する方法へ修正した。
+- メモリー転送2処理／CRC3処理を、元の補助処理16個を含む計21関数だけ診断用に変換・実行。WSLで20,000比較が成功し、終了0、最終1,639件の入力／ソース照合に不一致なし。元exeを起動した結果でも、ARM64／実機の結果でもない。最初の7関数診断は未解決targetで停止し、原失敗を保持。追加した14着地点は算術flagsを読まないことも独立確認した。
+- その停止を調べた結果、非空tableでも負のindex側を見落とす2箇所が判明。既存の1,053箇所に加え、**既知の未解決は計1,055 unique sites**。元の全体解析JSONを上書きした数ではなく、限定監査による補足。第3パッチはこの別のCMP/JB/NEG規則までは解決していない。
+- Windows 10 Pro 19045 / PowerShell 7.6.5、Xeon E5-1620 v4（4C/8T）、RAM31.9 GiB。初回空きRAM6.2 GiB。F空き87.5 GiB、C空き8.3 GiB。大きな生成やビルドはFへ置き、2並列を上限にする。
+- WSL Ubuntu-24.04と `/mnt/f` を利用可能。Python3.12、Git、CMake、Ninja、VS2022 BuildTools、WSL GCC13.3が存在。WindowsにXcode/iPhoneOS SDKはない。
+- Steam本体 `C:\Program Files (x86)\Steam` をHKCU/HKLMで確認。libraryfolders登録先はC側と `F:\SteamLibrary`。
+- 初回探索と15:46の再確認では両登録先に2011版／SEのmanifest・exeがなく、Steamの各Installed値も0だった。F側SEフォルダーは `Debug.log` のみ。その後、ユーザーがSteamインストールを許可し、こちらで2011版の開始画面を開いた。クリック操作の取得エラーのため確定はユーザーが行った。
+- 15:58:03 JST、Steamが2011版を `Fully Installed` / `No Error` と報告。`F:\SteamLibrary\steamapps\common\Skyrim`、BuildID15039560、日本語、ダウンロード5,268,473,152 bytesが完了。SEは未導入のまま。
+- 日本語版TESV.exeはx86 PE32、17,440,768 bytes、固定値／文字列ともFileVersion・ProductVersion **1.9.31.0**。SHA-1 `68f83f9b866d0abe7f2de2970a8d3e577f4ef7c6`、SHA-256 `c2778d3e80a25618ce731e38612127ec9df4d61d4ce1bfac3c414de87b68aed2`。主要Data9ファイルと音声BSA2ファイルが存在。Data全体のハッシュや起動は実施していない。
+- 元exeコピーと全体コピーを独立保存。全体は187ファイル、5,842,262,187 bytes。保存元・コピー先・記録の全パス／サイズが一致し、exeのSHA-256も一致。SteamのSizeOnDisk値とは50 bytes差があるが、実ファイルのコピー比較は一致している。日本語原本・旧未検出記録を上書きしていない。
+- 日本語全体コピーを照合後、ユーザー許可を得て英語へ切り替えた（画面操作は取得エラーのためユーザーが選択）。16:23:44 JSTにSteam更新完了、UserConfigとMountedConfig双方がenglish、StateFlags4。英語版TESV.exeは1.9.32.0、x86 PE32、18,024,240 bytes、SHA-1 `f39aecebf6e332616c4c518617073f6e8250e0f8`、SHA-256 `69362f77bc56bf17570a33106d020b6c67fd8f32a294b82f8b687b9cf71efc72`。Android READMEが示す元exeのprefix `f39aeceb` と一致。7セクションで`.bind`あり、フック位置比較は展開まで不可。
+- 英語版全181ファイル、6,031,556,590 bytesも独立コピーし、全パス／サイズとexe両ハッシュが保存元に一致。日本語版コピーを保持したまま、Steam側の設定は現在英語。
+- 固定したSteamlessソースを既存MSBuild／.NET4.8でビルドし、SteamStub2.1 x86形式の英語コピーを静的展開。ゲームexeは未実行。既定出力は17,462,064 bytes、SHA-1 `17ec1ef6d72781359860f103f600711dfc219182`、SHA-256 `d97eb0cc0ceef0923d2234d42b382c0d033853356528b271bc043542b1f5e605`。元exe、全体コピー、各試行の元exeハッシュは変わっていない。
+- 展開後は6セクション・`.bind`なし・entry VA `0x00f568a1`。上流PE読取処理がimport/TLS構造を受理し、15 DLLから266個の静的importを確認。これはDLLファイル全部が必要という意味ではなく、動的取得・COM・各代替実装の正しさは別検証。実際にimportされる `FlushFileBuffers`・thread priority/affinityには上流の未実装動作があり、統合前の課題となる。
+- 上流16フック候補の位置は`.text`内だが、同じ関数やABIである証拠ではなく互換性は未承認。日本語版と英語展開版の16指紋は全て異なる。物理処理4関数・時間変数等も未検証として明記。新規監査の合成検査9件がWindows/WSLで成功。
+- 展開オプション8通りと、各出力のセクション終端までの読み取り専用ハッシュを比較したが、上流記載の `67a597df…`／`fed96638…` には一致しなかった。元の署名overlayが保持される一方、出力のsecurity-directory位置がEOF外になる不備も特定。任意のバイト修正で一致させず、元の全出力と失敗を保持。詳細は [UNPACKING](UNPACKING.md)。
+- 許可済みのCapstone5.0.9とpefile2024.8.26のみを、SHA-256固定の公式wheelから専用WSL環境へ導入。配布版5.0.9に対してPythonの `__version__` が5.0.7なのは公式ソースの定数更新漏れと照合済み。元ファイルを修正せず、配布メタデータとwheelハッシュで固定する。関数探索の直列／並列一致1件、合成PEの境界・TLS／import・埋込み初期化2件もWSLで成功。
+- 未承認の英語展開候補に対し、版依存置換を使わない関数解析をWSL・2並列で実行。16:58:52〜17:05:08 JST、exit0、両JSONの構造と入力の不変を確認。90,900関数候補、1,083 jump table、gap4,029／46,802 bytes。未解決リスト1,201件は重複を除くと1,051箇所。後続監査で漏れていた空jump table2箇所を加え、計1,053箇所を未解決と記録した。完全なコード網羅性・変換成功・profile承認を意味しない。
+- 実x86命令と生成Cの比較でAF欠落を再現し、固定パッチを実装。拡張40,632ケース／最適化で、上流はO0/O2各13,016不一致、修正版は各0。算術・flag転送・保持・有限値のx87/SSE比較を検証。原失敗を保持し、独立したAstraレビューも実施。[CPU_VALIDATION](CPU_VALIDATION.md) に範囲・限界を記載。ARM64や全ゲームコードの正しさは未確認。
+- 上流16置換＋物理4関数を限定監査し、自己完結した文字列4関数だけを診断用に変換・実行。上流native wrappersとの32,000比較で、戻り値・書込み・保持ABIが一致した。元exeの起動やゲーム全体の生成ではなく、参照側の変換器誤りが共通する可能性は残る。元入力・解析結果・全一時ファイルを保持。空jump tableを未解決として報告する第2パッチも合成検査済み。
+- 元Unity作業のREADME・開発ガイド・状態を確認し、独立した `F:\SkyrimIOS` に実装。Astraにソース監査、iOS基盤、CIを分担した。
+- 固定した上流2ソースを取得・実装と履歴を監査。Skydreamのゲームなし合成検査9件がWSLで成功。詳細は [SOURCE_AUDIT](SOURCE_AUDIT.md)。
+- Steam探索／PE同定、元入力と派生入力の分離、誤混入検査、ビルド出自／署名照合、UIKit/Metal検証アプリと疎な4 GiBメモリー検査を実装した。
+- Native CをMSVC x64 /W4 /WXとWSL GCCでビルド・実行。4 GiB仮想予約、3ページ12 KiBの使用、境界・32-bit変換・解放を確認。WSL peak RSS 1,576 KiB。iPhoneでの確保可否は未確認。
+- [実CI 43071698303](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/43071698303) は終了0。Xcode26.6(17F113)、iPhoneOS26.5(23F81a)、ARM64、最低iOS18.0を確認。Python検査は29件中28件成功、PyYAML未導入による任意のYAML検査1件skip（Windowsで同検査は成功済み）。
+- [実CI 43072800930](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/43072800930) でもiPhoneOSビルド・dSYM照合が成功。追加したARM64 iOS26.5 Simulator（iPhone 17 Pro Maxモデル）のUI検査1件が63.911秒、失敗0で成功。起動、左右ドラッグ、保存／読込、Homeから復帰、プロセス再起動後の保存状態復元、実行バイナリーUUID記録、音声のスケジュールを確認。三角形の描画と操作後の位置／回転は保存画像でも確認した。音が聞こえること・Files取込・ログ共有は未検証。
+- 同Simulatorで4 GiB仮想予約、16 KiBページ3枚＝48 KiBアクセス、境界確認と解放が `VA PASS`。別のmacOS ARM64ネイティブC検査も16 KiBページで成功。Simulatorの `available=0` は実機の利用可能RAMを示さない。前後footprintは47,765,376→47,863,680 bytesの瞬間値で、ピークやゲームの必要量ではない。
+- 成功後、Simulator初回起動が約6分かかった記録を基に起動600秒／UI360秒の上限を設定し、実機用未署名成果物をSimulator開始前にも保持するようにした。終了・SIGINT/SIGTERM・子プロセス停止・無関係プロセス保護・失敗ログ保持を局所検査済み。アプリ本体は成功版と同一で、この保持／期限処理だけの変更ではクラウド検査を繰り返していない。
+
+## 証拠
+
+- `private/analysis/remaining-overrides-20261112-01/audit.json` が7置換のABI／呼出し／global監査（SHA-256 `ba4805deb9b2396fcb357c1834883da37c32ba02c4685ae690315c0f5e3e8a97`）。`remaining-physics-20261112-01/findings.json` が4 motion関数の結果（SHA-256 `62898c29d3107d0d8cd6c7343d6333d1646e3e6b03d220bc26fdb061df1bc074`）。新たなゲーム由来コードの生成・実行はしていない。
+- `local/tests/desktop-audio-source-20261112/baseline-evidence/` に音声source欠落の原失敗とCMake属性／ログを保存。第4パッチSHA-256は `24e8e69260880dc5c5fd9b6d6ca35e405c9cde5ad3898ea59695a9b15254cee4`。既存の文字列・primitive成功結果は変更しておらず、診断時の固定パッチ構成もそのまま保持する。
+- `local/translation/english-pair-four-patches-20261112/translation-plan.json` で4パッチの実ハッシュが一致。残るblockerは互換profile未承認、`executed:false`。ゲーム全体の生成や追加のAppleビルドはしていない。
+- `private/analysis/negative-table-real-probe-20261112/` が閉じたmmap参照の原失敗、`negative-table-real-probe-v2-20261112/` が修正後の2関数解析と12検査ログ。独立検査は `local/tests/negative-roots-independent-*`。第3パッチSHA-256は `21f610a0af715992a6b16b2adcacd0924e4d020cc7c7cd6c88beabc9338668e3`。
+- `private/diagnostics/five-primitives-reviewed-20261112-01/` が未解決target `F53AE4` の原失敗、`five-primitives-reviewed-20261112-02/report.json` が20,000比較の成功と1,639照合。生成CのSHA-256は `50f5f3c2e900cab5704a846085d5466be14b662c3f82fef2b5f8075eead7aa7e`、保存したrunnerは `53ac73449d05b2bdce994ad138f287f100be513a375237a36150f65f3500c99e`。全生成物・コンパイラー中間物・stderr/stdoutを非公開で保持。
+- `private/analysis/primitive-contracts-20261112-04/audit.json` が21関数の入力／block／呼出・table監査（SHA-256 `7d9be136d7f3a89f1d42b3d693f66631a5154234680807e8cf618c7e873feafd`）。旧01〜03も保存。`backward-memmove-cfg-20261112/` にNEG分岐の原因、算術flagsの限定確認、誤った途中説明を訂正する `flags-correction.json`、1,055箇所の補足記録。詳細と再現手順は [TRANSLATION](TRANSLATION.md)。
+- `local/translation/english-pair-three-patches-v2-20261112/translation-plan.json` は最終3パッチを照合し、exit2、残るblockerは互換profile未承認だけ。プリフライト26検査、primitive wrapper9検査も成功。iOSアプリ・ビルド設定は今回変更せず、クラウド再ビルドは行っていない。
+- `local/environment-20261112-023341.json`: 実行環境・ツールと容量。
+- `local/inputs-20261112-023309.json`: Steam照会順、全確認パス、未検出、検査エラー0。exeがないためバージョン／サイズ／ハッシュは未取得であり、空値を既知の入力で埋めていない。
+- `local/inputs-recheck-20261112-154645.json` がインストール前の再確認、`local/inputs-installed-20261112-155938.json` が完了後の入力同定。別記録として保持。
+- `private/inputs/steam-72850-japanese-20261112-155938/` に元exe・provenance・discovery、`private/inputs/steam-72850-japanese-full-20261112-160530/` に全体コピーと187ファイルの `complete.json`。ゲーム入力はGit／CIへ送らない。
+- `local/inputs-english-20261112-162508.json` が英語版入力同定、`private/inputs/steam-72850-english-20261112-162508/` が全体コピー・discovery・complete記録。`local/pe-audit/english-original-20261112/` は展開前なので `packed_image_not_hook_evidence` / `not_comparable` とした監査。
+- `local/pe-audit/japanese-installed-20261112/` と `local/pe-audit/japanese-preserved-20261112/` にPE・セクション・フック候補位置の読み取り専用監査。バイト内容を出力せず、互換性判定は未承認のまま。
+- `private/tooling/wheels-20261112-skydream/` に許可済み2wheel、取得ハッシュ、導入ログ、基本動作とCapstone版表示の照合記録。実行環境は `private/tooling/skydream-py312-20261112/`。`local/tests/source-with-approved-deps-20261112/` に追加の上流合成検査3件の原ログ。
+- `private/tooling/steamless-cd770bf-20261112/` に固定ソース・成功／失敗ビルド・実行ツールの監査。`private/translation/unpack-steamless-20261112-defaults/` に元コピー・展開候補・recipe・ログ・構造／import監査。`local/pe-audit/english-unpacked-defaults-20261112/` に候補のPE／フック位置指紋。
+- `local/translation/english-pair-20261112/translation-plan.json` は実際の元exe／展開候補／recipeを照合し、残るblockerは `unpacked_hash_and_layout_not_reviewed` の1件。exit2、生成は未実行。以前の未検出／依存不足／CRLF失敗記録を上書きしていない。
+- `local/translation/english-pair-two-patches-20261112/translation-plan.json` は後続の2パッチも順序・SHA-256を照合済み。残る入力blockerは同じ1件で、ゲーム全体の生成は未実行。
+- `private/discovery/basepin-english-1932-20261112-01/result.json` と `discovery.log` に完了した汎用解析。functions JSONのSHA-256 `1fc28ce90d668d635ace8fd641d95720782e24c0f64eaf08cbaf8bf170d15b6d`、gaps JSON `59e370de43a65a031faa97e979892c910a38b3bad4639e72cd6c2c70016e234a`。ソース、元／解析用コピー、依存のハッシュも同記録に固定。
+- `local/tests/lifter-flags-20261112T080014.624903Z-58/report.json` にAFの拡張比較。`source-lock.json` は基底commitとパッチSHA-256を固定し、生成contractは順序・実バイトも含む。パッチの内容・順序変更、改行変換、適用先の外側Gitへの混入を検査した。
+- `private/analysis/english-contracts-20261112/` に20関数のblock指紋・呼出／参照監査・未解決件数の補正。`private/diagnostics/four-strings-20261112T081458.223724Z-12/` に4関数の限定比較。詳細と再現方法は [TRANSLATION](TRANSLATION.md)。ゲーム由来の生成Cはこの非公開ローカル保管だけに置く。
+- [PROBE](PROBE.md): C検査・Apple側未検証点・実機手順。
+- [CI](CI.md): source検査・ビルド／署名テスト・固定環境・生成物の対応。
+- `local/build/native-vs/Testing/Temporary/LastTest.log`: MSVC側の実C検査。
+- `local/ci-failures/run-43070949202.log`: macOSの `/var` → `/private/var` 差による初回検査失敗。ルート正規化と範囲外symlink拒否の回帰検査で修正。
+- `local/ci-failures/run-43071341237.log` と `local/ci-downloads/run-43071341237.zip`: CoreGraphicsリンク不足の原失敗。明示リンクを追加し修正。原ZIP SHA256 `a794e53c00980e9614f8a0677e37d54de3ccd08b7a58a3b971b13f2b75b3a253`。
+- `local/ci-downloads/run-43071698303.zip`: 成功した原ZIPを取得・照合済み、SHA256 `90dafa38b3a13cce50474fc82926255e68a411e8692b1fa25312fade562955e8`。同名の展開フォルダー内 `20261111T174839Z-unsigned-Gcdofr/artifacts/manifest.json` がソースcommit・SDK・バイナリー・dSYM・ログを対応づける。
+- 成功時CIソース `c764be0f8fdce122151ac45ab5187abbbc3a15d7`。実行ファイルSHA256 `22da35955b4a517e1c97576b846530be7dc9d293193aaa2f1035a9dd3c7241bc`、dSYMと共通UUID `9E48331D-C9F6-3FD9-8471-5EF2A82FA045`。`installable=false`、未署名.app.zip。署名済みIPAと呼ばない。
+- 最新の成功原ZIP `local/ci-downloads/run-43072800930.zip` のSHA256は `b57f2b1b18e31b3b91fe91b2750a77c1b686e964ff89f1a5015dba03e426d21c`。APIのdigestと照合し、内包5成果物・実行バイナリー・dSYMのハッシュも照合済み。ソース `27cafaa7e43b120f9c44030f720d60665bf955de`、iPhoneOS実行ファイルSHA256 `e4f118e0194a78c384257e0eef0a7c0ed32ad5c4e030e5c9b71914ba8257d2cb`、共通UUID `EF1143FE-E8B8-38C3-B77C-EC79590461F5`。展開先 `local/ci-downloads/run-43072800930/ci/20261111T175538Z-unsigned-Vmn7oE/artifacts/manifest.json`。
+- Simulatorの原ログ・XCTest結果・画像は同展開先 `simulator/run-20261111T175605Z-2063/`。`scope.json` と `native-test.log`、`attachments/C7450221-BC3B-4DF9-B725-0054E9AD2CEC.txt` がVA結果、`C632D884-07BC-42EC-BCB8-3BA216530064.png` が初期描画、`7A674A0A-708C-4115-9F53-E46620EBC772.png` が再起動後の復元。Simulatorの実行UUID `7AF2E14E-10E0-3A05-A5DF-9775C2C6A88E` はiPhoneOS成果物と別物。最終画面PNGはテスト終了後のホーム画面なので描画の証拠には用いない。
+- [非公開Draft PR #1](https://github.com/halc8312/skyrim-ios-preflight/pull/1) に今回の `pc-aot/` とCIを分離。既存mainは変更していない。
+- source公開対象の混入検査と `git diff --check` が成功。Unity側は元の `codex/sr01-realism` と14件の未追跡SceneDependencyCacheを維持。今回の入力・変換器修正ではiOSアプリ本体／native C／SDK build設定を変更しておらず、以前のApple成功結果を今回の新しいCPU診断結果に読み替えていない。
+
+## 現在の障害と次の操作
+
+1. **build1は実機で実行済み。** 音声・入力とPresent/Bethesda動画デコードを確認したが、描画の縮小・黒画面・ロード停止があり、正常な動的タイトル／ゲームプレイの到達とは扱わない。元のIPAと所有データを保持している。
+2. **build2更新済み。** 実ピクセル出力矩形、sampler alias生成、main上のUIKitイベント処理を修正。9回目で実Metalコンパイル3件とアプリ本体が成功し、PC内で署名後に実機を更新した。追加ビルドは不要。
+3. **端末データ保持を確認済み。** 本人の保存・終了・USB再接続の確認を受け、既存の信頼でUpgrade。アプリID・Team・build2と前後のゲーム一覧／設定を照合済み。本人の再実行後に必要なログを回収する。
+4. **実機フィードバック受領。** build2ではゲームプレイに到達したとの本人報告。右スティック／トリガー／十字キーがないため操作不足があり、発熱と複雑な描画のカクつきが残る。build3で操作・設定・計測を追加する。保存／読込の確認、長時間動作、具体的なFPS改善量は未確認。全編の互換性は引き続き未知。
+
+クラウドへ送るのは公開ホストと自作検証だけ。ゲーム由来framework・入力・秘密鍵はPC内に保持する。既存Xbox版のアプリとデータは変更しない。

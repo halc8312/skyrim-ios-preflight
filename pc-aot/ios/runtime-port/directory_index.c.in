@@ -1,0 +1,48 @@
+/* Only byte lengths are indexed. Keep libc's locale-aware strcasecmp and the
+ * first matching readdir entry; do not cache folded names or search results. */
+static int dir_index_order(const void *left, const void *right) {
+    const DirNameIndex *a = left, *b = right;
+    if (a->length != b->length) return a->length < b->length ? -1 : 1;
+    return (a->offset > b->offset) - (a->offset < b->offset);
+}
+
+static void dir_index_build(DirCache *dc) {
+    if (dc->len > UINT32_MAX) return;
+    size_t count = 0;
+    for (size_t o = 0; o < dc->len; o += strlen(dc->names + o) + 1)
+        if (++count > 65536) return;
+    if (count < 32) return; /* Small listings retain the original direct walk. */
+    const int saved_errno = errno;
+    DirNameIndex *index = malloc(count * sizeof(*index));
+    if (index) {
+        size_t n = 0;
+        for (size_t o = 0; o < dc->len;) {
+            size_t length = strlen(dc->names + o);
+            index[n++] = (DirNameIndex){(uint32_t)o, (uint32_t)length};
+            o += length + 1;
+        }
+        qsort(index, count, sizeof(*index), dir_index_order);
+        dc->index = index; dc->index_count = count;
+    }
+    errno = saved_errno; /* Optional acceleration must not change errors. */
+}
+
+static const char *dir_index_find(const DirCache *dc, const char *comp) {
+    if (dc->index) {
+        const size_t length = strlen(comp);
+        size_t lo = 0, hi = dc->index_count;
+        while (lo < hi) {
+            size_t mid = lo + (hi - lo) / 2;
+            if (dc->index[mid].length < length) lo = mid + 1;
+            else hi = mid;
+        }
+        for (size_t n = lo; n < dc->index_count && dc->index[n].length == length; ++n) {
+            const char *name = dc->names + dc->index[n].offset;
+            if (!strcasecmp(name, comp)) return name;
+        }
+    } else {
+        for (size_t o = 0; o < dc->len; o += strlen(dc->names + o) + 1)
+            if (!strcasecmp(dc->names + o, comp)) return dc->names + o;
+    }
+    return NULL;
+}

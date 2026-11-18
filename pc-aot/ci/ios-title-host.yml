@@ -1,0 +1,54 @@
+name: Skyrim PC AOT title host (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skyrim-pc-title-host
+  cancel-in-progress: false
+
+jobs:
+  public-iphoneos-host:
+    runs-on: macos-26
+    timeout-minutes: 65
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      IPHONEOS_DEPLOYMENT_TARGET: '18.0'
+      JOBS: '2'
+    steps:
+      - name: Check out public build source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Prepare host build tools
+        run: |
+          set -euo pipefail
+          brew install bison make cmake
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+      - name: Restore public dependency cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: pc-aot/local/ios-dependencies
+          key: pc-title-deps-ios18-xcode26.6-${{ hashFiles('pc-aot/ios/dependencies/build-dependencies.sh') }}
+      - name: Compile real iPhoneOS public runtime
+        run: bash pc-aot/scripts/build-title-host.sh
+      - name: Preserve dependency cache for fixes without rebuilding libraries
+        if: always()
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: pc-aot/local/ios-dependencies
+          key: pc-title-deps-ios18-xcode26.6-${{ hashFiles('pc-aot/ios/dependencies/build-dependencies.sh') }}
+      - name: Save host and bounded build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: skyrim-pc-title-public-host
+          path: |
+            pc-aot/local/title-host/*/artifacts/*
+            pc-aot/local/ios-dependencies/logs/*/*.log
+          if-no-files-found: error
+          retention-days: 3

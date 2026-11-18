@@ -1,0 +1,9 @@
+# Pinned Skydream ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a requirements.
+# Python >=3.10, Linux x86_64 (WSL); not an iPhoneOS dependency list.
+# Distribution hashes verified from the release-specific PyPI JSON metadata.
+# https://pypi.org/pypi/capstone/5.0.9/json
+# capstone-5.0.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+capstone==5.0.9 --hash=sha256:273fd8d747d2e35c88f91450be51a603ecfaafb00d96d9f315dcb8689c86193e
+# https://pypi.org/pypi/pefile/2024.8.26/json
+# pefile-2024.8.26-py3-none-any.whl
+pefile==2024.8.26 --hash=sha256:76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f

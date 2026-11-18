@@ -1,0 +1,12 @@
+diff --git a/desktop/CMakeLists.txt b/desktop/CMakeLists.txt
+--- a/desktop/CMakeLists.txt
++++ b/desktop/CMakeLists.txt
+@@ -133,7 +133,7 @@
+     message(STATUS "SKSE compatibility: experimental Papyrus subset; no Windows DLL plugins")
+ else()
+     list(FILTER RT_SRC EXCLUDE REGEX "skse_compat_values\\.c$")
+-    set_property(TARGET lb_runtime PROPERTY SOURCES ${RT_SRC})
++    set_property(TARGET lb_runtime PROPERTY SOURCES ${RT_SRC} "${PORT}/third_party/f3daudio/F3DAudio.c")
+ endif()
+ target_compile_options(lb_runtime PRIVATE -O2 -fno-strict-aliasing -fwrapv -fsigned-char)
+ target_link_libraries(lb_runtime PRIVATE SDL2::SDL2 dxvk_d3d9 Threads::Threads skydream_media skydream_host ${CMAKE_DL_LIBS})
