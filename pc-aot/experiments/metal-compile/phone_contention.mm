@@ -535,6 +535,7 @@ static void overlap(const DrainingRequests& requests, NSMutableDictionary* repor
     report[@"prefetch_inflight_at_urgent_api_enter"] = @(atUrgent);
     report[@"urgent_prefetch_overlap_ns"] = @(total);
     report[@"host_overlap_observed"] = @(total > 0);
+    report[@"actual_overlap_evaluated"] = @YES;
     report[@"max_host_requests_inflight"] = @(maximum);
     report[@"urgent_request_to_callback_ns"] = @(urgent.callbackEnter - urgent.apiEnter);
     report[@"urgent_queue_delay_ns"] = @(urgent.apiEnter - urgent.enqueued);
@@ -542,25 +543,30 @@ static void overlap(const DrainingRequests& requests, NSMutableDictionary* repor
 }
 
 [[maybe_unused]] static NSMutableDictionary* runTrial(id<MTLDevice> device, Compiler compiler, id<MTLCommandQueue> gpuQueue,
-        NSString* base, const Input& input, unsigned profile, unsigned bank, bool metal4, bool contended,
+        NSString* base, const Input& input, const Plan& selected, NSString* panel, bool firstAssigned,
         Clock::time_point epoch, NSMutableArray* records, BOOL (^continued)(void)) {
+    const bool metal4 = selected.metal4, contended = selected.contended;
     NSMutableDictionary* report = [NSMutableDictionary dictionaryWithDictionary:@{
-        @"status": @"running", @"profile": profile ? @"urgent_user_initiated_prefetch_utility" : @"neutral_user_initiated",
-        @"profile_index": @(profile), @"bank_index": @(bank), @"api": metal4 ? @"metal4_async" : @"legacy_async",
+        @"status": @"running", @"profile": @"neutral_user_initiated",
+        @"block_index": @(selected.block), @"position_index": @(selected.position),
+        @"condition_index": @(selected.condition), @"condition_id": [NSString stringWithUTF8String:conditionID(selected.condition)],
+        @"lane_index": @(selected.lane), @"source_group": @(selected.sourceGroup), @"panel_namespace": panel,
+        @"first_assigned_in_run": @(firstAssigned), @"api": metal4 ? @"metal4_async" : @"legacy_async",
         @"mode": contended ? @"contended" : @"idle", @"jobs": [NSMutableArray array],
-        @"urgent_qos": @"user_initiated", @"prefetch_qos": profile ? @"utility" : @"user_initiated",
-        @"submitted_work_equal": @YES, @"max_allowed_outstanding": @3,
+        @"urgent_qos": @"user_initiated", @"prefetch_qos": @"user_initiated",
+        @"planned_request_count": @3, @"planned_overlap": @(contended), @"actual_overlap_evaluated": @NO,
+        @"kernel_template": @"phone_contention_kernel_v1", @"max_allowed_outstanding": @3,
         @"driver_concurrency_verified": @NO, @"cold_os_cache_verified": @NO
     }];
     [records addObject:report];
     Queue urgentQueue(QOS_CLASS_USER_INITIATED);
-    Queue prefetchQueue(profile ? QOS_CLASS_UTILITY : QOS_CLASS_USER_INITIATED);
+    Queue prefetchQueue(QOS_CLASS_USER_INITIATED);
     DrainingRequests requests;
     requests.values.reserve(3);
     bool stopped = false;
     for (unsigned role = 0; role < 3; ++role) {
         if (continued && !continued()) { stopped = true; break; }
-        auto request = std::make_shared<Request>(device, compiler, sourceFor(base, salt(profile, bank, role)), metal4, epoch);
+        auto request = std::make_shared<Request>(device, compiler, sourceFor(base, groupSalt(selected.sourceGroup, role)), metal4, epoch);
         requests.values.push_back(request);
         request->start(role == 2 ? urgentQueue.get() : prefetchQueue.get());
         // Ensure the preceding API has actually been invoked, not merely queued.
@@ -579,11 +585,12 @@ static void overlap(const DrainingRequests& requests, NSMutableDictionary* repor
     // GPU work cannot inflate the measured urgent compilation intervals above.
     for (unsigned role = 0; role < requests.values.size(); ++role) {
         const auto& request = requests.values[role];
-        NSMutableDictionary* job = requestRecord(request, salt(profile, bank, role), role);
+        NSMutableDictionary* job = requestRecord(request, groupSalt(selected.sourceGroup, role), role);
+        job[@"source_group"] = @(selected.sourceGroup);
         [report[@"jobs"] addObject:job];
         if (!stopped) {
             try {
-                readback(device, gpuQueue, request->state->library.get(), input, salt(profile, bank, role), job, continued);
+                readback(device, gpuQueue, request->state->library.get(), input, groupSalt(selected.sourceGroup, role), job, continued);
             } catch (const Stopped&) { stopped = true; }
         }
         finishRequest(request, job);
@@ -601,10 +608,12 @@ static void overlap(const DrainingRequests& requests, NSMutableDictionary* repor
                          Clock::time_point epoch, NSMutableArray* records) {
     Queue queue(QOS_CLASS_USER_INITIATED);
     DrainingRequests requests;
-    auto request = std::make_shared<Request>(device, compiler, sourceFor(base, salt(0, 0, 0), true), metal4, epoch);
+    auto request = std::make_shared<Request>(device, compiler, sourceFor(base, groupSalt(1, 0), true), metal4, epoch);
     requests.values.push_back(request);
     request->start(queue.get()); request->drain(); request->verify();
-    NSMutableDictionary* record = requestRecord(request, salt(0, 0, 0), 2);
+    NSMutableDictionary* record = requestRecord(request, groupSalt(1, 0), 2);
+    record[@"source_group"] = @1;
+    record[@"source_role_index"] = @0;
     record[@"api"] = metal4 ? @"metal4_async" : @"legacy_async";
     record[@"kind"] = @"intentional_compiler_error_retained_across_callback_pool";
     [records addObject:record];
@@ -619,6 +628,23 @@ static void overlap(const DrainingRequests& requests, NSMutableDictionary* repor
 static NSDictionary* environment() {
     NSProcessInfo* process = NSProcessInfo.processInfo;
     return @{ @"thermal_state": @(process.thermalState), @"low_power": @(process.lowPowerModeEnabled) };
+}
+
+[[maybe_unused]] static void verifyPanelIdentities(NSString* base, bool metal4First, NSMutableDictionary* report) {
+    NSMutableSet* identities = [NSMutableSet setWithCapacity:96];
+    for (unsigned block = 0; block < BlockCount; ++block)
+        for (unsigned position = 0; position < Conditions; ++position) {
+            const auto selected = plan(block, position, metal4First);
+            for (unsigned role = 0; role < 3; ++role) {
+                NSString* identity = stringSHA(sourceFor(base, groupSalt(selected.sourceGroup, role)));
+                require(![identities containsObject:identity], "normal scheduling source identity reused within panel");
+                [identities addObject:identity];
+            }
+        }
+    require(identities.count == 96, "normal scheduling source identity count mismatch");
+    // This hashes source text only; it neither invokes Metal nor asserts that
+    // the OS has not seen a source during a previous run of this same panel.
+    report[@"planned_distinct_normal_sources_verified"] = @YES;
 }
 
 static void runSuite(NSMutableDictionary* report, NSString* path, BOOL metal4First, BOOL (^continued)(void),
@@ -658,25 +684,24 @@ static void runSuite(NSMutableDictionary* report, NSString* path, BOOL metal4Fir
         NSMutableArray* inputs = [NSMutableArray arrayWithCapacity:input.size()];
         for (uint32_t word : input) [inputs addObject:@(word)];
         report[@"input_words"] = inputs;
-        // Within each QoS profile all four (API,mode) combinations receive one
-        // fresh bank first. The other combinations revisit the SAME sources.
-        // Alternating profile order limits, but cannot eliminate, time/cache bias.
-        for (unsigned bank = 0; bank < 4; ++bank) {
-            for (unsigned profileSlot = 0; profileSlot < 2; ++profileSlot) {
-                for (unsigned apiSlot = 0; apiSlot < 2; ++apiSlot) {
-                    for (unsigned modeSlot = 0; modeSlot < 2; ++modeSlot) {
-                        const auto selected = plan(bank, profileSlot, apiSlot, modeSlot, bool(metal4First));
-                        checkpoint(continued);
-                        NSMutableDictionary* trial = runTrial(device.get(), compiler.get(), gpuQueue.get(), base.get(), input,
-                            selected.profile, bank, selected.metal4, selected.contended, epoch, report[@"trials"], continued);
-                        trial[@"api_slot"] = @(apiSlot); trial[@"mode_slot"] = @(modeSlot);
-                        trial[@"profile_slot"] = @(profileSlot);
-                        trial[@"first_bank_encounter_in_this_probe"] = @(apiSlot == 0 && modeSlot == 0);
-                        report[@"completed_trials"] = @([report[@"trials"] count]);
-                    }
-                }
+        verifyPanelIdentities(base.get(), bool(metal4First), report);
+        for (unsigned block = 0; block < BlockCount; ++block)
+            for (unsigned position = 0; position < Conditions; ++position) {
+                checkpoint(continued);
+                const auto selected = plan(block, position, bool(metal4First));
+                runTrial(device.get(), compiler.get(), gpuQueue.get(), base.get(), input, selected,
+                    report[@"panel_namespace"], true, epoch, report[@"trials"], continued);
+                report[@"completed_trials"] = @([report[@"trials"] count]);
             }
-        }
+        NSMutableSet* observedIdentities = [NSMutableSet setWithCapacity:96];
+        for (NSDictionary* trial in report[@"trials"])
+            for (NSDictionary* job in trial[@"jobs"]) {
+                NSString* identity = job[@"source_sha256"];
+                require(identity && ![observedIdentities containsObject:identity], "observed normal source identity reused");
+                [observedIdentities addObject:identity];
+            }
+        require(observedIdentities.count == 96, "normal source identity record incomplete");
+        report[@"all_96_normal_source_identities_distinct"] = @YES;
         for (unsigned slot = 0; slot < 2; ++slot) {
             checkpoint(continued);
             errorControl(device.get(), compiler.get(), base.get(), bool(slot ^ unsigned(metal4First)), epoch,
@@ -703,10 +728,15 @@ NSDictionary* SkyrimMetalRunPhoneContention(NSString* path, BOOL metal4First, BO
     NSDictionary* answer = nil;
     @autoreleasepool {
         NSMutableDictionary* report = [NSMutableDictionary dictionaryWithDictionary:@{
-            @"schema": @1, @"scope": @"authored_iphone_mrc_library_scheduling",
+            @"schema": @2, @"scope": @"authored_iphone_mrc_library_scheduling",
             @"status": @"running", @"metal4_first": @(metal4First),
             @"total_trials": @32, @"completed_trials": @0, @"total_normal_requests": @96,
-            @"unique_salted_sources": @24, @"maximum_outstanding": @3,
+            @"blocks": @8, @"observations_per_condition": @8, @"unique_salted_sources": @96, @"maximum_outstanding": @3,
+            @"panel_namespace": [NSString stringWithUTF8String:panelNamespace(bool(metal4First))],
+            @"source_group_first": @(panelFirstGroup(bool(metal4First))),
+            @"source_group_last": @(panelFirstGroup(bool(metal4First)) + TrialCount - 1),
+            @"condition_ids": @[@"legacy_idle", @"legacy_contended", @"metal4_idle", @"metal4_contended"],
+            @"planned_distinct_normal_sources_verified": @NO, @"all_96_normal_source_identities_distinct": @NO,
             @"trials": [NSMutableArray array], @"error_controls": [NSMutableArray array],
             @"environment_before": environment(), @"physical_iphone_verified": @NO,
             @"authored_gpu_outputs_verified": @NO, @"mrc_async_lifetime_verified": @NO,
@@ -715,12 +745,13 @@ NSDictionary* SkyrimMetalRunPhoneContention(NSString* path, BOOL metal4First, BO
             @"performance_improvement_verified": @NO, @"cold_os_cache_verified": @NO,
             @"cancellation_requested": @NO,
             @"source_scope": @"verified_base_plus_fixed_authored_salted_compute_kernel",
-            @"cache_scope": @"first_in_this_probe_is_not_cold_os_cache; sources_revisited_by_matched_routes",
+            @"cache_scope": @"96_distinct_normal_source_identities_within_run; same_panel_repeat_can_be_warm; disjoint_panels_are_not_proof_of_cold_OS_cache",
             @"timing_scope": @"monotonic_ns_relative_to_contention_start; api_enter_to_callback_entry_includes_delivery_delay; queue_and_worker_wake_separate",
             @"overlap_scope": @"host_API_request_intervals_only;_no_claim_of_simultaneous_compiler_execution",
-            @"idle_scope": @"same_two_prefetch_requests_drained_before_urgent; contended_submits_urgent_after_prefetch_API_returns",
-            @"qos_scope": @"documented_submission_queue_QoS; internal_service_scheduling_not_observed",
-            @"comparison_scope": @"primary_matched_comparisons_within_same_profile_and_bank; QoS_profiles_have_different_semantic_salts_so_cross_profile_time_difference_is_not_a_QoS_only_effect",
+            @"idle_scope": @"two_prefetch_requests_drained_before_urgent; contended_submits_urgent_after_prefetch_API_returns; both_plan_three_requests",
+            @"qos_scope": @"all_submission_queues_USER_INITIATED; actual_thread_QoS_recorded; internal_service_scheduling_not_observed",
+            @"comparison_scope": @"eight_blocks_of_four_conditions; eight_observations_each; fixed_kernel_options_input_with_distinct_semantic_salts; no_exact_source_crossover",
+            @"order_scope": @"Williams_0_1_3_2_plus_block_mod4; backend_bit_swapped_for_alternate_panel; positions_and_source_lanes_balanced; inter_block_carryover_not_controlled",
             @"ownership_scope": @"manual_reference_counting; copied_inputs; retained_callback_results; adopted_task; worker_drain_before_adapter_release",
             @"exceptional_join_policy": @"disable_process_session_and_retain_at_most_three_owners; further_runs_refused_until_app_restart",
             @"readback_scope": @"legacy_compute_PSO_and_command_after_all_trial_compilations; not_full_Metal4_rendering",
@@ -756,7 +787,7 @@ NSDictionary* SkyrimMetalRunPhoneContention(NSString* path, BOOL metal4First, BO
         if (encoded && encoded.length <= 512 * 1024) {
             answer = [[NSJSONSerialization JSONObjectWithData:encoded options:0 error:&error] retain];
         }
-        if (!answer) answer = [@{ @"schema": @1, @"status": @"failed",
+        if (!answer) answer = [@{ @"schema": @2, @"status": @"failed",
             @"failure": @"contention report serialization failed or exceeded 512 KiB bound",
             @"physical_iphone_verified": @NO, @"mrc_async_lifetime_verified": @NO } retain];
     }

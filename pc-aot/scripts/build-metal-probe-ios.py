@@ -19,7 +19,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_NAME = "MetalProbe"
-APP_VERSION = "4"
+APP_VERSION = "5"
 DEFAULT_BUNDLE = "org.skyrimios.metalprobe"
 # The second name is the pre-existing, separate diagnostic app, never SkyrimIOS.
 ALLOWED_BUNDLES = {DEFAULT_BUNDLE, "org.skyrimios.probe"}

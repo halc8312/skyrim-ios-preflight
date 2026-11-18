@@ -83,7 +83,7 @@ class MetalPhoneBuildControls(unittest.TestCase):
             self.assertEqual(set(archive.namelist()), {"Payload/MetalProbe.app/" + name for name in build.APP_FILES})
             info = plistlib.loads(archive.read("Payload/MetalProbe.app/Info.plist"))
             self.assertEqual(info["CFBundleIdentifier"], build.DEFAULT_BUNDLE)
-            self.assertEqual(info["CFBundleVersion"], "4")
+            self.assertEqual(info["CFBundleVersion"], "5")
             self.assertEqual(info["MinimumOSVersion"], "26.0")
             provenance = json.loads(archive.read("Payload/MetalProbe.app/BuildInfo.json"))
             self.assertEqual(len(provenance["inputs"]), 14)
@@ -103,7 +103,7 @@ class MetalPhoneBuildControls(unittest.TestCase):
         self.assertFalse(list((run / "artifacts").glob("*.ipa")))
         with zipfile.ZipFile(run / "artifacts/MetalProbe-simulator.app.zip") as archive:
             self.assertIn("MetalProbe.app/MetalProbe", archive.namelist())
-            self.assertEqual(plistlib.loads(archive.read("MetalProbe.app/Info.plist"))["CFBundleVersion"], "4")
+            self.assertEqual(plistlib.loads(archive.read("MetalProbe.app/Info.plist"))["CFBundleVersion"], "5")
         compile_calls = [args for args, label, *_ in self.calls if label.startswith("compile-")]
         self.assertTrue(all("arm64-apple-ios26.0-simulator" in args for args in compile_calls))
 
@@ -155,15 +155,17 @@ class MetalPhoneBuildControls(unittest.TestCase):
         run, = (self.root / "local/metal-probe-ios").iterdir()
         self.assertFalse(list((run / "artifacts").glob("*.ipa")))
 
-    def test_old_bundle_version_is_refused(self):
+    def test_old_or_forged_bundle_version_is_refused(self):
         template = self.root / "experiments/metal-compile/ios/Info.plist"
         value = plistlib.loads(template.read_bytes())
-        value["CFBundleVersion"] = "3"
-        template.write_bytes(plistlib.dumps(value))
-        with self.assertRaisesRegex(ValueError, "metadata mismatch: CFBundleVersion"):
-            self.invoke()
-        run, = (self.root / "local/metal-probe-ios").iterdir()
-        self.assertFalse(list((run / "artifacts").glob("*.ipa")))
+        for version in ("4", 5, "05", "5.0", "6"):
+            with self.subTest(version=version):
+                value["CFBundleVersion"] = version
+                template.write_bytes(plistlib.dumps(value))
+                with self.assertRaisesRegex(ValueError, "metadata mismatch: CFBundleVersion"):
+                    self.invoke()
+        for run in (self.root / "local/metal-probe-ios").iterdir():
+            self.assertFalse(list((run / "artifacts").glob("*.ipa")))
 
     def test_source_provenance_cannot_omit_inject_or_change_fixture_hashes(self):
         run = self.invoke()

@@ -80,7 +80,7 @@ class ProbeSigningAdmissionTests(unittest.TestCase):
     def test_only_authored_five_file_device_app_is_accepted(self):
         self.assertEqual(signer.read_unsigned(write_ipa(self.root / "probe.ipa").read_bytes()), members())
         self.assertEqual(len(signer.PROVENANCE_INPUTS), 14)
-        self.assertEqual(plistlib.loads(members()["Info.plist"])["CFBundleVersion"], "4")
+        self.assertEqual(plistlib.loads(members()["Info.plist"])["CFBundleVersion"], "5")
 
     def test_phone_fixture_mutation_is_refused_even_with_matching_metadata(self):
         files = members()
@@ -139,7 +139,9 @@ class ProbeSigningAdmissionTests(unittest.TestCase):
     def test_foreign_app_simulator_forged_success_and_fixture_are_refused(self):
         for field, value in (("CFBundleIdentifier", "org.skyrimios.title"),
                              ("CFBundleIdentifier", "org.skyrimios.probe"),
-                             ("CFBundleVersion", "3"),
+                             ("CFBundleVersion", "4"), ("CFBundleVersion", 5),
+                             ("CFBundleVersion", "05"), ("CFBundleVersion", "5.0"),
+                             ("CFBundleVersion", "6"),
                              ("CFBundleExecutable", "SkyrimIOS"),
                              ("CFBundleSupportedPlatforms", ["iPhoneSimulator"]),
                              ("MinimumOSVersion", "18.0")):

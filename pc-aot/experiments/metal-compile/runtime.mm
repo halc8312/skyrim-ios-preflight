@@ -31,6 +31,7 @@
 
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
@@ -720,6 +721,102 @@ int main(int argc, const char* argv[]) {
 #endif
 
 #ifdef SKYRIM_METAL_RUNTIME_NO_MAIN
+static bool phoneDisplayDuration(id value) {
+    return [value isKindOfClass:NSNumber.class] &&
+        CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
+        std::isfinite([value doubleValue]) && [value doubleValue] >= 0;
+}
+
+static double phoneMedianMilliseconds(NSArray<NSNumber*>* values) {
+    NSArray<NSNumber*>* sorted = [values sortedArrayUsingSelector:@selector(compare:)];
+    const NSUInteger middle = sorted.count / 2;
+    double value = sorted[middle].doubleValue;
+    if (sorted.count % 2 == 0) value = (value + sorted[middle - 1].doubleValue) / 2;
+    return value / 1e6;
+}
+
+NSString* SkyrimMetalPhoneContentionResultText(NSDictionary* comparison) {
+    const NSUInteger schema = [comparison[@"schema"] unsignedIntegerValue];
+    if (schema < 4) return nil;
+    NSDictionary* control = [comparison[@"contention_control"] isKindOfClass:NSDictionary.class]
+        ? comparison[@"contention_control"] : @{};
+    NSString* status = control[@"status"];
+    NSString* summary = @"未実施";
+    if ([status isEqual:@"passed"]) summary = @"記録済み";
+    else if ([status isEqual:@"incomplete"] || [status isEqual:@"running"]) summary = @"未完了";
+    else if ([status isEqual:@"stopped"] || [status isEqual:@"interrupted"]) summary = @"途中で停止";
+    else if ([status isEqual:@"unsupported"]) summary = @"この環境では未対応";
+    else if ([status isEqual:@"failed"]) summary = @"確認が必要な結果";
+    NSMutableArray<NSString*>* lines = [NSMutableArray arrayWithObject:
+        [NSString stringWithFormat:@"先読み中の待ち時間：%@", summary]];
+    if (![status isEqual:@"passed"]) return [lines componentsJoinedByString:@"\n"];
+    NSArray* trials = [control[@"trials"] isKindOfClass:NSArray.class] ? control[@"trials"] : @[];
+    if (schema >= 5) {
+        // Use every planned observation, not only requests which overlapped:
+        // fast completions can remove overlap and must not leave the sample.
+        if (![control[@"schema"] isEqual:@2] || trials.count != 32)
+            return @"先読み中の待ち時間：記録の確認が必要です";
+        [lines addObject:@"各8回の中央値・準備開始から完了通知まで"];
+        for (NSString* api in @[@"legacy_async", @"metal4_async"]) {
+            NSMutableArray<NSNumber*>* idle = [NSMutableArray new];
+            NSMutableArray<NSNumber*>* planned = [NSMutableArray new];
+            NSUInteger overlapping = 0;
+            for (id value in trials) {
+                if (![value isKindOfClass:NSDictionary.class])
+                    return @"先読み中の待ち時間：記録の確認が必要です";
+                NSDictionary* trial = value;
+                if (![trial[@"api"] isEqual:api]) continue;
+                NSNumber* duration = trial[@"urgent_request_to_callback_ns"];
+                if (![trial[@"status"] isEqual:@"passed"] ||
+                    ![trial[@"first_assigned_in_run"] isEqual:@YES] || !phoneDisplayDuration(duration))
+                    return @"先読み中の待ち時間：記録の確認が必要です";
+                if ([trial[@"mode"] isEqual:@"idle"]) [idle addObject:duration];
+                else if ([trial[@"mode"] isEqual:@"contended"]) {
+                    id observed = trial[@"host_overlap_observed"];
+                    if (![observed isEqual:@YES] && ![observed isEqual:@NO])
+                        return @"先読み中の待ち時間：記録の確認が必要です";
+                    [planned addObject:duration];
+                    overlapping += [observed boolValue] ? 1 : 0;
+                } else return @"先読み中の待ち時間：記録の確認が必要です";
+            }
+            if (idle.count != 8 || planned.count != 8)
+                return @"先読み中の待ち時間：記録の確認が必要です";
+            [lines addObject:[NSString stringWithFormat:@"\n%@\n単独 %.2f ms ／ 先読みあり %.2f ms\n実際の重なり %lu / 8回%@",
+                [api isEqual:@"legacy_async"] ? @"従来方式" : @"Metal 4",
+                phoneMedianMilliseconds(idle), phoneMedianMilliseconds(planned),
+                (unsigned long)overlapping, overlapping ? @"" : @"（未観測）"]];
+        }
+    } else {
+        // Build 4 used repeated banks and reported an enqueue-to-callback max.
+        // Keep that meaning when reopening a historical record.
+        NSUInteger measured = 0, prefetchPending = 0;
+        NSMutableDictionary<NSString*, NSNumber*>* maxima = [NSMutableDictionary new];
+        for (id value in trials) {
+            if (![value isKindOfClass:NSDictionary.class]) continue;
+            NSDictionary* trial = value;
+            if (![trial[@"status"] isEqual:@"passed"] || ![trial[@"mode"] isEqual:@"contended"] ||
+                !phoneDisplayDuration(trial[@"urgent_enqueue_to_callback_ns"]) ||
+                ![trial[@"prefetch_inflight_at_urgent_api_enter"] isKindOfClass:NSNumber.class]) continue;
+            NSString* api = trial[@"api"];
+            if (![api isEqual:@"legacy_async"] && ![api isEqual:@"metal4_async"]) continue;
+            ++measured;
+            if ([trial[@"prefetch_inflight_at_urgent_api_enter"] unsignedIntegerValue] > 0) ++prefetchPending;
+            NSNumber* duration = trial[@"urgent_enqueue_to_callback_ns"];
+            if (!maxima[api] || duration.unsignedLongLongValue > maxima[api].unsignedLongLongValue)
+                maxima[api] = duration;
+        }
+        if (measured) {
+            [lines addObject:@"以前の比較：最大値・開始待ちを含む"];
+            for (NSString* api in @[@"legacy_async", @"metal4_async"])
+                if (maxima[api]) [lines addObject:[NSString stringWithFormat:@"%@　%.2f ms",
+                    [api isEqual:@"legacy_async"] ? @"従来" : @"Metal 4", maxima[api].doubleValue / 1e6]];
+            [lines addObject:[NSString stringWithFormat:@"開始時に先読みが未完了：%lu / %lu回",
+                (unsigned long)prefetchPending, (unsigned long)measured]];
+        }
+    }
+    return [lines componentsJoinedByString:@"\n"];
+}
+
 static NSDictionary* phoneEnvironment() {
     NSMutableDictionary* result = [@{
         @"thermal_state": @(NSProcessInfo.processInfo.thermalState),
@@ -970,9 +1067,11 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
 #endif
         auto started = Clock::now();
         NSMutableDictionary* report = [@{
-            @"schema": @4, @"scope": @"authored-iphone-metal-workload-comparison",
+            @"schema": @5, @"scope": @"authored-iphone-metal-workload-comparison",
             @"status": @"running", @"phase": @"prepare", @"repeat": @(repeats),
             @"metal4_first_requested": @(metal4First), @"completed_samples": @0,
+            @"contention_panel_requested": metal4First ? @"alternate" : @"primary",
+            @"contention_selector_scope": @"both APIs in each run; alternate selects a disjoint predeclared source panel and changes starting API; repeating a selector reuses its sources; OS/compiler cache is uncontrolled",
             @"total_samples": @0, @"total_cases": @(SkyrimPhoneWorkloads::CaseCount),
             @"total_families": @(SkyrimPhoneWorkloads::FamilyCount), @"variants_per_family": @(SkyrimPhoneWorkloads::VariantCount),
             @"control_source_options": sourceOptions(), @"workloads": [NSMutableArray new],
@@ -1195,6 +1294,7 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                     throw std::runtime_error("separate contention control is unsupported; see nested result");
                 }
                 require([contentionStatus isEqual:@"passed"], "separate contention control failed; see nested result");
+                require([contention[@"schema"] isEqual:@2], "contention control design does not match this comparison build");
                 report[@"contention_control_verified"] = @YES;
                 report[@"gpu_execution_verified"] = @YES;
                 report[@"metal4_library_verified"] = @YES;

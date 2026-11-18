@@ -12,7 +12,7 @@ The tracked experiment contains no Skyrim shaders or game data.
 The `pc2011-metal-phone-probe` manual workflow builds an isolated UIKit app,
 `MetalProbe` (`org.skyrimios.metalprobe`, iOS 26 or later). It compares the legacy
 and Metal 4 library APIs, synchronously and asynchronously, through legacy
-render/compute pipelines. Builds 3 and 4 use three bounded authored workload families:
+render/compute pipelines. Builds 3 through 5 use three bounded authored workload families:
 branching arithmetic, dependent table lookups, and coupled mixing rounds, with
 four semantic variants each (twelve cases). Variants change integer expressions
 and constants, not just names. Each family assigns every route first exactly
@@ -50,15 +50,16 @@ Initial/final store calls and the final return snapshot are explicitly excluded,
 so the immutable final file does not pretend to know its own write duration.
 Library/specialization/PSO clocks exclude these progress intervals.
 
-Build 4 keeps the 192 serial samples, checks stop requests at every operation
-boundary and saves intermediate results after each four completed samples and
+Build 4 introduced the recording policy retained by build 5. Both keep the 192
+serial samples, check stop requests at every operation boundary and save
+intermediate results after each four completed samples and
 at control boundaries. A normal full run makes 73 progress callbacks. The
-final save includes every completed sample. Schema 4 writes sorted, compact
+final save includes every completed sample. Schemas 4 and 5 write sorted, compact
 JSON within the existing 2 MiB store limit. An abrupt process kill can lose the
 last four completed serial samples plus work in progress. The separate
 scheduling check is saved when it returns.
 
-The scheduling check submits two prefetch requests and one urgent request in
+Build 4's scheduling check submitted two prefetch requests and one urgent request in
 32 trials. In the idle condition both prefetch requests finish before the urgent
 request starts. In the contended condition the urgent request follows the two
 prefetch submissions. Each trial records how many were actually outstanding at
@@ -67,9 +68,11 @@ The GPU verifies each returned library against the same integer calculation.
 The adapter keeps the original callback results and errors alive through its
 worker's checks and drains each returned Metal 4 task before releasing it.
 
-Compare legacy and Metal 4 within the same source bank, scheduling profile and
-cache history. The two scheduling profiles use different semantic salts, so a
-difference between profiles also includes a workload difference. Host timestamps
+Build 4 reused source banks across APIs and modes: a later route could consume
+already-prepared work. Its two scheduling profiles also used different semantic
+salts, so profile differences include a workload difference. The [build-5
+design](#build-5-first-assigned-scheduling-comparison) addresses that first-assignment
+imbalance with distinct sources and one fixed submission priority. Host timestamps
 show when the app was waiting. Internal compiler scheduling and resulting game
 frame rates each require separate evidence. See the [gameplay scenarios and
 developer reports](MOLTENVK_PLAN.md#when-metal-4-could-shorten-a-skyrim-frame).
@@ -419,8 +422,7 @@ scheduling suite. All 386 serial/environment observations reported nominal
 thermal state and low-power mode off. Observed footprint grew from 24.94 MB to
 88.36 MB at serial completion and 110.77 MB after the additional suite.
 
-Before the next speed test, give each API several first requests under the same
-submission priorities. A local scheduling dry run assigned 32 distinct urgent
+The follow-up development dry run assigned 32 distinct urgent
 sources to two APIs and two modes, eight per condition. In eight four-trial
 blocks the condition order was `[0,1,3,2] + block (mod 4)` and the source lane
 was `(condition + floor(block / 2)) mod 4`. Each condition occupied each order
@@ -429,8 +431,44 @@ indices 9 through 40 produced 96 distinct source hashes and 96 distinct CPU
 output hashes across the three roles, with no overlap with build 4's 24 source
 or output hashes. This verifies the proposed allocations on the development
 host. Actual first-request cost, overlap and cache state still require a device.
-Report genuinely overlapping draws and queue delay separately and retain the
-number of planned trials that had no overlap.
+Keep all planned trials in the primary comparison, and report actual overlap
+and submission-queue delay separately.
+
+## Build-5 first-assigned scheduling comparison
+
+Run the **standard set once**: it compares both APIs after the unchanged 192-sample
+serial suite. The optional alternate set changes the scheduling source panel and
+starting API; a second run is not required to include Metal 4. Repeating the same
+selection reuses its inputs and may benefit from existing caches.
+
+The scheduling suite has eight blocks of four conditions: legacy/Metal 4 async,
+each with idle and planned-contended submission. Both submission queues use the
+same `user_initiated` priority. Each condition receives eight first-assigned
+observations, with order positions and source lanes balanced. Each trial gets
+three distinct semantic sources for its two prefetches and urgent request:
+96 source identities per panel. Standard uses groups 9–40 and alternate 41–72;
+the panels are disjoint. Different salts can still have different compile costs
+or share compiler work, so this is not an exact-source crossover or a cold-cache
+experiment.
+
+The primary per-API statistic is the median over **all eight planned-contended
+trials**, alongside the eight idle references. The interval runs from urgent
+API entry to callback entry. Actual host overlap is a separate `n/8` count;
+zero means unobserved, not zero latency or a failed run. Filtering the primary
+median to overlapping requests would discard fast completions. Queue delay and
+the original timestamps remain in the JSON. Analyze an exported result with:
+
+```sh
+python experiments/metal-compile/first_use_results.py <export.json>
+```
+
+The outer comparison is schema 5 and the scheduling result is nested schema 2.
+Compact storage, the 2 MiB limit, 73 normal progress callbacks and cooperative
+stop/recovery behavior remain unchanged. All **192 distinct sources across both
+panels** have compiled and linked with the official Windows Metal toolchain.
+No physical build-5 iPhone measurement is available yet. OS/compiler caches are
+uncontrolled, host timestamps do not reveal internal compiler execution, and
+this authored test establishes no Skyrim performance result.
 
 ## What each environment establishes
 

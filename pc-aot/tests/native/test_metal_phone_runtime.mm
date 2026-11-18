@@ -102,6 +102,72 @@ static void checkpointControls() {
           "normal callback reporting store failure did not stop subsequent work");
 }
 
+static void resultDisplayControls() {
+    // Explicitly authored formatting inputs only; these are not saved as
+    // measurements and cannot establish iPhone/Metal execution evidence.
+    NSMutableArray* trials = [NSMutableArray new];
+    for (NSUInteger apiIndex = 0; apiIndex < 2; ++apiIndex) {
+        for (NSUInteger modeIndex = 0; modeIndex < 2; ++modeIndex) {
+            for (NSUInteger i = 0; i < 8; ++i) {
+                const uint64_t duration = (modeIndex ? (i + 1) * (apiIndex ? 2 : 10) : i + 1 + apiIndex) * 1000000ULL;
+                [trials addObject:@{ @"api": apiIndex ? @"metal4_async" : @"legacy_async",
+                    @"mode": modeIndex ? @"contended" : @"idle", @"status": @"passed",
+                    @"first_assigned_in_run": @YES,
+                    @"host_overlap_observed": @(modeIndex && apiIndex == 0 && i >= 6),
+                    @"urgent_request_to_callback_ns": @(duration),
+                    @"urgent_enqueue_to_callback_ns": @999000000ULL }];
+            }
+        }
+    }
+    NSDictionary* control = @{ @"schema": @2, @"status": @"passed", @"trials": trials };
+    NSString* text = SkyrimMetalPhoneContentionResultText(@{ @"schema": @5, @"contention_control": control });
+    check([text containsString:@"従来方式\n単独 4.50 ms ／ 先読みあり 45.00 ms\n実際の重なり 2 / 8回"],
+          "display excluded fast nonoverlapping observations or used wrong interval");
+    check([text containsString:@"Metal 4\n単独 5.50 ms ／ 先読みあり 9.00 ms\n実際の重なり 0 / 8回（未観測）"],
+          "zero overlap became a failure, missing planned median, or a zero duration");
+    check(![text containsString:@"999"] && ![text containsString:@"75.00"],
+          "display used enqueue interval or actual-only sample selection");
+
+    NSArray* statuses = @[@"not_run", @"incomplete", @"stopped", @"unsupported", @"failed"];
+    NSArray* labels = @[@"未実施", @"未完了", @"途中で停止", @"この環境では未対応", @"確認が必要な結果"];
+    for (NSUInteger i = 0; i < statuses.count; ++i) {
+        NSString* value = SkyrimMetalPhoneContentionResultText(@{ @"schema": @5,
+            @"contention_control": @{ @"schema": @2, @"status": statuses[i], @"trials": trials } });
+        check([value containsString:labels[i]] && ![value containsString:@" ms"],
+              "incomplete/unavailable result was formatted as a completed comparison");
+    }
+    for (id invalidDuration in @[@YES, @(-1), @"100", NSNull.null]) {
+        NSMutableArray* malformed = [trials mutableCopy];
+        NSMutableDictionary* invalid = [malformed[0] mutableCopy];
+        invalid[@"urgent_request_to_callback_ns"] = invalidDuration;
+        malformed[0] = invalid;
+        NSString* value = SkyrimMetalPhoneContentionResultText(@{ @"schema": @5,
+            @"contention_control": @{ @"schema": @2, @"status": @"passed", @"trials": malformed } });
+        check([value containsString:@"記録の確認が必要"] && ![value containsString:@" ms"],
+              "invalid duration was displayed as measured time");
+    }
+    NSMutableArray* missing = [trials mutableCopy];
+    [missing removeLastObject];
+    check([SkyrimMetalPhoneContentionResultText(@{ @"schema": @5,
+        @"contention_control": @{ @"schema": @2, @"status": @"passed", @"trials": missing } })
+        containsString:@"記録の確認が必要"], "incomplete planned set was presented as eight observations");
+
+    NSDictionary* old = @{ @"schema": @4, @"contention_control": @{ @"status": @"passed", @"trials": @[
+        @{ @"status": @"passed", @"api": @"legacy_async", @"mode": @"contended",
+           @"urgent_enqueue_to_callback_ns": @1000000, @"urgent_request_to_callback_ns": @50000000,
+           @"prefetch_inflight_at_urgent_api_enter": @0 },
+        @{ @"status": @"passed", @"api": @"legacy_async", @"mode": @"contended",
+           @"urgent_enqueue_to_callback_ns": @5000000, @"urgent_request_to_callback_ns": @50000000,
+           @"prefetch_inflight_at_urgent_api_enter": @1 }] } };
+    NSString* oldText = SkyrimMetalPhoneContentionResultText(old);
+    check([oldText containsString:@"以前の比較：最大値・開始待ちを含む"] &&
+          [oldText containsString:@"従来　5.00 ms"] && ![oldText containsString:@"中央値"],
+          "historical schema4 was reinterpreted using schema5 timing or statistic");
+    for (NSNumber* schema in @[@1, @2, @3])
+        check(SkyrimMetalPhoneContentionResultText(@{ @"schema": schema }) == nil,
+              "historical serial-only result acquired scheduling measurements");
+}
+
 int main() {
     @autoreleasepool {
         @try {
@@ -175,10 +241,13 @@ int main() {
                       "progress snapshot changed after the callback");
                 check([firstSnapshot[@"status"] isEqual:@"running"] &&
                       [unsupported[@"status"] isEqual:@"unsupported"], "snapshot status aliases final report");
-                check([unsupported[@"schema"] unsignedIntegerValue] == 4 &&
+                check([unsupported[@"schema"] unsignedIntegerValue] == 5 &&
                       [unsupported[@"total_cases"] unsignedIntegerValue] == 12 &&
                       [unsupported[@"total_samples"] unsignedIntegerValue] == 192,
                       "workload comparison totals/schema changed");
+                check([main[@"contention_panel_requested"] isEqual:@"primary"] &&
+                      [unsupported[@"contention_panel_requested"] isEqual:@"alternate"],
+                      "selector no longer records its requested disjoint test panel");
                 check([callbackFailed[@"status"] isEqual:@"failed"] && failedProgress == 1 &&
                       [callbackFailed[@"failure"] containsString:@"controlled progress"],
                       "callback failure was swallowed or escaped");
@@ -203,7 +272,8 @@ int main() {
                 }
                 for (NSDictionary* report in @[invalid, stopped, unsupported, firstSnapshot, callbackFailed]) unverified(report);
                 checkpointControls();
-                std::puts("METAL_PHONE_HOST_CONTROLS cases=8 gpu_execution_verified=0 physical_iphone_verified=0");
+                resultDisplayControls();
+                std::puts("METAL_PHONE_HOST_CONTROLS cases=11 gpu_execution_verified=0 physical_iphone_verified=0");
                 return 0;
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "%s\n", e.what());

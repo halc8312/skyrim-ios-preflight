@@ -54,7 +54,7 @@ class PhoneRuntimeBoundaryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0,
                              (output / f"{label}.stderr.log").read_text(errors="replace"))
         self.assertEqual((output / "run.stdout.log").read_text().strip(),
-                         "METAL_PHONE_HOST_CONTROLS cases=8 gpu_execution_verified=0 physical_iphone_verified=0")
+                         "METAL_PHONE_HOST_CONTROLS cases=11 gpu_execution_verified=0 physical_iphone_verified=0")
         self.assertEqual((output / "run.stderr.log").stat().st_size, 0)
 
 

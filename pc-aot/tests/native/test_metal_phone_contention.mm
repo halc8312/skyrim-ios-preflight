@@ -7,6 +7,10 @@ static void check(bool value, const char* message) { require(value, message); }
 
 static void inspectTrial(NSDictionary* trial, bool idle) {
     check([trial[@"status"] isEqual:@"passed"] && [trial[@"jobs"] count] == 3, "legacy trial incomplete");
+    check([trial[@"planned_overlap"] boolValue] == !idle && [trial[@"actual_overlap_evaluated"] boolValue],
+          "planned overlap was confused with measured overlap");
+    check([trial[@"urgent_qos"] isEqual:@"user_initiated"] && [trial[@"prefetch_qos"] isEqual:@"user_initiated"],
+          "neutral comparison changed requested QoS");
     check([trial[@"max_host_requests_inflight"] unsignedIntegerValue] <= 3, "unbounded host requests");
     if (idle) check([trial[@"prefetch_inflight_at_urgent_api_enter"] unsignedIntegerValue] == 0 &&
                     [trial[@"urgent_prefetch_overlap_ns"] unsignedLongLongValue] == 0,
@@ -29,6 +33,38 @@ static void inspectTrial(NSDictionary* trial, bool idle) {
               [job[@"request_to_callback_ns"] unsignedLongLongValue] == callback - entered,
               "API/callback timestamps inconsistent");
     }
+}
+
+static NSArray* inspectSourcePanels(NSString* base) {
+    // Frozen SHA-256 of ordered ASCII source hashes: all legacy sources first,
+    // then each disjoint 96-source panel. This invokes the real sourceFor(),
+    // covering formatting/salt drift as well as the portable integer oracle.
+    NSArray* expected = @[@"7811f2498dbfcb761c80a5f530c2f398451142b81b1fa781a6002c1b0404b225",
+                          @"40da8a562c60436107a1e2651131cd8dc2eaca2a7358bd59811cc15a8862319e",
+                          @"de0a9f8ff8a26a60837622be1944528165cb6c100b4cd71102001b453de1c053"];
+    constexpr unsigned first[] = {1, 9, 41}, last[] = {8, 40, 72};
+    NSMutableSet* all = [NSMutableSet setWithCapacity:216];
+    NSMutableArray* records = [NSMutableArray array];
+    for (unsigned panel = 0; panel < 3; ++panel) {
+        NSMutableString* ordered = [NSMutableString string];
+        for (unsigned group = first[panel]; group <= last[panel]; ++group)
+            for (unsigned role = 0; role < 3; ++role) {
+                NSString* fingerprint = stringSHA(sourceFor(base, groupSalt(group, role)));
+                check(![all containsObject:fingerprint], "source panels or legacy identities overlap");
+                [all addObject:fingerprint]; [ordered appendString:fingerprint];
+            }
+        NSString* digest = stringSHA(ordered);
+        check([digest isEqual:expected[panel]], "frozen complete source identity digest changed");
+        [records addObject:@{ @"first_group": @(first[panel]), @"last_group": @(last[panel]),
+            @"count": @((last[panel] - first[panel] + 1) * 3), @"ordered_hashes_sha256": digest }];
+    }
+    check(all.count == 216, "combined source identity count mismatch");
+    for (bool alternate : {false, true}) {
+        NSMutableDictionary* verified = [NSMutableDictionary dictionary];
+        verifyPanelIdentities(base, alternate, verified);
+        check([verified[@"planned_distinct_normal_sources_verified"] boolValue], "actual panel preflight failed");
+    }
+    return records;
 }
 
 int main(int argc, const char* argv[]) {
@@ -56,6 +92,11 @@ int main(int argc, const char* argv[]) {
                                 check([unsupported[@"status"] isEqual:@"unsupported"] &&
                                       [unsupported[@"unsupported_reason"] isEqual:@"physical_iphone_required"],
                                       "Mac boundary claimed physical support");
+                                check([unsupported[@"schema"] unsignedIntegerValue] == 2 &&
+                                      [unsupported[@"source_group_first"] unsignedIntegerValue] == 41 &&
+                                      [unsupported[@"source_group_last"] unsignedIntegerValue] == 72 &&
+                                      ![unsupported[@"all_96_normal_source_identities_distinct"] boolValue],
+                                      "unsupported panel metadata fabricated completed identities");
                                 for (NSDictionary* record in @[stopped, unsupported]) {
                                     check(![record[@"physical_iphone_verified"] boolValue] &&
                                           ![record[@"mrc_async_lifetime_verified"] boolValue], "boundary fabricated device validation");
@@ -65,13 +106,17 @@ int main(int argc, const char* argv[]) {
                                 check(device.get() != nil, "Mac test requires a real Metal device");
                                 auto queue = Held<id<MTLCommandQueue>>::adopt([device.get() newCommandQueue]);
                                 auto base = loadBase(path);
+                                NSArray* sourcePanels = inspectSourcePanels(base.get());
                                 const auto input = makeInput();
                                 NSMutableArray* trials = [NSMutableArray array];
                                 NSMutableArray* errors = [NSMutableArray array];
                                 const auto epoch = Clock::now();
-                                auto idle = runTrial(device.get(), nil, queue.get(), base.get(), input, 0, 0, false, false, epoch, trials, nil);
-                                auto contended = runTrial(device.get(), nil, queue.get(), base.get(), input, 0, 0, false, true, epoch, trials, nil);
+                                NSString* panel = [NSString stringWithUTF8String:panelNamespace(false)];
+                                auto idle = runTrial(device.get(), nil, queue.get(), base.get(), input, plan(0, 0, false), panel, true, epoch, trials, nil);
+                                auto contended = runTrial(device.get(), nil, queue.get(), base.get(), input, plan(0, 1, false), panel, true, epoch, trials, nil);
                                 inspectTrial(idle, true); inspectTrial(contended, false);
+                                check([idle[@"source_group"] unsignedIntegerValue] == 9 &&
+                                      [contended[@"source_group"] unsignedIntegerValue] == 10, "native trial assignment changed");
                                 errorControl(device.get(), nil, base.get(), false, epoch, errors);
                                 check([errors count] == 1 && [errors[0][@"expected_rejection_verified"] boolValue] &&
                                       [errors[0][@"callback_pool_exited"] boolValue], "retained compiler error control failed");
@@ -81,7 +126,7 @@ int main(int argc, const char* argv[]) {
                                 __block unsigned checks = 0;
                                 bool caught = false;
                                 try {
-                                    (void)runTrial(device.get(), nil, queue.get(), base.get(), input, 0, 0, false, true,
+                                    (void)runTrial(device.get(), nil, queue.get(), base.get(), input, plan(0, 1, false), panel, false,
                                         epoch, partial, ^BOOL { return ++checks == 1; });
                                 } catch (const Stopped&) { caught = true; }
                                 NSDictionary* stoppedTrial = [partial firstObject];
@@ -93,7 +138,7 @@ int main(int argc, const char* argv[]) {
                                       "partial stop fabricated GPU success");
                                 checks = 0; caught = false;
                                 try {
-                                    (void)runTrial(device.get(), nil, queue.get(), base.get(), input, 0, 0, false, true,
+                                    (void)runTrial(device.get(), nil, queue.get(), base.get(), input, plan(0, 1, false), panel, false,
                                         epoch, partial, ^BOOL { return ++checks <= 3; });
                                 } catch (const Stopped&) { caught = true; }
                                 NSDictionary* stopAfterCompiles = [partial lastObject];
@@ -115,7 +160,7 @@ int main(int argc, const char* argv[]) {
                                 }
                                 std::array<std::shared_ptr<Request>, 3> owners;
                                 for (unsigned i = 0; i < owners.size(); ++i) {
-                                    owners[i] = std::make_shared<Request>(nil, nil, sourceFor(base.get(), salt(0, 0, i)), false, epoch);
+                                    owners[i] = std::make_shared<Request>(nil, nil, sourceFor(base.get(), groupSalt(1, i)), false, epoch);
                                     retainFailedJoin(safety, owners[i]);
                                     retainFailedJoin(safety, owners[i]);
                                 }
@@ -126,6 +171,7 @@ int main(int argc, const char* argv[]) {
                                 completedReport = [@{ @"status": @"passed", @"scope": @"mac_legacy_mrc_contention_controls",
                                     @"boundary_controls": @3, @"legacy_readbacks": @6, @"compiler_errors": @1, @"stop_after_submit_controls": @2,
                                     @"bounded_retirement_policy_control": @YES,
+                                    @"source_identity_panels": sourcePanels,
                                     @"physical_iphone_verified": @NO, @"metal4_task_lifetime_verified": @NO,
                                     @"mac_legacy_mrc_verified": @YES, @"device_name": device.get().name ?: @"",
                                     @"base_source_sha256": BaseSHA, @"input_sha256": sha(input.data(), sizeof(input)),

@@ -253,18 +253,29 @@ available through the existing private comparison-app route. Both physical
 192-sample runs have since validated outputs and controls, without a demonstrated
 Metal 4 speed advantage. Their 587 full-progress checkpoints cost about 6.5 seconds
 per run in snapshot generation plus synchronous callbacks, independently of
-compiler clocks. Build 4 now groups progress saves, retains per-operation stop
-checks and follows the serial comparison with 32 matched scheduling trials.
+compiler clocks. Build 4 grouped progress saves, retained per-operation stop
+checks and followed the serial comparison with 32 scheduling trials that reused
+source groups across APIs and modes.
 The new MRC adapter passed its legacy readback, error and stop checks on the
 Mac test GPU. The physical iPhone then produced all expected outputs and the
 worker finished and released 49 Metal 4 tasks, including one expected compiler
 error. Four of 16 nominally contended trials had prefetches outstanding when
 the urgent request entered. All four were first encounters on different
 sources. A repeated-source run on the same phone mainly measures reuse.
-The [physical result and proposed balanced first-use schedule](README.md#build-4-physical-iphone-result)
-give the conditions for a meaningful speed comparison. Before enabling a game
-experiment, validate the actual MoltenVK compile options and owner/timeout
-behavior through the production boundary. Measure frame gaps separately.
+Build 5 implements the [balanced first-assignment comparison](README.md#build-5-first-assigned-scheduling-comparison).
+One standard run covers both APIs, with eight planned-contended observations and
+eight idle references per API at one fixed submission priority. The primary
+median includes every planned trial; actual overlap is reported separately as
+`n/8`, avoiding selection of only slower requests. The optional alternate panel
+uses disjoint sources; repeating a panel reuses its inputs. All 192 distinct
+sources across both panels compiled and linked with the official Windows Metal
+toolchain, but no physical build-5 measurement is available yet. Analyze an
+export with `python experiments/metal-compile/first_use_results.py <export.json>`.
+The API-entry-to-callback intervals are host wall times, with uncontrolled OS
+caches and different semantic costs. They do not show internal compiler order
+or Skyrim performance. Before enabling a game experiment, validate the actual
+MoltenVK compile options and owner/timeout behavior through the production
+boundary. Measure frame gaps separately.
 
 ## When Metal 4 could shorten a Skyrim frame
 

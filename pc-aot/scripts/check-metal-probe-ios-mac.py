@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Manual unsigned phone build and simulator UI check. No device or game proof."""
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,35 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = "org.skyrimios.metalprobe"
+
+
+def saved_record_fingerprints(records):
+    """Bounded snapshot of the preview's store, without modifying its records."""
+    if records.is_symlink() or (records.exists() and not records.is_dir()):
+        raise RuntimeError("Preview record store must be a plain directory")
+    if not records.exists():
+        return {}
+    result = {".": "directory"}
+    for path in sorted(records.rglob("*")):
+        if path.is_symlink():
+            raise RuntimeError("Linked preview record entry")
+        name = path.relative_to(records).as_posix()
+        if path.is_dir():
+            result[name + "/"] = "directory"
+        elif path.is_file():
+            with path.open("rb") as stream:
+                raw = stream.read((2 << 20) + 1)
+            if len(raw) > 2 << 20:
+                raise RuntimeError("Preview record exceeds the store size limit")
+            result[name] = hashlib.sha256(raw).hexdigest()
+        else:
+            raise RuntimeError("Non-file preview record entry")
+    return result
+
+
+def require_unchanged_records(records, before):
+    if saved_record_fingerprints(records) != before:
+        raise RuntimeError("Authored layout example changed saved comparison records")
 
 
 def fresh_unsupported_record(path, prior_paths, source_revision):
@@ -32,13 +62,20 @@ def fresh_unsupported_record(path, prior_paths, source_revision):
         return None
     if record.get("status") != "unsupported" or comparison.get("status") != "unsupported":
         raise RuntimeError("Simulator must persist an explicit unsupported result")
-    for key in ("physical_iphone_verified", "gpu_execution_verified", "metal4_library_verified"):
+    for key in ("physical_iphone_verified", "gpu_execution_verified", "metal4_library_verified",
+                "serial_comparison_verified", "contention_control_verified"):
         if comparison.get(key) is not False:
             raise RuntimeError("Simulator incorrectly claimed or omitted device/GPU evidence")
     if comparison.get("samples") != []:
         raise RuntimeError("Simulator ran unexpected comparison samples")
-    if comparison.get("schema") != 4 or comparison.get("total_cases") != 12 or comparison.get("total_samples") != 192:
+    if any(type(comparison.get(key)) is not int or comparison[key] != expected
+           for key, expected in (("schema", 5), ("total_cases", 12), ("total_samples", 192))):
         raise RuntimeError("Simulator did not run the current balanced comparison design")
+    if (comparison.get("contention_panel_requested") != "primary" or
+            comparison.get("contention_selector_scope") !=
+            "both APIs in each run; alternate selects a disjoint predeclared source panel and changes starting API; "
+            "repeating a selector reuses its sources; OS/compiler cache is uncontrolled"):
+        raise RuntimeError("Simulator smoke did not record the default panel and cache scope")
     # The unsupported simulator path completes exactly the device checkpoint.
     # Its actual host-store duration must be nested in the progress callback,
     # while snapshot serialization is a separate interval inside runtime elapsed.
@@ -141,7 +178,8 @@ def main():
         call("preflight", [sys.executable, str(ROOT / "scripts/check-public-tree.py")])
         for suite in ("test_metal_probe_ios_build.py", "test_metal_probe_signing.py", "test_metal_probe_ui_driver.py",
                       "test_metal_phone_workloads.py", "test_metal_phone_progress.py", "test_metal_phone_runtime.py",
-                      "test_metal_phone_contention.py", "test_metal_probe_store.py", "test_metal_compile_runtime.py"):
+                      "test_metal_phone_contention.py", "test_metal_phone_first_use_analysis.py",
+                      "test_metal_probe_store.py", "test_metal_compile_runtime.py"):
             if not (ROOT / "tests" / suite).is_file() or (ROOT / "tests" / suite).is_symlink():
                 raise RuntimeError("Required native/control test suite missing or linked: " + suite)
             call(suite.removesuffix(".py"), [sys.executable, "-m", "unittest", "discover", "-s", str(ROOT / "tests"), "-p", suite, "-v"], 180)
@@ -202,6 +240,18 @@ def main():
         call("screen-share", ["xcrun", "simctl", "io", udid, "screenshot", str(out / "share.png")])
         report["simulator_unsupported_record_verified"] = True
         report["screenshots_captured"] = ["ready.png", "result.png", "restored.png", "share.png"]
+        # The explicitly labelled layout example is presentation-only. It must
+        # neither satisfy the unsupported run above nor create/change saved data.
+        call("terminate-share", ["xcrun", "simctl", "terminate", udid, BUNDLE])
+        before_layout = saved_record_fingerprints(records)
+        call("launch-authored-layout", ["xcrun", "simctl", "launch", udid, BUNDLE, "--probe-ui-authored-layout"])
+        time.sleep(8)
+        call("screen-authored-layout", ["xcrun", "simctl", "io", udid, "screenshot", str(out / "authored-layout.png")])
+        call("terminate-authored-layout", ["xcrun", "simctl", "terminate", udid, BUNDLE])
+        require_unchanged_records(records, before_layout)
+        report["authored_layout_example"] = {
+            "screenshot": "authored-layout.png", "scope": "presentation example; not measured evidence",
+            "saved_records_unchanged": True}
         report["visual_review_pending"] = True
         report["status"] = "passed"
     except BaseException as error:

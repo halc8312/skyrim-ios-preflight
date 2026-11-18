@@ -36,10 +36,12 @@ inline Input makeInput() {
     }
     return input;
 }
-inline uint32_t salt(unsigned profile, unsigned bank, unsigned role) {
-    if (profile >= 2 || bank >= 4 || role >= 3)
+inline uint32_t groupSalt(unsigned group, unsigned role) {
+    // Groups 1..8 retain build4's exact identities. Build5 uses disjoint
+    // panels 9..40 and 41..72; each group contributes three semantic sources.
+    if (group < 1 || group > 72 || role >= 3)
         throw std::out_of_range("authored scheduling index out of range");
-    return 0x31415927u ^ ((profile * 4u + bank + 1u) * 0x9e3779b9u) ^ (role * 0x85ebca6bu);
+    return 0x31415927u ^ (group * 0x9e3779b9u) ^ (role * 0x85ebca6bu);
 }
 inline Output oracle(const Input& input, uint32_t value) {
     Output result{};
@@ -67,13 +69,34 @@ inline Output oracle(const Input& input, uint32_t value) {
     }
     return result;
 }
-struct Plan { unsigned profile; bool metal4, contended; };
-inline Plan plan(unsigned bank, unsigned profileSlot, unsigned apiSlot, unsigned modeSlot, bool metal4First) {
-    if (bank >= 4 || profileSlot >= 2 || apiSlot >= 2 || modeSlot >= 2)
+inline constexpr unsigned BlockCount = 8;
+inline constexpr unsigned Conditions = 4;
+inline constexpr unsigned TrialCount = BlockCount * Conditions;
+inline unsigned panelFirstGroup(bool metal4First) { return metal4First ? 41u : 9u; }
+inline const char* panelNamespace(bool metal4First) {
+    return metal4First ? "contention_v2_groups_41_72" : "contention_v2_groups_9_40";
+}
+inline const char* conditionID(unsigned condition) {
+    constexpr const char* names[] = {"legacy_idle", "legacy_contended", "metal4_idle", "metal4_contended"};
+    if (condition >= Conditions) throw std::out_of_range("authored condition out of range");
+    return names[condition];
+}
+struct Plan {
+    unsigned block, position, condition, lane, sourceGroup;
+    bool metal4, contended;
+};
+inline Plan plan(unsigned block, unsigned position, bool metal4First) {
+    if (block >= BlockCount || position >= Conditions)
         throw std::out_of_range("authored scheduling plan out of range");
-    return { (bank + profileSlot) % 2,
-             bool((bank & 1u) ^ apiSlot ^ unsigned(metal4First)),
-             bool(((bank >> 1u) & 1u) ^ modeSlot) };
+    constexpr unsigned williams[] = {0, 1, 3, 2};
+    const unsigned base = (williams[position] + block) % Conditions;
+    // The alternate panel changes only the backend assignment of each planned
+    // condition. Idle/contended status and the Williams position stay intact.
+    const unsigned condition = base ^ (metal4First ? 2u : 0u);
+    const unsigned lane = (condition + block / 2) % Conditions;
+    return {block, position, condition, lane,
+            panelFirstGroup(metal4First) + block * Conditions + lane,
+            condition >= 2, (condition & 1u) != 0};
 }
 } // namespace SkyrimContentionWorkload
 #endif

@@ -132,6 +132,17 @@ int main(int argc, const char *argv[]) {
             check(![compactStore writeSnapshot:@{ @"schema": @4, @"status": @"failed", @"large": large }
                                        toURL:compactURL finished:YES error:&error], "oversized compact record accepted");
             check([compactBytes isEqual:bytes(compactURL)], "oversized compact write damaged prior evidence");
+            dense[@"schema"] = @5;
+            check([compactStore writeSnapshot:dense toURL:compactURL finished:NO error:&error],
+                  "schema5 compact record below byte limit was refused");
+            compactRecord = [compactStore readRecordAtURL:compactURL error:&error];
+            compactBytes = bytes(compactURL);
+            sortedCompact = [NSJSONSerialization dataWithJSONObject:compactRecord options:NSJSONWritingSortedKeys error:&error];
+            check([compactRecord[@"comparison"] isEqual:dense] && [sortedCompact isEqual:compactBytes],
+                  "schema5 changed content or compact sorted encoding");
+            check(![compactStore writeSnapshot:@{ @"schema": @5, @"status": @"failed", @"large": large }
+                                       toURL:compactURL finished:YES error:&error], "oversized schema5 record accepted");
+            check([compactBytes isEqual:bytes(compactURL)], "oversized schema5 write damaged prior evidence");
             dense[@"status"] = @"passed";
             check([compactStore writeSnapshot:dense toURL:compactURL finished:YES error:&error], "compact terminal save");
             ProbeRunStore *compactReopened = [[ProbeRunStore alloc] initWithRootURL:compactRoot error:&error];
@@ -140,8 +151,8 @@ int main(int argc, const char *argv[]) {
                   [compactRestored[@"comparison"] isEqual:dense] && [compactRestored[@"finished"] boolValue],
                   "compact final record did not survive reopening");
             check([finalBytes isEqual:bytes(first)] && [recovered readRecordAtURL:first error:&error] != nil,
-                  "schema4 save affected legacy record readability");
-            std::puts("METAL_PROBE_STORE cases=13 foundation_verified=1 metal_api_verified=0 physical_iphone_verified=0");
+                  "compact save affected legacy record readability");
+            std::puts("METAL_PROBE_STORE cases=14 foundation_verified=1 metal_api_verified=0 physical_iphone_verified=0");
             return 0;
         } catch (const std::exception &error) {
             std::fprintf(stderr, "%s\n", error.what());

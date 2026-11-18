@@ -1,8 +1,10 @@
 """Real CPU oracle/order controls and Apple-only MRC/legacy GPU controls."""
 from pathlib import Path
+import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import time
@@ -11,6 +13,32 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 EXPERIMENT = ROOT / "experiments/metal-compile"
 CXX = shutil.which(os.environ.get("CXX", "c++"))
+
+
+class SourceIdentityControls(unittest.TestCase):
+    def test_frozen_semantic_panels_are_disjoint_from_each_other_and_build4(self):
+        base = (EXPERIMENT / "phone_fixture.metal").read_bytes()
+        self.assertEqual(hashlib.sha256(base).hexdigest(),
+                         "26ed56a8f4d264965eb624911d42cbf925f1329f0f103d58f683fe1c52d07ad6")
+        implementation = (EXPERIMENT / "phone_contention.mm").read_text(encoding="utf-8")
+        matches = re.findall(r'static NSString\* const Kernel = @R"MSL\((.*?)\)MSL";', implementation, re.S)
+        self.assertEqual(len(matches), 1)
+        all_hashes = set()
+        expected = ((1, 8, "7811f2498dbfcb761c80a5f530c2f398451142b81b1fa781a6002c1b0404b225"),
+                    (9, 40, "40da8a562c60436107a1e2651131cd8dc2eaca2a7358bd59811cc15a8862319e"),
+                    (41, 72, "de0a9f8ff8a26a60837622be1944528165cb6c100b4cd71102001b453de1c053"))
+        for first, last, frozen in expected:
+            hashes = []
+            for group in range(first, last + 1):
+                for role in range(3):
+                    salt = 0x31415927 ^ ((group * 0x9E3779B9) & 0xFFFFFFFF) ^ ((role * 0x85EBCA6B) & 0xFFFFFFFF)
+                    source = base + (f"\n#define CONTENTION_SALT 0x{salt:08x}u\n" + matches[0]).encode("utf-8")
+                    digest = hashlib.sha256(source).hexdigest()
+                    self.assertNotIn(digest, all_hashes)
+                    all_hashes.add(digest)
+                    hashes.append(digest)
+            self.assertEqual(hashlib.sha256("".join(hashes).encode("ascii")).hexdigest(), frozen)
+        self.assertEqual(len(all_hashes), 216)
 
 
 class Logged(unittest.TestCase):
@@ -39,7 +67,7 @@ class CPUControls(Logged):
                 self.execute(directory, "compile", [CXX, "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
                     *flags, "-I", str(EXPERIMENT), str(ROOT / "tests/native/test_metal_phone_contention.cpp"), "-o", str(exe)])
                 self.assertEqual(self.execute(directory, "run", [str(exe)]),
-                    "PHONE_CONTENTION_CPU golden_vectors=24 balanced_trials=32 requests=96 base_orders=2 gpu_execution_verified=0")
+                    "PHONE_CONTENTION_CPU golden_vectors=216 panels=2 balanced_trials=32 requests=96 unique_per_panel=96 gpu_execution_verified=0")
 
 
 @unittest.skipUnless(platform.system() == "Darwin", "requires Apple SDK, Foundation, and actual Metal GPU")
@@ -63,7 +91,10 @@ class MacMRCControls(Logged):
         self.assertEqual(len(data["trials"]), 2)
         self.assertEqual(len(data["error_controls"]), 1)
         self.assertEqual(len(data["partial_stop"]), 2)
+        self.assertEqual([p["count"] for p in data["source_identity_panels"]], [24, 96, 96])
         for trial in data["trials"]:
+            self.assertEqual(trial["planned_overlap"], trial["mode"] == "contended")
+            self.assertTrue(trial["actual_overlap_evaluated"])
             self.assertEqual(len(trial["jobs"]), 3)
             for job in trial["jobs"]:
                 self.assertTrue(job["oracle_verified"])

@@ -39,12 +39,12 @@ static NSData *Encode(NSDictionary *record, NSError **error) {
             StoreError(error, 3, @"結果に保存できない値が含まれています。");
             return nil;
         }
-        // Schema 4 adds the separately retained scheduling trials. Keep the
+        // Schemas 4 and 5 retain the separate scheduling trials. Keep the
         // same sorted keys and full data while avoiding indentation overhead;
         // older records retain their existing serialization and read contract.
         NSDictionary *comparison = record[@"comparison"];
         const BOOL compact = [comparison isKindOfClass:NSDictionary.class] &&
-                             [comparison[@"schema"] isEqual:@4];
+                             ([comparison[@"schema"] isEqual:@4] || [comparison[@"schema"] isEqual:@5]);
         NSJSONWritingOptions options = NSJSONWritingSortedKeys;
         if (!compact) options |= NSJSONWritingPrettyPrinted;
         NSData *data = [NSJSONSerialization dataWithJSONObject:record options:options error:error];

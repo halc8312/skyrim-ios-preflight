@@ -35,10 +35,18 @@ NS_ASSUME_NONNULL_BEGIN
 // intermediate persistence. Controlled stop/error returns the complete in-memory
 // report for the host's terminal save. A separate authored MRC scheduling control
 // follows serial controls and has its own nested result and eligibility status.
+// metal4First also selects a disjoint predeclared scheduling-test panel; each
+// panel compares both APIs. Repeating the same selection reuses those sources.
 FOUNDATION_EXPORT NSDictionary* SkyrimMetalRunPhoneComparison(
     NSString* sourcePath, NSUInteger repeats, BOOL metal4First,
     BOOL (^ _Nullable shouldContinue)(void),
     void (^ _Nullable progress)(NSDictionary* snapshot));
+
+// Display-only summary. Schema 5 uses all eight planned observations per
+// API/condition, with observed overlap counts separately. Historical schema 4
+// keeps its enqueue-to-callback maximum; earlier schemas return nil. This helper
+// neither runs work nor creates or upgrades measurement/verification evidence.
+FOUNDATION_EXPORT NSString* _Nullable SkyrimMetalPhoneContentionResultText(NSDictionary* comparison);
 
 NS_ASSUME_NONNULL_END
 #endif
