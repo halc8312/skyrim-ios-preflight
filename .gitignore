@@ -840,3 +840,11 @@
 !/pc-aot/ios/runtime-port/mod_plugins.h
 !/pc-aot/tests/test_mod_plugins.py
 !/pc-aot/tests/native/test_mod_plugins.c
+!/pc-aot/ios/runtime-port/mod_archive.c
+!/pc-aot/ios/runtime-port/mod_archive.h
+!/pc-aot/ios/runtime-port/mod_deploy.c
+!/pc-aot/ios/runtime-port/mod_deploy.h
+!/pc-aot/ios/runtime-port/mod_manager.h
+!/pc-aot/ios/runtime-port/mod_manager.m
+!/pc-aot/tests/test_mod_archive.py
+!/pc-aot/tests/native/test_mod_archive.c

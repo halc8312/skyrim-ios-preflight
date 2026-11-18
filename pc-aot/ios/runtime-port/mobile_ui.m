@@ -21,6 +21,7 @@
 #include "device_policy.h"
 #include "game_language.h"
 #include "mod_plugins.h"
+#include "mod_manager.h"
 #include "diagnostic_upload.h"
 #include "diagnostic_schema.h"
 #include "lifecycle_runtime.h"
@@ -328,22 +329,23 @@ static NSString *gameLanguageFallback(void) {
  * changed. A profile without any MOD choice keeps its plugins.txt untouched. */
 static NSArray<NSDictionary *> *modPlugins;   /* startup snapshot for the UI */
 static NSString *modNotice;
-static NSString *const kModsKey = @"mods-v1";
-
+/* Choices are stored per profile by mod_manager.m. Rows for plugins that
+ * are absent this launch (package off, safe mode) are kept, after the
+ * present ones, so they come back unchanged. */
 static NSArray<NSDictionary *> *savedModChoices(void) {
-    id saved = [NSUserDefaults.standardUserDefaults arrayForKey:kModsKey];
     NSMutableArray *result = [NSMutableArray array];
-    if (![saved isKindOfClass:NSArray.class]) return result;
-    for (id item in saved)
-        if ([item isKindOfClass:NSDictionary.class] && [item[@"name"] isKindOfClass:NSString.class] &&
-            [item[@"on"] isKindOfClass:NSNumber.class])
+    for (id item in skyrim_mods_plugin_choices())
+        if ([item isKindOfClass:NSDictionary.class] && [item[@"name"] isKindOfClass:NSString.class])
             [result addObject:@{@"name":item[@"name"], @"on":@([item[@"on"] boolValue])}];
     return result;
 }
 static void saveModChoices(NSArray *rows) {
-    NSMutableArray *out = [NSMutableArray arrayWithCapacity:rows.count];
-    for (NSDictionary *row in rows) [out addObject:@{@"name":row[@"name"], @"on":@([row[@"on"] boolValue])}];
-    [NSUserDefaults.standardUserDefaults setObject:out forKey:kModsKey];
+    NSMutableArray *out = [NSMutableArray arrayWithArray:rows];
+    NSMutableSet *present = [NSMutableSet set];
+    for (NSDictionary *row in rows) [present addObject:[row[@"name"] lowercaseString]];
+    for (NSDictionary *row in savedModChoices())
+        if (![present containsObject:[row[@"name"] lowercaseString]]) [out addObject:row];
+    skyrim_mods_set_plugin_choices(out);
 }
 static int readPluginHeader(NSString *path, SkyrimPluginHeader *header) {
     memset(header, 0, sizeof *header);
@@ -440,10 +442,15 @@ void skyrim_mobile_prepare_mods(const char *gameDirectory) {
     /* User order first (exact names that still exist), then new files. */
     NSMutableArray<NSDictionary *> *rows = [NSMutableArray array];
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
-    for (NSDictionary *choice in savedModChoices())
-        if (index[choice[@"name"]] && ![seen containsObject:choice[@"name"]]) {
-            [rows addObject:choice]; [seen addObject:choice[@"name"]];
+    /* Saved names match case-insensitively: package files keep their own case. */
+    NSMutableDictionary<NSString *, NSString *> *byLower = [NSMutableDictionary dictionary];
+    for (NSString *name in names) byLower[name.lowercaseString] = name;
+    for (NSDictionary *choice in savedModChoices()) {
+        NSString *name = byLower[[choice[@"name"] lowercaseString]];
+        if (name && ![seen containsObject:name]) {
+            [rows addObject:@{@"name":name, @"on":choice[@"on"]}]; [seen addObject:name];
         }
+    }
     NSMutableArray<NSString *> *added = [NSMutableArray array];
     for (NSString *name in names) if (![seen containsObject:name]) [added addObject:name];
     [added sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
@@ -826,7 +833,7 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)p {
     [table deselectRowAtIndexPath:p animated:YES];
     if (p.section==8) {
-        [self.navigationController pushViewController:[[SKMods alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
+        [self.navigationController pushViewController:skyrim_mods_hub_controller() animated:YES];
         return;
     }
     if (p.section==7) {
@@ -1049,6 +1056,9 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 @end
 
+void skyrim_mobile_show_notice(NSString *text) { if (text.length) [overlay message:text]; }
+UIViewController *skyrim_mobile_plugin_controller(void) { return [[SKMods alloc] initWithStyle:UITableViewStyleInsetGrouped]; }
+
 void skyrim_mobile_install(void *window) {
     NSCAssert(NSThread.isMainThread,@"UIKit overlay must run on main");
     SDL_SysWMinfo info;SDL_VERSION(&info.version);
@@ -1062,11 +1072,13 @@ void skyrim_mobile_install(void *window) {
     overlay=[[SKOverlay alloc] initWithFrame:root.bounds];[root addSubview:overlay];
     [overlay message:L(@"Drag an empty area to look. Open the gear for sensitivity, layout and graphics.", @"空いている場所をドラッグして視点移動。右上の設定で感度・配置・画質を変更")];
     NSString *fallback = gameLanguageFallback();
-    if (fallback || modNotice)
-        [overlay message:fallback && modNotice ? [NSString stringWithFormat:@"%@\n%@", fallback, modNotice] : fallback ?: modNotice];
+    NSMutableArray *notices = [NSMutableArray array];
+    for (NSString *n in @[fallback ?: @"", skyrim_mods_launch_notice() ?: @"", modNotice ?: @""]) if (n.length) [notices addObject:n];
+    if (notices.count) [overlay message:[notices componentsJoinedByString:@"\n"]];
 }
 void skyrim_mobile_tick(void) {
     if(!overlay || !NSThread.isMainThread) return;
+    skyrim_mods_frame(__atomic_load_n(&frameCount, __ATOMIC_RELAXED));
     @autoreleasepool {
     /* SDL 2.32 replaces rootViewController.view when creating its Metal view
      * (SDL_uikitview.setSDLWindow). Reattach to that new view, not the detached

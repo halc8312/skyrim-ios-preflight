@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include "ios_runtime.h"
 #include "mobile_ui.h"
+#include "mod_manager.h"
 #include "device_policy.h"
 #include "diagnostic_upload.h"
 #include "PcGuestABI.h"
@@ -145,8 +146,11 @@ int SDL_main(int argc, char **argv) {
         skyrim_ios_stage("sdl-application-entry");
         skyrim_device_platform_initialize();
         NSURL *game = directory(NSDocumentDirectory, @"Skyrim");
-        NSURL *profile = directory(NSApplicationSupportDirectory, @"SkyrimIOS/Profile");
+        NSURL *defaultProfile = directory(NSApplicationSupportDirectory, @"SkyrimIOS/Profile");
         NSURL *cache = directory(NSCachesDirectory, @"SkyrimIOS/DXVK");
+        // MOD profiles: the default keeps the existing saves; others have their
+        // own. May ask the safe-mode question before anything else starts.
+        NSURL *profile = [NSURL fileURLWithPath:skyrim_mods_select_profile(defaultProfile.path) isDirectory:YES];
         skyrim_mobile_initialize(profile.fileSystemRepresentation);
         for (unsigned i = 0; i < SKYRIM_SHADER_OPTION_COUNT; ++i) {
             int enabled = skyrim_mobile_shader_option(i);
@@ -170,7 +174,10 @@ int SDL_main(int argc, char **argv) {
         skyrim_ios_stage("private-guest-bound");
         if (!skyrim_mobile_prepare_game_language(game.fileSystemRepresentation))
             startup_failure(@"Cannot safely apply the game language to the app profile; the guest was not started");
-        skyrim_mobile_prepare_mods(game.fileSystemRepresentation);
+        // The original game folder, or a copy-on-write clone with the enabled
+        // MOD packages laid over Data. The original is never modified.
+        NSURL *runtimeGame = [NSURL fileURLWithPath:skyrim_mods_prepare_game(game.path) isDirectory:YES];
+        skyrim_mobile_prepare_mods(runtimeGame.fileSystemRepresentation);
         set_default("LB_LOG", skyrim_mobile_verbose() ? "1" : "0");
         set_default("DXVK_LOG_PATH", cache.fileSystemRepresentation);
         set_default("DXVK_STATE_CACHE_PATH", cache.fileSystemRepresentation);
@@ -178,7 +185,7 @@ int SDL_main(int argc, char **argv) {
         set_default("SKYDREAM_VSYNC", "1");
         fprintf(stderr, "Game input: %s\nProfile: %s\n", game.fileSystemRepresentation,
                 profile.fileSystemRepresentation);
-        char *runtime_argv[] = {"SkyrimIOS", (char *)game.fileSystemRepresentation,
+        char *runtime_argv[] = {"SkyrimIOS", (char *)runtimeGame.fileSystemRepresentation,
                                 (char *)profile.fileSystemRepresentation, NULL};
         int result = skyrim_ios_runtime_main(3, runtime_argv);
         fprintf(stderr, "Guest entry returned %d; no title success was inferred\n", result);

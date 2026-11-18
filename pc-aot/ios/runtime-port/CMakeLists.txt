@@ -57,6 +57,9 @@ add_library(skyrim_ios_runtime STATIC ${runtime_sources}
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_core.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/game_language.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mod_plugins.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/mod_archive.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/mod_deploy.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/mod_manager.m"
     "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_upload.m"
     "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_controller.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_runtime.m"
@@ -72,6 +75,8 @@ target_compile_options(skyrim_ios_runtime PRIVATE -O2 -fno-strict-aliasing -fwra
     "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>"
     -include "${CMAKE_CURRENT_SOURCE_DIR}/ios_build_contract.h")
 target_link_libraries(skyrim_ios_runtime PUBLIC skyrim_ios_dependencies)
+# MOD import: zlib for zip, UTType for the document picker.
+target_link_libraries(skyrim_ios_runtime PUBLIC z "-framework UniformTypeIdentifiers")
 
 if(SKYRIM_IOS_BUILD_APP)
     if(NOT SKYRIM_IOS_BINDING_SOURCES)
