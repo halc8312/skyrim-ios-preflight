@@ -50,6 +50,11 @@ and the existing DXVK scheduling remain on their current paths.
   with host storage nested inside callback. This establishes the measurement
   app's overhead and further ARC compatibility, not a backend speedup or the
   unresolved MRC, options and parallel-contention gates.
+- Build 4 (`4ff4bb84`) observed real host request overlap on the iPhone and
+  exercised manual ownership with Metal 4 on 48 successes and one intentional
+  failure. The four overlapping trials used different first-encounter sources.
+  The production timing/ownership contract and exact option parity still need
+  dedicated coverage.
 
 Upstream source references below are all at the built revision:
 [shader implementation](https://github.com/KhronosGroup/MoltenVK/blob/458870543b9bcf6b0edd6f90aaa776707b310d96/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm),
@@ -126,12 +131,13 @@ update; the rejected GPU admission changes remain excluded.
   ownership to a separately validated waiter/retirement context before joining.
   Apple's [task API](https://developer.apple.com/documentation/metal/mtl4compilertask)
   documents a blocking wait; it does not prove callback/release ordering for this
-  adapter. The next hardware check should use the existing ARC comparison first.
+  adapter. The physical build-4 fixture validated a worker-side join and release
+  through normal completion and an expected compiler error.
   The separate `--retirement-handoff-only` CPU model now covers early/late callback
   handoff to a waiter and rejects a join on the producer thread. WSL normal and
   ASan/UBSan controls passed; run12 additionally passed Mac normal, ASan/UBSan
-  and Darwin TSan, with empty stderr. It uses fake tasks and does not supply the
-  missing Metal 4 wait/release contract, which still requires device validation.
+  and Darwin TSan, with empty stderr. Validation of a production waiter that
+  times out before a real callback arrives remains outstanding.
 
 ## Failure routing and diagnostics
 
@@ -250,10 +256,15 @@ per run in snapshot generation plus synchronous callbacks, independently of
 compiler clocks. Build 4 now groups progress saves, retains per-operation stop
 checks and follows the serial comparison with 32 matched scheduling trials.
 The new MRC adapter passed its legacy readback, error and stop checks on the
-Mac test GPU. The iPhone will reveal whether any prefetch requests are actually
-outstanding at urgent submission and how long the urgent requests take on each
-backend. Real Metal 4 task retirement, production option equivalence and game
-frame times remain separate acceptance steps.
+Mac test GPU. The physical iPhone then produced all expected outputs and the
+worker finished and released 49 Metal 4 tasks, including one expected compiler
+error. Four of 16 nominally contended trials had prefetches outstanding when
+the urgent request entered. All four were first encounters on different
+sources. A repeated-source run on the same phone mainly measures reuse.
+The [physical result and proposed balanced first-use schedule](README.md#build-4-physical-iphone-result)
+give the conditions for a meaningful speed comparison. Before enabling a game
+experiment, validate the actual MoltenVK compile options and owner/timeout
+behavior through the production boundary. Measure frame gaps separately.
 
 ## When Metal 4 could shorten a Skyrim frame
 

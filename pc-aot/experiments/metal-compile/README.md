@@ -82,7 +82,8 @@ paravirtual GPU returned the expected 384 words in six new legacy readbacks.
 No prefetch request was outstanding when the urgent request entered in those
 two host trials. The simulator exercised the unsupported, restore and share
 views. The existing private link delivered the signed 119,309-byte build 4
-package. Observations from the iPhone are needed to evaluate Metal 4.
+package. The [first physical build-4 result](#build-4-physical-iphone-result)
+records four overlapping foreground requests and the runtime checks on iPhone.
 
 Build-3 preparation passed Windows Metal 6.2 compilation/linking for all twelve
 cases without diagnostics, portable CPU golden/sensitivity/order controls in
@@ -368,6 +369,68 @@ Combine that measurement fix with independent actual Metal 4 MRC task retirement
 production-option equivalence and bounded parallel-contention checks. Repeated
 serial synthetic runs alone cannot satisfy those integration gates. This analysis
 did not rebuild, modify production, or change defaults.
+
+## Build-4 physical iPhone result
+
+The 13:59 JST legacy-first run completed on the iPhone 17 Pro Max (A19 Pro,
+iOS 26.5.2). Its full BuildInfo matched both the delivered signed IPA and the
+unsigned run-7 IPA, with all fourteen source fingerprints matching `881725ac`.
+The original JSON is `private/metal-probe-results/20261118-135932/comparison.json`
+(946,494 bytes, SHA-256 `7edf215be2f5c509d7a32b61377cfd700363ce65dc21d7d7c9970d2c642cdec3`).
+
+Of 32 scheduling trials, 16 waited for both prefetches before submitting the
+urgent library request and 16 submitted it immediately after their API calls
+returned. Four of the latter still had both prefetches outstanding. The table
+shows the urgent request interval from API entry to its completion callback.
+Each cell contains one observation from a different source bank.
+
+| Submission priorities | Legacy async | Metal 4 async |
+| --- | ---: | ---: |
+| Equal | 13.445 ms | 7.835 ms |
+| Lower priority for prefetch | 8.593 ms | 7.676 ms |
+
+Every overlap occurred on the first use of a source group in the run. The
+other API revisited the same source with the same options after it had already
+been compiled. Zero groups gave an overlapping observation on **both** APIs.
+The eight first urgent requests ranged from 6.090 to 13.445 ms. The 24 revisits
+ranged from 0.014 to 0.029 ms, with no observed overlap. Prefetch and urgent
+requests were outstanding together in the host. Their callbacks do not reveal
+Metal's internal execution order. The OS cache was uncontrolled. These results
+establish neither an API speed ranking nor a Skyrim frame-time improvement.
+
+All 192 serial samples produced the expected 24,576 GPU words. The four serial
+rejections and four retained-result controls behaved as expected. The new
+scheduling control produced the expected 6,144 words across all 96 requests,
+matching a separate integer reference calculation across 24 semantic source
+hashes. All 98 normal and deliberate-error requests delivered one callback. In
+the 49 Metal 4 cases the adapter adopted the task, waited for it to finish and
+released its reference. Each of the two APIs preserved the intended compiler
+error after the callback's autorelease pool ended. The run left no owner in
+exceptional-join quarantine. This covers the authored worker's success/error
+paths. The game's MoltenVK options, timeout paths and long-run memory behavior
+remain separate tests.
+
+All 73 intermediate stores succeeded (601 boundaries, 528 coalesced). Snapshot
+encode/decode took 228.306 ms and the synchronous callback 561.359 ms, totalling
+789.665 ms versus 6,548.656 and 6,480.627 ms in build 3. The 560.831 ms store
+interval is already included in the callback. Each callback could still take
+up to 17.928 ms. The complete probe took 1,538.605 ms including the 543.359 ms
+scheduling suite. All 386 serial/environment observations reported nominal
+thermal state and low-power mode off. Observed footprint grew from 24.94 MB to
+88.36 MB at serial completion and 110.77 MB after the additional suite.
+
+Before the next speed test, give each API several first requests under the same
+submission priorities. A local scheduling dry run assigned 32 distinct urgent
+sources to two APIs and two modes, eight per condition. In eight four-trial
+blocks the condition order was `[0,1,3,2] + block (mod 4)` and the source lane
+was `(condition + floor(block / 2)) mod 4`. Each condition occupied each order
+position and each source lane twice. The existing salt formula with group
+indices 9 through 40 produced 96 distinct source hashes and 96 distinct CPU
+output hashes across the three roles, with no overlap with build 4's 24 source
+or output hashes. This verifies the proposed allocations on the development
+host. Actual first-request cost, overlap and cache state still require a device.
+Report genuinely overlapping draws and queue delay separately and retain the
+number of planned trials that had no overlap.
 
 ## What each environment establishes
 
