@@ -128,3 +128,49 @@ use plugins.txt order for active plugins (as MO2's classic Skyrim support
 assumes); confirm with an authored master/dependent pair on the device before
 relying on order for conflicting records. Content that reaches engine code
 the static translation never discovered must still fail explicitly.
+
+## 2026-11-19 MOD manager implementation (code + host tests; no build, no device run)
+
+At the user's request the full first scope was implemented in one series of
+commits on top of the plugin-selection change above. Everything is new code
+paths; with no MOD package on and no plugin choice the app starts exactly as
+before (original game folder, untouched plugins.txt).
+
+| Feature | Where | Host verification |
+| --- | --- | --- |
+| Packages, launch view (clonefile overlay), conflicts | `mod_deploy.c`, `mod_manager.m` | `test_mod_archive.py` deploy cases |
+| zip import (share sheet, picker), folder import | `mod_archive.c`, `mod_manager.m` | `test_mod_archive.py` |
+| 7z / rar import | `mod_libarchive.c` (needs libarchive + liblzma in the dependency prefix) | `test_mod_libarchive.py` (7z) |
+| FOMOD installer screens | `mod_fomod.m` | syntax only |
+| Nexus in-app browser (Manual Download only) | `mod_browser.m` | syntax only |
+| SE / SKSE / weight checks, save check | `mod_analyze.c`, `mod_manager.m` | `test_mod_optimize.py` |
+| Automatic optimization at import | `mod_optimize.c` (+ `scripts/fetch-mod-codecs.sh`) | `test_mod_optimize.py` |
+| Profiles with own saves, safe mode, MOD lists | `mod_manager.m` | syntax only |
+| SKSE | plan only: `docs/SKSE_IOS_PLAN.md` | — |
+
+Objective-C was checked with clang against GNUstep Foundation plus UIKit/
+WebKit stand-in declarations; that catches typos and type errors, not UIKit
+behaviour. Required before release: Mac build; simulator pass over Settings >
+MOD (empty, zip import, folder import, FOMOD sample, profiles, conflicts,
+save check, export/import list); then device runs in this order — one
+authored texture-only package, one authored plugin with a copied save in a
+new profile, a forced crash to see the safe-mode question, then real LE MODs.
+
+Design decisions that differ from the earlier text:
+
+- Packages are deployed by cloning (`clonefile`) the whole game folder into
+  `Application Support/SkyrimIOS/Views/<profile>` and laying packages over its
+  Data, instead of a runtime path-resolution layer. The guest sees an ordinary
+  folder; no runtime patch is needed; the original folder is only read.
+  Rebuilt only when the package list or the game folder's signature changes.
+- Profiles are separate runtime profile directories, so saves, INIs and
+  plugins.txt are naturally separate. The existing profile is "Default".
+- Safe mode: a launch with packages that ends before ~30 s of frames without
+  going to the background triggers a pre-launch question next time.
+- Optimization changes only the app's staged copy of a MOD. Defaults: on,
+  2048 px texture limit. SE meshes and SE plugins are reported, not converted.
+
+New build inputs: `scripts/fetch-mod-codecs.sh` (bcdec + stb_dxt, pinned by
+commit and SHA-256); optional libarchive and xz (liblzma) static libraries in
+the iPhoneOS dependency prefix for 7z/rar; frameworks WebKit and
+UniformTypeIdentifiers; zlib.

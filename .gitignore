@@ -862,3 +862,4 @@
 !/pc-aot/ios/runtime-port/mod_browser.m
 !/pc-aot/tests/test_mod_libarchive.py
 !/pc-aot/tests/native/test_mod_libarchive.c
+!/pc-aot/docs/SKSE_IOS_PLAN.md
