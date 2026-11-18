@@ -1057,6 +1057,11 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 @end
 
 void skyrim_mobile_show_notice(NSString *text) { if (text.length) [overlay message:text]; }
+NSArray<NSString *> *skyrim_mobile_loaded_plugins(void) {
+    NSMutableArray *out = [NSMutableArray arrayWithObjects:@"Skyrim.esm", @"Update.esm", nil];
+    for (NSDictionary *row in modPlugins) if ([row[@"state"] intValue] == SKYRIM_PLUGIN_LOAD) [out addObject:row[@"name"]];
+    return out;
+}
 UIViewController *skyrim_mobile_plugin_controller(void) { return [[SKMods alloc] initWithStyle:UITableViewStyleInsetGrouped]; }
 
 void skyrim_mobile_install(void *window) {
@@ -1073,7 +1078,7 @@ void skyrim_mobile_install(void *window) {
     [overlay message:L(@"Drag an empty area to look. Open the gear for sensitivity, layout and graphics.", @"空いている場所をドラッグして視点移動。右上の設定で感度・配置・画質を変更")];
     NSString *fallback = gameLanguageFallback();
     NSMutableArray *notices = [NSMutableArray array];
-    for (NSString *n in @[fallback ?: @"", skyrim_mods_launch_notice() ?: @"", modNotice ?: @""]) if (n.length) [notices addObject:n];
+    for (NSString *n in @[fallback ?: @"", skyrim_mods_launch_notice() ?: @"", modNotice ?: @"", skyrim_mods_save_notice() ?: @""]) if (n.length) [notices addObject:n];
     if (notices.count) [overlay message:[notices componentsJoinedByString:@"\n"]];
 }
 void skyrim_mobile_tick(void) {

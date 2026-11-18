@@ -59,6 +59,8 @@ add_library(skyrim_ios_runtime STATIC ${runtime_sources}
     "${CMAKE_CURRENT_SOURCE_DIR}/mod_plugins.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mod_archive.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mod_deploy.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/mod_analyze.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/mod_optimize.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mod_manager.m"
     "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_upload.m"
     "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_controller.c"
@@ -75,7 +77,14 @@ target_compile_options(skyrim_ios_runtime PRIVATE -O2 -fno-strict-aliasing -fwra
     "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>"
     -include "${CMAKE_CURRENT_SOURCE_DIR}/ios_build_contract.h")
 target_link_libraries(skyrim_ios_runtime PUBLIC skyrim_ios_dependencies)
-# MOD import: zlib for zip, UTType for the document picker.
+# MOD import: zlib for zip, UTType for the document picker. Texture codecs
+# are pinned header-only checkouts (scripts/fetch-mod-codecs.sh).
+set(SKYRIM_MOD_CODEC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../vendor" CACHE PATH "bcdec and stb checkouts")
+if(NOT EXISTS "${SKYRIM_MOD_CODEC_DIR}/bcdec/bcdec.h" OR NOT EXISTS "${SKYRIM_MOD_CODEC_DIR}/stb/stb_dxt.h")
+    message(FATAL_ERROR "MOD texture codecs missing; run scripts/fetch-mod-codecs.sh")
+endif()
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/mod_optimize.c" PROPERTIES
+    INCLUDE_DIRECTORIES "${SKYRIM_MOD_CODEC_DIR}/bcdec;${SKYRIM_MOD_CODEC_DIR}/stb")
 target_link_libraries(skyrim_ios_runtime PUBLIC z "-framework UniformTypeIdentifiers")
 
 if(SKYRIM_IOS_BUILD_APP)

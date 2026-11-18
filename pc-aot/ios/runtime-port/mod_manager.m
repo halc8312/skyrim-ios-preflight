@@ -18,6 +18,8 @@
 #include "mod_archive.h"
 #include "mod_deploy.h"
 #include "mod_plugins.h"
+#include "mod_analyze.h"
+#include "mod_optimize.h"
 
 static NSString *T(NSString *english, NSString *japanese) {
     NSDictionary *s = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
@@ -270,8 +272,63 @@ static NSArray<NSString *> *PluginsIn(NSString *data) {
 
 /* Inspect / convert a staged package in place before it is published.
  * Returns NO with *message to refuse the package. */
+static unsigned TextureLimit(void) {
+    id v = [NSUserDefaults.standardUserDefaults objectForKey:@"mods-texture-max"];
+    return [v isKindOfClass:NSNumber.class] ? [v unsignedIntValue] : 2048;
+}
 static BOOL ProcessStaged(NSString *data, NSMutableDictionary *package, NSString **message) {
-    (void)data; (void)package; (void)message; return YES;
+    (void)message;
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSMutableDictionary *opt = [NSMutableDictionary dictionary];
+    BOOL optimize = ![NSUserDefaults.standardUserDefaults boolForKey:@"mods-optimize-off"];
+    /* Special Edition archives become loose files the classic engine reads. */
+    unsigned extracted = 0, archives = 0;
+    for (NSString *name in [fm contentsOfDirectoryAtPath:data error:NULL]) {
+        if (!optimize || ![name.pathExtension.lowercaseString isEqualToString:@"bsa"]) continue;
+        NSString *path = [data stringByAppendingPathComponent:name];
+        NSData *head = [[NSFileHandle fileHandleForReadingAtPath:path] readDataOfLength:8];
+        if (head.length < 8 || skyrim_bsa_version(head.bytes, head.length) != 105) continue;
+        unsigned files = 0;
+        if (!skyrim_bsa_extract_se(path.fileSystemRepresentation, data.fileSystemRepresentation, &files)) {
+            [fm removeItemAtPath:path error:NULL]; ++archives; extracted += files;
+        }
+    }
+    opt[@"seArchives"] = @(archives); opt[@"seArchiveFiles"] = @(extracted);
+    if (optimize) {
+        NSMutableArray<NSString *> *textures = [NSMutableArray array];
+        NSDirectoryEnumerator *en = [fm enumeratorAtPath:data];
+        for (NSString *rel in en)
+            if ([rel.pathExtension.lowercaseString isEqualToString:@"dds"]) [textures addObject:[data stringByAppendingPathComponent:rel]];
+        unsigned *counts = calloc(SKYRIM_TEX_ERROR + 1, sizeof *counts);   /* shared with the block */
+        unsigned limit = TextureLimit();
+        NSObject *lock = [NSObject new];
+        NSUInteger total = counts ? textures.count : 0;
+        __block NSUInteger done = 0;
+        dispatch_apply(total, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^(size_t i) {
+            int action = skyrim_texture_optimize(textures[i].fileSystemRepresentation, limit);
+            @synchronized (lock) {
+                ++counts[action];
+                if (++done % 500 == 0)
+                    Notice([NSString stringWithFormat:T(@"Optimizing textures… %lu / %lu", @"テクスチャを最適化中… %lu / %lu"), (unsigned long)done, (unsigned long)total]);
+            }
+        });
+        if (!counts) counts = calloc(SKYRIM_TEX_ERROR + 1, sizeof *counts);
+        if (!counts) return YES;
+        opt[@"trimmed"] = @(counts[SKYRIM_TEX_TRIMMED]); opt[@"reheadered"] = @(counts[SKYRIM_TEX_REHEADERED]);
+        opt[@"transcoded"] = @(counts[SKYRIM_TEX_TRANSCODED]); opt[@"unsupported"] = @(counts[SKYRIM_TEX_UNSUPPORTED]);
+        opt[@"failed"] = @(counts[SKYRIM_TEX_ERROR]); opt[@"limit"] = @(limit);
+        free(counts);
+    }
+    package[@"optimized"] = opt;
+    SkyrimModReport r;
+    skyrim_mod_analyze(data.fileSystemRepresentation, &r);
+    package[@"report"] = @{@"plugins":@(r.plugins), @"sePlugins":@(r.se_plugins), @"esl":@(r.esl), @"bsas":@(r.bsas),
+        @"seBsas":@(r.se_bsas), @"foreignBsas":@(r.foreign_bsas), @"textures":@(r.textures), @"dx10":@(r.dx10_textures),
+        @"bc7":@(r.bc7_textures), @"tex4k":@(r.textures_4k), @"noMips":@(r.textures_no_mips), @"maxTexture":@(r.max_texture),
+        @"textureMB":@(r.texture_bytes >> 20), @"meshes":@(r.meshes), @"seMeshes":@(r.se_meshes), @"foreignMeshes":@(r.foreign_meshes),
+        @"scripts":@(r.scripts), @"skseScripts":@(r.skse_scripts), @"mcm":@(r.mcm_scripts), @"skseDlls":@(r.skse_dlls),
+        @"skseMissing":@(r.skse_missing)};
+    return YES;
 }
 
 /* Publish a staged package (on the import queue) and select it on the main
@@ -546,6 +603,75 @@ static NSArray<NSDictionary *> *ConflictSummary(void) {
     return out;
 }
 
+/* ---- save consistency ---------------------------------------------------- */
+/* Saves of the running profile, newest first, with plugins they list that
+ * this launch does not load. Reads only the save header. */
+static NSArray<NSDictionary *> *SaveChecks(NSUInteger limit) {
+    NSString *dir = [ProfileDir(RunningProfile()) stringByAppendingPathComponent:@"Documents/My Games/Skyrim/Saves"];
+    NSMutableArray *saves = [NSMutableArray array];
+    for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:NULL]) {
+        if (![name.pathExtension.lowercaseString isEqualToString:@"ess"]) continue;
+        NSDictionary *a = [NSFileManager.defaultManager attributesOfItemAtPath:[dir stringByAppendingPathComponent:name] error:NULL];
+        if (a[NSFileModificationDate]) [saves addObject:@{@"name":name, @"date":a[NSFileModificationDate]}];
+    }
+    [saves sortUsingComparator:^NSComparisonResult(NSDictionary *x, NSDictionary *y) { return [y[@"date"] compare:x[@"date"]]; }];
+    NSMutableSet *loaded = [NSMutableSet set];
+    for (NSString *n in skyrim_mobile_loaded_plugins()) [loaded addObject:n.lowercaseString];
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *save in saves) {
+        if (out.count >= limit) break;
+        char *names = NULL; unsigned count = 0;
+        NSString *path = [dir stringByAppendingPathComponent:save[@"name"]];
+        if (skyrim_save_plugins(path.fileSystemRepresentation, &names, &count)) {
+            [out addObject:@{@"name":save[@"name"], @"date":save[@"date"], @"unreadable":@YES}];
+            continue;
+        }
+        NSMutableArray *missing = [NSMutableArray array];
+        for (unsigned i = 0, o = 0; i < count; ++i) {
+            NSString *n = [[NSString alloc] initWithBytes:names + o length:strlen(names + o) encoding:NSWindowsCP1252StringEncoding] ?: @"?";
+            if (![loaded containsObject:n.lowercaseString]) [missing addObject:n];
+            o += (unsigned)strlen(names + o) + 1;
+        }
+        free(names);
+        [out addObject:@{@"name":save[@"name"], @"date":save[@"date"], @"missing":missing}];
+    }
+    return out;
+}
+NSString *skyrim_mods_save_notice(void) {
+    if (!state) return nil;
+    NSDictionary *latest = SaveChecks(1).firstObject;
+    NSArray *missing = latest[@"missing"];
+    if (!missing.count) return nil;
+    return [NSString stringWithFormat:T(@"Your latest save uses MODs that are not loaded now: %@. Load it only if you meant to remove them.",
+        @"最新のセーブは、今は読み込まれていないMODを使っています：%@。外すつもりの場合だけ、そのセーブを読み込んでください。"),
+        [missing componentsJoinedByString:@", "]];
+}
+
+@interface SKSaves : UITableViewController
+@property(nonatomic, strong) NSArray<NSDictionary *> *saves;
+@end
+@implementation SKSaves
+- (void)viewDidLoad { [super viewDidLoad]; self.title = T(@"Save check", @"セーブの確認"); self.saves = SaveChecks(50); }
+- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { (void)t; (void)s; return self.saves.count ? (NSInteger)self.saves.count : 1; }
+- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
+    (void)t; (void)s;
+    return T(@"Compared with the plugins loaded in this launch. Loading a save without a MOD it used removes that MOD's items and changes from the save once you save again.",
+             @"今回の起動で読み込んだプラグインと比べています。使っていたMODがない状態で読み込んで保存すると、そのMODの物や変化がセーブから消えます。");
+}
+- (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)p {
+    (void)t;
+    UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    c.selectionStyle = UITableViewCellSelectionStyleNone; c.detailTextLabel.numberOfLines = 0;
+    if (!self.saves.count) { c.textLabel.text = T(@"No saves in this profile", @"このプロファイルにセーブはありません"); return c; }
+    NSDictionary *save = self.saves[p.row];
+    c.textLabel.text = [save[@"name"] stringByDeletingPathExtension];
+    NSArray *missing = save[@"missing"];
+    c.detailTextLabel.text = [save[@"unreadable"] boolValue] ? T(@"Could not read this save", @"このセーブは読めませんでした") :
+        missing.count ? [NSString stringWithFormat:T(@"⚠️ Missing: %@", @"⚠️ 足りないMOD：%@"), [missing componentsJoinedByString:@", "]] : T(@"✅ All MODs present", @"✅ MODはすべてそろっています");
+    return c;
+}
+@end
+
 /* ---- UI ---------------------------------------------------------------- */
 @interface SKListController : UITableViewController
 @property(nonatomic, copy) NSString *footer;
@@ -686,15 +812,47 @@ static NSArray<NSDictionary *> *ConflictSummary(void) {
 }
 @end
 
-/* Report lines shown for a package (first line also in the list). */
-static NSArray<NSString *> *ReportLines(NSDictionary *package) { (void)package; return @[]; }
+/* Report lines shown for a package, most serious first (the first line is
+ * also shown in the MOD list). Warnings only; nothing is blocked. */
+static NSArray<NSString *> *ReportLines(NSDictionary *package) {
+    NSDictionary *r = package[@"report"], *o = package[@"optimized"];
+    if (![r isKindOfClass:NSDictionary.class]) return @[];
+    NSMutableArray *bad = [NSMutableArray array], *warn = [NSMutableArray array], *info = [NSMutableArray array];
+    unsigned (^n)(NSString *) = ^unsigned(NSString *k) { return [r[k] unsignedIntValue]; };
+    if (n(@"sePlugins")) [bad addObject:[NSString stringWithFormat:T(@"⛔ %u Special Edition plugin(s): likely to crash", @"⛔ SE用のプラグイン %u個：落ちる可能性が高い"), n(@"sePlugins")]];
+    if (n(@"esl")) [bad addObject:T(@"⛔ ESL files are not supported by the 2011 engine", @"⛔ ESLは2011年版のエンジンでは使えません")];
+    if (n(@"skseDlls")) [bad addObject:[NSString stringWithFormat:T(@"⛔ %u SKSE plugin DLL(s): cannot run on iPhone", @"⛔ SKSEプラグイン（DLL）%u個：iPhoneでは動きません"), n(@"skseDlls")]];
+    if (n(@"seMeshes")) [warn addObject:[NSString stringWithFormat:T(@"⚠️ %u Special Edition mesh(es): may look broken or crash", @"⚠️ SE用のメッシュ %u個：表示崩れや落ちる可能性"), n(@"seMeshes")]];
+    if (n(@"skseScripts")) {
+        NSString *missing = [r[@"skseMissing"] length] ? [NSString stringWithFormat:T(@" (not available: %@)", @"（未対応：%@）"), r[@"skseMissing"]] : @"";
+        [warn addObject:[NSString stringWithFormat:T(@"⚠️ %u script(s) need SKSE%@", @"⚠️ SKSEが必要なスクリプト %u個%@"), n(@"skseScripts"), missing]];
+    }
+    if (n(@"mcm")) [warn addObject:T(@"⚠️ Uses the SkyUI MCM menu (needs SkyUI and SKSE)", @"⚠️ SkyUIのMCMメニューを使用（SkyUIとSKSEが必要）")];
+    if (n(@"foreignBsas") || n(@"foreignMeshes")) [warn addObject:T(@"⚠️ Files from another game version", @"⚠️ 別のゲーム用のファイルが含まれています")];
+    unsigned mb = n(@"textureMB");
+    if (mb >= 1024) [warn addObject:[NSString stringWithFormat:T(@"⚠️ Heavy: about %u MB of textures", @"⚠️ 重い：テクスチャ約%u MB"), mb]];
+    else if (mb >= 256) [info addObject:[NSString stringWithFormat:T(@"Medium: about %u MB of textures", @"やや重い：テクスチャ約%u MB"), mb]];
+    else if (n(@"textures")) [info addObject:[NSString stringWithFormat:T(@"Light: about %u MB of textures", @"軽い：テクスチャ約%u MB"), mb]];
+    if ([o isKindOfClass:NSDictionary.class]) {
+        unsigned changed = [o[@"trimmed"] unsignedIntValue] + [o[@"transcoded"] unsignedIntValue] + [o[@"reheadered"] unsignedIntValue];
+        if (changed || [o[@"seArchives"] unsignedIntValue])
+            [info addObject:[NSString stringWithFormat:T(@"Auto-optimized: %u texture(s) (limit %@), %u SE archive(s) unpacked", @"自動最適化：テクスチャ %u個（上限 %@）、SE用BSA %u個を展開"),
+                changed, [o[@"limit"] unsignedIntValue] ? [o[@"limit"] stringValue] : T(@"none", @"なし"), [o[@"seArchives"] unsignedIntValue]]];
+        if ([o[@"unsupported"] unsignedIntValue] || [o[@"failed"] unsignedIntValue])
+            [warn addObject:[NSString stringWithFormat:T(@"⚠️ %u texture(s) could not be converted", @"⚠️ 変換できなかったテクスチャ %u個"),
+                [o[@"unsupported"] unsignedIntValue] + [o[@"failed"] unsignedIntValue]]];
+    }
+    if (!bad.count && !warn.count) [info insertObject:T(@"✅ No problems found", @"✅ 問題は見つかりませんでした") atIndex:0];
+    [bad addObjectsFromArray:warn]; [bad addObjectsFromArray:info];
+    return bad;
+}
 
 @interface SKModHub : UITableViewController <UIDocumentPickerDelegate>
 @property(nonatomic, strong) NSMutableArray<NSMutableDictionary *> *rows;   /* selected profile's packages */
 @property(nonatomic, strong) NSDictionary<NSString *, NSDictionary *> *packages;
 @property(nonatomic) BOOL pickingFolder, pickingList;
 @end
-enum { HubProfile, HubMods, HubAdd, HubTools, HubSafety, HubShare, HubCount };
+enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, HubCount };
 @implementation SKModHub
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title = @"MOD";
@@ -730,7 +888,8 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubSafety, HubShare, HubCount };
     switch (s) {
     case HubMods: return self.rows.count ? (NSInteger)self.rows.count : 1;
     case HubAdd: return 2;
-    case HubTools: return 2;
+    case HubTools: return 3;
+    case HubOptimize: return 2;
     case HubShare: return 2;
     default: return 1;
     }
@@ -738,7 +897,7 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubSafety, HubShare, HubCount };
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
     (void)t;
     return @[T(@"Profile", @"プロファイル"), T(@"MODs — lower ones win", @"MOD — 下にあるほど優先"), T(@"Add", @"追加"),
-             T(@"Details", @"詳細"), T(@"Safety", @"安全"), T(@"Share", @"共有")][s];
+             T(@"Details", @"詳細"), T(@"Automatic optimization", @"自動最適化"), T(@"Safety", @"安全"), T(@"Share", @"共有")][s];
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
     (void)t;
@@ -747,6 +906,8 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubSafety, HubShare, HubCount };
     if (s == HubMods) return T(@"Changes apply after a full restart. MOD files are kept inside the app; the original game files are not changed. Only MODs for Skyrim 2011 / Legendary Edition work.",
         @"変更はアプリの完全終了・再起動後に反映します。MODはアプリ内に保存され、元のゲームファイルは変更しません。Skyrim 2011年版／Legendary Edition用のMODだけが動きます。");
     if (s == HubAdd) return T(@"You can also share a zip from Safari or the Files app to SkyrimIOS.", @"Safariや「ファイル」アプリからzipをSkyrimIOSへ共有しても追加できます。");
+    if (s == HubOptimize) return T(@"Applied to each MOD when it is added: oversized textures are reduced, Special Edition textures and archives are converted for the 2011 engine, and missing mipmaps are rebuilt. Your original download is not changed. Applies to MODs added from now on.",
+        @"MODを追加するときに自動で行います：大きすぎるテクスチャの縮小、SE用テクスチャとBSAの2011年版向け変換、縮小版（ミップマップ）の作成。元のダウンロードファイルは変更しません。これから追加するMODに適用されます。");
     if (s == HubSafety) return T(@"If a launch with MODs ends unexpectedly, the app asks what to do at the next launch.", @"MODありの起動が途中で終了した場合、次回起動時に対応を選べます。");
     if (s == HubShare) return T(@"The MOD list file contains names and checksums only, not MOD files or saves.", @"構成ファイルにはMODの名前と識別情報だけが入り、MOD本体やセーブは含まれません。");
     return nil;
@@ -785,9 +946,22 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubSafety, HubShare, HubCount };
         break;
     }
     case HubTools:
-        c.textLabel.text = p.row ? T(@"Conflicts", @"競合") : T(@"Plugin order", @"プラグインの並び");
-        c.imageView.image = [UIImage systemImageNamed:p.row ? @"arrow.triangle.merge" : @"list.number"];
+        c.textLabel.text = @[T(@"Plugin order", @"プラグインの並び"), T(@"Conflicts", @"競合"), T(@"Save check", @"セーブの確認")][p.row];
+        c.imageView.image = [UIImage systemImageNamed:@[@"list.number", @"arrow.triangle.merge", @"checkmark.shield"][p.row]];
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        break;
+    case HubOptimize:
+        if (p.row == 0) {
+            c.textLabel.text = T(@"Optimize new MODs", @"追加するMODを最適化");
+            UISwitch *toggle = [UISwitch new]; toggle.on = ![NSUserDefaults.standardUserDefaults boolForKey:@"mods-optimize-off"];
+            [toggle addTarget:self action:@selector(optimizeToggled:) forControlEvents:UIControlEventValueChanged];
+            c.accessoryView = toggle; c.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else {
+            unsigned limit = TextureLimit();
+            c.textLabel.text = T(@"Texture size limit", @"テクスチャの上限");
+            c.detailTextLabel.text = limit ? [NSString stringWithFormat:@"%u px", limit] : T(@"No limit", @"上限なし");
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        }
         break;
     case HubSafety: {
         c.textLabel.text = T(@"Start without MODs next time", @"次回はMODなしで起動");
@@ -817,6 +991,19 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubSafety, HubShare, HubCount };
         }
     }
     [self changed:nil];
+}
+- (void)optimizeToggled:(UISwitch *)toggle { [NSUserDefaults.standardUserDefaults setBool:!toggle.on forKey:@"mods-optimize-off"]; }
+- (void)chooseLimit:(NSIndexPath *)p {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:T(@"Texture size limit", @"テクスチャの上限")
+        message:T(@"Lower is lighter and more stable; 2048 is a good balance on iPhone.", @"小さいほど軽く安定します。iPhoneでは2048がおすすめです。") preferredStyle:UIAlertControllerStyleActionSheet];
+    for (NSNumber *v in @[@1024, @2048, @4096, @0])
+        [sheet addAction:[UIAlertAction actionWithTitle:v.unsignedIntValue ? [NSString stringWithFormat:@"%@ px", v] : T(@"No limit", @"上限なし")
+            style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            (void)a; [NSUserDefaults.standardUserDefaults setObject:v forKey:@"mods-texture-max"]; [self.tableView reloadData];
+        }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:T(@"Cancel", @"キャンセル") style:UIAlertActionStyleCancel handler:nil]];
+    sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:p];
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 - (void)safeToggled:(UISwitch *)toggle { state[@"safeNext"] = @(toggle.on); [self changed:nil]; }
 - (BOOL)tableView:(UITableView *)t canEditRowAtIndexPath:(NSIndexPath *)p { (void)t; return p.section == HubMods && self.rows.count; }
@@ -898,8 +1085,12 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubSafety, HubShare, HubCount };
         } else if (p.row == 1) [self pick:@[UTTypeFolder] folder:YES list:NO];
         break;
     case HubTools:
-        if (p.row) [self.navigationController pushViewController:[[SKConflicts alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
-        else [self.navigationController pushViewController:skyrim_mobile_plugin_controller() animated:YES];
+        if (p.row == 0) [self.navigationController pushViewController:skyrim_mobile_plugin_controller() animated:YES];
+        else if (p.row == 1) [self.navigationController pushViewController:[[SKConflicts alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
+        else [self.navigationController pushViewController:[[SKSaves alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
+        break;
+    case HubOptimize:
+        if (p.row == 1) [self chooseLimit:p];
         break;
     case HubShare:
         if (p.row) [self pick:@[UTTypeJSON] folder:NO list:YES];

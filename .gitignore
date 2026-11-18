@@ -848,3 +848,10 @@
 !/pc-aot/ios/runtime-port/mod_manager.m
 !/pc-aot/tests/test_mod_archive.py
 !/pc-aot/tests/native/test_mod_archive.c
+!/pc-aot/ios/runtime-port/mod_analyze.c
+!/pc-aot/ios/runtime-port/mod_analyze.h
+!/pc-aot/ios/runtime-port/mod_optimize.c
+!/pc-aot/ios/runtime-port/mod_optimize.h
+!/pc-aot/tests/test_mod_optimize.py
+!/pc-aot/tests/native/test_mod_optimize.c
+!/pc-aot/scripts/fetch-mod-codecs.sh

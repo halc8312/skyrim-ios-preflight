@@ -26,7 +26,12 @@ UIViewController *skyrim_mods_hub_controller(void);
 /* Accept a file shared to the app (zip / 7z / rar / MOD list). Any thread. */
 void skyrim_mods_import_url(NSURL *url, BOOL security_scoped);
 
+/* Warning when the newest save of the running profile lists plugins that are
+ * not loaded now (nil otherwise). Call after the plugin list is prepared. */
+NSString *skyrim_mods_save_notice(void);
+
 /* Provided by mobile_ui.m. */
+NSArray<NSString *> *skyrim_mobile_loaded_plugins(void);
 void skyrim_mobile_show_notice(NSString *text);
 UIViewController *skyrim_mobile_plugin_controller(void);
 #endif
