@@ -173,8 +173,21 @@ cmake -S ios/runtime-port -B "$RUN/build" -G 'Unix Makefiles' \
   "-DSKYDREAM_SOURCE_DIR=$RUN/source" \
   "-DSKYRIM_IOS_RUNTIME_OVERLAY_DIR=$RUN/overlay/runtime" \
   "-DSKYRIM_IOS_BINDING_SOURCES=$ROOT/ios/private-abi/pc_guest_host.c" \
+  "-DSKYRIM_MOD_ARCHIVE_PREFIX=$RUN/without-mod-archive-libraries" \
   -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+# Link the actual iPhone app with the optional readers absent, then reuse the
+# build directory for the distributable app with its readers and notices.
 cmake --build "$RUN/build" --parallel 2 -- -k
+xcrun nm "$RUN/build/SkyrimIOS.app/SkyrimIOS" > "$RUN/mod-fallback-symbols.txt"
+if grep -q ' _skyrim_archive_list$' "$RUN/mod-fallback-symbols.txt"; then
+  echo 'Unexpected optional archive reader in the fallback app.' >&2; exit 1
+fi
+echo 'MOD_ARCHIVE: iPhoneOS fallback app linked without libarchive or liblzma.'
+cmake -S ios/runtime-port -B "$RUN/build" "-DSKYRIM_MOD_ARCHIVE_PREFIX=$MOD_DEPS_ROOT/prefix"
+cmake --build "$RUN/build" --parallel 2 -- -k
+xcrun nm "$RUN/build/SkyrimIOS.app/SkyrimIOS" > "$RUN/mod-full-symbols.txt"
+grep -q ' _skyrim_archive_list$' "$RUN/mod-full-symbols.txt"
+test -s "$RUN/build/SkyrimIOS.app/ModArchiveLicenses.txt"
 MOD_SIMULATOR_STATUS=0
 if bash ios/dependencies/build-mod-archive-dependencies.sh iphonesimulator; then
   env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT bash scripts/check-mod-simulator.sh \

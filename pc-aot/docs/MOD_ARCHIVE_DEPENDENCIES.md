@@ -7,6 +7,13 @@ reader. The app enables the other three formats when both static archives,
 the libarchive headers and their distribution notices are available in the
 iPhoneOS prefix.
 
+For a renderer-only prefix, run `bash ios/dependencies/build-dependencies.sh`
+and fetch the texture headers as usual. The app then accepts ZIP and folder
+imports and identifies 7z/RAR as unavailable. A separate archive prefix can
+be supplied with `-DSKYRIM_MOD_ARCHIVE_PREFIX=/path/to/prefix`. The Mac host
+workflow links the iPhone app once with an absent archive prefix, then again
+with the pinned libraries and bundled notices for distribution.
+
 The archive recipe verifies the official release tarballs by SHA-256. It builds
 the SDK's zlib support and the pinned LZMA decoder into the reader's dependency
 chain. For example, 7z packages using LZMA or LZMA2 are supported. A 7z method

@@ -90,17 +90,18 @@ set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/mod_optimize.c" PROPERT
 target_link_libraries(skyrim_ios_runtime PUBLIC z "-framework UniformTypeIdentifiers" "-framework WebKit")
 # 7z / rar: libarchive (+ liblzma for 7z) from the prepared dependency prefix.
 # Without them the app still builds; 7z/rar imports then show a message.
-if(EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/lib/libarchive.a"
-    AND EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/lib/liblzma.a"
-    AND EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/include/archive.h"
-    AND EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/include/archive_entry.h"
-    AND EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/share/skyrim-ios/ModArchiveLicenses.txt")
+set(SKYRIM_MOD_ARCHIVE_PREFIX "${SKYRIM_IOS_DEPS_PREFIX}" CACHE PATH "Optional static MOD archive libraries")
+if(EXISTS "${SKYRIM_MOD_ARCHIVE_PREFIX}/lib/libarchive.a"
+    AND EXISTS "${SKYRIM_MOD_ARCHIVE_PREFIX}/lib/liblzma.a"
+    AND EXISTS "${SKYRIM_MOD_ARCHIVE_PREFIX}/include/archive.h"
+    AND EXISTS "${SKYRIM_MOD_ARCHIVE_PREFIX}/include/archive_entry.h"
+    AND EXISTS "${SKYRIM_MOD_ARCHIVE_PREFIX}/share/skyrim-ios/ModArchiveLicenses.txt")
     target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/mod_libarchive.c")
-    target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_HAVE_LIBARCHIVE=1)
-    target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_DEPS_PREFIX}/include")
-    target_link_libraries(skyrim_ios_runtime PUBLIC "${SKYRIM_IOS_DEPS_PREFIX}/lib/libarchive.a"
-        "${SKYRIM_IOS_DEPS_PREFIX}/lib/liblzma.a" z iconv)
-    set(_mod_archive_notice "${SKYRIM_IOS_DEPS_PREFIX}/share/skyrim-ios/ModArchiveLicenses.txt")
+    set_property(SOURCE mod_manager.m APPEND PROPERTY COMPILE_DEFINITIONS SKYRIM_HAVE_LIBARCHIVE=1)
+    set_property(SOURCE mod_libarchive.c APPEND PROPERTY INCLUDE_DIRECTORIES "${SKYRIM_MOD_ARCHIVE_PREFIX}/include")
+    target_link_libraries(skyrim_ios_runtime PUBLIC "${SKYRIM_MOD_ARCHIVE_PREFIX}/lib/libarchive.a"
+        "${SKYRIM_MOD_ARCHIVE_PREFIX}/lib/liblzma.a" z iconv)
+    set(_mod_archive_notice "${SKYRIM_MOD_ARCHIVE_PREFIX}/share/skyrim-ios/ModArchiveLicenses.txt")
 else()
     message(STATUS "Optional MOD archive dependency prefix incomplete: 7z/rar import disabled")
 endif()

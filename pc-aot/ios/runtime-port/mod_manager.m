@@ -22,7 +22,7 @@
 #include "mod_analyze.h"
 #include "mod_optimize.h"
 #include "mod_install.h"
-#if SKYRIM_HAVE_LIBARCHIVE
+#ifdef SKYRIM_HAVE_LIBARCHIVE
 #include "mod_libarchive.h"
 #endif
 
@@ -528,9 +528,9 @@ static BOOL RunInstaller(SkyrimZip *zip, NSString *archive, NSMutableDictionary 
 
 /* 7z / rar through libarchive, when the build provides it. */
 static BOOL ImportOther(NSString *path, NSString *name, NSString *digest) {
-#if SKYRIM_HAVE_LIBARCHIVE
     NSString *ext = name.pathExtension.lowercaseString;
     if (![ext isEqualToString:@"7z"] && ![ext isEqualToString:@"rar"]) return NO;
+#ifdef SKYRIM_HAVE_LIBARCHIVE
     SkyrimArchiveList list;
     int status = skyrim_archive_list(path.fileSystemRepresentation, &list);
     if (status) { Notice(ZipErrorText(status)); return YES; }
@@ -567,8 +567,10 @@ static BOOL ImportOther(NSString *path, NSString *name, NSString *digest) {
     PublishStaged(staging, package);
     return YES;
 #else
-    (void)path; (void)name; (void)digest;
-    return NO;
+    (void)path; (void)digest;
+    Notice(T(@"This build cannot open 7z or RAR archives. Choose a ZIP file or folder.",
+             @"このビルドは7z・RAR形式に対応していません。ZIPファイルまたはフォルダを選んでください。"));
+    return YES;
 #endif
 }
 
@@ -690,7 +692,7 @@ void skyrim_mods_import_url(NSURL *url, BOOL scoped) {
             if (dup) Notice([NSString stringWithFormat:T(@"%@ is already added.", @"%@ は追加済みです。"), dup]);
             else if ([ext isEqualToString:@"zip"]) ImportZip(copy, name, digest);
             else {
-                if (!ImportOther(copy, name, digest)) Notice(T(@"This file type is not supported. Use zip, 7z, rar or a folder.", @"このファイル形式には対応していません。zip・7z・rar・フォルダを使ってください。"));
+                if (!ImportOther(copy, name, digest)) Notice(T(@"This file type is not supported.", @"このファイル形式には対応していません。"));
             }
         }
         [NSFileManager.defaultManager removeItemAtPath:copy error:NULL];
