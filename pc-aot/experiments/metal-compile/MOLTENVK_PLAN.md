@@ -269,8 +269,13 @@ median includes every planned trial; actual overlap is reported separately as
 `n/8`, avoiding selection of only slower requests. The optional alternate panel
 uses disjoint sources; repeating a panel reuses its inputs. All 192 distinct
 sources across both panels compiled and linked with the official Windows Metal
-toolchain, but no physical build-5 measurement is available yet. Analyze an
-export with `python experiments/metal-compile/first_use_results.py <export.json>`.
+toolchain. On the A19 Pro, both prefetches were outstanding in all eight
+contended trials per API. Legacy and Metal 4 urgent medians were 9.139 and
+9.170 ms, and each API finished sooner in four of the eight blocks. Keep the
+legacy library path for gameplay. The independent build 14 draw-wait comparison
+is the nearer-term game test. [Physical results](README.md#standard-set-on-the-iphone-17-pro-max)
+
+Analyze an export with `python experiments/metal-compile/first_use_results.py <export.json>`.
 The API-entry-to-callback intervals are host wall times, with uncontrolled OS
 caches and different semantic costs. They do not show internal compiler order
 or Skyrim performance. Before enabling a game experiment, validate the actual

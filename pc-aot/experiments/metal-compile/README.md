@@ -466,9 +466,8 @@ The outer comparison is schema 5 and the scheduling result is nested schema 2.
 Compact storage, the 2 MiB limit, 73 normal progress callbacks and cooperative
 stop/recovery behavior remain unchanged. All **192 distinct sources across both
 panels** have compiled and linked with the official Windows Metal toolchain.
-No physical build-5 iPhone measurement is available yet. OS/compiler caches are
-uncontrolled, host timestamps do not reveal internal compiler execution, and
-this authored test establishes no Skyrim performance result.
+OS/compiler caches are uncontrolled. The host timestamps measure when the
+application calls each API and when its completion callback enters.
 
 [Phone workflow run 10](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afd4913d133a39c4a128a30)
 built the signed package's device inputs and the simulator app from public
@@ -478,6 +477,36 @@ The paravirtual GPU produced the expected 384 scheduling words and 3,072 serial
 words. The simulator restored and shared an explicit unsupported result. The
 separate layout example left saved results intact. The signed 122,980-byte IPA
 served over the private HTTPS route matched the locally verified SHA-256.
+
+### Standard set on the iPhone 17 Pro Max
+
+The standard set completed on an A19 Pro running iOS 26.5.2. The device's
+BuildInfo matched the delivered build 5, including all 14 source fingerprints.
+The 96 distinct scheduling inputs matched the compiled Windows panel. The
+6,144 scheduling output words and 24,576 serial output words matched their
+expected values.
+
+| Urgent request interval, ms | Trials per API | Legacy async | Metal 4 async |
+| --- | ---: | ---: | ---: |
+| Median after both prefetches finished | 8 | 6.534 | 6.465 |
+| Median when submitted immediately after the prefetches | 8 | 9.139 | 9.170 |
+| Maximum in the latter condition | 8 | 13.253 | 10.921 |
+
+In all 16 planned overlaps, both prefetch requests were outstanding when the
+urgent API call began. In the two idle groups, all urgent requests started
+after the prefetches had finished. Metal 4 was quicker in four of eight contended blocks.
+Three legacy and four Metal 4 contended requests exceeded 10 ms. The difference
+between the two group medians was 0.031 ms. The smaller observed Metal 4 maximum
+alone gives little reason to change the game's default on this sample.
+
+The next gameplay comparison can use the existing build 14 switch for separate
+draw-preparation waits. In the build 13 game trace, 1,808.043 ms of draw-side
+pipeline lock waits overlapped a 1,870.729 ms frame gap. This switch can test
+whether coordinating requests by exact draw state shortens that type of wait.
+Score it by gameplay gaps over 100 ms per active minute
+and their duration, with other options held fixed and initial cache growth and
+saves identified. Those measurements answer a different question from this
+phone test's elapsed time between API entry and callback. [Game trace and switch](../../docs/PERFORMANCE_WORK.md)
 
 ## What each environment establishes
 
