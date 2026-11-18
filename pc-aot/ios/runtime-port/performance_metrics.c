@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "performance_metrics.h"
 #include <errno.h>
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -39,6 +40,13 @@ static PerfAtomic counters[SKYRIM_PERF_KIND_COUNT];
 #define CONTEXT_COUNT 51
 static PerfAtomic context_counters[CONTEXT_COUNT];
 static _Thread_local SkyrimPerfContext work_context;
+static _Thread_local SkyrimPerfPrefetch prefetch_context;
+SkyrimPerfPrefetch skyrim_perf_prefetch_get(void) { return prefetch_context; }
+SkyrimPerfPrefetch skyrim_perf_prefetch_set(SkyrimPerfPrefetch next) {
+    SkyrimPerfPrefetch previous = prefetch_context;
+    prefetch_context = next;
+    return previous;
+}
 SkyrimPerfContext skyrim_perf_context_get(void) { return work_context; }
 SkyrimPerfContext skyrim_perf_context_set(SkyrimPerfContext next) {
     SkyrimPerfContext old = work_context;
@@ -107,6 +115,88 @@ uint64_t skyrim_perf_thread_ordinal(void) { return anonymous_thread(); }
 int skyrim_perf_interval_active(uint64_t started) {
     const uint64_t active_since = atomic_load_explicit(&active_since_ns, memory_order_acquire);
     return started && active_since != UINT64_MAX && started >= active_since;
+}
+
+/* Only completed long draw waits enter this buffer. The producer is the
+ * library returned by lookup; it need not have held the lock for the wait. */
+typedef struct ShaderWait {
+    SkyrimPerfShaderOrigin origin;
+    uint64_t wait_start_ns, wait_end_ns;
+    unsigned result;
+} ShaderWait;
+enum { SHADER_WAIT_CAPACITY = 16 };
+typedef struct ShaderWaitBatch {
+    ShaderWait waits[SHADER_WAIT_CAPACITY];
+    unsigned count;
+    uint64_t busy, full;
+} ShaderWaitBatch;
+static ShaderWait shader_waits[SHADER_WAIT_CAPACITY];
+static unsigned shader_wait_count;
+static uint64_t shader_wait_full;
+static _Atomic uint64_t shader_wait_busy;
+static atomic_flag shader_wait_lock = ATOMIC_FLAG_INIT;
+
+void skyrim_perf_shader_wait(unsigned result, uint64_t wait_start_ns,
+                             uint64_t wait_end_ns, SkyrimPerfShaderOrigin origin) {
+    if (work_context.role != SKYRIM_PERF_ROLE_DRAW ||
+        (result != SKYRIM_PERF_WAIT_HIT && result != SKYRIM_PERF_WAIT_CREATE) ||
+        !wait_start_ns || wait_end_ns < wait_start_ns ||
+        wait_end_ns - wait_start_ns < SKYRIM_PERF_STALL_THRESHOLD_NS ||
+        !skyrim_perf_interval_active(wait_start_ns)) return;
+    if (atomic_flag_test_and_set_explicit(&shader_wait_lock, memory_order_acquire)) {
+        atomic_fetch_add_explicit(&shader_wait_busy, 1, memory_order_relaxed);
+        return;
+    }
+    const uint64_t since = atomic_load_explicit(&active_since_ns, memory_order_acquire);
+    if (since != UINT64_MAX && wait_start_ns >= since) {
+        if (shader_wait_count < SHADER_WAIT_CAPACITY) {
+            const SkyrimPerfPrefetch job = origin.prefetch;
+            if (result != SKYRIM_PERF_WAIT_HIT || !job.queued_ns || job.queued_ns < since ||
+                job.ready_ns > job.queued_ns || job.queued_ns > job.worker_ns ||
+                job.worker_ns > origin.compile_ns || origin.compile_ns > origin.published_ns ||
+                origin.published_ns > wait_end_ns) {
+                origin = (SkyrimPerfShaderOrigin){0};
+            } else if (job.ready_ns < since) {
+                origin.prefetch.ready_ns = 0;
+            }
+            shader_waits[shader_wait_count++] = (ShaderWait){origin, wait_start_ns, wait_end_ns, result};
+        } else {
+            ++shader_wait_full;
+        }
+    }
+    atomic_flag_clear_explicit(&shader_wait_lock, memory_order_release);
+}
+
+static int shader_waits_take(ShaderWaitBatch *out) {
+    if (atomic_flag_test_and_set_explicit(&shader_wait_lock, memory_order_acquire)) return 0;
+    out->count = shader_wait_count;
+    memcpy(out->waits, shader_waits, out->count * sizeof(shader_waits[0]));
+    out->busy = atomic_exchange_explicit(&shader_wait_busy, 0, memory_order_relaxed);
+    out->full = shader_wait_full;
+    shader_wait_count = 0;
+    shader_wait_full = 0;
+    atomic_flag_clear_explicit(&shader_wait_lock, memory_order_release);
+    return 1;
+}
+
+static void log_shader_waits(void) {
+    /* One reporter per process. Equal clock ticks on separate draw threads
+     * remain distinct; replaying a captured record retains its sequence. */
+    static uint64_t sequence;
+    ShaderWaitBatch batch;
+    if (!shader_waits_take(&batch)) return;
+    for (unsigned i = 0; i < batch.count && sequence != UINT64_MAX; ++i) {
+        const ShaderWait *w = &batch.waits[i];
+        const SkyrimPerfPrefetch *job = &w->origin.prefetch;
+        fprintf(stderr, "IOS_SHADER_LEAD schema=1 seq=%" PRIu64 " result=%u ready_ns=%" PRIu64
+            " queued_ns=%" PRIu64 " worker_ns=%" PRIu64 " compile_ns=%" PRIu64
+            " published_ns=%" PRIu64 " wait_start_ns=%" PRIu64 " wait_end_ns=%" PRIu64 "\n",
+            ++sequence, w->result, job->ready_ns, job->queued_ns, job->worker_ns,
+            w->origin.compile_ns, w->origin.published_ns, w->wait_start_ns, w->wait_end_ns);
+    }
+    if ((batch.busy || batch.full) && sequence != UINT64_MAX)
+        fprintf(stderr, "IOS_SHADER_LEAD_DROPS schema=1 seq=%" PRIu64 " busy=%" PRIu64 " full=%" PRIu64 "\n",
+                ++sequence, batch.busy, batch.full);
 }
 
 static void stall_record(unsigned kind, uint64_t started, uint64_t ended,
@@ -288,6 +378,7 @@ void skyrim_perf_log_window(void) {
             line[used++] = '\n'; line[used] = 0; fputs(line, stderr);
         }
     }
+    log_shader_waits();
     SkyrimPerfStalls stalls;
     if (skyrim_perf_stalls_take(&stalls)) {
         /* This is an approximate recorder window, not the endpoints of every

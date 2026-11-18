@@ -63,9 +63,24 @@ class DeviceMemoryTests(unittest.TestCase):
         restored = restored.replace(gated_shutdown, shutdown)
         for line in ("    skyrim_device_platform_work_role(SKYRIM_WORK_COMPILER);\n",
                      "      skyrim_device_platform_work_role(SKYRIM_WORK_COMPILER);\n",
+                     "      SkyrimPerfPrefetchScope iosPrefetchScope(item.iosPrefetch);\n",
                      "    skyrim_device_platform_work_role(SKYRIM_WORK_CACHE_WRITER);\n"):
             # Preserve exact indentation when removing injected calls.
             restored="\n".join(x for x in restored.split("\n") if x+"\n" != line)
+        metadata = [
+            ('    const bool iosInserted = m_shaderMap.insert({ key, shader }).second;\n'
+             '    // While entryLock is held, a newly inserted final prerequisite makes all\n'
+             '    // its now-complete tuples eligible. Capture once before any worker-lock\n'
+             '    // wait; duplicate registrations cannot reconstruct the original time.\n'
+             '    const uint64_t iosReadyNs = iosInserted ? skyrim_perf_now_ns() : 0;',
+             '    m_shaderMap.insert({ key, shader });'),
+            ('      item.iosPrefetch.ready_ns = iosReadyNs;\n'
+             '      item.iosPrefetch.queued_ns = skyrim_perf_now_ns();\n', ''),
+            ('        item.iosPrefetch.worker_ns = skyrim_perf_now_ns();\n', ''),
+        ]
+        for added, original in metadata:
+            self.assertEqual(restored.count(added), 1)
+            restored = restored.replace(added, original)
         # Also reverse the independently exercised shader-tuple index change.
         # Keep the whole-file equality check: no other queue/worker edits hide here.
         indexing = [

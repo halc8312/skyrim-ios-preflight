@@ -4,16 +4,31 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <queue>
 #include <set>
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 #include "dxvk/dxvk_shader_key.h"
+#include "performance_metrics.h"
+#include "device_policy.h"
+
+// Only the adapter clock and platform QoS are authored. TLS get/set and the
+// scope come from the production metrics C/header linked by the fixture.
+static std::atomic<uint64_t> clockNs{1}, clockCalls{0};
+extern "C" uint64_t skyrim_perf_now_ns(void) {
+    const auto value=clockNs.fetch_add(10);
+    clockCalls.fetch_add(1);
+    return value;
+}
+extern "C" int skyrim_device_platform_work_role(unsigned) { return 0; }
 
 namespace dxvk {
+namespace env { static void setThreadName(const char*) {} }
 /* ACTUAL_KEY */
 static const DxvkShaderKey g_nullShaderKey;
 class DxvkShader : public RcObject {
@@ -47,11 +62,15 @@ static std::string identity(const DxvkStateCacheKey& k) {
 struct Ledger {
     size_t attempts=0;
     std::set<std::string> results,failures;
+    std::vector<SkyrimPerfPrefetch> prefetch;
+    std::function<void()> onCompile;
 };
 struct Pipeline {
     std::string key;Ledger* ledger;
     void compilePipeline(State state,Pass* pass=nullptr) {
         ++ledger->attempts;
+        ledger->prefetch.push_back(skyrim_perf_prefetch_get());
+        if(ledger->onCompile)ledger->onCompile();
         const std::string id=key+":"+std::to_string(state.id)+":"+std::to_string(pass?pass->id:99);
         ledger->results.insert(id);
         // Authored permanent failure represents the existing cached-null
@@ -70,7 +89,7 @@ struct DxvkPipelineManager {
     }
 };
 class DxvkStateCache {
-    struct WorkerItem { DxvkGraphicsPipelineShaders gp;DxvkComputePipelineShaders cp; };
+    /* ACTUAL_WORKER_ITEM */
     DxvkPipelineManager* m_pipeManager;DxvkRenderPassPool* m_passManager;
     std::vector<DxvkStateCacheEntry> m_entries;
     dxvk::mutex m_entryLock,m_workerLock;
@@ -79,6 +98,8 @@ class DxvkStateCache {
     std::unordered_multimap<DxvkShaderKey,DxvkStateCacheKey,DxvkHash,DxvkEq> m_pipelineMap;
     std::unordered_map<DxvkShaderKey,Rc<DxvkShader>,DxvkHash,DxvkEq> m_shaderMap;
     std::queue<WorkerItem> m_workerQueue;
+    std::atomic<bool> m_stopThreads{false};
+    std::atomic<unsigned> m_workerBusy{1};
     size_t numShaderTuples = 0;
     DxvkShaderKey getShaderKey(const Rc<DxvkShader>& shader) const;
     bool getShaderByKey(const DxvkShaderKey& key,Rc<DxvkShader>& shader) const;
@@ -91,6 +112,17 @@ public:
         /* ACTUAL_LOADING */
     }
     void registerShader(const Rc<DxvkShader>& shader);
+    void workerFunc();
+    void stop() {
+        { std::lock_guard<dxvk::mutex> lock(m_workerLock); m_stopThreads=true; }
+        m_workerCond.notify_all();
+    }
+    bool idle() const { return m_workerBusy.load()==0; }
+    std::unique_lock<dxvk::mutex> holdWorker() { return std::unique_lock<dxvk::mutex>(m_workerLock); }
+    bool entryHeld() {
+        if(!m_entryLock.try_lock())return true;
+        m_entryLock.unlock();return false;
+    }
     size_t jobs() { std::lock_guard<dxvk::mutex> lock(m_workerLock);return m_workerQueue.size(); }
     size_t entries() const { assert(m_entryMap.size()==m_entries.size());return m_entries.size(); }
     size_t mappings() const { return m_pipelineMap.size(); }
@@ -146,8 +178,130 @@ static void run(unsigned variants,bool concurrent,bool reverse) {
     if(variants==16&&!reverse&&!concurrent)
         printf("variants=%u entries=%zu mappings=%zu jobs=%zu visits=%zu unique=%zu\n",variants,cache.entries(),cache.mappings(),jobs,manager.ledger.attempts,expected.size());
 }
+
+#if PATCHED
+static bool same(SkyrimPerfPrefetch a,SkyrimPerfPrefetch b) {
+    return a.ready_ns==b.ready_ns&&a.queued_ns==b.queued_ns&&a.worker_ns==b.worker_ns;
 }
-int main(){
+template<class F> static void await(F ready) {
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!ready()) {
+        assert(std::chrono::steady_clock::now()<deadline);
+        std::this_thread::yield();
+    }
+}
+static void prefetchControls() {
+    const SkyrimPerfPrefetch outer{11,22,33};
+    skyrim_perf_prefetch_set(outer);
+    {
+        DxvkPipelineManager manager;DxvkRenderPassPool passes;DxvkStateCache cache(manager,passes);
+        DxvkStateCacheKey graphics;graphics.vs=key(0,101);graphics.fs=key(4,102);
+        DxvkStateCacheKey compute;compute.cs=key(5,103);
+        for(unsigned n=0;n<3;++n)cache.load({graphics,{n},{n},{n}});
+        for(unsigned n=0;n<2;++n)cache.load({compute,{n},{n},{n}});
+        clockNs=100;clockCalls=0;
+        cache.registerShader(new DxvkShader(g_nullShaderKey));
+        assert(clockCalls==0&&cache.jobs()==0);
+        cache.registerShader(new DxvkShader(graphics.vs));
+        assert(clockCalls==1&&cache.jobs()==0); // Missing final prerequisite.
+        cache.registerShader(new DxvkShader(graphics.vs));
+        assert(clockCalls==1&&cache.jobs()==0); // Duplicate is not a new arrival.
+
+        clockNs=1000;
+        cache.registerShader(new DxvkShader(graphics.fs));
+        assert(clockCalls==3&&cache.jobs()==1);
+        cache.registerShader(new DxvkShader(graphics.fs));
+        assert(clockCalls==4&&cache.jobs()==2); // Existing duplicate wakeup preserved.
+        clockNs=1500;
+        cache.registerShader(new DxvkShader(compute.cs));
+        assert(clockCalls==6&&cache.jobs()==3);
+        manager.ledger.onCompile=[&] {
+            const auto current=skyrim_perf_prefetch_get();
+            { SkyrimPerfPrefetchScope nested({7,8,9});assert(same(skyrim_perf_prefetch_get(),{7,8,9})); }
+            assert(same(skyrim_perf_prefetch_get(),current));
+            if(manager.ledger.attempts==3)clockNs=3000;
+            if(manager.ledger.attempts==6)clockNs=4000;
+            if(manager.ledger.attempts==8)cache.stop();
+        };
+        clockNs=2000;
+        cache.workerFunc(); // Actual loop, actual compilePipelines for all variants.
+        assert(clockCalls==9&&manager.ledger.prefetch.size()==8);
+        for(unsigned n=0;n<3;++n)assert(same(manager.ledger.prefetch[n],{1000,1010,2000}));
+        for(unsigned n=3;n<6;++n)assert(same(manager.ledger.prefetch[n],{0,1020,3000}));
+        for(unsigned n=6;n<8;++n)assert(same(manager.ledger.prefetch[n],{1500,1510,4000}));
+        assert(same(skyrim_perf_prefetch_get(),outer));
+    }
+    {
+        // Two tuples become eligible at the same insertion. Block queue access
+        // until later: neither ready timestamp may include that lock wait.
+        DxvkPipelineManager manager;DxvkRenderPassPool passes;DxvkStateCache cache(manager,passes);
+        DxvkStateCacheKey a;a.vs=key(0,111);a.fs=key(4,112);
+        auto b=a;b.fs=key(4,113);
+        cache.load({a,{0},{0},{0}});cache.load({b,{1},{1},{1}});
+        cache.registerShader(new DxvkShader(a.fs));cache.registerShader(new DxvkShader(b.fs));
+        auto held=cache.holdWorker();clockNs=500;clockCalls=0;
+        std::thread registration([&]{cache.registerShader(new DxvkShader(a.vs));});
+        await([&]{return clockCalls.load()==1;});
+        assert(cache.entryHeld()); // Eligibility capture is inside entry exclusion.
+        clockNs=900;held.unlock();registration.join();
+        assert(clockCalls==3&&cache.jobs()==2);
+        manager.ledger.onCompile=[&]{if(manager.ledger.attempts==2)cache.stop();};
+        clockNs=1200;cache.workerFunc();
+        assert(same(manager.ledger.prefetch[0],{500,900,1200}));
+        assert(same(manager.ledger.prefetch[1],{500,910,1210}));
+        assert(same(skyrim_perf_prefetch_get(),outer));
+    }
+    {
+        // Idle waiting and shutdown never read the instrumentation clock.
+        DxvkPipelineManager manager;DxvkRenderPassPool passes;DxvkStateCache cache(manager,passes);
+        clockCalls=0;
+        std::thread worker([&]{
+            skyrim_perf_prefetch_set({44,55,66});cache.workerFunc();
+            assert(same(skyrim_perf_prefetch_get(),{44,55,66}));
+        });
+        await([&]{return cache.idle();});cache.stop();worker.join();
+        assert(clockCalls==0&&same(skyrim_perf_prefetch_get(),outer));
+    }
+    {
+        // Upstream still propagates a compiler exception. The scoped job must
+        // unwind without leaving its metadata on a reused caller thread.
+        DxvkPipelineManager manager;DxvkRenderPassPool passes;DxvkStateCache cache(manager,passes);
+        DxvkStateCacheKey k;k.cs=key(5,121);cache.load({k,{0},{0},{0}});
+        cache.registerShader(new DxvkShader(k.cs));
+        manager.ledger.onCompile=[] { throw std::runtime_error("authored compile failure"); };
+        bool caught=false;try{cache.workerFunc();}catch(const std::runtime_error&){caught=true;}
+        assert(caught&&same(skyrim_perf_prefetch_get(),outer));
+    }
+    {
+        // Independent worker threads share neither the active job nor the
+        // previous TLS value. The get/set implementation is production C.
+        std::vector<std::thread> workers;
+        for(unsigned n=0;n<2;++n)workers.emplace_back([n]{
+            const SkyrimPerfPrefetch previous{50+n,60+n,70+n};
+            skyrim_perf_prefetch_set(previous);
+            DxvkPipelineManager manager;DxvkRenderPassPool passes;DxvkStateCache cache(manager,passes);
+            DxvkStateCacheKey k;k.cs=key(5,130+n);cache.load({k,{0},{0},{0}});
+            cache.registerShader(new DxvkShader(k.cs));
+            manager.ledger.onCompile=[&]{
+                const auto current=skyrim_perf_prefetch_get();
+                assert(current.ready_ns&&current.ready_ns<current.queued_ns&&current.queued_ns<current.worker_ns);
+                cache.stop();
+            };
+            cache.workerFunc();assert(same(skyrim_perf_prefetch_get(),previous));
+        });
+        for(auto& t:workers)t.join();
+        assert(same(skyrim_perf_prefetch_get(),outer));
+    }
+    puts("prefetch_metadata_actual_worker=PASS cases=7");
+}
+#endif
+}
+int main(int argc,char** argv){
+#if PATCHED
+    if(argc==2&&std::string(argv[1])=="prefetch"){dxvk::prefetchControls();return 0;}
+#else
+    (void)argc;(void)argv;
+#endif
     for(unsigned n:{1u,2u,16u,128u})for(bool concurrent:{false,true})for(bool reverse:{false,true})dxvk::run(n,concurrent,reverse);
     puts("all_states_and_failure_identity=PASS concurrent_registration=PASS empty_and_partial=PASS");
 }

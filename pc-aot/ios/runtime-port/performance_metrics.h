@@ -68,6 +68,21 @@ enum SkyrimPerfWaitResult { SKYRIM_PERF_WAIT_UNKNOWN, SKYRIM_PERF_WAIT_HIT, SKYR
 typedef struct SkyrimPerfContext { unsigned role, source, result; } SkyrimPerfContext;
 SkyrimPerfContext skyrim_perf_context_get(void);
 SkyrimPerfContext skyrim_perf_context_set(SkyrimPerfContext context);
+/* Times for one queued DXVK shader tuple. A duplicate registration can wake
+ * the tuple again without revealing when its last prerequisite first arrived. */
+typedef struct SkyrimPerfPrefetch {
+    uint64_t ready_ns, queued_ns, worker_ns;
+} SkyrimPerfPrefetch;
+SkyrimPerfPrefetch skyrim_perf_prefetch_get(void);
+SkyrimPerfPrefetch skyrim_perf_prefetch_set(SkyrimPerfPrefetch next);
+/* Attached only to the root library published in this process. compile_ns is
+ * the caller's request to its Metal compiler, not an OS/GPU execution time. */
+typedef struct SkyrimPerfShaderOrigin {
+    SkyrimPerfPrefetch prefetch;
+    uint64_t compile_ns, published_ns;
+} SkyrimPerfShaderOrigin;
+void skyrim_perf_shader_wait(unsigned result, uint64_t wait_start_ns,
+                             uint64_t wait_end_ns, SkyrimPerfShaderOrigin origin);
 void skyrim_perf_interval_context(unsigned kind, uint64_t started_ns, uint64_t ended_ns,
                                  int failed, uint64_t sleep_calls, SkyrimPerfContext context);
 void skyrim_perf_context_take(unsigned kind, SkyrimPerfContext context, SkyrimPerfWindow *out);
@@ -121,6 +136,15 @@ void skyrim_perf_activity(int active);
 #ifdef __cplusplus
 }
 #define SKYRIM_PERF_CONTEXT_KEEP (~0u)
+class SkyrimPerfPrefetchScope {
+    SkyrimPerfPrefetch previous;
+public:
+    explicit SkyrimPerfPrefetchScope(SkyrimPerfPrefetch value) noexcept
+        : previous(skyrim_perf_prefetch_set(value)) {}
+    ~SkyrimPerfPrefetchScope() { skyrim_perf_prefetch_set(previous); }
+    SkyrimPerfPrefetchScope(const SkyrimPerfPrefetchScope&) = delete;
+    SkyrimPerfPrefetchScope& operator=(const SkyrimPerfPrefetchScope&) = delete;
+};
 class SkyrimPerfContextScope {
     SkyrimPerfContext previous;
 public:

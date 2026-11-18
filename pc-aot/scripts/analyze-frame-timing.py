@@ -5,6 +5,7 @@ Histograms are approximate, slow spans are sampled, and overlap is not causation
 No game names, addresses, paths from the log, or shader contents are emitted.
 """
 import argparse
+import heapq
 import json
 from pathlib import Path
 import re
@@ -29,6 +30,9 @@ THRESHOLD = 50000000
 MAX_BYTES = 256 * 1024 * 1024
 MAX_SPANS = 100000
 MAX_LINE = 1024 * 1024
+MAX_SHADER_LEAD_DETAILS = 20
+SHADER_LEAD_TIMES = ('ready_ns', 'queued_ns', 'worker_ns', 'compile_ns', 'published_ns',
+                     'wait_start_ns', 'wait_end_ns')
 LOCK_THRESHOLD = 16666667
 LOCK_CAPACITY = 16
 LOCK_NAMES = ('unknown', 'd3d9', 'audio', 'com', 'shadow', 'bc')
@@ -117,6 +121,95 @@ def stalls(text, include_window=False):
     return (*output, window) if include_window else output
 
 
+def shader_lead(text):
+    """A verified returned-library producer, not every owner during the wait."""
+    values = fields(text, {'schema', 'seq', 'result', *SHADER_LEAD_TIMES})
+    if values['schema'] != '1':
+        raise ValueError('unknown shader lead schema')
+    row = {key: unsigned(value) for key, value in values.items()}
+    if not row['seq'] or row['result'] not in (1, 2) or not row['wait_start_ns'] or \
+            row['wait_end_ns'] - row['wait_start_ns'] < THRESHOLD:
+        raise ValueError('invalid shader lead wait')
+    producer = [row[key] for key in SHADER_LEAD_TIMES[:5]]
+    if any(producer):
+        ready, queued, worker, compile_request, published = producer
+        if row['result'] != 1 or not 0 < queued <= worker <= compile_request <= published <= row['wait_end_ns'] or \
+                (ready and ready > queued):
+            raise ValueError('invalid shader lead producer')
+    return row
+
+
+def shader_lead_drops(text):
+    values = fields(text, {'schema', 'seq', 'busy', 'full'})
+    if values['schema'] != '1':
+        raise ValueError('unknown shader lead drops schema')
+    row = {key: unsigned(values[key]) for key in ('seq', 'busy', 'full')}
+    if not row['seq']:
+        raise ValueError('invalid shader lead sequence')
+    return row
+
+
+def shader_lead_summary(rows, duplicates, conflicts, drops, launch_origin, timing_origin):
+    """Bound detail output; no all-frames x all-leads correlation scan."""
+    origin = launch_origin if launch_origin is not None else timing_origin
+    origin_kind = 'launch' if launch_origin is not None else 'first_timing_window'
+    if origin is None:
+        origin = min((row['wait_start_ns'] for row in rows), default=None)
+        origin_kind = 'first_observed_shader_wait' if origin is not None else 'unobserved'
+    groups = {key: dict(count=0, total_wait_ms=0.0, max_wait_ms=None) for key in
+              ('hit_verified_prefetch', 'hit_producer_unobserved', 'create')}
+    intervals = {key: dict(samples=0, total_ms=0.0, max_ms=None) for key in
+                 ('ready_to_queue', 'queue_to_worker', 'worker_to_compile_request', 'compile_to_publication')}
+    for row in rows:
+        group = groups['create' if row['result'] == 2 else
+                       'hit_verified_prefetch' if row['queued_ns'] else 'hit_producer_unobserved']
+        elapsed = (row['wait_end_ns'] - row['wait_start_ns']) / 1e6
+        group['count'] += 1
+        group['total_wait_ms'] += elapsed
+        group['max_wait_ms'] = max(group['max_wait_ms'] or 0, elapsed)
+        if row['queued_ns']:
+            for key, start, end in (('ready_to_queue', 'ready_ns', 'queued_ns'),
+                                    ('queue_to_worker', 'queued_ns', 'worker_ns'),
+                                    ('worker_to_compile_request', 'worker_ns', 'compile_ns'),
+                                    ('compile_to_publication', 'compile_ns', 'published_ns')):
+                if not row[start]:
+                    continue
+                item = intervals[key]
+                elapsed = (row[end] - row[start]) / 1e6
+                item['samples'] += 1
+                item['total_ms'] += elapsed
+                item['max_ms'] = max(item['max_ms'] or 0, elapsed)
+    details = []
+    for row in heapq.nlargest(MAX_SHADER_LEAD_DETAILS, rows,
+                             key=lambda r: r['wait_end_ns'] - r['wait_start_ns']):
+        known = bool(row['queued_ns'])
+        details.append(dict(seq=row['seq'], result=row['result'], verified_prefetch_producer=known,
+            wait_ms=(row['wait_end_ns'] - row['wait_start_ns']) / 1e6,
+            times_ms_from_origin={key[:-3]: (row[key] - origin) / 1e6 if row[key] else None
+                                  for key in SHADER_LEAD_TIMES},
+            producer_lead_to_wait_start_ms={key[:-3]: (row['wait_start_ns'] - row[key]) / 1e6
+                                            if row[key] else None for key in SHADER_LEAD_TIMES[:5]},
+            ready_to_queue_ms=(row['queued_ns'] - row['ready_ns']) / 1e6 if row['ready_ns'] else None,
+            queue_to_worker_ms=(row['worker_ns'] - row['queued_ns']) / 1e6 if known else None,
+            worker_to_compile_request_ms=(row['compile_ns'] - row['worker_ns']) / 1e6 if known else None,
+            compile_to_publication_ms=(row['published_ns'] - row['compile_ns']) / 1e6 if known else None))
+    lost = bool(drops['busy'] or drops['full'])
+    status = ('observed_with_drops' if lost else 'observed') if rows else 'drops_only' if lost else 'unobserved'
+    if conflicts['sequences']:
+        status = 'observed_with_conflicts' if rows else 'conflicts_only'
+    return dict(status=status,
+        observations=len(rows), duplicate_records=sum(duplicates.values()),
+        duplicate_lead_records=duplicates['lead'], duplicate_drop_records=duplicates['drops'],
+        conflicting_sequences=conflicts['sequences'], conflicting_records=conflicts['records'],
+        drop_records=drops['records'],
+        dropped_busy=drops['busy'], dropped_full=drops['full'], results=groups,
+        producer_intervals=intervals, time_origin=origin_kind,
+        longest_waits=details, additional_observations=max(0, len(rows) - len(details)),
+        scope='Completed foreground draw cold waits >=50ms. Zero producer fields mean unobserved, not no prefetch.',
+        interpretation='Producer timestamps identify the returned library only, not all lock owners. Positive lead means before draw wait start; compile-to-publication is host wall time, not hardware compilation time. Details are the longest waits; aggregates cover all unique observations.',
+        drops_scope='Drops are session totals without timestamps and cannot be assigned to a frame. Different reporter sequences are separate drains even when counts match; conflicting sequences are excluded entirely. Sequence is output order only, not a producer or thread ID.')
+
+
 def percentile(bins, percent):
     total = sum(bins)
     if not total:
@@ -177,6 +270,10 @@ def interval_union_ns(intervals):
 
 def summarize(lines):
     aggregate = {}
+    shader_reporter_records = {}
+    shader_lead_duplicates = dict(lead=0, drops=0)
+    shader_lead_conflicts = dict(sequences=0, records=0)
+    launch_origin = None
     context_rows = []
     spans = []
     lock_spans = []
@@ -190,6 +287,42 @@ def summarize(lines):
     last_end = 0
     current_kinds = set()
     for line in lines:
+        launch = re.fullmatch(r'IOS_STAGE sdl-application-entry monotonic=([0-9]{1,20})[.]([0-9]{9})', line.strip()) \
+            if line.startswith('IOS_STAGE sdl-application-entry ') else None
+        if launch:
+            started = int(launch[1]) * 1000000000 + int(launch[2])
+            if 0 < started <= U64:
+                if launch_origin is not None and launch_origin != started:
+                    raise RuntimeError('multiple launch origins; use one unmodified launch log')
+                launch_origin = started
+            continue
+        lead_marker = 'IOS_SHADER_LEAD_DROPS ' if 'IOS_SHADER_LEAD_DROPS ' in line else \
+                      'IOS_SHADER_LEAD ' if 'IOS_SHADER_LEAD ' in line else None
+        if lead_marker:
+            try:
+                kind = 'drops' if lead_marker == 'IOS_SHADER_LEAD_DROPS ' else 'lead'
+                parser = shader_lead_drops if kind == 'drops' else shader_lead
+                row = parser(line.split(lead_marker, 1)[1])
+                seq = row['seq']
+                if seq in shader_reporter_records:
+                    previous = shader_reporter_records[seq]
+                    if previous == (kind, row):
+                        shader_lead_duplicates[kind] += 1
+                    else:
+                        # A conflicting reuse makes both records ambiguous;
+                        # do not preserve whichever one happened to arrive first.
+                        removed = 2 if previous is not None else 1
+                        shader_lead_conflicts['sequences'] += previous is not None
+                        shader_lead_conflicts['records'] += removed
+                        invalid += removed
+                        shader_reporter_records[seq] = None
+                    continue
+                if len(shader_reporter_records) >= MAX_SPANS:
+                    raise RuntimeError('shader lead reporter sequence bound exceeded')
+                shader_reporter_records[seq] = (kind, row)
+            except ValueError:
+                invalid += 1
+            continue
         if 'IOS_LOCK ' in line:
             try:
                 samples, window = locks(line.split('IOS_LOCK ', 1)[1])
@@ -271,6 +404,18 @@ def summarize(lines):
                 stall_records += 1
         except ValueError:
             invalid += 1
+    shader_leads = []
+    lead_drops = dict(records=0, busy=0, full=0)
+    for record in shader_reporter_records.values():
+        if record is None:
+            continue
+        kind, row = record
+        if kind == 'lead':
+            shader_leads.append(row)
+        else:
+            lead_drops['records'] += 1
+            lead_drops['busy'] += row['busy']
+            lead_drops['full'] += row['full']
     kinds = {}
     for kind in KINDS:
         if kind not in aggregate:
@@ -344,6 +489,7 @@ def summarize(lines):
         lock_window_known = any(r['window']['start'] <= f['end'] and r['window']['end'] >= f['start']
                                 for r in lock_windows)
         correlations.append(dict(start_ms_from_first_sample=(f['start']-origin)/1e6,
+            start_ms_from_launch=(f['start']-launch_origin)/1e6 if launch_origin is not None else None,
             start_ms_from_first_timing_window=(f['start']-timing_origin)/1e6 if timing_origin is not None else None,
             duration_ms=(f['end']-f['start'])/1e6, estimated_endpoint=bool(f['estimated_end']),
             overlaps=overlap[:12], additional_overlaps=max(0,len(overlap)-12),
@@ -386,6 +532,8 @@ def summarize(lines):
         a['max_ns'] = max(a['max_ns'], row['max_ns'])
         a['failures'] = a['failures'] + row['failures'] if row['failures_known'] and a['failures'] is not None else None
     return dict(schema=1, scope='one launch; host wall time; not GPU time or a causal attribution',
+        shader_lead=shader_lead_summary(shader_leads, shader_lead_duplicates, shader_lead_conflicts,
+                                        lead_drops, launch_origin, timing_origin),
         timing_records=timing_records, stall_records=stall_records, invalid_records=invalid,
         work_contexts=list(contexts.values()), duplicate_context_records=context_duplicates,
         duplicate_timing_records=duplicate, sampled_spans=len(spans), dropped_busy=dropped_busy,
@@ -438,7 +586,8 @@ def main():
         parser.exit(2, 'Unable to analyze this local log: '+
                     (str(error) if isinstance(error,RuntimeError) else 'file could not be read')+'\n')
     print(json.dumps(result,indent=2,allow_nan=False))
-    return 0 if result['timing_records'] or result['stall_records'] or result['lock_records'] else 1
+    return 0 if result['timing_records'] or result['stall_records'] or result['lock_records'] or \
+        result['shader_lead']['observations'] or result['shader_lead']['drop_records'] else 1
 
 
 if __name__ == '__main__':

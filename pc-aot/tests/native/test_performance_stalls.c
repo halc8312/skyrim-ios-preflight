@@ -52,6 +52,90 @@ static void verify_spans(const SkyrimPerfStalls *s) {
         assert(p->started_ns && p->ended_ns >= p->started_ns + SKYRIM_PERF_STALL_THRESHOLD_NS);
     }
 }
+
+static void *produce_shader_waits(void *arg) {
+    const uint64_t base = UINT64_C(5000000000) + (size_t)arg;
+    const SkyrimPerfPrefetch job = {base, base + 1, base + 2};
+    assert(!skyrim_perf_prefetch_set(job).queued_ns);
+    skyrim_perf_context_set((SkyrimPerfContext){SKYRIM_PERF_ROLE_DRAW, 0, 0});
+    for (unsigned i = 0; i < 4000; ++i) {
+        SkyrimPerfShaderOrigin origin = {skyrim_perf_prefetch_get(), base + 3, base + 4};
+        skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, base, base + SKYRIM_PERF_STALL_THRESHOLD_NS, origin);
+    }
+    assert(skyrim_perf_prefetch_get().queued_ns == job.queued_ns);
+    atomic_fetch_add(&finished, 1);
+    return NULL;
+}
+
+static void verify_shader_waits(void) {
+    const uint64_t start = UINT64_C(5300000000), end = start + SKYRIM_PERF_STALL_THRESHOLD_NS;
+    const SkyrimPerfShaderOrigin known = {
+        {UINT64_C(5000000000), UINT64_C(5100000000), UINT64_C(5200000000)}, start, end
+    };
+    ShaderWaitBatch batch;
+    skyrim_perf_context_set((SkyrimPerfContext){SKYRIM_PERF_ROLE_PREFETCH, 0, 0});
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, start, end, known);
+    skyrim_perf_context_set((SkyrimPerfContext){SKYRIM_PERF_ROLE_DRAW, 0, 0});
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_UNKNOWN, start, end, known);
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, start, end - 1, known);
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, end, start, known);
+    skyrim_perf_activity(0);
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, start, end, known);
+    skyrim_perf_activity(1); /* mock clock at 4 s */
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, 3999999999ULL, end, known);
+    assert(shader_waits_take(&batch) && batch.count == 0);
+
+    const unsigned clock_count = atomic_load(&clock_calls);
+    SkyrimPerfShaderOrigin partial = known;
+    partial.prefetch.ready_ns = 3000000000ULL; /* before the active interval */
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, start, end, partial);
+    partial = known;
+    partial.prefetch.queued_ns = 3000000000ULL;
+    partial.prefetch.ready_ns = 0;
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, start, end, partial);
+    partial = known;
+    partial.published_ns = end + 1;
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, start, end, partial);
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_CREATE, start, end, known);
+    assert(shader_waits_take(&batch) && batch.count == 4);
+    assert(!batch.waits[0].origin.prefetch.ready_ns && batch.waits[0].origin.prefetch.queued_ns == known.prefetch.queued_ns);
+    for (unsigned i = 1; i < batch.count; ++i) {
+        assert(!batch.waits[i].origin.prefetch.queued_ns && !batch.waits[i].origin.published_ns);
+    }
+    assert(batch.waits[3].result == SKYRIM_PERF_WAIT_CREATE && atomic_load(&clock_calls) == clock_count);
+
+    for (unsigned i = 0; i < SHADER_WAIT_CAPACITY + 1; ++i)
+        skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, start, end, known);
+    assert(shader_waits_take(&batch) && batch.count == SHADER_WAIT_CAPACITY && batch.full == 1 && !batch.busy);
+
+    pthread_t workers[4];
+    atomic_store(&finished, 0);
+    for (size_t i = 0; i < 4; ++i) assert(!pthread_create(&workers[i], NULL, produce_shader_waits, (void *)i));
+    uint64_t observed = 0;
+    do {
+        if (shader_waits_take(&batch)) {
+            observed += batch.count + batch.busy + batch.full;
+            for (unsigned i = 0; i < batch.count; ++i) {
+                const ShaderWait *wait = &batch.waits[i];
+                assert(wait->origin.prefetch.worker_ns == wait->wait_start_ns + 2);
+                assert(wait->origin.published_ns == wait->wait_start_ns + 4);
+            }
+        }
+    } while (atomic_load(&finished) < 4);
+    for (unsigned i = 0; i < 4; ++i) assert(!pthread_join(workers[i], NULL));
+    assert(shader_waits_take(&batch) && observed + batch.count + batch.busy + batch.full == 16000);
+    assert(!skyrim_perf_prefetch_get().queued_ns);
+
+    assert(!atomic_flag_test_and_set(&shader_wait_lock));
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, start, end, known);
+    atomic_flag_clear(&shader_wait_lock);
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, start, end, known);
+    skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_CREATE, start, end, known);
+    atomic_store(&fixture_now, end);
+    skyrim_perf_log_window(); /* no ordinary timing or stall rows in this window */
+    puts("shader_waits_foreground_origin_and_concurrent_accounting=PASS");
+}
+
 int main(void) {
     SkyrimPerfStalls s;
     atomic_store(&fixture_now, 1000000000);
@@ -164,5 +248,6 @@ int main(void) {
     assert(errno == EINTR);
     assert(skyrim_perf_stalls_take(&s) && !s.count);
     puts("bounded_stalls_threshold_reservation_lifecycle_concurrent_accounting=PASS");
+    verify_shader_waits();
     return 0;
 }

@@ -46,8 +46,38 @@ NEW_ASSIGN = b'''\tif (this == &other) { return *this; }
 \tstd::swap(_shaderConversionResultInfo, replacement._shaderConversionResultInfo);
 \tstd::swap(_compressedMSL, replacement._compressedMSL);
 \tstd::swap(_maySpecializeWithMacro, replacement._maySpecializeWithMacro);
+\tstd::swap(_iosShaderOrigin, replacement._iosShaderOrigin);
 \t_specializationVariants.swap(replacement._specializationVariants);
 \treturn *this;'''
+
+# Never serialized. Copies start empty through the member initializer, and
+# assignment receives the empty copy's origin. An actual published root alone
+# can describe the prefetch which produced the object returned to a waiter.
+ORIGIN_FIELD = b'\tSkyrimPerfShaderOrigin _iosShaderOrigin{};'
+ORIGIN_METHODS = b'''\t// Runtime-only producer observations; none identifies a lock owner.
+\tvoid iosBeginRootCompilerRequest() {
+\t\tconst auto context = skyrim_perf_context_get();
+\t\tif (context.role != SKYRIM_PERF_ROLE_PREFETCH || context.source != SKYRIM_PERF_SOURCE_ROOT ||
+\t\t\t_owner->getVkObjectType() != VK_OBJECT_TYPE_PIPELINE_CACHE) { return; }
+\t\tconst auto prefetch = skyrim_perf_prefetch_get();
+\t\t// A duplicate registration can leave the original prerequisite time unknown.
+\t\tif (!prefetch.queued_ns || !prefetch.worker_ns) { return; }
+\t\t_iosShaderOrigin.prefetch = prefetch;
+\t\t// Caller boundary immediately before newMTLLibrary, not the dispatched
+\t\t// Metal API invocation, compiler execution, or GPU execution time.
+\t\t_iosShaderOrigin.compile_ns = skyrim_perf_now_ns();
+\t}
+\tvoid iosMarkPublished() {
+\t\t// Called only for the actual winning root under the catalog lock.
+\t\tif (_iosShaderOrigin.compile_ns && _mtlLibrary) {
+\t\t\t_iosShaderOrigin.published_ns = skyrim_perf_now_ns();
+\t\t}
+\t}
+\tSkyrimPerfShaderOrigin iosShaderOrigin() const {
+\t\treturn _iosShaderOrigin.published_ns ? _iosShaderOrigin : SkyrimPerfShaderOrigin{};
+\t}
+
+'''
 MAP = b'\tstd::map<std::vector<std::pair<uint32_t, MVKShaderMacroValue>>, MVKShaderLibrary *> _specializationVariants;'
 LOOKUP = b'''\t\t\tauto entry = _specializationVariants.find(spec_list);
 \t\t\tif (entry != _specializationVariants.end()) {
@@ -123,7 +153,10 @@ def patched(name, raw):
     raw = compressed.patched(name, raw)
     if name.endswith('.h'):
         raw = once(raw, DECOMPRESS_DECL, DECOMPRESS_DECL + b'\n\tvoid decompressMSL(std::string& msl, const MVKCompressor<std::string>& source);')
-        return b'#include <mutex>\n#include <memory>\n' + once(raw, MAP, MAP+b'\n\tstd::mutex _specializationLock;')
+        raw = once(raw, b'class MVKShaderLibrary : public MVKBaseDeviceObject {\n\npublic:\n\n',
+                   b'class MVKShaderLibrary : public MVKBaseDeviceObject {\n\npublic:\n\n' + ORIGIN_METHODS)
+        raw = once(raw, MAP, ORIGIN_FIELD + b'\n' + MAP + b'\n\tstd::mutex _specializationLock;')
+        return b'#include "skyrim_performance_metrics.h"\n#include <mutex>\n#include <memory>\n' + raw
     raw = once(raw, OLD_COPY, NEW_COPY)
     raw = once(raw, OLD_ASSIGN, NEW_ASSIGN)
     raw = once(raw, DECOMPRESS_BODY, DECOMPRESS_BORROWED)
@@ -132,6 +165,8 @@ def patched(name, raw):
         b'\tSkyrimPerfContextScope iosSource(SKYRIM_PERF_CONTEXT_KEEP, SKYRIM_PERF_SOURCE_ROOT);\n\tcompileLibrary(conversionResult.msl);')
     raw = once(raw, b'\tcompileLibrary(msl, specializationMacroDef);',
         b'\tSkyrimPerfContextScope iosSource(SKYRIM_PERF_CONTEXT_KEEP, specializationMacroDef ? SKYRIM_PERF_SOURCE_MACRO : SKYRIM_PERF_SOURCE_RESTORE);\n\tcompileLibrary(msl, specializationMacroDef);')
+    raw = once(raw, b'\t_mtlLibrary = slc->newMTLLibrary(nsSrc, _shaderConversionResultInfo, macro_def);',
+        b'\tiosBeginRootCompilerRequest();\n\t_mtlLibrary = slc->newMTLLibrary(nsSrc, _shaderConversionResultInfo, macro_def);')
     return b'#include "skyrim_performance_metrics.h"\n' + once(raw, LOOKUP, LOCKED_LOOKUP)
 
 

@@ -29,7 +29,7 @@ def fixture(source, converter, codec):
     assert hashlib.sha256(converter).hexdigest() == 'a36806cf4caf7e3d72ffc04885f58fa6a07af07a0f37416e7ceb1cc63a02b6be'
     codec = codec.read_bytes()
     assert hashlib.sha256(codec).hexdigest() == 'dfe81dba1bb352d81b78eaa38abeb567793ecfb79c891a551d955f6f65bb4a98'
-    types = between(converter.decode(), 'typedef struct SPIRVWorkgroupSizeDimension', '/** The results of a SPIRV to MSL conversion. */')
+    types = between(converter.decode(), 'typedef struct SPIRVWorkgroupSizeDimension', '#pragma mark -\n#pragma mark SPIRVToMSLConverter')
     compressor = between(codec.decode(), 'template <class C>', '#pragma mark -')
     macro = between(header, 'typedef struct MVKShaderMacroValue', '/**\n * Wraps a single')
     copy = between(text, 'MVKShaderLibrary::MVKShaderLibrary(const MVKShaderLibrary&', '// If err object is nil')
@@ -43,12 +43,17 @@ def fixture(source, converter, codec):
         body = body.replace(old, new)
     # Keep the source constructor and owned compressor/result copies unchanged.
     a = text.index('MVKShaderLibrary::MVKShaderLibrary(MVKVulkanAPIDeviceObject* owner,', text.index('void MVKShaderLibrary::compressMSL'))
-    a = text.index('MVKShaderLibrary::MVKShaderLibrary(MVKVulkanAPIDeviceObject* owner,', a+1)
     constructor = text[a:text.index('void MVKShaderLibrary::compileLibrary(', a)]
+    origin = between(header, '\t// Runtime-only producer observations;', '\t/** Returns the Vulkan API opaque object')
+    origin_field = '\tSkyrimPerfShaderOrigin _iosShaderOrigin{};'
+    assert header.count(origin_field) == 1
+    # The authored Metal call uses the same preceding helper, at the precise
+    # caller boundary. The real Objective-C compiler API remains outside this CPU fixture.
+    assert text.count('\tiosBeginRootCompilerRequest();\n\t_mtlLibrary = slc->newMTLLibrary(') == 1
     template = (ROOT/'tests/native/mvk_library_fixture.cpp.in').read_text()
-    for anchor in ('@TYPES@', '@CODEC@', '@MACRO@', '@METHODS@'):
+    for anchor in ('@TYPES@', '@CODEC@', '@MACRO@', '@METHODS@', '@ORIGIN@'):
         assert template.count(anchor) == 1
-    return '#include "performance_metrics.h"\n' + template.replace('@TYPES@', types).replace('@CODEC@', compressor).replace('@MACRO@', macro).replace('@METHODS@', body+constructor)
+    return '#include "performance_metrics.h"\n' + template.replace('@TYPES@', types).replace('@CODEC@', compressor).replace('@MACRO@', macro).replace('@METHODS@', body+constructor).replace('@ORIGIN@', origin_field+'\n'+origin)
 
 
 def metrics_object(tmp, flags):

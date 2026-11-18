@@ -25,9 +25,13 @@
 #include "mvk_graphics_integration_backend.h"
 
 namespace FixtureMvk {
+// Injectable observation clock only; the tested locks and lookup decisions are
+// unchanged. Scripted timestamps test the 50ms boundary without timed sleeps.
+#define skyrim_perf_now_ns MvkIntegration::clockNow
 #include "mvk_integration_fixture.h"
 #include "mvk_module_cold_support.h"
 // ACTUAL_MVK_METHODS
+#undef skyrim_perf_now_ns
 }
 
 namespace MvkIntegration {
@@ -38,6 +42,8 @@ struct CacheState {
     std::condition_variable changed;
     std::map<Key, unsigned> conversionCounts, libraryCounts;
     std::map<unsigned, unsigned> waitCounts;
+    std::map<unsigned, std::vector<uint64_t>> scripts;
+    std::map<unsigned, unsigned> clockCounts;
     std::set<Key> blocked;
     bool released = false;
 };
@@ -74,6 +80,18 @@ void coldWait() {
     s.changed.notify_all();
 }
 
+uint64_t clockNow() {
+    if (!current) return skyrim_perf_now_ns();
+    auto& s = *current->state;
+    std::lock_guard<std::mutex> lock(s.mutex);
+    const auto index = s.clockCounts[current->request]++;
+    s.changed.notify_all();
+    auto found = s.scripts.find(current->request);
+    if (found == s.scripts.end()) return skyrim_perf_now_ns();
+    assert(index < found->second.size());
+    return found->second[index];
+}
+
 Cache::Cache() : state(std::make_unique<CacheState>()) {}
 Cache::~Cache() = default;
 
@@ -88,9 +106,9 @@ Library Cache::request(unsigned request, unsigned module, unsigned config) {
     conversion.key = int(config);
     FixtureMvk::MVKPipeline pipeline;
     auto* library = state->cache.getShaderLibrary(&conversion, &shader, &pipeline);
-    if (!library) return {0, false};
+    if (!library) return {0, false, {}};
     assert(library->key == int(config));
-    return {reinterpret_cast<uintptr_t>(library), library->valid};
+    return {reinterpret_cast<uintptr_t>(library), library->valid, library->iosShaderOrigin()};
 }
 
 void Cache::block(unsigned module, unsigned config) {
@@ -128,6 +146,24 @@ unsigned Cache::coldWaits(unsigned request) {
     return state->waitCounts[request];
 }
 unsigned Cache::published() { return unsigned(state->cache.snapshot()); }
+void Cache::publishUnrelated(unsigned module, unsigned config) {
+    state->cache.publishReadyForTest(int(module), int(config));
+}
+void Cache::clockScript(unsigned request, std::initializer_list<uint64_t> values) {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    state->scripts[request] = values;
+}
+bool Cache::waitForClock(unsigned request, unsigned count) {
+    std::unique_lock<std::mutex> lock(state->mutex);
+    return state->changed.wait_for(lock, std::chrono::seconds(5), [&] {
+        return state->clockCounts[request] >= count;
+    });
+}
+unsigned Cache::clockReads(unsigned request) {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    return state->clockCounts[request];
+}
+void failLibraries(bool fail) { FixtureMvk::fixtureLibraryFailure = fail; }
 bool allLibrariesDestroyed() {
     return FixtureMvk::fixture.live.load() == 0 && FixtureMvk::fixture.active.load() == 0;
 }

@@ -3,11 +3,14 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <initializer_list>
+#include "performance_metrics.h"
 
 namespace MvkIntegration {
 struct Library {
     uintptr_t identity;
     bool valid;
+    SkyrimPerfShaderOrigin origin;
 };
 struct CacheState;
 class Cache {
@@ -24,10 +27,16 @@ public:
     unsigned libraries(unsigned module, unsigned config);
     unsigned coldWaits(unsigned request);
     unsigned published();
+    void publishUnrelated(unsigned module, unsigned config);
+    void clockScript(unsigned request, std::initializer_list<uint64_t> values);
+    bool waitForClock(unsigned request, unsigned count);
+    unsigned clockReads(unsigned request);
 };
 // Observer-only hooks inserted at authored compiler entry and after a failed
 // actual cache try_lock. They never substitute a lock decision or result.
 void boundary(int key, bool library);
 void coldWait();
+uint64_t clockNow();
+void failLibraries(bool fail);
 bool allLibrariesDestroyed();
 }

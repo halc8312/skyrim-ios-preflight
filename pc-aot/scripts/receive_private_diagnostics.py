@@ -156,6 +156,10 @@ class Schema:
                 self.timing.stalls(value.split(' ', 1)[1])
             elif value.startswith('IOS_LOCK '):
                 self.timing.locks(value.split(' ', 1)[1])
+            elif value.startswith('IOS_SHADER_LEAD '):
+                return 'lead', self.timing.shader_lead(value.split(' ', 1)[1])
+            elif value.startswith('IOS_SHADER_LEAD_DROPS '):
+                return 'drops', self.timing.shader_lead_drops(value.split(' ', 1)[1])
             elif value.startswith('IOS_DIAG_SETTING '):
                 number = Decimal(value.rsplit('=', 1)[1])
                 require(abs(number) <= 1000000000, 'setting_range')
@@ -196,8 +200,17 @@ class Schema:
             require(type(lines) is list and 1 <= len(lines) <= MAX_LINES, 'line_count')
             require(all(type(line) is str for line in lines), 'line_shape')
             require(sum(len(line) + 1 for line in lines) <= MAX_SESSION_BYTES, 'session_byte_limit')
+            # The reporter shares a sequence across lead/drop records. Each
+            # captured launch has its own namespace; repeated identical rows
+            # are harmless, conflicting reuse cannot be trusted.
+            shader_sequences = {}
             for line in lines:
-                self.line(line)
+                record = self.line(line)
+                if record is not None:
+                    seq = record[1]['seq']
+                    require(seq not in shader_sequences or shader_sequences[seq] == record,
+                            'shader_lead_sequence_conflict')
+                    shader_sequences[seq] = record
         require('current' in slots, 'current_session_required')
         return value
 

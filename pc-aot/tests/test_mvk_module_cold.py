@@ -24,8 +24,9 @@ def region(raw, first, following):
     return raw[begin:raw.index(following, begin)]
 
 
-def fixture_header(mixin):
+def fixture_header(mixin, shader_header):
     raw = (ROOT / "tests/native/mvk_hot_cache_fixture.h").read_text()
+    raw = '#include "performance_metrics.h"\n' + raw
     raw = raw.replace('#include <vector>', '#include <vector>\n#include <string>\n#include <cstdlib>\n#include <cstring>\n#include <cstdio>')
     raw = raw.replace('  int key=0;\n  bool matches', '  int key=0;\n  struct {int entryPointStage=0;} options{};\n  bool matches', 1)
     raw = raw.replace('struct SPIRVToMSLConversionResult {int key=0;};', 'struct SPIRVToMSLConversionResult {int key=0;std::string msl,resultLog;};')
@@ -39,6 +40,11 @@ public: virtual int getVkObjectType(){return 0;} virtual ~MVKVulkanAPIDeviceObje
 class MVKPipelineCache;''', 1)
     constructor = region(raw, '  MVKShaderLibrary(MVKPipelineCache*', '  explicit MVKShaderLibrary(int merged)')
     raw = raw.replace(constructor, '  bool valid=true;\n  MVKShaderLibrary(MVKPipelineCache*,const SPIRVToMSLConversionResult&);\n', 1)
+    origin = region(shader_header, '\t// Runtime-only producer observations;', '\t/** Returns the Vulkan API opaque object')
+    field = '\tSkyrimPerfShaderOrigin _iosShaderOrigin{};'
+    assert shader_header.count(field) == 1
+    raw = raw.replace('  bool valid=true;', '  bool valid=true;\n'
+        '  MVKVulkanAPIDeviceObject* _owner=nullptr;\n  void* _mtlLibrary=nullptr;\n' + field + '\n' + origin, 1)
     module = region(raw, 'struct MVKShaderModule {', 'struct MVKPipeline {')
     raw = raw.replace(module, 'struct MVKShaderModule;\n', 1)
     raw = raw.replace('  FixturePairs _shaderLibraries;', '  std::mutex _moduleColdLock;\n  FixturePairs _shaderLibraries;', 1)
@@ -74,6 +80,10 @@ class ModuleColdExperimentTests(unittest.TestCase):
                              region(self.originals["MVKPipeline.mm"], b"MVKShaderLibrary* MVKPipelineCache::getShaderLibraryImpl(", b"#pragma mark Streaming pipeline"))
             self.assertEqual(source["MVKPipeline.mm"].split(b"#pragma mark Streaming pipeline", 1)[1],
                              self.originals["MVKPipeline.mm"].split(b"#pragma mark Streaming pipeline", 1)[1])
+        # The ready/refusal path before cold-lock acquisition gains neither a
+        # clock nor a provenance lookup. The serialized suffix above is exact.
+        self.assertEqual(region(self.base["MVKPipeline.mm"], b"MVKShaderLibrary* MVKPipelineCache::getShaderLibrary(", b"    unique_lock<mutex> compileLock("),
+                         region(self.candidate["MVKPipeline.mm"], b"MVKShaderLibrary* MVKPipelineCache::getShaderLibrary(", b"    unique_lock<mutex> compileLock("))
         self.assertEqual(region(self.candidate["MVKSync.mm"], b"void MVKMetalCompiler::compile(", b"void MVKMetalCompiler::handleError()"),
                          region(self.base["MVKSync.mm"], b"void MVKMetalCompiler::compile(", b"void MVKMetalCompiler::handleError()"))
         self.assertEqual(self.candidate["MVKSync.mm"].split(b"// Returns whether the compilation came in late",1)[1],
@@ -128,7 +138,7 @@ class ModuleColdExperimentTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(data).hexdigest(), digest)
                 (vendor/name).write_bytes(data)
             (vendor/"MVKFoundation.h").write_text("#pragma once\ntemplate<class T> class MVKArrayRef;\n")
-            (temp/"mvk_module_fixture.h").write_text(fixture_header(mixin))
+            (temp/"mvk_module_fixture.h").write_text(fixture_header(mixin, self.candidate["MVKShaderModule.h"].decode()))
             flags=["-O2", "-Wall", "-Wextra", "-Werror", "-Wno-unknown-pragmas", "-pthread"]
             sanitizer=os.environ.get("SKYRIM_TEST_SANITIZERS")
             if sanitizer in ("1", "thread"):

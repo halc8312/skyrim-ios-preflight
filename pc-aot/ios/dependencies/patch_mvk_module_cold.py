@@ -56,6 +56,49 @@ ERROR_METHOD = b'''\t// Only compiler failure publication takes this short catal
 '''
 
 
+WAIT_BEFORE = b'''    if (!compileLock.try_lock()) {
+        const uint64_t waitStarted = skyrim_perf_now_ns();
+        compileLock.lock();
+        skyrim_perf_end(SKYRIM_PERF_MVK_COLD_LOCK_WAIT, waitStarted, 0);
+    }
+    {
+        lock_guard<mutex> lock(_shaderCacheLock);
+        MVKShaderLibrary* ready = slCache->findShaderLibrary(pContext, pShaderFeedback, startTime);
+        if (ready) {
+            if (pShaderFeedback) mvkEnableFlags(pShaderFeedback->flags, VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT);
+            return ready;
+        }
+    }
+'''
+WAIT_OBSERVED = b'''    uint64_t iosWaitStart = 0, iosWaitEnd = 0;
+    if (!compileLock.try_lock()) {
+        iosWaitStart = skyrim_perf_now_ns();
+        compileLock.lock();
+        iosWaitEnd = skyrim_perf_now_ns();
+        skyrim_perf_interval(SKYRIM_PERF_MVK_COLD_LOCK_WAIT, iosWaitStart, iosWaitEnd, 0, 0);
+    }
+    const bool iosDrawWait = iosWaitStart && iosWaitEnd >= iosWaitStart &&
+        iosWaitEnd - iosWaitStart >= SKYRIM_PERF_STALL_THRESHOLD_NS &&
+        skyrim_perf_context_get().role == SKYRIM_PERF_ROLE_DRAW;
+    MVKShaderLibrary* iosReady;
+    {
+        lock_guard<mutex> lock(_shaderCacheLock);
+        iosReady = slCache->findShaderLibrary(pContext, pShaderFeedback, startTime);
+        if (iosReady && pShaderFeedback) {
+            mvkEnableFlags(pShaderFeedback->flags, VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT);
+        }
+    }
+    // Published objects remain alive and immutable until externally synchronized
+    // cache destruction. Observe the selected object after releasing the catalog
+    // lock, never a presumed mutex owner or an unrelated in-flight candidate.
+    if (iosReady) {
+        if (iosDrawWait) skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_HIT, iosWaitStart, iosWaitEnd, iosReady->iosShaderOrigin());
+        return iosReady;
+    }
+    if (iosDrawWait) skyrim_perf_shader_wait(SKYRIM_PERF_WAIT_CREATE, iosWaitStart, iosWaitEnd, SkyrimPerfShaderOrigin{});
+'''
+
+
 def baseline(pristine):
     return {
         **{name: hot.patched(name, pristine[name]) for name in hot.PINS},
@@ -72,6 +115,10 @@ def patched(pristine):
     result["MVKPipeline.mm"] = once(result["MVKPipeline.mm"],
         b"unique_lock<mutex> compileLock(_shaderCompileLock, defer_lock);",
         b"unique_lock<mutex> compileLock(mvkIOSModuleColdEnabled() ? slCache->_moduleColdLock : _shaderCompileLock, defer_lock);")
+    result["MVKPipeline.mm"] = once(result["MVKPipeline.mm"], WAIT_BEFORE, WAIT_OBSERVED)
+    publication = b"        slCache->_shaderLibraries.emplace_back(*pContext, candidate.get());\n        markDirty();"
+    result["MVKPipeline.mm"] = once(result["MVKPipeline.mm"], publication,
+        publication + b"\n        candidate->iosMarkPublished();")
     result["MVKPipeline.mm"] = once(result["MVKPipeline.mm"],
         b"// Keep one cold compilation per cache, but let already prepared libraries and",
         b"// Keep cold work global by default, or per module when explicitly enabled; prepared libraries and")

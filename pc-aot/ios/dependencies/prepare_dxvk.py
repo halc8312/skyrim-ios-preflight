@@ -33,6 +33,7 @@ EXPECTED = {
     "src/dxvk/dxvk_memory.cpp": "1432d9264ecd19159ef02af2de8767b31e19fa65d7e0653d16957ef2fd241631",
     "src/dxvk/dxvk_memory.h": "4aeee77488305734c8b559ec6c53309b048f47b197ad4532b36b5a7e3ccb57e4",
     "src/dxvk/dxvk_state_cache.cpp": "5b0942b71353c1731710f40a6f9573c8371c4cad65c661598aef06771b87026d",
+    "src/dxvk/dxvk_state_cache.h": "2b9ba65a9e5d3e349085edea4bed794f0fcc3092e08ea75adb74a21148402a18",
     "src/dxvk/dxvk_graphics.cpp": "dc35eb99f52d3dc4ea3e033fbe55c4a06faae8201c3424bf552aefcbc4e509ca",
     "src/dxvk/dxvk_compute.cpp": "2515fefb8ae4acee0fe9ba6fd3a36eda8664fa9bcbb15784a83b39763c26ee0e",
     "src/dxvk/dxvk_graphics.h": "f2fb63084bd9757262c641c6e4e20a4a5ff223edacc4ef23eae2d486725ddf88",
@@ -168,8 +169,32 @@ def adapt_memory(name: str, text: str) -> str:
     return once(text, marker, methods + marker)
 
 
+def adapt_worker_header(text: str) -> str:
+    text = '#include "performance_metrics.h"\n' + text
+    return once(text, '''    struct WorkerItem {
+      DxvkGraphicsPipelineShaders gp;
+      DxvkComputePipelineShaders  cp;
+    };''', '''    struct WorkerItem {
+      DxvkGraphicsPipelineShaders gp;
+      DxvkComputePipelineShaders  cp;
+      SkyrimPerfPrefetch iosPrefetch = {};
+    };''')
+
+
 def adapt_workers(text: str) -> str:
     text = '#include "device_policy.h"\n' + text
+    text = once(text, '    m_shaderMap.insert({ key, shader });', '''    const bool iosInserted = m_shaderMap.insert({ key, shader }).second;
+    // While entryLock is held, a newly inserted final prerequisite makes all
+    // its now-complete tuples eligible. Capture once before any worker-lock
+    // wait; duplicate registrations cannot reconstruct the original time.
+    const uint64_t iosReadyNs = iosInserted ? skyrim_perf_now_ns() : 0;''')
+    text = once(text, '      m_workerQueue.push(item);', '''      item.iosPrefetch.ready_ns = iosReadyNs;
+      item.iosPrefetch.queued_ns = skyrim_perf_now_ns();
+      m_workerQueue.push(item);''')
+    text = once(text, '''        item = m_workerQueue.front();
+        m_workerQueue.pop();''', '''        item = m_workerQueue.front();
+        item.iosPrefetch.worker_ns = skyrim_perf_now_ns();
+        m_workerQueue.pop();''')
     text = once(text, '  void DxvkStateCache::stopWorkerThreads() {',
         '  void DxvkStateCache::stopWorkerThreads() {\n    m_pipeManager->iosPrefetchGate().stop();')
     text = once(text, 'uint32_t numCpuCores = dxvk::thread::hardware_concurrency();',
@@ -177,7 +202,9 @@ def adapt_workers(text: str) -> str:
     text = once(text, '    env::setThreadName("dxvk-shader");',
         '    env::setThreadName("dxvk-shader");\n    skyrim_device_platform_work_role(SKYRIM_WORK_COMPILER);')
     text = once(text, '      compilePipelines(item);',
-        '      skyrim_device_platform_work_role(SKYRIM_WORK_COMPILER);\n      compilePipelines(item);')
+        '      skyrim_device_platform_work_role(SKYRIM_WORK_COMPILER);\n'
+        '      SkyrimPerfPrefetchScope iosPrefetchScope(item.iosPrefetch);\n'
+        '      compilePipelines(item);')
     text = once(text, '    env::setThreadName("dxvk-writer");',
         '    env::setThreadName("dxvk-writer");\n    skyrim_device_platform_work_role(SKYRIM_WORK_CACHE_WRITER);')
     # A worker item already visits every state entry for its shader tuple.
@@ -530,6 +557,8 @@ def adapt(name: str, text: str) -> str:
         return adapt_memory(name, text)
     if name.endswith("dxvk_state_cache.cpp"):
         return adapt_workers(text)
+    if name.endswith("dxvk_state_cache.h"):
+        return adapt_worker_header(text)
     if name.endswith(("dxvk_graphics.h", "dxvk_compute.h")):
         return adapt_pipeline_locking(name, text)
     if name.endswith("dxvk_pipemanager.h"):

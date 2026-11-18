@@ -64,7 +64,7 @@ def generate_mvk(source, folder, patched):
         assert hashlib.sha256(data).hexdigest() == digest
         (vendor / name).write_bytes(data)
     (vendor / "MVKFoundation.h").write_text("#pragma once\ntemplate<class T> class MVKArrayRef;\n", encoding="utf-8")
-    header = mvk.fixture_header(mixin)
+    header = mvk.fixture_header(mixin, patched["MVKShaderModule.h"].decode())
     anchor = "  void waitAt(int key,bool library) {"
     assert header.count(anchor) == 1
     header = header.replace(anchor, anchor + "\n    MvkIntegration::boundary(key, library);")
@@ -169,6 +169,21 @@ class GraphicsMvkColdIntegrationTests(unittest.TestCase):
                 self.assertIn("exact_state=1 wait_scope=1", stderr)
                 self.assertEqual(stderr.count("IOS_SHADER_POLICY "), 1)
                 self.assertIn(f"module_cold={mode} cold_scope={mode}", stderr)
+                expected = [dict(item.split("=", 1) for item in line.split()[1:])
+                            for line in stdout.splitlines() if line.startswith("ORIGIN_EXPECT ")]
+                wire = [dict(item.split("=", 1) for item in line.split()[1:])
+                        for line in stderr.splitlines() if line.startswith("IOS_SHADER_LEAD ")]
+                self.assertEqual(len(expected), 6)
+                for wanted in expected:
+                    matches = [row for row in wire if row["wait_start_ns"] == wanted["wait_start_ns"]
+                               and row["wait_end_ns"] == wanted["wait_end_ns"]]
+                    self.assertEqual(len(matches), int(wanted["emit"]))
+                    for row in matches:
+                        self.assertEqual(row["schema"], "1")
+                        self.assertGreater(int(row["seq"]), 0)
+                        for key in ("result", "ready_ns", "queued_ns", "worker_ns", "compile_ns", "published_ns"):
+                            self.assertEqual(row[key], wanted[key], (wanted["scenario"], key))
+                self.assertIn("chosen_library_origin=PASS recheck_hit_and_create=PASS ready_clock_free=PASS", stdout)
 
 
 if __name__ == "__main__":

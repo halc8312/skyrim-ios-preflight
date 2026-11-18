@@ -44,6 +44,11 @@ class DiagnosticUploadTests(unittest.TestCase):
         self.assertEqual({row["kind"] for row in result["work_contexts"]},
                          {"mvk_msl_wait", "graphics_state_wait"})
         self.assertEqual(result["work_contexts"][0]["over_100ms"], 1)
+        self.assertEqual(result['shader_lead']['observations'], 4)
+        self.assertEqual(result['shader_lead']['results']['hit_verified_prefetch']['count'], 2)
+        self.assertEqual(result['shader_lead']['results']['hit_producer_unobserved']['count'], 1)
+        self.assertEqual((result['shader_lead']['dropped_busy'], result['shader_lead']['dropped_full']), (1, 2))
+        self.assertEqual({row['seq'] for row in result['shader_lead']['longest_waits']}, {1, 2, 3, 4})
         # Actual receiver contract also accepts separately identified old-build
         # settings. A current build must never relabel the previous session.
         report = {"schema": 1, "report_id": "1" * 32, "app_build": 12, "sessions": [
@@ -113,6 +118,7 @@ class DiagnosticUploadTests(unittest.TestCase):
             parsed = module.Schema().timing.summarize(now["lines"])
             self.assertEqual(parsed["invalid_records"], 0)
             self.assertEqual(parsed["kinds"]["frame_gap"]["over_100ms"], 1)
+            self.assertEqual(parsed['shader_lead']['observations'], 4)
 
 
 if __name__ == "__main__":

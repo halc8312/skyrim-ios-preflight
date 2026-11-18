@@ -832,3 +832,4 @@
 !/pc-aot/tests/native/test_graphics_mvk_cold_integration.cpp
 !/pc-aot/tests/native/mvk_graphics_integration_backend.h
 !/pc-aot/tests/native/mvk_graphics_integration_backend.cpp
+!/pc-aot/tests/test_shader_lead_diagnostics.py

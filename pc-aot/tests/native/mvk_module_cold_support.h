@@ -55,7 +55,11 @@ struct MVKMetalCompiler {
 inline std::atomic<bool> fixtureLibraryFailure{false},fixtureLibraryThrow{false};
 inline MVKShaderLibrary::MVKShaderLibrary(MVKPipelineCache* owner,const SPIRVToMSLConversionResult& value):key(value.key) {
   if(fixtureLibraryThrow.exchange(false)){--fixture.active;throw std::bad_alloc();}
+  _owner=owner;
+  SkyrimPerfContextScope source(SKYRIM_PERF_CONTEXT_KEEP,SKYRIM_PERF_SOURCE_ROOT);
+  iosBeginRootCompilerRequest(); // Actual helper extracted from patched header.
   ++fixture.live;fixture.waitAt(key,true);
   if(fixtureLibraryFailure.load()){valid=false;MVKMetalCompiler compiler(owner);compiler.handleError();}
+  _mtlLibrary=valid?this:nullptr;
   --fixture.active;
 }

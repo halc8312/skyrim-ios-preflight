@@ -10,6 +10,7 @@ struct Driver {
         unsigned calls = 0, waits = 0, role = 0;
         uintptr_t library = 0;
         VkPipeline handle = VK_NULL_HANDLE;
+        SkyrimPerfShaderOrigin origin{};
     };
     MvkIntegration::Cache& cache;
     std::mutex mutex;
@@ -36,11 +37,13 @@ struct Driver {
             handle = reinterpret_cast<VkPipeline>(nextHandle++);
         }
         const auto library = cache.request(id, binding.module, binding.config);
-        assert(library.valid && library.identity);
+        assert(library.identity);
+        if (!library.valid) handle=VK_NULL_HANDLE;
         {
             std::lock_guard<std::mutex> lock(mutex);
             records[id].library = library.identity;
             records[id].handle = handle;
+            records[id].origin = library.origin;
         }
         return handle;
     }
@@ -165,6 +168,86 @@ static void same_identity() {
     std::puts("same_dxvk_state_single_generation=PASS same_mvk_key_single_generation=PASS same_module_serialization=PASS");
 }
 
+enum class OriginScenario {
+    KnownProducerHit,
+    DifferentConfigCreate,
+    CompetingPublicationHit,
+    FailedRootHit,
+    UnknownReadyTimeHit,
+    ShortWait,
+};
+
+static void shader_origin(OriginScenario scenario) {
+    const bool create = scenario == OriginScenario::DifferentConfigCreate;
+    const bool failed = scenario == OriginScenario::FailedRootHit;
+    const bool shortWait = scenario == OriginScenario::ShortWait;
+    MvkIntegration::Cache cache;
+    Driver driver(cache);
+    Manager manager;
+    TestPipeline pipeline(driver, manager);
+    Pass pass;
+    const auto workerState = state(401), drawState = state(402);
+    driver.bind(401, 10, 100);
+    driver.bind(402, 10, create ? 101 : 100);
+    cache.block(10, 100);
+    const uint64_t ms = 1000000, base = skyrim_perf_now_ns() + 1000 * ms;
+    const uint64_t ready = scenario == OriginScenario::UnknownReadyTimeHit ? 0 : base;
+    const uint64_t queued = base + 10 * ms, worker = base + 20 * ms;
+    const uint64_t compile = base + 40 * ms, published = base + 70 * ms;
+    const uint64_t waitStart = base + 50 * ms;
+    const uint64_t waitEnd = base + (shortWait ? 99 : 120) * ms;
+    cache.clockScript(401, {base + 30 * ms, compile, published});
+    cache.clockScript(402, {waitStart, waitEnd, base + 125 * ms});
+    MvkIntegration::failLibraries(failed);
+    std::future<void> producer;
+    std::future<VkPipeline> consumer;
+    ReleaseOnExit release{cache};
+    producer = std::async(std::launch::async, [&] {
+        SkyrimPerfPrefetchScope job({ready, queued, worker});
+        pipeline.build(workerState, &pass);
+    });
+    assert(cache.waitForMetal(10, 100));
+    consumer = std::async(std::launch::async, [&] {
+        return pipeline.get(drawState, &pass);
+    });
+    assert(cache.waitForCold(402) && cache.waitForClock(402, 1));
+    if (scenario == OriginScenario::CompetingPublicationHit) {
+        cache.publishUnrelated(10, 100);
+    }
+    cache.releaseAll();
+    assert(finished(producer));
+    producer.get();
+    assert(finished(consumer));
+    const auto handle = consumer.get();
+    MvkIntegration::failLibraries(false);
+    assert((handle == VK_NULL_HANDLE) == failed);
+    const auto source = driver.record(402).origin;
+    const bool known = scenario == OriginScenario::KnownProducerHit ||
+        scenario == OriginScenario::UnknownReadyTimeHit || shortWait;
+    if (known) {
+        assert(source.prefetch.ready_ns == ready);
+        assert(source.prefetch.queued_ns == queued && source.prefetch.worker_ns == worker);
+        assert(source.compile_ns == compile && source.published_ns == published);
+    } else {
+        assert(!source.prefetch.ready_ns && !source.prefetch.queued_ns && !source.prefetch.worker_ns &&
+               !source.compile_ns && !source.published_ns);
+    }
+    assert(cache.conversions(10, 100) == 1 && cache.libraries(10, 100) == 1);
+    assert(cache.conversions(10, 101) == unsigned(create));
+    // Directly exercise the MoltenVK ready path with a fresh DXVK state: no
+    // observation clock, no compiler or publication, and no new wait report.
+    cache.clockScript(403, {});
+    const auto cached = cache.request(403, 10, create ? 101 : 100);
+    assert(cached.identity == driver.record(402).library && cache.clockReads(403) == 0);
+    std::printf("ORIGIN_EXPECT scenario=%u emit=%u result=%u ready_ns=%llu queued_ns=%llu worker_ns=%llu compile_ns=%llu published_ns=%llu wait_start_ns=%llu wait_end_ns=%llu\n",
+        unsigned(scenario), unsigned(!shortWait),
+        unsigned(create ? SKYRIM_PERF_WAIT_CREATE : SKYRIM_PERF_WAIT_HIT),
+        (unsigned long long)(known ? ready : 0), (unsigned long long)(known ? queued : 0),
+        (unsigned long long)(known ? worker : 0), (unsigned long long)(known ? compile : 0),
+        (unsigned long long)(known ? published : 0),
+        (unsigned long long)waitStart, (unsigned long long)waitEnd);
+}
+
 int main(int argc, char** argv) {
     assert(argc == 2 && (std::strcmp(argv[1], "0") == 0 || std::strcmp(argv[1], "1") == 0));
     assert(skyrim::exactGraphicsStateEnabled());
@@ -172,5 +255,19 @@ int main(int argc, char** argv) {
     assert(MvkIntegration::allLibrariesDestroyed());
     same_identity();
     assert(MvkIntegration::allLibrariesDestroyed());
+    const OriginScenario originCases[] = {
+        OriginScenario::KnownProducerHit,
+        OriginScenario::DifferentConfigCreate,
+        OriginScenario::CompetingPublicationHit,
+        OriginScenario::FailedRootHit,
+        OriginScenario::UnknownReadyTimeHit,
+        OriginScenario::ShortWait,
+    };
+    for (const auto scenario : originCases) {
+        shader_origin(scenario);
+        assert(MvkIntegration::allLibrariesDestroyed());
+    }
+    skyrim_perf_log_window(); // Exercise the actual shared C recorder and wire.
+    std::puts("chosen_library_origin=PASS recheck_hit_and_create=PASS ready_clock_free=PASS");
     std::puts("cache_lifetime=PASS authored_boundaries_only=1 gpu_or_game_performance_verified=0");
 }
