@@ -11,7 +11,11 @@ if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
   message(FATAL_ERROR "Set CMAKE_OSX_ARCHITECTURES=arm64")
 endif()
 get_filename_component(_root "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
-set(SKYRIM_IOS_DEPS_PREFIX "${_root}/local/ios-dependencies-build9/prefix" CACHE PATH "Prepared iPhoneOS static dependencies")
+set(_deps_root "${_root}/local/ios-dependencies-build15")
+if(NOT "$ENV{SKYRIM_IOS_DEPS_ROOT}" STREQUAL "")
+  set(_deps_root "$ENV{SKYRIM_IOS_DEPS_ROOT}")
+endif()
+set(SKYRIM_IOS_DEPS_PREFIX "${_deps_root}/prefix" CACHE PATH "Prepared iPhoneOS static dependencies")
 set(SKYDREAM_SOURCE_DIR "${_root}/vendor/skydream" CACHE PATH "Public Skydream source checkout")
 
 # This is an already-built iPhoneOS prefix outside the SDK. Do not re-root

@@ -372,6 +372,7 @@ workflows:
         - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build7
         - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-shader-trials-v1
         - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build9
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build15
     scripts:
       - name: Prepare public iPhoneOS build tools
         script: |
@@ -391,3 +392,4 @@ workflows:
       - pc-aot/local/ios-dependencies-build7/logs/*/*.log
       - pc-aot/local/ios-dependencies-shader-trials-v1/logs/*/*.log
       - pc-aot/local/ios-dependencies-build9/logs/*/*.log
+      - pc-aot/local/ios-dependencies-build15/logs/*/*.log

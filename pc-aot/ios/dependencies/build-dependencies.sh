@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 [[ "$(uname -s)" == Darwin ]] || { echo 'Requires macOS and the Apple iPhoneOS SDK.' >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-build9}"
+WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-build15}"
 PREFIX="$WORK/prefix"
 DEPLOYMENT="${IPHONEOS_DEPLOYMENT_TARGET:-18.0}"
 JOBS="${JOBS:-2}"
@@ -225,7 +225,7 @@ PYMVK
     if grep -q '_skyrim_gpu_' "$RUN_LOG/moltenvk-undefined.txt"; then
       echo 'Rejected lifecycle gate still referenced by MoltenVK.' >&2; exit 1
     fi
-    for symbol in skyrim_perf_now_ns skyrim_perf_interval skyrim_perf_end; do
+    for symbol in skyrim_perf_now_ns skyrim_perf_interval skyrim_perf_end skyrim_perf_prefetch_get skyrim_perf_shader_wait; do
       grep -q "_$symbol" "$RUN_LOG/moltenvk-undefined.txt"
     done
   )

@@ -14,6 +14,7 @@
         - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-displayfix
         - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-cachefix
         - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build6
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build15
     scripts:
       - name: Prepare public iPhoneOS build tools
         script: |
@@ -30,3 +31,4 @@
       - pc-aot/local/ios-dependencies-displayfix/logs/*/*.log
       - pc-aot/local/ios-dependencies-cachefix/logs/*/*.log
       - pc-aot/local/ios-dependencies-build6/logs/*/*.log
+      - pc-aot/local/ios-dependencies-build15/logs/*/*.log

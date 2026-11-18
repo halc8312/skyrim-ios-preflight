@@ -3,7 +3,7 @@
 # compiler. This checks shader compilation, not an actual rendered game frame.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-build9}"
+WORK="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-build15}"
 CROSS="$WORK/sources/SPIRV-Cross-ios-samplerfix"
 OUT="${1:?fresh output directory required}"
 mkdir "$OUT"
