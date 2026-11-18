@@ -470,6 +470,15 @@ No physical build-5 iPhone measurement is available yet. OS/compiler caches are
 uncontrolled, host timestamps do not reveal internal compiler execution, and
 this authored test establishes no Skyrim performance result.
 
+[Phone workflow run 10](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afd4913d133a39c4a128a30)
+built the signed package's device inputs and the simulator app from public
+`7090f43b`. Its 14 input hashes match development commit `e0351c02`. Apple ran
+105 passing checks and skipped three Linux-only cases, which passed on WSL.
+The paravirtual GPU produced the expected 384 scheduling words and 3,072 serial
+words. The simulator restored and shared an explicit unsupported result. The
+separate layout example left saved results intact. The signed 122,980-byte IPA
+served over the private HTTPS route matched the locally verified SHA-256.
+
 ## What each environment establishes
 
 `mrc_lifetime.py --output NEW_DIRECTORY` runs a separate Foundation-only ownership
