@@ -1,12 +1,18 @@
 # 開発状況
 
-**2026-11-18：独立Metal比較アプリのbuild2を署名・非公開配信。実iPhoneの結果待ち。** 分岐演算・依存する表参照・連続する混合演算の自作3種類を追加し、各4方式×4巡の計48sampleで実行順の各位置を均等にした。入力bufferとCPU側の正解値を固定し、描画／compute各64語を照合する。初回観測と再測定は分けて記録するが、OS cacheの冷温は制御しておらず、整数演算の自作負荷をSkyrimの実shaderや性能改善の証拠には扱わない。元の小さなfixtureと失敗・保持検査は維持し、製品経路には接続していない。
+**2026-11-18：build2の実iPhone比較2回を受領し、96sampleすべての正解値を確認。** 11:19の従来方式先行と11:20のMetal4先行は、同じA19 Pro／iOS26.5.2で正常完了した。公開`19adfba`のBuildInfo・同梱12source hash・3負荷の入力／設定・実行順を照合し、描画／compute計12,288語は検証済みCPU正解値と全一致。保持検査の成功4件と意図的な不正source拒否12件も期待どおり。原本は`private/metal-probe-results/20261118-111958/comparison.json`（286,847 bytes、SHA-256 `862f8544ca32363f8c7e85b580e43b78a6826627d5268dace4d078c1156151fd`）と`20261118-112019/comparison.json`（286,960 bytes、`33bb91d2a9808d8ab17dec5f2f54885075b3736493b5337c05914d674b49a44e`）に変更せず保持した。
+
+**大きな初回準備を観測したが、Metal4の速度優位は未確定。** 1回目の各負荷先頭はすべて従来方式で、library／関数特殊化／描画PSO／compute PSOの合計は301.300／33.300／91.523 ms。この3件で同runの4区間合計の96.71%を占める。以後45件の合計最大は1.182 ms、2回目48件の最大は1.603 msだった。各位置への割当は均等でも、初回の担当方式は均等ではなく、Metal4先行の2回目も同じsourceを経験済み。短い反復中央値の優劣も一貫しないため、初回生成の高速化・ゲームのframe gap改善は主張しない。
+
+全体elapsedは2.522秒→4.671秒に増えた一方、4区間合計は440.617 ms→42.261 msに減った。測定外には進捗snapshot／保存、GPU処理、control検査等があり、残差を保存時間やMetal4の遅さと断定できない。全196個の通常sample境界／run境界観測はthermal0・低電力OFFで、長時間の発熱・並列競合の証明でもない。次の最小比較は、複数の新しい自作caseで最初の担当方式を均等にし、進捗snapshot／保存時間を別計測する設計とする。並列要求と実Metal4のMRC寿命は引き続き独立した未完了項目。今回の作業は原本検証・分析・記録のみで、新build・製品設定変更は行っていない。
+
+**build2の配布時点の記録。** 分岐演算・依存する表参照・連続する混合演算の自作3種類を追加し、各4方式×4巡の計48sampleで実行順の各位置を均等にした。入力bufferとCPU側の正解値を固定し、描画／compute各64語を照合する。初回観測と再測定は分けて記録するが、OS cacheの冷温は制御しておらず、整数演算の自作負荷をSkyrimの実shaderや性能改善の証拠には扱わない。元の小さなfixtureと失敗・保持検査は維持し、製品経路には接続していない。
 
 Windows Metal6.2で3種類すべてのcompile／linkが警告なしで成功（`local/metal-compile/phone-workloads-windows-03/`）。最初の予約語に関する構文エラーと、修正後の未使用関数警告はrun01／02に保存し、名前変更と対象case限定で解消した。WSLの梱包12検査、専用署名22検査と、正解値・入力感度・実行順の通常／ASan+UBSan検査も成功。
 
 [phone run5](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afcfca5d133a39c4a1274b1)は公開`19adfba`で成功。Xcode26.6／SDK26.5の関連59検査はskipなし、native stderr12fileは空。Apple Paravirtual deviceのlegacy Metalで3種類×通常／変更入力の6回、計768語の描画／compute出力がCPU正解値と一致した。これは仮想GPU上の検証であり、Metal4や実iPhoneのbuild2実行ではない。ARM64実機用／Simulator用を別々に生成し、同梱12sourceはmain `57b800a`とbyte一致。開始・非対応結果・再起動復元・共有の4画面を目視した。結果画面の一時的なシステム通知は復元画面では消えており、内容を確認できた。原記録の`visual_review_pending=true`は変更せず、ここに後続確認を記録する。証拠ZIPは`local/metal-probe-ios-ci/run-05/`、1,956,852 bytes、SHA-256 `7c0f070425324f86fc184a68e176ff9f9085128d3b32b2b5c7b60cd89f09ec78`。
 
-同じ専用profile・証明書でbuild2を署名し、暗号検証と作業用keyの削除を確認。署名済IPAは`private/metal-probe-signing/run-20261118T012351Z-a95e13d8d6/MetalProbe-signed.ipa`、85,754 bytes、SHA-256 `f5b611c5a57ff1f34f3378fcd4d293a132917c41764815ae20e74cb56edf77a7`。既存の非公開`/metal-probe`だけを更新し、実HTTPSのpage／manifest／IPA成功と全転送hash一致、無認証404を確認。既存の他3routeとFunnel無効を維持し、実配信ページを390px幅のlight／dark両方で目視した。build2の端末インストール・Metal4計測・性能改善は未確認で、次は本人に比較を1回実行してJSONを共有してもらう。Skyrim本体の更新は行っていない。
+同じ専用profile・証明書でbuild2を署名し、暗号検証と作業用keyの削除を確認。署名済IPAは`private/metal-probe-signing/run-20261118T012351Z-a95e13d8d6/MetalProbe-signed.ipa`、85,754 bytes、SHA-256 `f5b611c5a57ff1f34f3378fcd4d293a132917c41764815ae20e74cb56edf77a7`。既存の非公開`/metal-probe`だけを更新し、実HTTPSのpage／manifest／IPA成功と全転送hash一致、無認証404を確認。既存の他3routeとFunnel無効を維持し、実配信ページを390px幅のlight／dark両方で目視した。配布時点では端末インストール・Metal4計測は未確認だった。その後の結果を冒頭に記録し、性能改善は引き続き未確認。Skyrim本体の更新は行っていない。
 
 **2026-11-18：開始順を反転した2回の実iPhone比較が成功。** A19 Pro GPU／iOS26.5.2で、Metal4先行（08:38）と従来方式先行（08:42）の原本を受領。配布buildの情報・source hash・全設定・実行順・期待出力を再検査した。通常24sampleと保持検査の成功4件、計28回で描画64語・計算16語が完全一致。意図的な不正source拒否は保持検査分も含め12件、保持検査8caseも期待どおり。ログの`wait_timed_out=true`はcallback後の公開を止めた0ms待機で、実コンパイルのタイムアウトではない。原本は`private/metal-probe-results/20261118-083859/comparison.json`（SHA-256 `83a5cbc162f2af38c776c5fad9c17771a075e5bbd3048cd696287798f066acce`）と`20261118-084250/comparison.json`（`5ad4f71b21579144ec00781ae98104d8e6cb8b2844a8624acde8535b947fe69c`）に保持。
 

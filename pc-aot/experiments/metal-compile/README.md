@@ -68,8 +68,8 @@ The existing private comparison-app route now serves build 2. Real HTTPS page,
 manifest and package checks passed, including the complete signed-package hash.
 Unauthenticated requests returned 404; the other three routes and disabled
 Funnel setting were preserved. Fresh live 390 px light/dark screenshots were
-visually reviewed. Physical installation and the build-2 JSON result are pending;
-one comparison runs the complete balanced 48-sample sequence.
+visually reviewed. Two subsequently received physical build-2 results are
+recorded below; one comparison runs the complete balanced 48-sample sequence.
 
 Earlier build-1 phone workflow run 4 (`9af993d`, 2026-11-18 JST) passed all 56 relevant test
 methods on Apple hardware, including four native entry controls and ten store
@@ -155,10 +155,66 @@ Skyrim shaders or a cold-cache benchmark. Position balancing does not balance
 uncontrolled compiler-cache misses, and four repeats do not establish a tail
 latency distribution. Keep first-observed and repeated samples separate.
 Build-2 Apple compilation and virtual-GPU oracle checks passed as recorded above;
-its physical results remain pending and separate from successful build 1.
+its subsequent physical results are recorded separately below.
 Parallel contention and actual Metal 4
 MRC lifetime checks are later, independent gates; this ARC probe does not close
 them or validate a MoltenVK integration.
+
+## Build-2 physical iPhone results
+
+The 2026-11-18 11:19 and 11:20 JST reports both completed on A19 Pro / iOS 26.5.2,
+starting with legacy and Metal 4 respectively. Their complete build manifests
+match the distributed `19adfba` artifact and all twelve source hashes. All 96
+normal samples match the verified CPU-oracle vectors word for word (12,288
+render/compute words). Four retained-success GPU cases and twelve intentional
+compiler-error cases also match expectations. No unexpected sample error or
+interruption was observed. Every route occupies each position once per case,
+but that does not balance which route first encounters a previously unused case.
+
+The first run's initial sample for each case used legacy synchronous compilation:
+
+| Authored workload | Library (ms) | Library + specialization + render/compute PSO (ms) |
+| --- | ---: | ---: |
+| Branching arithmetic | 136.133 | 301.300 |
+| Dependent table lookups | 7.408 | 33.300 |
+| Coupled mixing rounds | 17.750 | 91.523 |
+
+Those three samples account for 96.71% of the first run's measured preparation
+sum. The other 45 samples peak at 1.182001 ms for the same four-interval sum.
+The second run's 48 samples peak at 1.603459 ms; each individual interval is
+under 1 ms. This is consistent with substantial reuse, but OS cache contents
+remain unobserved. A Metal-4-first second run on already-used sources does not
+measure its previously-unseen compilation cost.
+
+Library medians for the three repeated samples, first/second run in milliseconds:
+
+| Workload | Legacy sync | Metal 4 sync | Legacy async | Metal 4 async |
+| --- | ---: | ---: | ---: | ---: |
+| Branching arithmetic | 0.072 / 0.138 | 0.054 / 0.155 | 0.106 / 0.225 | 0.115 / 0.185 |
+| Dependent table lookups | 0.025 / 0.113 | 0.023 / 0.120 | 0.029 / 0.123 | 0.023 / 0.185 |
+| Coupled mixing rounds | 0.037 / 0.105 | 0.026 / 0.105 | 0.038 / 0.115 | 0.062 / 0.128 |
+
+There is no consistent backend advantage. Whole-run elapsed time increases from
+2.522 to 4.671 seconds while the four preparation intervals total 440.617 then
+42.261 ms. The remainder includes progress snapshot/serialization and store
+calls, GPU/readback and controls; it is not measured compiler time. The successful
+source path implies 155 progress callbacks, not an independently logged callback
+count or store-duration measurement. Do not attribute the residual to fsync or
+interpret whole-run elapsed time as a Metal 4 regression.
+
+All 196 sampled run/sample boundary environments report thermal zero and low
+power off. Observed footprint maxima are 65,192,760 / 66,077,568 bytes and minimum
+advisory headroom is 3,474,799,816 / 3,473,915,008 bytes. These short serial runs
+do not bound transient peaks, sustained heat, parallel requests or game latency.
+Next, balance the first-use route across multiple new authored cases and measure
+progress/store overhead separately. No OS-cold-cache claim follows from that
+design either. Actual Metal 4 MRC ownership and contention remain separate gates.
+
+Immutable originals are private:
+`private/metal-probe-results/20261118-111958/comparison.json` (286,847 bytes,
+SHA-256 `862f8544ca32363f8c7e85b580e43b78a6826627d5268dace4d078c1156151fd`)
+and `20261118-112019/comparison.json` (286,960 bytes,
+`33bb91d2a9808d8ab17dec5f2f54885075b3736493b5337c05914d674b49a44e`).
 
 The immediate question is whether a library produced by `MTL4Compiler` or by an
 offline Windows compiler can feed the existing Metal function-specialization,

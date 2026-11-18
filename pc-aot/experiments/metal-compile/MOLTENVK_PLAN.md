@@ -35,6 +35,12 @@ and the existing DXVK scheduling remain on their current paths.
   These establish the basic ARC library boundary through legacy PSOs, not
   MoltenVK MRC lifetime or a performance improvement. See README for exact times,
   input identities and the unmodified private records.
+- Build 2 (`19adfba`) subsequently passed two physical iPhone runs with three
+  runtime-input integer workloads and 96 normal samples, all oracle words equal.
+  This expands the ARC compatibility evidence. The costly first encounters were
+  all legacy-first in run one; the opposite-order run reused the same sources.
+  It therefore does not establish a Metal 4 first-use speedup. See README for
+  preparation-stage sums, repeated medians and non-compiler elapsed overhead.
 
 Upstream source references below are all at the built revision:
 [shader implementation](https://github.com/KhronosGroup/MoltenVK/blob/458870543b9bcf6b0edd6f90aaa776707b310d96/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm),
@@ -208,9 +214,20 @@ Phone workflow run 5 (`19adfba`) passed 59 controls without skips, both Apple SD
 targets, and six legacy-Metal readbacks on the Apple Paravirtual device. The
 dedicated signed build-2 IPA is 85,754 bytes, with evidence under
 `private/metal-probe-signing/run-20261118T012351Z-a95e13d8d6/`; the existing private
-comparison-app link now serves that verified package. Physical build-2 results
-remain pending. Preserve initial/repeated observations and make no cold-cache
-claim. Parallel contention and actual Metal 4 MRC task
+comparison-app link now serves that verified package. Both physical build-2
+reports passed all output checks. Their long first-encounter preparation was
+concentrated in three legacy-first samples (301.300 / 33.300 / 91.523 ms);
+the second run reused the same sources. Repeated timings do not show a consistent
+Metal 4 advantage. Whole-run time also contains unmeasured progress/store work.
+
+Before drawing a performance conclusion, the next bounded serial comparison
+should use multiple new authored semantic variants with the first requested
+route balanced across all four APIs. Keep workload families and variant counts
+comparable, preserve fixed CPU oracles and source/options identities, and record
+first-observed samples separately. Cosmetic renaming alone is not evidence of a
+fresh compiler workload, and no variant scheme proves an empty OS cache. Measure
+progress snapshot/store time independently of compiler intervals, preserving
+interrupted-result recovery. Parallel contention and actual Metal 4 MRC task
 retirement should then be evaluated independently. The production gate stays
 open until those lifetime/options checks pass; neither an ARC fixture nor its
 short thermal-zero run proves game performance or long-session stability.
