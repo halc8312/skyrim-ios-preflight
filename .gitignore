@@ -826,3 +826,9 @@
 !/pc-aot/tests/native/test_metal_phone_workloads_gpu.mm
 
 !/pc-aot/tests/test_metal_phone_workloads.py
+
+# Authored integration checks for foreground and prefetched shader requests.
+!/pc-aot/tests/test_graphics_mvk_cold_integration.py
+!/pc-aot/tests/native/test_graphics_mvk_cold_integration.cpp
+!/pc-aot/tests/native/mvk_graphics_integration_backend.h
+!/pc-aot/tests/native/mvk_graphics_integration_backend.cpp

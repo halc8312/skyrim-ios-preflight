@@ -352,8 +352,10 @@ def patch_file_writes(s: str) -> str:
         '    if (write) skyrim_save_write_end(ios_save_candidate, ios_write_started, r < 0, 1);',
         'write-ex syscall observation before unchanged APC handling')
     old = '        if (!f->shared) close(f->fd);  /* shared BSA fds stay open */'
-    return replace_once(s, old, old + '\n        skyrim_save_write_close(&f->ios_write);',
-        'candidate handle elapsed interval, not serialization or durability')
+    return replace_once(s, old,
+        '        const uint64_t ios_close_started = f->shared ? 0 : skyrim_save_write_close_begin(&f->ios_write);\n'
+        + old + '\n        skyrim_save_write_close(&f->ios_write, ios_close_started);',
+        'candidate handle timing around the original close call')
 
 
 def patch_waiter_membership(s: str) -> str:

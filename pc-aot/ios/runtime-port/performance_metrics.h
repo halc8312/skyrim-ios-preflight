@@ -48,6 +48,9 @@ enum SkyrimPerfKind {
     /* Exact graphics-state flight wait; distinct from the legacy shader-pair
      * compile mutex. Append only: older numeric stall IDs must stay stable. */
     SKYRIM_PERF_GRAPHICS_STATE_WAIT,
+    SKYRIM_PERF_SAVE_FIRST_TO_LAST_WRITE_START,
+    SKYRIM_PERF_SAVE_LAST_WRITE_START_TO_CLOSE,
+    SKYRIM_PERF_SAVE_CLOSE_CALL,
     SKYRIM_PERF_KIND_COUNT
 };
 #define SKYRIM_PERF_BUCKET_COUNT 20

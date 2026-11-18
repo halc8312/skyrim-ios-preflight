@@ -117,6 +117,8 @@ int main(void) {
         c.args[0]=7;shim_CloseHandle(&c);
         assert(c.result==1 && c.pops==1 && slot.type==H_FREE && errno==EIO);
         assert(take(SKYRIM_PERF_SAVE_CANDIDATE_WINDOW,0)==(p==0?EXPECT_METRICS:0));
+        for(unsigned phase=SKYRIM_PERF_SAVE_FIRST_TO_LAST_WRITE_START;phase<=SKYRIM_PERF_SAVE_CLOSE_CALL;++phase)
+            assert(take(phase,0)==(p==0?EXPECT_METRICS:0));
         shim_CloseHandle(&c);assert(!c.result);
     }
     /* The original WriteFile stops dereferencing GFile after entering write().
@@ -138,9 +140,28 @@ int main(void) {
     assert(c.result==1 && slot.type==H_FREE);
     assert(take(ex?SKYRIM_PERF_SAVE_CANDIDATE_WRITE_EX:SKYRIM_PERF_SAVE_CANDIDATE_WRITE,0)==EXPECT_METRICS);
     assert(take(SKYRIM_PERF_SAVE_CANDIDATE_WINDOW,0)==EXPECT_METRICS);
+    for(unsigned phase=SKYRIM_PERF_SAVE_FIRST_TO_LAST_WRITE_START;phase<=SKYRIM_PERF_SAVE_CLOSE_CALL;++phase)
+        assert(take(phase,0)==EXPECT_METRICS);
     }
+    /* A shared descriptor can have a handle window with no close syscall. */
+    GFile *shared = calloc(1, sizeof *shared);
+    shared->fd = 7;
+    shared->shared = 1;
+#if EXPECT_METRICS
+    skyrim_save_write_init(&shared->ios_write, "example.ess", 12);
+#endif
+    slot = (struct HObj){H_FILE, shared};
+    during_write = NULL;
+    CPU shared_cpu = {.args = {7, 128, 12, 64}};
+    shim_WriteFile(&shared_cpu);
+    assert(shared_cpu.result == 1);
+    shim_CloseHandle(&shared_cpu);
+    assert(shared_cpu.result == 1 && slot.type == H_FREE);
+    assert(take(SKYRIM_PERF_SAVE_CANDIDATE_WINDOW, 0) == EXPECT_METRICS);
+    for (unsigned phase = SKYRIM_PERF_SAVE_FIRST_TO_LAST_WRITE_START; phase <= SKYRIM_PERF_SAVE_CLOSE_CALL; ++phase)
+        assert(take(phase, 0) == 0);
+    assert(writes==38 && pwrites==13 && closes==14 && frees==15 && callbacks==25);
     printf("save_write_behavior=PASS checksum=%u writes=%u pwrites=%u reads=%u closes=%u frees=%u callbacks=%u\n",
            checksum,writes,pwrites,reads,closes,frees,callbacks);
-    assert(writes==37 && pwrites==13 && closes==14 && frees==14 && callbacks==25);
     return 0;
 }

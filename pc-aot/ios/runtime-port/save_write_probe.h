@@ -11,6 +11,7 @@
 typedef struct SkyrimSaveWriteProbe {
     unsigned candidate;
     _Atomic uint64_t first_observed_ns;
+    _Atomic uint64_t last_write_start_ns;
 } SkyrimSaveWriteProbe;
 
 static inline unsigned skyrim_save_ascii_lower(unsigned ch) {
@@ -32,6 +33,7 @@ static inline void skyrim_save_write_init(SkyrimSaveWriteProbe *p, const char *p
          skyrim_save_suffix(path, len, ".ess.tmp", 8) ||
          skyrim_save_suffix(path, len, ".ess.bak", 8));
     atomic_init(&p->first_observed_ns, 0);
+    atomic_init(&p->last_write_start_ns, 0);
 }
 
 static inline uint64_t skyrim_save_write_begin(SkyrimSaveWriteProbe *p) {
@@ -42,6 +44,11 @@ static inline uint64_t skyrim_save_write_begin(SkyrimSaveWriteProbe *p) {
          * successful observer, not necessarily the earliest syscall. */
         atomic_compare_exchange_strong_explicit(&p->first_observed_ns, &expected, now,
                                                memory_order_relaxed, memory_order_relaxed);
+        /* Overlapping callers can reach the probe in a different order from
+         * their clock reads. Keep the latest start without touching p after I/O. */
+        uint64_t last = atomic_load_explicit(&p->last_write_start_ns, memory_order_relaxed);
+        while (last < now && !atomic_compare_exchange_strong_explicit(
+                &p->last_write_start_ns, &last, now, memory_order_relaxed, memory_order_relaxed)) {}
     }
     return now;
 }
@@ -54,10 +61,25 @@ static inline void skyrim_save_write_end(unsigned candidate, uint64_t start, int
     skyrim_perf_end(kind, start, failed);
 }
 
-static inline void skyrim_save_write_close(SkyrimSaveWriteProbe *p) {
-    uint64_t start = atomic_exchange_explicit(&p->first_observed_ns, 0, memory_order_relaxed);
-    if (start) skyrim_perf_end(SKYRIM_PERF_SAVE_CANDIDATE_WINDOW, start, 0);
-    /* Includes idle time between writes; excludes serialization before the
-     * first write, rename after close, and any later storage durability work.
-     * Failure status is unknown. Nothing is logged per write or per close. */
+static inline uint64_t skyrim_save_write_close_begin(const SkyrimSaveWriteProbe *p) {
+    if (!p->candidate || !atomic_load_explicit(&p->first_observed_ns, memory_order_relaxed)) return 0;
+    return skyrim_perf_now_ns();
+}
+
+static inline void skyrim_save_write_close(SkyrimSaveWriteProbe *p, uint64_t close_begin) {
+    uint64_t end = close_begin ? skyrim_perf_now_ns() : 0;
+    const uint64_t first = atomic_exchange_explicit(&p->first_observed_ns, 0, memory_order_relaxed);
+    if (!first) return;
+    if (!close_begin) end = skyrim_perf_now_ns();
+    skyrim_perf_interval(SKYRIM_PERF_SAVE_CANDIDATE_WINDOW, first, end, 0, 0);
+    const uint64_t last = atomic_load_explicit(&p->last_write_start_ns, memory_order_relaxed);
+    if (last < first || last > close_begin || close_begin > end) return;
+
+    /* The middle interval starts immediately before the latest write and ends
+     * at close entry. That write can still be in flight when the handle is freed.
+     * All three parts use the same clock boundaries. A shared fd, a failed
+     * clock read, or unordered observations leave only the existing window. */
+    skyrim_perf_interval(SKYRIM_PERF_SAVE_FIRST_TO_LAST_WRITE_START, first, last, 0, 0);
+    skyrim_perf_interval(SKYRIM_PERF_SAVE_LAST_WRITE_START_TO_CLOSE, last, close_begin, 0, 0);
+    skyrim_perf_interval(SKYRIM_PERF_SAVE_CLOSE_CALL, close_begin, end, 0, 0);
 }

@@ -248,4 +248,18 @@ int main(int argc,char **argv){
         self.assertEqual([x['thread_relation'] for x in overlaps], ['handle_lifetime', 'same'])
         self.assertIn('not proof of autosave', ' '.join(result['caveats']))
 
+    def test_save_phases_keep_cross_thread_boundaries_and_do_not_double_count_the_parent(self):
+        intervals = [('frame_gap', 1, 100, 400), ('save_candidate_window', 0, 100, 400),
+                     ('save_first_to_last_write_start', 0, 100, 200),
+                     ('save_last_write_start_to_close', 0, 200, 340), ('save_close_call', 1, 340, 400)]
+        records = [(analyzer.KINDS.index(kind), thread, start*1000000, end*1000000, 0, 0, 0, 0, 0)
+                   for kind, thread, start, end in intervals]
+        result = analyzer.summarize([stalls_v3(records, 1, 500000000)])
+        self.assertEqual(result['invalid_records'], 0)
+        gap = result['longest_sampled_frame_gaps'][0]
+        self.assertEqual(gap['sampled_work_overlap_union_ms'], 300)
+        self.assertEqual({row['kind']:row['thread_relation'] for row in gap['overlaps']},
+                         {'save_candidate_window':'handle_lifetime', 'save_first_to_last_write_start':'handle_lifetime',
+                          'save_last_write_start_to_close':'handle_lifetime', 'save_close_call':'same'})
+
 if __name__=='__main__':unittest.main()

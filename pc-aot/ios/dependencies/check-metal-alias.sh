@@ -55,6 +55,10 @@ env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT \
   SKYRIM_MVK_PATCHED_GPU_SOURCE="$WORK/sources/MoltenVK-ios-cachefix/MoltenVK/MoltenVK/GPUObjects" \
   python3 -m unittest discover -s "$ROOT/tests" -p test_mvk_module_cold.py -v \
   2>&1 | tee "$OUT/mvk-module-cold.log"
+env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT \
+  SKYRIM_MVK_GPU_SOURCE="$MVK_CORE/GPUObjects" \
+  python3 -m unittest discover -s "$ROOT/tests" -p test_graphics_mvk_cold_integration.py -v \
+  2>&1 | tee "$OUT/graphics-mvk-cold-integration.log"
 python3 "$ROOT/tests/graphics_alias_fixture.py" "$OUT/fixtures"
 # This executable runs on the build Mac, not on the phone. The workflow's
 # IPHONEOS_DEPLOYMENT_TARGET otherwise makes Apple clang silently select iOS.

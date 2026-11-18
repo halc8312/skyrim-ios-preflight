@@ -43,6 +43,7 @@ class SaveWriteTests(unittest.TestCase):
         restored = re.sub(r'^ *skyrim_save_write_(?:init|end|close)\([^\n]+\);\n', '', restored, flags=re.M)
         restored = re.sub(r'^ *if \(write\) skyrim_save_write_end\([^\n]+\);\n', '', restored, flags=re.M)
         restored = re.sub(r'^ *const uint64_t ios_write_started = [^\n]+;\n', '', restored, flags=re.M)
+        restored = re.sub(r'^ *const uint64_t ios_close_started = [^\n]+;\n', '', restored, flags=re.M)
         restored = re.sub(r'^ *const unsigned ios_save_candidate = [^\n]+;\n', '', restored, flags=re.M)
         self.assertEqual(restored, old)
         self.assertIn('skyrim_save_write_init', adapter.prepare(ROOT/'vendor/skydream')['kernel32.c'])

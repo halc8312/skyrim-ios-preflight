@@ -37,7 +37,10 @@
     "IOS_GRAPHICS_POLICY schema=1 exact_state=0 wait_scope=0",
     "IOS_GRAPHICS_POLICY schema=1 exact_state=1 wait_scope=1",
     "IOS_TIMING schema=1 approximate_window=1 end_ns=6000000000 window_ns=5000000000 kind=graphics_state_wait samples=1 total_ns=150000000 max_ns=150000000 failures_known=1 failures=0 sleep_calls=0 bins=0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0",
-    "IOS_TIMING_CONTEXT schema=1 approximate_window=1 end_ns=6000000000 window_ns=5000000000 kind=graphics_state_wait samples=1 total_ns=150000000 max_ns=150000000 failures_known=1 failures=0 sleep_calls=0 bins=0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0 role=1 source=0 result=1"
+    "IOS_TIMING_CONTEXT schema=1 approximate_window=1 end_ns=6000000000 window_ns=5000000000 kind=graphics_state_wait samples=1 total_ns=150000000 max_ns=150000000 failures_known=1 failures=0 sleep_calls=0 bins=0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0 role=1 source=0 result=1",
+    "IOS_TIMING schema=1 approximate_window=1 end_ns=6000000000 window_ns=5000000000 kind=save_first_to_last_write_start samples=1 total_ns=110000000 max_ns=110000000 failures_known=0 failures=0 sleep_calls=0 bins=0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0",
+    "IOS_TIMING schema=1 approximate_window=1 end_ns=6000000000 window_ns=5000000000 kind=save_last_write_start_to_close samples=1 total_ns=2000000 max_ns=2000000 failures_known=0 failures=0 sleep_calls=0 bins=0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0",
+    "IOS_TIMING schema=1 approximate_window=1 end_ns=6000000000 window_ns=5000000000 kind=save_close_call samples=1 total_ns=1000000 max_ns=1000000 failures_known=0 failures=0 sleep_calls=0 bins=0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
   ],
   "excluded": [
     "Game input: /private/authored-fixture/game",

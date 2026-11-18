@@ -23,7 +23,8 @@ static const char *const names[SKYRIM_PERF_KIND_COUNT] = {
     "mvk_dispatch_wait", "mvk_dispatch_block",
     "write_file", "write_file_ex", "save_candidate_write", "save_candidate_write_ex",
     "save_candidate_window", "mvk_cold_lock_wait", "mvk_convert",
-    "pacer_runloop", "pacer_sleep", "ui_pump", "pacer_overrun", "graphics_state_wait"
+    "pacer_runloop", "pacer_sleep", "ui_pump", "pacer_overrun", "graphics_state_wait",
+    "save_first_to_last_write_start", "save_last_write_start_to_close", "save_close_call"
 };
 typedef struct PerfAtomic {
     _Atomic uint64_t buckets[SKYRIM_PERF_BUCKET_COUNT];
@@ -122,12 +123,14 @@ static void stall_record(unsigned kind, uint64_t started, uint64_t ended,
         unsigned capacity = kind == SKYRIM_PERF_FRAME_GAP ? SKYRIM_PERF_STALL_FRAMES : SKYRIM_PERF_STALL_WORK;
         SkyrimPerfStall *spans = kind == SKYRIM_PERF_FRAME_GAP ? stall_frames : stall_work;
         if (*count < capacity) {
-            /* A file lifetime may cross threads; do not attribute its elapsed
-             * window to the thread that happened to close the handle. */
+            /* The writes and close can run on different threads. Only the
+             * close call itself is a measurement on the closing thread. */
+            const int handle_interval = kind == SKYRIM_PERF_SAVE_CANDIDATE_WINDOW ||
+                kind == SKYRIM_PERF_SAVE_FIRST_TO_LAST_WRITE_START ||
+                kind == SKYRIM_PERF_SAVE_LAST_WRITE_START_TO_CLOSE;
             spans[(*count)++] = (SkyrimPerfStall){started, ended,
-                kind == SKYRIM_PERF_SAVE_CANDIDATE_WINDOW ? 0 : anonymous_thread(),
-                                                kind, !!failed, estimated_end,
-                kind == SKYRIM_PERF_SAVE_CANDIDATE_WINDOW ? (SkyrimPerfContext){0} : context};
+                handle_interval ? 0 : anonymous_thread(), kind, !!failed, estimated_end,
+                handle_interval ? (SkyrimPerfContext){0} : context};
         } else {
             atomic_fetch_add_explicit(&stall_dropped_full, 1, memory_order_relaxed);
         }

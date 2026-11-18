@@ -19,7 +19,8 @@ KINDS = ('frame_gap', 'present_host', 'pacer', 'hlsl', 'graphics_pipeline',
          'mvk_dispatch_wait', 'mvk_dispatch_block', 'write_file', 'write_file_ex',
          'save_candidate_write', 'save_candidate_write_ex', 'save_candidate_window', 'mvk_cold_lock_wait',
          'mvk_convert', 'pacer_runloop', 'pacer_sleep', 'ui_pump', 'pacer_overrun',
-         'graphics_state_wait')
+         'graphics_state_wait', 'save_first_to_last_write_start', 'save_last_write_start_to_close',
+         'save_close_call')
 U64 = (1 << 64) - 1
 UPPER = (0, 1000000, 2000000, 4000000, 8000000, 12000000, 16666667,
          20000000, 25000000, 33333334, 40000000, 50000000, 66666667,
@@ -299,7 +300,7 @@ def summarize(lines):
             covered.append((max(f['start'],s['start']), min(f['end'],s['end'])))
             relation = 'unknown' if not f['thread'] or not s['thread'] else \
                        'same' if f['thread']==s['thread'] else 'different'
-            if s['kind'] == 'save_candidate_window':
+            if s['kind'] in ('save_candidate_window', 'save_first_to_last_write_start', 'save_last_write_start_to_close'):
                 relation = 'handle_lifetime'
             overlap.append(dict(kind=s['kind'],thread_relation=relation, overlap_ms=common/1e6,
                 duration_ms=(s['end']-s['start'])/1e6, estimated_endpoint=bool(s['estimated_end']),
@@ -409,6 +410,7 @@ def summarize(lines):
                  'Lock samples retain the longest completed intervals when full; completion order and recorder contention can still hide relevant work.',
                  'Unfinished waits and work completing after capture are absent even with zero drops. Missing or empty observations do not prove that a probe was enabled or that its target was reached.',
                  'Save candidates are filename-classified, not proof of autosave; their handle windows include idle time and exclude earlier serialization and later durability.',
+                 'Save phases partition a written handle window at the last observed write start and entry to close. The last write can still be in flight at close. Older logs have only the overall window.',
                  'Use a separate log for each launch; anonymous thread ordinals restart per process.'])
 
 
