@@ -239,8 +239,57 @@ static void paths(const char *root) {
     puts("case-insensitive paths PASS");
 }
 
+static void assert_bytes(const char *path, const char *text, size_t length) {
+    FILE *file = fopen(path, "rb");
+    assert(file);
+    for (size_t i = 0; i < length; ++i) assert(fgetc(file) == (unsigned char)text[i]);
+    assert(fgetc(file) == EOF && !ferror(file));
+    assert(!fclose(file));
+}
+static void save_bytes(const char *path, const char *bytes, size_t length) {
+    FILE *file = fopen(path, "wb"); assert(file);
+    assert(fwrite(bytes, 1, length, file) == length && !fclose(file));
+}
+static void profile_list(const char *root) {
+    char profile[512], docs[640], list[768];
+    assert(strlen(root) < 400);
+    snprintf(profile, sizeof profile, "%s/profile", root);
+    snprintf(docs, sizeof docs, "%s/Documents", profile);
+    snprintf(list, sizeof list, "%s/Skyrim/plugins.txt", docs);
+    assert(!mkdir(profile, 0700));
+    size_t bytes = 0;
+    const char *base[] = {"Skyrim.esm", NULL};
+    reset(); add("Authored.esp", 1, 0, base);
+    size_t count = run();
+    char *managed = skyrim_plugin_list_text(entries, order, count, &bytes);
+    assert(managed);
+    assert(!skyrim_plugin_apply_list(profile, NULL, 0));
+    assert(access(docs, F_OK) != 0);
+    assert(!skyrim_plugin_apply_list(profile, managed, bytes));
+    assert_bytes(list, managed, bytes);
+    assert(!skyrim_plugin_apply_list(profile, NULL, 0));
+    assert(access(list, F_OK) != 0);
+
+    const char original[] = "# Author's list\r\nDawnguard.esm\r\n# \xe9\n";
+    save_bytes(list, original, sizeof original - 1);
+    struct stat before, after;
+    assert(!stat(list, &before) && !skyrim_plugin_apply_list(profile, NULL, 0) && !stat(list, &after));
+    assert(before.st_ino == after.st_ino && before.st_mtime == after.st_mtime);
+    assert(!skyrim_plugin_apply_list(profile, managed, bytes) && !skyrim_plugin_apply_list(profile, managed, bytes));
+    assert(!skyrim_plugin_apply_list(profile, NULL, 0));
+    assert_bytes(list, original, sizeof original - 1);
+    assert(!skyrim_plugin_apply_list(profile, managed, bytes));
+    save_bytes(list, "edited", 6);
+    assert(!skyrim_plugin_apply_list(profile, NULL, 0)); assert_bytes(list, "edited", 6);
+    save_bytes(list, "", 0);
+    assert(!skyrim_plugin_apply_list(profile, managed, bytes) && !skyrim_plugin_apply_list(profile, NULL, 0));
+    assert_bytes(list, "", 0);
+    free(managed); reset();
+    puts("profile restore PASS");
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2);
-    parsing(); names(); ordering(); list_text(); paths(argv[1]);
+    parsing(); names(); ordering(); list_text(); paths(argv[1]); profile_list(argv[1]);
     return 0;
 }

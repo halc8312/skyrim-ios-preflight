@@ -130,7 +130,15 @@ class ModArchiveTests(unittest.TestCase):
         rows = conflicts.read_text().splitlines()
         self.assertIn("Textures/Sky.dds\t-1\t0", rows)
         self.assertIn("Textures/new.dds\t0\t1", rows)
-        self.assertIn("Skyrim.esm\t-1\t0", rows)
+        self.assertIn("Skyrim.esm\t0\t-1", rows)  # The protected original wins.
+        (view / "TESV_unpacked.exe").write_bytes(b"isolated test write")
+        (view / "Data/B.esp").write_bytes(b"isolated package write")
+        self.assertEqual((game / "TESV_unpacked.exe").read_bytes(), b"exe")
+        self.assertEqual((b / "B.esp").read_bytes(), b"TES4")
+        before_conflicts = conflicts.read_bytes()
+        self.assertNotIn("deploy 0 ", self.run_driver("deploy", game, view, conflicts, "incomplete", self.dir / "missing-package"))
+        self.assertEqual(conflicts.read_bytes(), before_conflicts)
+        self.assertEqual((view / "Data/B.esp").read_bytes(), b"isolated package write")
         # Rebuild with fewer packages replaces the view atomically.
         out = self.run_driver("deploy", game, view, conflicts, "key-2")
         self.assertIn("deploy 0  matches 1", out)

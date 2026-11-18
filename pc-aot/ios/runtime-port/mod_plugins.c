@@ -3,11 +3,15 @@
  * game memory, guest addresses or original installation edits. */
 #include "mod_plugins.h"
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 enum { TES4_HEADER_BYTES = 24, TES4_COMPRESSED = 0x00040000u };
 static const char k_managed[] = "# Managed by SkyrimIOS Settings > MOD. Changes here are replaced at launch.\r\n";
@@ -264,4 +268,103 @@ int skyrim_plugin_child_path(const char *directory, const char *name, char *out,
     int n = snprintf(out, capacity, "%s/%s", directory, chosen);
     if (n < 0 || (size_t)n >= capacity) return -1;
     return matches ? 1 : 0;
+}
+
+/* The baseline lives in the application-owned profile, never in the game's
+ * Data folder. One leading byte distinguishes an absent file from an empty
+ * one. It is durable before we publish a managed list. */
+enum { MOD_LIST_LIMIT = 1024 * 1024 };
+static int read_list_file(const char *path, size_t limit, char **bytes, size_t *size) {
+    *bytes = NULL;
+    *size = 0;
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return errno;
+    struct stat st;
+    int e = 0;
+    if (fstat(fd, &st)) e = errno;
+    else if (!S_ISREG(st.st_mode) || st.st_size < 0 || (uint64_t)st.st_size > limit) e = EINVAL;
+    if (!e && !(*bytes = malloc((size_t)st.st_size + 1))) e = ENOMEM;
+    while (!e && *size < (size_t)st.st_size) {
+        ssize_t n = read(fd, *bytes + *size, (size_t)st.st_size - *size);
+        if (n > 0) *size += (size_t)n;
+        else if (n == 0 || errno != EINTR) e = n == 0 ? EIO : errno;
+    }
+    close(fd);
+    if (e) { free(*bytes); *bytes = NULL; *size = 0; }
+    return e;
+}
+
+static int replace_list_file(const char *path, const char *bytes, size_t size) {
+    char tmp[4096];
+    if (snprintf(tmp, sizeof tmp, "%s.XXXXXX", path) >= (int)sizeof tmp) return ENAMETOOLONG;
+    int fd = mkstemp(tmp);
+    if (fd < 0) return errno;
+    int e = 0;
+    for (size_t pos = 0; pos < size;) {
+        ssize_t n = write(fd, bytes + pos, size - pos);
+        if (n > 0) pos += (size_t)n;
+        else if (n == 0 || errno != EINTR) { e = n == 0 ? EIO : errno; break; }
+    }
+    if (!e && fsync(fd)) e = errno;
+    if (close(fd) && !e) e = errno;
+    if (!e && rename(tmp, path)) e = errno;
+    if (e) unlink(tmp);
+    return e;
+}
+
+static int profile_subdir(const char *parent, const char *name, int create, char *out, size_t size) {
+    struct stat st;
+    if (lstat(parent, &st) || !S_ISDIR(st.st_mode)) return ENOTDIR;
+    int found = skyrim_plugin_child_path(parent, name, out, size);
+    if (found < 0) return EINVAL;
+    if (!found && create && mkdir(out, 0700) && errno != EEXIST) return errno;
+    if (lstat(out, &st)) return errno;
+    return S_ISDIR(st.st_mode) ? 0 : ENOTDIR;
+}
+
+int skyrim_plugin_apply_list(const char *profile, const char *list, size_t length) {
+    char baseline[4096], docs[4096], folder[4096], target[4096];
+    if (!profile || (list && (!skyrim_plugin_list_is_managed(list, length) || length > MOD_LIST_LIMIT)) ||
+        snprintf(baseline, sizeof baseline, "%s/.skyrimios-plugin-baseline-v1", profile) >= (int)sizeof baseline)
+        return EINVAL;
+    char *original = NULL, *current = NULL;
+    size_t n_original = 0, n_current = 0;
+    int e = read_list_file(baseline, MOD_LIST_LIMIT + 1, &original, &n_original);
+    if (e == ENOENT && !list) return 0;  /* Fresh/vanilla: no scan, creation, or write. */
+    if (e && e != ENOENT) return e;
+    if (original && (!n_original || (original[0] != 0 && original[0] != 1) ||
+                     (!original[0] && n_original != 1))) { free(original); return EINVAL; }
+    e = profile_subdir(profile, "Documents", list != NULL, docs, sizeof docs);
+    if (!e) e = profile_subdir(docs, "Skyrim", list != NULL, folder, sizeof folder);
+    if (!e && skyrim_plugin_child_path(folder, "plugins.txt", target, sizeof target) < 0) e = EINVAL;
+    if (e) goto done;
+    e = read_list_file(target, MOD_LIST_LIMIT, &current, &n_current);
+    if (e && e != ENOENT) goto done;
+    e = 0;
+    int managed = skyrim_plugin_list_is_managed(current, n_current);
+    if (list) {
+        if (!managed) {
+            char *snapshot = malloc(n_current + 1);
+            if (!snapshot) { e = ENOMEM; goto done; }
+            snapshot[0] = current != NULL;
+            if (n_current) memcpy(snapshot + 1, current, n_current);
+            e = replace_list_file(baseline, snapshot, n_current + 1);
+            free(snapshot);
+        } else if (!original) {
+            /* A list from another installation has no local provenance. */
+            e = EINVAL;
+        }
+        if (!e && (!current || n_current != length || memcmp(current, list, length)))
+            e = replace_list_file(target, list, length);
+    } else {
+        /* Preserve a later external edit. Only replace our marked output. */
+        if (managed) {
+            if (original[0]) e = replace_list_file(target, original + 1, n_original - 1);
+            else if (unlink(target)) e = errno;
+        }
+        if (!e && unlink(baseline)) e = errno;
+    }
+done:
+    free(current); free(original);
+    return e;
 }

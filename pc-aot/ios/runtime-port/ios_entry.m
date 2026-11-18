@@ -150,7 +150,9 @@ int SDL_main(int argc, char **argv) {
         NSURL *cache = directory(NSCachesDirectory, @"SkyrimIOS/DXVK");
         // MOD profiles: the default keeps the existing saves; others have their
         // own. May ask the safe-mode question before anything else starts.
-        NSURL *profile = [NSURL fileURLWithPath:skyrim_mods_select_profile(defaultProfile.path) isDirectory:YES];
+        NSString *profileDirectory = skyrim_mods_select_profile(defaultProfile.path);
+        if (!profileDirectory) startup_failure(@"Cannot open the selected MOD profile; the guest was not started");
+        NSURL *profile = [NSURL fileURLWithPath:profileDirectory isDirectory:YES];
         skyrim_mobile_initialize(profile.fileSystemRepresentation);
         for (unsigned i = 0; i < SKYRIM_SHADER_OPTION_COUNT; ++i) {
             int enabled = skyrim_mobile_shader_option(i);
@@ -177,7 +179,8 @@ int SDL_main(int argc, char **argv) {
         // The original game folder, or a copy-on-write clone with the enabled
         // MOD packages laid over Data. The original is never modified.
         NSURL *runtimeGame = [NSURL fileURLWithPath:skyrim_mods_prepare_game(game.path) isDirectory:YES];
-        skyrim_mobile_prepare_mods(runtimeGame.fileSystemRepresentation);
+        if (!skyrim_mobile_prepare_mods(runtimeGame.fileSystemRepresentation))
+            startup_failure(@"Cannot restore the profile plugin list; the guest was not started");
         set_default("LB_LOG", skyrim_mobile_verbose() ? "1" : "0");
         set_default("DXVK_LOG_PATH", cache.fileSystemRepresentation);
         set_default("DXVK_STATE_CACHE_PATH", cache.fileSystemRepresentation);

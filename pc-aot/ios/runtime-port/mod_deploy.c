@@ -86,27 +86,48 @@ int skyrim_mod_data_root(const char *const *paths, size_t count, char *prefix, s
 }
 
 /* ---- file helpers ----------------------------------------------------- */
-static int copy_bytes(const char *source, const char *destination) {
-    int in = open(source, O_RDONLY | O_CLOEXEC);
-    if (in < 0) return errno;
+static int copy_bytes(int in, const char *destination) {
     int out = open(destination, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
-    if (out < 0) { int e = errno; close(in); return e; }
+    if (out < 0) return errno;
     char buf[1 << 16]; ssize_t r; int e = 0;
-    while ((r = read(in, buf, sizeof buf)) > 0)
-        if (write(out, buf, (size_t)r) != r) { e = errno ? errno : EIO; break; }
-    if (r < 0) e = errno;
-    close(in);
+    while (!e) {
+        r = read(in, buf, sizeof buf);
+        if (r == 0) break;
+        if (r < 0) { if (errno != EINTR) e = errno; continue; }
+        for (ssize_t pos = 0; pos < r;) {
+            ssize_t n = write(out, buf + pos, (size_t)(r - pos));
+            if (n > 0) pos += n;
+            else if (n == 0 || errno != EINTR) { e = n == 0 ? EIO : errno; break; }
+        }
+    }
     if (close(out) && !e) e = errno;
     if (e) unlink(destination);
     return e;
 }
-int skyrim_clone_file(const char *source, const char *destination) {
+static int clone_regular(const char *source, const char *destination, int game_input) {
+    int fd = open(source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) return errno;
+    struct stat st;
+    int e = 0;
+    if (fstat(fd, &st)) e = errno;
+    else if (!S_ISREG(st.st_mode)) e = EINVAL;
+    else {
 #ifdef __APPLE__
-    if (!clonefile(source, destination, CLONE_NOFOLLOW)) return 0;
+        if (fclonefileat(fd, AT_FDCWD, destination, 0)) {
+            e = errno;
+            /* Never silently copy an entire game on a phone without COW. */
+            if (!game_input && (e == ENOTSUP || e == EXDEV)) e = copy_bytes(fd, destination);
+        }
 #else
-    if (!link(source, destination)) return 0;
+        (void)game_input;
+        e = copy_bytes(fd, destination);
 #endif
-    return copy_bytes(source, destination);
+    }
+    close(fd);
+    return e;
+}
+int skyrim_clone_file(const char *source, const char *destination) {
+    return clone_regular(source, destination, 0);
 }
 static int remove_entry(const char *path, const struct stat *st, int flag, struct FTW *ftw) {
     (void)st; (void)flag; (void)ftw;
@@ -123,7 +144,10 @@ typedef int (*WalkFn)(void *ctx, const char *relative, const char *name, int is_
 static int walk(const char *root, char *relative, size_t len, size_t cap, int depth, WalkFn fn, void *ctx) {
     if (depth > 64) return ELOOP;
     char path[4096];
-    snprintf(path, sizeof path, "%s%s%s", root, len ? "/" : "", relative);
+    if (snprintf(path, sizeof path, "%s%s%s", root, len ? "/" : "", relative) >= (int)sizeof path) return ENAMETOOLONG;
+    struct stat dir_st;
+    if (lstat(path, &dir_st)) return errno;
+    if (!S_ISDIR(dir_st.st_mode)) return ENOTDIR;
     DIR *dir = opendir(path);
     if (!dir) return errno;
     struct dirent *entry; int e = 0;
@@ -136,12 +160,13 @@ static int walk(const char *root, char *relative, size_t len, size_t cap, int de
         memcpy(relative + len + (len ? 1 : 0), name, nlen + 1);
         size_t child = len + (len ? 1 : 0) + nlen;
         char full[4096]; struct stat st;
-        snprintf(full, sizeof full, "%s/%s", root, relative);
+        if (snprintf(full, sizeof full, "%s/%s", root, relative) >= (int)sizeof full) { e = ENAMETOOLONG; break; }
         if (lstat(full, &st)) { e = errno; }
         else if (S_ISDIR(st.st_mode)) {
             e = fn(ctx, relative, name, 1, &st);
             if (!e) e = walk(root, relative, child, cap, depth + 1, fn, ctx);
         } else if (S_ISREG(st.st_mode)) e = fn(ctx, relative, name, 0, &st);
+        else e = EINVAL;
         relative[len] = 0;
     }
     closedir(dir);
@@ -217,6 +242,7 @@ static int index_fn(void *ctx, const char *relative, const char *name, int is_di
     Deploy *d = ctx;
     Slot *s = map_find(&d->map, relative, 1);
     if (!s) return ENOMEM;
+    if (s->actual && strcmp(s->actual, relative)) return EEXIST;
     if (!s->actual) { s->actual = strdup(relative); s->owner = -1; s->dir = (unsigned char)is_dir; }
     return s->actual ? 0 : ENOMEM;
 }
@@ -247,19 +273,22 @@ static int overlay_fn(void *ctx, const char *relative, const char *name, int is_
     char dst[8192];
     if (is_dir) {
         if (s->actual) {
-            if (!s->dir && d->conflicts) fprintf(d->conflicts, "%s\t%d\t%d\n", s->actual, s->owner, d->owner);
+            if (!s->dir && d->conflicts) fprintf(d->conflicts, "%s\t%d\t%d\n", s->actual, d->owner, s->owner);
             return 0;
         }
         snprintf(dst, sizeof dst, "%s/%s", d->data_dir, actual);
-        if (mkdir(dst, 0755) && errno != EEXIST) return errno;
+        if (mkdir(dst, 0755)) return errno;
         s->actual = strdup(actual); s->owner = d->owner; s->dir = 1;
         return s->actual ? 0 : ENOMEM;
     }
     char src[8192];
     snprintf(src, sizeof src, "%s/%s", d->package, relative);
     if (s->actual) {
+        if (s->dir || (s->owner == -1 && protected_original(s))) {
+            if (d->conflicts) fprintf(d->conflicts, "%s\t%d\t%d\n", s->actual, d->owner, s->owner);
+            return 0;
+        }
         if (d->conflicts) fprintf(d->conflicts, "%s\t%d\t%d\n", s->actual, s->owner, d->owner);
-        if (s->dir || (s->owner == -1 && protected_original(s))) return 0;
         snprintf(dst, sizeof dst, "%s/%s", d->data_dir, s->actual);
         if (unlink(dst) && errno != ENOENT) return errno;
         s->owner = d->owner;
@@ -278,8 +307,8 @@ static int clone_tree_fn(void *ctx, const char *relative, const char *name, int 
     char src[8192], dst[8192];
     snprintf(src, sizeof src, "%s/%s", roots[0], relative);
     snprintf(dst, sizeof dst, "%s/%s", roots[1], relative);
-    if (is_dir) return mkdir(dst, 0755) && errno != EEXIST ? errno : 0;
-    return skyrim_clone_file(src, dst);
+    if (is_dir) return mkdir(dst, 0755) ? errno : 0;
+    return clone_regular(src, dst, 1);
 }
 static int find_child(const char *dir, const char *name, char *out, size_t cap) {
     return skyrim_plugin_child_path(dir, name, out, cap);
@@ -300,17 +329,18 @@ int skyrim_deploy_matches(const char *view_dir, const char *key) {
 int skyrim_deploy_build(const char *game_dir, const char *const *package_roots, size_t count,
                         const char *view_dir, const char *conflicts_path, const char *key,
                         char *err, size_t err_cap) {
-    char building[4096], old[4096], data[4096];
+    char building[4096], old[4096], data[4096], pending_conflicts[4096] = "";
     if (strlen(view_dir) > 3000 || strlen(game_dir) > 3000) return ENAMETOOLONG;
     if (err && err_cap) err[0] = 0;
     snprintf(building, sizeof building, "%s.building", view_dir);
     snprintf(old, sizeof old, "%s.old", view_dir);
     int e = skyrim_remove_tree(building);
-    if (!e) e = skyrim_remove_tree(old);
+    struct stat previous;
+    if (!e && !lstat(old, &previous)) {
+        if (!lstat(view_dir, &previous)) e = skyrim_remove_tree(old);
+        else if (errno != ENOENT || rename(old, view_dir)) e = errno;
+    }
     if (e) { snprintf(err, err_cap, "cannot clear previous build (%d)", e); return e; }
-#ifdef __APPLE__
-    if (clonefile(game_dir, building, CLONE_NOFOLLOW)) { e = errno; snprintf(err, err_cap, "cannot clone the game folder (%d)", e); return e; }
-#else
     if (mkdir(building, 0755)) { e = errno; snprintf(err, err_cap, "cannot create view (%d)", e); return e; }
     {
         const char *roots[2] = {game_dir, building};
@@ -318,35 +348,52 @@ int skyrim_deploy_build(const char *game_dir, const char *const *package_roots, 
         e = walk(game_dir, rel, 0, sizeof rel, 0, clone_tree_fn, (void *)roots);
         if (e) { snprintf(err, err_cap, "cannot copy the game folder (%d)", e); skyrim_remove_tree(building); return e; }
     }
-#endif
     if (find_child(building, "Data", data, sizeof data) < 0) { skyrim_remove_tree(building); snprintf(err, err_cap, "ambiguous Data folder"); return EEXIST; }
     if (mkdir(data, 0755) && errno != EEXIST) { e = errno; skyrim_remove_tree(building); return e; }
     Deploy d = {0};
     d.data_dir = data; d.err = err; d.err_cap = err_cap;
-    d.conflicts = conflicts_path ? fopen(conflicts_path, "wb") : NULL;
+    if (conflicts_path) {
+        snprintf(pending_conflicts, sizeof pending_conflicts, "%s.conflicts.XXXXXX", view_dir);
+        int fd = mkstemp(pending_conflicts);
+        if (fd < 0) e = errno;
+        else if (!(d.conflicts = fdopen(fd, "w"))) { e = errno; close(fd); }
+    }
     char rel[4096] = "";
-    e = walk(data, rel, 0, sizeof rel, 0, index_fn, &d);
+    if (!e) e = walk(data, rel, 0, sizeof rel, 0, index_fn, &d);
     for (size_t i = 0; !e && i < count; ++i) {
         d.package = package_roots[i]; d.owner = (int)i;
         rel[0] = 0;
         e = walk(package_roots[i], rel, 0, sizeof rel, 0, overlay_fn, &d);
     }
-    if (d.conflicts) fclose(d.conflicts);
+    if (d.conflicts) {
+        if (ferror(d.conflicts) && !e) e = EIO;
+        if (fclose(d.conflicts) && !e) e = errno;
+    }
     map_free(&d.map);
     if (!e) {
         char marker[8192];
         snprintf(marker, sizeof marker, "%s/.skyrimios-deploy", building);
-        FILE *f = fopen(marker, "wb");
+        FILE *f = fopen(marker, "wbx");
         if (!f || fprintf(f, "%s\n", key ? key : "") < 0) e = EIO;
         if (f && fclose(f) && !e) e = EIO;
     }
     if (!e) {
         struct stat st;
-        if (!lstat(view_dir, &st) && rename(view_dir, old)) e = errno;
-        else if (rename(building, view_dir)) e = errno;
+        int had_view = !lstat(view_dir, &st);
+        if (!had_view && errno != ENOENT) e = errno;
+        else if (had_view && rename(view_dir, old)) e = errno;
+        else if (rename(building, view_dir)) {
+            e = errno;
+            if (had_view && rename(old, view_dir)) e = errno;
+        }
+        else if (conflicts_path && rename(pending_conflicts, conflicts_path)) {
+            e = errno;
+            if (rename(view_dir, building) || (had_view && rename(old, view_dir))) e = errno;
+        }
         if (!e) skyrim_remove_tree(old);
     }
     if (e) {
+        if (*pending_conflicts) unlink(pending_conflicts);
         if (err && !err[0]) snprintf(err, err_cap, "deploy failed (%d)", e);
         skyrim_remove_tree(building);
     }

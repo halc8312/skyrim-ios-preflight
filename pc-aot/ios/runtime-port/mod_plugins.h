@@ -92,6 +92,9 @@ char *skyrim_plugin_list_text(const SkyrimPluginEntry *entries,
                               const size_t *order, size_t loaded, size_t *out_bytes);
 /* 1 when bytes start with the managed-file comment written above. */
 int skyrim_plugin_list_is_managed(const char *bytes, size_t length);
+/* Apply a generated list before guest startup. A NULL list restores the
+ * profile's previous exact bytes (or absence) if this app managed it. */
+int skyrim_plugin_apply_list(const char *profile, const char *list, size_t length);
 
 /* Resolve one existing child of directory case-insensitively, as the guest's
  * path resolver does. 1: unique match copied to out; 0: absent (name copied);

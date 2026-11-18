@@ -17,13 +17,13 @@ int skyrim_mod_data_root(const char *const *paths, size_t count,
 /* Build the launch view: a copy-on-write clone of the original game folder
  * with enabled MOD packages laid over its Data folder, later packages winning.
  * On Apple platforms files are cloned (clonefile), so the view costs almost
- * no space and writes to it never reach the original. Elsewhere hard links or
- * copies are used (tests only).
+ * no space and writes to it never reach the original. Elsewhere independent
+ * byte copies are used (tests only).
  *
  * Built in view_dir + ".building" and swapped in by rename; the original game
  * folder and packages are only read. Original *.esm / *.bsa / executable
  * files are never replaced. Each replacement is appended to conflicts_path
- * as "relative-path<TAB>previous-owner<TAB>new-owner\n" (owner -1 = original
+ * as "relative-path<TAB>losing-owner<TAB>winning-owner\n" (owner -1 = original
  * game, otherwise the package index). key is stored in the view so an
  * unchanged selection can be reused. Returns 0 or an errno-style code; err
  * receives a short description. */
@@ -36,7 +36,7 @@ int skyrim_deploy_matches(const char *view_dir, const char *key);
 int skyrim_tree_signature(const char *dir, uint64_t *signature);
 /* Recursive delete that never follows symlinks. 0 on success or absent. */
 int skyrim_remove_tree(const char *path);
-/* Copy-on-write clone where available, else hard link, else byte copy. */
+/* Copy-on-write clone where available, else an independent byte copy. */
 int skyrim_clone_file(const char *source, const char *destination);
 #ifdef __cplusplus
 }

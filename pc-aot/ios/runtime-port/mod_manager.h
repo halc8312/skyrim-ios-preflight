@@ -18,6 +18,11 @@ NSString *skyrim_mods_prepare_game(NSString *game_directory);
 NSString *skyrim_mods_launch_notice(void);
 /* Plugin on/off and order for the running profile (array of {name, on}). */
 NSArray<NSDictionary *> *skyrim_mods_plugin_choices(void);
+/* Frozen effective choices for this launch, accounting for disabled packages
+ * and a safe-mode or failed-deployment fallback. */
+BOOL skyrim_mods_manages_plugins(void);
+NSArray<NSDictionary *> *skyrim_mods_launch_plugin_choices(void);
+void skyrim_mods_no_plugin_loaded(void);
 void skyrim_mods_set_plugin_choices(NSArray *rows);
 /* Called with the running frame count; marks the launch healthy once. */
 void skyrim_mods_frame(uint64_t frames);

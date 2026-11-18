@@ -14,6 +14,7 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
 #include <CommonCrypto/CommonDigest.h>
+#include <errno.h>
 #include "mod_manager.h"
 #include "mod_archive.h"
 #include "mod_deploy.h"
@@ -40,7 +41,10 @@ static NSString *Base(void) {
     return base;
 }
 static NSString *ModsDir(void) { return [Base() stringByAppendingPathComponent:@"Mods"]; }
-static NSString *PackageDir(NSString *pid) { return [ModsDir() stringByAppendingPathComponent:pid]; }
+static BOOL ValidId(NSString *pid) {
+    return [pid isKindOfClass:NSString.class] && pid.length == 36 && [[NSUUID alloc] initWithUUIDString:pid] != nil;
+}
+static NSString *PackageDir(NSString *pid) { return ValidId(pid) ? [ModsDir() stringByAppendingPathComponent:pid] : nil; }
 static NSString *StatePath(void) { return [Base() stringByAppendingPathComponent:@"mods-state.json"]; }
 static NSString *LaunchPath(void) { return [Base() stringByAppendingPathComponent:@"launch.json"]; }
 
@@ -48,6 +52,9 @@ static NSMutableDictionary *state;          /* main thread only */
 static NSString *activeProfile;             /* this launch */
 static NSString *launchNotice;
 static BOOL launchWithoutMods, healthyMarked;
+static NSArray<NSDictionary *> *launchPlugins;
+static NSDictionary *launchSetup;
+static BOOL launchHasPackages;
 
 static id MutableJSON(NSData *data) {
     if (!data) return nil;
@@ -65,9 +72,14 @@ static NSMutableDictionary *ProfileById(NSString *pid) {
 }
 static NSMutableDictionary *SelectedProfile(void) { return ProfileById(state[@"next"]) ?: Profiles().firstObject; }
 static NSMutableDictionary *RunningProfile(void) { return ProfileById(activeProfile) ?: SelectedProfile(); }
-static NSString *ProfileDir(NSDictionary *p) { return [Base() stringByAppendingPathComponent:p[@"dir"]]; }
+static NSString *ProfileDir(NSDictionary *p) {
+    NSString *pid = p[@"id"];
+    if ([pid isEqual:@"default"]) return [Base() stringByAppendingPathComponent:@"Profile"];
+    return ValidId(pid) ? [[Base() stringByAppendingPathComponent:@"Profiles"] stringByAppendingPathComponent:pid] : nil;
+}
 
 static NSMutableDictionary *LoadPackage(NSString *pid) {
+    if (!ValidId(pid)) return nil;
     NSMutableDictionary *p = MutableJSON([NSData dataWithContentsOfFile:[PackageDir(pid) stringByAppendingPathComponent:@"package.json"]]);
     return [p isKindOfClass:NSMutableDictionary.class] ? p : nil;
 }
@@ -84,9 +96,6 @@ static NSArray<NSMutableDictionary *> *InstalledPackages(void) {
 static void EnsureState(void) {
     if (state) return;
     NSFileManager *fm = NSFileManager.defaultManager;
-    [fm createDirectoryAtPath:ModsDir() withIntermediateDirectories:YES attributes:nil error:NULL];
-    NSURL *mods = [NSURL fileURLWithPath:ModsDir() isDirectory:YES];
-    [mods setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:NULL];   /* re-downloadable */
     state = MutableJSON([NSData dataWithContentsOfFile:StatePath()]);
     if (![state isKindOfClass:NSMutableDictionary.class] || ![state[@"profiles"] isKindOfClass:NSMutableArray.class]) {
         /* First run: the existing profile and saves become "Default". Plugin
@@ -98,15 +107,49 @@ static void EnsureState(void) {
                 [plugins addObject:[@{@"name":row[@"name"], @"on":@([row[@"on"] boolValue])} mutableCopy]];
         state = [@{@"version":@1, @"next":@"default", @"profiles":[@[[@{@"id":@"default", @"name":@"Default",
             @"dir":@"Profile", @"packages":[NSMutableArray array], @"plugins":plugins} mutableCopy]] mutableCopy]} mutableCopy];
-        SaveState();
     }
+    NSMutableArray *validProfiles = [NSMutableArray array];
+    for (id p in Profiles())
+        if ([p isKindOfClass:NSMutableDictionary.class] && ProfileDir(p) &&
+            [p[@"plugins"] isKindOfClass:NSMutableArray.class] && [p[@"packages"] isKindOfClass:NSMutableArray.class])
+            [validProfiles addObject:p];
+    state[@"profiles"] = validProfiles;
+    if (!ProfileById(@"default")) [validProfiles insertObject:[@{@"id":@"default", @"name":@"Default", @"dir":@"Profile",
+        @"packages":[NSMutableArray array], @"plugins":[NSMutableArray array]} mutableCopy] atIndex:0];
     /* Drop selections whose package no longer exists. */
     for (NSMutableDictionary *p in Profiles()) {
         NSMutableArray *keep = [NSMutableArray array];
-        for (NSMutableDictionary *row in p[@"packages"])
-            if ([fm fileExistsAtPath:[PackageDir(row[@"id"]) stringByAppendingPathComponent:@"package.json"]]) [keep addObject:row];
+        for (id row in p[@"packages"])
+            if ([row isKindOfClass:NSMutableDictionary.class] && ValidId(row[@"id"]) &&
+                [fm fileExistsAtPath:[PackageDir(row[@"id"]) stringByAppendingPathComponent:@"package.json"]]) [keep addObject:row];
         p[@"packages"] = keep;
     }
+}
+
+/* A disabled package's previous choice must not activate a same-named file
+ * from another source. A second enabled package may still provide the name. */
+static NSArray<NSDictionary *> *EffectivePlugins(NSDictionary *profile) {
+    NSArray *choices = profile[@"plugins"];
+    if (!choices.count) return @[];
+    NSMutableSet *disabled = [NSMutableSet set], *enabled = [NSMutableSet set];
+    for (NSDictionary *row in profile[@"packages"]) {
+        NSMutableSet *set = [row[@"on"] boolValue] ? enabled : disabled;
+        for (id name in LoadPackage(row[@"id"])[@"plugins"])
+            if ([name isKindOfClass:NSString.class]) [set addObject:[name lowercaseString]];
+    }
+    [disabled minusSet:enabled];
+    NSMutableArray *effective = [NSMutableArray array];
+    for (id row in choices) {
+        if (![row isKindOfClass:NSDictionary.class] || ![row[@"name"] isKindOfClass:NSString.class]) continue;
+        BOOL on = [row[@"on"] boolValue] && ![disabled containsObject:[row[@"name"] lowercaseString]];
+        [effective addObject:@{@"name":row[@"name"], @"on":@(on)}];
+    }
+    return effective;
+}
+
+static BOOL AnyOn(NSArray *rows) {
+    for (NSDictionary *row in rows) if ([row[@"on"] boolValue]) return YES;
+    return NO;
 }
 
 /* ---- startup ----------------------------------------------------------- */
@@ -130,13 +173,14 @@ static NSInteger AskBeforeLaunch(NSString *title, NSString *message, NSArray<NSS
 }
 
 NSString *skyrim_mods_select_profile(NSString *defaultProfile) {
-    (void)defaultProfile;   /* "Profile" under Base: the existing default */
     EnsureState();
     NSMutableDictionary *profile = SelectedProfile();
     NSDictionary *last = MutableJSON([NSData dataWithContentsOfFile:LaunchPath()]);
+    launchPlugins = EffectivePlugins(profile);
     launchWithoutMods = [state[@"safeNext"] boolValue];
-    if (launchWithoutMods) { [state removeObjectForKey:@"safeNext"]; launchNotice = T(@"Started without MODs, as requested.", @"指定どおり、MODなしで起動しました。"); }
+    if (launchWithoutMods) { [state removeObjectForKey:@"safeNext"]; SaveState(); launchNotice = T(@"Started without MODs, as requested.", @"指定どおり、MODなしで起動しました。"); }
     else if ([last isKindOfClass:NSDictionary.class] && [last[@"hadMods"] boolValue] &&
+             [last[@"profile"] isEqual:profile[@"id"]] && (AnyOn(profile[@"packages"]) || AnyOn(launchPlugins)) &&
              ![last[@"healthy"] boolValue] && ![last[@"backgrounded"] boolValue]) {
         BOOL canRevert = [profile[@"lastGood"] isKindOfClass:NSDictionary.class];
         NSMutableArray *choices = [@[T(@"Start without MODs (this time)", @"MODなしで起動（今回だけ）")] mutableCopy];
@@ -151,13 +195,15 @@ NSString *skyrim_mods_select_profile(NSString *defaultProfile) {
         } else if (canRevert && answer == 1) {
             profile[@"packages"] = [profile[@"lastGood"][@"packages"] mutableCopy];
             profile[@"plugins"] = [profile[@"lastGood"][@"plugins"] mutableCopy];
+            launchPlugins = EffectivePlugins(profile);
+            SaveState();
             launchNotice = T(@"Restored the last MOD setup that started.", @"前回正常に起動したMOD構成に戻しました。");
         }
     }
     activeProfile = profile[@"id"];
-    SaveState();
-    NSString *dir = ProfileDir(profile);
-    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSString *dir = [activeProfile isEqual:@"default"] ? defaultProfile : ProfileDir(profile);
+    if (![activeProfile isEqual:@"default"] &&
+        ![NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL]) return nil;
     return dir;
 }
 
@@ -179,8 +225,27 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
     EnsureState();
     NSMutableDictionary *profile = RunningProfile();
     NSArray *ids = launchWithoutMods ? @[] : EnabledPackageIds(profile);
-    WriteJSON(@{@"profile":profile[@"id"], @"hadMods":@(ids.count > 0), @"healthy":@NO, @"backgrounded":@NO,
-                @"started":@(NSDate.date.timeIntervalSince1970)}, LaunchPath());
+    launchHasPackages = ids.count > 0;
+    if (launchWithoutMods) launchPlugins = @[];
+    if (!ids.count && !AnyOn(launchPlugins)) {
+        /* Consume a previous MOD run once. A fresh/vanilla launch creates
+         * no marker and leaves the guest input and chosen profile as-is. */
+        if ([NSFileManager.defaultManager fileExistsAtPath:LaunchPath()])
+            [NSFileManager.defaultManager removeItemAtPath:LaunchPath() error:NULL];
+        launchSetup = nil;
+        return game;
+    }
+    /* Changes made in Settings during this session apply to the next
+     * launch. Retain an independent copy of what actually started. */
+    launchSetup = @{@"packages":[[NSArray alloc] initWithArray:profile[@"packages"] copyItems:YES],
+                    @"plugins":[[NSArray alloc] initWithArray:profile[@"plugins"] copyItems:YES]};
+    if (!WriteJSON(@{@"profile":profile[@"id"], @"hadMods":@YES, @"healthy":@NO, @"backgrounded":@NO,
+                     @"started":@(NSDate.date.timeIntervalSince1970)}, LaunchPath())) {
+        launchWithoutMods = YES; launchHasPackages = NO; launchPlugins = @[]; launchSetup = nil;
+        launchNotice = T(@"Could not record the MOD setup for recovery. Started without MODs.",
+                         @"復旧用のMOD構成を記録できなかったため、MODなしで起動しました。");
+        return game;
+    }
     [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil
         queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         (void)n;
@@ -189,26 +254,29 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
     }];
     if (!ids.count) return game;
     uint64_t signature = 0;
-    skyrim_tree_signature(game.fileSystemRepresentation, &signature);
+    int signatureError = skyrim_tree_signature(game.fileSystemRepresentation, &signature);
     NSString *keySource = [NSString stringWithFormat:@"v1|%llx|%@", (unsigned long long)signature, [ids componentsJoinedByString:@","]];
     NSString *key = HexDigest([keySource dataUsingEncoding:NSUTF8StringEncoding]);
     NSString *views = [Base() stringByAppendingPathComponent:@"Views"];
     [NSFileManager.defaultManager createDirectoryAtPath:views withIntermediateDirectories:YES attributes:nil error:NULL];
     NSString *view = [views stringByAppendingPathComponent:profile[@"id"]];
     NSString *conflicts = [view stringByAppendingString:@".conflicts.tsv"];
-    if (skyrim_deploy_matches(view.fileSystemRepresentation, key.UTF8String)) return view;
+    if (!signatureError && skyrim_deploy_matches(view.fileSystemRepresentation, key.UTF8String)) return view;
     NSMutableArray *roots = [NSMutableArray array];
     for (NSString *pid in ids) [roots addObject:[PackageDir(pid) stringByAppendingPathComponent:@"Data"]];
     const char **c = calloc(roots.count, sizeof *c);
-    for (NSUInteger i = 0; i < roots.count; ++i) c[i] = [roots[i] fileSystemRepresentation];
+    if (c) for (NSUInteger i = 0; i < roots.count; ++i) c[i] = [roots[i] fileSystemRepresentation];
     char err[512] = "";
     NSTimeInterval started = NSDate.date.timeIntervalSince1970;
-    int r = skyrim_deploy_build(game.fileSystemRepresentation, c, roots.count, view.fileSystemRepresentation,
-                                conflicts.fileSystemRepresentation, key.UTF8String, err, sizeof err);
+    int r = signatureError ? signatureError : !c ? ENOMEM :
+        skyrim_deploy_build(game.fileSystemRepresentation, c, roots.count, view.fileSystemRepresentation,
+                            conflicts.fileSystemRepresentation, key.UTF8String, err, sizeof err);
     free(c);
     fprintf(stderr, "IOS_MODS deploy packages=%lu result=%d seconds=%.3f\n", (unsigned long)ids.count, r,
             NSDate.date.timeIntervalSince1970 - started);
     if (r) {
+        launchWithoutMods = YES; launchHasPackages = NO; launchPlugins = @[]; launchSetup = nil;
+        [NSFileManager.defaultManager removeItemAtPath:LaunchPath() error:NULL];
         launchNotice = T(@"Could not prepare the MODs, so the game started without them.", @"MODを準備できなかったため、MODなしで起動しました。");
         return game;
     }
@@ -217,6 +285,13 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
 }
 
 NSString *skyrim_mods_launch_notice(void) { return launchNotice; }
+BOOL skyrim_mods_manages_plugins(void) { return !launchWithoutMods && AnyOn(launchPlugins); }
+NSArray<NSDictionary *> *skyrim_mods_launch_plugin_choices(void) { return launchWithoutMods ? @[] : launchPlugins; }
+void skyrim_mods_no_plugin_loaded(void) {
+    if (launchHasPackages || !launchSetup) return;
+    launchSetup = nil;
+    [NSFileManager.defaultManager removeItemAtPath:LaunchPath() error:NULL];
+}
 
 NSArray<NSDictionary *> *skyrim_mods_plugin_choices(void) {
     EnsureState();
@@ -231,13 +306,13 @@ void skyrim_mods_set_plugin_choices(NSArray *rows) {
 }
 
 void skyrim_mods_frame(uint64_t frames) {
-    if (healthyMarked || frames < 1800) return;          /* about 30 s of play */
+    if (!launchSetup || healthyMarked || frames < 1800) return;
     healthyMarked = YES;
     NSMutableDictionary *l = MutableJSON([NSData dataWithContentsOfFile:LaunchPath()]);
     if ([l isKindOfClass:NSMutableDictionary.class]) { l[@"healthy"] = @YES; WriteJSON(l, LaunchPath()); }
     if (launchWithoutMods || !state) return;
     NSMutableDictionary *p = RunningProfile();
-    p[@"lastGood"] = @{@"packages":[p[@"packages"] copy] ?: @[], @"plugins":[p[@"plugins"] copy] ?: @[]};
+    p[@"lastGood"] = launchSetup;
     SaveState();
 }
 
@@ -387,7 +462,9 @@ static void PublishStaged(NSString *staging, NSMutableDictionary *package) {
 }
 static NSString *NewStaging(void) {
     NSString *s = [ModsDir() stringByAppendingPathComponent:[@".staging-" stringByAppendingString:NSUUID.UUID.UUIDString]];
-    return [NSFileManager.defaultManager createDirectoryAtPath:[s stringByAppendingPathComponent:@"Data"] withIntermediateDirectories:YES attributes:nil error:NULL] ? s : nil;
+    if (![NSFileManager.defaultManager createDirectoryAtPath:[s stringByAppendingPathComponent:@"Data"] withIntermediateDirectories:YES attributes:nil error:NULL]) return nil;
+    [[NSURL fileURLWithPath:ModsDir() isDirectory:YES] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:NULL];
+    return s;
 }
 static NSString *ZipErrorText(int status) {
     switch (status) {
@@ -743,7 +820,7 @@ static NSArray<NSDictionary *> *SaveChecks(NSUInteger limit) {
     return out;
 }
 NSString *skyrim_mods_save_notice(void) {
-    if (!state) return nil;
+    if (!launchSetup) return nil;
     NSDictionary *latest = SaveChecks(1).firstObject;
     NSArray *missing = latest[@"missing"];
     if (!missing.count) return nil;
@@ -1140,11 +1217,25 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
         (void)a;
         NSString *pid = row[@"id"];
         /* The running view is a clone, so deleting the package now is safe. */
-        skyrim_remove_tree(PackageDir(pid).fileSystemRepresentation);
+        if (skyrim_remove_tree(PackageDir(pid).fileSystemRepresentation)) {
+            skyrim_mobile_show_notice(T(@"Could not delete the MOD.", @"MODを削除できませんでした。"));
+            return;
+        }
+        NSMutableSet *removed = [NSMutableSet set];
+        for (NSString *plugin in self.packages[pid][@"plugins"]) [removed addObject:plugin.lowercaseString];
         for (NSMutableDictionary *profile in Profiles()) {
             NSMutableArray *keep = [NSMutableArray array];
-            for (NSDictionary *r in profile[@"packages"]) if (![r[@"id"] isEqual:pid]) [keep addObject:r];
+            NSMutableSet *noProvider = [removed mutableCopy];
+            BOOL hadPackage = NO;
+            for (NSDictionary *r in profile[@"packages"]) {
+                if ([r[@"id"] isEqual:pid]) { hadPackage = YES; continue; }
+                [keep addObject:r];
+                if ([r[@"on"] boolValue])
+                    for (NSString *plugin in LoadPackage(r[@"id"])[@"plugins"]) [noProvider removeObject:plugin.lowercaseString];
+            }
             profile[@"packages"] = keep;
+            if (hadPackage) for (NSMutableDictionary *choice in profile[@"plugins"])
+                if ([noProvider containsObject:[choice[@"name"] lowercaseString]]) choice[@"on"] = @NO;
         }
         [self changed:[NSString stringWithFormat:T(@"Deleted %@.", @"%@ を削除しました。"), name]];
         [self reload];

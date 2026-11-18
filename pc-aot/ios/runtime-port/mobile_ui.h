@@ -11,9 +11,9 @@ void skyrim_mobile_initialize(const char *profile);
 int skyrim_mobile_prepare_game_language(const char *game_directory);
 /* Once after the language step and before guest threads. Reads only plugin
  * headers in Data and publishes the profile plugins.txt for the user's MOD
- * choices; a profile with no MOD choice is left untouched. Never fatal: a
- * failure keeps the previous list and is shown to the user. */
-void skyrim_mobile_prepare_mods(const char *game_directory);
+ * choices. Returns 0 if a vanilla launch could not restore the profile's
+ * original list. Such a launch must not use a stale managed list. */
+int skyrim_mobile_prepare_mods(const char *game_directory);
 int skyrim_mobile_verbose(void);
 int skyrim_mobile_shader_option(unsigned option);
 void skyrim_mobile_install(void *sdl_window);

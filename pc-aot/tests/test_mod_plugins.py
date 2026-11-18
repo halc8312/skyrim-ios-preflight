@@ -24,7 +24,7 @@ class ModPluginTests(unittest.TestCase):
                 str(ROOT / "tests/native/test_mod_plugins.c"), "-o", str(binary)], check=True, timeout=60)
             result = subprocess.run([str(binary), tmp], check=True, text=True, capture_output=True, timeout=30)
             for line in ("header parsing PASS", "names PASS", "ordering PASS",
-                         "plugins.txt PASS", "case-insensitive paths PASS"):
+                         "plugins.txt PASS", "case-insensitive paths PASS", "profile restore PASS"):
                 self.assertIn(line, result.stdout)
 
     def test_guest_reads_plugins_txt_from_the_profile_documents_folder(self):
@@ -38,9 +38,12 @@ class ModPluginTests(unittest.TestCase):
         self.assertIn('"C:\\\\Users\\\\Player\\\\Documents"', shim)
         self.assertNotIn("ARG(1)", shim.split("*/", 1)[1])  # csidl is ignored
         ui = (PORT / "mobile_ui.m").read_text(encoding="utf-8")
-        self.assertIn('@"Documents"', ui)
-        self.assertIn('"Skyrim"', ui)
-        self.assertIn('"plugins.txt"', ui)
+        self.assertIn("skyrim_plugin_apply_list(profilePath.fileSystemRepresentation", ui)
+        # The native test above checks creation, rollback and exact bytes at
+        # profile/Documents/Skyrim/plugins.txt using this production writer.
+        entry = (PORT / "ios_entry.m").read_text(encoding="utf-8")
+        self.assertIn("skyrim_mobile_initialize(profile.fileSystemRepresentation)", entry)
+        self.assertIn("(char *)profile.fileSystemRepresentation, NULL", entry)
 
 
 if __name__ == "__main__":
