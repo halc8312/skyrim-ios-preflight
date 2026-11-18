@@ -247,13 +247,13 @@ available through the existing private comparison-app route. Both physical
 192-sample runs have since validated outputs and controls, without a demonstrated
 Metal 4 speed advantage. Their 587 full-progress checkpoints cost about 6.5 seconds
 per run in snapshot generation plus synchronous callbacks, independently of
-compiler clocks. Coalesce progress snapshots/storage in the next experiment
-without removing per-operation stop checks, final samples, error handling or
-interrupted-result recovery. Further serial repeats are not the next acceptance
-gate: validate bounded parallel contention, actual Metal 4 MRC task retirement
-and production option equivalence independently. The production gate stays
-open until those lifetime/options checks pass; neither an ARC fixture nor its
-short thermal-zero run proves game performance or long-session stability.
+compiler clocks. Build 4 now groups progress saves, retains per-operation stop
+checks and follows the serial comparison with 32 matched scheduling trials.
+The new MRC adapter passed its legacy readback, error and stop checks on the
+Mac test GPU. The iPhone will reveal whether any prefetch requests are actually
+outstanding at urgent submission and how long the urgent requests take on each
+backend. Real Metal 4 task retirement, production option equivalence and game
+frame times remain separate acceptance steps.
 
 ## When Metal 4 could shorten a Skyrim frame
 

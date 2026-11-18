@@ -74,6 +74,16 @@ show when the app was waiting. Internal compiler scheduling and resulting game
 frame rates each require separate evidence. See the [gameplay scenarios and
 developer reports](MOLTENVK_PLAN.md#when-metal-4-could-shorten-a-skyrim-frame).
 
+[Phone workflow run 7](https://codemagic.io/app/6ad977fcf240708df6941076/build/6afd2e9ed133a39c4a1282b4)
+built the device and simulator packages from public `4ff4bb84`. All fourteen
+package inputs matched development commit `881725ac`. The Mac ran 93 passing
+checks. The three Linux-only signing-failure checks passed under WSL. The
+paravirtual GPU returned the expected 384 words in six new legacy readbacks.
+No prefetch request was outstanding when the urgent request entered in those
+two host trials. The simulator exercised the unsupported, restore and share
+views. The existing private link delivered the signed 119,309-byte build 4
+package. Observations from the iPhone are needed to evaluate Metal 4.
+
 Build-3 preparation passed Windows Metal 6.2 compilation/linking for all twelve
 cases without diagnostics, portable CPU golden/sensitivity/order controls in
 normal and ASan/UBSan builds, fifteen packaging and twenty-three signing tests,
