@@ -8,6 +8,9 @@ NS_ASSUME_NONNULL_BEGIN
 // and joined on this worker before returning, and cannot be cancelled here.
 // Progress dictionaries are immutable JSON snapshots and are delivered on the
 // calling worker. Never update UIKit directly from the progress callback.
+// sourcePath must name the authored phone_fixture.metal, with the original
+// fixture.metal in the same directory for rejection/retention controls.
+// repeats must be 4: three workloads x four APIs x four balanced rotations.
 FOUNDATION_EXPORT NSDictionary* SkyrimMetalRunPhoneComparison(
     NSString* sourcePath, NSUInteger repeats, BOOL metal4First,
     BOOL (^ _Nullable shouldContinue)(void),

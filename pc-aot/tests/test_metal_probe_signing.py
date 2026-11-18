@@ -43,10 +43,14 @@ def members():
     proof = {key: False for key in ("signed_for_device", "installed", "physical_iphone_verified",
              "gpu_execution_verified", "metal4_runtime_verified", "gameplay_improvement_verified")}
     proof.update(bundle_id=signer.BUNDLE, simulator=False,
-                 inputs={"experiments/metal-compile/fixture.metal": signer.FIXTURE_SHA256})
+                 inputs={"experiments/metal-compile/fixture.metal": signer.FIXTURE_SHA256,
+                         "experiments/metal-compile/phone_fixture.metal": signer.PHONE_FIXTURE_SHA256,
+                         "experiments/metal-compile/phone_workloads.h": signer.digest(
+                             (ROOT / "experiments/metal-compile/phone_workloads.h").read_bytes())})
     return {"MetalProbe": image(), "Info.plist": plistlib.dumps(info),
             "BuildInfo.json": json.dumps(proof).encode(),
-            "fixture.metal": (ROOT / "experiments/metal-compile/fixture.metal").read_bytes()}
+            "fixture.metal": (ROOT / "experiments/metal-compile/fixture.metal").read_bytes(),
+            "phone_fixture.metal": (ROOT / "experiments/metal-compile/phone_fixture.metal").read_bytes()}
 
 
 def profile():
@@ -76,8 +80,48 @@ class ProbeSigningAdmissionTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
 
-    def test_only_authored_four_file_device_app_is_accepted(self):
+    def test_only_authored_five_file_device_app_is_accepted(self):
         self.assertEqual(signer.read_unsigned(write_ipa(self.root / "probe.ipa").read_bytes()), members())
+
+    def test_phone_fixture_mutation_is_refused_even_with_matching_metadata(self):
+        files = members()
+        files["phone_fixture.metal"] += b"\n// changed phone workload\n"
+        for forged_provenance in (False, True):
+            if forged_provenance:
+                provenance = json.loads(files["BuildInfo.json"])
+                provenance["inputs"]["experiments/metal-compile/phone_fixture.metal"] = signer.digest(
+                    files["phone_fixture.metal"])
+                files["BuildInfo.json"] = json.dumps(provenance).encode()
+            with self.subTest(forged_provenance=forged_provenance), \
+                    self.assertRaisesRegex(signer.Refusal, "authored_phone_fixture_mismatch"):
+                signer.bundle_contract(files)
+
+    def test_missing_phone_fixture_and_unexpected_workload_resource_are_refused(self):
+        files = members()
+        del files["phone_fixture.metal"]
+        with self.assertRaisesRegex(signer.Refusal, "fixed_unsigned_file_set"):
+            signer.read_unsigned(write_ipa(self.root / "old-four-file-app.ipa", files).read_bytes())
+        files = members()
+        files["phone_workloads.h"] = b"unexpected source resource"
+        with self.assertRaisesRegex(signer.Refusal, "unexpected_zip_member"):
+            signer.read_unsigned(write_ipa(self.root / "extra-source-app.ipa", files).read_bytes())
+
+    def test_phone_source_provenance_is_required_and_hash_validated(self):
+        missing = object()
+        for source, invalid_values in (("phone_fixture.metal", (missing, "0" * 64, None)),
+                                      ("phone_workloads.h", (missing, "", "g" * 64, "a" * 63, None, 7))):
+            for invalid in invalid_values:
+                files = members()
+                provenance = json.loads(files["BuildInfo.json"])
+                key = "experiments/metal-compile/" + source
+                if invalid is missing:
+                    del provenance["inputs"][key]
+                else:
+                    provenance["inputs"][key] = invalid
+                files["BuildInfo.json"] = json.dumps(provenance).encode()
+                with self.subTest(source=source, invalid=invalid), \
+                        self.assertRaisesRegex(signer.Refusal, "phone_.*provenance"):
+                    signer.bundle_contract(files)
 
     def test_foreign_app_simulator_forged_success_and_fixture_are_refused(self):
         for field, value in (("CFBundleIdentifier", "org.skyrimios.title"),

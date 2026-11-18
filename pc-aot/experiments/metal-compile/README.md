@@ -11,10 +11,14 @@ The tracked experiment contains no Skyrim shaders or game data.
 
 The `pc2011-metal-phone-probe` manual workflow builds an isolated UIKit app,
 `MetalProbe` (`org.skyrimios.metalprobe`, iOS 26 or later). It compares the legacy
-and Metal 4 library APIs, synchronously and asynchronously, using this same
-authored fixture and the same legacy render/compute pipeline path. Each of the
-four routes runs three times in a rotating order; the first backend is selectable.
-All 64 render words and 16 compute words must match before a sample is accepted.
+and Metal 4 library APIs, synchronously and asynchronously, through legacy
+render/compute pipelines. Build 2 uses three bounded authored workloads:
+branching arithmetic, dependent table lookups, and coupled mixing rounds.
+Runtime input buffers prevent the outputs from being constant expressions.
+Each case runs all four routes four times (48 samples), with each route occupying
+each order position once. Every render and compute word must match the CPU
+oracle before a sample is accepted. The original small fixture remains unchanged
+for error and retained-result controls and for the standalone CLI.
 This tests a library preparation boundary, not Skyrim frame rate or a complete
 Metal 4 renderer. It does not access the game, saves, accounts, or network.
 
@@ -39,8 +43,8 @@ The dedicated `org.skyrimios.metalprobe` profile is now registered with Apple,
 and a private IPA has been signed with the existing certificate for the registered
 iPhone. No additional entitlements were requested beyond development identity.
 The workflow itself neither signs nor installs the app, and the Skyrim identity
-is never substituted. On the phone, start with the legacy-first
-order, share the saved JSON, then repeat with Metal-4-first. The OS/compiler cache
+is never substituted. On the phone, start the comparison and share its saved
+JSON; the initial backend is selectable. The OS/compiler cache
 is not cleared, so first-observed and repeated samples are reported separately
 without claiming a cold cache or a measured game performance improvement.
 
@@ -62,7 +66,7 @@ execution. Signing and simulator evidence alone did not satisfy that gate.
 Performance and production integration remain unverified.
 
 `scripts/sign-metal-probe-ipa.py` is a local WSL adapter for the existing reviewed
-signer and Apple-identity verification tools. It accepts only the four-file
+signer and Apple-identity verification tools. Build 2 accepts only the five-file
 authored device app, its exact input hash, a matching registered-device profile,
 and the existing certificate/key. It does not log in, unseal a key, create a
 certificate, install an app or substitute the game's bundle identity. Output
@@ -120,9 +124,14 @@ Original records remain private and unmodified under
 `83a5cbc162f2af38c776c5fad9c17771a075e5bbd3048cd696287798f066acce`) and
 `20261118-084250/comparison.json`
 (`5ad4f71b21579144ec00781ae98104d8e6cb8b2844a8624acde8535b947fe69c`).
-Next, compare multiple more complex authored inputs with all four routes equally
-represented at each execution position and fixed expected outputs. Keep first
-observed and repeated samples separate. Parallel contention and actual Metal 4
+The build-2 comparison implements multiple more complex authored inputs with
+all four routes equally represented at each execution position and fixed
+expected outputs. These are integer compiler workloads, not representative
+Skyrim shaders or a cold-cache benchmark. Position balancing does not balance
+uncontrolled compiler-cache misses, and four repeats do not establish a tail
+latency distribution. Keep first-observed and repeated samples separate.
+Apple compilation, GPU validation and physical build-2 results must be recorded
+separately from the successful build-1 results above. Parallel contention and actual Metal 4
 MRC lifetime checks are later, independent gates; this ARC probe does not close
 them or validate a MoltenVK integration.
 

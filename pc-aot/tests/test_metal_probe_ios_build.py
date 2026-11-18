@@ -51,7 +51,8 @@ class MetalPhoneBuildControls(unittest.TestCase):
             if label == "link-app":
                 Path(argv[-1]).write_bytes(macho(platform=7 if simulator else 2))
                 if mutate:
-                    (output / "inputs/experiments/metal-compile/fixture.metal").write_text("changed\n")
+                    name = "fixture.metal" if mutate is True else mutate
+                    (output / "inputs/experiments/metal-compile" / name).write_text("changed\n")
             stdout = {"source-revision": "a" * 40, "xcode-version": "Xcode 26.6",
                       "sdk-path": str(self.root / "sdk"), "sdk-version": "26.5",
                       "compiler-path": str(self.root / "clang++"), "compiler-version": "Apple clang 21"}.get(label, "")
@@ -105,6 +106,12 @@ class MetalPhoneBuildControls(unittest.TestCase):
     def test_changed_source_snapshot_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "resource changed"):
             self.invoke(mutate=True)
+        run, = (self.root / "local/metal-probe-ios").iterdir()
+        self.assertFalse(list((run / "artifacts").glob("*.ipa")))
+
+    def test_changed_phone_source_snapshot_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "resource changed: phone_fixture.metal"):
+            self.invoke(mutate="phone_fixture.metal")
         run, = (self.root / "local/metal-probe-ios").iterdir()
         self.assertFalse(list((run / "artifacts").glob("*.ipa")))
 

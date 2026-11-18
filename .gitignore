@@ -816,3 +816,13 @@
 !/pc-aot/tests/test_private_ota_products.py
 
 !/pc-aot/tests/test_metal_probe_signing.py
+
+!/pc-aot/experiments/metal-compile/phone_fixture.metal
+
+!/pc-aot/experiments/metal-compile/phone_workloads.h
+
+!/pc-aot/tests/native/test_metal_phone_workloads.cpp
+
+!/pc-aot/tests/native/test_metal_phone_workloads_gpu.mm
+
+!/pc-aot/tests/test_metal_phone_workloads.py

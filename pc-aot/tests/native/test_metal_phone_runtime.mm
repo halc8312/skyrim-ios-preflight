@@ -22,7 +22,7 @@ int main() {
     @autoreleasepool {
         @try {
             try {
-                NSDictionary* main = SkyrimMetalRunPhoneComparison(@"missing-authored-fixture", 3, NO, nil, nil);
+                NSDictionary* main = SkyrimMetalRunPhoneComparison(@"missing-authored-fixture", 4, NO, nil, nil);
                 check([main[@"status"] isEqual:@"failed"], "main-thread invocation did not fail");
                 check([main[@"failure"] containsString:@"main thread"], "main-thread refusal not diagnosed");
                 unverified(main);
@@ -45,10 +45,10 @@ int main() {
                         workerWasMain = NSThread.isMainThread;
                         @try {
                             try {
-                                invalid = SkyrimMetalRunPhoneComparison(@"missing-authored-fixture", 0, NO, nil, nil);
-                                stopped = SkyrimMetalRunPhoneComparison(@"missing-authored-fixture", 3, NO,
+                                invalid = SkyrimMetalRunPhoneComparison(@"missing-authored-fixture", 3, NO, nil, nil);
+                                stopped = SkyrimMetalRunPhoneComparison(@"missing-authored-fixture", 4, NO,
                                     ^BOOL { return NO; }, ^(NSDictionary* snapshot) { (void)snapshot; ++stoppedProgress; });
-                                unsupported = SkyrimMetalRunPhoneComparison(@"missing-authored-fixture", 3, YES,
+                                unsupported = SkyrimMetalRunPhoneComparison(@"missing-authored-fixture", 4, YES,
                                     ^BOOL { return YES; }, ^(NSDictionary* snapshot) {
                                         ++unsupportedProgress;
                                         if (!firstSnapshot) firstSnapshot = snapshot;

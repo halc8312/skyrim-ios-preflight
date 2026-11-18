@@ -25,6 +25,8 @@ INPUTS = (
     "experiments/metal-compile/runtime.mm",
     "experiments/metal-compile/runtime_host.h",
     "experiments/metal-compile/fixture.metal",
+    "experiments/metal-compile/phone_fixture.metal",
+    "experiments/metal-compile/phone_workloads.h",
     "experiments/metal-compile/ios/main.mm",
     "experiments/metal-compile/ios/ProbeRunStore.h",
     "experiments/metal-compile/ios/ProbeRunStore.mm",
@@ -33,7 +35,8 @@ INPUTS = (
     "scripts/build-metal-probe-ios.sh",
     "scripts/build-metal-probe-ios.py",
 )
-APP_FILES = {APP_NAME, "Info.plist", "fixture.metal", "BuildInfo.json"}
+FIXTURES = ("fixture.metal", "phone_fixture.metal")
+APP_FILES = {APP_NAME, "Info.plist", *FIXTURES, "BuildInfo.json"}
 FALSE_EVIDENCE = (
     "signed_for_device", "installed", "physical_iphone_verified",
     "gpu_execution_verified", "metal4_runtime_verified", "gameplay_improvement_verified",
@@ -108,7 +111,7 @@ def make_plist(template, bundle, simulator):
     return plistlib.dumps(value, sort_keys=True)
 
 
-def validate_app(app, bundle, simulator, fixture_hash):
+def validate_app(app, bundle, simulator, fixture_hashes):
     if app.is_symlink() or not app.is_dir():
         raise ValueError("app must be an owned directory")
     found = set()
@@ -117,7 +120,7 @@ def validate_app(app, bundle, simulator, fixture_hash):
             raise ValueError("unexpected directory or symlink in authored app")
         found.add(path.relative_to(app).as_posix())
     if found != APP_FILES:
-        raise ValueError("app file set differs from authored four-file bundle")
+        raise ValueError("app file set differs from authored five-file bundle")
     value = plistlib.loads((app / "Info.plist").read_bytes())
     required = {"CFBundleIdentifier": validate_bundle(bundle), "CFBundleExecutable": APP_NAME,
                 "CFBundlePackageType": "APPL", "MinimumOSVersion": "26.0",
@@ -127,8 +130,11 @@ def validate_app(app, bundle, simulator, fixture_hash):
     for key, expected in required.items():
         if value.get(key) != expected:
             raise ValueError("app metadata mismatch: " + key)
-    if sha256(app / "fixture.metal") != fixture_hash:
-        raise ValueError("authored source resource changed")
+    if set(fixture_hashes) != set(FIXTURES):
+        raise ValueError("authored source hash set mismatch")
+    for name, expected in fixture_hashes.items():
+        if sha256(app / name) != expected:
+            raise ValueError("authored source resource changed: " + name)
     build_info = json.loads((app / "BuildInfo.json").read_text(encoding="utf-8"))
     if build_info.get("bundle_id") != bundle or build_info.get("simulator") is not simulator:
         raise ValueError("build provenance mismatch")
@@ -235,10 +241,12 @@ def execute(root, simulator=False, bundle=DEFAULT_BUNDLE, command=None):
                        "-o", str(app / APP_NAME)], "link-app", 120)
         (app / APP_NAME).chmod(0o755)
         (app / "Info.plist").write_bytes(make_plist((base / "ios/Info.plist").read_bytes(), bundle, simulator))
-        shutil.copyfile(base / "fixture.metal", app / "fixture.metal")
+        for name in FIXTURES:
+            shutil.copyfile(base / name, app / name)
         build_info = {key: value for key, value in report.items() if key not in {"commands", "status"}}
         (app / "BuildInfo.json").write_text(json.dumps(build_info, indent=2) + "\n", encoding="utf-8")
-        report["macho"] = validate_app(app, bundle, simulator, report["inputs"]["experiments/metal-compile/fixture.metal"])
+        report["macho"] = validate_app(app, bundle, simulator, {
+            name: report["inputs"]["experiments/metal-compile/" + name] for name in FIXTURES})
         for name, digest in report["inputs"].items():
             if sha256(snapshot / name) != digest:
                 raise ValueError("source snapshot changed during build")

@@ -5,6 +5,7 @@
 
 #ifdef SKYRIM_METAL_RUNTIME_NO_MAIN
 #import "runtime_host.h"
+#include "phone_workloads.h"
 #import <CommonCrypto/CommonDigest.h>
 #include <mach/mach.h>
 #include <os/proc.h>
@@ -219,11 +220,13 @@ static NSDictionary* probeLibraryFactory(id<MTLDevice> device, NSString* sourceP
 #endif
 
 static id<MTLLibrary> sourceLibrary(id<MTLDevice> device, id<MTL4Compiler> compiler,
-                                   NSString* source, bool metal4, NSError** error) {
-    if (!metal4) return [device newLibraryWithSource:source options:compileOptions() error:error];
+                                   NSString* source, bool metal4, NSError** error,
+                                   MTLCompileOptions* suppliedOptions = nil) {
+    MTLCompileOptions* options = suppliedOptions ?: compileOptions();
+    if (!metal4) return [device newLibraryWithSource:source options:options error:error];
     MTL4LibraryDescriptor* descriptor = [MTL4LibraryDescriptor new];
     descriptor.source = source;
-    descriptor.options = compileOptions();
+    descriptor.options = options;
     return [compiler newLibraryWithDescriptor:descriptor error:error];
 }
 
@@ -327,8 +330,9 @@ static AsyncLibraryRequest beginAsyncLibrary(id<MTLDevice> device, id<MTL4Compil
 
 static id<MTLLibrary> asyncSourceLibrary(id<MTLDevice> device, id<MTL4Compiler> compiler,
                                         NSString* source, bool metal4, NSError** error,
-                                        NSMutableDictionary* observation) {
-    auto request = beginAsyncLibrary(device, compiler, source, compileOptions(), metal4, false);
+                                         NSMutableDictionary* observation,
+                                         MTLCompileOptions* suppliedOptions = nil) {
+    auto request = beginAsyncLibrary(device, compiler, source, suppliedOptions ?: compileOptions(), metal4, false);
     request.drain();
     return request.result(error, observation);
 }
@@ -764,6 +768,138 @@ static NSString* phoneSourceHash(NSData* source) {
     for (unsigned char byte : digest) [value appendFormat:@"%02x", byte];
     return value;
 }
+
+static NSDictionary* phoneWorkloadOptions(unsigned index) {
+    return @{ @"language": @"2.4", @"fast_math": @NO,
+        @"preprocessor_macros": @{ @"PHONE_CASE": @(index), @"PHONE_ROUNDS": @(SkyrimPhoneWorkloads::rounds(index)) },
+        @"function_constant": @{ @"index": @0, @"type": @"uint", @"value": @(SkyrimPhoneWorkloads::scale(index)) } };
+}
+
+static MTLCompileOptions* phoneCompileOptions(unsigned index) {
+    MTLCompileOptions* options = compileOptions();
+    options.preprocessorMacros = phoneWorkloadOptions(index)[@"preprocessor_macros"];
+    return options;
+}
+
+template<size_t N>
+static NSData* phoneWordData(const std::array<uint32_t, N>& input) {
+    const auto bytes = SkyrimPhoneWorkloads::littleEndianBytes(input);
+    return [NSData dataWithBytes:bytes.data() length:bytes.size()];
+}
+
+static NSDictionary* phoneWorkloadInfo(unsigned index, NSString* sourceHash) {
+    using namespace SkyrimPhoneWorkloads;
+    const Input input = makeInput(index);
+    NSData* data = phoneWordData(input);
+    return @{ @"case_id": [NSString stringWithUTF8String:caseID(index)], @"case_index": @(index + 1),
+        @"source_sha256": sourceHash, @"source_options": phoneWorkloadOptions(index),
+        @"input_sha256": phoneSourceHash(data), @"input_bytes": @(data.length),
+        @"input_format": @"128 little-endian uint32 words; fixed authored seed per case",
+        @"render_oracle_sha256": phoneSourceHash(phoneWordData(oracle(index, input, RenderTag))),
+        @"compute_oracle_sha256": phoneSourceHash(phoneWordData(oracle(index, input, ComputeTag))),
+        @"readback_format": @"RGBA32Uint render and uint4 compute; 64 words per stage",
+        @"unrolled_rounds": @(rounds(index)) };
+}
+
+static void runPhoneWorkloadGPU(id<MTLDevice> device, id<MTLCommandQueue> queue,
+                                 id<MTLLibrary> library, unsigned index,
+                                 const SkyrimPhoneWorkloads::Input& input,
+                                 NSMutableDictionary* sample,
+                                 BOOL (^shouldContinue)(void) = nil) {
+    using namespace SkyrimPhoneWorkloads;
+    checkContinue(shouldContinue);
+    // Oracle generation is outside every measured compiler interval.
+    const Output expectedRender = oracle(index, input, RenderTag);
+    const Output expectedCompute = oracle(index, input, ComputeTag);
+    sample[@"library_function_names"] = [library.functionNames sortedArrayUsingSelector:@selector(compare:)] ?: @[];
+    NSError* error = nil;
+    auto start = Clock::now();
+    id<MTLFunction> vertex = [library newFunctionWithName:@"phone_vertex"];
+    requireObject(vertex, nil, "phone vertex lookup");
+    MTLFunctionConstantValues* constants = [MTLFunctionConstantValues new];
+    uint32_t factor = scale(index);
+    [constants setConstantValue:&factor type:MTLDataTypeUInt atIndex:0];
+    id<MTLFunction> fragment = [library newFunctionWithName:@"phone_fragment" constantValues:constants error:&error];
+    sample[@"fragment_diagnostic"] = errorInfo(error);
+    requireObject(fragment, error, "phone fragment specialization");
+    checkContinue(shouldContinue);
+    error = nil;
+    id<MTLFunction> kernel = [library newFunctionWithName:@"phone_kernel" constantValues:constants error:&error];
+    sample[@"compute_function_diagnostic"] = errorInfo(error);
+    requireObject(kernel, error, "phone compute specialization");
+    sample[@"specialization_ns"] = @(elapsed(start));
+    checkContinue(shouldContinue);
+
+    MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
+    descriptor.vertexFunction = vertex;
+    descriptor.fragmentFunction = fragment;
+    descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA32Uint;
+    error = nil;
+    start = Clock::now();
+    id<MTLRenderPipelineState> render = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+    sample[@"render_pso_ns"] = @(elapsed(start));
+    sample[@"render_pso_diagnostic"] = errorInfo(error);
+    requireObject(render, error, "phone legacy render pipeline");
+    checkContinue(shouldContinue);
+    error = nil;
+    start = Clock::now();
+    id<MTLComputePipelineState> compute = [device newComputePipelineStateWithFunction:kernel error:&error];
+    sample[@"compute_pso_ns"] = @(elapsed(start));
+    sample[@"compute_pso_diagnostic"] = errorInfo(error);
+    requireObject(compute, error, "phone legacy compute pipeline");
+    checkContinue(shouldContinue);
+
+    NSData* inputData = phoneWordData(input);
+    id<MTLBuffer> inputBuffer = [device newBufferWithBytes:inputData.bytes length:inputData.length
+                                                 options:MTLResourceStorageModeShared];
+    id<MTLBuffer> output = [device newBufferWithLength:sizeof(Output) options:MTLResourceStorageModeShared];
+    MTLTextureDescriptor* textureDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA32Uint
+                                                                                              width:4 height:4 mipmapped:NO];
+    textureDescriptor.storageMode = MTLStorageModeShared;
+    textureDescriptor.usage = MTLTextureUsageRenderTarget;
+    id<MTLTexture> texture = [device newTextureWithDescriptor:textureDescriptor];
+    requireObject(inputBuffer, nil, "phone input buffer");
+    requireObject(output, nil, "phone output buffer");
+    requireObject(texture, nil, "phone readback texture");
+    memset(output.contents, 0xcd, output.length);
+    id<MTLCommandBuffer> command = [queue commandBuffer];
+    requireObject(command, nil, "phone legacy command buffer");
+    MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture = texture;
+    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
+    id<MTLRenderCommandEncoder> drawing = [command renderCommandEncoderWithDescriptor:pass];
+    requireObject(drawing, nil, "phone legacy render encoder");
+    [drawing setRenderPipelineState:render];
+    [drawing setFragmentBuffer:inputBuffer offset:0 atIndex:0];
+    [drawing setViewport:MTLViewport{0, 0, 4, 4, 0, 1}];
+    [drawing drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [drawing endEncoding];
+    id<MTLComputeCommandEncoder> computing = [command computeCommandEncoder];
+    requireObject(computing, nil, "phone legacy compute encoder");
+    [computing setComputePipelineState:compute];
+    [computing setBuffer:inputBuffer offset:0 atIndex:0];
+    [computing setBuffer:output offset:0 atIndex:1];
+    [computing dispatchThreads:MTLSizeMake(LaneCount, 1, 1) threadsPerThreadgroup:MTLSizeMake(LaneCount, 1, 1)];
+    [computing endEncoding];
+    checkContinue(shouldContinue);
+    [command commit];
+    [command waitUntilCompleted]; // Retain and drain issued work; never claim cancellation.
+    sample[@"command_status_value"] = @(command.status);
+    sample[@"command_error"] = errorInfo(command.error);
+    require(command.status == MTLCommandBufferStatusCompleted && !command.error, "phone GPU command failed");
+    Output renderWords{}, computeWords{};
+    [texture getBytes:renderWords.data() bytesPerRow:4 * 4 * sizeof(uint32_t)
+           fromRegion:MTLRegionMake2D(0, 0, 4, 4) mipmapLevel:0];
+    memcpy(computeWords.data(), output.contents, sizeof(computeWords));
+    sample[@"render_words"] = words(renderWords.data(), renderWords.size());
+    sample[@"compute_words"] = words(computeWords.data(), computeWords.size());
+    sample[@"command_status"] = @"completed";
+    require(renderWords == expectedRender, "phone integer render readback differs from CPU oracle");
+    require(computeWords == expectedCompute, "phone integer compute readback differs from CPU oracle");
+    sample[@"oracle_verified"] = @YES;
+}
 #endif
 
 NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger repeats,
@@ -775,10 +911,11 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
 #endif
         auto started = Clock::now();
         NSMutableDictionary* report = [@{
-            @"schema": @1, @"scope": @"authored-iphone-metal-library-comparison",
+            @"schema": @2, @"scope": @"authored-iphone-metal-workload-comparison",
             @"status": @"running", @"phase": @"prepare", @"repeat": @(repeats),
             @"metal4_first_requested": @(metal4First), @"completed_samples": @0,
-            @"total_samples": @0, @"source_options": sourceOptions(),
+            @"total_samples": @0, @"total_cases": @(SkyrimPhoneWorkloads::CaseCount),
+            @"control_source_options": sourceOptions(), @"workloads": [NSMutableArray new],
             @"samples": [NSMutableArray new], @"rejections": [NSMutableArray new],
             @"async_retention_checks": [NSMutableArray new],
             @"gpu_execution_verified": @NO, @"metal4_library_verified": @NO,
@@ -789,6 +926,10 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
             @"metal4_compiler_created": @NO, @"compiler_setup_ns": @0,
             @"cancellation_requested": @NO, @"stop_requested": @NO,
             @"timing_scope": @"wall intervals; async library includes callback and task join; PSOs use legacy APIs",
+            @"specialization_scope": @"vertex lookup plus fragment and compute specialization",
+            @"workload_scope": @"three fixed authored integer workloads, runtime input buffers, serial execution; no game inputs",
+            @"gpu_time_measured": @NO, @"parallel_compilation_verified": @NO,
+            @"mrc_lifetime_verified": @NO,
             @"cache_scope": @"first observed sample and repeated samples; OS/compiler cache is not reset or controlled",
             @"stop_scope": @"cooperative boundaries only; issued compiler tasks and GPU work drain on worker without cancellation",
             @"environment_before": phoneEnvironment()
@@ -796,8 +937,8 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
         @try {
             try {
                 require(!NSThread.isMainThread, "phone comparison must run off the main thread");
-                require(repeats >= 1 && repeats <= 5, "repeat must be between 1 and 5");
-                report[@"total_samples"] = @(repeats * 4);
+                require(repeats == SkyrimPhoneWorkloads::RepeatCount, "phone repeat must be 4 for balanced route positions");
+                report[@"total_samples"] = @(repeats * SkyrimPhoneWorkloads::RouteCount * SkyrimPhoneWorkloads::CaseCount);
                 NSOperatingSystemVersion os = NSProcessInfo.processInfo.operatingSystemVersion;
                 report[@"os_version"] = @[@(os.majorVersion), @(os.minorVersion), @(os.patchVersion)];
                 struct utsname machine{};
@@ -841,10 +982,25 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                 report[@"source_bytes"] = @(sourceBytes.length);
                 // This entry point runs only the bundled authored fixture, never
                 // a game-derived or externally supplied shader.
-                require([sourceHash isEqualToString:@"e45755523aabf64eb236c01a77ae220e271b4ae6d0eabcf120d9a80cabbada87"],
+                require([sourceHash isEqualToString:@"8963ee6a13291f0e07fb636e534eddc415ca090b70420f5f7bdb86cc78a5b270"],
                         "bundled authored fixture hash mismatch");
                 NSString* source = [[NSString alloc] initWithData:sourceBytes encoding:NSUTF8StringEncoding];
                 requireObject(source, nil, "authored UTF-8 source");
+                checkContinue(shouldContinue);
+                NSString* controlPath = [[sourcePath stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"fixture.metal"];
+                error = nil;
+                NSData* controlBytes = [NSData dataWithContentsOfFile:controlPath options:0 error:&error];
+                report[@"control_input_diagnostic"] = errorInfo(error);
+                requireObject(controlBytes, error, "authored control source read");
+                NSString* controlHash = phoneSourceHash(controlBytes);
+                require([controlHash isEqualToString:@"e45755523aabf64eb236c01a77ae220e271b4ae6d0eabcf120d9a80cabbada87"],
+                        "bundled authored control fixture hash mismatch");
+                NSString* controlSource = [[NSString alloc] initWithData:controlBytes encoding:NSUTF8StringEncoding];
+                requireObject(controlSource, nil, "authored UTF-8 control source");
+                report[@"control_source_sha256"] = controlHash;
+                NSMutableArray* workloads = report[@"workloads"];
+                for (unsigned index = 0; index < SkyrimPhoneWorkloads::CaseCount; ++index)
+                    [workloads addObject:phoneWorkloadInfo(index, sourceHash)];
                 phoneCheckpoint(report, @"compiler", shouldContinue, progress);
                 auto compilerStarted = Clock::now();
                 error = nil;
@@ -860,44 +1016,53 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                     ? @[@"metal4_source", @"legacy_source", @"metal4_async_source", @"legacy_async_source"]
                     : @[@"legacy_source", @"metal4_source", @"legacy_async_source", @"metal4_async_source"];
                 report[@"base_route_order"] = routes;
-                report[@"order_policy"] = @"rotate four routes by iteration; choose opposite initial backend on the next run";
+                report[@"order_policy"] = @"four rotations per case; each route occupies every slot once; opposite initial backend is optional";
                 NSMutableArray* samples = report[@"samples"];
-                for (NSUInteger iteration = 0; iteration < repeats; ++iteration) {
-                    for (NSUInteger slot = 0; slot < routes.count; ++slot) {
-                        @autoreleasepool {
-                            NSString* api = routes[(slot + iteration) % routes.count];
-                            bool metal4 = [api hasPrefix:@"metal4_"];
-                            bool asynchronous = [api containsString:@"_async_"];
-                            NSMutableDictionary* sample = [@{
-                                @"api": api, @"iteration": @(iteration + 1), @"slot": @(slot + 1),
-                                @"sample_index": @(samples.count + 1), @"source_sha256": sourceHash,
-                                @"source_options": sourceOptions(), @"status": @"running",
-                                @"cache_observation": iteration ? @"repeated_in_this_run" : @"first_for_this_api_in_this_run",
-                                @"library_operation": asynchronous ? @"async_compile" : @"compile",
-                                @"environment_before": phoneEnvironment()
-                            } mutableCopy];
-                            [samples addObject:sample];
-                            report[@"active_api"] = api;
-                            report[@"active_sample"] = sample[@"sample_index"];
-                            phoneCheckpoint(report, @"library", shouldContinue, progress);
-                            auto libraryStarted = Clock::now();
-                            error = nil;
-                            id<MTLLibrary> library = asynchronous
-                                ? asyncSourceLibrary(device, compiler, source, metal4, &error, sample)
-                                : sourceLibrary(device, compiler, source, metal4, &error);
-                            sample[@"library_ns"] = @(elapsed(libraryStarted));
-                            sample[@"library_diagnostic"] = errorInfo(error);
-                            requireObject(library, error, "phone library creation");
-                            phoneCheckpoint(report, @"gpu_readback", shouldContinue, progress);
-                            runGPU(device, queue, library, sample, shouldContinue);
-                            sample[@"environment_after"] = phoneEnvironment();
-                            sample[@"status"] = @"passed";
-                            report[@"completed_samples"] = @([report[@"completed_samples"] unsignedIntegerValue] + 1);
-                            phoneCheckpoint(report, @"sample_complete", shouldContinue, progress);
+                for (unsigned index = 0; index < SkyrimPhoneWorkloads::CaseCount; ++index) {
+                    const auto input = SkyrimPhoneWorkloads::makeInput(index);
+                    NSDictionary* workload = workloads[index];
+                    report[@"active_case_id"] = workload[@"case_id"];
+                    report[@"active_case_index"] = workload[@"case_index"];
+                    for (unsigned iteration = 0; iteration < repeats; ++iteration) {
+                        for (unsigned slot = 0; slot < routes.count; ++slot) {
+                            @autoreleasepool {
+                                NSString* api = routes[SkyrimPhoneWorkloads::routeIndex(iteration, slot)];
+                                bool metal4 = [api hasPrefix:@"metal4_"];
+                                bool asynchronous = [api containsString:@"_async_"];
+                                NSMutableDictionary* sample = [workload mutableCopy];
+                                [sample addEntriesFromDictionary:@{
+                                    @"api": api, @"iteration": @(iteration + 1), @"slot": @(slot + 1),
+                                    @"sample_index": @(samples.count + 1), @"status": @"running",
+                                    @"cache_observation": iteration ? @"repeated_case_api_in_this_run" : @"first_observed_case_api_in_this_run",
+                                    @"library_operation": asynchronous ? @"async_compile" : @"compile",
+                                    @"environment_before": phoneEnvironment()
+                                }];
+                                [samples addObject:sample];
+                                report[@"active_api"] = api;
+                                report[@"active_sample"] = sample[@"sample_index"];
+                                phoneCheckpoint(report, @"library", shouldContinue, progress);
+                                MTLCompileOptions* options = phoneCompileOptions(index);
+                                auto libraryStarted = Clock::now();
+                                error = nil;
+                                id<MTLLibrary> library = asynchronous
+                                    ? asyncSourceLibrary(device, compiler, source, metal4, &error, sample, options)
+                                    : sourceLibrary(device, compiler, source, metal4, &error, options);
+                                sample[@"library_ns"] = @(elapsed(libraryStarted));
+                                sample[@"library_diagnostic"] = errorInfo(error);
+                                requireObject(library, error, "phone library creation");
+                                phoneCheckpoint(report, @"gpu_readback", shouldContinue, progress);
+                                runPhoneWorkloadGPU(device, queue, library, index, input, sample, shouldContinue);
+                                sample[@"environment_after"] = phoneEnvironment();
+                                sample[@"status"] = @"passed";
+                                report[@"completed_samples"] = @([report[@"completed_samples"] unsignedIntegerValue] + 1);
+                                phoneCheckpoint(report, @"sample_complete", shouldContinue, progress);
+                            }
                         }
                     }
                 }
-                NSString* invalid = [@"#error Intentional_Metal_compile_fixture_rejection\n" stringByAppendingString:source];
+                report[@"active_case_id"] = @"control_fixture";
+                report[@"active_case_index"] = @0;
+                NSString* invalid = [@"#error Intentional_Metal_compile_fixture_rejection\n" stringByAppendingString:controlSource];
                 NSMutableArray* rejections = report[@"rejections"];
                 for (NSString* api in routes) {
                     report[@"active_api"] = api;
@@ -920,7 +1085,7 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                     bool metal4 = [api hasPrefix:@"metal4_"];
                     report[@"active_api"] = api;
                     phoneCheckpoint(report, @"retained_success", shouldContinue, progress);
-                    checkAsyncRetention(device, compiler, queue, source, metal4, false,
+                    checkAsyncRetention(device, compiler, queue, controlSource, metal4, false,
                                         report[@"async_retention_checks"], shouldContinue);
                     phoneCheckpoint(report, @"retained_error", shouldContinue, progress);
                     checkAsyncRetention(device, compiler, queue, invalid, metal4, true,

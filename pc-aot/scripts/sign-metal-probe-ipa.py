@@ -27,9 +27,10 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = "org.skyrimios.metalprobe"
 APP = "Payload/MetalProbe.app"
-UNSIGNED_FILES = {"MetalProbe", "Info.plist", "fixture.metal", "BuildInfo.json"}
+UNSIGNED_FILES = {"MetalProbe", "Info.plist", "fixture.metal", "phone_fixture.metal", "BuildInfo.json"}
 SIGNED_FILES = UNSIGNED_FILES | {"embedded.mobileprovision", "_CodeSignature/CodeResources"}
 FIXTURE_SHA256 = "e45755523aabf64eb236c01a77ae220e271b4ae6d0eabcf120d9a80cabbada87"
+PHONE_FIXTURE_SHA256 = "8963ee6a13291f0e07fb636e534eddc415ca090b70420f5f7bdb86cc78a5b270"
 SIGNER_HELPER_SHA256 = "2238760e2f997174797d3e9adf1afc504136165a4167a11162a6937d36953827"
 PROFILE_HELPER_SHA256 = "9ba5eb3f3f6d8b425cbb07cf15667ca860c184bcd683ca83e8c741008a6bff84"
 CERTIFICATE_HELPER_SHA256 = "12ce42f38cb222b00fdd16c32fcf121d33a5703e2ef798308a7e4bff4cd9c5ea"
@@ -149,11 +150,17 @@ def bundle_contract(members):
          and info.get("CFBundleSupportedPlatforms") == ["iPhoneOS"] and info.get("UIDeviceFamily") == [1],
          "isolated_device_probe_identity_required")
     need(digest(members["fixture.metal"]) == FIXTURE_SHA256, "authored_fixture_mismatch")
+    need(digest(members["phone_fixture.metal"]) == PHONE_FIXTURE_SHA256, "authored_phone_fixture_mismatch")
     provenance = json.loads(members["BuildInfo.json"])
     need(provenance.get("bundle_id") == BUNDLE and provenance.get("simulator") is False,
          "device_build_provenance_required")
     need(provenance.get("inputs", {}).get("experiments/metal-compile/fixture.metal") == FIXTURE_SHA256,
          "fixture_provenance_mismatch")
+    need(provenance.get("inputs", {}).get("experiments/metal-compile/phone_fixture.metal") == PHONE_FIXTURE_SHA256,
+         "phone_fixture_provenance_mismatch")
+    workloads = provenance.get("inputs", {}).get("experiments/metal-compile/phone_workloads.h")
+    need(isinstance(workloads, str) and re.fullmatch("[0-9a-f]{64}", workloads),
+         "phone_workloads_provenance_missing_or_invalid")
     need(all(provenance.get(k) is False for k in ("signed_for_device", "installed", "physical_iphone_verified",
          "gpu_execution_verified", "metal4_runtime_verified", "gameplay_improvement_verified")),
          "unsigned_build_must_not_claim_runtime_success")

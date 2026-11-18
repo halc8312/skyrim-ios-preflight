@@ -13,6 +13,13 @@ static NSString* apiName(NSString* api) {
     return names[api] ?: @"準備中";
 }
 
+static NSString* caseName(NSString* caseID) {
+    if (![caseID isKindOfClass:NSString.class]) return @"テスト用の負荷";
+    NSDictionary* names = @{@"branch_mix": @"分岐と演算", @"table_permute": @"表参照と並べ替え",
+                            @"coupled_rounds": @"連続する演算", @"control_fixture": @"基本テスト"};
+    return names[caseID] ?: @"追加の負荷";
+}
+
 static UILabel* makeLabel(NSString* text, UIFontTextStyle style) {
     UILabel* label = [UILabel new];
     label.text = text;
@@ -79,8 +86,8 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
         [content.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-20],
         [content.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-40]
     ]];
-    [content addArrangedSubview:makeLabel(@"シェーダー準備を測る", UIFontTextStyleTitle2)];
-    UILabel* intro = makeLabel(@"描画の準備時間と結果を比較します。測定中は画面を開いたままお待ちください。", UIFontTextStyleBody);
+    [content addArrangedSubview:makeLabel(@"3種類の負荷で4方式を比較", UIFontTextStyleTitle2)];
+    UILabel* intro = makeLabel(@"自作のテストで、描画の準備時間と結果を比べます。測定中は画面を開いたままお待ちください。", UIFontTextStyleBody);
     intro.textColor = UIColor.secondaryLabelColor;
     [content addArrangedSubview:intro];
     [content addArrangedSubview:makeLabel(@"最初に試す方式", UIFontTextStyleHeadline)];
@@ -89,7 +96,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
     self.orderControl.accessibilityLabel = @"最初に試す方式";
     [self.orderControl.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
     [content addArrangedSubview:self.orderControl];
-    UILabel* orderHint = makeLabel(@"各方式を3回ずつ、順番を変えて測ります。次の測定では、もう一方の方式から始めてください。", UIFontTextStyleSubheadline);
+    UILabel* orderHint = makeLabel(@"各負荷で順番を入れ替え、4方式を4回ずつ測ります（合計48回）。開始方式は自由に選べます。", UIFontTextStyleSubheadline);
     orderHint.textColor = UIColor.secondaryLabelColor;
     [content addArrangedSubview:orderHint];
     self.stateLabel = makeLabel(@"準備できています", UIFontTextStyleHeadline);
@@ -159,7 +166,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
         self.detailLabel.text = @"高温時は測定を開始しません。少し時間を置いてお試しください。";
         return;
     }
-    NSString* source = [NSBundle.mainBundle pathForResource:@"fixture" ofType:@"metal"];
+    NSString* source = [NSBundle.mainBundle pathForResource:@"phone_fixture" ofType:@"metal"];
     if (!source) {
         self.stateLabel.text = @"テストデータが見つかりません";
         self.detailLabel.text = @"検証アプリの構成を確認する必要があります。";
@@ -200,7 +207,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         @autoreleasepool {
             __block NSError* saveError = nil;
-            NSDictionary* comparison = SkyrimMetalRunPhoneComparison(source, 3, metal4First,
+            NSDictionary* comparison = SkyrimMetalRunPhoneComparison(source, 4, metal4First,
                 ^BOOL { return control->load(); }, ^(NSDictionary* snapshot) {
                     NSError* checkpointError = nil;
                     NSMutableDictionary* savedSnapshot = [snapshot mutableCopy];
@@ -216,8 +223,14 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
                         if (total) self.progressView.progress = float(done) / float(total);
                         if (control->load()) {
                             self.stateLabel.text = @"比較しています";
-                            self.detailLabel.text = [NSString stringWithFormat:@"%@　%lu / %lu", apiName(snapshot[@"active_api"]),
-                                                    (unsigned long)done, (unsigned long)total];
+                            NSUInteger caseIndex = [snapshot[@"active_case_index"] unsignedIntegerValue];
+                            NSUInteger totalCases = [snapshot[@"total_cases"] unsignedIntegerValue];
+                            NSString* progress = [NSString stringWithFormat:@"%@　%lu / %lu回", apiName(snapshot[@"active_api"]),
+                                                  (unsigned long)done, (unsigned long)total];
+                            self.detailLabel.text = caseIndex && totalCases
+                                ? [NSString stringWithFormat:@"負荷 %lu / %lu　%@\n%@", (unsigned long)caseIndex,
+                                   (unsigned long)totalCases, caseName(snapshot[@"active_case_id"]), progress]
+                                : progress;
                         }
                     });
                 });
@@ -285,7 +298,10 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
     self.progressView.progress = passed ? 1 : self.progressView.progress;
     if (passed) {
         self.stateLabel.text = @"比較が完了しました";
-        self.detailLabel.text = @"テスト用の描画・計算結果は一致しました。";
+        NSUInteger totalCases = [comparison[@"total_cases"] unsignedIntegerValue];
+        self.detailLabel.text = totalCases > 1
+            ? [NSString stringWithFormat:@"%lu種類の負荷で、描画・計算結果の一致を確認しました。", (unsigned long)totalCases]
+            : @"テスト用の描画・計算結果は一致しました。";
     } else if ([status isEqual:@"unsupported"]) {
         self.stateLabel.text = @"この環境では比較できません";
         self.detailLabel.text = @"Metal 4の対応条件を満たしていません。対応状況を結果に保存しました。";
@@ -301,24 +317,37 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
         self.detailLabel.text = @"その時点で測定を止め、保存エラーの情報を最終結果に残しました。";
     }
     NSArray* samples = [comparison[@"samples"] isKindOfClass:NSArray.class] ? comparison[@"samples"] : @[];
-    NSMutableArray<NSString*>* lines = [NSMutableArray new];
-    for (NSString* api in @[@"legacy_source", @"metal4_source", @"legacy_async_source", @"metal4_async_source"]) {
-        NSMutableArray<NSNumber*>* durations = [NSMutableArray new];
-        for (NSDictionary* sample in samples) {
-            if ([sample[@"status"] isEqual:@"passed"] && [sample[@"api"] isEqual:api] && [sample[@"library_ns"] isKindOfClass:NSNumber.class]
-                && [sample[@"command_status"] isEqual:@"completed"])
-                [durations addObject:sample[@"library_ns"]];
+    NSMutableArray<NSString*>* caseIDs = [NSMutableArray new];
+    for (NSDictionary* sample in samples) {
+        NSString* caseID = [sample[@"case_id"] isKindOfClass:NSString.class] ? sample[@"case_id"] : @"";
+        if (![caseIDs containsObject:caseID]) [caseIDs addObject:caseID];
+    }
+    NSMutableArray<NSString*>* groups = [NSMutableArray new];
+    for (NSString* caseID in caseIDs) {
+        NSMutableArray<NSString*>* lines = [NSMutableArray new];
+        for (NSString* api in @[@"legacy_source", @"metal4_source", @"legacy_async_source", @"metal4_async_source"]) {
+            NSMutableArray<NSNumber*>* durations = [NSMutableArray new];
+            for (NSDictionary* sample in samples) {
+                NSString* sampleCase = [sample[@"case_id"] isKindOfClass:NSString.class] ? sample[@"case_id"] : @"";
+                if ([sampleCase isEqual:caseID] && [sample[@"status"] isEqual:@"passed"] && [sample[@"api"] isEqual:api]
+                    && [sample[@"library_ns"] isKindOfClass:NSNumber.class] && [sample[@"command_status"] isEqual:@"completed"])
+                    [durations addObject:sample[@"library_ns"]];
+            }
+            [durations sortUsingSelector:@selector(compare:)];
+            if (durations.count) {
+                NSUInteger middle = durations.count / 2;
+                double median = durations[middle].doubleValue;
+                if (durations.count % 2 == 0) median = (median + durations[middle - 1].doubleValue) / 2;
+                median /= 1e6;
+                [lines addObject:[NSString stringWithFormat:@"%@　%.2f ms（%lu回）", apiName(api), median, (unsigned long)durations.count]];
+            }
         }
-        [durations sortUsingSelector:@selector(compare:)];
-        if (durations.count) {
-            NSUInteger middle = durations.count / 2;
-            double median = durations[middle].doubleValue;
-            if (durations.count % 2 == 0) median = (median + durations[middle - 1].doubleValue) / 2;
-            median /= 1e6;
-            [lines addObject:[NSString stringWithFormat:@"%@　%.2f ms（%lu回）", apiName(api), median, (unsigned long)durations.count]];
+        if (lines.count) {
+            NSString* values = [lines componentsJoinedByString:@"\n"];
+            [groups addObject:caseID.length ? [NSString stringWithFormat:@"%@\n%@", caseName(caseID), values] : values];
         }
     }
-    self.resultLabel.text = lines.count ? [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n\nライブラリ準備時間の中央値です。描画性能や初回キャッシュの速さを示すものではありません。"]
+    self.resultLabel.text = groups.count ? [[groups componentsJoinedByString:@"\n\n"] stringByAppendingString:@"\n\n各方式のライブラリ準備時間の中央値です。描画性能や初回キャッシュの速さを示すものではありません。"]
                                       : @"比較できた測定値はありません";
     self.savedLabel.text = [record[@"recovered_incomplete"] boolValue]
         ? @"前回の途中経過を表示しています。新しい比較も開始できます。"

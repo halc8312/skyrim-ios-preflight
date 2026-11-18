@@ -55,7 +55,9 @@ def main():
     report = {"schema": 1, "status": "failed", "scope": "unsigned iPhone build and simulator UI only",
               "physical_iphone_verified": False, "metal4_runtime_verified": False,
               "gameplay_improvement_verified": False, "commands": []}
-    native_groups = (("phone-runtime", "local/tests/phone-runtime-*"), ("store", "local/metal-probe-store/run-*"))
+    native_groups = (("phone-runtime", "local/tests/phone-runtime-*"),
+                     ("phone-workloads", "local/tests/phone-workloads-*"),
+                     ("store", "local/metal-probe-store/run-*"))
     prior_native = {group: set(ROOT.glob(pattern)) for group, pattern in native_groups}
 
     def call(label, command, limit=60):
@@ -104,7 +106,7 @@ def main():
 
     try:
         call("preflight", [sys.executable, str(ROOT / "scripts/check-public-tree.py")])
-        for suite in ("test_metal_probe_ios_build.py", "test_metal_probe_ui_driver.py", "test_metal_phone_runtime.py", "test_metal_probe_store.py", "test_metal_compile_runtime.py"):
+        for suite in ("test_metal_probe_ios_build.py", "test_metal_probe_ui_driver.py", "test_metal_phone_workloads.py", "test_metal_phone_runtime.py", "test_metal_probe_store.py", "test_metal_compile_runtime.py"):
             call(suite.removesuffix(".py"), [sys.executable, "-m", "unittest", "discover", "-s", str(ROOT / "tests"), "-p", suite, "-v"], 180)
         build(False)
         simulator_app = build(True)
