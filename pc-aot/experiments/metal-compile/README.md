@@ -66,9 +66,10 @@ Evidence is under `local/metal-probe-ios-ci/run-06/`. The dedicated signed build
 IPA is 89,640 bytes, SHA-256
 `ece5572607e8be9c058d6fe3fe2122202e9947e3612c2423637a653486d7ba27`.
 The existing private comparison-app route serves it; live HTTPS transfer/hash and
-390-pixel light/dark page checks passed. Physical build-3 installation, the 192
-samples and Metal 4 performance remain unverified. Earlier build evidence below
-remains historical; production Skyrim is unchanged.
+390-pixel light/dark page checks passed. Two subsequent physical build-3 runs
+validated all 384 normal samples; their findings appear below. Metal 4 speedup,
+parallel contention and production lifetime remain unverified. Earlier build
+evidence below remains historical; production Skyrim is unchanged.
 
 On an Apple host with the iOS 26 SDK, `scripts/build-metal-probe-ios.sh` creates
 a fresh unsigned device IPA and build evidence under `local/metal-probe-ios/`.
@@ -104,7 +105,7 @@ is 71,503 bytes; the separately signed and cryptographically verified IPA is
 85,754 bytes (SHA-256
 `f5b611c5a57ff1f34f3378fcd4d293a132917c41764815ae20e74cb56edf77a7`),
 under `private/metal-probe-signing/run-20261118T012351Z-a95e13d8d6/`.
-The existing private comparison-app route now serves build 2. Real HTTPS page,
+At that delivery the private comparison-app route served build 2. Real HTTPS page,
 manifest and package checks passed, including the complete signed-package hash.
 Unauthenticated requests returned 404; the other three routes and disabled
 Funnel setting were preserved. Fresh live 390 px light/dark screenshots were
@@ -260,6 +261,79 @@ The immediate question is whether a library produced by `MTL4Compiler` or by an
 offline Windows compiler can feed the existing Metal function-specialization,
 render-pipeline, and compute-pipeline APIs with the same observable results.
 That is narrower than migrating the renderer to Metal 4.
+
+## Build-3 physical iPhone results
+
+The 2026-11-18 12:09 and 12:10 JST records completed on A19 Pro / iOS 26.5.2,
+starting with legacy and Metal 4 respectively. Both complete BuildInfo objects
+match phone run 6 (`af678912`); all twelve source hashes match main `4e91844`.
+Each has 192 samples over twelve cases, correct family/variant/route ordering
+and three first-case assignments per API. All 49,152 normal GPU words and 320
+retained-control words match the previously verified CPU/GPU evidence. Source,
+option and input hashes, expected invalid-source rejection, single callback
+delivery and task completion all validate. All 587 progress stores per run
+succeeded. Original records remain unchanged and private:
+
+- `private/metal-probe-results/20261118-120936/comparison.json`: 1,178,097 bytes,
+  SHA-256 `4cc189de0c829fc23e5152f80f497245924808cb274c8077ec483d3e9def5f1f`.
+- `private/metal-probe-results/20261118-121012/comparison.json`: 1,177,985 bytes,
+  SHA-256 `2e61262da03a7f81c39e892b14d6e6f79fe917fd8bc45231eb2e490ea5b7f27e`.
+
+Preparation means the sum of library, function specialization, render PSO and
+compute PSO wall intervals. It is not GPU execution time or CPU utilization.
+
+| Interval or partition | First run (ms) | Second run (ms) |
+| --- | ---: | ---: |
+| All 192 preparation samples | 740.473878 | 26.471767 |
+| Twelve case-first samples | 716.720127 | 2.268419 |
+| Other 180 samples | 23.753751 | 24.203348 |
+| Maximum among those 180 | 0.216124 | 0.592417 |
+| Snapshot JSON encode/decode | 1,814.581592 | 1,841.401300 |
+| Synchronous progress callback | 4,734.074413 | 4,639.225461 |
+| Store, already inside callback | 4,730.736542 | 4,635.900241 |
+| Whole runtime interval | 7,530.080084 | 6,751.027292 |
+
+Snapshot plus callback accounts for 86.97% and 95.99% of runtime respectively.
+Store includes validation, JSON, locking and file I/O, not just disk time; do not
+add it again. Initial/final stores and the return snapshot are explicitly outside
+these counters. Other work includes device/setup, controls, GPU command handling,
+output checks and observation, so the residual is not attributed to one cause.
+The growing full report is encoded/decoded and stored at all 587 checkpoints.
+This overhead belongs to the isolated measurement app, not the Skyrim renderer;
+it is excluded from the preparation clocks but may still perturb the environment.
+
+First-run case-first preparation, with a different semantic variant assigned to
+each API in each family (therefore not a same-input backend comparison):
+
+| Family | Legacy sync (ms) | Metal 4 sync (ms) | Legacy async (ms) | Metal 4 async (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Branching arithmetic | 208.996 | 35.421 | 34.999 | 36.066 |
+| Dependent table lookups | 32.607 | 31.896 | 30.411 | 32.771 |
+| Coupled mixing rounds | 68.242 | 68.902 | 70.027 | 66.382 |
+
+The first legacy sample's library alone took 128.686500 ms. It is also the first
+normal request in the process and compiler sequence; its excess cannot be assigned
+to the legacy API. Other first libraries took about 6–8 ms regardless of route.
+For coupled mixing, the two legacy PSO stages together took about 53 ms and are
+outside the Metal 4 library replacement. This differs from the game's previously
+observed MSL-dominated long waits. Run two reused identical case sources/options;
+all its sample preparation sums were at most 0.805668 ms. Neither equal leader
+counts nor changing the initial selector proves a cold OS cache or an API speedup.
+
+All 386 environment observations per run reported thermal 0, low-power off and
+successful footprint queries. Observed maximum footprints were 84,083,536 and
+68,879,256 bytes; minimum advisory headroom was 3,455,909,040 and 3,471,113,320
+bytes. These snapshots do not establish transient peaks or sustained thermal
+behavior. Only authored ARC library compatibility through legacy PSOs is proven.
+
+The next device experiment should coalesce progress serialization/persistence
+while retaining every sample in the final record, cooperative stop checks at
+every operation boundary, store-error handling and explicit interrupted recovery.
+Document the maximum unsaved prefix rather than claiming crash-proof capture.
+Combine that measurement fix with independent actual Metal 4 MRC task retirement,
+production-option equivalence and bounded parallel-contention checks. Repeated
+serial synthetic runs alone cannot satisfy those integration gates. This analysis
+did not rebuild, modify production, or change defaults.
 
 ## What each environment establishes
 

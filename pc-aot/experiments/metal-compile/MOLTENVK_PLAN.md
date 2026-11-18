@@ -41,6 +41,15 @@ and the existing DXVK scheduling remain on their current paths.
   all legacy-first in run one; the opposite-order run reused the same sources.
   It therefore does not establish a Metal 4 first-use speedup. See README for
   preparation-stage sums, repeated medians and non-compiler elapsed overhead.
+- Build 3 (`af678912`) then passed two physical runs with twelve semantic cases
+  and 384 normal samples; all 49,152 normal output words and retained controls
+  match. Each API leads three cases, but variant cost and the process's first
+  request remain confounders. Preparation sums were 740.473878 / 26.471767 ms;
+  the other 180 samples after excluding each case's first were 23.753751 /
+  24.203348 ms. Snapshot/callback work consumed 86.97% / 95.99% of elapsed time,
+  with host storage nested inside callback. This establishes the measurement
+  app's overhead and further ARC compatibility, not a backend speedup or the
+  unresolved MRC, options and parallel-contention gates.
 
 Upstream source references below are all at the built revision:
 [shader implementation](https://github.com/KhronosGroup/MoltenVK/blob/458870543b9bcf6b0edd6f90aaa776707b310d96/MoltenVK/MoltenVK/GPUObjects/MVKShaderModule.mm),
@@ -214,7 +223,7 @@ Phone workflow run 5 (`19adfba`) passed 59 controls without skips, both Apple SD
 targets, and six legacy-Metal readbacks on the Apple Paravirtual device. The
 dedicated signed build-2 IPA is 85,754 bytes, with evidence under
 `private/metal-probe-signing/run-20261118T012351Z-a95e13d8d6/`; the existing private
-comparison-app link now serves that verified package. Both physical build-2
+comparison-app link served that verified package at delivery. Both physical build-2
 reports passed all output checks. Their long first-encounter preparation was
 concentrated in three legacy-first samples (301.300 / 33.300 / 91.523 ms);
 the second run reused the same sources. Repeated timings do not show a consistent
@@ -234,9 +243,14 @@ Initial/final writes and the return snapshot are explicitly excluded. Portable
 and Windows compilation checks passed. Phone run 6 (`af678912`) passed 64 Apple
 checks without skips, 24 legacy readbacks on the Apple Paravirtual device, both
 iOS build targets and timed Foundation storage. The signed build-3 package is
-available through the existing private comparison-app route; physical iPhone
-installation and its 192-sample results remain pending. Parallel contention and
-actual Metal 4 MRC task
-retirement should then be evaluated independently. The production gate stays
+available through the existing private comparison-app route. Both physical
+192-sample runs have since validated outputs and controls, without a demonstrated
+Metal 4 speed advantage. Their 587 full-progress checkpoints cost about 6.5 seconds
+per run in snapshot generation plus synchronous callbacks, independently of
+compiler clocks. Coalesce progress snapshots/storage in the next experiment
+without removing per-operation stop checks, final samples, error handling or
+interrupted-result recovery. Further serial repeats are not the next acceptance
+gate: validate bounded parallel contention, actual Metal 4 MRC task retirement
+and production option equivalence independently. The production gate stays
 open until those lifetime/options checks pass; neither an ARC fixture nor its
 short thermal-zero run proves game performance or long-session stability.
