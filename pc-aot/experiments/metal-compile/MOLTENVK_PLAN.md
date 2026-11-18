@@ -231,8 +231,12 @@ interrupted-result recovery. Build 3 now implements this serial design with
 twelve semantic cases and 192 samples, a family-plus-variant leader rotation,
 and disjoint snapshot/callback intervals with nested host-store measurements.
 Initial/final writes and the return snapshot are explicitly excluded. Portable
-and Windows compilation checks passed; its Apple and physical checks remain
-pending. Parallel contention and actual Metal 4 MRC task
+and Windows compilation checks passed. Phone run 6 (`af678912`) passed 64 Apple
+checks without skips, 24 legacy readbacks on the Apple Paravirtual device, both
+iOS build targets and timed Foundation storage. The signed build-3 package is
+available through the existing private comparison-app route; physical iPhone
+installation and its 192-sample results remain pending. Parallel contention and
+actual Metal 4 MRC task
 retirement should then be evaluated independently. The production gate stays
 open until those lifetime/options checks pass; neither an ARC fixture nor its
 short thermal-zero run proves game performance or long-session stability.

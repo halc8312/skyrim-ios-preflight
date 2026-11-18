@@ -54,9 +54,21 @@ Build-3 preparation passed Windows Metal 6.2 compilation/linking for all twelve
 cases without diagnostics, portable CPU golden/sensitivity/order controls in
 normal and ASan/UBSan builds, fifteen packaging and twenty-three signing tests,
 and six simulator-evidence parser controls. Evidence is in
-`local/metal-compile/phone-workloads-windows-04/`. Apple SDK execution, the expanded
-24 legacy-GPU readbacks, timed Foundation storage and physical build-3 results
-are not yet verified. Earlier build evidence below remains historical.
+`local/metal-compile/phone-workloads-windows-04/`. Phone workflow run 6
+(`af6789125074ce3eda34e5eb02908a63877002ef`) then passed 64 checks without skips,
+both Apple SDK targets, timed Foundation storage and 24 legacy-GPU readbacks
+(3,072 words) on the Apple Paravirtual device. Its twelve input sources match
+main `4e91844c190530d1746451f067890ecb98641918` exactly. The simulator recorded
+one completed progress call, with host-store time nested inside callback time;
+initial/final writes were excluded. Four simulator screens were visually reviewed
+after collection, leaving the original `visual_review_pending` evidence intact.
+Evidence is under `local/metal-probe-ios-ci/run-06/`. The dedicated signed build-3
+IPA is 89,640 bytes, SHA-256
+`ece5572607e8be9c058d6fe3fe2122202e9947e3612c2423637a653486d7ba27`.
+The existing private comparison-app route serves it; live HTTPS transfer/hash and
+390-pixel light/dark page checks passed. Physical build-3 installation, the 192
+samples and Metal 4 performance remain unverified. Earlier build evidence below
+remains historical; production Skyrim is unchanged.
 
 On an Apple host with the iOS 26 SDK, `scripts/build-metal-probe-ios.sh` creates
 a fresh unsigned device IPA and build evidence under `local/metal-probe-ios/`.
