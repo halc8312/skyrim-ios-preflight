@@ -176,7 +176,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [self.view layoutIfNeeded];
             CGRect example = [self.resultLabel convertRect:self.resultLabel.bounds toView:scroll];
-            [scroll scrollRectToVisible:CGRectInset(example, 0, -12) animated:NO];
+            [scroll scrollRectToVisible:example animated:NO];
         });
         return; // Keep this path completely outside ProbeRunStore.
     }
