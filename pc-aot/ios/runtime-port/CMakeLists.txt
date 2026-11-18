@@ -62,6 +62,8 @@ add_library(skyrim_ios_runtime STATIC ${runtime_sources}
     "${CMAKE_CURRENT_SOURCE_DIR}/mod_analyze.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mod_optimize.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mod_manager.m"
+    "${CMAKE_CURRENT_SOURCE_DIR}/mod_fomod.m"
+    "${CMAKE_CURRENT_SOURCE_DIR}/mod_browser.m"
     "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_upload.m"
     "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_controller.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_runtime.m"
@@ -85,7 +87,18 @@ if(NOT EXISTS "${SKYRIM_MOD_CODEC_DIR}/bcdec/bcdec.h" OR NOT EXISTS "${SKYRIM_MO
 endif()
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/mod_optimize.c" PROPERTIES
     INCLUDE_DIRECTORIES "${SKYRIM_MOD_CODEC_DIR}/bcdec;${SKYRIM_MOD_CODEC_DIR}/stb")
-target_link_libraries(skyrim_ios_runtime PUBLIC z "-framework UniformTypeIdentifiers")
+target_link_libraries(skyrim_ios_runtime PUBLIC z "-framework UniformTypeIdentifiers" "-framework WebKit")
+# 7z / rar: libarchive (+ liblzma for 7z) from the prepared dependency prefix.
+# Without them the app still builds; 7z/rar imports then show a message.
+if(DEFINED SKYRIM_IOS_DEPS_PREFIX AND EXISTS "${SKYRIM_IOS_DEPS_PREFIX}/lib/libarchive.a")
+    target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/mod_libarchive.c")
+    target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_HAVE_LIBARCHIVE=1)
+    target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_DEPS_PREFIX}/include")
+    target_link_libraries(skyrim_ios_runtime PUBLIC "${SKYRIM_IOS_DEPS_PREFIX}/lib/libarchive.a"
+        "${SKYRIM_IOS_DEPS_PREFIX}/lib/liblzma.a" bz2 iconv)
+else()
+    message(WARNING "libarchive not in the dependency prefix: 7z/rar MOD import disabled")
+endif()
 
 if(SKYRIM_IOS_BUILD_APP)
     if(NOT SKYRIM_IOS_BINDING_SOURCES)

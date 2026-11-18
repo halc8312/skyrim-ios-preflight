@@ -76,6 +76,7 @@ PY
   run_validation python3 -m unittest discover -s tests -p 'test_mod_plugins.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_archive.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_optimize.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_mod_libarchive.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_diagnostic_upload.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_private_diagnostics.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_lifecycle_controller.py' -v

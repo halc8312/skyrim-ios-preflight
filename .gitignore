@@ -855,3 +855,10 @@
 !/pc-aot/tests/test_mod_optimize.py
 !/pc-aot/tests/native/test_mod_optimize.c
 !/pc-aot/scripts/fetch-mod-codecs.sh
+!/pc-aot/ios/runtime-port/mod_libarchive.c
+!/pc-aot/ios/runtime-port/mod_libarchive.h
+!/pc-aot/ios/runtime-port/mod_install.h
+!/pc-aot/ios/runtime-port/mod_fomod.m
+!/pc-aot/ios/runtime-port/mod_browser.m
+!/pc-aot/tests/test_mod_libarchive.py
+!/pc-aot/tests/native/test_mod_libarchive.c

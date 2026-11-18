@@ -20,6 +20,10 @@
 #include "mod_plugins.h"
 #include "mod_analyze.h"
 #include "mod_optimize.h"
+#include "mod_install.h"
+#if SKYRIM_HAVE_LIBARCHIVE
+#include "mod_libarchive.h"
+#endif
 
 static NSString *T(NSString *english, NSString *japanese) {
     NSDictionary *s = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
@@ -342,6 +346,12 @@ static void PublishStaged(NSString *staging, NSMutableDictionary *package) {
         return;
     }
     package[@"plugins"] = PluginsIn(data);
+    if (!package[@"files"]) {
+        unsigned long long files = 0, bytes = 0;
+        NSDirectoryEnumerator *en = [NSFileManager.defaultManager enumeratorAtPath:data];
+        for (NSString *rel in en) { (void)rel; if ([en.fileAttributes[NSFileType] isEqual:NSFileTypeRegular]) { ++files; bytes += en.fileAttributes.fileSize; } }
+        package[@"files"] = @(files); package[@"bytes"] = @(bytes);
+    }
     NSString *pid = package[@"id"];
     if (!WriteJSON(package, [staging stringByAppendingPathComponent:@"package.json"]) ||
         rename(staging.fileSystemRepresentation, PackageDir(pid).fileSystemRepresentation)) {
@@ -381,13 +391,98 @@ static NSString *ZipErrorText(int status) {
     }
 }
 
-/* Other archive formats: returns YES when it handled the file. */
-static BOOL ImportOther(NSString *path, NSString *name, NSString *digest) {
-    (void)path; (void)name; (void)digest; return NO;
+/* ---- installers (FOMOD) ---------------------------------------------- */
+static NSString *FindModuleConfig(NSString *root) {
+    NSDirectoryEnumerator *en = [NSFileManager.defaultManager enumeratorAtPath:root];
+    for (NSString *rel in en) {
+        if (en.level > 4) { [en skipDescendants]; continue; }
+        if ([rel.lastPathComponent caseInsensitiveCompare:@"ModuleConfig.xml"] == NSOrderedSame &&
+            [rel.stringByDeletingLastPathComponent.lastPathComponent caseInsensitiveCompare:@"fomod"] == NSOrderedSame)
+            return [root stringByAppendingPathComponent:rel];
+    }
+    return nil;
 }
-/* Installer (FOMOD) archives: returns YES when it handled the archive. */
+/* raw holds the whole extracted archive (inside staging). Shows the installer
+ * on the main thread; publishes on the import queue when it finishes. */
+static void RunInstallerFromRaw(NSString *staging, NSString *raw, NSMutableDictionary *package) {
+    NSString *config = FindModuleConfig(raw);
+    if (!config) {
+        skyrim_remove_tree(staging.fileSystemRepresentation);
+        Notice(T(@"The installer file was not found.", @"インストーラーの設定ファイルが見つかりませんでした。"));
+        return;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        EnsureState();
+        NSMutableSet *active = [NSMutableSet setWithObjects:@"skyrim.esm", @"update.esm", nil];
+        for (NSDictionary *row in RunningProfile()[@"plugins"]) if ([row[@"on"] boolValue]) [active addObject:[row[@"name"] lowercaseString]];
+        skyrim_fomod_run(raw, config, [staging stringByAppendingPathComponent:@"Data"], active, ^(BOOL installed, NSString *message) {
+            dispatch_async(ImportQueue(), ^{
+                skyrim_remove_tree(raw.fileSystemRepresentation);
+                if (!installed) { skyrim_remove_tree(staging.fileSystemRepresentation); if (message) Notice(message); return; }
+                package[@"installer"] = @YES;
+                PublishStaged(staging, package);
+            });
+        });
+    });
+}
 static BOOL RunInstaller(SkyrimZip *zip, NSString *archive, NSMutableDictionary *package) {
-    (void)zip; (void)archive; (void)package; return NO;
+    (void)archive;
+    NSString *staging = NewStaging();
+    if (!staging) return NO;
+    NSString *raw = [staging stringByAppendingPathComponent:@"raw"];
+    [NSFileManager.defaultManager createDirectoryAtPath:raw withIntermediateDirectories:YES attributes:nil error:NULL];
+    int status = SKYRIM_ZIP_OK;
+    for (size_t i = 0; i < zip->count && !status; ++i)
+        if (!zip->entries[i].is_dir) status = skyrim_zip_extract(zip, i, raw.fileSystemRepresentation, zip->entries[i].path);
+    if (status) { skyrim_remove_tree(staging.fileSystemRepresentation); Notice(ZipErrorText(status)); return YES; }
+    RunInstallerFromRaw(staging, raw, package);
+    return YES;
+}
+
+/* 7z / rar through libarchive, when the build provides it. */
+static BOOL ImportOther(NSString *path, NSString *name, NSString *digest) {
+#if SKYRIM_HAVE_LIBARCHIVE
+    NSString *ext = name.pathExtension.lowercaseString;
+    if (![ext isEqualToString:@"7z"] && ![ext isEqualToString:@"rar"]) return NO;
+    SkyrimArchiveList list;
+    int status = skyrim_archive_list(path.fileSystemRepresentation, &list);
+    if (status) { Notice(ZipErrorText(status)); return YES; }
+    if (list.total + (256ull << 20) > FreeBytes()) {
+        skyrim_archive_list_free(&list);
+        Notice(T(@"Not enough free space on this iPhone for this MOD.", @"このMODを入れるための空き容量が足りません。"));
+        return YES;
+    }
+    char prefix[1024]; int installer = 0;
+    int found = skyrim_mod_data_root((const char *const *)list.paths, list.count, prefix, sizeof prefix, &installer);
+    skyrim_archive_list_free(&list);
+    NSMutableDictionary *package = [@{@"id":NSUUID.UUID.UUIDString, @"name":name.stringByDeletingPathExtension,
+        @"archive":name, @"sha256":digest ?: @"", @"imported":@(NSDate.date.timeIntervalSince1970)} mutableCopy];
+    NSString *staging = NewStaging();
+    if (!staging) { Notice(T(@"Could not save the MOD.", @"MODを保存できませんでした。")); return YES; }
+    size_t files = 0; uint64_t bytes = 0;
+    if (installer) {
+        NSString *raw = [staging stringByAppendingPathComponent:@"raw"];
+        [NSFileManager.defaultManager createDirectoryAtPath:raw withIntermediateDirectories:YES attributes:nil error:NULL];
+        status = skyrim_archive_extract(path.fileSystemRepresentation, "", 0, raw.fileSystemRepresentation, &files, &bytes);
+        if (status) { skyrim_remove_tree(staging.fileSystemRepresentation); Notice(ZipErrorText(status)); return YES; }
+        RunInstallerFromRaw(staging, raw, package);
+        return YES;
+    }
+    if (!found) {
+        skyrim_remove_tree(staging.fileSystemRepresentation);
+        Notice(T(@"No Skyrim game files were found in this archive.", @"この圧縮ファイルにSkyrimのゲーム用ファイルが見つかりませんでした。"));
+        return YES;
+    }
+    status = skyrim_archive_extract(path.fileSystemRepresentation, prefix, 1,
+                                    [staging stringByAppendingPathComponent:@"Data"].fileSystemRepresentation, &files, &bytes);
+    if (status) { skyrim_remove_tree(staging.fileSystemRepresentation); Notice(ZipErrorText(status)); return YES; }
+    package[@"files"] = @(files); package[@"bytes"] = @(bytes); package[@"dataPrefix"] = @(prefix);
+    PublishStaged(staging, package);
+    return YES;
+#else
+    (void)path; (void)name; (void)digest;
+    return NO;
+#endif
 }
 
 static void ImportZip(NSString *path, NSString *name, NSString *digest) {
@@ -508,7 +603,7 @@ void skyrim_mods_import_url(NSURL *url, BOOL scoped) {
             if (dup) Notice([NSString stringWithFormat:T(@"%@ is already added.", @"%@ は追加済みです。"), dup]);
             else if ([ext isEqualToString:@"zip"]) ImportZip(copy, name, digest);
             else {
-                if (!ImportOther(copy, name, digest)) Notice(T(@"Only zip files and folders are supported in this version.", @"この版で対応しているのはzipとフォルダです。"));
+                if (!ImportOther(copy, name, digest)) Notice(T(@"This file type is not supported. Use zip, 7z, rar or a folder.", @"このファイル形式には対応していません。zip・7z・rar・フォルダを使ってください。"));
             }
         }
         [NSFileManager.defaultManager removeItemAtPath:copy error:NULL];
@@ -887,7 +982,7 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
     (void)t;
     switch (s) {
     case HubMods: return self.rows.count ? (NSInteger)self.rows.count : 1;
-    case HubAdd: return 2;
+    case HubAdd: return 3;
     case HubTools: return 3;
     case HubOptimize: return 2;
     case HubShare: return 2;
@@ -1083,6 +1178,7 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
             for (NSString *ext in @[@"7z", @"rar"]) { UTType *u = [UTType typeWithFilenameExtension:ext]; if (u) [types addObject:u]; }
             [self pick:types folder:NO list:NO];
         } else if (p.row == 1) [self pick:@[UTTypeFolder] folder:YES list:NO];
+        else [self.navigationController pushViewController:skyrim_mods_browser_controller() animated:YES];
         break;
     case HubTools:
         if (p.row == 0) [self.navigationController pushViewController:skyrim_mobile_plugin_controller() animated:YES];
