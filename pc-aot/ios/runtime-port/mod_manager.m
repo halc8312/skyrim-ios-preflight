@@ -308,14 +308,24 @@ static BOOL ProcessStaged(NSString *data, NSMutableDictionary *package, NSString
         NSObject *lock = [NSObject new];
         NSUInteger total = counts ? textures.count : 0;
         __block NSUInteger done = 0;
-        dispatch_apply(total, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^(size_t i) {
+        /* At most two textures at once: imports can run while the game is
+         * playing, and a decoded 4K texture alone needs 64 MB. */
+        dispatch_semaphore_t slots = dispatch_semaphore_create(2);
+        dispatch_group_t group = dispatch_group_create();
+        dispatch_queue_t workers = dispatch_get_global_queue(QOS_CLASS_UTILITY, 0);
+        for (NSUInteger i = 0; i < total; ++i) {
+            dispatch_semaphore_wait(slots, DISPATCH_TIME_FOREVER);
+            dispatch_group_async(group, workers, ^{
             int action = skyrim_texture_optimize(textures[i].fileSystemRepresentation, limit);
             @synchronized (lock) {
                 ++counts[action];
                 if (++done % 500 == 0)
                     Notice([NSString stringWithFormat:T(@"Optimizing textures… %lu / %lu", @"テクスチャを最適化中… %lu / %lu"), (unsigned long)done, (unsigned long)total]);
             }
-        });
+            dispatch_semaphore_signal(slots);
+            });
+        }
+        dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
         if (!counts) counts = calloc(SKYRIM_TEX_ERROR + 1, sizeof *counts);
         if (!counts) return YES;
         opt[@"trimmed"] = @(counts[SKYRIM_TEX_TRIMMED]); opt[@"reheadered"] = @(counts[SKYRIM_TEX_REHEADERED]);
