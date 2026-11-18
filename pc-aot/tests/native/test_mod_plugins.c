@@ -1,0 +1,246 @@
+/* Authored TES4 headers only; no game files. */
+#include "mod_plugins.h"
+#include <assert.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+typedef struct { unsigned char b[300000]; size_t n; } Buf;
+static void put(Buf *b, const void *p, size_t n) { assert(b->n + n <= sizeof b->b); memcpy(b->b + b->n, p, n); b->n += n; }
+static void u16(Buf *b, unsigned v) { unsigned char x[2] = {v & 255, v >> 8 & 255}; put(b, x, 2); }
+static void u32(Buf *b, unsigned v) { unsigned char x[4] = {v & 255, v >> 8 & 255, v >> 16 & 255, v >> 24 & 255}; put(b, x, 4); }
+static void sub(Buf *b, const char *type, const void *data, size_t n) {
+    if (n > 65535) { put(b, "XXXX", 4); u16(b, 4); u32(b, (unsigned)n); put(b, type, 4); u16(b, 0); }
+    else { put(b, type, 4); u16(b, (unsigned)n); }
+    put(b, data, n);
+}
+/* masters: NULL-terminated list. onam: bytes of a large ONAM subrecord. */
+static Buf *plugin(unsigned flags, const char *const *masters, size_t onam) {
+    static Buf body; static Buf out;
+    body.n = out.n = 0;
+    unsigned char hedr[12] = {0};
+    sub(&body, "HEDR", hedr, sizeof hedr);
+    sub(&body, "CNAM", "author", 7);
+    for (; masters && *masters; ++masters) {
+        sub(&body, "MAST", *masters, strlen(*masters) + 1);
+        unsigned char data[8] = {0};
+        sub(&body, "DATA", data, 8);
+    }
+    if (onam) { static unsigned char big[200000]; assert(onam <= sizeof big); sub(&body, "ONAM", big, onam); }
+    put(&out, "TES4", 4); u32(&out, (unsigned)body.n); u32(&out, flags); u32(&out, 0); u32(&out, 0);
+    u16(&out, 43); u16(&out, 0);
+    put(&out, body.b, body.n);
+    return &out;
+}
+
+static SkyrimPluginHeader headers[300];
+static SkyrimPluginEntry entries[300];
+static size_t entry_count;
+static void add(const char *name, int enabled, unsigned flags, const char *const *masters) {
+    Buf *b = plugin(flags, masters, 0);
+    SkyrimPluginEntry *e = &entries[entry_count];
+    e->name = name; e->enabled = enabled;
+    e->header_status = skyrim_plugin_parse_header(b->b, b->n, &headers[entry_count]);
+    e->header = &headers[entry_count];
+    ++entry_count;
+}
+static void reset(void) {
+    for (size_t i = 0; i < entry_count; ++i) skyrim_plugin_header_free(&headers[i]);
+    entry_count = 0;
+}
+static size_t order[300]; static SkyrimPluginState state[300]; static int problem[300];
+static size_t run(void) { return skyrim_plugin_order(entries, entry_count, order, state, problem); }
+static const char *loaded_names(size_t n) {
+    static char text[8192]; text[0] = 0;
+    for (size_t k = 0; k < n; ++k) { strcat(text, entries[order[k]].name); strcat(text, k + 1 < n ? "," : ""); }
+    return text;
+}
+#define EXPECT_ORDER(n, s) do { const char *got = loaded_names(n); if (strcmp(got, s)) { fprintf(stderr, "order %s != %s\n", got, s); abort(); } } while (0)
+
+static void parsing(void) {
+    SkyrimPluginHeader h;
+    const char *masters[] = {"Skyrim.esm", "Update.esm", "Dawnguard.esm", NULL};
+    Buf *b = plugin(1, masters, 0);
+    assert(skyrim_plugin_header_size(b->b, 8) == b->n);
+    assert(skyrim_plugin_parse_header(b->b, b->n, &h) == SKYRIM_PLUGIN_HEADER_OK);
+    assert(h.flags == 1 && h.version == 43 && h.master_count == 3);
+    assert(!strcmp(skyrim_plugin_master(&h, 0), "Skyrim.esm"));
+    assert(!strcmp(skyrim_plugin_master(&h, 2), "Dawnguard.esm"));
+    assert(!skyrim_plugin_master(&h, 3));
+    skyrim_plugin_header_free(&h);
+    assert(skyrim_plugin_parse_header(b->b, b->n - 1, &h) == SKYRIM_PLUGIN_HEADER_TRUNCATED);
+    assert(!h.masters && !h.master_count);
+
+    /* Large ONAM uses XXXX; masters before and after it are both kept. */
+    b = plugin(1, masters, 70000);
+    assert(skyrim_plugin_parse_header(b->b, b->n, &h) == SKYRIM_PLUGIN_HEADER_OK && h.master_count == 3);
+    skyrim_plugin_header_free(&h);
+
+    b = plugin(0x00040000u, masters, 0);
+    assert(skyrim_plugin_parse_header(b->b, b->n, &h) == SKYRIM_PLUGIN_HEADER_COMPRESSED);
+    b = plugin(0, masters, 0); memcpy(b->b, "TES3", 4);
+    assert(skyrim_plugin_parse_header(b->b, b->n, &h) == SKYRIM_PLUGIN_HEADER_NOT_TES4);
+    assert(!skyrim_plugin_header_size(b->b, b->n));
+
+    /* Unterminated master name; subrecord past the end; dangling XXXX. */
+    Buf bad = {.n = 0};
+    put(&bad, "TES4", 4); u32(&bad, 10); u32(&bad, 0); u32(&bad, 0); u32(&bad, 0); u16(&bad, 43); u16(&bad, 0);
+    put(&bad, "MAST", 4); u16(&bad, 4); put(&bad, "abcd", 4);
+    assert(skyrim_plugin_parse_header(bad.b, bad.n, &h) == SKYRIM_PLUGIN_HEADER_BAD_MASTER);
+    bad.n = 0;
+    put(&bad, "TES4", 4); u32(&bad, 10); u32(&bad, 0); u32(&bad, 0); u32(&bad, 0); u16(&bad, 43); u16(&bad, 0);
+    put(&bad, "CNAM", 4); u16(&bad, 9); put(&bad, "abcd", 4);
+    assert(skyrim_plugin_parse_header(bad.b, bad.n, &h) == SKYRIM_PLUGIN_HEADER_BAD_SUBRECORD);
+    bad.n = 0;
+    put(&bad, "TES4", 4); u32(&bad, 10); u32(&bad, 0); u32(&bad, 0); u32(&bad, 0); u16(&bad, 43); u16(&bad, 0);
+    put(&bad, "XXXX", 4); u16(&bad, 4); u32(&bad, 5);
+    assert(skyrim_plugin_parse_header(bad.b, bad.n, &h) == SKYRIM_PLUGIN_HEADER_BAD_SUBRECORD);
+    /* Declared size beyond the cap is refused before allocation. */
+    bad.n = 0; put(&bad, "TES4", 4); u32(&bad, 0x7fffffffu);
+    assert(!skyrim_plugin_header_size(bad.b, bad.n));
+    assert(skyrim_plugin_parse_header(bad.b, bad.n, &h) == SKYRIM_PLUGIN_HEADER_TOO_LARGE);
+    puts("header parsing PASS");
+}
+
+static void names(void) {
+    assert(skyrim_plugin_name_valid("Unofficial Skyrim Patch.esp"));
+    assert(skyrim_plugin_name_valid("a.ESM"));
+    assert(!skyrim_plugin_name_valid("a.esl") && !skyrim_plugin_name_valid(".esp"));
+    assert(!skyrim_plugin_name_valid("dir/a.esp") && !skyrim_plugin_name_valid("dir\\a.esp"));
+    assert(!skyrim_plugin_name_valid("\xe6\x97\xa5\xe6\x9c\xac.esp"));   /* non-ASCII */
+    assert(!skyrim_plugin_name_valid("#a.esp") && !skyrim_plugin_name_valid("a .esp"));
+    assert(skyrim_plugin_is_base("SKYRIM.ESM") && skyrim_plugin_is_base("update.esm") && !skyrim_plugin_is_base("Dawnguard.esm"));
+    assert(skyrim_plugin_default_rank("dawnguard.esm", 1) < skyrim_plugin_default_rank("Dragonborn.esm", 1));
+    assert(skyrim_plugin_default_rank("Dragonborn.esm", 1) < skyrim_plugin_default_rank("Other.esm", 1));
+    assert(skyrim_plugin_default_rank("Other.esm", 1) < skyrim_plugin_default_rank("Other.esp", 0));
+    puts("names PASS");
+}
+
+static void ordering(void) {
+    const char *base[] = {"Skyrim.esm", "Update.esm", NULL};
+    const char *needs_master[] = {"Skyrim.esm", "Master.esm", NULL};
+    const char *needs_patch[] = {"Patch.esp", NULL};
+    const char *needs_a[] = {"A.esp", NULL};
+    const char *needs_b[] = {"B.esp", NULL};
+    const char *needs_c[] = {"c.ESP", NULL};
+
+    /* User put an ESP and a dependent above their masters: masters move up,
+     * independent user order is kept. Master names match case-insensitively. */
+    reset();
+    add("Patch.esp", 1, 0, needs_master);
+    add("Second.esp", 1, 0, base);
+    add("Master.esm", 1, 1, base);
+    add("Child.esp", 1, 0, needs_patch);
+    size_t n = run();
+    assert(n == 4); EXPECT_ORDER(n, "Master.esm,Patch.esp,Second.esp,Child.esp");
+    reset();
+    add("Child.esp", 1, 0, needs_patch);
+    add("patch.ESP", 1, 0, base);
+    n = run(); EXPECT_ORDER(n, "patch.ESP,Child.esp");
+
+    /* Disabled or absent master blocks the dependent and its dependents. */
+    reset();
+    add("Master.esm", 0, 1, base);
+    add("Patch.esp", 1, 0, needs_master);
+    add("Child.esp", 1, 0, needs_patch);
+    add("Free.esp", 1, 0, base);
+    n = run();
+    EXPECT_ORDER(n, "Free.esp");
+    assert(state[0] == SKYRIM_PLUGIN_OFF && state[1] == SKYRIM_PLUGIN_MISSING_MASTER && problem[1] == 1);
+    assert(state[2] == SKYRIM_PLUGIN_MISSING_MASTER && problem[2] == 0);
+
+    /* An ESM cannot use an ESP master: ESM-flag files always load first. */
+    reset();
+    add("A.esp", 1, 0, base);
+    add("Bad.esm", 1, 1, needs_a);
+    n = run(); EXPECT_ORDER(n, "A.esp");
+    assert(state[1] == SKYRIM_PLUGIN_MASTER_AFTER);
+
+    /* Cycle A <-> B is refused, their dependent too; unrelated plugins load. */
+    reset();
+    add("A.esp", 1, 0, needs_b);
+    add("B.esp", 1, 0, needs_a);
+    add("C.esp", 1, 0, base);
+    add("D.esp", 1, 0, needs_c);
+    add("E.esp", 1, 0, needs_a);
+    n = run(); EXPECT_ORDER(n, "C.esp,D.esp");
+    assert(state[0] == SKYRIM_PLUGIN_CYCLE && state[1] == SKYRIM_PLUGIN_CYCLE);
+    assert(state[4] == SKYRIM_PLUGIN_CYCLE || state[4] == SKYRIM_PLUGIN_MISSING_MASTER);
+
+    /* Self reference, unreadable header, base names, invalid names, duplicates. */
+    reset();
+    const char *self[] = {"Self.esp", NULL};
+    add("Self.esp", 1, 0, self);
+    add("Skyrim.esm", 1, 1, NULL);
+    add("Dup.esp", 1, 0, base);
+    add("dup.ESP", 0, 0, base);
+    add("ok.esp", 1, 0, base);
+    entries[entry_count] = (SkyrimPluginEntry){"Broken.esp", 1, SKYRIM_PLUGIN_HEADER_TRUNCATED, NULL}; ++entry_count;
+    entries[entry_count] = (SkyrimPluginEntry){"\xe6\x97\xa5.esp", 1, SKYRIM_PLUGIN_HEADER_OK, &headers[4]}; ++entry_count;
+    n = run(); EXPECT_ORDER(n, "ok.esp");
+    assert(state[0] == SKYRIM_PLUGIN_MISSING_MASTER && state[1] == SKYRIM_PLUGIN_BAD_NAME);
+    assert(state[2] == SKYRIM_PLUGIN_DUPLICATE && state[3] == SKYRIM_PLUGIN_OFF);
+    assert(state[5] == SKYRIM_PLUGIN_UNREADABLE && state[6] == SKYRIM_PLUGIN_BAD_NAME);
+    entry_count = 5; /* the two literal entries reuse headers; avoid double free */
+
+    /* Slot limit: 253 loaded besides Skyrim.esm / Update.esm. */
+    reset();
+    static char names[260][32];
+    for (int i = 0; i < 260; ++i) { snprintf(names[i], sizeof names[i], "P%03d.esp", i); add(names[i], 1, 0, base); }
+    n = run();
+    assert(n == 253 && state[252] == SKYRIM_PLUGIN_LOAD && state[253] == SKYRIM_PLUGIN_LIMIT && state[259] == SKYRIM_PLUGIN_LIMIT);
+    reset();
+    puts("ordering PASS");
+}
+
+static void list_text(void) {
+    const char *base[] = {"Skyrim.esm", NULL};
+    reset();
+    add("B.esp", 1, 0, base);
+    add("Dawnguard.esm", 1, 1, base);
+    size_t n = run(), bytes = 0;
+    char *text = skyrim_plugin_list_text(entries, order, n, &bytes);
+    const char *expect = "# Managed by SkyrimIOS Settings > MOD. Changes here are replaced at launch.\r\n"
+        "Skyrim.esm\r\nUpdate.esm\r\nDawnguard.esm\r\nB.esp\r\n";
+    assert(text && bytes == strlen(expect) && !memcmp(text, expect, bytes));
+    assert(skyrim_plugin_list_is_managed(text, bytes));
+    assert(!skyrim_plugin_list_is_managed("Skyrim.esm\r\n", 12));
+    free(text);
+    text = skyrim_plugin_list_text(entries, order, 0, &bytes);
+    assert(text && strstr(text, "Update.esm\r\n") && !strstr(text, "B.esp"));
+    free(text);
+    reset();
+    puts("plugins.txt PASS");
+}
+
+static void touch(const char *dir, const char *name) {
+    char path[2048]; snprintf(path, sizeof path, "%s/%s", dir, name);
+    int fd = open(path, O_CREAT | O_WRONLY, 0600); assert(fd >= 0); close(fd);
+}
+static void paths(const char *root) {
+    char out[2048], dir[512];
+    assert(strlen(root) < 400);
+    snprintf(dir, sizeof dir, "%s/paths", root); mkdir(dir, 0700);
+    assert(skyrim_plugin_child_path(dir, "plugins.txt", out, sizeof out) == 0);
+    assert(!strcmp(strrchr(out, '/') + 1, "plugins.txt"));
+    touch(dir, "Plugins.TXT");
+    assert(skyrim_plugin_child_path(dir, "plugins.txt", out, sizeof out) == 1);
+    assert(!strcmp(strrchr(out, '/') + 1, "Plugins.TXT"));
+    touch(dir, "plugins.txt");
+    struct stat a, b; char p1[2048], p2[2048];
+    snprintf(p1, sizeof p1, "%s/Plugins.TXT", dir); snprintf(p2, sizeof p2, "%s/plugins.txt", dir);
+    if (!stat(p1, &a) && !stat(p2, &b) && a.st_ino != b.st_ino)   /* case-sensitive volume */
+        assert(skyrim_plugin_child_path(dir, "plugins.txt", out, sizeof out) == -1);
+    assert(skyrim_plugin_child_path("/nonexistent-dir-for-test", "Data", out, sizeof out) == 0);
+    assert(skyrim_plugin_child_path(dir, "plugins.txt", out, 4) == -1);
+    puts("case-insensitive paths PASS");
+}
+
+int main(int argc, char **argv) {
+    assert(argc == 2);
+    parsing(); names(); ordering(); list_text(); paths(argv[1]);
+    return 0;
+}

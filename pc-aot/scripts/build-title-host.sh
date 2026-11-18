@@ -73,6 +73,7 @@ PY
   run_validation python3 -m unittest discover -s tests -p 'test_save_write_probe.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_game_language.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_mod_plugins.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_diagnostic_upload.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_private_diagnostics.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_lifecycle_controller.py' -v

@@ -833,3 +833,10 @@
 !/pc-aot/tests/native/mvk_graphics_integration_backend.h
 !/pc-aot/tests/native/mvk_graphics_integration_backend.cpp
 !/pc-aot/tests/test_shader_lead_diagnostics.py
+# Classic MOD plugin selection (authored headers only in tests).
+!/pc-aot/ios/
+!/pc-aot/ios/runtime-port/
+!/pc-aot/ios/runtime-port/mod_plugins.c
+!/pc-aot/ios/runtime-port/mod_plugins.h
+!/pc-aot/tests/test_mod_plugins.py
+!/pc-aot/tests/native/test_mod_plugins.c

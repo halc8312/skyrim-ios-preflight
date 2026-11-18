@@ -20,6 +20,7 @@
 #include "pipeline_cache_control.h"
 #include "device_policy.h"
 #include "game_language.h"
+#include "mod_plugins.h"
 #include "diagnostic_upload.h"
 #include "diagnostic_schema.h"
 #include "lifecycle_runtime.h"
@@ -319,6 +320,194 @@ static NSString *gameLanguageFallback(void) {
                  @"日本語音声を利用できないため、英語音声で再生しています。");
     return nil;
 }
+/* ---- Classic MOD plugins -------------------------------------------------
+ * The user copies files into Documents/Skyrim/Data with the Files app. Loose
+ * files and BSAs need nothing here. Plugins (.esp/.esm) are off until turned
+ * on in Settings > MOD; the chosen order is published once, before guest
+ * threads start, as the profile's plugins.txt. Data and saves are never
+ * changed. A profile without any MOD choice keeps its plugins.txt untouched. */
+static NSArray<NSDictionary *> *modPlugins;   /* startup snapshot for the UI */
+static NSString *modNotice;
+static NSString *const kModsKey = @"mods-v1";
+
+static NSArray<NSDictionary *> *savedModChoices(void) {
+    id saved = [NSUserDefaults.standardUserDefaults arrayForKey:kModsKey];
+    NSMutableArray *result = [NSMutableArray array];
+    if (![saved isKindOfClass:NSArray.class]) return result;
+    for (id item in saved)
+        if ([item isKindOfClass:NSDictionary.class] && [item[@"name"] isKindOfClass:NSString.class] &&
+            [item[@"on"] isKindOfClass:NSNumber.class])
+            [result addObject:@{@"name":item[@"name"], @"on":@([item[@"on"] boolValue])}];
+    return result;
+}
+static void saveModChoices(NSArray *rows) {
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:rows.count];
+    for (NSDictionary *row in rows) [out addObject:@{@"name":row[@"name"], @"on":@([row[@"on"] boolValue])}];
+    [NSUserDefaults.standardUserDefaults setObject:out forKey:kModsKey];
+}
+static int readPluginHeader(NSString *path, SkyrimPluginHeader *header) {
+    memset(header, 0, sizeof *header);
+    FILE *f = fopen(path.fileSystemRepresentation, "rb");
+    if (!f) return SKYRIM_PLUGIN_HEADER_TRUNCATED;
+    unsigned char first[8];
+    size_t got = fread(first, 1, sizeof first, f);
+    size_t need = skyrim_plugin_header_size(first, got);
+    int status;
+    if (got < sizeof first) status = SKYRIM_PLUGIN_HEADER_TRUNCATED;
+    else if (memcmp(first, "TES4", 4)) status = SKYRIM_PLUGIN_HEADER_NOT_TES4;
+    else if (!need) status = SKYRIM_PLUGIN_HEADER_TOO_LARGE;
+    else {
+        unsigned char *bytes = malloc(need);
+        if (!bytes) status = SKYRIM_PLUGIN_HEADER_NO_MEMORY;
+        else {
+            memcpy(bytes, first, sizeof first);
+            size_t rest = fread(bytes + sizeof first, 1, need - sizeof first, f);
+            status = skyrim_plugin_parse_header(bytes, sizeof first + rest, header);
+            free(bytes);
+        }
+    }
+    fclose(f);
+    return status;
+}
+/* Resolve profile/Documents/Skyrim case-insensitively, creating what is absent. */
+static NSString *pluginListFolder(void) {
+    char resolved[PATH_MAX];
+    NSString *folder = profilePath;
+    for (NSString *part in @[@"Documents", @"Skyrim"]) {
+        int found = skyrim_plugin_child_path(folder.fileSystemRepresentation, part.UTF8String, resolved, sizeof resolved);
+        if (found < 0) return nil;
+        folder = [NSString stringWithUTF8String:resolved];
+        if (!found && ![NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:NO attributes:nil error:NULL])
+            return nil;
+    }
+    return folder;
+}
+static int publishPluginList(const SkyrimPluginEntry *entries, const size_t *order, size_t loaded, BOOL anyChoice) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *folder = pluginListFolder();
+    if (!folder) return 0;
+    char resolved[PATH_MAX];
+    int exists = skyrim_plugin_child_path(folder.fileSystemRepresentation, "plugins.txt", resolved, sizeof resolved);
+    if (exists < 0) return 0;
+    NSString *target = [NSString stringWithUTF8String:resolved];
+    NSData *current = nil;
+    if (exists) {
+        NSDictionary *attributes = [fm attributesOfItemAtPath:target error:NULL];
+        if (![attributes[NSFileType] isEqual:NSFileTypeRegular] || [attributes[NSFileSize] unsignedLongLongValue] > 1024 * 1024) return 0;
+        current = [NSData dataWithContentsOfFile:target];
+        if (!current) return 0;
+    }
+    BOOL managed = current && skyrim_plugin_list_is_managed(current.bytes, current.length);
+    if (!anyChoice && !managed) return 1;           /* vanilla profile: leave as is */
+    if (current && !managed) {                      /* keep a copy of a foreign list once */
+        NSString *backup = [target stringByAppendingString:@".before-skyrimios"];
+        if (![fm fileExistsAtPath:backup] && ![current writeToFile:backup options:NSDataWritingAtomic error:NULL]) return 0;
+    }
+    size_t bytes = 0;
+    char *text = skyrim_plugin_list_text(entries, order, loaded, &bytes);
+    if (!text) return 0;
+    NSData *updated = [NSData dataWithBytesNoCopy:text length:bytes freeWhenDone:YES];
+    if ([current isEqualToData:updated]) return 1;
+    return [updated writeToFile:target options:NSDataWritingAtomic error:NULL] ? 1 : 0;
+}
+
+void skyrim_mobile_prepare_mods(const char *gameDirectory) {
+    NSCAssert(NSThread.isMainThread, @"MOD selection is published before guest startup");
+    modPlugins = @[]; modNotice = nil;
+    char resolved[PATH_MAX];
+    if (skyrim_plugin_child_path(gameDirectory, "Data", resolved, sizeof resolved) != 1) {
+        fprintf(stderr, "IOS_MODS found=0 data_folder=0\n");
+        return;
+    }
+    NSString *data = [NSString stringWithUTF8String:resolved];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (NSString *name in [fm contentsOfDirectoryAtPath:data error:NULL]) {
+        NSString *ext = name.pathExtension.lowercaseString;
+        if (!([ext isEqualToString:@"esp"] || [ext isEqualToString:@"esm"]) || skyrim_plugin_is_base(name.UTF8String)) continue;
+        NSDictionary *attributes = [fm attributesOfItemAtPath:[data stringByAppendingPathComponent:name] error:NULL];
+        if ([attributes[NSFileType] isEqual:NSFileTypeRegular]) [names addObject:name];
+    }
+    const size_t count = names.count;
+    SkyrimPluginHeader *headers = calloc(count ? count : 1, sizeof *headers);
+    int *status = calloc(count ? count : 1, sizeof *status);
+    if (!headers || !status) { free(headers); free(status); modNotice = L(@"Not enough memory to read the MOD list.", @"メモリ不足のためMODの一覧を読めませんでした。"); return; }
+    NSMutableDictionary<NSString *, NSNumber *> *index = [NSMutableDictionary dictionary];
+    for (size_t i = 0; i < count; ++i) {
+        status[i] = readPluginHeader([data stringByAppendingPathComponent:names[i]], &headers[i]);
+        index[names[i]] = @(i);
+    }
+    /* User order first (exact names that still exist), then new files. */
+    NSMutableArray<NSDictionary *> *rows = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (NSDictionary *choice in savedModChoices())
+        if (index[choice[@"name"]] && ![seen containsObject:choice[@"name"]]) {
+            [rows addObject:choice]; [seen addObject:choice[@"name"]];
+        }
+    NSMutableArray<NSString *> *added = [NSMutableArray array];
+    for (NSString *name in names) if (![seen containsObject:name]) [added addObject:name];
+    [added sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+        size_t ia = index[a].unsignedLongValue, ib = index[b].unsignedLongValue;
+        int ra = skyrim_plugin_default_rank(a.UTF8String, status[ia] == SKYRIM_PLUGIN_HEADER_OK && (headers[ia].flags & 1));
+        int rb = skyrim_plugin_default_rank(b.UTF8String, status[ib] == SKYRIM_PLUGIN_HEADER_OK && (headers[ib].flags & 1));
+        return ra != rb ? (ra < rb ? NSOrderedAscending : NSOrderedDescending) : [a caseInsensitiveCompare:b];
+    }];
+    for (NSString *name in added) [rows addObject:@{@"name":name, @"on":@NO}];
+    saveModChoices(rows);
+
+    SkyrimPluginEntry *entries = calloc(rows.count ? rows.count : 1, sizeof *entries);
+    size_t *order = calloc(rows.count ? rows.count : 1, sizeof *order);
+    SkyrimPluginState *state = calloc(rows.count ? rows.count : 1, sizeof *state);
+    int *problem = calloc(rows.count ? rows.count : 1, sizeof *problem);
+    BOOL anyChoice = NO;
+    size_t loaded = 0;
+    int published = 0;
+    if (entries && order && state && problem) {
+        for (NSUInteger r = 0; r < rows.count; ++r) {
+            size_t i = index[rows[r][@"name"]].unsignedLongValue;
+            entries[r] = (SkyrimPluginEntry){names[i].UTF8String, [rows[r][@"on"] boolValue], status[i], &headers[i]};
+            anyChoice |= entries[r].enabled;
+        }
+        loaded = skyrim_plugin_order(entries, rows.count, order, state, problem);
+        published = publishPluginList(entries, order, loaded, anyChoice);
+        NSMutableArray *snapshot = [NSMutableArray arrayWithCapacity:rows.count];
+        unsigned blocked = 0;
+        for (NSUInteger r = 0; r < rows.count; ++r) {
+            size_t i = index[rows[r][@"name"]].unsignedLongValue;
+            const char *master = problem[r] >= 0 ? skyrim_plugin_master(&headers[i], (unsigned)problem[r]) : NULL;
+            BOOL isMaster = status[i] == SKYRIM_PLUGIN_HEADER_OK && (headers[i].flags & 1);
+            [snapshot addObject:@{@"name":rows[r][@"name"], @"on":rows[r][@"on"], @"state":@((int)state[r]),
+                @"master":@(isMaster), @"problem":master ? @(master) : @""}];
+            if (entries[r].enabled && state[r] != SKYRIM_PLUGIN_LOAD) ++blocked;
+        }
+        modPlugins = snapshot;
+        if (!published)
+            modNotice = L(@"Could not update the MOD list. The previous list is in use.", @"MODの一覧を更新できなかったため、前回の設定で起動しました。");
+        else if (blocked)
+            modNotice = [NSString stringWithFormat:L(@"%u MOD file(s) could not be loaded. See Settings > MOD.", @"%u個のMODを読み込めませんでした。設定の「MOD」で理由を確認できます。"), blocked];
+        fprintf(stderr, "IOS_MODS found=%lu enabled_loaded=%lu blocked=%u published=%d managed=%d\n",
+            (unsigned long)rows.count, (unsigned long)loaded, blocked, published, (int)anyChoice);
+    } else {
+        modNotice = L(@"Not enough memory to read the MOD list.", @"メモリ不足のためMODの一覧を読めませんでした。");
+    }
+    for (size_t i = 0; i < count; ++i) skyrim_plugin_header_free(&headers[i]);
+    free(headers); free(status); free(entries); free(order); free(state); free(problem);
+}
+static NSString *modStateText(NSDictionary *row) {
+    switch ([row[@"state"] intValue]) {
+    case SKYRIM_PLUGIN_LOAD: return L(@"Loaded", @"読み込み中");
+    case SKYRIM_PLUGIN_OFF: return L(@"Off", @"オフ");
+    case SKYRIM_PLUGIN_UNREADABLE: return L(@"Unreadable: not a classic (LE) plugin?", @"読めません（LE用ではない可能性）");
+    case SKYRIM_PLUGIN_BAD_NAME: return L(@"Rename using English letters and digits only", @"ファイル名を半角英数字に変えてください");
+    case SKYRIM_PLUGIN_DUPLICATE: return L(@"Same name exists with different capitals", @"大文字・小文字だけ違う同名ファイルがあります");
+    case SKYRIM_PLUGIN_MISSING_MASTER: return [NSString stringWithFormat:L(@"Needs %@ (missing or off)", @"%@ が必要です（未導入かオフ）"), row[@"problem"]];
+    case SKYRIM_PLUGIN_MASTER_AFTER: return [NSString stringWithFormat:L(@"ESM needs ESP %@", @"ESMがESPの %@ を必要としています"), row[@"problem"]];
+    case SKYRIM_PLUGIN_CYCLE: return L(@"Circular requirement", @"互いに必要としあっています");
+    case SKYRIM_PLUGIN_LIMIT: return L(@"Over the 253-plugin limit", @"253個の上限を超えています");
+    }
+    return @"";
+}
+
 int skyrim_mobile_verbose(void) { return [startup[@"verbose"] boolValue]; }
 int skyrim_mobile_shader_option(unsigned option) {
     const char *key = skyrim_shader_option_key(option);
@@ -465,6 +654,78 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     if (choice.doubleValue < 0) return L(@"Keep current", @"維持");
     return choice.stringValue;
 }
+
+/* Settings > MOD: on/off and order for plugins found at this launch. States
+ * describe this launch; changes are saved immediately and apply next launch. */
+@interface SKMods : UITableViewController
+@property(nonatomic, strong) NSMutableArray<NSMutableDictionary *> *rows;
+@end
+@implementation SKMods
+- (void)viewDidLoad {
+    [super viewDidLoad]; self.title=@"MOD";
+    self.tableView.estimatedRowHeight=60; self.tableView.rowHeight=UITableViewAutomaticDimension;
+    self.rows=[NSMutableArray array];
+    for (NSDictionary *row in modPlugins) [self.rows addObject:[row mutableCopy]];
+    if (self.rows.count)
+        self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:L(@"Reorder", @"並べ替え") style:UIBarButtonItemStylePlain target:self action:@selector(toggleReorder)];
+}
+- (void)toggleReorder {
+    [self setEditing:!self.editing animated:YES];
+    self.navigationItem.rightBarButtonItem.title=self.editing ? L(@"Done", @"完了") : L(@"Reorder", @"並べ替え");
+}
+- (void)persist {
+    saveModChoices(self.rows);
+    [overlay message:L(@"MOD list saved. Save your game, then fully close and reopen the app.", @"MODの設定を保存しました。ゲーム内で保存し、アプリを完全終了して開き直すと反映します")];
+}
+- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section { return self.rows.count ? (NSInteger)self.rows.count : 1; }
+- (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
+    return L(@"Plugins (.esp / .esm) — applies after restart", @"プラグイン（.esp／.esm） — 次回起動から反映");
+}
+- (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
+    return L(@"Put MOD files in Files > On My iPhone > SkyrimIOS > Skyrim > Data, keeping the MOD's own folders (textures, meshes…). Texture and mesh files work without a switch. Use MODs made for Skyrim 2011 / Legendary Edition only; Special Edition, SKSE, SkyUI and ENB MODs do not work. Before turning on a MOD that changes the game, make a new save. Turning it off later does not undo what a save already contains. Masters load first, and each plugin loads after the files it needs; otherwise your order is kept.",
+             @"MODのファイルは「ファイル」アプリ →「このiPhone内」→ SkyrimIOS → Skyrim → Data に、MOD内のフォルダ構成（textures・meshesなど）のまま入れてください。テクスチャやメッシュはスイッチなしで有効になります。Skyrim 2011年版／Legendary Edition用のMODだけが対象です。Special Edition用、SKSE・SkyUI・ENBが必要なMODは動きません。ゲーム内容を変えるMODをオンにする前に、別のセーブを作ってください。後でオフにしても、セーブに記録された変化は元に戻りません。ESMは先に、各プラグインは必要なファイルの後に読み込まれます。それ以外は並べた順のままです。");
+}
+- (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)p {
+    UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    cell.textLabel.numberOfLines=2; cell.detailTextLabel.numberOfLines=3;
+    cell.detailTextLabel.textColor=UIColor.secondaryLabelColor;
+    cell.selectionStyle=UITableViewCellSelectionStyleNone;
+    if (!self.rows.count) {
+        cell.textLabel.text=L(@"No .esp / .esm files found", @".esp／.esmファイルはありません");
+        cell.detailTextLabel.text=L(@"Add files to Data, then fully close and reopen the app.", @"Dataに入れた後、アプリを完全終了して開き直してください。");
+        return cell;
+    }
+    NSMutableDictionary *row=self.rows[p.row];
+    cell.textLabel.text=row[@"name"];
+    NSString *kind=[row[@"master"] boolValue] ? @"ESM" : @"ESP";
+    NSString *detail=[NSString stringWithFormat:@"%@ · %@", kind, modStateText(row)];
+    if ([row[@"on"] boolValue] != ([row[@"state"] intValue] != SKYRIM_PLUGIN_OFF))
+        detail=[detail stringByAppendingFormat:@"\n%@", [row[@"on"] boolValue] ? L(@"Turns on after restart", @"次回起動からオン") : L(@"Turns off after restart", @"次回起動からオフ")];
+    cell.detailTextLabel.text=detail;
+    UISwitch *toggle=[UISwitch new];
+    toggle.on=[row[@"on"] boolValue]; toggle.tag=p.row;
+    toggle.accessibilityLabel=row[@"name"];
+    [toggle addTarget:self action:@selector(toggled:) forControlEvents:UIControlEventValueChanged];
+    cell.accessoryView=toggle;
+    return cell;
+}
+- (void)toggled:(UISwitch *)toggle {
+    if (toggle.tag < 0 || (NSUInteger)toggle.tag >= self.rows.count) return;
+    self.rows[toggle.tag][@"on"]=@(toggle.on);
+    [self persist];
+    [self.tableView reloadRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:toggle.tag inSection:0]] withRowAnimation:UITableViewRowAnimationNone];
+}
+- (BOOL)tableView:(UITableView *)table canMoveRowAtIndexPath:(NSIndexPath *)p { return self.rows.count > 1; }
+- (UITableViewCellEditingStyle)tableView:(UITableView *)table editingStyleForRowAtIndexPath:(NSIndexPath *)p { return UITableViewCellEditingStyleNone; }
+- (BOOL)tableView:(UITableView *)table shouldIndentWhileEditingRowAtIndexPath:(NSIndexPath *)p { return NO; }
+- (void)tableView:(UITableView *)table moveRowAtIndexPath:(NSIndexPath *)from toIndexPath:(NSIndexPath *)to {
+    NSMutableDictionary *row=self.rows[from.row];
+    [self.rows removeObjectAtIndex:from.row]; [self.rows insertObject:row atIndex:to.row];
+    [self persist];
+    dispatch_async(dispatch_get_main_queue(), ^{ [self.tableView reloadData]; });  /* refresh switch tags */
+}
+@end
+
 @implementation SKSettings
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title=L(@"SkyrimIOS Settings", @"SkyrimIOS 設定");
@@ -473,15 +734,17 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 - (void)close { [overlay clearInput]; [self dismissViewControllerAnimated:YES completion:nil]; }
 - (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated]; shaderSettingsPermission(YES); }
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 - (void)viewWillDisappear:(BOOL)animated { shaderSettingsPermission(NO); [super viewWillDisappear:animated]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 8; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 9; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
     return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+1 : section==3 ? 2 : section==5 ? 3 : section==6 ? shaderRows().count : 1;
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
-    return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),@"Language",L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映"),L(@"Diagnostics", @"診断")][section];
+    return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),@"Language",L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映"),L(@"Diagnostics", @"診断"),L(@"MOD — applies after restart", @"MOD — 次回起動から反映")][section];
 }
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
+    if (section==8) return modNotice ?: L(@"Classic (2011 / LE) MODs you copied into Data with the Files app.", @"「ファイル」アプリでDataに入れた2011年版（LE）用のMODです。");
     if (section==7) return L(@"Send performance, settings and numeric error records from this launch and the previous launch to your paired PC. Game data and saves are excluded. Open the game system menu first; keep the PC awake and Tailscale connected. After receipt, tell us in the chat that you sent it.",
         @"今回と前回の起動の性能・設定・エラー番号を、登録した自分のPCへ送ります。ゲームデータやセーブは送りません。先にゲームのシステムメニューを開き、PCを起動してTailscaleを接続してください。送信できたら、このチャットで知らせてください。");
     if (section==0) return L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。");
@@ -526,6 +789,15 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     cell.textLabel.numberOfLines=2; cell.detailTextLabel.font=[UIFont systemFontOfSize:14];
     NSDictionary *r=[self row:p];
+    if (p.section==8) {
+        NSUInteger on=0;
+        for (NSDictionary *row in savedModChoices()) on+=[row[@"on"] boolValue];
+        cell.textLabel.text=L(@"MOD list", @"MODの一覧");
+        cell.imageView.image=[UIImage systemImageNamed:@"puzzlepiece.extension"];
+        cell.detailTextLabel.text=[NSString stringWithFormat:L(@"%lu of %lu on", @"%lu／%lu個オン"), (unsigned long)on, (unsigned long)modPlugins.count];
+        cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+        return cell;
+    }
     if (p.section==7) {
         cell.textLabel.text=L(@"Send diagnostics to PC", @"診断ログをPCへ送信");
         cell.imageView.image=[UIImage systemImageNamed:@"arrow.up.doc"];
@@ -553,6 +825,10 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)p {
     [table deselectRowAtIndexPath:p animated:YES];
+    if (p.section==8) {
+        [self.navigationController pushViewController:[[SKMods alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
+        return;
+    }
     if (p.section==7) {
         if (self.sendingDiagnostics) return;
         self.sendingDiagnostics=YES; [table reloadRowsAtIndexPaths:@[p] withRowAnimation:UITableViewRowAnimationNone];
@@ -786,7 +1062,8 @@ void skyrim_mobile_install(void *window) {
     overlay=[[SKOverlay alloc] initWithFrame:root.bounds];[root addSubview:overlay];
     [overlay message:L(@"Drag an empty area to look. Open the gear for sensitivity, layout and graphics.", @"空いている場所をドラッグして視点移動。右上の設定で感度・配置・画質を変更")];
     NSString *fallback = gameLanguageFallback();
-    if (fallback) [overlay message:fallback];
+    if (fallback || modNotice)
+        [overlay message:fallback && modNotice ? [NSString stringWithFormat:@"%@\n%@", fallback, modNotice] : fallback ?: modNotice];
 }
 void skyrim_mobile_tick(void) {
     if(!overlay || !NSThread.isMainThread) return;

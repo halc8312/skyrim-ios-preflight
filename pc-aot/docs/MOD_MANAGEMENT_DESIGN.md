@@ -85,3 +85,46 @@ order, not process addresses. Require matching gameplay content between peers.
 Engine access, thread/lifetime contracts, network loss/reconnection, pause/death
 policy and persistence remain unimplemented. A Windows peer would also need a
 compatible client; vanilla PC Skyrim would not automatically interoperate.
+
+## 2026-11-19 minimal plugin selection (code + host tests only; no build, no device run)
+
+At the user's request this adds the smallest usable step toward the design
+above, instead of the full package/profile manager. Nothing is enabled by
+default and a profile with no MOD choice keeps its current plugins.txt
+byte-for-byte.
+
+- **Where files go.** The user copies MOD files with the Files app into
+  `Documents/Skyrim/Data` (already shared via `UIFileSharingEnabled`). Loose
+  textures/meshes and plugin-named BSAs need no app change: the guest's
+  case-insensitive resolver already finds them. This is the original Data
+  folder, so removing a MOD means removing its files; there is no separate
+  package store yet.
+- **Plugins.** `mod_plugins.c` reads only the TES4 header of each
+  `.esp/.esm` in Data (flags, MAST list; XXXX-sized subrecords supported;
+  compressed or oversized headers refused). Settings > MOD lists them with
+  on/off switches and drag reordering, stored in `NSUserDefaults` `mods-v1`.
+- **Load order.** ESM-flagged files first, each plugin after its masters,
+  otherwise the user's order. Missing/off masters, an ESM that needs an ESP,
+  cycles, case-only duplicates, non-ASCII names and the 253-plugin slot limit
+  block the plugin with a visible reason instead of crashing at load.
+- **Publication.** Once at startup, after the language step and before guest
+  threads, the app writes `profile/Documents/Skyrim/plugins.txt` atomically
+  (the guest's `SHGetFolderPathA` returns Documents for every CSIDL, so the
+  classic engine's `LOCAL_APPDATA\Skyrim\plugins.txt` resolves there). The
+  file carries a managed-file comment; an existing unmanaged list is copied
+  once to `plugins.txt.before-skyrimios`. Failure is not fatal: the previous
+  list stays and the user sees a notice.
+- **Not done here.** No package import/validation, no separate modded
+  profile or save set, no conflict viewer, no SKSE/SE/ESL support. The
+  design's acceptance items 1, 3, 4 and 5 remain open. `IOS_MODS` log lines
+  are not in the diagnostic allowlist.
+
+Verification so far: `tests/test_mod_plugins.py` (authored headers; normal and
+ASan/UBSan on Linux) and a clang syntax check of the new Objective-C against
+stand-in declarations. Still required: Mac build, simulator run of the
+Settings > MOD screen, then a device run with one harmless authored plugin,
+then a reviewed real MOD with a copied save. Classic 1.9.32 is expected to
+use plugins.txt order for active plugins (as MO2's classic Skyrim support
+assumes); confirm with an authored master/dependent pair on the device before
+relying on order for conflicting records. Content that reaches engine code
+the static translation never discovered must still fail explicitly.

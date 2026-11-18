@@ -56,6 +56,7 @@ add_library(skyrim_ios_runtime STATIC ${runtime_sources}
     "${CMAKE_CURRENT_SOURCE_DIR}/ios_runtime.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_core.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/game_language.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/mod_plugins.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_upload.m"
     "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_controller.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_runtime.m"
