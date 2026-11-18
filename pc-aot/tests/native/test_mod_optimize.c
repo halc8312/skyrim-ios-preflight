@@ -5,16 +5,29 @@
 #include <stdlib.h>
 #include <string.h>
 
-static unsigned char *slurp(const char *p, size_t *n) {
-    FILE *f = fopen(p, "rb"); if (!f) return NULL;
-    fseek(f, 0, SEEK_END); long s = ftell(f); fseek(f, 0, SEEK_SET);
-    unsigned char *b = malloc((size_t)s + 1); *n = fread(b, 1, (size_t)s, f); fclose(f); return b;
+static unsigned char *slurp(const char *path, size_t *length) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return NULL;
+    long size = fseek(file, 0, SEEK_END) == 0 ? ftell(file) : -1;
+    if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    unsigned char *bytes = malloc((size_t)size + 1);
+    if (bytes && fread(bytes, 1, (size_t)size, file) != (size_t)size) {
+        free(bytes);
+        bytes = NULL;
+    }
+    fclose(file);
+    *length = (size_t)size;
+    return bytes;
 }
 int main(int argc, char **argv) {
     if (argc < 3) return 2;
     if (!strcmp(argv[1], "convert") && argc == 5) {
         size_t n, on = 0; int action;
         unsigned char *b = slurp(argv[2], &n);
+        if (!b) return 2;
         unsigned char *o = skyrim_texture_convert(b, n, (unsigned)atoi(argv[4]), &on, &action);
         printf("action %d\n", action);
         if (o) {

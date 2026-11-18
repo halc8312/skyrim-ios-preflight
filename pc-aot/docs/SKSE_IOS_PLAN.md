@@ -64,3 +64,18 @@ It does not load `skse_1_9_32.dll` and copies no SKSE code; keep it that way
   store data in SKSE co-saves.
 - The MOD list marks each MOD with the SKSE functions it would need that are
   not available yet.
+
+## 2026-11-19 estimate for a separate experiment
+
+Budget **2–4 engineering days** for an opt-in prototype that builds the private
+guest with the pinned upstream compatibility code and passes its registration
+self-test on an iPhone. Budget a further **3–7 engineering days** to exercise
+SkyUI 5.1 inventory, MCM persistence and one Papyrus-only MOD on copied saves,
+including a comparison against the ordinary build. These are planning estimates
+assuming access to the owner's game and script archives, a Mac builder and a
+test iPhone. A mismatch in the private guest bindings would require a new estimate.
+
+The upstream runtime implements 90 native registrations and reports its SkyUI
+tests on Linux. iPhone compatibility depends on the two device milestones above.
+An arbitrary Windows DLL or a MOD depending on SKSE co-save serialization would
+require a separate project. Build 16 keeps the existing compile-time exclusion.

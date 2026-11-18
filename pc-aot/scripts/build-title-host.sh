@@ -13,6 +13,9 @@ exec > >(tee "$RUN/artifacts/build.log") 2>&1
 echo "Public host build: $RUN"
 xcodebuild -version
 xcrun --sdk iphoneos --show-sdk-version
+MOD_DEPS_ROOT="${SKYRIM_IOS_DEPS_ROOT:-$ROOT/local/ios-dependencies-build15}"
+bash scripts/fetch-mod-codecs.sh
+env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT bash ios/dependencies/build-mod-archive-dependencies.sh macosx
 
 # Copy only the upstream public tree. Its patches are checked before use.
 python3 - "$ROOT" "$RUN" <<'PY'
@@ -50,6 +53,7 @@ PY
   # executables must instead link against macOS and run on the build machine.
   unset IPHONEOS_DEPLOYMENT_TARGET
   export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+  export SKYRIM_MOD_ARCHIVE_TEST_PREFIX="$MOD_DEPS_ROOT/mod-archive/macosx/prefix"
   # Run independent suites even after a failure, but never build/package a host
   # unless every required suite passed. Preserve all diagnostics in one Mac run.
   HOST_CHECK_STATUS=0
@@ -117,7 +121,7 @@ PY
   exit "$HOST_CHECK_STATUS"
 )
 
-bash ios/dependencies/build-dependencies.sh
+bash scripts/build-dependencies.sh
 # Keep this required gate, but collect independent app compiler failures in the
 # same paid-minute run instead of stopping before its build can start.
 METAL_CHECK_STATUS=0
@@ -171,6 +175,24 @@ cmake -S ios/runtime-port -B "$RUN/build" -G 'Unix Makefiles' \
   "-DSKYRIM_IOS_BINDING_SOURCES=$ROOT/ios/private-abi/pc_guest_host.c" \
   -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
 cmake --build "$RUN/build" --parallel 2 -- -k
+MOD_SIMULATOR_STATUS=0
+if bash ios/dependencies/build-mod-archive-dependencies.sh iphonesimulator; then
+  env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT bash scripts/check-mod-simulator.sh \
+    "$RUN/mod-simulator" "$MOD_DEPS_ROOT/prefix" "$MOD_DEPS_ROOT/mod-archive/iphonesimulator/prefix" \
+    || MOD_SIMULATOR_STATUS=$?
+else
+  MOD_SIMULATOR_STATUS=1
+fi
+if [[ -d "$RUN/mod-simulator/evidence" ]]; then
+  ditto -c -k --keepParent "$RUN/mod-simulator/evidence" "$RUN/artifacts/mod-simulator-checks.zip"
+else
+  echo "MOD simulator evidence directory is missing." >&2
+  MOD_SIMULATOR_STATUS=1
+fi
+if (( MOD_SIMULATOR_STATUS != 0 )); then
+  echo "Required MOD simulator checks failed; no host package will be published." >&2
+  exit "$MOD_SIMULATOR_STATUS"
+fi
 if (( METAL_CHECK_STATUS != 0 )); then
   echo 'Required Metal checks failed; no host package or success result will be published.' >&2
   exit "$METAL_CHECK_STATUS"
