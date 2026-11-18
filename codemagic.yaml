@@ -393,3 +393,22 @@ workflows:
       - pc-aot/local/ios-dependencies-shader-trials-v1/logs/*/*.log
       - pc-aot/local/ios-dependencies-build9/logs/*/*.log
       - pc-aot/local/ios-dependencies-build15/logs/*/*.log
+  pc2011-mod-simulator-checks:
+    name: Skyrim MOD settings - iPhone Simulator UI checks
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: "26.6"
+      vars:
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+        JOBS: "2"
+    cache:
+      cache_paths:
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build15/mod-archive/iphonesimulator
+        - $CM_BUILD_DIR/pc-aot/local/ios-dependencies-build15/mod-archive/downloads
+    scripts:
+      - name: Run MOD settings XCTest with authored fixtures
+        script: bash pc-aot/scripts/check-mod-simulator-ci.sh
+    artifacts:
+      - pc-aot/local/mod-simulator-checks/*/artifacts/*.zip
+      - pc-aot/local/mod-simulator-checks/*/artifacts/ci.log

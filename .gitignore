@@ -869,6 +869,7 @@
 !/pc-aot/ios/dependencies/
 !/pc-aot/ios/dependencies/build-mod-archive-dependencies.sh
 !/pc-aot/scripts/check-mod-simulator.sh
+!/pc-aot/scripts/check-mod-simulator-ci.sh
 !/pc-aot/tests/mod-simulator/
 !/pc-aot/tests/mod-simulator/guest_boundary.m
 !/pc-aot/tests/mod-simulator/host.m
