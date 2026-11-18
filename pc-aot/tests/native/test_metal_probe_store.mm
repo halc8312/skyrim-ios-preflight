@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import "ProbeRunStore.h"
 #include <cstdio>
+#include <chrono>
 #include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -27,7 +28,11 @@ int main(int argc, const char *argv[]) {
 
             NSMutableArray *samples = [NSMutableArray arrayWithObject:@{@"library_ns": @123}];
             NSMutableDictionary *snapshot = [@{@"status": @"running", @"samples": samples} mutableCopy];
-            check([store writeSnapshot:snapshot toURL:first finished:NO error:&error], "progress save");
+            uint64_t measured = UINT64_MAX;
+            auto began = std::chrono::steady_clock::now();
+            check([store writeSnapshot:snapshot toURL:first finished:NO elapsedNanoseconds:&measured error:&error], "timed progress save");
+            auto outerNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count();
+            check(measured != UINT64_MAX && measured <= static_cast<uint64_t>(outerNs), "progress duration is not inside outer wall interval");
             [samples addObject:@{@"library_ns": @999}];
             record = [store readRecordAtURL:first error:&error];
             check([record[@"comparison"][@"samples"] count] == 1, "mutable caller data was retained");
@@ -41,7 +46,11 @@ int main(int argc, const char *argv[]) {
             check(![reopened writeSnapshot:@{@"status": @"passed"} toURL:first finished:YES error:&error], "reopened run became writable");
 
             NSDictionary *invalid = @{@"status": @"failed", @"invalid": [NSSet setWithObject:@1]};
-            check(![store writeSnapshot:invalid toURL:first finished:YES error:&error], "invalid JSON accepted");
+            measured = UINT64_MAX;
+            began = std::chrono::steady_clock::now();
+            check(![store writeSnapshot:invalid toURL:first finished:YES elapsedNanoseconds:&measured error:&error], "invalid JSON accepted");
+            outerNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count();
+            check(error != nil && measured != UINT64_MAX && measured <= static_cast<uint64_t>(outerNs), "rejected write duration missing or outside outer interval");
             check([initialBytes isEqual:bytes(first)], "invalid JSON damaged prior evidence");
             NSString *large = [@"x" stringByPaddingToLength:2 * 1024 * 1024 + 1 withString:@"x" startingAtIndex:0];
             check(![store writeSnapshot:@{@"status": @"failed", @"large": large} toURL:first finished:YES error:&error], "oversized record accepted");
@@ -49,7 +58,7 @@ int main(int argc, const char *argv[]) {
             check(![store writeSnapshot:@{@"status": @"running"} toURL:first finished:YES error:&error], "nonterminal result finished");
             check([initialBytes isEqual:bytes(first)], "invalid terminal status damaged evidence");
 
-            check([store writeSnapshot:@{@"status": @"passed", @"samples": @[@1]} toURL:first finished:YES error:&error], "final save");
+            check([store writeSnapshot:@{@"status": @"passed", @"samples": @[@1]} toURL:first finished:YES elapsedNanoseconds:nullptr error:&error], "unmeasured final save through timed entry");
             NSData *finalBytes = bytes(first);
             check(![store writeSnapshot:@{@"status": @"failed"} toURL:first finished:YES error:&error], "finished run overwritten");
             record = [store readRecordAtURL:first error:&error];

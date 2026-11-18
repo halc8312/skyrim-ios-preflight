@@ -750,11 +750,41 @@ static NSDictionary* phoneSnapshot(NSDictionary* report) {
     return snapshot;
 }
 
+static NSMutableDictionary* phoneProgressTiming() {
+    return [@{
+        @"scope": @"phoneCheckpoint wall intervals for callbacks that returned normally; final return snapshot excluded; intervals are outside library/specialization/PSO clocks",
+        @"snapshot_scope": @"JSON encode plus immutable JSON decode; snapshot contains prior completed checkpoint totals",
+        @"callback_scope": @"synchronous progress callback including caller storage and UI enqueue; nested host storage time must not be added again",
+        @"snapshot_serialization": @{ @"count": @0, @"total_ns": @0, @"max_ns": @0 },
+        @"synchronous_callback": @{ @"count": @0, @"total_ns": @0, @"max_ns": @0 }
+    } mutableCopy];
+}
+
+static void phoneRecordProgressInterval(NSMutableDictionary* report, NSString* key, uint64_t duration) {
+    NSMutableDictionary* timing = report[@"progress_timing"];
+    NSDictionary* previous = timing[key];
+    const uint64_t priorMax = [previous[@"max_ns"] unsignedLongLongValue];
+    timing[key] = @{ @"count": @([previous[@"count"] unsignedLongLongValue] + 1),
+        @"total_ns": @([previous[@"total_ns"] unsignedLongLongValue] + duration),
+        @"max_ns": @(duration > priorMax ? duration : priorMax) };
+}
+
 static void phoneCheckpoint(NSMutableDictionary* report, NSString* phase,
                             BOOL (^shouldContinue)(void), void (^progress)(NSDictionary*)) {
     report[@"phase"] = phase;
     checkContinue(shouldContinue);
-    if (progress) progress(phoneSnapshot(report));
+    if (progress) {
+        const auto snapshotStarted = Clock::now();
+        NSDictionary* snapshot = phoneSnapshot(report);
+        const uint64_t snapshotNs = elapsed(snapshotStarted);
+        const auto callbackStarted = Clock::now();
+        progress(snapshot);
+        const uint64_t callbackNs = elapsed(callbackStarted);
+        // A throwing callback is not a completed progress call. Publish both
+        // independent interval counters only after it returned normally.
+        phoneRecordProgressInterval(report, @"snapshot_serialization", snapshotNs);
+        phoneRecordProgressInterval(report, @"synchronous_callback", callbackNs);
+    }
     // Persistence may take time or request a stop; recheck before issuing work.
     checkContinue(shouldContinue);
 }
@@ -771,7 +801,9 @@ static NSString* phoneSourceHash(NSData* source) {
 
 static NSDictionary* phoneWorkloadOptions(unsigned index) {
     return @{ @"language": @"2.4", @"fast_math": @NO,
-        @"preprocessor_macros": @{ @"PHONE_CASE": @(index), @"PHONE_ROUNDS": @(SkyrimPhoneWorkloads::rounds(index)) },
+        @"preprocessor_macros": @{ @"PHONE_CASE": @(SkyrimPhoneWorkloads::familyIndex(index)),
+            @"PHONE_VARIANT": @(SkyrimPhoneWorkloads::variantIndex(index)),
+            @"PHONE_ROUNDS": @(SkyrimPhoneWorkloads::rounds(index)) },
         @"function_constant": @{ @"index": @0, @"type": @"uint", @"value": @(SkyrimPhoneWorkloads::scale(index)) } };
 }
 
@@ -787,12 +819,20 @@ static NSData* phoneWordData(const std::array<uint32_t, N>& input) {
     return [NSData dataWithBytes:bytes.data() length:bytes.size()];
 }
 
-static NSDictionary* phoneWorkloadInfo(unsigned index, NSString* sourceHash) {
+static NSDictionary* phoneWorkloadInfo(unsigned index, NSString* sourceHash, NSString* firstAPI = @"legacy_source") {
     using namespace SkyrimPhoneWorkloads;
     const Input input = makeInput(index);
     NSData* data = phoneWordData(input);
+    NSDictionary* options = phoneWorkloadOptions(index);
+    NSError* error = nil;
+    NSData* optionsData = [NSJSONSerialization dataWithJSONObject:options options:NSJSONWritingSortedKeys error:&error];
+    requireObject(optionsData, error, "authored options fingerprint");
     return @{ @"case_id": [NSString stringWithUTF8String:caseID(index)], @"case_index": @(index + 1),
-        @"source_sha256": sourceHash, @"source_options": phoneWorkloadOptions(index),
+        @"family_id": [NSString stringWithUTF8String:familyID(index)], @"family_index": @(familyIndex(index) + 1),
+        @"variant_index": @(variantIndex(index) + 1), @"variant_salt": @(variantSalt(index)),
+        @"case_first_api": firstAPI,
+        @"source_sha256": sourceHash, @"source_options": options,
+        @"options_sha256": phoneSourceHash(optionsData), @"options_fingerprint_format": @"sorted-key JSON UTF-8",
         @"input_sha256": phoneSourceHash(data), @"input_bytes": @(data.length),
         @"input_format": @"128 little-endian uint32 words; fixed authored seed per case",
         @"render_oracle_sha256": phoneSourceHash(phoneWordData(oracle(index, input, RenderTag))),
@@ -911,11 +951,13 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
 #endif
         auto started = Clock::now();
         NSMutableDictionary* report = [@{
-            @"schema": @2, @"scope": @"authored-iphone-metal-workload-comparison",
+            @"schema": @3, @"scope": @"authored-iphone-metal-workload-comparison",
             @"status": @"running", @"phase": @"prepare", @"repeat": @(repeats),
             @"metal4_first_requested": @(metal4First), @"completed_samples": @0,
             @"total_samples": @0, @"total_cases": @(SkyrimPhoneWorkloads::CaseCount),
+            @"total_families": @(SkyrimPhoneWorkloads::FamilyCount), @"variants_per_family": @(SkyrimPhoneWorkloads::VariantCount),
             @"control_source_options": sourceOptions(), @"workloads": [NSMutableArray new],
+            @"progress_timing": phoneProgressTiming(),
             @"samples": [NSMutableArray new], @"rejections": [NSMutableArray new],
             @"async_retention_checks": [NSMutableArray new],
             @"gpu_execution_verified": @NO, @"metal4_library_verified": @NO,
@@ -927,7 +969,7 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
             @"cancellation_requested": @NO, @"stop_requested": @NO,
             @"timing_scope": @"wall intervals; async library includes callback and task join; PSOs use legacy APIs",
             @"specialization_scope": @"vertex lookup plus fragment and compute specialization",
-            @"workload_scope": @"three fixed authored integer workloads, runtime input buffers, serial execution; no game inputs",
+            @"workload_scope": @"three authored integer families with four semantic variants each, runtime input buffers, serial execution; no game inputs",
             @"gpu_time_measured": @NO, @"parallel_compilation_verified": @NO,
             @"mrc_lifetime_verified": @NO,
             @"cache_scope": @"first observed sample and repeated samples; OS/compiler cache is not reset or controlled",
@@ -982,7 +1024,7 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                 report[@"source_bytes"] = @(sourceBytes.length);
                 // This entry point runs only the bundled authored fixture, never
                 // a game-derived or externally supplied shader.
-                require([sourceHash isEqualToString:@"8963ee6a13291f0e07fb636e534eddc415ca090b70420f5f7bdb86cc78a5b270"],
+                require([sourceHash isEqualToString:@"26ed56a8f4d264965eb624911d42cbf925f1329f0f103d58f683fe1c52d07ad6"],
                         "bundled authored fixture hash mismatch");
                 NSString* source = [[NSString alloc] initWithData:sourceBytes encoding:NSUTF8StringEncoding];
                 requireObject(source, nil, "authored UTF-8 source");
@@ -998,9 +1040,13 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                 NSString* controlSource = [[NSString alloc] initWithData:controlBytes encoding:NSUTF8StringEncoding];
                 requireObject(controlSource, nil, "authored UTF-8 control source");
                 report[@"control_source_sha256"] = controlHash;
+                NSArray<NSString*>* routes = metal4First
+                    ? @[@"metal4_source", @"legacy_source", @"metal4_async_source", @"legacy_async_source"]
+                    : @[@"legacy_source", @"metal4_source", @"legacy_async_source", @"metal4_async_source"];
                 NSMutableArray* workloads = report[@"workloads"];
                 for (unsigned index = 0; index < SkyrimPhoneWorkloads::CaseCount; ++index)
-                    [workloads addObject:phoneWorkloadInfo(index, sourceHash)];
+                    [workloads addObject:phoneWorkloadInfo(index, sourceHash,
+                        routes[SkyrimPhoneWorkloads::routeIndex(0, 0, index)])];
                 phoneCheckpoint(report, @"compiler", shouldContinue, progress);
                 auto compilerStarted = Clock::now();
                 error = nil;
@@ -1012,21 +1058,21 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                 checkContinue(shouldContinue);
                 id<MTLCommandQueue> queue = [device newCommandQueue];
                 requireObject(queue, nil, "legacy command queue");
-                NSArray<NSString*>* routes = metal4First
-                    ? @[@"metal4_source", @"legacy_source", @"metal4_async_source", @"legacy_async_source"]
-                    : @[@"legacy_source", @"metal4_source", @"legacy_async_source", @"metal4_async_source"];
                 report[@"base_route_order"] = routes;
-                report[@"order_policy"] = @"four rotations per case; each route occupies every slot once; opposite initial backend is optional";
+                report[@"order_policy"] = @"leader=(family_index0+variant_index0)%4; each route is first once per family; four rotations per case balance all slots; initial backend selector permutes base order";
                 NSMutableArray* samples = report[@"samples"];
                 for (unsigned index = 0; index < SkyrimPhoneWorkloads::CaseCount; ++index) {
                     const auto input = SkyrimPhoneWorkloads::makeInput(index);
                     NSDictionary* workload = workloads[index];
                     report[@"active_case_id"] = workload[@"case_id"];
                     report[@"active_case_index"] = workload[@"case_index"];
+                    report[@"active_family_id"] = workload[@"family_id"];
+                    report[@"active_family_index"] = workload[@"family_index"];
+                    report[@"active_variant_index"] = workload[@"variant_index"];
                     for (unsigned iteration = 0; iteration < repeats; ++iteration) {
                         for (unsigned slot = 0; slot < routes.count; ++slot) {
                             @autoreleasepool {
-                                NSString* api = routes[SkyrimPhoneWorkloads::routeIndex(iteration, slot)];
+                                NSString* api = routes[SkyrimPhoneWorkloads::routeIndex(iteration, slot, index)];
                                 bool metal4 = [api hasPrefix:@"metal4_"];
                                 bool asynchronous = [api containsString:@"_async_"];
                                 NSMutableDictionary* sample = [workload mutableCopy];
@@ -1062,6 +1108,9 @@ NSDictionary* SkyrimMetalRunPhoneComparison(NSString* sourcePath, NSUInteger rep
                 }
                 report[@"active_case_id"] = @"control_fixture";
                 report[@"active_case_index"] = @0;
+                report[@"active_family_id"] = @"control_fixture";
+                report[@"active_family_index"] = @0;
+                report[@"active_variant_index"] = @0;
                 NSString* invalid = [@"#error Intentional_Metal_compile_fixture_rejection\n" stringByAppendingString:controlSource];
                 NSMutableArray* rejections = report[@"rejections"];
                 for (NSString* api in routes) {

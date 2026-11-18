@@ -1,5 +1,9 @@
 # 開発状況
 
+**2026-11-18：初回担当を分散するMetal比較build3を準備。** 自作3系統×4個の意味的な変種を用意し、各系統で4方式が最初の担当を1回ずつ受け持つ。系統番号も順序に加えてvariant番号との固定対応を崩し、各case内の4巡も維持する（計192sample）。実際の整数式・定数・入力seedが変わり、コメント変更だけで新規性を主張しない。OS cacheは制御せず、異なる変種の単発値で速度優位を確定しない。schema3にfamily／variant／case先頭APIを記録し、画面は系統ごとの最初の準備4区間合計を表示する。
+
+snapshotのJSON生成と同期進捗callbackを別区間で記録し、hostの途中保存時間はcallbackに内包される値として分離した。最終結果には完了済み進捗処理の累計を入れ、initial／final保存と返却用最終snapshotは対象外と明記する。失敗時の時間記録・途中復元・完成済み結果の保護は維持。Windows Metal6.2の12case／24compile-linkは警告なし（`local/metal-compile/phone-workloads-windows-04/`）。WSLの正解値24組・入力感度・先頭担当／全位置均等はnormal／ASan+UBSanで成功、梱包15・署名23・UI判定6検査も成功。独立レビューで実装上の未解決指摘なし。Apple SDK／24 GPU readback／保存計測の実Foundation確認・実iPhoneのbuild3結果は未実施。Skyrim本体には未接続。
+
 **2026-11-18：build2の実iPhone比較2回を受領し、96sampleすべての正解値を確認。** 11:19の従来方式先行と11:20のMetal4先行は、同じA19 Pro／iOS26.5.2で正常完了した。公開`19adfba`のBuildInfo・同梱12source hash・3負荷の入力／設定・実行順を照合し、描画／compute計12,288語は検証済みCPU正解値と全一致。保持検査の成功4件と意図的な不正source拒否12件も期待どおり。原本は`private/metal-probe-results/20261118-111958/comparison.json`（286,847 bytes、SHA-256 `862f8544ca32363f8c7e85b580e43b78a6826627d5268dace4d078c1156151fd`）と`20261118-112019/comparison.json`（286,960 bytes、`33bb91d2a9808d8ab17dec5f2f54885075b3736493b5337c05914d674b49a44e`）に変更せず保持した。
 
 **大きな初回準備を観測したが、Metal4の速度優位は未確定。** 1回目の各負荷先頭はすべて従来方式で、library／関数特殊化／描画PSO／compute PSOの合計は301.300／33.300／91.523 ms。この3件で同runの4区間合計の96.71%を占める。以後45件の合計最大は1.182 ms、2回目48件の最大は1.603 msだった。各位置への割当は均等でも、初回の担当方式は均等ではなく、Metal4先行の2回目も同じsourceを経験済み。短い反復中央値の優劣も一貫しないため、初回生成の高速化・ゲームのframe gap改善は主張しない。

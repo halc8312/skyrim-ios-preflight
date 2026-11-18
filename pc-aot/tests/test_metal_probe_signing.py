@@ -43,10 +43,7 @@ def members():
     proof = {key: False for key in ("signed_for_device", "installed", "physical_iphone_verified",
              "gpu_execution_verified", "metal4_runtime_verified", "gameplay_improvement_verified")}
     proof.update(bundle_id=signer.BUNDLE, simulator=False,
-                 inputs={"experiments/metal-compile/fixture.metal": signer.FIXTURE_SHA256,
-                         "experiments/metal-compile/phone_fixture.metal": signer.PHONE_FIXTURE_SHA256,
-                         "experiments/metal-compile/phone_workloads.h": signer.digest(
-                             (ROOT / "experiments/metal-compile/phone_workloads.h").read_bytes())})
+                 inputs={name: signer.digest((ROOT / name).read_bytes()) for name in signer.PROVENANCE_INPUTS})
     return {"MetalProbe": image(), "Info.plist": plistlib.dumps(info),
             "BuildInfo.json": json.dumps(proof).encode(),
             "fixture.metal": (ROOT / "experiments/metal-compile/fixture.metal").read_bytes(),
@@ -82,6 +79,8 @@ class ProbeSigningAdmissionTests(unittest.TestCase):
 
     def test_only_authored_five_file_device_app_is_accepted(self):
         self.assertEqual(signer.read_unsigned(write_ipa(self.root / "probe.ipa").read_bytes()), members())
+        self.assertEqual(len(signer.PROVENANCE_INPUTS), 12)
+        self.assertEqual(plistlib.loads(members()["Info.plist"])["CFBundleVersion"], "3")
 
     def test_phone_fixture_mutation_is_refused_even_with_matching_metadata(self):
         files = members()
@@ -123,9 +122,24 @@ class ProbeSigningAdmissionTests(unittest.TestCase):
                         self.assertRaisesRegex(signer.Refusal, "phone_.*provenance"):
                     signer.bundle_contract(files)
 
+    def test_all_twelve_source_provenance_keys_and_hashes_are_required(self):
+        base = json.loads(members()["BuildInfo.json"])["inputs"]
+        missing = dict(base)
+        del missing["experiments/metal-compile/runtime.mm"]
+        invalid = dict(base, **{"experiments/metal-compile/runtime.mm": "not a SHA256"})
+        for value in (None, [], missing, invalid, dict(base, **{"extra/private.bin": "0" * 64})):
+            files = members()
+            provenance = json.loads(files["BuildInfo.json"])
+            provenance["inputs"] = value
+            files["BuildInfo.json"] = json.dumps(provenance).encode()
+            with self.subTest(value_type=type(value).__name__), \
+                    self.assertRaisesRegex(signer.Refusal, "source_provenance"):
+                signer.bundle_contract(files)
+
     def test_foreign_app_simulator_forged_success_and_fixture_are_refused(self):
         for field, value in (("CFBundleIdentifier", "org.skyrimios.title"),
                              ("CFBundleIdentifier", "org.skyrimios.probe"),
+                             ("CFBundleVersion", "2"),
                              ("CFBundleExecutable", "SkyrimIOS"),
                              ("CFBundleSupportedPlatforms", ["iPhoneSimulator"]),
                              ("MinimumOSVersion", "18.0")):

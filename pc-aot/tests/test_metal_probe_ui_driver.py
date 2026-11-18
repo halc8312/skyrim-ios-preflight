@@ -18,9 +18,16 @@ class PreviewEvidenceTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / "record.json"
         self.record = {"finished": True, "status": "unsupported", "comparison": {
+            "schema": 3, "total_cases": 12, "total_samples": 192, "elapsed_ns": 2000,
             "status": "unsupported", "host_build": {"source_revision": "authored-revision"},
             "physical_iphone_verified": False, "gpu_execution_verified": False,
-            "metal4_library_verified": False, "samples": []}}
+            "metal4_library_verified": False, "samples": [],
+            "progress_timing": {
+                "snapshot_serialization": {"count": 1, "total_ns": 100, "max_ns": 100},
+                "synchronous_callback": {"count": 1, "total_ns": 1000, "max_ns": 1000}},
+            "host_timing": {"initial_store_included": False, "final_store_included": False,
+                "progress_store": {"count": 1, "successful_count": 1, "failed_count": 0,
+                                   "total_ns": 900, "max_ns": 900}}}}
 
     def write(self, record=None):
         self.path.write_text(json.dumps(record or self.record))
@@ -45,6 +52,32 @@ class PreviewEvidenceTests(unittest.TestCase):
             with self.subTest(value=value):
                 bad = copy.deepcopy(self.record)
                 bad["comparison"]["physical_iphone_verified"] = value
+                self.write(bad)
+                with self.assertRaises(RuntimeError):
+                    driver.fresh_unsupported_record(self.path, set(), "authored-revision")
+
+    def test_missing_or_uncompleted_progress_timing_is_rejected(self):
+        for change in ("missing", "wrong_count", "invalid_duration", "old_schema"):
+            with self.subTest(change=change):
+                bad = copy.deepcopy(self.record)
+                if change == "missing": del bad["comparison"]["host_timing"]
+                elif change == "wrong_count": bad["comparison"]["progress_timing"]["synchronous_callback"]["count"] = 0
+                elif change == "invalid_duration": bad["comparison"]["host_timing"]["progress_store"]["total_ns"] = True
+                else: bad["comparison"]["schema"] = 2
+                self.write(bad)
+                with self.assertRaises(RuntimeError):
+                    driver.fresh_unsupported_record(self.path, set(), "authored-revision")
+
+    def test_nested_store_scope_and_runtime_elapsed_are_enforced(self):
+        for change in ("store_outside_callback", "callback_outside_runtime", "final_included", "failed_store"):
+            with self.subTest(change=change):
+                bad = copy.deepcopy(self.record)
+                c = bad["comparison"]
+                if change == "store_outside_callback":
+                    c["host_timing"]["progress_store"].update(total_ns=1500, max_ns=1500)
+                elif change == "callback_outside_runtime": c["elapsed_ns"] = 1000
+                elif change == "final_included": c["host_timing"]["final_store_included"] = True
+                else: c["host_timing"]["progress_store"].update(successful_count=0, failed_count=1)
                 self.write(bad)
                 with self.assertRaises(RuntimeError):
                     driver.fresh_unsupported_record(self.path, set(), "authored-revision")

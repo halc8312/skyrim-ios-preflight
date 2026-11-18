@@ -26,15 +26,30 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = "org.skyrimios.metalprobe"
+APP_VERSION = "3"
 APP = "Payload/MetalProbe.app"
 UNSIGNED_FILES = {"MetalProbe", "Info.plist", "fixture.metal", "phone_fixture.metal", "BuildInfo.json"}
 SIGNED_FILES = UNSIGNED_FILES | {"embedded.mobileprovision", "_CodeSignature/CodeResources"}
 FIXTURE_SHA256 = "e45755523aabf64eb236c01a77ae220e271b4ae6d0eabcf120d9a80cabbada87"
-PHONE_FIXTURE_SHA256 = "8963ee6a13291f0e07fb636e534eddc415ca090b70420f5f7bdb86cc78a5b270"
+PHONE_FIXTURE_SHA256 = "26ed56a8f4d264965eb624911d42cbf925f1329f0f103d58f683fe1c52d07ad6"
 SIGNER_HELPER_SHA256 = "2238760e2f997174797d3e9adf1afc504136165a4167a11162a6937d36953827"
 PROFILE_HELPER_SHA256 = "9ba5eb3f3f6d8b425cbb07cf15667ca860c184bcd683ca83e8c741008a6bff84"
 CERTIFICATE_HELPER_SHA256 = "12ce42f38cb222b00fdd16c32fcf121d33a5703e2ef798308a7e4bff4cd9c5ea"
 MAX_IPA = 32 << 20
+PROVENANCE_INPUTS = {
+    "experiments/metal-compile/runtime.mm",
+    "experiments/metal-compile/runtime_host.h",
+    "experiments/metal-compile/fixture.metal",
+    "experiments/metal-compile/phone_fixture.metal",
+    "experiments/metal-compile/phone_workloads.h",
+    "experiments/metal-compile/ios/main.mm",
+    "experiments/metal-compile/ios/ProbeRunStore.h",
+    "experiments/metal-compile/ios/ProbeRunStore.mm",
+    "experiments/metal-compile/ios/Info.plist",
+    "experiments/metal-compile/offline.py",
+    "scripts/build-metal-probe-ios.sh",
+    "scripts/build-metal-probe-ios.py",
+}
 
 
 class Refusal(ValueError):
@@ -146,6 +161,7 @@ def bundle_contract(members):
     need(set(members) == UNSIGNED_FILES, "fixed_unsigned_file_set_required")
     info = plistlib.loads(members["Info.plist"])
     need(info.get("CFBundleIdentifier") == BUNDLE and info.get("CFBundleExecutable") == "MetalProbe"
+         and info.get("CFBundleVersion") == APP_VERSION
          and info.get("CFBundlePackageType") == "APPL" and info.get("MinimumOSVersion") == "26.0"
          and info.get("CFBundleSupportedPlatforms") == ["iPhoneOS"] and info.get("UIDeviceFamily") == [1],
          "isolated_device_probe_identity_required")
@@ -154,13 +170,18 @@ def bundle_contract(members):
     provenance = json.loads(members["BuildInfo.json"])
     need(provenance.get("bundle_id") == BUNDLE and provenance.get("simulator") is False,
          "device_build_provenance_required")
-    need(provenance.get("inputs", {}).get("experiments/metal-compile/fixture.metal") == FIXTURE_SHA256,
+    inputs = provenance.get("inputs")
+    need(isinstance(inputs, dict), "source_provenance_set_mismatch")
+    need(inputs.get("experiments/metal-compile/fixture.metal") == FIXTURE_SHA256,
          "fixture_provenance_mismatch")
-    need(provenance.get("inputs", {}).get("experiments/metal-compile/phone_fixture.metal") == PHONE_FIXTURE_SHA256,
+    need(inputs.get("experiments/metal-compile/phone_fixture.metal") == PHONE_FIXTURE_SHA256,
          "phone_fixture_provenance_mismatch")
-    workloads = provenance.get("inputs", {}).get("experiments/metal-compile/phone_workloads.h")
+    workloads = inputs.get("experiments/metal-compile/phone_workloads.h")
     need(isinstance(workloads, str) and re.fullmatch("[0-9a-f]{64}", workloads),
          "phone_workloads_provenance_missing_or_invalid")
+    need(set(inputs) == PROVENANCE_INPUTS, "source_provenance_set_mismatch")
+    need(all(isinstance(value, str) and re.fullmatch("[0-9a-f]{64}", value) for value in inputs.values()),
+         "source_provenance_hash_invalid")
     need(all(provenance.get(k) is False for k in ("signed_for_device", "installed", "physical_iphone_verified",
          "gpu_execution_verified", "metal4_runtime_verified", "gameplay_improvement_verified")),
          "unsigned_build_must_not_claim_runtime_success")

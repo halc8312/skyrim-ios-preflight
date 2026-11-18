@@ -37,6 +37,29 @@ def fresh_unsupported_record(path, prior_paths, source_revision):
             raise RuntimeError("Simulator incorrectly claimed or omitted device/GPU evidence")
     if comparison.get("samples") != []:
         raise RuntimeError("Simulator ran unexpected comparison samples")
+    if comparison.get("schema") != 3 or comparison.get("total_cases") != 12 or comparison.get("total_samples") != 192:
+        raise RuntimeError("Simulator did not run the current balanced comparison design")
+    # The unsupported simulator path completes exactly the device checkpoint.
+    # Its actual host-store duration must be nested in the progress callback,
+    # while snapshot serialization is a separate interval inside runtime elapsed.
+    timing = comparison.get("progress_timing", {})
+    host = comparison.get("host_timing", {})
+    if not isinstance(timing, dict) or not isinstance(host, dict):
+        raise RuntimeError("Missing current progress timing evidence")
+    intervals = [timing.get("snapshot_serialization"), timing.get("synchronous_callback"), host.get("progress_store")]
+    for interval in intervals:
+        if not isinstance(interval, dict) or any(type(interval.get(key)) is not int or interval[key] < 0
+                                                for key in ("count", "total_ns", "max_ns")):
+            raise RuntimeError("Invalid progress timing counters")
+        if interval["count"] != 1 or interval["max_ns"] != interval["total_ns"]:
+            raise RuntimeError("Simulator checkpoint timing count differs from completed path")
+    snapshot, callback, store = intervals
+    elapsed = comparison.get("elapsed_ns")
+    if (type(elapsed) is not int or snapshot["total_ns"] + callback["total_ns"] > elapsed or
+            store["total_ns"] > callback["total_ns"] or store.get("successful_count") != 1 or
+            store.get("failed_count") != 0 or host.get("initial_store_included") is not False or
+            host.get("final_store_included") is not False):
+        raise RuntimeError("Progress/store timing scopes or nesting are inconsistent")
     return record
 
 

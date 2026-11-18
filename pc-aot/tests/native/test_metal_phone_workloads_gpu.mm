@@ -20,7 +20,7 @@ int main(int argc, const char* argv[]) {
                 NSString* source = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
                 requireObject(source, nil, "workload source encoding");
                 NSString* hash = phoneSourceHash(data);
-                require([hash isEqualToString:@"8963ee6a13291f0e07fb636e534eddc415ca090b70420f5f7bdb86cc78a5b270"],
+                require([hash isEqualToString:@"26ed56a8f4d264965eb624911d42cbf925f1329f0f103d58f683fe1c52d07ad6"],
                         "authored workload source hash changed");
                 id<MTLDevice> device = MTLCreateSystemDefaultDevice();
                 requireObject(device, nil, "actual legacy Metal device");
@@ -51,7 +51,7 @@ int main(int argc, const char* argv[]) {
                 }
                 report[@"status"] = @"passed";
                 report[@"mac_legacy_gpu_verified"] = @YES;
-                std::puts("PHONE_WORKLOAD_MAC_LEGACY cases=3 input_variants=2 readbacks=6 physical_iphone_verified=0 metal4_verified=0");
+                std::puts("PHONE_WORKLOAD_MAC_LEGACY families=3 cases=12 input_variants=2 readbacks=24 physical_iphone_verified=0 metal4_verified=0");
                 result = 0;
             } catch (const std::exception& e) {
                 report[@"failure"] = [NSString stringWithUTF8String:e.what()];

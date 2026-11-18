@@ -2,11 +2,14 @@
 #include <metal_stdlib>
 using namespace metal;
 
-#if !defined(PHONE_CASE) || !defined(PHONE_ROUNDS)
-#error Recorded PHONE_CASE and PHONE_ROUNDS options are required
+#if !defined(PHONE_CASE) || !defined(PHONE_VARIANT) || !defined(PHONE_ROUNDS)
+#error Recorded PHONE_CASE, PHONE_VARIANT and PHONE_ROUNDS options are required
 #endif
 #if (PHONE_CASE == 0 && PHONE_ROUNDS != 12) || (PHONE_CASE == 1 && PHONE_ROUNDS != 20) || (PHONE_CASE == 2 && PHONE_ROUNDS != 28) || PHONE_CASE < 0 || PHONE_CASE > 2
 #error Unknown authored workload configuration
+#endif
+#if PHONE_VARIANT < 0 || PHONE_VARIANT > 3
+#error Unknown authored semantic variant
 #endif
 
 constant uint phone_scale [[function_constant(0)]];
@@ -27,10 +30,13 @@ static inline uint phone_mix(uint x, uint salt) {
 #endif
 
 static inline uint4 phone_workload(device const uint* input, uint id, uint stage) {
-    uint x = input[(id * 3u + uint(PHONE_CASE) * 5u) & 127u] ^ (0x9e3779b9u + stage);
+    // Each predeclared variant changes real integer expressions, not labels or
+    // comments. Rounds and the operation structure remain fixed per family.
+    const uint salt = 0x6a09e667u ^ (uint(PHONE_VARIANT) * 0xbb67ae85u);
+    uint x = input[(id * 3u + uint(PHONE_CASE) * 5u) & 127u] ^ (0x9e3779b9u + stage) ^ salt;
     uint y = input[(id * 5u + 17u) & 127u] + id * 0x85ebca6bu;
     uint z = input[(id * 7u + 31u) & 127u] ^ (phone_scale * 0xc2b2ae35u);
-    uint w = input[(id * 11u + 47u) & 127u] + 0x27d4eb2fu + (uint(PHONE_CASE) << 16);
+    uint w = input[(id * 11u + 47u) & 127u] + 0x27d4eb2fu + (uint(PHONE_CASE) << 16) + uint(PHONE_VARIANT) * 0x10001u;
     // The bounded compile-time loop is unrolled, while all branches and table
     // accesses depend on runtime buffer values. This is not a large GPU load:
     // only 16 fragment invocations and 16 compute lanes are submitted per sample.
@@ -63,10 +69,10 @@ static inline uint4 phone_workload(device const uint* input, uint id, uint stage
         z += phone_rotate(u ^ y, 11);
         w ^= phone_rotate(v + z, 19);
 #endif
-        x ^= r * 0x9e3779b9u;
-        y += phone_scale;
-        z ^= phone_rotate(x + w, 5);
-        w += t ^ (r + stage);
+        x ^= r * (0x9e3779b9u + uint(PHONE_VARIANT) * 2u);
+        y += phone_scale ^ salt;
+        z ^= phone_rotate(x + w, 5u + uint(PHONE_VARIANT));
+        w += t ^ (r + stage + salt);
     }
     return uint4(x ^ stage, y + id, z ^ phone_scale, w + uint(PHONE_CASE));
 }

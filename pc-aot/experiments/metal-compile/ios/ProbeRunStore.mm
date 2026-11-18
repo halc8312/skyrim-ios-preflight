@@ -1,4 +1,5 @@
 #import "ProbeRunStore.h"
+#include <chrono>
 
 #include <cerrno>
 #include <fcntl.h>
@@ -190,6 +191,17 @@ static NSData *Encode(NSDictionary *record, NSError **error) {
         _active[url.path] = record;
         _latestReportURL = url;
         return url;
+    }
+}
+
+- (BOOL)writeSnapshot:(NSDictionary *)snapshot toURL:(NSURL *)url finished:(BOOL)finished
+  elapsedNanoseconds:(uint64_t *)elapsed error:(NSError **)error {
+    const auto started = std::chrono::steady_clock::now();
+    @try {
+        return [self writeSnapshot:snapshot toURL:url finished:finished error:error];
+    } @finally {
+        if (elapsed) *elapsed = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - started).count());
     }
 }
 

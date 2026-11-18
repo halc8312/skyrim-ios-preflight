@@ -227,7 +227,12 @@ comparable, preserve fixed CPU oracles and source/options identities, and record
 first-observed samples separately. Cosmetic renaming alone is not evidence of a
 fresh compiler workload, and no variant scheme proves an empty OS cache. Measure
 progress snapshot/store time independently of compiler intervals, preserving
-interrupted-result recovery. Parallel contention and actual Metal 4 MRC task
+interrupted-result recovery. Build 3 now implements this serial design with
+twelve semantic cases and 192 samples, a family-plus-variant leader rotation,
+and disjoint snapshot/callback intervals with nested host-store measurements.
+Initial/final writes and the return snapshot are explicitly excluded. Portable
+and Windows compilation checks passed; its Apple and physical checks remain
+pending. Parallel contention and actual Metal 4 MRC task
 retirement should then be evaluated independently. The production gate stays
 open until those lifetime/options checks pass; neither an ARC fixture nor its
 short thermal-zero run proves game performance or long-session stability.

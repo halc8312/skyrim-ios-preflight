@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+import re
 import shutil
 import struct
 import sys
@@ -18,6 +19,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_NAME = "MetalProbe"
+APP_VERSION = "3"
 DEFAULT_BUNDLE = "org.skyrimios.metalprobe"
 # The second name is the pre-existing, separate diagnostic app, never SkyrimIOS.
 ALLOWED_BUNDLES = {DEFAULT_BUNDLE, "org.skyrimios.probe"}
@@ -123,6 +125,7 @@ def validate_app(app, bundle, simulator, fixture_hashes):
         raise ValueError("app file set differs from authored five-file bundle")
     value = plistlib.loads((app / "Info.plist").read_bytes())
     required = {"CFBundleIdentifier": validate_bundle(bundle), "CFBundleExecutable": APP_NAME,
+                "CFBundleVersion": APP_VERSION,
                 "CFBundlePackageType": "APPL", "MinimumOSVersion": "26.0",
                 "CFBundleSupportedPlatforms": ["iPhoneSimulator" if simulator else "iPhoneOS"],
                 "UIDeviceFamily": [1],
@@ -138,6 +141,13 @@ def validate_app(app, bundle, simulator, fixture_hashes):
     build_info = json.loads((app / "BuildInfo.json").read_text(encoding="utf-8"))
     if build_info.get("bundle_id") != bundle or build_info.get("simulator") is not simulator:
         raise ValueError("build provenance mismatch")
+    inputs = build_info.get("inputs")
+    if not isinstance(inputs, dict) or set(inputs) != set(INPUTS):
+        raise ValueError("build source provenance set mismatch")
+    if any(not isinstance(value, str) or re.fullmatch("[0-9a-f]{64}", value) is None for value in inputs.values()):
+        raise ValueError("build source provenance hash invalid")
+    if any(inputs["experiments/metal-compile/" + name] != expected for name, expected in fixture_hashes.items()):
+        raise ValueError("build fixture provenance mismatch")
     if any(build_info.get(key) is not False for key in FALSE_EVIDENCE):
         raise ValueError("build metadata must not claim signing/device/runtime success")
     return validate_macho((app / APP_NAME).read_bytes(), simulator)

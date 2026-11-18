@@ -13,6 +13,13 @@ NS_ASSUME_NONNULL_BEGIN
                toURL:(NSURL *)reportURL
             finished:(BOOL)finished
                error:(NSError * _Nullable * _Nullable)error;
+// Complete writeSnapshot wall time, including validation, serialization and I/O.
+// The measurement is returned after the call; it is not inserted into that write.
+- (BOOL)writeSnapshot:(NSDictionary *)snapshot
+               toURL:(NSURL *)reportURL
+            finished:(BOOL)finished
+  elapsedNanoseconds:(uint64_t * _Nullable)elapsed
+               error:(NSError * _Nullable * _Nullable)error;
 - (nullable NSDictionary *)readRecordAtURL:(NSURL *)reportURL error:(NSError * _Nullable * _Nullable)error;
 @end
 

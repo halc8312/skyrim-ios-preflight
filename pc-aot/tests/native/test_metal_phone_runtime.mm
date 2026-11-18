@@ -31,9 +31,11 @@ int main() {
                 __block NSDictionary* invalid = nil;
                 __block NSDictionary* stopped = nil;
                 __block NSDictionary* unsupported = nil;
+                __block NSDictionary* callbackFailed = nil;
                 __block NSDictionary* firstSnapshot = nil;
                 __block NSUInteger stoppedProgress = 0;
                 __block NSUInteger unsupportedProgress = 0;
+                __block NSUInteger failedProgress = 0;
                 // Catch inside the block: exceptions must never unwind GCD frames.
                 __block NSString* workerFailure = nil;
                 __block BOOL workerWasMain = YES;
@@ -52,6 +54,12 @@ int main() {
                                     ^BOOL { return YES; }, ^(NSDictionary* snapshot) {
                                         ++unsupportedProgress;
                                         if (!firstSnapshot) firstSnapshot = snapshot;
+                                    });
+                                callbackFailed = SkyrimMetalRunPhoneComparison(@"missing-authored-fixture", 4, NO,
+                                    ^BOOL { return YES; }, ^(NSDictionary* snapshot) {
+                                        (void)snapshot;
+                                        ++failedProgress;
+                                        throw std::runtime_error("controlled progress callback failure");
                                     });
                             } catch (const std::exception& e) {
                                 workerFailure = [NSString stringWithUTF8String:e.what()];
@@ -83,8 +91,27 @@ int main() {
                       "progress snapshot changed after the callback");
                 check([firstSnapshot[@"status"] isEqual:@"running"] &&
                       [unsupported[@"status"] isEqual:@"unsupported"], "snapshot status aliases final report");
-                for (NSDictionary* report in @[invalid, stopped, unsupported, firstSnapshot]) unverified(report);
-                std::puts("METAL_PHONE_HOST_CONTROLS cases=4 gpu_execution_verified=0 physical_iphone_verified=0");
+                check([unsupported[@"schema"] unsignedIntegerValue] == 3 &&
+                      [unsupported[@"total_cases"] unsignedIntegerValue] == 12 &&
+                      [unsupported[@"total_samples"] unsignedIntegerValue] == 192,
+                      "workload comparison totals/schema changed");
+                check([callbackFailed[@"status"] isEqual:@"failed"] && failedProgress == 1 &&
+                      [callbackFailed[@"failure"] containsString:@"controlled progress"],
+                      "callback failure was swallowed or escaped");
+                for (NSString* key in @[@"snapshot_serialization", @"synchronous_callback"]) {
+                    NSDictionary* measured = unsupported[@"progress_timing"][key];
+                    check([measured[@"count"] unsignedIntegerValue] == 1 &&
+                          [measured[@"max_ns"] isEqual:measured[@"total_ns"]],
+                          "completed progress interval count/max mismatch");
+                    check([firstSnapshot[@"progress_timing"][key][@"count"] unsignedIntegerValue] == 0,
+                          "published snapshot mutated with its own incomplete timing");
+                    check([callbackFailed[@"progress_timing"][key][@"count"] unsignedIntegerValue] == 0,
+                          "throwing callback counted as a completed progress call");
+                    check([stopped[@"progress_timing"][key][@"count"] unsignedIntegerValue] == 0,
+                          "stop-before-progress recorded a nonexistent interval");
+                }
+                for (NSDictionary* report in @[invalid, stopped, unsupported, firstSnapshot, callbackFailed]) unverified(report);
+                std::puts("METAL_PHONE_HOST_CONTROLS cases=5 gpu_execution_verified=0 physical_iphone_verified=0");
                 return 0;
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "%s\n", e.what());

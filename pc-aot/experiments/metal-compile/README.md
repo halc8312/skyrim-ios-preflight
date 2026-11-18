@@ -12,10 +12,13 @@ The tracked experiment contains no Skyrim shaders or game data.
 The `pc2011-metal-phone-probe` manual workflow builds an isolated UIKit app,
 `MetalProbe` (`org.skyrimios.metalprobe`, iOS 26 or later). It compares the legacy
 and Metal 4 library APIs, synchronously and asynchronously, through legacy
-render/compute pipelines. Build 2 uses three bounded authored workloads:
-branching arithmetic, dependent table lookups, and coupled mixing rounds.
+render/compute pipelines. Build 3 uses three bounded authored workload families:
+branching arithmetic, dependent table lookups, and coupled mixing rounds, with
+four semantic variants each (twelve cases). Variants change integer expressions
+and constants, not just names. Each family assigns every route first exactly
+once; a family offset avoids the same variant-to-route mapping in every family.
 Runtime input buffers prevent the outputs from being constant expressions.
-Each case runs all four routes four times (48 samples), with each route occupying
+Each case runs all four routes four times (192 samples), with each route occupying
 each order position once. Every render and compute word must match the CPU
 oracle before a sample is accepted. The original small fixture remains unchanged
 for error and retained-result controls and for the standalone CLI.
@@ -29,6 +32,31 @@ unfinished saved run is presented as interrupted after relaunch. Stop and
 backgrounding request a stop at the next operation boundary; already issued
 compiler/GPU work remains owned until completion on the worker. This is not
 Metal cancellation or a hard time limit, and the UI never joins that worker.
+
+Schema 3 records family, semantic variant and first-requested API for each case.
+The result UI groups the first sample of each case by family, showing the sum of
+library, specialization and both PSO intervals. Old schema 1/2 records retain
+their previous display. Different variants can still share compiler caches and
+have different compilation costs; equal first-use counts are not proof of empty
+OS caches or a backend performance advantage.
+
+`progress_timing` separately measures JSON snapshot encode/decode and the
+synchronous progress callback, counting only callbacks that returned normally.
+`host_timing.progress_store` measures completed intermediate `writeSnapshot`
+calls including validation, JSON and file I/O. It is nested inside the callback
+interval and must not be added to it. Intermediate records contain only prior
+completed totals; the final record contains all completed progress calls.
+Initial/final store calls and the final return snapshot are explicitly excluded,
+so the immutable final file does not pretend to know its own write duration.
+Library/specialization/PSO clocks exclude these progress intervals.
+
+Build-3 preparation passed Windows Metal 6.2 compilation/linking for all twelve
+cases without diagnostics, portable CPU golden/sensitivity/order controls in
+normal and ASan/UBSan builds, fifteen packaging and twenty-three signing tests,
+and six simulator-evidence parser controls. Evidence is in
+`local/metal-compile/phone-workloads-windows-04/`. Apple SDK execution, the expanded
+24 legacy-GPU readbacks, timed Foundation storage and physical build-3 results
+are not yet verified. Earlier build evidence below remains historical.
 
 On an Apple host with the iOS 26 SDK, `scripts/build-metal-probe-ios.sh` creates
 a fresh unsigned device IPA and build evidence under `local/metal-probe-ios/`.
@@ -89,7 +117,7 @@ execution. Signing and simulator evidence alone did not satisfy that gate.
 Performance and production integration remain unverified.
 
 `scripts/sign-metal-probe-ipa.py` is a local WSL adapter for the existing reviewed
-signer and Apple-identity verification tools. Build 2 accepts only the five-file
+signer and Apple-identity verification tools. Build 3 accepts only the five-file
 authored device app, its exact input hash, a matching registered-device profile,
 and the existing certificate/key. It does not log in, unseal a key, create a
 certificate, install an app or substitute the game's bundle identity. Output

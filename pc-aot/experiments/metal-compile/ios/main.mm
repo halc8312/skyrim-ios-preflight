@@ -20,6 +20,14 @@ static NSString* caseName(NSString* caseID) {
     return names[caseID] ?: @"追加の負荷";
 }
 
+static NSDictionary* hostTiming(uint64_t count, uint64_t successful, uint64_t total, uint64_t maximum) {
+    return @{ @"schema": @1,
+        @"progress_store": @{ @"count": @(count), @"successful_count": @(successful),
+            @"failed_count": @(count - successful), @"total_ns": @(total), @"max_ns": @(maximum) },
+        @"initial_store_included": @NO, @"final_store_included": @NO,
+        @"scope": @"completed progress writeSnapshot wall calls including validation, JSON, lock and file I/O; nested inside runtime synchronous_callback, not additive; initial/final writes excluded; checkpoint contains only earlier completed writes" };
+}
+
 static UILabel* makeLabel(NSString* text, UIFontTextStyle style) {
     UILabel* label = [UILabel new];
     label.text = text;
@@ -86,7 +94,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
         [content.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-20],
         [content.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-40]
     ]];
-    [content addArrangedSubview:makeLabel(@"3種類の負荷で4方式を比較", UIFontTextStyleTitle2)];
+    [content addArrangedSubview:makeLabel(@"初回の準備も4方式で比較", UIFontTextStyleTitle2)];
     UILabel* intro = makeLabel(@"自作のテストで、描画の準備時間と結果を比べます。測定中は画面を開いたままお待ちください。", UIFontTextStyleBody);
     intro.textColor = UIColor.secondaryLabelColor;
     [content addArrangedSubview:intro];
@@ -96,7 +104,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
     self.orderControl.accessibilityLabel = @"最初に試す方式";
     [self.orderControl.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
     [content addArrangedSubview:self.orderControl];
-    UILabel* orderHint = makeLabel(@"各負荷で順番を入れ替え、4方式を4回ずつ測ります（合計48回）。開始方式は自由に選べます。", UIFontTextStyleSubheadline);
+    UILabel* orderHint = makeLabel(@"3種類の負荷を4パターンずつ試します。最初の担当も各方式に均等に分け、合計192回測定します。", UIFontTextStyleSubheadline);
     orderHint.textColor = UIColor.secondaryLabelColor;
     [content addArrangedSubview:orderHint];
     self.stateLabel = makeLabel(@"準備できています", UIFontTextStyleHeadline);
@@ -207,12 +215,21 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         @autoreleasepool {
             __block NSError* saveError = nil;
+            __block uint64_t storeCount = 0, storeSuccessful = 0, storeTotal = 0, storeMaximum = 0;
             NSDictionary* comparison = SkyrimMetalRunPhoneComparison(source, 4, metal4First,
                 ^BOOL { return control->load(); }, ^(NSDictionary* snapshot) {
                     NSError* checkpointError = nil;
                     NSMutableDictionary* savedSnapshot = [snapshot mutableCopy];
                     savedSnapshot[@"host_build"] = buildInfo;
-                    if (![store writeSnapshot:savedSnapshot toURL:reportURL finished:NO error:&checkpointError]) {
+                    savedSnapshot[@"host_timing"] = hostTiming(storeCount, storeSuccessful, storeTotal, storeMaximum);
+                    uint64_t storeElapsed = 0;
+                    BOOL checkpointStored = [store writeSnapshot:savedSnapshot toURL:reportURL finished:NO
+                                              elapsedNanoseconds:&storeElapsed error:&checkpointError];
+                    ++storeCount;
+                    storeSuccessful += checkpointStored ? 1 : 0;
+                    storeTotal += storeElapsed;
+                    if (storeElapsed > storeMaximum) storeMaximum = storeElapsed;
+                    if (!checkpointStored) {
                         saveError = checkpointError;
                         control->store(false);
                     }
@@ -227,9 +244,10 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
                             NSUInteger totalCases = [snapshot[@"total_cases"] unsignedIntegerValue];
                             NSString* progress = [NSString stringWithFormat:@"%@　%lu / %lu回", apiName(snapshot[@"active_api"]),
                                                   (unsigned long)done, (unsigned long)total];
+                            NSString* familyID = snapshot[@"active_family_id"] ?: snapshot[@"active_case_id"];
                             self.detailLabel.text = caseIndex && totalCases
                                 ? [NSString stringWithFormat:@"負荷 %lu / %lu　%@\n%@", (unsigned long)caseIndex,
-                                   (unsigned long)totalCases, caseName(snapshot[@"active_case_id"]), progress]
+                                   (unsigned long)totalCases, caseName(familyID), progress]
                                 : progress;
                         }
                     });
@@ -237,6 +255,9 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
             NSError* finalError = nil;
             NSMutableDictionary* finalSnapshot = [comparison mutableCopy];
             finalSnapshot[@"host_build"] = buildInfo;
+            // All completed progress calls are now known. The final immutable
+            // record cannot contain the duration of its own forthcoming write.
+            finalSnapshot[@"host_timing"] = hostTiming(storeCount, storeSuccessful, storeTotal, storeMaximum);
             if (saveError) {
                 finalSnapshot[@"host_save_error"] = @{@"domain": saveError.domain, @"code": @(saveError.code),
                                                        @"description": saveError.localizedDescription ?: @""};
@@ -300,7 +321,7 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
         self.stateLabel.text = @"比較が完了しました";
         NSUInteger totalCases = [comparison[@"total_cases"] unsignedIntegerValue];
         self.detailLabel.text = totalCases > 1
-            ? [NSString stringWithFormat:@"%lu種類の負荷で、描画・計算結果の一致を確認しました。", (unsigned long)totalCases]
+            ? [NSString stringWithFormat:@"%luパターンで、描画・計算結果の一致を確認しました。", (unsigned long)totalCases]
             : @"テスト用の描画・計算結果は一致しました。";
     } else if ([status isEqual:@"unsupported"]) {
         self.stateLabel.text = @"この環境では比較できません";
@@ -317,9 +338,11 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
         self.detailLabel.text = @"その時点で測定を止め、保存エラーの情報を最終結果に残しました。";
     }
     NSArray* samples = [comparison[@"samples"] isKindOfClass:NSArray.class] ? comparison[@"samples"] : @[];
+    BOOL firstUseDesign = [comparison[@"schema"] unsignedIntegerValue] >= 3;
+    NSString* groupingKey = firstUseDesign ? @"family_id" : @"case_id";
     NSMutableArray<NSString*>* caseIDs = [NSMutableArray new];
     for (NSDictionary* sample in samples) {
-        NSString* caseID = [sample[@"case_id"] isKindOfClass:NSString.class] ? sample[@"case_id"] : @"";
+        NSString* caseID = [sample[groupingKey] isKindOfClass:NSString.class] ? sample[groupingKey] : @"";
         if (![caseIDs containsObject:caseID]) [caseIDs addObject:caseID];
     }
     NSMutableArray<NSString*>* groups = [NSMutableArray new];
@@ -328,10 +351,20 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
         for (NSString* api in @[@"legacy_source", @"metal4_source", @"legacy_async_source", @"metal4_async_source"]) {
             NSMutableArray<NSNumber*>* durations = [NSMutableArray new];
             for (NSDictionary* sample in samples) {
-                NSString* sampleCase = [sample[@"case_id"] isKindOfClass:NSString.class] ? sample[@"case_id"] : @"";
+                NSString* sampleCase = [sample[groupingKey] isKindOfClass:NSString.class] ? sample[groupingKey] : @"";
                 if ([sampleCase isEqual:caseID] && [sample[@"status"] isEqual:@"passed"] && [sample[@"api"] isEqual:api]
-                    && [sample[@"library_ns"] isKindOfClass:NSNumber.class] && [sample[@"command_status"] isEqual:@"completed"])
-                    [durations addObject:sample[@"library_ns"]];
+                    && [sample[@"library_ns"] isKindOfClass:NSNumber.class] && [sample[@"command_status"] isEqual:@"completed"]) {
+                    if (firstUseDesign) {
+                        if ([sample[@"iteration"] unsignedIntegerValue] != 1 || [sample[@"slot"] unsignedIntegerValue] != 1) continue;
+                        uint64_t preparation = 0;
+                        BOOL valid = YES;
+                        for (NSString* key in @[@"library_ns", @"specialization_ns", @"render_pso_ns", @"compute_pso_ns"]) {
+                            if (![sample[key] isKindOfClass:NSNumber.class]) { valid = NO; break; }
+                            preparation += [sample[key] unsignedLongLongValue];
+                        }
+                        if (valid) [durations addObject:@(preparation)];
+                    } else [durations addObject:sample[@"library_ns"]];
+                }
             }
             [durations sortUsingSelector:@selector(compare:)];
             if (durations.count) {
@@ -347,7 +380,10 @@ static UIButton* makeButton(NSString* title, BOOL filled) {
             [groups addObject:caseID.length ? [NSString stringWithFormat:@"%@\n%@", caseName(caseID), values] : values];
         }
     }
-    self.resultLabel.text = groups.count ? [[groups componentsJoinedByString:@"\n\n"] stringByAppendingString:@"\n\n各方式のライブラリ準備時間の中央値です。描画性能や初回キャッシュの速さを示すものではありません。"]
+    NSString* explanation = firstUseDesign
+        ? @"\n\nこの測定で各パターンを最初に担当した方式の準備時間です。保存時間は含みません。端末内の準備済みデータは消去していません。条件も方式ごとに異なるため、この数値だけで優劣は決まりません。再測定の値も共有結果に含まれます。"
+        : @"\n\n各方式のライブラリ準備時間の中央値です。描画性能や初回キャッシュの速さを示すものではありません。";
+    self.resultLabel.text = groups.count ? [[groups componentsJoinedByString:@"\n\n"] stringByAppendingString:explanation]
                                       : @"比較できた測定値はありません";
     self.savedLabel.text = [record[@"recovered_incomplete"] boolValue]
         ? @"前回の途中経過を表示しています。新しい比較も開始できます。"

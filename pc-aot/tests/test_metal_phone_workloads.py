@@ -40,7 +40,7 @@ class PortableWorkloadOracleTests(LoggedNativeTest):
                     *flags, "-I", str(EXPERIMENT), str(ROOT / "tests/native/test_metal_phone_workloads.cpp"),
                     "-o", str(executable)])
                 output = self.run_logged(directory, "run", [str(executable)])
-                self.assertEqual(output, "PHONE_WORKLOAD_CPU cases=3 stages=2 balanced_samples=48 golden_vectors=6 gpu_execution_verified=0")
+                self.assertEqual(output, "PHONE_WORKLOAD_CPU families=3 cases=12 stages=2 balanced_samples=192 golden_vectors=24 first_api_balanced=1 gpu_execution_verified=0")
 
 
 @unittest.skipUnless(platform.system() == "Darwin", "requires actual Apple Metal device and SDK")
@@ -54,13 +54,13 @@ class MacLegacyWorkloadGPUTests(LoggedNativeTest):
             "-I", str(EXPERIMENT), str(ROOT / "tests/native/test_metal_phone_workloads_gpu.mm"),
             "-framework", "Foundation", "-framework", "Metal", "-o", str(executable)])
         output = self.run_logged(directory, "run", [str(executable), str(EXPERIMENT / "phone_fixture.metal"), str(report)], 180)
-        self.assertEqual(output, "PHONE_WORKLOAD_MAC_LEGACY cases=3 input_variants=2 readbacks=6 physical_iphone_verified=0 metal4_verified=0")
+        self.assertEqual(output, "PHONE_WORKLOAD_MAC_LEGACY families=3 cases=12 input_variants=2 readbacks=24 physical_iphone_verified=0 metal4_verified=0")
         data = json.loads(report.read_text())
         self.assertEqual(data["status"], "passed")
         self.assertTrue(data["mac_legacy_gpu_verified"])
         self.assertFalse(data["physical_iphone_verified"])
         self.assertFalse(data["metal4_library_verified"])
-        self.assertEqual(len(data["samples"]), 6)
+        self.assertEqual(len(data["samples"]), 24)
         for sample in data["samples"]:
             self.assertEqual(sample["status"], "passed")
             self.assertTrue(sample["oracle_verified"])
