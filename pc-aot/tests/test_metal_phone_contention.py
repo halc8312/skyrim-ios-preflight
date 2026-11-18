@@ -13,6 +13,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 EXPERIMENT = ROOT / "experiments/metal-compile"
 CXX = shutil.which(os.environ.get("CXX", "c++"))
+CLANGXX = shutil.which(os.environ.get("CLANGXX", "clang++")) or shutil.which("clang++-18")
 
 
 class SourceIdentityControls(unittest.TestCase):
@@ -55,6 +56,41 @@ class Logged(unittest.TestCase):
         self.assertEqual(result.returncode, 0, (directory / f"{label}.stderr.log").read_text(errors="replace"))
         self.assertEqual((directory / f"{label}.stderr.log").stat().st_size, 0)
         return (directory / f"{label}.stdout.log").read_text().strip()
+
+
+@unittest.skipUnless(CLANGXX, "requires Clang Objective-C++ parser")
+class HeaderNullabilityControls(Logged):
+    def test_objc_and_portable_header_with_nullability_warnings_as_errors(self):
+        directory = self.directory("header-nullability")
+        foundation = directory / "Foundation"
+        foundation.mkdir()
+        # Declaration-only shim: exercise Clang's real nullability diagnostics
+        # without pretending to compile Foundation/Metal or run an Apple API.
+        (foundation / "Foundation.h").write_text(
+            '#pragma once\n'
+            '#define FOUNDATION_EXPORT extern\n'
+            '#define NS_ASSUME_NONNULL_BEGIN _Pragma("clang assume_nonnull begin")\n'
+            '#define NS_ASSUME_NONNULL_END _Pragma("clang assume_nonnull end")\n'
+            '#define NS_RETURNS_NOT_RETAINED __attribute__((ns_returns_not_retained))\n'
+            'typedef signed char BOOL;\n@class NSDictionary, NSString;\n', encoding="utf-8")
+        source = directory / "header.mm"
+        source.write_text('#include "phone_contention.h"\n', encoding="utf-8")
+        common = [CLANGXX, "-std=c++17", "-fsyntax-only", "-Wall", "-Wextra", "-Werror",
+                  "-Wnullability-completeness", "-I", str(directory), "-I", str(EXPERIMENT)]
+        self.execute(directory, "objc-header", common + ["-x", "objective-c++", "-fblocks", str(source)])
+        self.execute(directory, "portable-header", common + ["-x", "c++", str(source)])
+        control = directory / "missing-annotation.mm"
+        # Completeness diagnostics apply to included headers, not ordinary
+        # implementation-file declarations. Keep the negative control there.
+        (directory / "missing-annotation.h").write_text(
+            'const char* _Nullable annotated();\nconst char* missing();\n', encoding="utf-8")
+        control.write_text('#include "missing-annotation.h"\n', encoding="utf-8")
+        with (directory / "negative.stdout.log").open("wb") as out, \
+                (directory / "negative.stderr.log").open("wb") as err:
+            result = subprocess.run(common + ["-x", "objective-c++", str(control)], stdout=out, stderr=err,
+                                    stdin=subprocess.DEVNULL, timeout=30, check=False)
+        self.assertNotEqual(result.returncode, 0, "compiler did not enforce nullability completeness")
+        self.assertIn("-Wnullability-completeness", (directory / "negative.stderr.log").read_text(errors="replace"))
 
 
 @unittest.skipUnless(os.name == "posix" and CXX, "requires a POSIX C++17 compiler")

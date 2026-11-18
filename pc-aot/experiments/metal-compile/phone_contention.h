@@ -73,6 +73,11 @@ inline constexpr unsigned BlockCount = 8;
 inline constexpr unsigned Conditions = 4;
 inline constexpr unsigned TrialCount = BlockCount * Conditions;
 inline unsigned panelFirstGroup(bool metal4First) { return metal4First ? 41u : 9u; }
+#ifdef __OBJC__
+// These literal-return helpers never return null. Keep the annotation scoped
+// away from portable C++ and from the standard-library includes above.
+NS_ASSUME_NONNULL_BEGIN
+#endif
 inline const char* panelNamespace(bool metal4First) {
     return metal4First ? "contention_v2_groups_41_72" : "contention_v2_groups_9_40";
 }
@@ -81,6 +86,9 @@ inline const char* conditionID(unsigned condition) {
     if (condition >= Conditions) throw std::out_of_range("authored condition out of range");
     return names[condition];
 }
+#ifdef __OBJC__
+NS_ASSUME_NONNULL_END
+#endif
 struct Plan {
     unsigned block, position, condition, lane, sourceGroup;
     bool metal4, contended;
