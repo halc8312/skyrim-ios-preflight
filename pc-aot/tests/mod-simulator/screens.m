@@ -98,7 +98,8 @@
     [self capture:@"empty-hub"];
     [[self findRow:@"Save check" direction:YES] tap];
     XCTAssertTrue(self.app.staticTexts[@"Authored Save"].exists);
-    XCTAssertTrue([self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"label CONTAINS %@",@"UnavailableFixture.esp"]].count>0);
+    NSPredicate *missingPlugin = [NSPredicate predicateWithFormat:@"label CONTAINS %@", @"UnavailableFixture.esp"];
+    XCTAssertTrue([self.app.staticTexts matchingPredicate:missingPlugin].count > 0);
     [self capture:@"save-check"]; [self goBack];
 
     [[self findRow:@"Add a zip file" direction:NO] tap];
