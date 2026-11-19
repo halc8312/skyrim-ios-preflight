@@ -41,6 +41,43 @@ __declspec(dllimport) void *__cdecl memset(void *destination, int value, size_t 
 static char buffer[128];
 #endif
 
+#if FIXTURE_VARIANT == 5
+static unsigned char slab[96];
+static void initialize_string_buffers(void) {
+    unsigned char *start = slab;
+    unsigned char *overlap = slab + 1;
+    unsigned char *fill = slab + 32;
+    __asm {
+        cld
+        mov edi, fill
+        mov eax, 12345678h
+        mov ecx, 8
+        rep stosd
+        mov esi, fill
+        mov edi, start
+        mov ecx, 8
+        rep movsd
+        mov esi, start
+        mov edi, overlap
+        mov ecx, 8
+        rep movsb
+        mov edi, start
+        add edi, 40
+        mov eax, 0a132h
+        mov ecx, 3
+        std
+        xor edx, edx
+        rep stosw
+        cld
+        mov esi, fill
+        mov edi, start
+        add edi, 80
+        xor ecx, ecx
+        rep movsd
+    }
+}
+#endif
+
 _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (!api || !info) return 0;
     info->info_version = 1;
@@ -57,6 +94,9 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
         memcpy(buffer, marker, sizeof marker) != buffer ||
         memmove(buffer + 1, buffer, sizeof marker) != buffer + 1) return 0;
 #endif
+#if FIXTURE_VARIANT == 5
+    initialize_string_buffers();
+#endif
     return supported;
 }
 
@@ -71,6 +111,11 @@ _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
 #if FIXTURE_VARIANT == 4
     if (buffer[0] != 'r' || buffer[1] != 'r' || buffer[2] != 'e' ||
         buffer[14] != 0 || buffer[127] != 0x78) return 0;
+#endif
+#if FIXTURE_VARIANT == 5
+    if (slab[0] != 0x78 || slab[1] != 0x78 || slab[8] != 0x78 || slab[9] != 0x56 ||
+        slab[35] != 0x12 || slab[36] != 0x32 || slab[37] != 0xa1 || slab[40] != 0x32 ||
+        slab[41] != 0xa1 || slab[42] != 0x34 || slab[80] != 0) return 0;
 #endif
     if (api->get_release_index() != 48) return 0;
     return api->get_plugin_handle() != 0xffffffffu;

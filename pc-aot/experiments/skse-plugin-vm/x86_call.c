@@ -4,7 +4,7 @@
 #include <string.h>
 
 enum { EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI };
-enum { CF = 1, PF = 4, ZF = 0x40, SF = 0x80, OF = 0x800 };
+enum { CF = 1, PF = 4, ZF = 0x40, SF = 0x80, DF = 0x400, OF = 0x800 };
 enum { ADD, OR, ADC, SBB, AND, SUB, XOR, CMP };
 enum { MAX_SCRATCH = 256 * 1024, MAX_ARGUMENTS = 16, MAX_STEPS = 1000000 };
 
@@ -176,7 +176,7 @@ static void set_flags(Vm *vm, uint32_t value, unsigned width, bool carry, bool o
     parity ^= parity >> 4;
     parity ^= parity >> 2;
     parity ^= parity >> 1;
-    vm->flags = (carry ? CF : 0) | (overflow ? OF : 0) |
+    vm->flags = (vm->flags & DF) | (carry ? CF : 0) | (overflow ? OF : 0) |
                 ((value & sign_mask(width)) ? SF : 0) | (value ? 0 : ZF) |
                 ((parity & 1) ? 0 : PF);
 }
@@ -255,6 +255,15 @@ static void return_from_call(Vm *vm, unsigned discard) {
     vm->ip = target;
 }
 
+static bool reserve_bulk(Vm *vm, uint64_t cost) {
+    if (cost > vm->limit - vm->result.instructions - vm->bulk_work) {
+        fail(vm, SKSE_X86_INSTRUCTION_LIMIT);
+        return false;
+    }
+    vm->bulk_work += (uint32_t)cost;
+    return true;
+}
+
 static void memory_service(Vm *vm, SkseX86ServiceKind kind) {
     uint32_t stack = vm->registers[ESP];
     if (!in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, stack, 12)) {
@@ -267,11 +276,7 @@ static void memory_service(Vm *vm, SkseX86ServiceKind kind) {
     if (count != 0) {
         // Charge bulk operations as well as decoded instructions. A single
         // imported function call must not acquire an unbounded CPU budget.
-        uint32_t cost = count / 64 + (count % 64 != 0);
-        if (cost > vm->limit - vm->result.instructions - vm->bulk_work) {
-            fail(vm, SKSE_X86_INSTRUCTION_LIMIT);
-            return;
-        }
+        if (!reserve_bulk(vm, ((uint64_t)count + 63) / 64)) return;
         uint8_t *dst = memory(vm, destination, count, SKSE_PE_WRITE);
         if (!dst) return;
         if (kind == SKSE_X86_MEMSET) {
@@ -286,9 +291,64 @@ static void memory_service(Vm *vm, SkseX86ServiceKind kind) {
             }
             memmove(dst, src, count);
         }
-        vm->bulk_work += cost;
     }
     vm->registers[EAX] = destination;
+}
+
+static void fill_string(uint8_t *dst, size_t length, unsigned width, uint32_t value) {
+    if (width == 1) {
+        memset(dst, (int)(uint8_t)value, length);
+        return;
+    }
+    for (unsigned i = 0; i < width; ++i) dst[i] = (uint8_t)(value >> (8 * i));
+    size_t written = width;
+    while (written < length) {
+        size_t next = length - written;
+        if (next > written) next = written;
+        memcpy(dst + written, dst, next);
+        written += next;
+    }
+}
+
+static void string_memory(Vm *vm, bool moving, bool repeat, unsigned width) {
+    if (vm->result.status != SKSE_X86_OK) return;
+    const uint32_t count = repeat ? vm->registers[ECX] : 1;
+    if (!count) return;
+    const bool backwards = (vm->flags & DF) != 0;
+    const uint64_t bytes = (uint64_t)count * width;
+    const uint64_t tail = backwards ? bytes - width : 0;
+    const uint32_t edi = vm->registers[EDI], esi = vm->registers[ESI];
+    if (tail > edi || (moving && tail > esi)) {
+        fail(vm, SKSE_X86_MEMORY_FAULT);
+        return;
+    }
+    const uint32_t destination = edi - (uint32_t)tail, source = esi - (uint32_t)tail;
+    const bool overlaps = (uint64_t)destination + bytes > source && (uint64_t)source + bytes > destination;
+    const bool overwrites = moving && overlaps && (backwards ? destination < source : destination > source);
+    // A direction that overwrites unread source bytes must reproduce each
+    // x86 store. Charge it per element and keep contiguous copies native.
+    if (!reserve_bulk(vm, overwrites ? count : (bytes + 63) / 64)) return;
+    // The budget above limits the native transfer to at most MAX_STEPS*64.
+    uint8_t *dst = memory(vm, destination, (size_t)bytes, SKSE_PE_WRITE);
+    if (!dst) return;
+    if (moving) {
+        const uint8_t *src = memory(vm, source, (size_t)bytes, SKSE_PE_READ);
+        if (!src) return;
+        if (overwrites) {
+            for (uint32_t i = 0; i < count; ++i) {
+                const size_t offset = (size_t)(backwards ? count - 1 - i : i) * width;
+                memmove(dst + offset, src + offset, width);
+            }
+        } else {
+            memmove(dst, src, (size_t)bytes);
+        }
+    } else {
+        fill_string(dst, (size_t)bytes, width, vm->registers[EAX]);
+    }
+    const uint32_t delta = backwards ? 0u - (uint32_t)bytes : (uint32_t)bytes;
+    vm->registers[EDI] += delta;
+    if (moving) vm->registers[ESI] += delta;
+    if (repeat) vm->registers[ECX] = 0;
 }
 
 static void invoke(Vm *vm, uint32_t address) {
@@ -345,7 +405,21 @@ static void two_byte_instruction(Vm *vm, unsigned width) {
 static void step(Vm *vm) {
     uint32_t opcode = fetch(vm, 1);
     unsigned word = 4;
-    if (opcode == 0x66) { word = 2; opcode = fetch(vm, 1); }
+    bool repeat = opcode == 0xf3;
+    if (repeat) opcode = fetch(vm, 1);
+    if (opcode == 0x66) {
+        word = 2;
+        opcode = fetch(vm, 1);
+        if (!repeat && opcode == 0xf3) { repeat = true; opcode = fetch(vm, 1); }
+    }
+    if (opcode == 0xa4 || opcode == 0xa5 || opcode == 0xaa || opcode == 0xab) {
+        string_memory(vm, opcode < 0xaa, repeat, opcode & 1 ? word : 1);
+        return;
+    }
+    if (repeat) {
+        fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+        return;
+    }
     uint32_t form = opcode & 7;
     if (opcode <= 0x3d && form <= 5) {
         unsigned operation = opcode >> 3;
@@ -488,6 +562,8 @@ static void step(Vm *vm) {
         alu(vm, AND, width, read_operand(vm, source, width), immediate);
         return;
     }
+    case 0xfc: vm->flags &= ~(uint32_t)DF; return;
+    case 0xfd: vm->flags |= DF; return;
     case 0xff: {
         uint32_t modrm = fetch(vm, 1);
         unsigned group = (modrm >> 3) & 7;
@@ -548,7 +624,7 @@ SkseX86Result skse_x86_call(SksePeImage *image, uint32_t entry,
         step(&vm);
     }
     if (!vm.finished) fail(&vm, SKSE_X86_INSTRUCTION_LIMIT);
-    else if (vm.registers[EBX] != canaries[0] || vm.registers[EBP] != canaries[1] ||
+    else if ((vm.flags & DF) || vm.registers[EBX] != canaries[0] || vm.registers[EBP] != canaries[1] ||
              vm.registers[ESI] != canaries[2] || vm.registers[EDI] != canaries[3])
         fail(&vm, SKSE_X86_BAD_CALL_RETURN);
     if (vm.result.status == SKSE_X86_OK) vm.result.eax = vm.registers[EAX];

@@ -46,6 +46,16 @@ int main(void) {
     uint8_t unknown[] = {0xcc, 0xc3};
     assert(ARRAY_RUN(unknown).status == SKSE_X86_UNSUPPORTED_INSTRUCTION);
 
+    // A zero repeat count doesn't address memory or change ECX, ESI or EDI.
+    uint8_t empty_copy[] = {0x57, 0xbf, 0xfe, 0xff, 0xff, 0xff, 0x31, 0xc9, 0xf3, 0xaa, 0x5f, 0xc3};
+    assert(ARRAY_RUN(empty_copy).status == SKSE_X86_OK);
+    uint8_t copy_over_budget[] = {0xbf, 0, 0, 0x20, 0, 0xb9, 0xff, 0xff, 0xff, 0xff, 0xf3, 0xaa, 0xc3};
+    assert(ARRAY_RUN(copy_over_budget).status == SKSE_X86_INSTRUCTION_LIMIT && scratch[0] == 0);
+    uint8_t crosses_scratch[] = {0xbf, 0xff, 0x0f, 0x20, 0, 0xb9, 2, 0, 0, 0, 0xb0, 0x33, 0xf3, 0xaa, 0xc3};
+    assert(ARRAY_RUN(crosses_scratch).status == SKSE_X86_MEMORY_FAULT && scratch[sizeof scratch - 1] == 0);
+    uint8_t leaves_direction_flag[] = {0xfd, 0xc3};
+    assert(ARRAY_RUN(leaves_direction_flag).status == SKSE_X86_BAD_CALL_RETURN);
+
     uint8_t clobbers_ebx[] = {0x31, 0xdb, 0xc3};
     assert(ARRAY_RUN(clobbers_ebx).status == SKSE_X86_BAD_CALL_RETURN);
 
