@@ -18,7 +18,7 @@ def run(*args, **kwargs):
 def compile_interpreter(compiler, output, test_source, flag_list):
     run(compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", *flag_list,
         HERE / "pe_image.c", HERE / "x86_call.c", HERE / "x86_heap.c", HERE / "x86_winthread.c", HERE / "x86_winfile.c",
-        HERE / "dependency_plan.c", HERE / "plugin_trial.c",
+        HERE / "x86_winevent.c", HERE / "dependency_plan.c", HERE / "plugin_trial.c",
         HERE / test_source, "-o", output)
 
 
@@ -212,7 +212,7 @@ class PluginInterpreterTests(unittest.TestCase):
             compile_interpreter(cc, emulator, "test_interpreted.c",
                                 ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
             for variant, mode in ((14, "tls"), (15, "static-tls"), (16, "static-tls-pair"), (17, "interlocked"),
-                                  (18, "module-lookup"), (19, "locked-instructions"), (20, "file-assets")):
+                                  (18, "module-lookup"), (19, "locked-instructions"), (20, "file-assets"), (21, "events")):
                 for opt in ("-O0", "-O2"):
                     with self.subTest(variant=variant, optimization=opt):
                         expected, actual = compare_with_windows(cc, linker, emulator, root / f"{variant}-{opt}",

@@ -765,6 +765,7 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
     if (operation == SKSE_WIN_OPEN_FILE_A || operation == SKSE_WIN_OPEN_FILE_W)
         return open_asset(vm, args, operation == SKSE_WIN_OPEN_FILE_W);
     if (operation == SKSE_WIN_READ_FILE) return win_read_asset(vm, args);
+    if (operation == SKSE_WIN_CLOSE_FILE && skse_win_event_close(vm->services.events, args[0])) return 1;
     SkseWinFile *file = skse_win_file_lookup(vm->services.files, args[0]);
     if (!file) {
         vm->services.thread->last_error = 6; // ERROR_INVALID_HANDLE.
@@ -783,6 +784,59 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
     for (unsigned i = 0; i < 4; ++i) result[i] = (uint8_t)(file->length >> (i * 8));
     memset(result + 4, 0, 4);
     return 1;
+}
+
+static uint32_t win_wait_events(Vm *vm, SkseWinEventOperation operation, const uint32_t args[]) {
+    const bool many = operation == SKSE_WIN_WAIT_MANY || operation == SKSE_WIN_WAIT_MANY_EX;
+    const bool alertable = (operation == SKSE_WIN_WAIT_ONE_EX && args[2]) ||
+                           (operation == SKSE_WIN_WAIT_MANY_EX && args[4]);
+    if (alertable) {
+        fail(vm, SKSE_X86_UNSUPPORTED_API);
+        return UINT32_MAX;
+    }
+    uint32_t tokens[SKSE_WIN_EVENT_LIMIT];
+    unsigned count = 1;
+    tokens[0] = args[0];
+    if (many) {
+        count = args[0];
+        if (!count || count > SKSE_WIN_EVENT_LIMIT) {
+            vm->services.thread->last_error = 87;
+            return UINT32_MAX;
+        }
+        const uint8_t *source = memory(vm, args[1], count * 4, SKSE_PE_READ);
+        if (!source) return UINT32_MAX;
+        for (unsigned i = 0; i < count; ++i) tokens[i] = little_endian(source + i * 4, 4);
+    }
+    uint32_t result = skse_win_event_wait(vm->services.events, tokens, count, many && args[2],
+                                          &vm->services.thread->last_error);
+    if (result == SKSE_WIN_WAIT_TIMEOUT && args[many ? 3 : 1])
+        fail(vm, SKSE_X86_UNSUPPORTED_API); // Blocking needs another logical Windows thread.
+    return result;
+}
+
+static uint32_t win_event_service(Vm *vm, SkseWinEventOperation operation) {
+    static const unsigned argument_counts[] = {4, 1, 1, 2, 3, 4, 5};
+    _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_EVENT_OPERATION_COUNT, "event ABI");
+    unsigned count = argument_counts[operation];
+    const uint8_t *parameters = service_parameters(vm, count * 4);
+    if (!parameters) return 0;
+    uint32_t args[5];
+    for (unsigned i = 0; i < count; ++i) args[i] = little_endian(parameters + 4 * i, 4);
+    vm->registers[ESP] += count * 4;
+
+    if (operation >= SKSE_WIN_WAIT_ONE) return win_wait_events(vm, operation, args);
+    if (operation == SKSE_WIN_EVENT_CREATE) {
+        if (args[0] || args[3]) {
+            vm->services.thread->last_error = 50; // Named events and security descriptors.
+            return 0;
+        }
+        uint32_t token = skse_win_event_create(vm->services.events, args[1] != 0, args[2] != 0);
+        if (!token) vm->services.thread->last_error = 8;
+        return token;
+    }
+    if (skse_win_event_signal(vm->services.events, args[0], operation == SKSE_WIN_EVENT_SET)) return 1;
+    vm->services.thread->last_error = 6;
+    return 0;
 }
 
 static void branch(Vm *vm, uint32_t address, bool tail) {
@@ -837,6 +891,9 @@ static void branch(Vm *vm, uint32_t address, bool tail) {
             case SKSE_X86_READ_ONLY_FILES:
                 vm->registers[EAX] = win_file_service(vm, (SkseWinFileOperation)service->value);
                 break;
+            case SKSE_X86_EVENTS:
+                vm->registers[EAX] = win_event_service(vm, (SkseWinEventOperation)service->value);
+                break;
             }
             ++vm->result.service_calls[i];
             if (tail) {
@@ -857,17 +914,19 @@ typedef enum {
 } VectorOp;
 
 static bool vector_instruction(Vm *vm, uint32_t opcode, unsigned prefix) {
-    enum { OPERAND_SIZE = 0x66, REPEAT = 0xf3 };
+    enum { OPERAND_SIZE = 0x66, SCALAR_DOUBLE = 0xf2, REPEAT = 0xf3 };
     VectorOp operation;
     unsigned width = 16;
     unsigned lane = 0;
     bool aligned_access = false;
     bool zero_upper = false;
+    if (prefix == SCALAR_DOUBLE && opcode != 0x10 && opcode != 0x11) return false;
     switch (opcode) {
     case 0x10:
     case 0x11:
         operation = opcode == 0x10 ? VECTOR_LOAD : VECTOR_STORE;
         if (prefix == REPEAT) width = 4; // MOVSS
+        if (prefix == SCALAR_DOUBLE) width = 8; // MOVSD
         break;
     case 0x28:
     case 0x29:
@@ -970,7 +1029,7 @@ static bool vector_instruction(Vm *vm, uint32_t opcode, unsigned prefix) {
         if (zero_upper && rm.is_register) memset(other + width, 0, 16 - width);
     } else if (operation == VECTOR_LOAD) {
         memmove(xmm, other, width);
-        if (zero_upper || (!rm.is_register && width == 4)) memset(xmm + width, 0, 16 - width);
+        if (zero_upper || (!rm.is_register && width < 16)) memset(xmm + width, 0, 16 - width);
     } else if (operation == VECTOR_EQUAL) {
         for (unsigned offset = 0; offset < 16; offset += lane) {
             bool equal = !memcmp(xmm + offset, other + offset, lane);
@@ -1140,6 +1199,11 @@ static void step(Vm *vm) {
     uint32_t opcode = fetch(vm, 1);
     if (opcode == 0x64) {
         read_static_tls_table(vm);
+        return;
+    }
+    if (opcode == 0xf2) {
+        if (fetch(vm, 1) != 0x0f || !vector_instruction(vm, fetch(vm, 1), 0xf2))
+            fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
         return;
     }
     unsigned word = 4;
@@ -1411,7 +1475,7 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
-        if ((unsigned)kind > SKSE_X86_READ_ONLY_FILES || !address ||
+        if ((unsigned)kind > SKSE_X86_EVENTS || !address ||
             (kind >= SKSE_X86_MALLOC && kind <= SKSE_X86_HEAP_FREE && !services.heap) ||
             (kind == SKSE_X86_WIN_THREAD &&
              (!services.thread || services.entries[i].value >= SKSE_WIN_THREAD_OPERATION_COUNT)) ||
@@ -1421,6 +1485,8 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
               services.system_export_count > SKSE_X86_MAX_SERVICES || services.entries[i].value >= SKSE_X86_MODULE_LOOKUP_COUNT)) ||
             (kind == SKSE_X86_READ_ONLY_FILES &&
              (!services.thread || !services.files || services.entries[i].value >= SKSE_WIN_FILE_OPERATION_COUNT)) ||
+            (kind == SKSE_X86_EVENTS &&
+             (!services.thread || !services.events || services.entries[i].value >= SKSE_WIN_EVENT_OPERATION_COUNT)) ||
             ((kind == SKSE_X86_QUERY_CLASSIC || kind == SKSE_X86_REGISTER_CORE_LISTENER) &&
              (!services.core_messaging ||
               !in_range(scratch.base, scratch_end, services.core_messaging->interface_address, 16))) ||

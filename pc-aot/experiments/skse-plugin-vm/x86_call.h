@@ -6,6 +6,7 @@
 #include "x86_heap.h"
 #include "x86_winthread.h"
 #include "x86_winfile.h"
+#include "x86_winevent.h"
 
 typedef enum {
     SKSE_X86_OK,
@@ -26,7 +27,7 @@ typedef struct {
     size_t length;
 } SkseX86Scratch;
 
-enum { SKSE_X86_MAX_SERVICES = 48, SKSE_X86_MAX_IMAGES = 4, SKSE_CLASSIC_MESSAGING_ID = 5 };
+enum { SKSE_X86_MAX_SERVICES = 64, SKSE_X86_MAX_IMAGES = 4, SKSE_CLASSIC_MESSAGING_ID = 5 };
 #define SKSE_X86_PROCESS_HEAP UINT32_C(0xe1000000)
 
 typedef enum {
@@ -34,7 +35,7 @@ typedef enum {
     SKSE_X86_QUERY_CLASSIC, SKSE_X86_REGISTER_CORE_LISTENER, SKSE_X86_UNAVAILABLE,
     SKSE_X86_MALLOC, SKSE_X86_CALLOC, SKSE_X86_REALLOC, SKSE_X86_FREE,
     SKSE_X86_HEAP_ALLOC, SKSE_X86_HEAP_REALLOC, SKSE_X86_HEAP_FREE, SKSE_X86_WIN_THREAD,
-    SKSE_X86_INTERLOCKED, SKSE_X86_MODULE_LOOKUP, SKSE_X86_READ_ONLY_FILES
+    SKSE_X86_INTERLOCKED, SKSE_X86_MODULE_LOOKUP, SKSE_X86_READ_ONLY_FILES, SKSE_X86_EVENTS
 } SkseX86ServiceKind;
 
 typedef enum {
@@ -65,6 +66,7 @@ typedef struct {
     SkseX86Heap *heap;
     SkseWinThread *thread;
     SkseWinFiles *files;
+    SkseWinEvents *events;
     /* Optional export names for resolving symbols in the emulated system DLLs.
      * The result must also be present in entries as a service token. */
     const SksePeImportBinding *system_exports;
