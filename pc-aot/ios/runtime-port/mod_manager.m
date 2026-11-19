@@ -26,9 +26,16 @@
 #include "mod_libarchive.h"
 #endif
 
-static NSString *T(NSString *english, NSString *japanese) {
+/* Language is read once per screen visit instead of on every string: a
+ * user-defaults lookup per label made long lists slow to scroll. */
+static int languageCache = -1;
+static void RefreshLanguage(void) {
     NSDictionary *s = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
-    return [s[@"language"] isKindOfClass:NSNumber.class] && [s[@"language"] intValue] == 1 ? japanese : english;
+    languageCache = [s[@"language"] isKindOfClass:NSNumber.class] && [s[@"language"] intValue] == 1;
+}
+static NSString *T(NSString *english, NSString *japanese) {
+    if (languageCache < 0) RefreshLanguage();
+    return languageCache ? japanese : english;
 }
 
 /* ---- paths and state --------------------------------------------------- */
@@ -78,18 +85,39 @@ static NSString *ProfileDir(NSDictionary *p) {
     return ValidId(pid) ? [[Base() stringByAppendingPathComponent:@"Profiles"] stringByAppendingPathComponent:pid] : nil;
 }
 
+/* Published packages are immutable, so their package.json is read once and
+ * kept; publishing or deleting a package clears the cache. Any thread. */
+static NSMutableDictionary *packageCache;
+static NSArray *installedCache;
+static NSObject *PackageLock(void) {
+    static NSObject *lock;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ lock = [NSObject new]; packageCache = [NSMutableDictionary dictionary]; });
+    return lock;
+}
+static void InvalidatePackages(void) {
+    @synchronized (PackageLock()) { [packageCache removeAllObjects]; installedCache = nil; }
+}
 static NSMutableDictionary *LoadPackage(NSString *pid) {
     if (!ValidId(pid)) return nil;
+    @synchronized (PackageLock()) {
+        id cached = packageCache[pid];
+        if (cached) return cached == NSNull.null ? nil : cached;
+    }
     NSMutableDictionary *p = MutableJSON([NSData dataWithContentsOfFile:[PackageDir(pid) stringByAppendingPathComponent:@"package.json"]]);
-    return [p isKindOfClass:NSMutableDictionary.class] ? p : nil;
+    if (![p isKindOfClass:NSMutableDictionary.class]) p = nil;
+    @synchronized (PackageLock()) { packageCache[pid] = p ?: (id)NSNull.null; }
+    return p;
 }
 static NSArray<NSMutableDictionary *> *InstalledPackages(void) {
+    @synchronized (PackageLock()) { if (installedCache) return installedCache; }
     NSMutableArray *out = [NSMutableArray array];
     for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:ModsDir() error:NULL]) {
         if ([name hasPrefix:@"."]) continue;
         NSMutableDictionary *p = LoadPackage(name);
         if (p) [out addObject:p];
     }
+    @synchronized (PackageLock()) { installedCache = [out copy]; }
     return out;
 }
 
@@ -444,6 +472,7 @@ static void PublishStaged(NSString *staging, NSMutableDictionary *package) {
         Notice(T(@"Could not save the MOD.", @"MODを保存できませんでした。"));
         return;
     }
+    InvalidatePackages();
     dispatch_async(dispatch_get_main_queue(), ^{
         EnsureState();
         NSMutableDictionary *p = SelectedProfile();
@@ -502,7 +531,7 @@ static void RunInstallerFromRaw(NSString *staging, NSString *raw, NSMutableDicti
         EnsureState();
         NSMutableSet *active = [NSMutableSet setWithObjects:@"skyrim.esm", @"update.esm", nil];
         for (NSDictionary *row in RunningProfile()[@"plugins"]) if ([row[@"on"] boolValue]) [active addObject:[row[@"name"] lowercaseString]];
-        skyrim_fomod_run(raw, config, [staging stringByAppendingPathComponent:@"Data"], active, ^(BOOL installed, NSString *message) {
+        skyrim_fomod_run(package[@"name"] ?: package[@"archive"] ?: @"MOD", raw, config, [staging stringByAppendingPathComponent:@"Data"], active, ^(BOOL installed, NSString *message) {
             dispatch_async(ImportQueue(), ^{
                 skyrim_remove_tree(raw.fileSystemRepresentation);
                 if (!installed) { skyrim_remove_tree(staging.fileSystemRepresentation); if (message) Notice(message); return; }
@@ -768,10 +797,11 @@ static NSArray<NSDictionary *> *ConflictSummary(void) {
     NSString *text = [NSString stringWithContentsOfFile:[view stringByAppendingString:@".conflicts.tsv"] encoding:NSUTF8StringEncoding error:NULL];
     if (![ids isKindOfClass:NSArray.class] || !text) return @[];
     NSMutableDictionary<NSString *, NSMutableArray *> *groups = [NSMutableDictionary dictionary];
-    NSString *(^owner)(int) = ^NSString *(int i) {
-        if (i < 0 || i >= (int)ids.count) return T(@"Original game", @"元のゲーム");
-        return LoadPackage(ids[i])[@"name"] ?: @"?";
-    };
+    /* Names are looked up once per package, not once per conflicting file. */
+    NSMutableArray<NSString *> *names = [NSMutableArray arrayWithCapacity:ids.count];
+    for (id pid in ids) [names addObject:([pid isKindOfClass:NSString.class] ? LoadPackage(pid)[@"name"] : nil) ?: @"?"];
+    NSString *original = T(@"Original game", @"元のゲーム");
+    NSString *(^owner)(int) = ^NSString *(int i) { return i < 0 || i >= (int)names.count ? original : names[i]; };
     for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
         NSArray *f = [line componentsSeparatedByString:@"\t"];
         if (f.count != 3) continue;
@@ -790,8 +820,16 @@ static NSArray<NSDictionary *> *ConflictSummary(void) {
 /* ---- save consistency ---------------------------------------------------- */
 /* Saves of the running profile, newest first, with plugins they list that
  * this launch does not load. Reads only the save header. */
-static NSArray<NSDictionary *> *SaveChecks(NSUInteger limit) {
-    NSString *dir = [ProfileDir(RunningProfile()) stringByAppendingPathComponent:@"Documents/My Games/Skyrim/Saves"];
+static NSArray<NSDictionary *> *SaveChecksIn(NSString *dir, NSSet<NSString *> *loaded, NSUInteger limit);
+static NSString *SavesDir(void) { return [ProfileDir(RunningProfile()) stringByAppendingPathComponent:@"Documents/My Games/Skyrim/Saves"]; }
+static NSSet<NSString *> *LoadedPluginSet(void) {
+    NSMutableSet *loaded = [NSMutableSet set];
+    for (NSString *n in skyrim_mobile_loaded_plugins()) [loaded addObject:n.lowercaseString];
+    return loaded;
+}
+static NSArray<NSDictionary *> *SaveChecks(NSUInteger limit) { return SaveChecksIn(SavesDir(), LoadedPluginSet(), limit); }
+/* Any thread: only reads files. */
+static NSArray<NSDictionary *> *SaveChecksIn(NSString *dir, NSSet<NSString *> *loaded, NSUInteger limit) {
     NSMutableArray *saves = [NSMutableArray array];
     for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:NULL]) {
         if (![name.pathExtension.lowercaseString isEqualToString:@"ess"]) continue;
@@ -799,8 +837,6 @@ static NSArray<NSDictionary *> *SaveChecks(NSUInteger limit) {
         if (a[NSFileModificationDate]) [saves addObject:@{@"name":name, @"date":a[NSFileModificationDate]}];
     }
     [saves sortUsingComparator:^NSComparisonResult(NSDictionary *x, NSDictionary *y) { return [y[@"date"] compare:x[@"date"]]; }];
-    NSMutableSet *loaded = [NSMutableSet set];
-    for (NSString *n in skyrim_mobile_loaded_plugins()) [loaded addObject:n.lowercaseString];
     NSMutableArray *out = [NSMutableArray array];
     for (NSDictionary *save in saves) {
         if (out.count >= limit) break;
@@ -835,7 +871,14 @@ NSString *skyrim_mods_save_notice(void) {
 @property(nonatomic, strong) NSArray<NSDictionary *> *saves;
 @end
 @implementation SKSaves
-- (void)viewDidLoad { [super viewDidLoad]; self.title = T(@"Save check", @"セーブの確認"); self.saves = SaveChecks(50); }
+- (void)viewDidLoad {
+    [super viewDidLoad]; self.title = T(@"Save check", @"セーブの確認"); self.saves = nil;
+    NSString *dir = SavesDir(); NSSet *loaded = LoadedPluginSet();
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSArray *saves = SaveChecksIn(dir, loaded, 50);
+        dispatch_async(dispatch_get_main_queue(), ^{ self.saves = saves; [self.tableView reloadData]; });
+    });
+}
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { (void)t; (void)s; return self.saves.count ? (NSInteger)self.saves.count : 1; }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
     (void)t; (void)s;
@@ -846,7 +889,7 @@ NSString *skyrim_mods_save_notice(void) {
     (void)t;
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     c.selectionStyle = UITableViewCellSelectionStyleNone; c.detailTextLabel.numberOfLines = 0;
-    if (!self.saves.count) { c.textLabel.text = T(@"No saves in this profile", @"このプロファイルにセーブはありません"); return c; }
+    if (!self.saves.count) { c.textLabel.text = self.saves ? T(@"No saves in this profile", @"このプロファイルにセーブはありません") : T(@"Loading…", @"読み込み中…"); return c; }
     NSDictionary *save = self.saves[p.row];
     c.textLabel.text = [save[@"name"] stringByDeletingPathExtension];
     NSArray *missing = save[@"missing"];
@@ -857,6 +900,17 @@ NSString *skyrim_mods_save_notice(void) {
 @end
 
 /* ---- UI ---------------------------------------------------------------- */
+/* Subtitle cell from the table's reuse pool, reset to a neutral state. */
+static UITableViewCell *ReusableCell(UITableView *t) {
+    UITableViewCell *c = [t dequeueReusableCellWithIdentifier:@"SKModCell"];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"SKModCell"];
+    c.textLabel.text = nil; c.detailTextLabel.text = nil; c.imageView.image = nil;
+    c.textLabel.numberOfLines = 1; c.detailTextLabel.numberOfLines = 1; c.textLabel.enabled = YES;
+    c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    c.accessoryView = nil; c.accessoryType = UITableViewCellAccessoryNone;
+    c.selectionStyle = UITableViewCellSelectionStyleDefault;
+    return c;
+}
 @interface SKListController : UITableViewController
 @property(nonatomic, copy) NSString *footer;
 @property(nonatomic, strong) NSArray<NSString *> *lines;
@@ -877,7 +931,14 @@ NSString *skyrim_mods_save_notice(void) {
 @property(nonatomic, strong) NSArray<NSDictionary *> *groups;
 @end
 @implementation SKConflicts
-- (void)viewDidLoad { [super viewDidLoad]; self.title = T(@"Conflicts", @"競合"); self.groups = ConflictSummary(); }
+- (void)viewDidLoad {
+    [super viewDidLoad]; self.title = T(@"Conflicts", @"競合"); self.groups = nil;
+    /* Large MOD sets can list tens of thousands of files: read off the main thread. */
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSArray *groups = ConflictSummary();
+        dispatch_async(dispatch_get_main_queue(), ^{ self.groups = groups; [self.tableView reloadData]; });
+    });
+}
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { (void)t; (void)s; return self.groups.count ? (NSInteger)self.groups.count : 1; }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
     (void)t; (void)s;
@@ -887,7 +948,10 @@ NSString *skyrim_mods_save_notice(void) {
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)p {
     (void)t;
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    if (!self.groups.count) { c.textLabel.text = T(@"No conflicts", @"競合はありません"); c.selectionStyle = UITableViewCellSelectionStyleNone; return c; }
+    if (!self.groups.count) {
+        c.textLabel.text = self.groups ? T(@"No conflicts", @"競合はありません") : T(@"Loading…", @"読み込み中…");
+        c.selectionStyle = UITableViewCellSelectionStyleNone; return c;
+    }
     NSDictionary *g = self.groups[p.row];
     c.textLabel.text = [NSString stringWithFormat:T(@"%@ replaces %@", @"%@ が %@ を上書き"), g[@"winner"], g[@"loser"]];
     c.textLabel.numberOfLines = 2;
@@ -1034,6 +1098,7 @@ static NSArray<NSString *> *ReportLines(NSDictionary *package) {
 @interface SKModHub : UITableViewController <UIDocumentPickerDelegate>
 @property(nonatomic, strong) NSMutableArray<NSMutableDictionary *> *rows;   /* selected profile's packages */
 @property(nonatomic, strong) NSDictionary<NSString *, NSDictionary *> *packages;
+@property(nonatomic, strong) NSDictionary<NSString *, NSString *> *summaries;   /* computed once per reload */
 @property(nonatomic) BOOL pickingFolder, pickingList;
 @end
 enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, HubCount };
@@ -1050,8 +1115,16 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
     EnsureState();
     self.rows = SelectedProfile()[@"packages"];
     NSMutableDictionary *byId = [NSMutableDictionary dictionary];
-    for (NSDictionary *p in InstalledPackages()) byId[p[@"id"]] = p;
-    self.packages = byId;
+    NSMutableDictionary *summaries = [NSMutableDictionary dictionary];
+    for (NSDictionary *p in InstalledPackages()) {
+        byId[p[@"id"]] = p;
+        NSString *size = [NSByteCountFormatter stringFromByteCount:[p[@"bytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile];
+        NSMutableArray *bits = [NSMutableArray arrayWithObject:[NSString stringWithFormat:T(@"%@ · %@ files", @"%@ · %@ファイル"), size, p[@"files"] ?: @0]];
+        NSArray *report = ReportLines(p);
+        if (report.count) [bits addObject:report.firstObject];
+        summaries[p[@"id"]] = [bits componentsJoinedByString:@"\n"];
+    }
+    self.packages = byId; self.summaries = summaries;
     /* Installed packages not yet in this profile are listed, off. */
     for (NSString *pid in byId) {
         BOOL present = NO;
@@ -1060,7 +1133,15 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
     }
     [self.tableView reloadData];
 }
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self reload]; }
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    RefreshLanguage();
+    /* The game keeps drawing on the main thread behind this screen; pause it
+     * while any MOD screen is open so scrolling stays smooth. Released when the
+     * settings root appears again (see mobile_ui.m). */
+    skyrim_mobile_menu_pause(SKYRIM_MENU_PAUSE_MODS, 1);
+    [self reload];
+}
 - (void)toggleReorder {
     [self setEditing:!self.editing animated:YES];
     self.navigationItem.rightBarButtonItem.title = self.editing ? T(@"Done", @"完了") : T(@"Reorder", @"並べ替え");
@@ -1097,9 +1178,8 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)p {
-    (void)t;
-    UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    c.textLabel.numberOfLines = 2; c.detailTextLabel.numberOfLines = 3; c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    UITableViewCell *c = ReusableCell(t);
+    c.textLabel.numberOfLines = 2; c.detailTextLabel.numberOfLines = 3;
     switch (p.section) {
     case HubProfile: {
         NSDictionary *pr = SelectedProfile();
@@ -1113,11 +1193,7 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
         NSMutableDictionary *row = self.rows[p.row];
         NSDictionary *pkg = self.packages[row[@"id"]];
         c.textLabel.text = pkg[@"name"] ?: @"?";
-        NSString *size = [NSByteCountFormatter stringFromByteCount:[pkg[@"bytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile];
-        NSMutableArray *bits = [NSMutableArray arrayWithObject:[NSString stringWithFormat:T(@"%@ · %@ files", @"%@ · %@ファイル"), size, pkg[@"files"] ?: @0]];
-        NSArray *report = ReportLines(pkg);
-        if (report.count) [bits addObject:report.firstObject];
-        c.detailTextLabel.text = [bits componentsJoinedByString:@"\n"];
+        c.detailTextLabel.text = self.summaries[row[@"id"]];
         UISwitch *toggle = [UISwitch new]; toggle.on = [row[@"on"] boolValue]; toggle.tag = p.row;
         [toggle addTarget:self action:@selector(toggled:) forControlEvents:UIControlEventValueChanged];
         c.accessoryView = toggle;
@@ -1219,7 +1295,9 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
         (void)a;
         NSString *pid = row[@"id"];
         /* The running view is a clone, so deleting the package now is safe. */
-        if (skyrim_remove_tree(PackageDir(pid).fileSystemRepresentation)) {
+        int removedTree = skyrim_remove_tree(PackageDir(pid).fileSystemRepresentation);
+        InvalidatePackages();
+        if (removedTree) {
             skyrim_mobile_show_notice(T(@"Could not delete the MOD.", @"MODを削除できませんでした。"));
             return;
         }

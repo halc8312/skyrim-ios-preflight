@@ -4,13 +4,21 @@
  * Files are copied from the app's extracted copy into the package's staging
  * Data folder; nothing outside those two folders is touched. */
 #import <UIKit/UIKit.h>
+#import <objc/message.h>
 #include "mod_install.h"
+#include "mod_manager.h"
+#include "mod_analyze.h"
 #include "mod_archive.h"
 #include "mod_deploy.h"
 
-static NSString *T(NSString *english, NSString *japanese) {
+static int japanese = -1;      /* read once per installer run */
+static void RefreshLanguage(void) {
     NSDictionary *s = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
-    return [s[@"language"] isKindOfClass:NSNumber.class] && [s[@"language"] intValue] == 1 ? japanese : english;
+    japanese = [s[@"language"] isKindOfClass:NSNumber.class] && [s[@"language"] intValue] == 1;
+}
+static NSString *T(NSString *english, NSString *japaneseText) {
+    if (japanese < 0) RefreshLanguage();
+    return japanese ? japaneseText : english;
 }
 
 /* ---- minimal DOM ---------------------------------------------------------- */
@@ -62,7 +70,9 @@ static SKXNode *ParseXML(NSData *data) {
 
 /* ---- model ---------------------------------------------------------------- */
 @interface SKFOption : NSObject
-@property(nonatomic, copy) NSString *name, *desc;
+@property(nonatomic, copy) NSString *name, *desc, *image;
+@property(nonatomic, copy) NSString *badges;          /* filled in the background */
+@property(nonatomic, strong) UIImage *thumbnail;      /* filled in the background */
 @property(nonatomic, strong) NSArray<NSDictionary *> *files;
 @property(nonatomic, strong) NSDictionary<NSString *, NSString *> *flags;
 @property(nonatomic, strong) SKXNode *typeNode;
@@ -100,7 +110,7 @@ static NSArray<NSDictionary *> *Files(SKXNode *files) {
 }
 
 @interface SKFomod : NSObject
-@property(nonatomic, copy) NSString *title;
+@property(nonatomic, copy) NSString *title, *moduleImage;
 @property(nonatomic, strong) NSArray<SKFStep *> *steps;
 @property(nonatomic, strong) NSArray<NSDictionary *> *required;
 @property(nonatomic, strong) NSArray<NSDictionary *> *conditional;   /* {deps, files} */
@@ -115,6 +125,7 @@ static NSArray<NSDictionary *> *Files(SKXNode *files) {
     _active = active; _raw = raw;
     _moduleRoot = [path.stringByDeletingLastPathComponent stringByDeletingLastPathComponent];
     _title = [[root child:@"moduleName"] trimmed] ?: @"MOD";
+    _moduleImage = [[root child:@"moduleImage"] attr:@"path"];
     _required = Files([root child:@"requiredInstallFiles"]);
     NSMutableArray *conditional = [NSMutableArray array];
     for (SKXNode *pattern in [[[root child:@"conditionalFileInstalls"] child:@"patterns"] all:@"pattern"])
@@ -137,6 +148,7 @@ static NSArray<NSDictionary *> *Files(SKXNode *files) {
                 SKFOption *opt = [SKFOption new];
                 opt.name = [o attr:@"name"] ?: @"";
                 opt.desc = [[o child:@"description"] trimmed] ?: @"";
+                opt.image = [[o child:@"image"] attr:@"path"];
                 opt.files = Files([o child:@"files"]);
                 NSMutableDictionary *flags = [NSMutableDictionary dictionary];
                 for (SKXNode *f in [[o child:@"conditionFlags"] all:@"flag"]) if ([f attr:@"name"]) flags[[f attr:@"name"]] = [f trimmed];
@@ -277,37 +289,258 @@ static BOOL Execute(SKFomod *f, NSArray<NSDictionary *> *plan, NSString *data) {
     return YES;
 }
 
+/* ---- help for reading the choices ------------------------------------------ */
+/* Common installer words, used when on-device translation is unavailable or
+ * has not finished. Whole-word replacements only; anything else stays as the
+ * author wrote it. */
+static NSDictionary<NSString *, NSString *> *Glossary(void) {
+    static NSDictionary *g;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        g = @{@"main file":@"本体", @"main files":@"本体", @"main":@"本体", @"core":@"本体", @"core files":@"本体",
+              @"optional":@"任意", @"optional files":@"任意ファイル", @"options":@"オプション", @"option":@"オプション",
+              @"required":@"必須", @"recommended":@"推奨", @"patch":@"パッチ", @"patches":@"パッチ",
+              @"compatibility":@"互換性", @"compatibility patches":@"互換パッチ", @"textures":@"テクスチャ",
+              @"texture":@"テクスチャ", @"meshes":@"メッシュ", @"mesh":@"メッシュ", @"performance":@"軽量（動作重視）",
+              @"quality":@"高画質", @"high quality":@"高画質", @"low":@"低", @"medium":@"中", @"high":@"高",
+              @"ultra":@"最高", @"vanilla":@"バニラ（元のまま）", @"default":@"標準", @"none":@"なし",
+              @"resolution":@"解像度", @"texture resolution":@"テクスチャ解像度", @"512":@"512（とても軽い）",
+              @"1k":@"1K（軽い）", @"2k":@"2K（標準）", @"4k":@"4K（重い）", @"8k":@"8K（非常に重い）",
+              @"lore friendly":@"世界観重視", @"immersive":@"没入感重視", @"add-ons":@"追加要素", @"addons":@"追加要素",
+              @"plugins":@"プラグイン", @"plugin":@"プラグイン", @"settings":@"設定", @"version":@"バージョン",
+              @"male":@"男性", @"female":@"女性", @"armor":@"防具", @"armour":@"防具", @"weapons":@"武器",
+              @"dawnguard":@"ドーンガード", @"dragonborn":@"ドラゴンボーン", @"hearthfire":@"ハースファイア",
+              @"hearthfires":@"ハースファイア", @"unofficial patch":@"非公式パッチ", @"special edition":@"SE版",
+              @"legendary edition":@"レジェンダリー版", @"welcome":@"ようこそ", @"introduction":@"はじめに",
+              @"intro":@"はじめに", @"finish":@"完了", @"readme":@"説明書", @"color":@"色", @"colour":@"色",
+              @"standard":@"標準", @"lite":@"軽量版", @"light":@"軽量", @"full":@"フル", @"all":@"すべて"};
+    });
+    return g;
+}
+static NSString *GlossaryText(NSString *text) {
+    NSString *trimmed = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *exact = Glossary()[trimmed.lowercaseString];
+    if (exact) return exact;
+    if (trimmed.length > 60) return nil;                       /* sentences: leave to translation */
+    NSMutableString *out = [trimmed mutableCopy];
+    __block BOOL changed = NO;
+    NSArray *keys = [Glossary().allKeys sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+        return a.length > b.length ? NSOrderedAscending : a.length < b.length ? NSOrderedDescending : NSOrderedSame;
+    }];
+    for (NSString *key in keys) {
+        NSString *pattern = [NSString stringWithFormat:@"(?<![A-Za-z0-9])%@(?![A-Za-z0-9])", [NSRegularExpression escapedPatternForString:key]];
+        NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:NULL];
+        if ([re replaceMatchesInString:out options:0 range:NSMakeRange(0, out.length) withTemplate:[NSRegularExpression escapedTemplateForString:Glossary()[key]]]) changed = YES;
+    }
+    return changed ? out : nil;
+}
+static NSString *TypeLabel(NSString *type) {
+    NSDictionary *labels = @{@"Required":T(@"required", @"必須"), @"Recommended":T(@"recommended", @"推奨"),
+        @"NotUsable":T(@"not usable", @"使用不可"), @"CouldBeUsable":T(@"may work", @"条件付き")};
+    return labels[type];
+}
+
+/* What would this option install, read from the actual files (background). */
+static NSString *OptionBadges(SKFomod *f, SKFOption *o, BOOL optimize) {
+    SkyrimModReport r;
+    memset(&r, 0, sizeof r);
+    NSUInteger ops = 0;
+    for (NSDictionary *op in o.files) {
+        NSString *src = ResolveCI(f.moduleRoot, op[@"source"]);
+        if (!src) continue;
+        ++ops;
+        NSString *dest = [op[@"destination"] stringByReplacingOccurrencesOfString:@"\\" withString:@"/"];
+        if ([op[@"folder"] boolValue]) skyrim_mod_analyze_add_dir(src.fileSystemRepresentation, dest.length == 0, &r);
+        else {
+            if (!dest.length || [dest hasSuffix:@"/"]) dest = [dest stringByAppendingString:src.lastPathComponent];
+            skyrim_mod_analyze_add_file(src.fileSystemRepresentation, dest.UTF8String, &r);
+        }
+    }
+    NSMutableArray *bad = [NSMutableArray array], *info = [NSMutableArray array];
+    if (r.skse_dlls) [bad addObject:T(@"⛔ SKSE DLL: won't run on iPhone", @"⛔ SKSEのDLL：iPhoneでは動きません")];
+    if (r.se_plugins || r.esl) [bad addObject:T(@"⚠️ Special Edition plugin", @"⚠️ SE用プラグイン")];
+    if (r.se_meshes) [bad addObject:T(@"⚠️ Special Edition meshes", @"⚠️ SE用メッシュ")];
+    if (r.skse_scripts) [bad addObject:T(@"⚠️ needs SKSE", @"⚠️ SKSEが必要")];
+    if (r.mcm_scripts) [info addObject:T(@"SkyUI menu (MCM)", @"SkyUIのMCM用")];
+    if (r.textures_4k && optimize) [info addObject:T(@"4K textures (reduced automatically)", @"4Kテクスチャ（自動で縮小）")];
+    else if (r.textures_4k) [bad addObject:T(@"⚠️ 4K textures: heavy", @"⚠️ 4Kテクスチャ：重い")];
+    else if (r.texture_bytes >= (512ull << 20)) [bad addObject:T(@"⚠️ heavy textures", @"⚠️ テクスチャが重い")];
+    if (optimize && (r.bc7_textures || r.se_bsas)) [info addObject:T(@"SE formats converted automatically", @"SE形式は自動で変換")];
+    NSString *text = [NSString stringWithFormat:@"%@ %@", o.name ?: @"", o.desc ?: @""];
+    if (!r.skse_dlls && !r.skse_scripts && [text rangeOfString:@"SKSE" options:NSCaseInsensitiveSearch].location != NSNotFound)
+        [info addObject:T(@"mentions SKSE", @"説明にSKSEの記載あり")];
+    NSRegularExpression *se = [NSRegularExpression regularExpressionWithPattern:@"\\b(SSE|Special Edition|Anniversary Edition)\\b" options:NSRegularExpressionCaseInsensitive error:NULL];
+    if (!r.se_plugins && [se firstMatchInString:text options:0 range:NSMakeRange(0, text.length)])
+        [info addObject:T(@"mentions Special Edition", @"説明にSE向けの記載あり")];
+    if (!ops) [info addObject:T(@"no files (setting only)", @"ファイルなし（設定のみ）")];
+    else if (!bad.count) [bad addObject:T(@"✅ looks fine on iPhone", @"✅ iPhoneで使えそう")];
+    [bad addObjectsFromArray:info];
+    return [bad componentsJoinedByString:@"　"];
+}
+static UIImage *Thumbnail(NSString *path, CGFloat side) {
+    UIImage *image = path ? [UIImage imageWithContentsOfFile:path] : nil;
+    if (!image || image.size.width < 1 || image.size.height < 1) return nil;
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(side, side)];
+    return [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        (void)ctx;
+        CGFloat scale = MAX(side / image.size.width, side / image.size.height);
+        CGSize size = CGSizeMake(image.size.width * scale, image.size.height * scale);
+        [image drawInRect:CGRectMake((side - size.width) / 2, (side - size.height) / 2, size.width, size.height)];
+    }];
+}
+
+/* Full text, selectable, so iOS's own "Translate" menu also works. */
+@interface SKTextSheet : UIViewController
+@property(nonatomic, copy) NSString *text;
+@end
+@implementation SKTextSheet
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    UITextView *tv = [[UITextView alloc] initWithFrame:self.view.bounds];
+    tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    tv.editable = NO; tv.selectable = YES; tv.text = self.text;
+    tv.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    tv.textContainerInset = UIEdgeInsetsMake(20, 16, 20, 16);
+    [self.view addSubview:tv];
+}
+@end
+
 /* ---- screens ---------------------------------------------------------------- */
 @interface SKFomodController : UITableViewController
 @property(nonatomic, strong) SKFomod *fomod;
 @property(nonatomic, strong) NSArray<NSNumber *> *visible;
 @property(nonatomic) NSUInteger position;
-@property(nonatomic, copy) NSString *data;
+@property(nonatomic, copy) NSString *data, *modName;
 @property(nonatomic, copy) void (^completion)(BOOL, NSString *);
-@property(nonatomic) BOOL finished;
+@property(nonatomic) BOOL finished, showOriginal, translationRequested, translating, optimize;
 @property(nonatomic, strong) NSMutableIndexSet *visited;   /* steps whose defaults were applied */
+@property(nonatomic, strong) NSDictionary<NSString *, NSString *> *translations;
+@property(nonatomic, strong) UIImage *moduleImage;
 @end
 @implementation SKFomodController
 - (SKFStep *)step { return self.fomod.steps[self.visible[self.position].unsignedIntegerValue]; }
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.tableView.estimatedRowHeight = 70; self.tableView.rowHeight = UITableViewAutomaticDimension;
+    self.optimize = ![NSUserDefaults.standardUserDefaults boolForKey:@"mods-optimize-off"];
+    self.tableView.estimatedRowHeight = 90; self.tableView.rowHeight = UITableViewAutomaticDimension;
+    [self.tableView addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPress:)]];
+    NSString *imagePath = self.fomod.moduleImage.length ? ResolveCI(self.fomod.moduleRoot, self.fomod.moduleImage) : nil;
+    if (imagePath)
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            UIImage *image = [UIImage imageWithContentsOfFile:imagePath];
+            dispatch_async(dispatch_get_main_queue(), ^{ self.moduleImage = image; [self updateHeader]; });
+        });
     [self refresh];
+}
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    [self requestTranslation];      /* needs a window for the language download prompt */
+}
+/* Display text: on-device translation, else glossary, else original. */
+- (NSString *)show:(NSString *)text {
+    if (!text.length || !japanese || self.showOriginal) return text;
+    return self.translations[text] ?: GlossaryText(text) ?: text;
+}
+- (void)requestTranslation {
+    if (self.translationRequested || !japanese) return;
+    self.translationRequested = YES;
+    Class translator = NSClassFromString(@"SKTranslator");
+    SEL sel = NSSelectorFromString(@"translate:in:completion:");
+    if (![translator respondsToSelector:sel]) return;
+    NSMutableOrderedSet *texts = [NSMutableOrderedSet orderedSet];
+    NSCharacterSet *latin = [NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"];
+    void (^add)(NSString *) = ^(NSString *t) { if (t.length && [t rangeOfCharacterFromSet:latin].location != NSNotFound) [texts addObject:t]; };
+    add(self.fomod.title);
+    for (SKFStep *step in self.fomod.steps) {
+        add(step.name);
+        for (SKFGroup *g in step.groups) { add(g.name); for (SKFOption *o in g.options) { add(o.name); add(o.desc); } }
+    }
+    if (!texts.count || texts.count > 600) return;
+    self.translating = YES; [self updateHeader];
+    NSArray *list = texts.array;
+    void (^done)(NSArray *) = ^(NSArray *result) {
+        self.translating = NO;
+        if (result.count == list.count) {
+            NSMutableDictionary *map = [NSMutableDictionary dictionary];
+            for (NSUInteger i = 0; i < list.count; ++i) if ([result[i] isKindOfClass:NSString.class]) map[list[i]] = result[i];
+            self.translations = map;
+        }
+        [self refresh];
+    };
+    ((void (*)(id, SEL, NSArray *, UIViewController *, void (^)(NSArray *)))objc_msgSend)(translator, sel, list, self, done);
+}
+- (void)toggleOriginal { self.showOriginal = !self.showOriginal; [self refresh]; }
+- (void)updateHeader {
+    CGFloat width = self.tableView.bounds.size.width > 0 ? self.tableView.bounds.size.width : UIScreen.mainScreen.bounds.size.width;
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 10)];
+    CGFloat y = 12;
+    if (self.moduleImage) {
+        UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(16, y, width - 32, 150)];
+        iv.image = self.moduleImage; iv.contentMode = UIViewContentModeScaleAspectFit;
+        iv.layer.cornerRadius = 10; iv.clipsToBounds = YES;
+        [header addSubview:iv]; y += 158;
+    }
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(20, y, width - 40, 10)];
+    label.numberOfLines = 0;
+    label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    label.textColor = UIColor.secondaryLabelColor;
+    NSMutableArray *lines = [NSMutableArray array];
+    NSString *module = [self show:self.fomod.title];
+    if (module.length && ![module isEqualToString:self.modName]) [lines addObject:[NSString stringWithFormat:T(@"Installer: %@", @"インストーラー：%@"), module]];
+    if (self.visible.count) [lines addObject:[NSString stringWithFormat:T(@"Step %lu of %lu: %@", @"ステップ %lu／%lu：%@"),
+        (unsigned long)self.position + 1, (unsigned long)self.visible.count, [self show:self.step.name] ?: @""]];
+    if (self.translating) [lines addObject:T(@"Translating…", @"日本語に翻訳中…")];
+    else if (japanese && !self.showOriginal) [lines addObject:self.translations ? T(@"Translated on this iPhone. Long-press an option for the full text.", @"iPhone内で翻訳しています。長押しで原文と全文を表示。")
+                                                                           : T(@"Long-press an option for the full text.", @"項目を長押しすると全文を表示します。")];
+    label.text = [lines componentsJoinedByString:@"\n"];
+    CGSize fit = [label sizeThatFits:CGSizeMake(width - 40, CGFLOAT_MAX)];
+    label.frame = CGRectMake(20, y, width - 40, fit.height);
+    [header addSubview:label];
+    header.frame = CGRectMake(0, 0, width, y + fit.height + 8);
+    self.tableView.tableHeaderView = header;
 }
 - (void)refresh {
     self.visible = self.fomod.visibleStepIndexes;
     if (self.position >= self.visible.count) self.position = self.visible.count ? self.visible.count - 1 : 0;
     BOOL last = self.position + 1 >= self.visible.count;
-    self.title = self.visible.count ? self.step.name : self.fomod.title;
-    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:self.position ? T(@"Back", @"戻る") : T(@"Cancel", @"キャンセル")
+    /* The MOD's own name stays above the title on every step. */
+    self.navigationItem.prompt = self.modName;
+    self.title = self.visible.count ? [NSString stringWithFormat:T(@"Step %lu/%lu", @"ステップ %lu/%lu"), (unsigned long)self.position + 1, (unsigned long)self.visible.count]
+                                    : T(@"Install", @"インストール");
+    UIBarButtonItem *back = [[UIBarButtonItem alloc] initWithTitle:self.position ? T(@"Back", @"戻る") : T(@"Cancel", @"キャンセル")
         style:UIBarButtonItemStylePlain target:self action:@selector(back)];
+    NSMutableArray *left = [NSMutableArray arrayWithObject:back];
+    if (japanese) [left addObject:[[UIBarButtonItem alloc] initWithTitle:self.showOriginal ? @"日本語" : @"原文"
+        style:UIBarButtonItemStylePlain target:self action:@selector(toggleOriginal)]];
+    self.navigationItem.leftBarButtonItems = left;
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:last ? T(@"Install", @"インストール") : T(@"Next", @"次へ")
         style:UIBarButtonItemStyleDone target:self action:@selector(next)];
+    [self updateHeader];
     [self.tableView reloadData];
+    [self loadStepDetails];
+}
+/* Badges and thumbnails for the shown step, computed off the main thread. */
+- (void)loadStepDetails {
+    if (!self.visible.count) return;
+    NSMutableArray<SKFOption *> *pending = [NSMutableArray array];
+    for (SKFGroup *g in self.step.groups) for (SKFOption *o in g.options) if (!o.badges) [pending addObject:o];
+    if (!pending.count) return;
+    for (SKFOption *o in pending) o.badges = T(@"Checking files…", @"ファイルを確認中…");
+    SKFomod *f = self.fomod; BOOL optimize = self.optimize;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        for (SKFOption *o in pending) {
+            NSString *badges = OptionBadges(f, o, optimize);
+            NSString *imagePath = o.image.length ? ResolveCI(f.moduleRoot, o.image) : nil;
+            UIImage *thumb = imagePath ? Thumbnail(imagePath, 64) : nil;
+            dispatch_async(dispatch_get_main_queue(), ^{ o.badges = badges; o.thumbnail = thumb; [self.tableView reloadData]; });
+        }
+    });
 }
 - (void)finish:(BOOL)ok message:(NSString *)m {
     if (self.finished) return;
     self.finished = YES;
+    skyrim_mobile_menu_pause(SKYRIM_MENU_PAUSE_INSTALLER, 0);
     void (^done)(BOOL, NSString *) = self.completion;
     [self dismissViewControllerAnimated:YES completion:^{ done(ok, m); }];
 }
@@ -363,22 +596,52 @@ static BOOL Execute(SKFomod *f, NSArray<NSDictionary *> *plan, NSString *data) {
     SKFGroup *g = self.step.groups[s];
     NSDictionary *rule = @{@"SelectExactlyOne":T(@"choose one", @"1つ選択"), @"SelectAtMostOne":T(@"choose up to one", @"0〜1つ選択"),
         @"SelectAtLeastOne":T(@"choose at least one", @"1つ以上選択"), @"SelectAll":T(@"all included", @"すべて含まれます"), @"SelectAny":T(@"choose any", @"自由に選択")};
-    return [NSString stringWithFormat:@"%@ — %@", g.name, rule[g.type] ?: g.type];
+    return [NSString stringWithFormat:@"%@ — %@", [self show:g.name], rule[g.type] ?: g.type];
 }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)p {
-    (void)t;
-    UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    c.textLabel.numberOfLines = 2; c.detailTextLabel.numberOfLines = 6; c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
-    if (!self.visible.count) { c.textLabel.text = T(@"No choices needed. Tap Install.", @"選択する項目はありません。「インストール」を押してください。"); return c; }
+    UITableViewCell *c = [t dequeueReusableCellWithIdentifier:@"SKFomodCell"];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"SKFomodCell"];
+    c.textLabel.numberOfLines = 2; c.detailTextLabel.numberOfLines = 7; c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    c.imageView.image = nil; c.textLabel.enabled = YES;
+    if (!self.visible.count) {
+        c.textLabel.text = T(@"No choices needed. Tap Install.", @"選択する項目はありません。「インストール」を押してください。");
+        c.detailTextLabel.text = nil; c.accessoryType = UITableViewCellAccessoryNone;
+        return c;
+    }
     SKFOption *o = self.step.groups[p.section].options[p.row];
     NSString *type = [self.fomod typeOf:o flags:[self.fomod flagsBefore:self.visible[self.position].unsignedIntegerValue]];
-    c.textLabel.text = [type isEqualToString:@"Recommended"] ? [o.name stringByAppendingString:T(@" (recommended)", @"（推奨）")] : o.name;
-    c.detailTextLabel.text = o.desc;
+    NSString *name = [self show:o.name], *typeText = TypeLabel(type);
+    c.textLabel.text = typeText && ![type isEqualToString:@"Optional"] ? [NSString stringWithFormat:@"%@（%@）", name, typeText] : name;
+    NSMutableArray *lines = [NSMutableArray array];
+    if (![name isEqualToString:o.name]) [lines addObject:o.name];             /* original name for searching */
+    if (o.badges.length) [lines addObject:o.badges];
+    NSString *desc = [self show:o.desc];
+    if (desc.length) [lines addObject:desc];
+    c.detailTextLabel.text = [lines componentsJoinedByString:@"\n"];
+    c.imageView.image = o.thumbnail;
     c.accessoryType = o.selected ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
     BOOL locked = [type isEqualToString:@"Required"] || [type isEqualToString:@"NotUsable"] || [self.step.groups[p.section].type isEqualToString:@"SelectAll"];
     c.textLabel.enabled = ![type isEqualToString:@"NotUsable"];
     c.selectionStyle = locked ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
     return c;
+}
+- (void)longPress:(UILongPressGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateBegan || !self.visible.count) return;
+    NSIndexPath *p = [self.tableView indexPathForRowAtPoint:[g locationInView:self.tableView]];
+    if (!p) return;
+    SKFOption *o = self.step.groups[p.section].options[p.row];
+    NSMutableArray *parts = [NSMutableArray array];
+    NSString *name = [self.translations[o.name] ?: GlossaryText(o.name) ?: o.name copy];
+    [parts addObject:name];
+    if (![name isEqualToString:o.name]) [parts addObject:o.name];
+    if (o.badges.length) [parts addObject:o.badges];
+    if (self.translations[o.desc].length) [parts addObject:self.translations[o.desc]];
+    if (o.desc.length) [parts addObject:japanese ? [@"――原文――\n" stringByAppendingString:o.desc] : o.desc];
+    SKTextSheet *sheet = [SKTextSheet new];
+    sheet.text = [parts componentsJoinedByString:@"\n\n"];
+    sheet.sheetPresentationController.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];
+    sheet.sheetPresentationController.prefersGrabberVisible = YES;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)p {
     [t deselectRowAtIndexPath:p animated:YES];
@@ -404,15 +667,18 @@ static UIViewController *TopController(void) {
     return top;
 }
 
-void skyrim_fomod_run(NSString *raw, NSString *config, NSString *data, NSSet<NSString *> *active,
+void skyrim_fomod_run(NSString *mod_name, NSString *raw, NSString *config, NSString *data, NSSet<NSString *> *active,
                       void (^completion)(BOOL, NSString *)) {
+    RefreshLanguage();
     SKFomod *f = [[SKFomod alloc] initWithConfig:config active:active raw:raw];
     if (!f) { completion(NO, T(@"The installer file could not be read.", @"インストーラーの設定ファイルを読めませんでした。")); return; }
     UIViewController *top = TopController();
     if (!top) { completion(NO, T(@"Open the app to run the installer.", @"インストーラーを表示できませんでした。")); return; }
     SKFomodController *c = [[SKFomodController alloc] initWithStyle:UITableViewStyleInsetGrouped];
-    c.fomod = f; c.data = data; c.completion = completion;
+    c.fomod = f; c.data = data; c.completion = completion; c.modName = mod_name;
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:c];
     nav.modalInPresentation = YES;
+    /* Pause the game while choosing, like the MOD screens. */
+    skyrim_mobile_menu_pause(SKYRIM_MENU_PAUSE_INSTALLER, 1);
     [top presentViewController:nav animated:YES completion:nil];
 }

@@ -250,6 +250,15 @@ static int walk(const char *dir, int depth, SkyrimModReport *r) {
     closedir(d);
     return 0;
 }
+void skyrim_mod_analyze_add_file(const char *path, const char *destination, SkyrimModReport *report) {
+    struct stat st;
+    if (stat(path, &st) || !S_ISREG(st.st_mode)) return;
+    const char *slash = strrchr(destination, '/');
+    inspect(path, slash ? slash + 1 : destination, (size_t)st.st_size, slash == NULL, report);
+}
+void skyrim_mod_analyze_add_dir(const char *dir, int top_level, SkyrimModReport *report) {
+    walk(dir, top_level ? 0 : 1, report);
+}
 int skyrim_mod_analyze(const char *data_dir, SkyrimModReport *report) {
     memset(report, 0, sizeof *report);
     return walk(data_dir, 0, report);

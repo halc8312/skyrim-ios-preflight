@@ -13,7 +13,7 @@ import sys
 PRIVATE_PARTS = {"local", "private", "generated", "vendor", "build", "artifacts",
                  "data", "saves", "mods", "signing", "deriveddata", "__pycache__"}
 SOURCE_SUFFIXES = {".md", ".txt", ".json", ".yaml", ".yml", ".py", ".sh", ".ps1",
-                   ".c", ".h", ".cc", ".cpp", ".hpp", ".m", ".mm", ".metal",
+                   ".c", ".h", ".cc", ".cpp", ".hpp", ".m", ".mm", ".swift", ".metal",
                    ".plist", ".pbxproj", ".xcscheme", ".xcworkspacedata", ".xcconfig",
                    ".cmake", ".in", ".example", ".toml", ".csv", ".tsv", ".patch"}
 ROOT_NAMES = {".gitignore", ".gitattributes", "LICENSE", "NOTICE", "CMakeLists.txt"}
@@ -81,7 +81,7 @@ def check_file(relative: str, path: Path) -> list[str]:
         errors.append("private-key marker")
     if rel.suffix.lower() == ".patch":
         errors.extend(check_patch(rel, source.replace("\r\n", "\n")))
-    if rel.suffix.lower() in {".c", ".h", ".cc", ".cpp", ".hpp", ".m", ".mm"}:
+    if rel.suffix.lower() in {".c", ".h", ".cc", ".cpp", ".hpp", ".m", ".mm", ".swift"}:
         if any(pattern.search(source) for pattern in GENERATED_PATTERNS):
             errors.append("possible generated/decompiled game source")
     return errors

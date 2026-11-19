@@ -43,6 +43,11 @@ typedef struct {
 /* Walk a package's Data folder. 0 on success. */
 int skyrim_mod_analyze(const char *data_dir, SkyrimModReport *report);
 
+/* Accumulate into report without clearing it (installer options): one file
+ * placed at destination (relative to Data), or a whole folder. */
+void skyrim_mod_analyze_add_file(const char *path, const char *destination, SkyrimModReport *report);
+void skyrim_mod_analyze_add_dir(const char *dir, int top_level, SkyrimModReport *report);
+
 /* Plugins named in a classic .ess save header. *names receives count
  * NUL-terminated names back to back (free with free()). 0 on success. */
 int skyrim_save_plugins(const char *path, char **names, unsigned *count);

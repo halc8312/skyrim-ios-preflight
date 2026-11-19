@@ -36,6 +36,10 @@ void skyrim_mods_import_url(NSURL *url, BOOL security_scoped);
 NSString *skyrim_mods_save_notice(void);
 
 /* Provided by mobile_ui.m. */
+/* Pause the game (same safe path as an inactive app) while a MOD screen or the
+ * installer is open, so UIKit has the main thread. Each reason is a flag. */
+enum { SKYRIM_MENU_PAUSE_MODS = 1, SKYRIM_MENU_PAUSE_INSTALLER = 2 };
+void skyrim_mobile_menu_pause(unsigned reason, int on);
 NSArray<NSString *> *skyrim_mobile_loaded_plugins(void);
 void skyrim_mobile_show_notice(NSString *text);
 UIViewController *skyrim_mobile_plugin_controller(void);

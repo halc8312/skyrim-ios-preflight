@@ -527,6 +527,8 @@ void skyrim_mobile_frame(void) { __atomic_add_fetch(&frameCount,1,__ATOMIC_RELAX
 
 @class SKOverlay;
 static SKOverlay *overlay;
+/* Reasons the game is paused for a menu (SKYRIM_MENU_PAUSE_* flags). */
+static unsigned menuPauseReasons;
 @interface SKPadControl : UIView
 @property(nonatomic) NSInteger code;
 @property(nonatomic,copy) NSString *caption;
@@ -718,7 +720,12 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 - (void)close { [overlay clearInput]; [self dismissViewControllerAnimated:YES completion:nil]; }
 - (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated]; shaderSettingsPermission(YES); }
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    /* Back on the settings root: no MOD screen is open any more. */
+    skyrim_mobile_menu_pause(SKYRIM_MENU_PAUSE_MODS, 0);
+    [self.tableView reloadData];
+}
 - (void)viewWillDisappear:(BOOL)animated { shaderSettingsPermission(NO); [super viewWillDisappear:animated]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 9; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
@@ -955,7 +962,7 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 - (void)message:(NSString *)text {self.notice.text=text;self.noticeUntil=mobileTime()+7;self.notice.hidden=NO;}
 - (void)resignActive:(NSNotification *)note { skyrim_lifecycle_request(0); [self clearInput]; skyrim_pipeline_checkpoint_foreground_permission(0); skyrim_ios_metrics_active(0); preparePipelineCacheCheckpoint(); }
-- (void)becomeActive:(NSNotification *)note { skyrim_lifecycle_request(1); finishCacheCheckpoint(cacheCheckpointTicket, 1); shaderSettingsPermission(shaderSettingsVisible); skyrim_ios_metrics_active(1); }
+- (void)becomeActive:(NSNotification *)note { skyrim_lifecycle_request(menuPauseReasons == 0); finishCacheCheckpoint(cacheCheckpointTicket, 1); shaderSettingsPermission(shaderSettingsVisible); skyrim_ios_metrics_active(menuPauseReasons == 0); }
 - (void)enterBackground:(NSNotification *)note { skyrim_lifecycle_did_background(); checkpointPipelineCache(); }
 - (void)clearInput {
     self.lookFinger=nil;
@@ -1030,6 +1037,18 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 @end
 
+/* Uses the inactive-app pause: the guest's main thread parks in a live run
+ * loop and GPU work is drained, so UIKit keeps the main thread to itself.
+ * Never resumes while the app itself is inactive. Main thread only. */
+void skyrim_mobile_menu_pause(unsigned reason, int on) {
+    if (!NSThread.isMainThread) return;
+    unsigned before = menuPauseReasons;
+    menuPauseReasons = on ? (menuPauseReasons | reason) : (menuPauseReasons & ~reason);
+    if (!before == !menuPauseReasons) return;
+    if (menuPauseReasons) { [overlay clearInput]; skyrim_ios_metrics_active(0); skyrim_lifecycle_request(0); return; }
+    if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;   /* becomeActive resumes */
+    skyrim_lifecycle_request(1); skyrim_ios_metrics_active(1);
+}
 void skyrim_mobile_show_notice(NSString *text) { if (text.length) [overlay message:text]; }
 NSArray<NSString *> *skyrim_mobile_loaded_plugins(void) {
     NSMutableArray *out = [NSMutableArray arrayWithObjects:@"Skyrim.esm", @"Update.esm", nil];

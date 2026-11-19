@@ -381,10 +381,16 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self capture:@"folder-imported"];
     [[self findRow:@"Add a zip file"] tap];
     [self pick:@"AuthoredInstaller.zip" folder:NO];
-    XCTAssertTrue([self.app.navigationBars[@"Choose a colour"] waitForExistenceWithTimeout:15]);
+    // The step number is the title; the MOD's own name stays above it and the
+    // step name is in the header, so the user knows whose choices these are.
+    XCUIElement *installer = self.app.navigationBars[@"Step 1/1"];
+    XCTAssertTrue([installer waitForExistenceWithTimeout:15]);
+    XCTAssertTrue(installer.staticTexts[@"AuthoredInstaller"].exists);
+    NSPredicate *stepName = [NSPredicate predicateWithFormat:@"label CONTAINS %@", @"Choose a colour"];
+    XCTAssertTrue([self.app.staticTexts matchingPredicate:stepName].count > 0);
     [[self findRow:@"Red"] tap];
     [self capture:@"fomod-options"];
-    [self.app.navigationBars[@"Choose a colour"].buttons[@"Install"] tap];
+    [installer.buttons[@"Install"] tap];
     [self findRow:@"AuthoredInstaller"];
 
     [[self findRow:@"Default"] tap];
