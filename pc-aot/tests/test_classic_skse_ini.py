@@ -1,4 +1,4 @@
-"""Check typed Classic INI reads, the real registration table and the opt-in overlay."""
+"""Check Classic Game and Utility queries against the staged registration table."""
 import os
 from pathlib import Path
 import shutil
@@ -32,7 +32,18 @@ class ClassicIniTests(unittest.TestCase):
         self.assertEqual([(self.vendor / "runtime" / name).read_bytes() for name in self.files], before)
         staged = (self.stage / "skse_system.c").read_text()
         self.assertIn("skse_classic_ini_dispatch(c, op, args, result);", staged)
+        self.assertIn("if (skse_classic_mod_query(c, op, args, result)) return 1;", staged)
         self.assertNotIn("double number=name[0]", staged)
+
+    def test_existing_classic_overlay_is_upgraded_without_replacing_local_edits(self):
+        from classic_skse_translation import adapt
+        for name in self.files:
+            target = self.stage / name
+            original = target.read_text()
+            previous = adapt(original) if name == "skse_translation.c" else classic.adapt_ini(name, original)
+            target.write_text(previous)
+        self.assertEqual(classic.prepare(self.vendor, self.stage), len(classic.PINNED))
+        self.assertEqual(classic.prepare(self.vendor, self.stage), 0)
 
     def test_rejects_vendor_target_and_staged_drift_before_publishing(self):
         with self.assertRaisesRegex(ValueError, "outside the vendor"):
@@ -43,19 +54,26 @@ class ClassicIniTests(unittest.TestCase):
         self.assertEqual((self.stage / "skse_compat.h").read_bytes(),
                          (self.vendor / "runtime/skse_compat.h").read_bytes())
 
-    @unittest.skipUnless(os.name == "posix", "needs a POSIX C compiler")
-    def test_real_registration_table_dispatches_typed_results(self):
+    def run_fixture(self, name):
         classic.prepare(self.vendor, self.stage)
-        executable = self.stage.parent / "classic-ini"
+        executable = self.stage.parent / name
         sanitizers = []
         if os.environ.get("SKYRIM_TEST_SANITIZERS"):
             sanitizers = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-Wall", "-Wextra", "-Werror",
                         *sanitizers, "-I", str(self.stage), "-I", str(PORT),
-                        str(ROOT / "tests/native/test_classic_skse_ini.c"),
+                        str(ROOT / "tests/native" / (name + ".c")),
                         str(self.stage / "skse_compat_values.c"), "-lm", "-o", str(executable)],
                        check=True, timeout=60)
         subprocess.run([str(executable)], check=True, timeout=30)
+
+    @unittest.skipUnless(os.name == "posix", "needs a POSIX C compiler")
+    def test_real_registration_table_dispatches_typed_results(self):
+        self.run_fixture("test_classic_skse_ini")
+
+    @unittest.skipUnless(os.name == "posix", "needs a POSIX C compiler")
+    def test_game_queries_read_loaded_files_and_master_indices(self):
+        self.run_fixture("test_classic_skse_mod_list")
 
 
 if __name__ == "__main__":

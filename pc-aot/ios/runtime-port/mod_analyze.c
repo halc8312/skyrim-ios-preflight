@@ -101,6 +101,9 @@ static const char *const k_skse_scripts[] = {"SKSE", "StringUtil", "UI", "UICall
     "SoundDescriptor", "TreeObject", "ActorValueInfo", "Art", "CombatStyle", "DefaultObjectManager", NULL};
 /* Common SKSE functions added to game scripts. */
 static const char *const k_skse_functions[] = {"GetModCount", "GetModName", "GetModByName", "GetModDependencyCount",
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    "GetModAuthor", "GetModDescription", "GetNthModDependency",
+#endif
     "GetNumItems", "GetNthForm", "GetNumKeywords", "GetNthKeyword", "GetWornForm", "GetEquippedObject",
     "GetNumParts", "QueueNiNodeUpdate", "GetModelPath", "SetModelPath", "GetIconPath", "GetMessageIconPath",
     "GetWeaponType", "GetBaseDamage", "SetBaseDamage", "GetCritDamage", "GetSlotMask", "SetSlotMask",
@@ -132,6 +135,8 @@ static const char *const k_compat_functions[] = {"GetVersion", "GetVersionMinor"
     "GetINIInt", "SetINIFloat",
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     "GetINIBool", "GetINIString",
+    "GetModCount", "GetModByName", "GetModName", "GetModAuthor", "GetModDescription",
+    "GetModDependencyCount", "GetNthModDependency",
 #endif
     NULL};
 static int in_list(const char *const *list, const char *s, size_t n) {

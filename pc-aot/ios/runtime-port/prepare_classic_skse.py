@@ -15,6 +15,17 @@ PINNED = {
 }
 
 
+MOD_QUERIES = (
+    ("GetModCount", "S_MOD_COUNT", 3, ()),
+    ("GetModByName", "S_MOD_FIND", 3, (2,)),
+    ("GetModName", "S_MOD_NAME", 2, (3,)),
+    ("GetModAuthor", "S_MOD_AUTHOR", 2, (3,)),
+    ("GetModDescription", "S_MOD_DESCRIPTION", 2, (3,)),
+    ("GetModDependencyCount", "S_MOD_MASTER_COUNT", 3, (3,)),
+    ("GetNthModDependency", "S_MOD_NTH_MASTER", 3, (3, 3)),
+)
+
+
 def adapt_ini(name, text):
     if hashlib.sha256(text.encode()).hexdigest() != PINNED[name]:
         raise ValueError(f"{name}: different from the reviewed Classic runtime")
@@ -37,6 +48,29 @@ def adapt_ini(name, text):
         "    }\n") + text[end:]
 
 
+def adapt_mod_queries(name, text):
+    if name == "skse_compat.h":
+        operations = [row[1] for row in MOD_QUERIES]
+        operations[0] += "=1310"  # leave existing system operation numbers unchanged
+        return replace_once(text, " S_METHOD=0x8000", " " + ",".join(operations)
+                            + ",\n S_METHOD=0x8000", name)
+    if name == "skse_compat_values.c":
+        rows = []
+        for function, op, result, args in MOD_QUERIES:
+            parameters = [result, len(args), *args, *([0] * (4 - len(args)))]
+            rows.append(f'    F("Game","{function}",' + ",".join(map(str, parameters)) + f",{op}),")
+        return replace_once(text, "\n};\n#undef F", "\n" + "\n".join(rows) + "\n};\n#undef F", name)
+    text = replace_once(text, '#include "classic_skse_ini.h"',
+                        '#include "classic_skse_ini.h"\n#include "classic_skse_mod_list.h"', name)
+    return replace_once(text, "    if(op==1300)", (
+        "    if (op >= S_MOD_COUNT && op <= S_MOD_NTH_MASTER) {\n"
+        "        if (skse_classic_mod_query(c, op, args, result)) return 1;\n"
+        '        LOG("SKSE %s.%s: plugin list unavailable or inconsistent",fn->class_name,fn->name);\n'
+        "        return 0;\n"
+        "    }\n"
+        "    if(op==1300)"), name)
+
+
 def prepare(source, runtime):
     from classic_skse_translation import adapt as adapt_translation
 
@@ -47,13 +81,14 @@ def prepare(source, runtime):
     changes = []
     for name in (*PINNED, "skse_translation.c"):
         original = (source / name).read_text(encoding="utf-8")
-        new = adapt_translation(original) if name == "skse_translation.c" else adapt_ini(name, original)
+        previous = original if name == "skse_translation.c" else adapt_ini(name, original)
+        new = adapt_translation(original) if name == "skse_translation.c" else adapt_mod_queries(name, previous)
         target = runtime / name
         if target.is_symlink() or target.samefile(source / name):
             raise ValueError(f"{name}: expected an independent staged copy")
         old = target.read_text(encoding="utf-8")
         if old != new:
-            if old != original:
+            if old not in (original, previous):
                 raise ValueError(f"{name}: unrecognized contents in staged runtime")
             changes.append((target, new))
     # Validate every input before publishing and preserve intact files on a failed write.
