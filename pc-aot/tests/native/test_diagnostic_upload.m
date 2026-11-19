@@ -7,6 +7,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <unistd.h>
+#define SKYRIM_IOS_CLASSIC_SKSE 1
 #import "../../ios/runtime-port/diagnostic_upload.h"
 
 static NSDictionary *fixturePairing;
@@ -284,6 +285,29 @@ static void pumpUntil(BOOL (^done)(void)) {
         [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
     assert(done());
 }
+static void classicShareTests(NSString *root) {
+    NSString *folder = directory(root, @"classic-share");
+    NSString *current = [folder stringByAppendingPathComponent:@"run-classic.log"];
+    NSString *query = @"IOS_CLASSIC_QUERY id=1 handled=0\n";
+    NSString *vm = @"IOS_CLASSIC_VM registered=99 primitive_passed=36\n";
+    NSString *privateLines = @"IOS_CLASSIC_QUERY id=8 handled=1\nIOS_CLASSIC_QUERY id=1 handled=0 name=Private.esp\n";
+    writeText(current, [NSString stringWithFormat:@"%@%@%@%@%@", header(12), vm, query, query, privateLines]);
+    skyrim_diagnostics_set_log_path(current.fileSystemRepresentation);
+    __block BOOL done = NO;
+    skyrim_diagnostics_share_classic(^(NSString *summary) {
+        assert(NSThread.isMainThread);
+        assert([summary isEqualToString:@"SkyrimIOS Classic Lab · current · build 12\nIOS_CLASSIC_VM registered=99 primitive_passed=36\nIOS_CLASSIC_QUERY id=1 handled=0"]);
+        done = YES;
+    });
+    pumpUntil(^BOOL{ return done; });
+    writeText(current, [header(12) stringByAppendingString:@"IOS_DIAG_SETTING key=0 value=30\n"]);
+    done = NO;
+    skyrim_diagnostics_share_classic(^(NSString *summary) {
+        assert([summary isEqualToString:@""]);
+        done = YES;
+    });
+    pumpUntil(^BOOL{ return done; });
+}
 static NSString *sendAndWait(int mode, SkyrimDiagnosticStatus expected) {
     atomic_store(&responseMode, mode);
     __block BOOL done = NO;
@@ -375,6 +399,6 @@ int main(int argc, char **argv) { @autoreleasepool {
     fixturePairing = @{@"endpoint":@"https://fixture.tail0.ts.net/skyrim-diagnostics/v1/reports",
         @"token":[@"" stringByPaddingToLength:43 withString:@"a" startingAtIndex:0]};
     requestLock = [NSLock new]; requests = [NSMutableArray array];
-    pairingTests(); captureTests(root, fixture); captureLimits(root); transportTests(root);
+    pairingTests(); captureTests(root, fixture); captureLimits(root); classicShareTests(root); transportTests(root);
     puts("DIAGNOSTIC_UPLOAD actual Foundation and mocked transport PASS");
 } }

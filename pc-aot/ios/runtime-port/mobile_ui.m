@@ -729,6 +729,11 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
     if (section==8) return modNotice ?: L(@"Import a classic Skyrim package or folder here. Apply your selection by restarting.", @"2011年版（LE）用のパッケージやフォルダはここから追加できます。変更は次回起動時に反映されます。");
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    if (section==7 && !skyrim_diagnostics_available())
+        return L(@"Share the SKSE registration counts and game calls recorded during this launch and the previous one.",
+                 @"今回と前回の起動で記録したSKSEの関数登録件数と、ゲームから呼び出された機能の記録を共有できます。");
+#endif
     if (section==7) return L(@"Send performance, settings and numeric error records from this launch and the previous launch to your paired PC. Game data and saves are excluded. Open the game system menu first; keep the PC awake and Tailscale connected. After receipt, tell us in the chat that you sent it.",
         @"今回と前回の起動の性能・設定・エラー番号を、登録した自分のPCへ送ります。ゲームデータやセーブは送りません。先にゲームのシステムメニューを開き、PCを起動してTailscaleを接続してください。送信できたら、このチャットで知らせてください。");
     if (section==0) return L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。");
@@ -780,6 +785,15 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
         return cell;
     }
     if (p.section==7) {
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        if (!skyrim_diagnostics_available()) {
+            cell.textLabel.text=L(@"Share in-game SKSE results", @"ゲーム内SKSEの検査結果を共有");
+            cell.detailTextLabel.text=self.sendingDiagnostics ? L(@"Preparing…", @"準備中…") :
+                self.diagnosticStatus ?: L(@"Function registration and observed calls", @"関数の登録件数と呼び出し記録");
+            cell.imageView.image=[UIImage systemImageNamed:@"square.and.arrow.up"];
+            return cell;
+        }
+#endif
         cell.textLabel.text=L(@"Send diagnostics to PC", @"診断ログをPCへ送信");
         cell.imageView.image=[UIImage systemImageNamed:@"arrow.up.doc"];
         cell.accessoryType=UITableViewCellAccessoryNone;
@@ -813,6 +827,24 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     if (p.section==7) {
         if (self.sendingDiagnostics) return;
         self.sendingDiagnostics=YES; [table reloadRowsAtIndexPaths:@[p] withRowAnimation:UITableViewRowAnimationNone];
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        if (!skyrim_diagnostics_available()) {
+            skyrim_diagnostics_share_classic(^(NSString *text) {
+                self.sendingDiagnostics=NO;
+                self.diagnosticStatus = !text ? L(@"Could not read the log", @"記録を読み取れませんでした") :
+                    text.length ? nil : L(@"No in-game SKSE results yet", @"ゲーム内SKSEの記録はまだありません");
+                if (!self.viewIfLoaded.window) return;
+                [table reloadRowsAtIndexPaths:@[p] withRowAnimation:UITableViewRowAnimationNone];
+                if (!text.length || self.presentedViewController) return;
+                UIActivityViewController *sheet = [[UIActivityViewController alloc] initWithActivityItems:@[text]
+                    applicationActivities:nil];
+                sheet.popoverPresentationController.sourceView = table;
+                sheet.popoverPresentationController.sourceRect = [table rectForRowAtIndexPath:p];
+                [self presentViewController:sheet animated:YES completion:nil];
+            });
+            return;
+        }
+#endif
         logDiagnosticSettings();
         [overlay message:L(@"Preparing diagnostics…", @"診断ログを準備しています…")];
         __weak SKSettings *weakSettings=self;

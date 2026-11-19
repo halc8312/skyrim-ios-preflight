@@ -235,6 +235,32 @@ void skyrim_diagnostics_set_log_path(const char *path) {
 BOOL skyrim_diagnostics_available(void) {
     return skyrim_diagnostics_valid_pairing([NSBundle.mainBundle objectForInfoDictionaryKey:@"PcDiagnostics"]);
 }
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+void skyrim_diagnostics_share_classic(void (^completion)(NSString *text)) {
+    NSCAssert(NSThread.isMainThread, @"diagnostic requests run on the main thread");
+    NSString *path = currentLog;
+    NSUInteger build = [[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"] integerValue];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        @autoreleasepool {
+            NSDictionary *report = skyrim_diagnostics_capture(path.stringByDeletingLastPathComponent, path, build, NULL);
+            NSMutableArray<NSString *> *sections = [NSMutableArray array];
+            for (NSDictionary *session in report[@"sessions"]) {
+                NSMutableOrderedSet<NSString *> *observed = [NSMutableOrderedSet orderedSet];
+                for (NSString *line in session[@"lines"]) {
+                    if ([line hasPrefix:@"IOS_CLASSIC_VM "] || [line hasPrefix:@"IOS_CLASSIC_QUERY "])
+                        [observed addObject:line];
+                }
+                if (observed.count) {
+                    [sections addObject:[NSString stringWithFormat:@"SkyrimIOS Classic Lab · %@ · build %@\n%@",
+                        session[@"slot"], session[@"build"], [observed.array componentsJoinedByString:@"\n"]]];
+                }
+            }
+            NSString *summary = report ? [sections componentsJoinedByString:@"\n\n"] : nil;
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(summary); });
+        }
+    });
+}
+#endif
 void skyrim_diagnostics_send(void (^completion)(SkyrimDiagnosticStatus, NSString *)) {
     NSCAssert(NSThread.isMainThread, @"diagnostic requests run on the main thread");
     SKDiagnosticTransfer *sender = transfer();
