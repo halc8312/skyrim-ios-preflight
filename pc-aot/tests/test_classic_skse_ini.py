@@ -47,6 +47,11 @@ class ClassicIniTests(unittest.TestCase):
             target.write_text(previous)
         self.assertEqual(classic.prepare(self.vendor, self.stage), len(classic.PINNED))
         self.assertEqual(classic.prepare(self.vendor, self.stage), 0)
+        target = self.stage / "skse_compat.c"
+        original = (self.vendor / "runtime" / target.name).read_text()
+        target.write_text(classic.adapt_mod_queries(target.name, original))
+        self.assertEqual(classic.prepare(self.vendor, self.stage), 1)
+        self.assertEqual(classic.prepare(self.vendor, self.stage), 0)
 
     def test_rejects_vendor_target_and_staged_drift_before_publishing(self):
         with self.assertRaisesRegex(ValueError, "outside the vendor"):
@@ -74,6 +79,49 @@ class ClassicIniTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "needs a POSIX C compiler")
     def test_real_registration_table_dispatches_typed_results(self):
         self.run_fixture("test_classic_skse_ini")
+
+    @unittest.skipUnless(os.name == "posix", "needs a POSIX C compiler")
+    def test_skyui_version_expectations_match_the_guest_dispatch(self):
+        classic.prepare(self.vendor, self.stage)
+        source = (self.stage / "skse_compat.c").read_text()
+        mode = source[source.index("int skse_skyui_enabled("):source.index("/* Verified against TESV")]
+        start = source.index("static uint32_t skyui_version_value(")
+        dispatch = source.index("static void run_native(", start)
+        probe = source.index("static void probe_native(", dispatch)
+        self.assertIn("value = skyui_version_value(fn, value);", source[dispatch:probe])
+        self.assertIn("expected = skyui_version_value(fn, expected);", source[probe:])
+        fixture = self.stage.parent / "skyui-version.c"
+        fixture.write_text('#include <assert.h>\n#include <stdlib.h>\n#include <string.h>\n'
+                           '#include "skse_compat.h"\n' + mode + source[start:dispatch] + r"""
+int main(void) {
+    const uint32_t expected[2][5] = {{0, 1, 0, 0, UINT32_MAX}, {1, 7, 3, 48, UINT32_MAX}};
+    const char *names[] = {"GetVersion", "GetVersionMinor", "GetVersionBeta",
+                           "GetVersionRelease", "GetPluginVersion"};
+    unsigned count = 0;
+    const SkseNative *table = skse_native_table(&count);
+    for (unsigned on = 0; on < 2; ++on) {
+        assert(setenv("LB_SKSE_SKYUI_PROBE", on ? "1" : "0", 1) == 0);
+        for (unsigned i = 0; i < sizeof names / sizeof names[0]; ++i) {
+            const SkseNative *fn = NULL;
+            for (unsigned j = 0; j < count; ++j)
+                if (!strcmp(table[j].class_name, "SKSE") && !strcmp(table[j].name, names[i]))
+                    fn = &table[j];
+            const uint32_t args[4] = {0};
+            const char *strings[4] = {"test plugin", NULL, NULL, NULL};
+            uint32_t value = 0;
+            char *text = NULL;
+            assert(fn && skse_native_eval(fn, args, strings, &value, &text) && !text);
+            assert(skyui_version_value(fn, value) == expected[on][i]);
+        }
+    }
+    return 0;
+}
+""", encoding="utf-8")
+        executable = fixture.with_suffix("")
+        subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-Wall", "-Wextra", "-Werror",
+                        "-I", str(self.stage), str(fixture), str(self.stage / "skse_compat_values.c"),
+                        "-lm", "-o", str(executable)], check=True, timeout=60)
+        subprocess.run([str(executable)], check=True, timeout=30)
 
     @unittest.skipUnless(os.name == "posix", "needs a POSIX C compiler")
     def test_game_queries_read_loaded_files_and_master_indices(self):

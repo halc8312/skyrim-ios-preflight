@@ -83,6 +83,32 @@ def adapt_mod_queries(name, text):
         "    if(op==1300)"), name)
 
 
+def adapt_skyui_selftest(text):
+    # The VM probe verifies dispatch against the same configured version as
+    # Papyrus. Keep all the normal type and value checks enabled in both modes.
+    name = "skse_compat.c"
+    text = replace_once(text, "static void run_native(CPU *c) {", r"""static uint32_t skyui_version_value(const SkseNative *fn, uint32_t value) {
+    if (strcmp(fn->class_name, "SKSE") == 0 && skse_skyui_enabled()) {
+        if (strcmp(fn->name, "GetVersion") == 0) return 1;
+        if (strcmp(fn->name, "GetVersionMinor") == 0) return 7;
+        if (strcmp(fn->name, "GetVersionBeta") == 0) return 3;
+        if (strcmp(fn->name, "GetVersionRelease") == 0) return 48;
+    }
+    return value;
+}
+
+static void run_native(CPU *c) {""", name)
+    text = replace_once(text, r"""    if(skse_skyui_enabled() && !strcmp(fn->class_name,"SKSE")) {
+        if(!strcmp(fn->name,"GetVersion")) value=1;
+        if(!strcmp(fn->name,"GetVersionMinor")) value=7;
+        if(!strcmp(fn->name,"GetVersionBeta")) value=3;
+        if(!strcmp(fn->name,"GetVersionRelease")) value=48;
+    }""", "    value = skyui_version_value(fn, value);", name)
+    return replace_once(text, "    uint32_t runargs[]={0,0,0,result,state};",
+                        "    expected = skyui_version_value(fn, expected);\n"
+                        "    uint32_t runargs[]={0,0,0,result,state};", name)
+
+
 def prepare(source, runtime):
     from classic_skse_translation import adapt as adapt_translation
 
@@ -94,13 +120,14 @@ def prepare(source, runtime):
     for name in (*PINNED, "skse_translation.c"):
         original = (source / name).read_text(encoding="utf-8")
         previous = original if name == "skse_translation.c" else adapt_ini(name, original)
-        new = adapt_translation(original) if name == "skse_translation.c" else adapt_mod_queries(name, previous)
+        adapted = adapt_translation(original) if name == "skse_translation.c" else adapt_mod_queries(name, previous)
+        new = adapt_skyui_selftest(adapted) if name == "skse_compat.c" else adapted
         target = runtime / name
         if target.is_symlink() or target.samefile(source / name):
             raise ValueError(f"{name}: expected an independent staged copy")
         old = target.read_text(encoding="utf-8")
         if old != new:
-            if old not in (original, previous):
+            if old not in (original, previous, adapted):
                 raise ValueError(f"{name}: unrecognized contents in staged runtime")
             changes.append((target, new))
     # Validate every input before publishing and preserve intact files on a failed write.

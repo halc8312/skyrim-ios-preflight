@@ -1,5 +1,9 @@
 # 開発状況
 
+**2026-11-19　SkyUI試験モードの起動時自己試験を修正**
+
+固定Skydreamでは、SkyUIの試験モードでPapyrusに返すバージョンが変わる一方、自己試験は通常時の値を期待していた。Classic用のランタイム生成で両方が同じバージョンを参照するようにし、PCで通常時と試験時の4つの値、プラグイン検索の戻り値、既存ソースからの更新を確認した。配布済みClassic Labには公式SkyUI 5.1の7zを開ける処理がある。試験モードの起動設定と、iPhoneでの持ち物画面・MCMの検証が残る。[SkyUI 5.1の公式配布](https://www.nexusmods.com/skyrim/mods/3863?tab=files)
+
 **2026-11-19　iPhoneのゲーム本編からClassic SKSEでロード順を取得**
 
 Classic Lab build 16（`ca6c7bf`）の本編で、自作の試験用MODが表示した結果を確認した。`Game.GetModCount()` は3件。順番は `0: Skyrim.esm`、`1: Update.esm`、`2: ClassicLabLoadOrderProbe.esp` だった。試験用ESPの名前から得た番号は2で、その番号から得た名前は試験用ESPと一致した。全3件で `GetModName` と `GetModByName` の往復も一致した。[ほかの実機検証項目](SKSE_IOS_PLAN.md)
