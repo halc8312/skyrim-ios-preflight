@@ -7,6 +7,7 @@
 #include "probe_asset_file.h"
 #include "x86_winfile.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -17,6 +18,7 @@
 #include <unistd.h>
 
 enum { FILE_MISSING = 2, PATH_MISSING = 3, DENIED = 5, NO_MEMORY = 8, INCOMPLETE = 13, TOO_LARGE = 223 };
+enum { MAX_CASE_SCAN_ENTRIES = 4096 };
 
 /* Returns the width of a Unicode scalar encoded in UTF-8. */
 static unsigned utf8_width(const unsigned char *s, size_t left) {
@@ -63,6 +65,45 @@ static uint32_t lookup_error(int error, uint32_t missing) {
     }
 }
 
+/* Keep the exact-name path to one stat. A fallback has an independent
+ * directory offset and may only choose an unambiguous ASCII case match. */
+static uint32_t lookup_component(int parent, char name[NAME_MAX + 1], struct stat *info,
+                                 uint32_t missing, unsigned *remaining) {
+    if (fstatat(parent, name, info, AT_SYMLINK_NOFOLLOW) == 0) return 0;
+    if (errno != ENOENT) return lookup_error(errno, missing);
+    int scan = openat(parent, ".", O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK);
+    if (scan < 0) return lookup_error(errno, missing);
+    DIR *entries = fdopendir(scan);
+    if (!entries) {
+        uint32_t result = lookup_error(errno, INCOMPLETE);
+        close(scan);
+        return result;
+    }
+    char match[NAME_MAX + 1] = {0};
+    const size_t name_bytes = strlen(name) + 1;
+    uint32_t result = missing;
+    for (;;) {
+        errno = 0;
+        const struct dirent *entry = readdir(entries);
+        if (!entry) {
+            if (errno) result = lookup_error(errno, INCOMPLETE);
+            break;
+        }
+        if (!*remaining) { result = INCOMPLETE; break; }
+        --*remaining;
+        if (!skse_win_asset_name_equal(name, entry->d_name)) continue;
+        if (*match) { result = DENIED; break; }
+        // A match has the same byte length as the verified component.
+        memcpy(match, entry->d_name, name_bytes);
+        result = 0;
+    }
+    closedir(entries);
+    if (result) return result;
+    if (fstatat(parent, match, info, AT_SYMLINK_NOFOLLOW) < 0) return lookup_error(errno, missing);
+    memcpy(name, match, name_bytes);
+    return 0;
+}
+
 static bool same_object(const struct stat *a, const struct stat *b) {
     return a->st_dev == b->st_dev && a->st_ino == b->st_ino;
 }
@@ -87,7 +128,8 @@ static bool unchanged(const struct stat *a, const struct stat *b) {
 
 /* Pin each directory while opening its next component. Return an owned parent
  * descriptor even if the final file is directly inside the selected root. */
-static uint32_t open_parent(int root, dev_t device, const char *path, int *parent, const char **leaf) {
+static uint32_t open_parent(int root, dev_t device, const char *path, int *parent,
+                            char leaf[NAME_MAX + 1], unsigned *remaining) {
     int fd = fcntl(root, F_DUPFD_CLOEXEC, 0);
     if (fd < 0) return lookup_error(errno, PATH_MISSING);
     uint32_t result = 0;
@@ -97,10 +139,8 @@ static uint32_t open_parent(int root, dev_t device, const char *path, int *paren
         memcpy(part, path, n);
         part[n] = 0;
         struct stat listed, opened;
-        if (fstatat(fd, part, &listed, AT_SYMLINK_NOFOLLOW) < 0) {
-            result = lookup_error(errno, PATH_MISSING);
-            break;
-        }
+        result = lookup_component(fd, part, &listed, PATH_MISSING, remaining);
+        if (result) break;
         if (!S_ISDIR(listed.st_mode) || listed.st_dev != device) {
             result = S_ISREG(listed.st_mode) ? PATH_MISSING : DENIED;
             break;
@@ -120,7 +160,7 @@ static uint32_t open_parent(int root, dev_t device, const char *path, int *paren
     if (result) close(fd);
     else {
         *parent = fd;
-        *leaf = path;
+        memcpy(leaf, path, strlen(path) + 1);
     }
     return result;
 }
@@ -152,27 +192,38 @@ static uint32_t snapshot_file(int fd, const struct stat *before, size_t max_size
     return 0;
 }
 
+static int authorized_directory(void *context, struct stat *directory) {
+    if (!context) return -1;
+    const int root = *(const int *)context;
+    const int flags = fcntl(root, F_GETFL);
+    if (flags < 0 || (flags & O_ACCMODE) != O_RDONLY || fstat(root, directory) < 0 ||
+        !S_ISDIR(directory->st_mode)) return -1;
+    return root;
+}
+
 uint32_t skse_probe_asset_read(void *context, const char *path, size_t max_size,
                                uint8_t **bytes, size_t *length) {
     if (bytes) *bytes = NULL;
     if (length) *length = 0;
-    if (!bytes || !length || !context || !normalized_path(path)) return DENIED;
-    const int root = *(const int *)context;
+    if (!bytes || !length || !normalized_path(path)) return DENIED;
     struct stat directory;
-    const int flags = fcntl(root, F_GETFL);
-    if (flags < 0 || (flags & O_ACCMODE) != O_RDONLY || fstat(root, &directory) < 0 ||
-        !S_ISDIR(directory.st_mode)) return DENIED;
+    int root = authorized_directory(context, &directory);
+    if (root < 0) return DENIED;
 
     int parent = -1, file = -1;
-    const char *leaf = NULL;
+    char leaf[NAME_MAX + 1];
+    unsigned remaining = MAX_CASE_SCAN_ENTRIES;
     uint8_t *candidate = NULL;
     size_t size = 0;
     struct stat listed, opened, named;
-    uint32_t result = open_parent(root, directory.st_dev, path, &parent, &leaf);
+    uint32_t result = open_parent(root, directory.st_dev, path, &parent, leaf, &remaining);
     if (result) return result;
-    if (fstatat(parent, leaf, &listed, AT_SYMLINK_NOFOLLOW) < 0) {
-        result = lookup_error(errno, FILE_MISSING);
-    } else if (!regular_asset(&listed, directory.st_dev)) {
+    result = lookup_component(parent, leaf, &listed, FILE_MISSING, &remaining);
+    if (result) {
+        close(parent);
+        return result;
+    }
+    if (!regular_asset(&listed, directory.st_dev)) {
         result = DENIED;
     } else if ((file = openat(parent, leaf, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)) < 0) {
         result = lookup_error(errno, INCOMPLETE);
@@ -187,8 +238,8 @@ uint32_t skse_probe_asset_read(void *context, const char *path, size_t max_size,
          * ancestor must not allow publishing a file from a detached folder. */
         if (!result) {
             result = INCOMPLETE;
-            if (!open_parent(root, directory.st_dev, path, &parent, &leaf)) {
-                if (fstatat(parent, leaf, &named, AT_SYMLINK_NOFOLLOW) == 0 && unchanged(&opened, &named))
+            if (!open_parent(root, directory.st_dev, path, &parent, leaf, &remaining)) {
+                if (!lookup_component(parent, leaf, &named, FILE_MISSING, &remaining) && unchanged(&opened, &named))
                     result = 0;
                 close(parent);
             }
@@ -199,6 +250,32 @@ uint32_t skse_probe_asset_read(void *context, const char *path, size_t max_size,
     else {
         *bytes = candidate;
         *length = size;
+    }
+    return result;
+}
+
+uint32_t skse_probe_asset_attributes(void *context, const char *path, uint32_t *attributes) {
+    if (!attributes) return DENIED;
+    *attributes = 0;
+    if (!normalized_path(path)) return DENIED;
+    struct stat directory;
+    const int root = authorized_directory(context, &directory);
+    if (root < 0) return DENIED;
+    int parent;
+    char leaf[NAME_MAX + 1];
+    unsigned remaining = MAX_CASE_SCAN_ENTRIES;
+    uint32_t result = open_parent(root, directory.st_dev, path, &parent, leaf, &remaining);
+    if (result) return result;
+    struct stat listed;
+    result = lookup_component(parent, leaf, &listed, FILE_MISSING, &remaining);
+    close(parent);
+    if (result) return result;
+    if (S_ISDIR(listed.st_mode) && listed.st_dev == directory.st_dev) {
+        *attributes = SKSE_WIN_ATTRIBUTE_DIRECTORY;
+    } else if (regular_asset(&listed, directory.st_dev)) {
+        *attributes = SKSE_WIN_ATTRIBUTE_NORMAL;
+    } else {
+        result = DENIED;
     }
     return result;
 }

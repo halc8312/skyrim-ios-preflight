@@ -54,6 +54,13 @@ static NSString *CallResult(BOOL japanese, SkseX86Status status) {
     }
 }
 
+static NSArray<NSString *> *CallFailure(BOOL japanese, NSString *summary, const SkseX86Result *result) {
+    NSString *reason = CallResult(japanese, result->status);
+    const char *function = skse_trial_windows_service_name(result->failed_service);
+    if (function) return @[summary, reason, [NSString stringWithUTF8String:function]];
+    return @[summary, reason];
+}
+
 static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *trial, const SksePeReport *imports) {
     switch (trial->status) {
     case SKSE_TRIAL_COMPLETED: {
@@ -121,21 +128,17 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
                                 @"診断に必要なメモリを確保できませんでした。")];
     case SKSE_TRIAL_TLS_ATTACH_FAULT:
     case SKSE_TRIAL_TLS_DETACH_FAULT:
-        return @[Text(japanese, @"The DLL stopped while handling its thread-local data.",
-                                @"DLLのスレッド専用データを処理する途中で停止しました。"),
-                 CallResult(japanese, trial->tls_fault.status)];
+        return CallFailure(japanese, Text(japanese, @"The DLL stopped while handling its thread-local data.",
+                                                    @"DLLのスレッド専用データを処理する途中で停止しました。"), &trial->tls_fault);
     case SKSE_TRIAL_SERIALIZATION_FAULT:
-        return @[Text(japanese, @"The DLL stopped during the test of its additional save data.",
-                                @"DLLの追加セーブ処理の試験が途中で停止しました。"),
-                 CallResult(japanese, trial->serialization_fault.status)];
+        return CallFailure(japanese, Text(japanese, @"The DLL stopped during the test of its additional save data.",
+                                                    @"DLLの追加セーブ処理の試験が途中で停止しました。"), &trial->serialization_fault);
     case SKSE_TRIAL_WORKER_FAULT:
-        return @[Text(japanese, @"The DLL stopped during a worker thread test.",
-                                @"DLLの補助スレッドの試験が途中で停止しました。"),
-                 CallResult(japanese, trial->worker_fault.status)];
+        return CallFailure(japanese, Text(japanese, @"The DLL stopped during a worker thread test.",
+                                                    @"DLLの補助スレッドの試験が途中で停止しました。"), &trial->worker_fault);
     case SKSE_TRIAL_TASK_FAULT:
-        return @[Text(japanese, @"The DLL stopped during a queued SKSE task.",
-                                @"後から実行するSKSEタスクの処理が途中で停止しました。"),
-                 CallResult(japanese, trial->task_fault.status)];
+        return CallFailure(japanese, Text(japanese, @"The DLL stopped during a queued SKSE task.",
+                                                    @"後から実行するSKSEタスクの処理が途中で停止しました。"), &trial->task_fault);
     default: {
         const SkseX86Result *fault = &trial->query;
         if (trial->status == SKSE_TRIAL_ATTACH_FAULT) fault = &trial->attach;
@@ -144,9 +147,8 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
         if (trial->status == SKSE_TRIAL_MESSAGE_FAULT) fault = &trial->message;
         if (trial->status == SKSE_TRIAL_DEPENDENCY_ATTACH_FAULT) fault = &trial->dependency_attach;
         if (trial->status == SKSE_TRIAL_DEPENDENCY_DETACH_FAULT) fault = &trial->dependency_detach;
-        return @[Text(japanese, @"The DLL encountered an unsupported operation during initialization.",
-                                @"このDLLは初期化中に未対応の処理に入りました。"),
-                 CallResult(japanese, fault->status)];
+        return CallFailure(japanese, Text(japanese, @"The DLL stopped during initialization.",
+                                                    @"このDLLは初期化中に停止しました。"), fault);
     }
     }
 }
@@ -224,14 +226,36 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
     case SKSE_PROBE_DIRECTORY_NO_PLUGINS:
         break;
     }
-    NSString *summary = report->plugin_count
-        ? [NSString stringWithFormat:Text(japanese, @"Found %u SKSE DLLs in this folder.", @"SKSE用DLLを%u個見つけました。"), report->plugin_count]
-        : Text(japanese, @"No Skyrim LE SKSE plugins were found.", @"Skyrim LE用のSKSEプラグインが見つかりませんでした。");
+    NSString *summary;
+    if (report->plugin_count == 0) {
+        summary = Text(japanese, @"No Skyrim LE SKSE plugins were found.", @"Skyrim LE用のSKSEプラグインが見つかりませんでした。");
+    } else if (report->plugin_count == 1) {
+        summary = Text(japanese, @"Found one Skyrim LE SKSE plugin.", @"Skyrim LE用のSKSEプラグインを1個見つけました。");
+    } else {
+        summary = [NSString stringWithFormat:Text(japanese, @"Found %u Skyrim LE SKSE plugins.",
+            @"Skyrim LE用のSKSEプラグインを%u個見つけました。"), report->plugin_count];
+    }
+
+    NSMutableSet<NSString *> *knownHelpers = [NSMutableSet set];
+    for (unsigned i = 0; i < report->file_count; ++i) {
+        const SkseProbeDirectoryFile *file = &report->files[i];
+        const SkseDependencyTrace *dependencies = &file->trial.dependencies;
+        if (!file->trial_ran || dependencies->status != SKSE_DEPENDENCY_READY) continue;
+        for (unsigned helper = 0; helper < dependencies->helper_count; ++helper) {
+            NSString *name = [NSString stringWithUTF8String:dependencies->load_order[helper]];
+            if (name) [knownHelpers addObject:name];
+        }
+    }
+
     NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObject:summary];
     for (unsigned i = 0; i < report->file_count; ++i) {
         const SkseProbeDirectoryFile *file = &report->files[i];
         NSString *name = [NSString stringWithUTF8String:file->relative_path] ?: @"DLL";
-        NSString *result = FolderFileResult(japanese, file);
+        BOOL isKnownHelper = file->status == SKSE_PROBE_DLL_NOT_PLUGIN &&
+            file->export_status == SKSE_PE_MISSING_EXPORTS && [knownHelpers containsObject:name.lastPathComponent];
+        NSString *result = isKnownHelper
+            ? Text(japanese, @"Helper DLL required by a detected SKSE plugin.", @"検出したSKSEプラグインが使う補助DLLです。")
+            : FolderFileResult(japanese, file);
         NSMutableString *detail = [NSMutableString stringWithFormat:@"%@\n%@", name, result];
         const SkseDependencyTrace *dependencies = &file->trial.dependencies;
         if (file->trial_ran && dependencies->status == SKSE_DEPENDENCY_READY && dependencies->helper_count) {

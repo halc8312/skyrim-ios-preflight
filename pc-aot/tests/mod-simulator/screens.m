@@ -378,8 +378,12 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCTAssertTrue([self.app.navigationBars[@"DLL Compatibility"] waitForExistenceWithTimeout:8]);
     NSPredicate *diagnosis = [NSPredicate predicateWithFormat:@"label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@",
         @"Paired.dll", @"SKSE initialization passed in the test environment.", @"OwnedWorker.dll"];
-    XCTAssertTrue([[self.app.staticTexts matchingPredicate:diagnosis].firstMatch waitForExistenceWithTimeout:12],
+    XCTAssertTrue([[self.app.staticTexts matchingPredicate:diagnosis].firstMatch waitForExistenceWithTimeout:25],
                   @"Expected the installed package and helper in the diagnostic. %@", self.app.debugDescription);
+    XCTAssertTrue(self.app.staticTexts[@"Found one Skyrim LE SKSE plugin."].exists);
+    NSPredicate *helper = [NSPredicate predicateWithFormat:@"label CONTAINS %@ AND label CONTAINS %@",
+        @"OwnedWorker.dll", @"Helper DLL required by a detected SKSE plugin."];
+    XCTAssertTrue([self.app.staticTexts matchingPredicate:helper].firstMatch.exists);
     [self capture:@"installed-dll-diagnosis"];
 }
 

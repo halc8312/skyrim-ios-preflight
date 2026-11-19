@@ -94,7 +94,7 @@ typedef struct {
 
 typedef struct {
     SkseX86Status status;
-    uint32_t eax, instructions, work, instruction_va;
+    uint32_t eax, instructions, work, instruction_va, failed_service;
     uint32_t service_calls[SKSE_X86_MAX_SERVICES];
 } SkseX86Result;
 

@@ -673,6 +673,15 @@ static uint32_t win_thread_service(Vm *vm, SkseWinThreadOperation operation) {
         first = little_endian(parameters, 4);
         if (count == 2) second = little_endian(parameters + 4, 4);
         vm->registers[ESP] += 4 * count;
+        if (operation == SKSE_WIN_CRITICAL_INIT_EX) {
+            const uint32_t no_debug_info = UINT32_C(0x01000000);
+            if (little_endian(parameters + 8, 4) & ~no_debug_info) {
+                fail(vm, SKSE_X86_UNSUPPORTED_API);
+                return 0;
+            }
+            // The virtual process keeps lock state without native debug records or spinning.
+            operation = SKSE_WIN_CRITICAL_SPIN_INIT;
+        }
     }
     if (operation < SKSE_WIN_CRITICAL_INIT) return skse_win_thread_call(vm->services.thread, operation, first, second);
     if (!first || (first & 3) || !memory(vm, first, SKSE_WIN_CRITICAL_SECTION_BYTES, SKSE_PE_READ | SKSE_PE_WRITE)) {
@@ -765,9 +774,8 @@ static uint32_t win_module_lookup(Vm *vm, SkseX86ModuleLookup operation) {
         for (size_t i = 0; i < vm->services.system_export_count; ++i) {
             const SksePeImportBinding *export = &vm->services.system_exports[i];
             if (skse_pe_library_name_equal(library, export->library) && !strcmp(name, export->symbol)) {
-                for (size_t j = 0; j < vm->services.count; ++j) {
-                    if (vm->services.entries[j].address == export->service_token) return export->service_token;
-                }
+                size_t slot = service_slot(vm->services.entries, vm->service_index, export->service_token);
+                if (vm->service_index[slot]) return export->service_token;
                 fail(vm, SKSE_X86_BAD_ARGUMENT);
                 break;
             }
@@ -775,6 +783,32 @@ static uint32_t win_module_lookup(Vm *vm, SkseX86ModuleLookup operation) {
     }
     vm->services.thread->last_error = library ? 127 : 126; // ERROR_PROC_NOT_FOUND / ERROR_MOD_NOT_FOUND.
     return 0;
+}
+
+static bool read_asset_path(Vm *vm, uint32_t name, bool wide, char path[SKSE_WIN_PATH_BYTES]) {
+    uint16_t units[SKSE_WIN_PATH_UNITS];
+    size_t length = 0;
+    unsigned width = wide ? 2 : 1;
+    if (!name) {
+        vm->services.thread->last_error = 123;
+        return false;
+    }
+    for (; length < SKSE_WIN_PATH_UNITS; ++length) {
+        size_t offset = length * width;
+        if (name > UINT32_MAX - offset) {
+            fail(vm, SKSE_X86_MEMORY_FAULT);
+            return false;
+        }
+        uint32_t unit = read_memory(vm, name + (uint32_t)offset, width);
+        if (vm->status != SKSE_X86_OK) return false;
+        if (!unit) break;
+        units[length] = (uint16_t)unit;
+    }
+    if (!skse_win_asset_path(units, length, wide, path)) {
+        vm->services.thread->last_error = 123; // ERROR_INVALID_NAME.
+        return false;
+    }
+    return true;
 }
 
 static uint32_t open_asset(Vm *vm, const uint32_t args[], bool wide) {
@@ -785,30 +819,27 @@ static uint32_t open_asset(Vm *vm, const uint32_t args[], bool wide) {
         vm->services.thread->last_error = 5;
         return UINT32_MAX;
     }
-    uint16_t units[SKSE_WIN_PATH_UNITS];
-    size_t length = 0;
-    unsigned width = wide ? 2 : 1;
-    if (!args[0]) {
-        vm->services.thread->last_error = 123;
-        return UINT32_MAX;
-    }
-    for (; length < SKSE_WIN_PATH_UNITS; ++length) {
-        size_t offset = length * width;
-        if (args[0] > UINT32_MAX - offset) {
-            fail(vm, SKSE_X86_MEMORY_FAULT);
+    char path[SKSE_WIN_PATH_BYTES];
+    if (!read_asset_path(vm, args[0], wide, path)) return UINT32_MAX;
+    return skse_win_file_open(vm->services.files, path, (args[2] & 1) != 0, &vm->services.thread->last_error);
+}
+
+static uint32_t win_asset_attributes(Vm *vm, uint32_t name, bool wide) {
+    SkseWinFiles *files = vm->services.files;
+    char path[SKSE_WIN_PATH_BYTES];
+    if (!read_asset_path(vm, name, wide, path)) return UINT32_MAX;
+    uint32_t error = 5, attributes = 0;
+    if (files->source.attributes) {
+        if (files->attribute_requests == 1024) {
+            fail(vm, SKSE_X86_INSTRUCTION_LIMIT);
             return UINT32_MAX;
         }
-        uint32_t unit = read_memory(vm, args[0] + (uint32_t)offset, width);
-        if (vm->status != SKSE_X86_OK) return UINT32_MAX;
-        if (!unit) break;
-        units[length] = (uint16_t)unit;
+        ++files->attribute_requests;
+        error = files->source.attributes(files->source.context, path, &attributes);
     }
-    char path[SKSE_WIN_PATH_BYTES];
-    if (!skse_win_asset_path(units, length, wide, path)) {
-        vm->services.thread->last_error = 123; // ERROR_INVALID_NAME.
-        return UINT32_MAX;
-    }
-    return skse_win_file_open(vm->services.files, path, (args[2] & 1) != 0, &vm->services.thread->last_error);
+    if (!error) return attributes;
+    vm->services.thread->last_error = error;
+    return UINT32_MAX;
 }
 
 static uint32_t win_read_asset(Vm *vm, const uint32_t args[]) {
@@ -843,27 +874,58 @@ static bool write_file_position(Vm *vm, uint32_t address, uint64_t position) {
     return true;
 }
 
-static uint32_t win_seek_asset(Vm *vm, SkseWinFile *file, const uint32_t args[]) {
-    const uint64_t distance = (uint64_t)args[2] << 32 | args[1];
+static bool win_seek_position(Vm *vm, const SkseWinFile *file, uint64_t distance,
+                              uint32_t origin, uint64_t *result) {
     uint64_t position;
-    switch (args[4]) {
+    switch (origin) {
     case 0: position = 0; break; // FILE_BEGIN.
     case 1: position = file->offset; break;
     case 2: position = file->length; break;
-    default: vm->services.thread->last_error = 87; return 0;
+    default: vm->services.thread->last_error = 87; return false;
     }
     if (distance > INT64_MAX ? 0 - distance > position : distance > INT64_MAX - position) {
         vm->services.thread->last_error = 131; // ERROR_NEGATIVE_SEEK.
-        return 0;
+        return false;
     }
-    position += distance;
+    *result = position + distance;
+    return true;
+}
+
+static uint32_t win_seek_asset_ex(Vm *vm, SkseWinFile *file, const uint32_t args[]) {
+    const uint64_t distance = (uint64_t)args[2] << 32 | args[1];
+    uint64_t position;
+    if (!win_seek_position(vm, file, distance, args[4], &position)) return 0;
     if (args[3] && !write_file_position(vm, args[3], position)) return 0;
     file->offset = position;
     return 1;
 }
 
+static uint32_t win_seek_asset(Vm *vm, SkseWinFile *file, const uint32_t args[]) {
+    uint32_t high = args[1] > INT32_MAX ? UINT32_MAX : 0;
+    if (args[2]) {
+        high = read_memory(vm, args[2], 4);
+        if (vm->status != SKSE_X86_OK) return UINT32_MAX;
+    }
+    const uint64_t distance = (uint64_t)high << 32 | args[1];
+    uint64_t position;
+    if (!win_seek_position(vm, file, distance, args[3], &position)) return UINT32_MAX;
+    if (!args[2] && position > UINT32_MAX) {
+        vm->services.thread->last_error = 87; // ERROR_INVALID_PARAMETER.
+        return UINT32_MAX;
+    }
+    if (args[2]) {
+        write_memory(vm, args[2], 4, (uint32_t)(position >> 32));
+        if (vm->status != SKSE_X86_OK) return UINT32_MAX;
+    }
+    file->offset = position;
+    const uint32_t low = (uint32_t)position;
+    // The successful position can have the same low word as the failure sentinel.
+    if (low == UINT32_MAX) vm->services.thread->last_error = 0;
+    return low;
+}
+
 static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
-    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1, 5, 1};
+    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1, 5, 1, 1, 1, 4};
     _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_FILE_OPERATION_COUNT, "file ABI");
     unsigned count = argument_counts[operation];
     const uint8_t *parameters = service_parameters(vm, count * 4);
@@ -874,6 +936,8 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
 
     if (operation == SKSE_WIN_OPEN_FILE_A || operation == SKSE_WIN_OPEN_FILE_W)
         return open_asset(vm, args, operation == SKSE_WIN_OPEN_FILE_W);
+    if (operation == SKSE_WIN_ATTRIBUTES_A || operation == SKSE_WIN_ATTRIBUTES_W)
+        return win_asset_attributes(vm, args[0], operation == SKSE_WIN_ATTRIBUTES_W);
     if (operation == SKSE_WIN_READ_FILE) return win_read_asset(vm, args);
     if (operation == SKSE_WIN_CLOSE_FILE && skse_win_sync_close(vm->services.sync, args[0])) return 1;
     SkseX86Worker *worker = vm->services.worker;
@@ -884,7 +948,7 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
     SkseWinFile *file = skse_win_file_lookup(vm->services.files, args[0]);
     if (!file) {
         vm->services.thread->last_error = 6; // ERROR_INVALID_HANDLE.
-        return operation == SKSE_WIN_FILE_SIZE ? UINT32_MAX : 0;
+        return operation == SKSE_WIN_FILE_SIZE || operation == SKSE_WIN_SEEK_FILE ? UINT32_MAX : 0;
     }
     if (operation == SKSE_WIN_CLOSE_FILE) {
         skse_win_file_close(file);
@@ -894,7 +958,8 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
         if (args[1]) write_memory(vm, args[1], 4, 0);
         return (uint32_t)file->length;
     }
-    if (operation == SKSE_WIN_SEEK_FILE_EX) return win_seek_asset(vm, file, args);
+    if (operation == SKSE_WIN_SEEK_FILE_EX) return win_seek_asset_ex(vm, file, args);
+    if (operation == SKSE_WIN_SEEK_FILE) return win_seek_asset(vm, file, args);
     if (operation == SKSE_WIN_FILE_TYPE) return 1; // FILE_TYPE_DISK.
     return write_file_position(vm, args[1], file->length);
 }
@@ -1008,6 +1073,7 @@ static uint32_t win_wait_objects(Vm *vm, SkseWinSyncOperation operation, const u
             if (worker_result.status == SKSE_X86_OK) return 0;
             fail(vm, worker_result.status);
             if (worker_result.instruction_va) vm->instruction_va = worker_result.instruction_va;
+            vm->result.failed_service = worker_result.failed_service;
             return UINT32_MAX;
         }
     }
@@ -1121,6 +1187,7 @@ static void invoke_service(Vm *vm, unsigned i, bool tail) {
         vm->registers[ESP] = stack;
         if (vm->status == SKSE_X86_OK) return_from_call(vm, cleanup);
     }
+    if (vm->status != SKSE_X86_OK && !vm->result.failed_service) vm->result.failed_service = service->address;
 }
 
 static void branch(Vm *vm, uint32_t address, bool tail) {

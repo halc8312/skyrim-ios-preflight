@@ -85,13 +85,23 @@ static const struct {
     {{"KERNEL32.dll", "GetFileType", 0xe00010dc}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_FILE_TYPE},
     {{"KERNEL32.dll", "CreateThread", 0xe00010e0}, SKSE_X86_WIN_WORKER, SKSE_WIN_WORKER_CREATE},
     {{"KERNEL32.dll", "ResumeThread", 0xe00010e4}, SKSE_X86_WIN_WORKER, SKSE_WIN_WORKER_RESUME},
-    {{"KERNEL32.dll", "GetExitCodeThread", 0xe00010e8}, SKSE_X86_WIN_WORKER, SKSE_WIN_WORKER_EXIT_CODE}
+    {{"KERNEL32.dll", "GetExitCodeThread", 0xe00010e8}, SKSE_X86_WIN_WORKER, SKSE_WIN_WORKER_EXIT_CODE},
+    {{"KERNEL32.dll", "GetFileAttributesA", 0xe00010ec}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_ATTRIBUTES_A},
+    {{"KERNEL32.dll", "GetFileAttributesW", 0xe00010f0}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_ATTRIBUTES_W},
+    {{"KERNEL32.dll", "SetFilePointer", 0xe00010f4}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_SEEK_FILE},
+    {{"KERNEL32.dll", "InitializeCriticalSectionEx", 0xe00010f8}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_INIT_EX}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 _Static_assert(WINDOWS_SERVICE_COUNT + 5 + SKSE_SERIAL_METHOD_COUNT + SKSE_X86_TASK_TYPES <= SKSE_X86_MAX_SERVICES,
                "trial service count");
 _Static_assert(SERIALIZATION_INTERFACE_OFFSET + 52 <= TASK_INTERFACE_OFFSET &&
                TASK_INTERFACE_OFFSET + 12 <= TLS_TABLE_OFFSET, "trial scratch ABI");
+
+const char *skse_trial_windows_service_name(uint32_t token) {
+    for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i)
+        if (windows_services[i].binding.service_token == token) return windows_services[i].binding.symbol;
+    return NULL;
+}
 
 typedef struct {
     SksePeImage *images[SKSE_DEPENDENCY_MAX_MODULES];

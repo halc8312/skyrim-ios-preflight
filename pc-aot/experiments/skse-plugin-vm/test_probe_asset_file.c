@@ -72,6 +72,13 @@ int main(int argc, char **argv) {
     must(rootfd >= 0);
     /* The adapter must not take ownership, write, or move the directory offset. */
     const off_t before = lseek(rootfd, 0, SEEK_CUR);
+    if (!strcmp(mode, "attributes")) {
+        uint32_t attributes = UINT32_MAX;
+        uint32_t status = skse_probe_asset_attributes(&rootfd, argv[2], &attributes);
+        must(lseek(rootfd, 0, SEEK_CUR) == before && close(rootfd) == 0);
+        printf("%u|%u|%u\n", status, attributes, reads);
+        return 0;
+    }
     uint8_t sentinel = 0;
     uint8_t *result = &sentinel;
     size_t length = SIZE_MAX;

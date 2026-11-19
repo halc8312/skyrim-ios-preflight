@@ -232,10 +232,11 @@ static void check_services_need_live_state(void) {
     wait[length++] = 0xff;
     wait[length++] = 0xd0;
     wait[length++] = 0xc3;
-    assert(run(wait, length, 50, services).status == SKSE_X86_UNSUPPORTED_API);
+    SkseX86Result blocked = run(wait, length, 50, services);
+    assert(blocked.status == SKSE_X86_UNSUPPORTED_API && blocked.failed_service == binding.address);
     assert(skse_win_event_signal(&events, token, true));
     SkseX86Result result = run(wait, length, 50, services);
-    assert(result.status == SKSE_X86_OK && result.eax == 0);
+    assert(result.status == SKSE_X86_OK && result.eax == 0 && !result.failed_service);
 
     SkseX86Serialization serial = {.interface_address = scratch_base + 64, .owner_handle = 12};
     const SkseX86Service resolver = {0x00401000, SKSE_SERIAL_RESOLVE_FORM, SKSE_X86_SERIALIZATION};

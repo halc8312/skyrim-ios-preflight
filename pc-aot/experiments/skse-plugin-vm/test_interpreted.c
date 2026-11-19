@@ -28,6 +28,14 @@ static uint32_t read_authored_asset(void *context, const char *path, size_t limi
     return 0;
 }
 
+static uint32_t authored_attributes(void *context, const char *path, uint32_t *out) {
+    (void)context;
+    if (!strcmp(path, "Data/SKSE")) *out = SKSE_WIN_ATTRIBUTE_DIRECTORY;
+    else if (!strcmp(path, "Data/SKSE/Plugins/\xe8\xa8\xad\xe5\xae\x9a.ini")) *out = SKSE_WIN_ATTRIBUTE_NORMAL;
+    else return 2;
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     int clock = argc >= 3 && strcmp(argv[2], "clock") == 0;
     int memory = argc >= 3 && strcmp(argv[2], "memory") == 0;
@@ -60,7 +68,8 @@ int main(int argc, char *argv[]) {
             .guest_base = moved ? UINT32_C(0x60000000) : 0,
             .core_messages = (unsigned)messages, .static_tls = (unsigned)(static_tls || worker),
             .serialization = (unsigned)serialization, .worker_thread = (unsigned)worker,
-            .assets = {.read = file_assets ? read_authored_asset : NULL}
+            .assets = {.read = file_assets ? read_authored_asset : NULL,
+                       .attributes = file_assets ? authored_attributes : NULL}
         };
         SkseTrialResult result = argc >= 3
             ? skse_plugin_trial_with_runtime(bytes, length, trial_cases[i], runtime)

@@ -2,6 +2,8 @@
 #import "mod_dll_probe.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+static const NSUInteger reportAttempts = 500;
+
 @interface SKDllFixtureScene : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic, strong) UIWindow *window;
 @property(nonatomic, strong) UITableViewController<UIDocumentPickerDelegate> *probe;
@@ -20,7 +22,7 @@
             [self checkReport:expected launchNext:next attempts:attempts - 1];
         });
     } else {
-        [NSException raise:NSInternalInconsistencyException format:@"DLL diagnosis did not return"];
+        [NSException raise:NSInternalInconsistencyException format:@"DLL diagnosis timed out waiting for %@", expected];
     }
 }
 - (void)diagnose:(NSString *)name extension:(NSString *)extension {
@@ -54,11 +56,11 @@
             [self checkReport:japanese ? @"診断環境でSKSEの初期化が完了しました。" : @"SKSE initialization passed in the test environment."
                    launchNext:^{
                 [self diagnose:@"ProbePackage" extension:nil];
-                [self checkReport:japanese ? @"SKSE用DLLを7個見つけました。" : @"Found 7 SKSE DLLs in this folder."
+                [self checkReport:japanese ? @"Skyrim LE用のSKSEプラグインを7個見つけました。" : @"Found 7 Skyrim LE SKSE plugins."
                        launchNext:^{
                     UITableView *table = self.probe.tableView;
                     NSInteger rows = [self.probe tableView:table numberOfRowsInSection:1];
-                    BOOL verifiedPair = NO, verifiedAsset = NO;
+                    BOOL verifiedPair = NO, verifiedHelper = NO, verifiedAsset = NO;
                     BOOL verifiedSerialization = NO, verifiedWorker = NO, verifiedTasks = NO;
                     for (NSInteger i = 1; i < rows; ++i) {
                         UITableViewCell *cell = [self.probe tableView:table
@@ -69,6 +71,11 @@
                         if ([text hasPrefix:@"Data/SKSE/Plugins/Paired.dll\n"] &&
                             [text containsString:@"OwnedWorker.dll"] && ready)
                             verifiedPair = YES;
+                        if ([text hasPrefix:@"Data/SKSE/Plugins/OwnedWorker.dll\n"] &&
+                            [text containsString:japanese ? @"検出したSKSEプラグインが使う補助DLLです。" :
+                                                            @"Helper DLL required by a detected SKSE plugin."]) {
+                            verifiedHelper = YES;
+                        }
                         if ([text hasPrefix:@"Data/SKSE/Plugins/AssetProbe.dll\n"] && ready) verifiedAsset = YES;
                         if ([text hasPrefix:@"Data/SKSE/Plugins/Serialization.dll\n"] && ready &&
                             [text containsString:japanese ? @"追加セーブの試験　呼び出し 2 回、記録 1 件" :
@@ -80,11 +87,11 @@
                             verifiedWorker = YES;
                         }
                         if ([text hasPrefix:@"Data/SKSE/Plugins/TaskProbe.dll\n"] && ready &&
-                            [text containsString:japanese ? @"タスクの試験　ゲーム 2 件、UI 1 件" : @"Queued task test · Game 2 · UI 1"]) {
+                            [text containsString:japanese ? @"タスクの試験　ゲーム 3 件、UI 1 件" : @"Queued task test · Game 3 · UI 1"]) {
                             verifiedTasks = YES;
                         }
                     }
-                    if (!verifiedPair || !verifiedAsset || !verifiedSerialization || !verifiedWorker || !verifiedTasks) {
+                    if (!verifiedPair || !verifiedHelper || !verifiedAsset || !verifiedSerialization || !verifiedWorker || !verifiedTasks) {
                         [NSException raise:NSInternalInconsistencyException format:@"Missing companion, asset, serialization, worker or task result"];
                     }
                     NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
@@ -92,9 +99,9 @@
                     NSError *error = nil;
                     if (![@"refused,passed,folder\n" writeToURL:evidence atomically:YES encoding:NSUTF8StringEncoding error:&error])
                         [NSException raise:NSInternalInconsistencyException format:@"Could not write fixture result: %@", error];
-                } attempts:200];
-            } attempts:200];
-        } attempts:200];
+                } attempts:reportAttempts];
+            } attempts:reportAttempts];
+        } attempts:reportAttempts];
     });
 }
 @end

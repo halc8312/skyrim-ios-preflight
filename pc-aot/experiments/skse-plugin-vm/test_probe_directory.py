@@ -49,12 +49,12 @@ def add_second_import(data, name):
 def file_asset_fixture():
     data = supported_fixture()
     add_named_clock(data)
-    directory(data, 12, 0x3060, 16)
+    directory(data, 12, 0x3060, 20)
     for table in (0x60, 0x80):
-        put(data, DATA + table, "4I", 0x30a0, 0x30c0, 0x30e0, 0)
-    for offset, name in ((0xa0, b"CreateFileA"), (0xc0, b"ReadFile"), (0xe0, b"CloseHandle")):
+        put(data, DATA + table, "5I", 0x30a0, 0x30c0, 0x30e0, 0x3100, 0)
+    for offset, name in ((0xa0, b"CreateFileA"), (0xc0, b"ReadFile"), (0xe0, b"CloseHandle"), (0x100, b"SetFilePointer")):
         zero_string(data, DATA + offset + 2, name)
-    zero_string(data, RD + 0x120, b"Data/SKSE/Plugins/Settings.ini")
+    zero_string(data, RD + 0x120, b"data/Skse/Plugins/settings.INI")
     put(data, SECTIONS + 8, "I", 0x180)
     put(data, RD + 0x60, "I", 0x1080)
     code = bytearray(b"\x53")  # Preserve EBX across the Classic cdecl call.
@@ -76,13 +76,19 @@ def file_asset_fixture():
     code.extend(b"\x83\xf8\xff")  # Reject INVALID_HANDLE_VALUE.
     jump_to_failure(0x74)
     code.extend(b"\x89\xc3")  # EBX holds the descriptor.
+    for value in (0, 0, 1):  # FILE_BEGIN, no high word, one byte forward.
+        push(value)
+    code.append(0x53)
+    call(3)
+    code.extend(b"\x83\xf8\x01")
+    jump_to_failure(0x75)
     for value in (0, BASE + 0x3140, 1, BASE + 0x3144):
         push(value)
     code.append(0x53)
     call(1)
     code.extend(b"\x85\xc0")
     jump_to_failure(0x74)
-    code.extend(b"\x80\x3d" + struct.pack("<I", BASE + 0x3144) + b"A")
+    code.extend(b"\x80\x3d" + struct.pack("<I", BASE + 0x3144) + b"u")
     jump_to_failure(0x75)
     code.append(0x53)
     call(2)

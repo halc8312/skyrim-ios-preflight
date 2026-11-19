@@ -237,6 +237,7 @@ __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
 typedef struct { unsigned words[6]; } FixtureCriticalSection;
 __declspec(dllimport) void __stdcall InitializeCriticalSection(FixtureCriticalSection *);
 __declspec(dllimport) int __stdcall InitializeCriticalSectionAndSpinCount(FixtureCriticalSection *, unsigned long);
+__declspec(dllimport) int __stdcall InitializeCriticalSectionEx(FixtureCriticalSection *, unsigned long, unsigned long);
 __declspec(dllimport) void __stdcall EnterCriticalSection(FixtureCriticalSection *);
 __declspec(dllimport) int __stdcall TryEnterCriticalSection(FixtureCriticalSection *);
 __declspec(dllimport) void __stdcall LeaveCriticalSection(FixtureCriticalSection *);
@@ -253,6 +254,15 @@ static _Bool setup_thread_values(void) {
     if (!TlsSetValue(index, (void *)0x12345678u) || GetLastError() != 0x5678) return 0;
     original_thread = GetCurrentThreadId();
     if (!original_thread || !InitializeCriticalSectionAndSpinCount(&section, 42)) return 0;
+    FixtureCriticalSection extended;
+    if (!InitializeCriticalSectionEx(&extended, 42, 0x01000000u)) return 0;
+    EnterCriticalSection(&extended);
+    if (!TryEnterCriticalSection(&extended)) return 0;
+    LeaveCriticalSection(&extended);
+    LeaveCriticalSection(&extended);
+    DeleteCriticalSection(&extended);
+    if (!InitializeCriticalSectionEx(&extended, 0, 0)) return 0;
+    DeleteCriticalSection(&extended);
     EnterCriticalSection(&section);
     return TryEnterCriticalSection(&section) != 0;
 }
@@ -366,13 +376,43 @@ __declspec(dllimport) int __stdcall ReadFile(void *, void *, uint32_t, uint32_t 
 __declspec(dllimport) uint32_t __stdcall GetFileSize(void *, uint32_t *);
 __declspec(dllimport) int __stdcall GetFileSizeEx(void *, int64_t *);
 __declspec(dllimport) uint32_t __stdcall GetFileType(void *);
+__declspec(dllimport) uint32_t __stdcall GetFileAttributesA(const char *);
+__declspec(dllimport) uint32_t __stdcall GetFileAttributesW(const wchar_t *);
 __declspec(dllimport) int __stdcall SetFilePointerEx(void *, int64_t, int64_t *, uint32_t);
+__declspec(dllimport) uint32_t __stdcall SetFilePointer(void *, int32_t, int32_t *, uint32_t);
 __declspec(dllimport) int __stdcall CloseHandle(void *);
 __declspec(dllimport) unsigned long __stdcall GetLastError(void);
+__declspec(dllimport) void __stdcall SetLastError(unsigned long);
+
+static _Bool check_legacy_seek(void *file) {
+    int64_t position = -1;
+    int32_t high = 0;
+    SetLastError(777);
+    if (SetFilePointer(file, 5, NULL, 0) != 5 || GetLastError() != 777 ||
+        SetFilePointer(file, -1, NULL, 1) != 4 ||
+        SetFilePointer(file, -8, NULL, 2) != UINT32_MAX || GetLastError() != 131 ||
+        SetFilePointer(file, 0, NULL, 1) != 4) return 0;
+    SetLastError(777);
+    if (SetFilePointer(file, -1, &high, 0) != UINT32_MAX || GetLastError() != 0 || high ||
+        SetFilePointer(file, 1, NULL, 1) != UINT32_MAX || GetLastError() != 87 ||
+        !SetFilePointerEx(file, 0, &position, 1) || position != 0xffffffffLL) return 0;
+    high = 1;
+    if (SetFilePointer(file, 3, &high, 0) != 3 || high != 1 ||
+        SetFilePointer(file, -4, &high, 9) != UINT32_MAX || GetLastError() != 87 || high != 1 ||
+        !SetFilePointerEx(file, 0, &position, 1) || position != 0x100000003LL) return 0;
+    high = -1;
+    return SetFilePointer(file, -4, &high, 1) == UINT32_MAX && GetLastError() == 0 && !high &&
+           SetFilePointer(file, 0, NULL, 0) == 0;
+}
 
 static _Bool check_file_assets(void) {
     const uint32_t read_access = 0x80000000u;
     void *const invalid = (void *)(uintptr_t)UINT32_MAX;
+    uint32_t attributes = GetFileAttributesA("Data\\SKSE");
+    if (attributes == UINT32_MAX || !(attributes & 0x10)) return 0;
+    attributes = GetFileAttributesW(L"Data/SKSE/Plugins/\u8a2d\u5b9a.ini");
+    if (attributes == UINT32_MAX || (attributes & 0x10) ||
+        GetFileAttributesW(L"OwnedAbsent.ini") != UINT32_MAX || GetLastError() != 2) return 0;
     void *file = CreateFileA("Data\\SKSE\\Plugins\\Settings.ini", read_access, 0, NULL, 3, 0x80, NULL);
     if (file == invalid) return 0;
     void *second = CreateFileW(L"Data/SKSE/Plugins/Settings.ini", read_access, 1, NULL, 3, 0x80, NULL);
@@ -381,6 +421,7 @@ static _Bool check_file_assets(void) {
     int64_t size = -1;
     if (GetFileType(file) != 1 || GetFileType(invalid) || GetLastError() != 6 ||
         GetFileSize(file, &high) != 7 || high || !GetFileSizeEx(file, &size) || size != 7) return 0;
+    if (SetFilePointer(invalid, 0, NULL, 0) != UINT32_MAX || GetLastError() != 6 || !check_legacy_seek(file)) return 0;
     unsigned char bytes[8];
     uint32_t transferred = 19;
     if (!ReadFile(file, bytes, 2, &transferred, NULL) || transferred != 2 || bytes[0] != 'A' || bytes[1] != 'B') return 0;
