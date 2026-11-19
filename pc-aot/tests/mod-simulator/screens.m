@@ -455,8 +455,8 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [[self findRow:@"Default"] tap];
     [self.app.navigationBars[@"Profiles"].buttons[@"Add"] tap];
     [self fillName:@"Trial" replacing:@"MOD" inAlert:@"New profile"];
-    XCUIElement *trial = [self findRow:@"Trial"];
-    [trial swipeLeft];
+    XCUIElement *profile = [self findRow:@"Trial"];
+    [profile swipeLeft];
     if (![self.app.alerts[@"Rename"] waitForExistenceWithTimeout:1.5]) {
         XCUIElement *rename = self.app.buttons[@"Rename"];
         XCTAssertTrue([rename waitForExistenceWithTimeout:6]);
