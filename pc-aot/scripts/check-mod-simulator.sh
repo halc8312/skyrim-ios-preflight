@@ -2,13 +2,14 @@
 # The simulator and this bundle contain only authored public fixtures.
 set -euo pipefail
 if [[ "$(uname -s)" != Darwin || $# -lt 3 || $# -gt 4 ]]; then
-    echo "Usage on a Mac with an iOS 18+ simulator: $0 OUTPUT SDL_PREFIX SIMULATOR_ARCHIVE_PREFIX [screens|nexus-live]" >&2
+    echo "Usage on a Mac with an iOS 18+ simulator: $0 OUTPUT SDL_PREFIX SIMULATOR_ARCHIVE_PREFIX [screens|nexus-live|dll-probe]" >&2
     exit 2
 fi
 mode="${4:-screens}"
 case "$mode" in
     screens) method=testActualSettingsModScreens ;;
     nexus-live) method=testLiveNexusListing ;;
+    dll-probe) method=testInstalledModDllDiagnostics; export SKYRIM_IOS_SKSE_DLL_PROBE=1 ;;
     *) echo "Unknown simulator test mode: $mode" >&2; exit 2 ;;
 esac
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -74,6 +75,8 @@ required = {"settings","mod-hub-japanese","empty-hub","save-check","zip-imported
 live = sys.argv[4] == "nexus-live"
 if live:
     required = {"nexus-live-listing"}
+elif sys.argv[4] == "dll-probe":
+    required = {"installed-dll-diagnosis"}
 captured = set()
 # Retain the last visible screen when a system picker or a table action fails.
 labels = required | {"failure-screen", "row-unavailable"}
@@ -122,6 +125,11 @@ if [[ "$mode" == nexus-live ]]; then
     exit 0
 fi
 container="$(xcrun simctl get_app_container "$UDID" org.skyrimios.tests.modscreens data)"
+if [[ "$mode" == dll-probe ]]; then
+    python3 "$PREP" verify-dll "$container" "$RUN/work/Fixtures" "$EVIDENCE/summary.json"
+    echo "MOD_SIMULATOR: the shipping MOD details opened the isolated DLL diagnostic."
+    exit 0
+fi
 python3 "$PREP" verify "$container" "$RUN/work/Fixtures" "$EVIDENCE/summary.json"
 python3 - "$container/Documents/mod-menu-requests.txt" <<'PY'
 from pathlib import Path

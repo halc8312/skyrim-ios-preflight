@@ -48,6 +48,7 @@ static NSString *CallResult(BOOL japanese, SkseX86Status status) {
     case SKSE_X86_INSTRUCTION_LIMIT: return @"1回の診断で実行できる処理量の上限に達しました。";
     case SKSE_X86_BAD_CALL_RETURN: return @"DLLの呼び出しから正常に復帰できませんでした。";
     case SKSE_X86_UNSUPPORTED_API: return @"診断で提供していないWindowsまたはSKSE関数が呼ばれました。";
+    case SKSE_X86_DIVIDE_FAULT: return @"DLLの除算で0除算または結果のあふれが発生しました。";
     default: return @"DLLの処理を実行できませんでした。";
     }
 }

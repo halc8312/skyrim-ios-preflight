@@ -150,6 +150,82 @@ static _Bool setup_allocation(void) {
 }
 #endif
 
+#if FIXTURE_VARIANT == 12
+static __declspec(align(16)) const unsigned char vector_input[16] = {
+    0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0, 0x1a, 0x2b
+};
+static __declspec(align(16)) unsigned char vector_output[96];
+
+static void setup_vectors(void) {
+    const unsigned char *src = vector_input;
+    unsigned char *dst = vector_output;
+    __asm {
+        mov esi, src
+        mov edi, dst
+        movdqa xmm0, xmmword ptr [esi]
+        movdqu xmmword ptr [edi + 1], xmm0
+        movups xmm1, xmmword ptr [edi + 1]
+        pxor xmm1, xmm0
+        movaps xmmword ptr [edi + 32], xmm1
+        mov eax, 12345678h
+        movd xmm2, eax
+        movss xmm1, dword ptr [edi + 1]
+        movss xmm1, xmm2
+        movss dword ptr [edi + 50], xmm1
+        movq qword ptr [edi + 64], xmm2
+        movq xmm3, qword ptr [edi + 1]
+        movq qword ptr [edi + 72], xmm3
+        xorps xmm4, xmm4
+        orps xmm4, xmm0
+        andps xmm4, xmm0
+        movd eax, xmm4
+        mov dword ptr [edi + 88], eax
+    }
+}
+#endif
+
+#if FIXTURE_VARIANT == 13
+static uint32_t arithmetic_output[9];
+
+static void setup_arithmetic(void) {
+    uint32_t *out = arithmetic_output;
+    __asm {
+        mov edi, out
+        mov eax, -1000000001
+        cdq
+        mov ecx, 75
+        idiv ecx
+        mov dword ptr [edi], eax
+        mov dword ptr [edi + 4], edx
+        mov eax, 0f1234567h
+        xor edx, edx
+        mov ecx, 10000h
+        div ecx
+        mov dword ptr [edi + 8], eax
+        mov dword ptr [edi + 12], edx
+        mov eax, 12345678h
+        mov ecx, 16
+        mul ecx
+        mov dword ptr [edi + 16], eax
+        mov dword ptr [edi + 20], edx
+        mov ax, 0fff1h
+        mov cl, 3
+        idiv cl
+        mov dword ptr [edi + 24], eax
+        mov eax, 0fedcba98h
+        sar eax, 4
+        mov dword ptr [edi + 28], eax
+        mov eax, 558811bbh
+        shl eax, 1
+        mov cl, 2
+        shr eax, cl
+        neg eax
+        not eax
+        mov dword ptr [edi + 32], eax
+    }
+}
+#endif
+
 _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (!api || !info) return 0;
     info->info_version = 1;
@@ -174,6 +250,12 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
 #endif
 #if FIXTURE_VARIANT == 10 || FIXTURE_VARIANT == 11
     if (supported && !setup_allocation()) return 0;
+#endif
+#if FIXTURE_VARIANT == 12
+    setup_vectors();
+#endif
+#if FIXTURE_VARIANT == 13
+    setup_arithmetic();
 #endif
     return supported;
 }
@@ -222,6 +304,19 @@ _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
     if (!HeapFree(GetProcessHeap(), 0, session_buffer)) return 0;
 #endif
     session_buffer = NULL;
+#endif
+#if FIXTURE_VARIANT == 12
+    if (vector_output[1] != 0x11 || vector_output[16] != 0x2b || vector_output[32] || vector_output[47] ||
+        vector_output[50] != 0x78 || vector_output[53] != 0x12 || vector_output[54] ||
+        vector_output[64] != 0x78 || vector_output[67] != 0x12 || vector_output[68] ||
+        vector_output[72] != 0x11 || vector_output[79] != 0x88 ||
+        vector_output[88] != 0x11 || vector_output[91] != 0x44) return 0;
+#endif
+#if FIXTURE_VARIANT == 13
+    if (arithmetic_output[0] != (uint32_t)-13333333 || arithmetic_output[1] != (uint32_t)-26 ||
+        arithmetic_output[2] != 0xf123 || arithmetic_output[3] != 0x4567 || arithmetic_output[4] != 0x23456780 ||
+        arithmetic_output[5] != 1 || (arithmetic_output[6] & 0xffff) != 0x00fb ||
+        arithmetic_output[7] != 0xffedcba9 || arithmetic_output[8] != (0x558811bbu >> 1) - 1) return 0;
 #endif
     return 1;
 }

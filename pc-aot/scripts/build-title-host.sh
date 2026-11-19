@@ -6,9 +6,14 @@ umask 077
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 CLASSIC_SKSE="${SKYRIM_IOS_CLASSIC_SKSE-0}"
+DLL_PROBE="${SKYRIM_IOS_SKSE_DLL_PROBE-0}"
 case "$CLASSIC_SKSE" in
   0|1) ;;
   *) echo 'SKYRIM_IOS_CLASSIC_SKSE must be 0 or 1' >&2; exit 2 ;;
+esac
+case "$DLL_PROBE" in
+  0|1) ;;
+  *) echo 'SKYRIM_IOS_SKSE_DLL_PROBE must be 0 or 1' >&2; exit 2 ;;
 esac
 python3 scripts/check-public-tree.py
 mkdir -p local/title-host
@@ -180,6 +185,7 @@ cmake -S ios/runtime-port -B "$RUN/build" -G 'Unix Makefiles' \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=18.0 -DCMAKE_BUILD_TYPE=Release \
   -DSKYRIM_IOS_BUILD_APP=ON -DSKYRIM_IOS_BUNDLE_IDENTIFIER=org.skyrimios.pc2011 \
   "-DSKYRIM_IOS_CLASSIC_SKSE=$CLASSIC_SKSE" \
+  "-DSKYRIM_IOS_SKSE_DLL_PROBE=$DLL_PROBE" \
   "-DSKYDREAM_SOURCE_DIR=$RUN/source" \
   "-DSKYRIM_IOS_RUNTIME_OVERLAY_DIR=$RUN/overlay/runtime" \
   "-DSKYRIM_IOS_BINDING_SOURCES=$ROOT/ios/private-abi/pc_guest_host.c" \
@@ -202,7 +208,7 @@ MOD_SIMULATOR_STATUS=0
 mod_simulator_run="$RUN/mod-simulator"
 check_mod_simulator() {
   env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT bash scripts/check-mod-simulator.sh \
-    "$1" "$MOD_DEPS_ROOT/prefix" "$MOD_DEPS_ROOT/mod-archive/iphonesimulator/prefix"
+    "$1" "$MOD_DEPS_ROOT/prefix" "$MOD_DEPS_ROOT/mod-archive/iphonesimulator/prefix" "${2:-screens}"
 }
 if bash ios/dependencies/build-mod-archive-dependencies.sh iphonesimulator; then
   check_mod_simulator "$mod_simulator_run" || MOD_SIMULATOR_STATUS=$?
@@ -228,6 +234,15 @@ if (( MOD_SIMULATOR_STATUS != 0 )); then
   echo "Required MOD simulator checks failed; no host package will be published." >&2
   exit "$MOD_SIMULATOR_STATUS"
 fi
+if [[ "$DLL_PROBE" == 1 ]]; then
+  dll_run="$RUN/mod-dll-simulator"
+  dll_status=0
+  check_mod_simulator "$dll_run" dll-probe || dll_status=$?
+  if [[ -d "$dll_run/evidence" ]]; then
+    ditto -c -k --keepParent "$dll_run/evidence" "$RUN/artifacts/mod-simulator-dll-checks.zip"
+  fi
+  (( dll_status == 0 )) || exit "$dll_status"
+fi
 if (( METAL_CHECK_STATUS != 0 )); then
   echo 'Required Metal checks failed; no host package or success result will be published.' >&2
   exit "$METAL_CHECK_STATUS"
@@ -235,6 +250,11 @@ fi
 APP="$RUN/build/SkyrimIOS.app"
 test -s "$APP/SkyrimIOS"
 xcrun nm "$APP/SkyrimIOS" > "$RUN/app-symbols.txt"
+if [[ "$DLL_PROBE" == 1 ]]; then
+  grep -Eq ' [Tt] _skyrim_mod_dll_probe_controller$' "$RUN/app-symbols.txt"
+elif grep -Eq ' [Tt] _skyrim_mod_dll_probe_controller$' "$RUN/app-symbols.txt"; then
+  echo 'The DLL diagnostic was linked without being selected.' >&2; exit 1
+fi
 if [[ "$CLASSIC_SKSE" == 1 ]]; then
   for symbol in _pc_guest_bind_classic_skse _pc_guest_select_classic_skse _skse_register_natives _skse_system_run; do
     grep -Eq " [Tt] ${symbol}$" "$RUN/app-symbols.txt" || { echo "Missing Classic runtime symbol $symbol" >&2; exit 1; }
@@ -259,7 +279,7 @@ if [[ "$CLASSIC_SKSE" == 1 ]]; then
   cp ios/private-abi/PcGuestSkseABI.h "$RUN/artifacts/"
 fi
 ditto -c -k --keepParent "$APP" "$RUN/artifacts/SkyrimIOS-public-host.zip"
-python3 - "$RUN/artifacts" "$APP/Info.plist" "$CLASSIC_SKSE" <<'PY'
+python3 - "$RUN/artifacts" "$APP/Info.plist" "$CLASSIC_SKSE" "$DLL_PROBE" <<'PY'
 from pathlib import Path
 import hashlib, json, os, plistlib, sys
 out=Path(sys.argv[1]); app=out/'SkyrimIOS-public-host.zip'
@@ -274,7 +294,7 @@ result = {
  'schema':1,'source_commit':os.environ.get('GITHUB_SHA') or os.environ.get('CM_COMMIT'),
  'artifact_sha256':hashlib.sha256(app.read_bytes()).hexdigest(),
  'target':'arm64-apple-ios','public_host_sdk_build':True,
- 'private_guest_included':False,'game_executed':False,
+ 'private_guest_included':False,'game_executed':False,'dll_diagnostic':sys.argv[4] == '1',
  'physical_iphone_verified':False,'signed_for_installation':False
 }
 if classic:

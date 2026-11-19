@@ -147,6 +147,25 @@ int main(void) {
     uint8_t leaves_direction_flag[] = {0xfd, 0xc3};
     assert(ARRAY_RUN(leaves_direction_flag).status == SKSE_X86_BAD_CALL_RETURN);
 
+    // Aligned SSE encodings require alignment even inside allowed scratch.
+    uint8_t unaligned_movaps[] = {0x0f, 0x28, 0x05, 1, 0, 0x20, 0, 0xc3};
+    assert(ARRAY_RUN(unaligned_movaps).status == SKSE_X86_MEMORY_FAULT);
+    uint8_t unaligned_movups[] = {0x0f, 0x10, 0x05, 1, 0, 0x20, 0, 0xc3};
+    assert(ARRAY_RUN(unaligned_movups).status == SKSE_X86_OK);
+    uint8_t truncated_movups[] = {0x0f, 0x10, 0x05, 0xf8, 0xf, 0x20, 0, 0xc3};
+    assert(ARRAY_RUN(truncated_movups).status == SKSE_X86_MEMORY_FAULT);
+    uint8_t vector_to_code[] = {0xf3, 0x0f, 0x7f, 0x05, 0, 0, 0x10, 0, 0xc3};
+    assert(ARRAY_RUN(vector_to_code).status == SKSE_X86_MEMORY_FAULT && vector_to_code[0] == 0xf3);
+
+    uint8_t divide_by_zero[] = {0x31, 0xc9, 0xf7, 0xf1, 0xc3};
+    assert(ARRAY_RUN(divide_by_zero).status == SKSE_X86_DIVIDE_FAULT);
+    // EDX:EAX = INT64_MIN / -1 would overflow even native int64 division.
+    uint8_t divide_overflow[] = {0xba, 0, 0, 0, 0x80, 0x31, 0xc0, 0x83, 0xc9, 0xff, 0xf7, 0xf9, 0xc3};
+    assert(ARRAY_RUN(divide_overflow).status == SKSE_X86_DIVIDE_FAULT);
+    uint8_t byte_divide[] = {0x66, 0xb8, 0xf1, 0xff, 0xb1, 3, 0xf6, 0xf9, 0xc3};
+    result = ARRAY_RUN(byte_divide);
+    assert(result.status == SKSE_X86_OK && result.eax == 0xfb);
+
     uint8_t clobbers_ebx[] = {0x31, 0xdb, 0xc3};
     assert(ARRAY_RUN(clobbers_ebx).status == SKSE_X86_BAD_CALL_RETURN);
 
@@ -169,9 +188,22 @@ int main(void) {
     uint8_t calls_service[] = {0xb8, 0, 0, 0x30, 0, 0xff, 0xd0, 0xc3};
     result = run(calls_service, sizeof calls_service, 100, services);
     assert(result.status == SKSE_X86_OK && result.eax == 0x1234 && result.service_calls[0] == 1);
-    calls_service[6] = 0xe0; // JMP cannot invoke a service token.
+    calls_service[6] = 0xe0; // The import thunk returns through the original caller.
     result = run(calls_service, sizeof calls_service, 100, services);
-    assert(result.status == SKSE_X86_MEMORY_FAULT && result.service_calls[0] == 0);
+    assert(result.status == SKSE_X86_OK && result.eax == 0x1234 && result.service_calls[0] == 1);
+
+    const SkseX86Service win_service = {0x00300000, 0, SKSE_X86_HEAP_ALLOC};
+    SkseX86Heap win_heap = {.base = 0x00400000};
+    SksePeImage thunk_image = {
+        .base = image_base, .size = sizeof calls_service, .bytes = calls_service, .section_count = 1,
+        .sections = {{0, sizeof calls_service, SKSE_PE_READ | SKSE_PE_EXEC}}
+    };
+    const uint32_t heap_args[] = {SKSE_X86_PROCESS_HEAP, 8, 32};
+    SkseX86Services win_services = {.entries = &win_service, .count = 1, .heap = &win_heap};
+    result = skse_x86_call(&thunk_image, image_base, (SkseX86Scratch){scratch_base, scratch, sizeof scratch},
+                           heap_args, 3, 65535, win_services, SKSE_X86_STDCALL);
+    assert(result.status == SKSE_X86_OK && result.eax == win_heap.base && result.service_calls[0] == 1);
+    skse_x86_heap_close(&win_heap);
 
     const SkseX86Service aliases_code = {image_base, 0x1234, SKSE_X86_SCALAR_RETURN};
     assert(run(calls_service, sizeof calls_service, 100, (SkseX86Services){.entries = &aliases_code, .count = 1}).status ==

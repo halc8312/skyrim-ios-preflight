@@ -9,6 +9,7 @@ import plistlib
 import re
 import struct
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -21,6 +22,7 @@ APP_ID = "org.skyrimios.tests.modscreens"
 APP = "ModScreensHost"
 TEST = "ModScreensUITests"
 SCHEME = "ModScreens"
+DLL_PROBE = ROOT / "experiments/skse-plugin-vm"
 
 
 def fixtures(directory):
@@ -40,6 +42,12 @@ def fixtures(directory):
         archive.writestr("fomod/ModuleConfig.xml", xml)
         archive.writestr("samples/red.txt", b"red\n")
         archive.writestr("samples/blue.txt", b"blue\n")
+    if os.environ.get("SKYRIM_IOS_SKSE_DLL_PROBE") == "1":
+        sys.path.insert(0, str(DLL_PROBE))
+        from test_probe_directory import helper, primary
+        with ZipFile(inputs / "AuthoredDLL.zip", "w", ZIP_DEFLATED) as archive:
+            archive.writestr("Data/SKSE/Plugins/Paired.dll", primary())
+            archive.writestr("Data/SKSE/Plugins/OwnedWorker.dll", helper())
 
     original = directory / "Original/Data/interface/screens/owned.txt"
     original.parent.mkdir(parents=True)
@@ -147,7 +155,12 @@ def project(work, sdl_prefix, archive_prefix):
         "mod_browser.m", "mod_plugins.c", "mod_archive.c", "mod_deploy.c",
         "mod_analyze.c", "mod_optimize.c", "mod_libarchive.c", "mod_translate.swift",
     ]
-    app_source_phase = source_phase(APP, [HERE/"host.m", HERE/"guest_boundary.m", *(PORT/p for p in app_sources)])
+    dll_enabled = os.environ.get("SKYRIM_IOS_SKSE_DLL_PROBE") == "1"
+    dll_sources = [DLL_PROBE / p for p in [
+        "pe_image.c", "x86_call.c", "x86_heap.c", "plugin_trial.c",
+        "probe_local_file.c", "probe_directory.c", "mod_dll_probe.m"
+    ]] if dll_enabled else []
+    app_source_phase = source_phase(APP, [HERE/"host.m", HERE/"guest_boundary.m", *(PORT/p for p in app_sources), *dll_sources])
     test_source_phase = source_phase(TEST, [HERE/"screens.m"])
     if not (sdl_prefix / "include/SDL2/SDL.h").is_file():
         raise SystemExit("Simulator host requires real public SDL headers from the prepared dependency prefix")
@@ -172,17 +185,19 @@ def project(work, sdl_prefix, archive_prefix):
         "GCC_C_LANGUAGE_STANDARD":"gnu11", "ONLY_ACTIVE_ARCH":"YES", "CODE_SIGN_STYLE":"Automatic"})
     frameworks = ["Foundation","UIKit","QuartzCore","UniformTypeIdentifiers","WebKit","SwiftUI","Translation"]
     classic_defines = ["SKYRIM_IOS_CLASSIC_SKSE=1"] if os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1" else []
+    dll_defines = ["SKYRIM_IOS_SKSE_DLL_PROBE=1"] if dll_enabled else []
     app_configs = configs(APP, {
         "PRODUCT_NAME":APP, "PRODUCT_BUNDLE_IDENTIFIER":APP_ID, "INFOPLIST_FILE":str(work/"HostInfo.plist"),
         "SWIFT_VERSION":"6.0", "SWIFT_STRICT_CONCURRENCY":"complete",
-        "HEADER_SEARCH_PATHS":[str(PORT),str(ROOT/"ios/private-abi"),str(sdl_prefix/"include"),str(archive_prefix/"include")],
+        "HEADER_SEARCH_PATHS":[str(PORT),str(ROOT/"ios/private-abi"),str(sdl_prefix/"include"),str(archive_prefix/"include"),
+                               *([str(DLL_PROBE)] if dll_enabled else [])],
         "SYSTEM_HEADER_SEARCH_PATHS":[str(ROOT/"vendor/bcdec"),str(ROOT/"vendor/stb")],
-        "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", "SKYRIM_HAVE_LIBARCHIVE=1", *classic_defines],
+        "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", "SKYRIM_HAVE_LIBARCHIVE=1", *classic_defines, *dll_defines],
         "OTHER_LDFLAGS":["$(inherited)",*map(str,static_libs),"-lz","-liconv",
                          *[arg for name in frameworks for arg in ("-framework", name)]]})
     test_configs = configs(TEST, {
         "PRODUCT_NAME":TEST, "PRODUCT_BUNDLE_IDENTIFIER":APP_ID+".uitests", "GENERATE_INFOPLIST_FILE":"YES",
-        "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", *classic_defines],
+        "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", *classic_defines, *dll_defines],
         "TEST_TARGET_NAME":APP, "ENABLE_TESTING_SEARCH_PATHS":"YES", "OTHER_LDFLAGS":["$(inherited)","-framework","XCTest"],
         "LD_RUNPATH_SEARCH_PATHS":["$(inherited)","@executable_path/Frameworks","@loader_path/Frameworks"]})
     def target(name, config, phases, dependencies, product, kind):
@@ -227,7 +242,7 @@ def choose_device():
     raise SystemExit("Simulator check requires an installed, available iOS 18+ iPhone runtime")
 
 
-def verify(container, assets, summary):
+def verify_original(container, assets, summary):
     result = json.loads(summary.read_text())
     if result.get("result") != "Passed" or result.get("passedTests",0) < 1 or result.get("failedTests",1) != 0:
         raise ValueError("The real UI test did not run to a passing conclusion")
@@ -237,6 +252,11 @@ def verify(container, assets, summary):
     assert contents(container/"Documents/Skyrim") == contents(assets/"Original")
     assert (base/"Profile/Documents/Skyrim/plugins.txt").read_bytes() == (assets/"initial-plugins.txt").read_bytes()
     assert (base/"Profile/Documents/My Games/Skyrim/Saves/Authored Save.ess").read_bytes() == (assets/"Authored Save.ess").read_bytes()
+    return base
+
+
+def verify(container, assets, summary):
+    base = verify_original(container, assets, summary)
     state = json.loads((base/"mods-state.json").read_text())
     profiles = {p["name"]:p for p in state["profiles"]}
     active = profiles["Trial Two"]
@@ -251,6 +271,20 @@ def verify(container, assets, summary):
     print("Real simulator UI result, original game/profile, conflict winner, FOMOD choice and reimported export verified.")
 
 
+def verify_dll(container, assets, summary):
+    base = verify_original(container, assets, summary)
+    packages = list((base / "Mods").glob("*/package.json"))
+    assert len(packages) == 1
+    package = packages[0]
+    metadata = json.loads(package.read_text())
+    assert metadata["name"] == "AuthoredDLL" and metadata["report"]["skseDlls"] == 2
+    with ZipFile(assets / "Imports/AuthoredDLL.zip") as fixture:
+        assert len(fixture.namelist()) == 2
+        for name in fixture.namelist():
+            assert (package.parent / name).read_bytes() == fixture.read(name)
+    print("Installed MOD DLL diagnosis and unchanged original game, profile and imported DLL bytes verified.")
+
+
 if __name__ == "__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     sub=parser.add_subparsers(dest="action",required=True)
@@ -258,13 +292,16 @@ if __name__ == "__main__":
     for arg in ("work","sdl","archive"):
         p.add_argument(arg,type=lambda s:Path(s).resolve())
     sub.add_parser("device")
-    v=sub.add_parser("verify")
-    for arg in ("container","assets","summary"):
-        v.add_argument(arg,type=Path)
+    for action in ("verify", "verify-dll"):
+        v=sub.add_parser(action)
+        for arg in ("container","assets","summary"):
+            v.add_argument(arg,type=Path)
     opts=parser.parse_args()
     if opts.action=="project":
         project(opts.work,opts.sdl,opts.archive)
     elif opts.action=="device":
         print(choose_device())
-    else:
+    elif opts.action=="verify":
         verify(opts.container,opts.assets,opts.summary)
+    else:
+        verify_dll(opts.container,opts.assets,opts.summary)

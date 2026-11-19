@@ -45,7 +45,10 @@ def compare_with_windows(compiler, linker, emulator, directory, variant, opt,
     command = [emulator, dll]
     if mode: command.append(mode)
     if with_dependency: command.append(companion)
-    actual = run(*command, capture_output=True, text=True).stdout
+    try:
+        actual = run(*command, capture_output=True, text=True).stdout
+    except subprocess.CalledProcessError as error:
+        raise AssertionError(error.stderr or error.stdout or f"Interpreter exited with {error.returncode}") from error
     if mode and not with_dependency:
         moved = run(emulator, dll, mode, "move", capture_output=True, text=True).stdout
         if moved != actual:
@@ -81,7 +84,8 @@ class PluginInterpreterTests(unittest.TestCase):
             compile_interpreter(cc, emulator, "test_interpreted.c",
                                 ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
             for variant, opt in ((1, "-O0"), (1, "-O2"), (2, "-O0"), (2, "-O2"),
-                                 (5, "-O0"), (5, "-O2")):
+                                 (5, "-O0"), (5, "-O2"), (12, "-O0"), (12, "-O2"),
+                                 (13, "-O0"), (13, "-O2")):
                 with self.subTest(variant=variant, optimization=opt):
                     expected, actual = compare_with_windows(cc, linker, emulator, root / f"{variant}-{opt}",
                                                             variant, opt)

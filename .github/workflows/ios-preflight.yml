@@ -75,6 +75,7 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       IPHONEOS_DEPLOYMENT_TARGET: '18.0'
       SKYRIM_IOS_CLASSIC_SKSE: ${{ inputs.classic_trial && '1' || '0' }}
+      SKYRIM_IOS_SKSE_DLL_PROBE: ${{ inputs.dll_probe && '1' || '0' }}
       JOBS: '2'
       HOMEBREW_NO_AUTO_UPDATE: '1'
     steps:
@@ -160,6 +161,7 @@ jobs:
             ${{ runner.temp }}/title-host.log
             pc-aot/local/title-host/run-*/artifacts/mod-simulator*.zip
             pc-aot/local/title-host/run-*/mod-simulator/evidence/*.log
+            pc-aot/local/title-host/run-*/mod-dll-simulator/evidence/*.log
           if-no-files-found: warn
           retention-days: 1
 

@@ -16,6 +16,7 @@ typedef struct {
     SkseX86Services services;
     SkseX86Result result;
     uint32_t registers[8], ip, flags, return_slot;
+    uint8_t xmm[8][16];
     uint32_t return_cleanup, limit, bulk_work;
     uint64_t code_start, code_end;
     const uint8_t *code_bytes;
@@ -246,6 +247,91 @@ static void multiply(Vm *vm, Operand destination, unsigned width, uint32_t a, ui
     vm->flags &= ~(uint32_t)(CF | OF);
     if (signed_word(value, width) != product) vm->flags |= CF | OF;
     write_operand(vm, destination, width, value);
+}
+
+static void shift_operand(Vm *vm, Operand destination, unsigned group, unsigned width, unsigned count) {
+    count &= 31;
+    if (!count) return;
+    const unsigned bits = width * 8;
+    const uint32_t value = read_operand(vm, destination, width);
+    const uint32_t sign = sign_mask(width);
+    const bool negative = (value & sign) != 0;
+    uint32_t output;
+    bool carry;
+    bool overflow = (vm->flags & OF) != 0;
+    if (group == 4) { // SHL
+        output = value << count;
+        carry = count <= bits && ((value >> (bits - count)) & 1);
+        if (count == 1) overflow = ((output ^ value) & sign) != 0;
+    } else {
+        carry = count <= bits ? ((value >> (count - 1)) & 1) != 0 : group == 7 && negative;
+        output = value >> count;
+        if (group == 7 && negative) output |= UINT32_MAX << (count >= bits ? 0 : bits - count);
+        if (count == 1) overflow = group == 5 && negative;
+    }
+    write_operand(vm, destination, width, output);
+    set_flags(vm, output, width, carry, overflow);
+}
+
+static void write_double_width(Vm *vm, unsigned width, uint32_t low, uint32_t high) {
+    if (width == 1) {
+        write_operand(vm, reg(EAX), 2, (low & 255) | ((high & 255) << 8));
+    } else {
+        write_operand(vm, reg(EAX), width, low);
+        write_operand(vm, reg(EDX), width, high);
+    }
+}
+
+static void accumulator_multiply(Vm *vm, unsigned width, uint32_t value, bool is_signed) {
+    const uint32_t a = read_operand(vm, reg(EAX), width);
+    const int64_t product = is_signed ? signed_word(a, width) * signed_word(value, width) : 0;
+    const uint64_t wide = is_signed ? (uint64_t)product : (uint64_t)a * value;
+    const uint32_t low = (uint32_t)wide & width_mask(width);
+    const uint32_t high = (uint32_t)(wide >> (width * 8)) & width_mask(width);
+    const bool overflow = is_signed ? product != signed_word(low, width) : high != 0;
+    vm->flags = (vm->flags & ~(uint32_t)(CF | OF)) | (overflow ? CF | OF : 0);
+    write_double_width(vm, width, low, high);
+}
+
+static int64_t signed_pair(uint64_t raw, unsigned bits) {
+    if (bits < 64) {
+        uint64_t sign = UINT64_C(1) << (bits - 1);
+        return (int64_t)(raw ^ sign) - (int64_t)sign;
+    }
+    return raw <= INT64_MAX ? (int64_t)raw : -(int64_t)~raw - 1;
+}
+
+static void accumulator_divide(Vm *vm, unsigned width, uint32_t divisor, bool is_signed) {
+    if (vm->result.status != SKSE_X86_OK) return;
+    if (!divisor) {
+        fail(vm, SKSE_X86_DIVIDE_FAULT);
+        return;
+    }
+    unsigned bits = width * 8;
+    uint64_t raw = width == 1 ? read_operand(vm, reg(EAX), 2) : read_operand(vm, reg(EAX), width) |
+                   (uint64_t)read_operand(vm, reg(EDX), width) << bits;
+    if (is_signed) {
+        int64_t dividend = signed_pair(raw, bits * 2);
+        int64_t denom = signed_word(divisor, width);
+        if (dividend == INT64_MIN && denom == -1) {
+            fail(vm, SKSE_X86_DIVIDE_FAULT);
+            return;
+        }
+        int64_t quotient = dividend / denom, remainder = dividend % denom;
+        int64_t limit = sign_mask(width);
+        if (quotient < -limit || quotient >= limit) {
+            fail(vm, SKSE_X86_DIVIDE_FAULT);
+            return;
+        }
+        write_double_width(vm, width, (uint32_t)quotient, (uint32_t)remainder);
+    } else {
+        uint64_t quotient = raw / divisor;
+        if (quotient > width_mask(width)) {
+            fail(vm, SKSE_X86_DIVIDE_FAULT);
+            return;
+        }
+        write_double_width(vm, width, (uint32_t)quotient, (uint32_t)(raw % divisor));
+    }
 }
 
 static bool condition(const Vm *vm, unsigned condition_code) {
@@ -484,11 +570,17 @@ static uint32_t win_heap_service(Vm *vm, SkseX86ServiceKind kind) {
                     : skse_x86_heap_allocate(heap, requested, (flags & ZERO_MEMORY) != 0);
 }
 
-static void invoke(Vm *vm, uint32_t address) {
+static void branch(Vm *vm, uint32_t address, bool tail) {
     if (vm->result.status != SKSE_X86_OK) return;
     for (size_t i = 0; i < vm->services.count; ++i) {
         const SkseX86Service *service = &vm->services.entries[i];
         if (address == service->address) {
+            uint32_t stack = vm->registers[ESP];
+            if (tail) {
+                // An indirect import thunk reuses the caller's return slot.
+                if (!service_parameters(vm, 4)) return;
+                vm->registers[ESP] += 4;
+            }
             switch (service->kind) {
             case SKSE_X86_SCALAR_RETURN:
                 vm->registers[EAX] = service->value;
@@ -518,15 +610,161 @@ static void invoke(Vm *vm, uint32_t address) {
                 break;
             }
             ++vm->result.service_calls[i];
+            if (tail) {
+                unsigned cleanup = vm->registers[ESP] - (stack + 4);
+                vm->registers[ESP] = stack;
+                if (vm->result.status == SKSE_X86_OK) return_from_call(vm, cleanup);
+            }
             return;
         }
     }
-    push(vm, vm->ip);
+    if (!tail) push(vm, vm->ip);
     vm->ip = address;
 }
 
-static void two_byte_instruction(Vm *vm, unsigned width) {
+typedef enum {
+    VECTOR_LOAD, VECTOR_STORE, VECTOR_FROM_GPR, VECTOR_TO_GPR,
+    VECTOR_AND, VECTOR_OR, VECTOR_XOR, VECTOR_EQUAL, VECTOR_SIGN_BITS
+} VectorOp;
+
+static bool vector_instruction(Vm *vm, uint32_t opcode, unsigned prefix) {
+    enum { OPERAND_SIZE = 0x66, REPEAT = 0xf3 };
+    VectorOp operation;
+    unsigned width = 16;
+    unsigned lane = 0;
+    bool aligned_access = false;
+    bool zero_upper = false;
+    switch (opcode) {
+    case 0x10:
+    case 0x11:
+        operation = opcode == 0x10 ? VECTOR_LOAD : VECTOR_STORE;
+        if (prefix == REPEAT) width = 4; // MOVSS
+        break;
+    case 0x28:
+    case 0x29:
+        if (prefix == REPEAT) return false;
+        operation = opcode == 0x28 ? VECTOR_LOAD : VECTOR_STORE;
+        aligned_access = true;
+        break;
+    case 0x6f:
+    case 0x7f:
+        if (!prefix) return false; // An unprefixed encoding addresses MMX.
+        operation = opcode == 0x6f ? VECTOR_LOAD : VECTOR_STORE;
+        aligned_access = prefix == OPERAND_SIZE;
+        break;
+    case 0x6e:
+        if (prefix != OPERAND_SIZE) return false;
+        operation = VECTOR_FROM_GPR;
+        break;
+    case 0x50:
+    case 0xd7:
+        if (prefix == REPEAT || (opcode == 0xd7 && prefix != OPERAND_SIZE)) return false;
+        operation = VECTOR_SIGN_BITS;
+        lane = opcode == 0xd7 ? 1 : prefix == OPERAND_SIZE ? 8 : 4;
+        break;
+    case 0x74:
+    case 0x75:
+    case 0x76:
+        if (prefix != OPERAND_SIZE) return false;
+        operation = VECTOR_EQUAL;
+        lane = 1u << (opcode - 0x74);
+        aligned_access = true;
+        break;
+    case 0x7e:
+        if (!prefix) return false;
+        operation = prefix == REPEAT ? VECTOR_LOAD : VECTOR_TO_GPR;
+        width = 8;
+        zero_upper = true;
+        break;
+    case 0xd6:
+        if (prefix != OPERAND_SIZE) return false;
+        operation = VECTOR_STORE;
+        width = 8;
+        zero_upper = true;
+        break;
+    case 0x54:
+    case 0x56:
+    case 0x57:
+        if (prefix == REPEAT) return false;
+        operation = opcode == 0x54 ? VECTOR_AND : opcode == 0x56 ? VECTOR_OR : VECTOR_XOR;
+        aligned_access = true;
+        break;
+    case 0xdb:
+    case 0xeb:
+    case 0xef:
+        if (prefix != OPERAND_SIZE) return false;
+        operation = opcode == 0xdb ? VECTOR_AND : opcode == 0xeb ? VECTOR_OR : VECTOR_XOR;
+        aligned_access = true;
+        break;
+    default:
+        return false;
+    }
+
+    uint32_t modrm = fetch(vm, 1);
+    Operand rm = decode_rm(vm, modrm);
+    if (vm->result.status != SKSE_X86_OK) return true;
+    if (aligned_access && !rm.is_register && (rm.value & 15)) {
+        fail(vm, SKSE_X86_MEMORY_FAULT);
+        return true;
+    }
+    uint8_t *xmm = vm->xmm[(modrm >> 3) & 7];
+    if (operation == VECTOR_FROM_GPR) {
+        uint32_t value = read_operand(vm, rm, 4);
+        if (vm->result.status != SKSE_X86_OK) return true;
+        memset(xmm, 0, 16);
+        for (unsigned i = 0; i < 4; ++i) xmm[i] = (uint8_t)(value >> (i * 8));
+        return true;
+    }
+    if (operation == VECTOR_TO_GPR) {
+        write_operand(vm, rm, 4, little_endian(xmm, 4));
+        return true;
+    }
+    if (operation == VECTOR_SIGN_BITS) {
+        if (!rm.is_register) {
+            fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+            return true;
+        }
+        uint32_t value = 0;
+        for (unsigned i = 0; i < 16 / lane; ++i) {
+            unsigned most_significant = (i + 1) * lane - 1;
+            value |= (uint32_t)(vm->xmm[rm.value][most_significant] >> 7) << i;
+        }
+        write_operand(vm, reg((modrm >> 3) & 7), 4, value);
+        return true;
+    }
+    bool store = operation == VECTOR_STORE;
+    uint8_t *other = rm.is_register ? vm->xmm[rm.value] :
+        memory(vm, rm.value, width, store ? SKSE_PE_WRITE : SKSE_PE_READ);
+    if (!other) return true;
+    if (store) {
+        memmove(other, xmm, width);
+        if (zero_upper && rm.is_register) memset(other + width, 0, 16 - width);
+    } else if (operation == VECTOR_LOAD) {
+        memmove(xmm, other, width);
+        if (zero_upper || (!rm.is_register && width == 4)) memset(xmm + width, 0, 16 - width);
+    } else if (operation == VECTOR_EQUAL) {
+        for (unsigned offset = 0; offset < 16; offset += lane) {
+            bool equal = !memcmp(xmm + offset, other + offset, lane);
+            memset(xmm + offset, equal ? 0xff : 0, lane);
+        }
+    } else {
+        for (unsigned i = 0; i < 16; ++i) {
+            if (operation == VECTOR_AND) xmm[i] &= other[i];
+            else if (operation == VECTOR_OR) xmm[i] |= other[i];
+            else xmm[i] ^= other[i];
+        }
+    }
+    return true;
+}
+
+static void two_byte_instruction(Vm *vm, unsigned width, bool repeat) {
     uint32_t opcode = fetch(vm, 1);
+    unsigned prefix = repeat ? 0xf3 : width == 2 ? 0x66 : 0;
+    if (vector_instruction(vm, opcode, prefix)) return;
+    if (repeat) {
+        fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+        return;
+    }
     if (opcode >= 0x80 && opcode <= 0x8f) {
         if (width != 4) { fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION); return; }
         uint32_t displacement = fetch(vm, 4);
@@ -575,6 +813,10 @@ static void step(Vm *vm) {
         string_memory(vm, opcode < 0xaa, repeat, opcode & 1 ? word : 1);
         return;
     }
+    if (opcode == 0x0f && (!repeat || word == 4)) {
+        two_byte_instruction(vm, word, repeat);
+        return;
+    }
     if (repeat) {
         fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
         return;
@@ -614,7 +856,6 @@ static void step(Vm *vm) {
         return;
     }
     switch (opcode) {
-    case 0x0f: two_byte_instruction(vm, word); return;
     case 0x68:
     case 0x6a:
         if (word != 4) break;
@@ -666,6 +907,14 @@ static void step(Vm *vm) {
         return;
     }
     case 0x90: return;
+    case 0x98:
+        write_operand(vm, reg(EAX), word, sign_extend(read_operand(vm, reg(EAX), word / 2), word / 2));
+        return;
+    case 0x99: {
+        uint32_t a = read_operand(vm, reg(EAX), word);
+        write_operand(vm, reg(EDX), word, (a & sign_mask(word)) ? UINT32_MAX : 0);
+        return;
+    }
     case 0xa0:
     case 0xa1:
     case 0xa2:
@@ -681,6 +930,20 @@ static void step(Vm *vm) {
         unsigned width = opcode == 0xa8 ? 1 : word;
         uint32_t operand = fetch(vm, width);
         alu(vm, AND, width, read_operand(vm, reg(EAX), width), operand);
+        return;
+    }
+    case 0xc0:
+    case 0xc1:
+    case 0xd0:
+    case 0xd1:
+    case 0xd2:
+    case 0xd3: {
+        uint32_t modrm = fetch(vm, 1);
+        unsigned group = (modrm >> 3) & 7;
+        if (group != 4 && group != 5 && group != 7) break;
+        Operand destination = decode_rm(vm, modrm);
+        unsigned count = opcode < 0xd0 ? fetch(vm, 1) : opcode < 0xd2 ? 1 : vm->registers[ECX];
+        shift_operand(vm, destination, group, opcode & 1 ? word : 1, count);
         return;
     }
     case 0xc2:
@@ -707,18 +970,27 @@ static void step(Vm *vm) {
     case 0xeb: {
         if (word != 4) break;
         uint32_t offset = opcode == 0xeb ? sign_extend(fetch(vm, 1), 1) : fetch(vm, 4);
-        if (opcode == 0xe8) invoke(vm, vm->ip + offset);
+        if (opcode == 0xe8) branch(vm, vm->ip + offset, false);
         else vm->ip += offset;
         return;
     }
     case 0xf6:
     case 0xf7: {
         uint32_t modrm = fetch(vm, 1);
-        if ((modrm >> 3) & 7) break;
+        unsigned group = (modrm >> 3) & 7;
+        if (group == 1) break;
         Operand source = decode_rm(vm, modrm);
         unsigned width = opcode == 0xf6 ? 1 : word;
-        uint32_t immediate = fetch(vm, width);
-        alu(vm, AND, width, read_operand(vm, source, width), immediate);
+        uint32_t value = read_operand(vm, source, width);
+        switch (group) {
+        case 0: alu(vm, AND, width, value, fetch(vm, width)); break;
+        case 2: write_operand(vm, source, width, ~value); break;
+        case 3: write_operand(vm, source, width, alu(vm, SUB, width, 0, value)); break;
+        case 4:
+        case 5: accumulator_multiply(vm, width, value, group == 5); break;
+        case 6:
+        case 7: accumulator_divide(vm, width, value, group == 7); break;
+        }
         return;
     }
     case 0xf8: vm->flags &= ~(uint32_t)CF; return;
@@ -733,8 +1005,7 @@ static void step(Vm *vm) {
         if (word != 4 || (group != 2 && group != 4 && group != 6)) break;
         uint32_t value = read_operand(vm, operand, 4);
         if (group == 6) { push(vm, value); return; }
-        if (group == 2) invoke(vm, value);
-        else vm->ip = value;
+        branch(vm, value, group == 4);
         return;
     }
     default: break;
@@ -836,6 +1107,7 @@ const char *skse_x86_status_text(SkseX86Status status) {
     case SKSE_X86_INSTRUCTION_LIMIT: return "The call exceeded its x86 execution budget";
     case SKSE_X86_BAD_CALL_RETURN: return "The call did not preserve its expected stack and registers";
     case SKSE_X86_UNSUPPORTED_API: return "The plugin called a Windows or SKSE service unavailable in this test";
+    case SKSE_X86_DIVIDE_FAULT: return "The plugin divided by zero or its quotient exceeded the x86 register";
     }
     return "Unknown x86 result";
 }

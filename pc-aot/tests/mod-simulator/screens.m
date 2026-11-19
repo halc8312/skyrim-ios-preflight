@@ -365,6 +365,25 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCTFail(@"Nexus live result %@: %@", result, detail);
 }
 
+#ifdef SKYRIM_IOS_SKSE_DLL_PROBE
+- (void)testInstalledModDllDiagnostics {
+    [self.app launch];
+    [self openHub];
+    [[self findRow:@"Add a zip file"] tap];
+    [self pick:@"AuthoredDLL.zip" folder:NO];
+    [[self findRow:@"AuthoredDLL"] tap];
+    XCUIElement *check = self.app.navigationBars[@"AuthoredDLL"].buttons[@"Check DLLs"];
+    XCTAssertTrue([check waitForExistenceWithTimeout:8]);
+    [check tap];
+    XCTAssertTrue([self.app.navigationBars[@"DLL Compatibility"] waitForExistenceWithTimeout:8]);
+    NSPredicate *diagnosis = [NSPredicate predicateWithFormat:@"label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@",
+        @"Paired.dll", @"SKSE initialization passed in the test environment.", @"OwnedWorker.dll"];
+    XCTAssertTrue([[self.app.staticTexts matchingPredicate:diagnosis].firstMatch waitForExistenceWithTimeout:12],
+                  @"Expected the installed package and helper in the diagnostic. %@", self.app.debugDescription);
+    [self capture:@"installed-dll-diagnosis"];
+}
+#endif
+
 - (void)testActualSettingsModScreens {
     [self.app launch];
     XCTAssertTrue([self.app.tables[@"mod-translation-bridge-checked"] waitForExistenceWithTimeout:10]);
