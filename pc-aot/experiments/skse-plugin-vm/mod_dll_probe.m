@@ -54,6 +54,13 @@ static NSString *CallResult(BOOL japanese, SkseX86Status status) {
     }
 }
 
+static NSArray<NSString *> *CallFailure(BOOL japanese, NSString *summary, const SkseX86Result *result) {
+    NSString *reason = CallResult(japanese, result->status);
+    const char *function = skse_trial_windows_service_name(result->failed_service);
+    if (function) return @[summary, reason, [NSString stringWithUTF8String:function]];
+    return @[summary, reason];
+}
+
 static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *trial, const SksePeReport *imports) {
     switch (trial->status) {
     case SKSE_TRIAL_COMPLETED: {
@@ -121,21 +128,17 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
                                 @"診断に必要なメモリを確保できませんでした。")];
     case SKSE_TRIAL_TLS_ATTACH_FAULT:
     case SKSE_TRIAL_TLS_DETACH_FAULT:
-        return @[Text(japanese, @"The DLL stopped while handling its thread-local data.",
-                                @"DLLのスレッド専用データを処理する途中で停止しました。"),
-                 CallResult(japanese, trial->tls_fault.status)];
+        return CallFailure(japanese, Text(japanese, @"The DLL stopped while handling its thread-local data.",
+                                                    @"DLLのスレッド専用データを処理する途中で停止しました。"), &trial->tls_fault);
     case SKSE_TRIAL_SERIALIZATION_FAULT:
-        return @[Text(japanese, @"The DLL stopped during the test of its additional save data.",
-                                @"DLLの追加セーブ処理の試験が途中で停止しました。"),
-                 CallResult(japanese, trial->serialization_fault.status)];
+        return CallFailure(japanese, Text(japanese, @"The DLL stopped during the test of its additional save data.",
+                                                    @"DLLの追加セーブ処理の試験が途中で停止しました。"), &trial->serialization_fault);
     case SKSE_TRIAL_WORKER_FAULT:
-        return @[Text(japanese, @"The DLL stopped during a worker thread test.",
-                                @"DLLの補助スレッドの試験が途中で停止しました。"),
-                 CallResult(japanese, trial->worker_fault.status)];
+        return CallFailure(japanese, Text(japanese, @"The DLL stopped during a worker thread test.",
+                                                    @"DLLの補助スレッドの試験が途中で停止しました。"), &trial->worker_fault);
     case SKSE_TRIAL_TASK_FAULT:
-        return @[Text(japanese, @"The DLL stopped during a queued SKSE task.",
-                                @"後から実行するSKSEタスクの処理が途中で停止しました。"),
-                 CallResult(japanese, trial->task_fault.status)];
+        return CallFailure(japanese, Text(japanese, @"The DLL stopped during a queued SKSE task.",
+                                                    @"後から実行するSKSEタスクの処理が途中で停止しました。"), &trial->task_fault);
     default: {
         const SkseX86Result *fault = &trial->query;
         if (trial->status == SKSE_TRIAL_ATTACH_FAULT) fault = &trial->attach;
@@ -144,9 +147,8 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
         if (trial->status == SKSE_TRIAL_MESSAGE_FAULT) fault = &trial->message;
         if (trial->status == SKSE_TRIAL_DEPENDENCY_ATTACH_FAULT) fault = &trial->dependency_attach;
         if (trial->status == SKSE_TRIAL_DEPENDENCY_DETACH_FAULT) fault = &trial->dependency_detach;
-        return @[Text(japanese, @"The DLL encountered an unsupported operation during initialization.",
-                                @"このDLLは初期化中に未対応の処理に入りました。"),
-                 CallResult(japanese, fault->status)];
+        return CallFailure(japanese, Text(japanese, @"The DLL stopped during initialization.",
+                                                    @"このDLLは初期化中に停止しました。"), fault);
     }
     }
 }

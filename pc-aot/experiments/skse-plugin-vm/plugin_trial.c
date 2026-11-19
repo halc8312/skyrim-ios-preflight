@@ -93,6 +93,12 @@ _Static_assert(WINDOWS_SERVICE_COUNT + 5 + SKSE_SERIAL_METHOD_COUNT + SKSE_X86_T
 _Static_assert(SERIALIZATION_INTERFACE_OFFSET + 52 <= TASK_INTERFACE_OFFSET &&
                TASK_INTERFACE_OFFSET + 12 <= TLS_TABLE_OFFSET, "trial scratch ABI");
 
+const char *skse_trial_windows_service_name(uint32_t token) {
+    for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i)
+        if (windows_services[i].binding.service_token == token) return windows_services[i].binding.symbol;
+    return NULL;
+}
+
 typedef struct {
     SksePeImage *images[SKSE_DEPENDENCY_MAX_MODULES];
     size_t count;

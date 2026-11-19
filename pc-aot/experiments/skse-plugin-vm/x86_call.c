@@ -765,9 +765,8 @@ static uint32_t win_module_lookup(Vm *vm, SkseX86ModuleLookup operation) {
         for (size_t i = 0; i < vm->services.system_export_count; ++i) {
             const SksePeImportBinding *export = &vm->services.system_exports[i];
             if (skse_pe_library_name_equal(library, export->library) && !strcmp(name, export->symbol)) {
-                for (size_t j = 0; j < vm->services.count; ++j) {
-                    if (vm->services.entries[j].address == export->service_token) return export->service_token;
-                }
+                size_t slot = service_slot(vm->services.entries, vm->service_index, export->service_token);
+                if (vm->service_index[slot]) return export->service_token;
                 fail(vm, SKSE_X86_BAD_ARGUMENT);
                 break;
             }
@@ -1008,6 +1007,7 @@ static uint32_t win_wait_objects(Vm *vm, SkseWinSyncOperation operation, const u
             if (worker_result.status == SKSE_X86_OK) return 0;
             fail(vm, worker_result.status);
             if (worker_result.instruction_va) vm->instruction_va = worker_result.instruction_va;
+            vm->result.failed_service = worker_result.failed_service;
             return UINT32_MAX;
         }
     }
@@ -1121,6 +1121,7 @@ static void invoke_service(Vm *vm, unsigned i, bool tail) {
         vm->registers[ESP] = stack;
         if (vm->status == SKSE_X86_OK) return_from_call(vm, cleanup);
     }
+    if (vm->status != SKSE_X86_OK && !vm->result.failed_service) vm->result.failed_service = service->address;
 }
 
 static void branch(Vm *vm, uint32_t address, bool tail) {

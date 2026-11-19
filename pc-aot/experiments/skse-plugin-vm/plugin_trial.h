@@ -81,4 +81,5 @@ SkseTrialResult skse_plugin_trial_with_dependency(const uint8_t *file, size_t le
  * the primary. Duplicate names, cycles and the fourth helper are diagnosed. */
 SkseTrialResult skse_plugin_trial_with_package(SkseTrialDependency primary, const SkseTrialDependency *catalog,
                                               size_t count, SkseTrialOptions options, SkseTrialRuntime runtime);
+const char *skse_trial_windows_service_name(uint32_t token);
 #endif
