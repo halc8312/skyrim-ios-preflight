@@ -81,5 +81,27 @@ SkseTrialResult skse_plugin_trial_with_dependency(const uint8_t *file, size_t le
  * the primary. Duplicate names, cycles and the fourth helper are diagnosed. */
 SkseTrialResult skse_plugin_trial_with_package(SkseTrialDependency primary, const SkseTrialDependency *catalog,
                                               size_t count, SkseTrialOptions options, SkseTrialRuntime runtime);
+
+typedef struct SksePluginSession SksePluginSession;
+typedef enum {
+    SKSE_SESSION_POST_LOAD, SKSE_SESSION_POST_POST_LOAD, SKSE_SESSION_GAME_TASKS,
+    SKSE_SESSION_UI_TASKS, SKSE_SESSION_WORKER
+} SkseSessionEvent;
+typedef enum { SKSE_SESSION_OK, SKSE_SESSION_OUT_OF_ORDER, SKSE_SESSION_FAULTED } SkseSessionResult;
+
+/* Owns the validated images and all VM state after Query/Load succeeds. The
+ * caller serializes calls and keeps any supplied asset callback context alive
+ * until close. Module file buffers are needed only while opening the session. */
+SksePluginSession *skse_plugin_session_open(SkseTrialDependency primary, const SkseTrialDependency *catalog,
+                                            size_t count, SkseTrialOptions options, SkseTrialRuntime runtime,
+                                            SkseTrialResult *report);
+/* The two startup events are sent in order, once each. Queue events drain the
+ * selected FIFO. Each event has a fresh budget of 1 to 1,000,000 units. A fault
+ * stops delivery until close. This session has no live game pointers or hooks. */
+SkseSessionResult skse_plugin_session_step(SksePluginSession *session, SkseSessionEvent event,
+                                         uint32_t work_limit, uint32_t uptime_ms);
+const SkseTrialResult *skse_plugin_session_report(const SksePluginSession *session);
+void skse_plugin_session_close(SksePluginSession *session, SkseTrialResult *report);
+
 const char *skse_trial_windows_service_name(uint32_t token);
 #endif

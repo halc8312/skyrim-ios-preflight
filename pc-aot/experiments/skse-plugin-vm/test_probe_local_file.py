@@ -198,6 +198,8 @@ class LocalFileProbeTest(unittest.TestCase):
                                       "stopped,1,truncated headers,0", "2", "3", "1", "2", "1", "2"])
             self.assertEqual(good.read_bytes(), fixture)
             self.assertEqual(unknown.read_bytes(), with_import)
+            resident = subprocess.check_output([binary, "--session", tasks], text=True, timeout=3)
+            self.assertEqual(resident.strip(), "resident tasks=3/1 independent-lifetime=ok budget-refusal=ok")
 
 
 if __name__ == "__main__":

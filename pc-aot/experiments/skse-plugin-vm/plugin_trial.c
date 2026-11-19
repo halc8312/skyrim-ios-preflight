@@ -224,6 +224,27 @@ typedef struct {
     uint32_t stack_offset, tls_scratch;
 } TrialWorkerContext;
 
+struct SksePluginSession {
+    SkseTrialResult result;
+    SkseDependencySpace space;
+    SksePeImportBinding imports[WINDOWS_SERVICE_COUNT];
+    SkseX86Service entries[SKSE_X86_MAX_SERVICES];
+    uint32_t tls_offsets[SKSE_DEPENDENCY_MAX_MODULES];
+    SkseX86CoreMessaging core;
+    SkseX86Serialization serial;
+    SkseX86Tasks tasks;
+    SkseX86Heap heap;
+    SkseWinThreadProcess process;
+    SkseWinThread thread;
+    SkseWinFiles files;
+    SkseWinSync sync;
+    TrialVm vm;
+    SkseX86Worker worker;
+    TrialWorkerContext worker_context;
+    unsigned startup_events;
+    bool detach_primary, helpers_ready, detach_helper[SKSE_DEPENDENCY_MAX_HELPERS];
+};
+
 static SkseX86Result run_worker(void *opaque, uint32_t id, uint32_t entry, uint32_t parameter, uint32_t budget) {
     TrialWorkerContext *context = opaque;
     SkseTrialResult *result = context->result;
@@ -302,27 +323,24 @@ static void exercise_serialization(TrialVm *vm, SkseX86Serialization *serial, Sk
     result->serialization_records = skse_x86_records_count(&serial->records);
 }
 
-static void exercise_tasks(TrialVm *vm, SkseX86Tasks *tasks, SkseTrialResult *result) {
-    for (unsigned type = 0; type < SKSE_X86_TASK_TYPES; ++type) {
-        SkseX86TaskQueue *queue = &tasks->queues[type];
-        while (queue->count) {
-            uint32_t delegate = queue->delegates[queue->head];
-            queue->head = (queue->head + 1) % SKSE_X86_TASK_LIMIT;
-            --queue->count;
-            for (unsigned slot = 0; slot < 2; ++slot) {
-                const uint32_t limit = vm->remaining_work < CALL_BUDGET ? vm->remaining_work : CALL_BUDGET;
-                SkseX86Result call = limit
-                    ? skse_x86_call_virtual(vm->images, vm->count, delegate, slot, vm->scratch, limit, vm->services)
-                    : (SkseX86Result){.status = SKSE_X86_INSTRUCTION_LIMIT};
-                vm->remaining_work -= call.work;
-                if (call.status != SKSE_X86_OK) {
-                    result->task_fault = call;
-                    result->status = SKSE_TRIAL_TASK_FAULT;
-                    return;
-                }
+static void run_task_queue(TrialVm *vm, SkseX86TaskQueue *queue, SkseTrialResult *result, SkseX86TaskType type) {
+    while (queue->count) {
+        uint32_t delegate = queue->delegates[queue->head];
+        queue->head = (queue->head + 1) % SKSE_X86_TASK_LIMIT;
+        --queue->count;
+        for (unsigned slot = 0; slot < 2; ++slot) {
+            const uint32_t limit = vm->remaining_work < CALL_BUDGET ? vm->remaining_work : CALL_BUDGET;
+            SkseX86Result call = limit
+                ? skse_x86_call_virtual(vm->images, vm->count, delegate, slot, vm->scratch, limit, vm->services)
+                : (SkseX86Result){.status = SKSE_X86_INSTRUCTION_LIMIT};
+            vm->remaining_work -= call.work;
+            if (call.status != SKSE_X86_OK) {
+                result->task_fault = call;
+                result->status = SKSE_TRIAL_TASK_FAULT;
+                return;
             }
-            ++result->tasks_completed[type];
         }
+        ++result->tasks_completed[type];
     }
 }
 
@@ -350,113 +368,110 @@ static void identify_unavailable_import(SkseTrialDependency primary, SkseDepende
     free(report);
 }
 
-static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions options, const SkseTrialRuntime *runtime,
-                                 const SkseTrialDependency *catalog, size_t count, CatalogPolicy policy) {
-    SkseTrialResult result = {.status = SKSE_TRIAL_IMAGE_REFUSED};
-    SkseDependencySpace space = {0};
-    SksePeImage *image = &space.images[0];
-    SksePeImportBinding imports[WINDOWS_SERVICE_COUNT];
+static bool map_session(SksePluginSession *session, SkseTrialDependency primary, const SkseTrialRuntime *runtime,
+                        const SkseTrialDependency *catalog, size_t count, CatalogPolicy policy) {
+    SkseTrialResult *result = &session->result;
+    SkseDependencySpace *space = &session->space;
+    SksePeImage *image = &space->images[0];
+    SksePeImportBinding *imports = session->imports;
     if (runtime) {
         for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i) imports[i] = windows_services[i].binding;
         if (policy != NO_CATALOG) {
             if (policy == EXPLICIT_HELPER) {
                 bool too_large = primary.length > SKSE_PE_MAX_FILE_BYTES || catalog[0].length > SKSE_PE_MAX_FILE_BYTES - primary.length;
                 if (too_large || !skse_dependency_local_name_valid(catalog[0].file_name) || !catalog[0].bytes || !catalog[0].length) {
-                    result.status = SKSE_TRIAL_DEPENDENCY_REFUSED;
-                    result.dependency_status = too_large ? SKSE_PE_SIZE_LIMIT : SKSE_PE_BAD_ARGUMENT;
-                    return result;
+                    result->status = SKSE_TRIAL_DEPENDENCY_REFUSED;
+                    result->dependency_status = too_large ? SKSE_PE_SIZE_LIMIT : SKSE_PE_BAD_ARGUMENT;
+                    return false;
                 }
             }
             SkseDependencyStatus status = skse_dependency_map(primary, catalog, count, runtime->guest_base,
-                                        runtime->static_tls, imports, WINDOWS_SERVICE_COUNT, &space, &result.dependencies);
-            if (status != SKSE_DEPENDENCY_READY || (policy == EXPLICIT_HELPER && space.count != 2)) {
-                result.dependency_status = status == SKSE_DEPENDENCY_READY ? SKSE_PE_MISSING_DEPENDENCY_EXPORT
-                                                                          : result.dependencies.image_status;
-                if (status == SKSE_DEPENDENCY_NO_MEMORY) result.status = SKSE_TRIAL_NO_MEMORY;
-                else if (result.dependencies.root_image_error && policy != EXPLICIT_HELPER)
-                    result.image_status = result.dependency_status;
-                else result.status = SKSE_TRIAL_DEPENDENCY_REFUSED;
-                skse_dependency_close(&space);
-                return result;
+                                        runtime->static_tls, imports, WINDOWS_SERVICE_COUNT, space, &result->dependencies);
+            if (status != SKSE_DEPENDENCY_READY || (policy == EXPLICIT_HELPER && space->count != 2)) {
+                result->dependency_status = status == SKSE_DEPENDENCY_READY ? SKSE_PE_MISSING_DEPENDENCY_EXPORT
+                                                                           : result->dependencies.image_status;
+                if (status == SKSE_DEPENDENCY_NO_MEMORY) result->status = SKSE_TRIAL_NO_MEMORY;
+                else if (result->dependencies.root_image_error && policy != EXPLICIT_HELPER)
+                    result->image_status = result->dependency_status;
+                else result->status = SKSE_TRIAL_DEPENDENCY_REFUSED;
+                return false;
             }
         } else if (runtime->static_tls) {
-            result.image_status = skse_pe_map_tls(primary.bytes, primary.length, runtime->guest_base,
-                               imports, WINDOWS_SERVICE_COUNT, SKSE_PE_ALLOW_ENTRY, NULL, 0, image, &space.tls[0]);
+            result->image_status = skse_pe_map_tls(primary.bytes, primary.length, runtime->guest_base,
+                                 imports, WINDOWS_SERVICE_COUNT, SKSE_PE_ALLOW_ENTRY, NULL, 0, image, &space->tls[0]);
         } else {
-            result.image_status = runtime->guest_base
+            result->image_status = runtime->guest_base
                 ? skse_pe_map_at_base(primary.bytes, primary.length, runtime->guest_base, imports, WINDOWS_SERVICE_COUNT,
                                       SKSE_PE_ALLOW_ENTRY, image)
                 : skse_pe_map_with_imports(primary.bytes, primary.length, imports, WINDOWS_SERVICE_COUNT, SKSE_PE_ALLOW_ENTRY, image);
         }
     } else {
-        result.image_status = skse_pe_map(primary.bytes, primary.length, image);
+        result->image_status = skse_pe_map(primary.bytes, primary.length, image);
     }
-    if (result.image_status != SKSE_PE_OK) {
-        if (result.image_status == SKSE_PE_UNAPPROVED_IMPORT) identify_unavailable_import(primary, &result.dependencies);
-        return result;
+    if (result->image_status != SKSE_PE_OK) {
+        if (result->image_status == SKSE_PE_UNAPPROVED_IMPORT) identify_unavailable_import(primary, &result->dependencies);
+        return false;
     }
-    if (policy == NO_CATALOG) space.count = 1;
+    if (policy == NO_CATALOG) space->count = 1;
+    return true;
+}
 
-    uint32_t tls_offsets[SKSE_DEPENDENCY_MAX_MODULES] = {0};
+static bool prepare_vm(SksePluginSession *session, SkseTrialOptions options, const SkseTrialRuntime *runtime) {
+    SkseDependencySpace *space = &session->space;
+
     uint32_t tls_scratch = 0;
-    if (!layout_static_tls(&space, tls_offsets, &tls_scratch)) {
-        result.image_status = SKSE_PE_SIZE_LIMIT;
-        skse_dependency_close(&space);
-        return result;
+    if (!layout_static_tls(space, session->tls_offsets, &tls_scratch)) {
+        session->result.image_status = SKSE_PE_SIZE_LIMIT;
+        return false;
     }
     uint32_t primary_scratch = SCRATCH_SIZE + tls_scratch;
-    bool worker_supported = runtime && runtime->worker_thread && space.count == 1;
+    bool worker_supported = runtime && runtime->worker_thread && space->count == 1;
     uint32_t scratch_size = worker_supported ? 2 * primary_scratch : primary_scratch;
     static const uint32_t scratch_choices[] = {0x60000000, 0x30000000, 0x68000000, 0x70000000, 0x78000000};
     static const uint32_t heap_choices[] = {0x18000000, 0x28000000, 0x38000000, 0x48000000, 0x58000000};
     SkseX86Scratch scratch = {
-        .base = free_region(&space, scratch_choices, sizeof scratch_choices / sizeof scratch_choices[0],
+        .base = free_region(space, scratch_choices, sizeof scratch_choices / sizeof scratch_choices[0],
                             scratch_size + CALLBACK_REGION_END),
         .bytes = calloc(scratch_size, 1), .length = scratch_size
     };
     if (!scratch.base || !scratch.bytes) {
-        result.status = SKSE_TRIAL_NO_MEMORY;
+        session->result.status = SKSE_TRIAL_NO_MEMORY;
         free(scratch.bytes);
-        skse_dependency_close(&space);
-        return result;
+        return false;
     }
 
     uint32_t callbacks_base = scratch.base + scratch_size;
-    SkseX86Service entries[SKSE_X86_MAX_SERVICES] = {
-        {callbacks_base + RELEASE_CALLBACK_OFFSET, options.release, SKSE_X86_SCALAR_RETURN},
-        {callbacks_base + HANDLE_CALLBACK_OFFSET, options.plugin_handle, SKSE_X86_SCALAR_RETURN},
-    };
+    SkseX86Service *entries = session->entries;
+    entries[0] = (SkseX86Service){callbacks_base + RELEASE_CALLBACK_OFFSET, options.release, SKSE_X86_SCALAR_RETURN};
+    entries[1] = (SkseX86Service){callbacks_base + HANDLE_CALLBACK_OFFSET, options.plugin_handle, SKSE_X86_SCALAR_RETURN};
     bool enable_messages = runtime && runtime->core_messages && !options.editor;
     bool enable_serialization = runtime && runtime->serialization && !options.editor;
     bool enable_tasks = runtime && runtime->task_interface && !options.editor;
-    SkseX86CoreMessaging core = {
+    session->core = (SkseX86CoreMessaging){
         .interface_address = enable_messages ? scratch.base + MESSAGING_INTERFACE_OFFSET : 0,
         .owner_handle = options.plugin_handle
     };
-    SkseX86Serialization serial = {
+    session->serial = (SkseX86Serialization){
         .interface_address = scratch.base + SERIALIZATION_INTERFACE_OFFSET,
         .owner_handle = options.plugin_handle
     };
-    SkseX86Tasks tasks = {.interface_address = scratch.base + TASK_INTERFACE_OFFSET};
-    SkseX86Heap heap = {.base = free_region(&space, heap_choices, sizeof heap_choices / sizeof heap_choices[0], SKSE_X86_HEAP_BYTES)};
-    SkseWinThreadProcess thread_process = {0};
-    SkseWinThread thread = {.process = &thread_process, .id = 1};
-    SkseWinFiles files = {0};
-    SkseWinSync sync = {0};
+    session->tasks.interface_address = scratch.base + TASK_INTERFACE_OFFSET;
+    session->heap.base = free_region(space, heap_choices, sizeof heap_choices / sizeof heap_choices[0], SKSE_X86_HEAP_BYTES);
+    session->thread = (SkseWinThread){.process = &session->process, .id = 1};
     SkseX86Services services = {.entries = entries, .count = 2};
     if (tls_scratch) {
         services.static_tls_table = scratch.base + TLS_TABLE_OFFSET;
         services.stack_floor = scratch.base + tls_scratch;
-        install_static_tls(&space, tls_offsets, scratch, true);
+        install_static_tls(space, session->tls_offsets, scratch, true);
     }
     if (worker_supported) services.stack_top = scratch.base + primary_scratch;
     if (runtime) {
-        services.heap = &heap;
-        services.thread = &thread;
-        files.source = runtime->assets;
-        services.files = &files;
-        services.sync = &sync;
-        services.system_exports = imports;
+        services.heap = &session->heap;
+        services.thread = &session->thread;
+        session->files.source = runtime->assets;
+        services.files = &session->files;
+        services.sync = &session->sync;
+        services.system_exports = session->imports;
         services.system_export_count = WINDOWS_SERVICE_COUNT;
         for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i) {
             entries[services.count++] = (SkseX86Service){
@@ -473,7 +488,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     if (options.expose_handle) write_word(scratch.bytes + 20, entries[1].address);
     if (options.expose_release) write_word(scratch.bytes + 24, entries[0].address);
     if (enable_messages || enable_serialization || enable_tasks) {
-        services.core_messaging = &core;
+        services.core_messaging = &session->core;
         uint32_t query_address = callbacks_base + QUERY_INTERFACE_OFFSET;
         entries[services.count++] = (SkseX86Service){query_address, 0, SKSE_X86_QUERY_CLASSIC};
         write_word(scratch.bytes + 16, query_address);
@@ -489,7 +504,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 12, unavailable_address);
     }
     if (enable_serialization) {
-        services.serialization = &serial;
+        services.serialization = &session->serial;
         uint8_t *interface = scratch.bytes + SERIALIZATION_INTERFACE_OFFSET;
         write_word(interface, 4);
         for (unsigned i = 0; i < SKSE_SERIAL_METHOD_COUNT; ++i) {
@@ -499,7 +514,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         }
     }
     if (enable_tasks) {
-        services.tasks = &tasks;
+        services.tasks = &session->tasks;
         uint8_t *interface = scratch.bytes + TASK_INTERFACE_OFFSET;
         write_word(interface, 2);
         for (unsigned i = 0; i < SKSE_X86_TASK_TYPES; ++i) {
@@ -509,155 +524,196 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         }
     }
 
-    TrialVm vm = {.count = space.count, .scratch = scratch, .services = services, .remaining_work = TRIAL_BUDGET};
-    TrialWorkerContext worker_context = {
-        .parent = &vm, .space = &space, .result = &result, .tls_offsets = tls_offsets,
+    session->vm = (TrialVm){.count = space->count, .scratch = scratch, .services = services, .remaining_work = TRIAL_BUDGET};
+    session->worker_context = (TrialWorkerContext){
+        .parent = &session->vm, .space = space, .result = &session->result, .tls_offsets = session->tls_offsets,
         .stack_offset = primary_scratch, .tls_scratch = tls_scratch
     };
-    SkseX86Worker worker = {.run = run_worker, .context = &worker_context, .loader_locked = true};
-    if (worker_supported) vm.services.worker = &worker;
-    for (unsigned i = 0; i < space.count; ++i) vm.images[i] = &space.images[i];
-    bool detach_helper[SKSE_DEPENDENCY_MAX_HELPERS] = {false};
-    bool helpers_ready = false;
-    for (unsigned i = 0; i < result.dependencies.helper_count; ++i) {
-        unsigned index = space.helper_order[i];
-        const SksePeImage *helper = &space.images[index];
-        if (!helper->entry_va && !space.tls[index].callback_count) continue;
-        if (!run_tls_callbacks(&vm, &space, index, 1, &result)) {
-            result.status = SKSE_TRIAL_TLS_ATTACH_FAULT;
-            memcpy(result.failing_helper, result.dependencies.load_order[i], sizeof result.failing_helper);
-            goto cleanup;
+    session->worker = (SkseX86Worker){.run = run_worker, .context = &session->worker_context, .loader_locked = true};
+    if (worker_supported) session->vm.services.worker = &session->worker;
+    for (unsigned i = 0; i < space->count; ++i) session->vm.images[i] = &space->images[i];
+    return true;
+}
+
+static void initialize_session(SksePluginSession *session, SkseTrialDependency primary, SkseTrialOptions options,
+                                const SkseTrialRuntime *runtime, const SkseTrialDependency *catalog,
+                                size_t count, CatalogPolicy policy) {
+    SkseTrialResult *result = &session->result;
+    result->status = SKSE_TRIAL_IMAGE_REFUSED;
+    if (!map_session(session, primary, runtime, catalog, count, policy) || !prepare_vm(session, options, runtime)) return;
+    SkseDependencySpace *space = &session->space;
+    SksePeImage *image = &space->images[0];
+    TrialVm *vm = &session->vm;
+    SkseX86Scratch scratch = vm->scratch;
+    for (unsigned i = 0; i < result->dependencies.helper_count; ++i) {
+        unsigned index = space->helper_order[i];
+        const SksePeImage *helper = &space->images[index];
+        if (!helper->entry_va && !space->tls[index].callback_count) continue;
+        if (!run_tls_callbacks(vm, space, index, 1, result)) {
+            result->status = SKSE_TRIAL_TLS_ATTACH_FAULT;
+            memcpy(result->failing_helper, result->dependencies.load_order[i], sizeof result->failing_helper);
+            return;
         }
         const uint32_t args[] = {helper->base, 1, 0};
-        result.dependency_attach = helper->entry_va ? call_trial(&vm, helper->entry_va, args, 3, SKSE_X86_STDCALL)
-                                                   : (SkseX86Result){.eax = 1};
-        if (result.dependency_attach.status != SKSE_X86_OK) {
-            result.status = SKSE_TRIAL_DEPENDENCY_ATTACH_FAULT;
-            memcpy(result.failing_helper, result.dependencies.load_order[i], sizeof result.failing_helper);
-            goto cleanup;
+        result->dependency_attach = helper->entry_va ? call_trial(vm, helper->entry_va, args, 3, SKSE_X86_STDCALL)
+                                                    : (SkseX86Result){.eax = 1};
+        if (result->dependency_attach.status != SKSE_X86_OK) {
+            result->status = SKSE_TRIAL_DEPENDENCY_ATTACH_FAULT;
+            memcpy(result->failing_helper, result->dependencies.load_order[i], sizeof result->failing_helper);
+            return;
         }
-        detach_helper[i] = true;
-        if (!result.dependency_attach.eax) {
-            result.status = SKSE_TRIAL_DEPENDENCY_ATTACH_DECLINED;
-            memcpy(result.failing_helper, result.dependencies.load_order[i], sizeof result.failing_helper);
-            goto cleanup;
+        session->detach_helper[i] = true;
+        if (!result->dependency_attach.eax) {
+            result->status = SKSE_TRIAL_DEPENDENCY_ATTACH_DECLINED;
+            memcpy(result->failing_helper, result->dependencies.load_order[i], sizeof result->failing_helper);
+            return;
         }
-        ++result.helpers_attached;
+        ++result->helpers_attached;
     }
-    helpers_ready = true;
-    uint32_t entry_args[] = {image->base, 1, 0}; // Dynamic DLL_PROCESS_ATTACH.
-    if (!run_tls_callbacks(&vm, &space, 0, 1, &result)) {
-        result.status = SKSE_TRIAL_TLS_ATTACH_FAULT;
-        goto cleanup;
+    session->helpers_ready = true;
+    const uint32_t entry_args[] = {image->base, 1, 0}; // Dynamic DLL_PROCESS_ATTACH.
+    if (!run_tls_callbacks(vm, space, 0, 1, result)) {
+        result->status = SKSE_TRIAL_TLS_ATTACH_FAULT;
+        return;
     }
     if (image->entry_va) {
-        result.attach = call_trial(&vm, image->entry_va, entry_args, 3, SKSE_X86_STDCALL);
-        if (result.attach.status != SKSE_X86_OK) {
-            result.status = SKSE_TRIAL_ATTACH_FAULT;
-            goto cleanup;
+        result->attach = call_trial(vm, image->entry_va, entry_args, 3, SKSE_X86_STDCALL);
+        if (result->attach.status != SKSE_X86_OK) {
+            result->status = SKSE_TRIAL_ATTACH_FAULT;
+            return;
         }
-        if (!result.attach.eax) {
-            result.status = SKSE_TRIAL_ATTACH_DECLINED;
-            goto detach;
-        }
+    }
+    session->detach_primary = true; // Also notify a DLL which declined its attach.
+    if (image->entry_va && !result->attach.eax) {
+        result->status = SKSE_TRIAL_ATTACH_DECLINED;
+        return;
     }
 
-    worker.loader_locked = false;
+    session->worker.loader_locked = false;
     const uint32_t args[] = {scratch.base, scratch.base + INFO_OFFSET};
-    result.query = call_trial(&vm, image->query_va, args, 2, SKSE_X86_CDECL);
-    if (result.query.status != SKSE_X86_OK) {
-        result.status = SKSE_TRIAL_QUERY_FAULT;
-    } else if (!(result.query.eax & 0xff)) {
-        result.status = SKSE_TRIAL_QUERY_DECLINED;
-    } else if (!read_plugin_info(&space, scratch.bytes + INFO_OFFSET, &result)) {
-        result.status = SKSE_TRIAL_INVALID_INFO;
+    result->query = call_trial(vm, image->query_va, args, 2, SKSE_X86_CDECL);
+    if (result->query.status != SKSE_X86_OK) {
+        result->status = SKSE_TRIAL_QUERY_FAULT;
+    } else if (!(result->query.eax & 0xff)) {
+        result->status = SKSE_TRIAL_QUERY_DECLINED;
+    } else if (!read_plugin_info(space, scratch.bytes + INFO_OFFSET, result)) {
+        result->status = SKSE_TRIAL_INVALID_INFO;
     } else {
-        result.load = call_trial(&vm, image->load_va, args, 1, SKSE_X86_CDECL);
-        if (result.load.status != SKSE_X86_OK) result.status = SKSE_TRIAL_LOAD_FAULT;
-        else result.status = (result.load.eax & 0xff) ? SKSE_TRIAL_COMPLETED : SKSE_TRIAL_LOAD_DECLINED;
+        result->load = call_trial(vm, image->load_va, args, 1, SKSE_X86_CDECL);
+        if (result->load.status != SKSE_X86_OK) result->status = SKSE_TRIAL_LOAD_FAULT;
+        else result->status = (result->load.eax & 0xff) ? SKSE_TRIAL_COMPLETED : SKSE_TRIAL_LOAD_DECLINED;
     }
-    if (result.status == SKSE_TRIAL_COMPLETED && core.listener) {
-        uint8_t *message = scratch.bytes + MESSAGE_OFFSET;
-        const uint32_t parameters[] = {scratch.base + MESSAGE_OFFSET};
-        entries[1].kind = SKSE_X86_UNAVAILABLE; // GetPluginHandle is scoped to Query/Load.
-        for (uint32_t type = 0; type < 2; ++type) {
-            memcpy(scratch.bytes + SENDER_OFFSET, "SKSE", 5);
-            write_word(message, scratch.base + SENDER_OFFSET);
-            write_word(message + 4, type); // PostLoad, followed by PostPostLoad.
-            write_word(message + 8, 0);
-            write_word(message + 12, 0);
-            result.message = call_trial(&vm, core.listener, parameters, 1, SKSE_X86_CDECL);
-            if (result.message.status != SKSE_X86_OK) {
-                result.status = SKSE_TRIAL_MESSAGE_FAULT;
-                break;
-            }
-            ++result.messages_delivered;
+}
+
+static void send_startup_message(SksePluginSession *session, uint32_t type) {
+    if (!session->core.listener) return;
+    TrialVm *vm = &session->vm;
+    const SkseX86Scratch scratch = vm->scratch;
+    uint8_t *message = scratch.bytes + MESSAGE_OFFSET;
+    const uint32_t parameters[] = {scratch.base + MESSAGE_OFFSET};
+    memcpy(scratch.bytes + SENDER_OFFSET, "SKSE", 5);
+    write_word(message, scratch.base + SENDER_OFFSET);
+    write_word(message + 4, type); // PostLoad, followed by PostPostLoad.
+    write_word(message + 8, 0);
+    write_word(message + 12, 0);
+    session->entries[1].kind = SKSE_X86_UNAVAILABLE; // GetPluginHandle is scoped to Query/Load.
+    SkseTrialResult *result = &session->result;
+    result->message = call_trial(vm, session->core.listener, parameters, 1, SKSE_X86_CDECL);
+    session->entries[1].kind = SKSE_X86_SCALAR_RETURN;
+    if (result->message.status != SKSE_X86_OK) result->status = SKSE_TRIAL_MESSAGE_FAULT;
+    else ++result->messages_delivered;
+}
+
+static void run_session_tasks(SksePluginSession *session, SkseX86TaskType type) {
+    session->entries[1].kind = SKSE_X86_UNAVAILABLE;
+    run_task_queue(&session->vm, &session->tasks.queues[type], &session->result, type);
+    session->entries[1].kind = SKSE_X86_SCALAR_RETURN;
+}
+
+static void finish_session_worker(SksePluginSession *session) {
+    SkseX86Worker *worker = &session->worker;
+    if (!worker->id || worker->complete) return;
+    TrialVm *vm = &session->vm;
+    SkseX86Result call = skse_x86_finish_worker(worker, vm->remaining_work);
+    vm->remaining_work -= call.work;
+    if (call.status != SKSE_X86_OK) {
+        session->result.worker_fault = call;
+        session->result.status = SKSE_TRIAL_WORKER_FAULT;
+    }
+}
+
+static void destroy_session_state(SksePluginSession *session) {
+    SkseTrialResult *result = &session->result;
+    SkseDependencySpace *space = &session->space;
+    TrialVm *vm = &session->vm;
+    session->worker.loader_locked = true;
+    session->worker.tearing_down = true;
+    if (session->detach_primary) {
+        const SksePeImage *image = &space->images[0];
+        if (!run_tls_callbacks(vm, space, 0, 0, result)) {
+            if (result->status == SKSE_TRIAL_COMPLETED) result->status = SKSE_TRIAL_TLS_DETACH_FAULT;
+        } else if (image->entry_va) {
+            const uint32_t args[] = {image->base, 0, 0}; // DLL_PROCESS_DETACH.
+            result->detach = call_trial(vm, image->entry_va, args, 3, SKSE_X86_STDCALL);
+            if (result->detach.status != SKSE_X86_OK && result->status == SKSE_TRIAL_COMPLETED)
+                result->status = SKSE_TRIAL_DETACH_FAULT;
         }
-        entries[1].kind = SKSE_X86_SCALAR_RETURN;
     }
-    if (result.status == SKSE_TRIAL_COMPLETED && enable_serialization) {
-        entries[1].kind = SKSE_X86_UNAVAILABLE;
-        exercise_serialization(&vm, &serial, &result);
-        entries[1].kind = SKSE_X86_SCALAR_RETURN;
-    }
-    while (result.status == SKSE_TRIAL_COMPLETED) {
-        if (tasks.queues[SKSE_X86_GAME_TASK].count || tasks.queues[SKSE_X86_UI_TASK].count) {
-            entries[1].kind = SKSE_X86_UNAVAILABLE;
-            exercise_tasks(&vm, &tasks, &result);
-            entries[1].kind = SKSE_X86_SCALAR_RETURN;
-        } else if (worker.id && !worker.complete) {
-            SkseX86Result call = skse_x86_finish_worker(&worker, vm.remaining_work);
-            vm.remaining_work -= call.work;
-            if (call.status != SKSE_X86_OK) {
-                result.worker_fault = call;
-                result.status = SKSE_TRIAL_WORKER_FAULT;
+    const unsigned helpers = result->dependencies.helper_count;
+    for (unsigned step = 0; step < helpers; ++step) {
+        unsigned i = session->helpers_ready ? space->detach_steps[step] : helpers - 1 - step;
+        if (!session->detach_helper[i]) continue;
+        unsigned index = space->helper_order[i];
+        const SksePeImage *helper = &space->images[index];
+        if (!run_tls_callbacks(vm, space, index, 0, result)) {
+            if (result->status == SKSE_TRIAL_COMPLETED) {
+                result->status = SKSE_TRIAL_TLS_DETACH_FAULT;
+                memcpy(result->failing_helper, result->dependencies.load_order[i], sizeof result->failing_helper);
             }
+            continue;
+        }
+        const uint32_t args[] = {helper->base, 0, 0};
+        SkseX86Result detached = helper->entry_va ? call_trial(vm, helper->entry_va, args, 3, SKSE_X86_STDCALL)
+                                                : (SkseX86Result){0};
+        if (result->dependency_detach.status == SKSE_X86_OK) result->dependency_detach = detached;
+        if (detached.status == SKSE_X86_OK) ++result->helpers_detached;
+        else if (result->status == SKSE_TRIAL_COMPLETED) {
+            result->status = SKSE_TRIAL_DEPENDENCY_DETACH_FAULT;
+            memcpy(result->failing_helper, result->dependencies.load_order[i], sizeof result->failing_helper);
+        }
+    }
+    result->unavailable_interface = session->core.unavailable_id;
+    skse_x86_records_close(&session->serial.records);
+    skse_win_files_close(&session->files);
+    free(vm->scratch.bytes);
+    skse_x86_heap_close(&session->heap);
+    skse_dependency_close(space);
+}
+
+static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions options, const SkseTrialRuntime *runtime,
+                                 const SkseTrialDependency *catalog, size_t count, CatalogPolicy policy) {
+    SksePluginSession session = {0};
+    initialize_session(&session, primary, options, runtime, catalog, count, policy);
+    SkseTrialResult *result = &session.result;
+    for (uint32_t type = 0; result->status == SKSE_TRIAL_COMPLETED && type < 2; ++type)
+        send_startup_message(&session, type);
+    if (result->status == SKSE_TRIAL_COMPLETED && session.vm.services.serialization) {
+        session.entries[1].kind = SKSE_X86_UNAVAILABLE;
+        exercise_serialization(&session.vm, &session.serial, result);
+        session.entries[1].kind = SKSE_X86_SCALAR_RETURN;
+    }
+    while (result->status == SKSE_TRIAL_COMPLETED) {
+        if (session.tasks.queues[SKSE_X86_GAME_TASK].count || session.tasks.queues[SKSE_X86_UI_TASK].count) {
+            run_session_tasks(&session, SKSE_X86_GAME_TASK);
+            if (result->status == SKSE_TRIAL_COMPLETED) run_session_tasks(&session, SKSE_X86_UI_TASK);
+        } else if (session.worker.id && !session.worker.complete) {
+            finish_session_worker(&session);
         } else {
             break;
         }
     }
-
-detach:
-    worker.loader_locked = true;
-    worker.tearing_down = true;
-    if (!run_tls_callbacks(&vm, &space, 0, 0, &result)) {
-        if (result.status == SKSE_TRIAL_COMPLETED) result.status = SKSE_TRIAL_TLS_DETACH_FAULT;
-    } else if (image->entry_va) {
-        entry_args[1] = 0; // DLL_PROCESS_DETACH, including a declined attach.
-        result.detach = call_trial(&vm, image->entry_va, entry_args, 3, SKSE_X86_STDCALL);
-        if (result.detach.status != SKSE_X86_OK && result.status == SKSE_TRIAL_COMPLETED)
-            result.status = SKSE_TRIAL_DETACH_FAULT;
-    }
-cleanup:
-    for (unsigned step = 0; step < result.dependencies.helper_count; ++step) {
-        unsigned i = helpers_ready ? space.detach_steps[step] : result.dependencies.helper_count - 1 - step;
-        if (!detach_helper[i]) continue;
-        unsigned index = space.helper_order[i];
-        const SksePeImage *helper = &space.images[index];
-        if (!run_tls_callbacks(&vm, &space, index, 0, &result)) {
-            if (result.status == SKSE_TRIAL_COMPLETED) {
-                result.status = SKSE_TRIAL_TLS_DETACH_FAULT;
-                memcpy(result.failing_helper, result.dependencies.load_order[i], sizeof result.failing_helper);
-            }
-            continue;
-        }
-        uint32_t args[] = {helper->base, 0, 0};
-        SkseX86Result detached = helper->entry_va ? call_trial(&vm, helper->entry_va, args, 3, SKSE_X86_STDCALL)
-                                                : (SkseX86Result){0};
-        if (result.dependency_detach.status == SKSE_X86_OK) result.dependency_detach = detached;
-        if (detached.status == SKSE_X86_OK) ++result.helpers_detached;
-        else if (result.status == SKSE_TRIAL_COMPLETED) {
-            result.status = SKSE_TRIAL_DEPENDENCY_DETACH_FAULT;
-            memcpy(result.failing_helper, result.dependencies.load_order[i], sizeof result.failing_helper);
-        }
-    }
-    result.unavailable_interface = core.unavailable_id;
-    skse_x86_records_close(&serial.records);
-    skse_win_files_close(&files);
-    free(scratch.bytes);
-    skse_x86_heap_close(&heap);
-    skse_dependency_close(&space);
-    return result;
+    destroy_session_state(&session);
+    return session.result;
 }
 
 SkseTrialResult skse_plugin_trial(const uint8_t *file, size_t length, SkseTrialOptions options) {
@@ -678,4 +734,67 @@ SkseTrialResult skse_plugin_trial_with_dependency(const uint8_t *file, size_t le
 SkseTrialResult skse_plugin_trial_with_package(SkseTrialDependency primary, const SkseTrialDependency *catalog,
                                               size_t count, SkseTrialOptions options, SkseTrialRuntime runtime) {
     return run_trial(primary, options, &runtime, catalog, count, PACKAGE_CATALOG);
+}
+
+SksePluginSession *skse_plugin_session_open(SkseTrialDependency primary, const SkseTrialDependency *catalog,
+                                            size_t count, SkseTrialOptions options, SkseTrialRuntime runtime,
+                                            SkseTrialResult *report) {
+    SksePluginSession *session = calloc(1, sizeof *session);
+    if (!session) {
+        if (report) *report = (SkseTrialResult){.status = SKSE_TRIAL_NO_MEMORY};
+        return NULL;
+    }
+    initialize_session(session, primary, options, &runtime, catalog, count, PACKAGE_CATALOG);
+    if (session->result.status != SKSE_TRIAL_COMPLETED) {
+        destroy_session_state(session);
+        if (report) *report = session->result;
+        free(session);
+        return NULL;
+    }
+    session->result.unavailable_interface = session->core.unavailable_id;
+    if (report) *report = session->result;
+    return session;
+}
+
+SkseSessionResult skse_plugin_session_step(SksePluginSession *session, SkseSessionEvent event,
+                                         uint32_t work_limit, uint32_t uptime_ms) {
+    if (!session || !work_limit || work_limit > TRIAL_BUDGET || (unsigned)event > SKSE_SESSION_WORKER)
+        return SKSE_SESSION_OUT_OF_ORDER;
+    if (session->result.status != SKSE_TRIAL_COMPLETED) return SKSE_SESSION_FAULTED;
+    const bool startup = event <= SKSE_SESSION_POST_POST_LOAD;
+    if (startup ? (unsigned)event != session->startup_events : session->startup_events != 2)
+        return SKSE_SESSION_OUT_OF_ORDER;
+
+    session->vm.remaining_work = work_limit;
+    session->entries[2].value = uptime_ms; // GetTickCount from this host event's uptime sample.
+    switch (event) {
+    case SKSE_SESSION_POST_LOAD:
+    case SKSE_SESSION_POST_POST_LOAD:
+        send_startup_message(session, (uint32_t)event);
+        ++session->startup_events;
+        break;
+    case SKSE_SESSION_GAME_TASKS:
+        run_session_tasks(session, SKSE_X86_GAME_TASK);
+        break;
+    case SKSE_SESSION_UI_TASKS:
+        run_session_tasks(session, SKSE_X86_UI_TASK);
+        break;
+    case SKSE_SESSION_WORKER:
+        finish_session_worker(session);
+        break;
+    }
+    session->result.unavailable_interface = session->core.unavailable_id;
+    return session->result.status == SKSE_TRIAL_COMPLETED ? SKSE_SESSION_OK : SKSE_SESSION_FAULTED;
+}
+
+const SkseTrialResult *skse_plugin_session_report(const SksePluginSession *session) {
+    return session ? &session->result : NULL;
+}
+
+void skse_plugin_session_close(SksePluginSession *session, SkseTrialResult *report) {
+    if (!session) return;
+    session->vm.remaining_work = TRIAL_BUDGET;
+    destroy_session_state(session);
+    if (report) *report = session->result;
+    free(session);
 }

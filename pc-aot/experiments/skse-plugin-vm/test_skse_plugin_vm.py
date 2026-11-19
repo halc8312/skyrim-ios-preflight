@@ -177,6 +177,11 @@ class PluginInterpreterTests(unittest.TestCase):
                                                                 variant, opt, mode="messages")
                         self.assertEqual(actual, expected)
                         self.assertIn(witness, actual)
+                        for moved in ([], ["move"]):
+                            dll = root / f"{variant}-{opt}/fixture.dll"
+                            resident = run(emulator, dll, "resident-messages", *moved,
+                                           capture_output=True, text=True).stdout
+                            self.assertEqual(resident, expected)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows runs the native dependency reference")
     def test_named_dependency_is_bound_and_relocated_without_host_code_loading(self):

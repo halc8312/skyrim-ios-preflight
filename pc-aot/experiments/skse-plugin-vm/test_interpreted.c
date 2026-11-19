@@ -36,6 +36,18 @@ static uint32_t authored_attributes(void *context, const char *path, uint32_t *o
     return 0;
 }
 
+static SkseTrialResult resident_messages(const uint8_t *bytes, size_t length, SkseTrialOptions options, SkseTrialRuntime runtime) {
+    SkseTrialResult result;
+    const SkseTrialDependency primary = {"Fixture.dll", bytes, length};
+    SksePluginSession *session = skse_plugin_session_open(primary, NULL, 0, options, runtime, &result);
+    if (!session) return result;
+    assert(result.messages_delivered == 0);
+    if (skse_plugin_session_step(session, SKSE_SESSION_POST_LOAD, 10000, runtime.uptime_ms + 10) == SKSE_SESSION_OK)
+        skse_plugin_session_step(session, SKSE_SESSION_POST_POST_LOAD, 10000, runtime.uptime_ms + 20);
+    skse_plugin_session_close(session, &result);
+    return result;
+}
+
 int main(int argc, char *argv[]) {
     int clock = argc >= 3 && strcmp(argv[2], "clock") == 0;
     int memory = argc >= 3 && strcmp(argv[2], "memory") == 0;
@@ -48,7 +60,8 @@ int main(int argc, char *argv[]) {
     int tls = argc >= 3 && strcmp(argv[2], "tls") == 0;
     int tls_pair = argc >= 4 && strcmp(argv[2], "static-tls-pair") == 0;
     int static_tls = tls_pair || (argc >= 3 && strcmp(argv[2], "static-tls") == 0);
-    int messages = argc >= 3 && strcmp(argv[2], "messages") == 0;
+    int resident = argc >= 3 && strcmp(argv[2], "resident-messages") == 0;
+    int messages = resident || (argc >= 3 && strcmp(argv[2], "messages") == 0);
     int serialization = argc >= 3 && strcmp(argv[2], "serialization") == 0;
     int dependency = tls_pair || (argc >= 4 && strcmp(argv[2], "dependency") == 0);
     int moved = argc >= 4 && strcmp(argv[argc - 1], "move") == 0;
@@ -71,9 +84,10 @@ int main(int argc, char *argv[]) {
             .assets = {.read = file_assets ? read_authored_asset : NULL,
                        .attributes = file_assets ? authored_attributes : NULL}
         };
-        SkseTrialResult result = argc >= 3
-            ? skse_plugin_trial_with_runtime(bytes, length, trial_cases[i], runtime)
-            : skse_plugin_trial(bytes, length, trial_cases[i]);
+        SkseTrialResult result;
+        if (resident) result = resident_messages(bytes, length, trial_cases[i], runtime);
+        else if (argc >= 3) result = skse_plugin_trial_with_runtime(bytes, length, trial_cases[i], runtime);
+        else result = skse_plugin_trial(bytes, length, trial_cases[i]);
         if (dependency) {
             assert(result.status == SKSE_TRIAL_IMAGE_REFUSED && result.image_status == SKSE_PE_UNAPPROVED_IMPORT);
             SkseTrialDependency supplied = {"oWNEDwORKER.DlL", helper, helper_length};
