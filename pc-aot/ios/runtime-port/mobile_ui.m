@@ -265,51 +265,51 @@ void skyrim_mobile_initialize(const char *profile) {
         integerINI("Decals","uMaxSkinDecalPerActor",enabled ? 20 : 0);
     }
 }
+static BOOL applyGameLanguageProfile(const char *gameDirectory) {
+    NSString *folder = [profilePath stringByAppendingPathComponent:@"Documents/My Games/Skyrim"];
+    char profileFile[PATH_MAX], defaultFile[PATH_MAX];
+    SkyrimGameIniSource origin = skyrim_game_language_plan_profile(gameDirectory,
+        folder.fileSystemRepresentation, &gameLanguage, profileFile, defaultFile, sizeof profileFile);
+    if (origin == SKYRIM_PROFILE_INI_ERROR) return NO;
+    if (origin == SKYRIM_PROFILE_INI_DEFERRED) return YES;
+    BOOL exists = origin == SKYRIM_PROFILE_INI_EXISTING;
+    NSString *target = [NSString stringWithUTF8String:profileFile];
+    NSString *sourcePath = exists ? target : [NSString stringWithUTF8String:defaultFile];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSError *error = nil;
+    NSDictionary *attributes = [fm attributesOfItemAtPath:sourcePath error:&error];
+    if (!attributes || ![attributes[NSFileType] isEqual:NSFileTypeRegular] ||
+        [attributes[NSFileSize] unsignedLongLongValue] > 1024 * 1024) return NO;
+    NSData *source = [NSData dataWithContentsOfFile:sourcePath options:0 error:&error];
+    if (!source) return NO;
+    size_t count = 0;
+    char *bytes = skyrim_game_language_ini(source.length ? source.bytes : "", source.length, gameLanguage, &count);
+    if (!bytes) return NO;
+    NSData *updated = [NSData dataWithBytesNoCopy:bytes length:count freeWhenDone:YES];
+    if ((!exists || ![source isEqualToData:updated]) &&
+        (![fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:&error] ||
+         ![updated writeToFile:target options:NSDataWritingAtomic error:&error])) return NO;
+    return YES;
+}
 int skyrim_mobile_prepare_game_language(const char *gameDirectory) {
     NSCAssert(NSThread.isMainThread, @"game language is selected before guest startup");
     skyrim_game_language_probe(gameDirectory, &gameLanguagePacks);
     gameLanguage = skyrim_game_language_select([startup[@"game_text"] unsignedIntValue],
         [startup[@"game_voices"] unsignedIntValue], gameLanguagePacks);
+    // Choosing only the app's display language leaves the game's profile untouched.
+    BOOL explicitSelection = startup[@"game_text"] != nil || startup[@"game_voices"] != nil;
+    gameLanguagePrepared = !explicitSelection || applyGameLanguageProfile(gameDirectory);
     fprintf(stderr, "IOS_GAME_LANGUAGE requested_text=%u text=%u text_reason=%u requested_voices=%u voices=%u voices_reason=%u\n",
         gameLanguage.requested_text, gameLanguage.text, gameLanguage.text_reason,
         gameLanguage.requested_voices, gameLanguage.voices, gameLanguage.voices_reason);
-    // An upgrade with no explicit game-language selection keeps the existing
-    // English profile byte-for-byte. UI language alone never changes this path.
-    if (!startup[@"game_text"] && !startup[@"game_voices"]) {
-        gameLanguagePrepared = YES;
-        return 1;
-    }
-    NSFileManager *fm = NSFileManager.defaultManager;
-    NSString *folder = [profilePath stringByAppendingPathComponent:@"Documents/My Games/Skyrim"];
-    char resolved[PATH_MAX];
-    int exists = skyrim_game_language_ini_path(folder.fileSystemRepresentation,
-        SKYRIM_GAME_INI_PROFILE, resolved, sizeof resolved);
-    if (exists < 0) return 0;
-    NSString *target = [NSString stringWithUTF8String:resolved];
-    NSString *sourcePath = target;
-    if (!exists) {
-        if (skyrim_game_language_ini_path(gameDirectory, SKYRIM_GAME_INI_DEFAULT,
-            resolved, sizeof resolved) != 1) return 0;
-        sourcePath = [NSString stringWithUTF8String:resolved];
-    }
-    NSError *error = nil;
-    NSDictionary *attributes = [fm attributesOfItemAtPath:sourcePath error:&error];
-    if (!attributes || ![attributes[NSFileType] isEqual:NSFileTypeRegular] ||
-        [attributes[NSFileSize] unsignedLongLongValue] > 1024 * 1024) return 0;
-    NSData *source = [NSData dataWithContentsOfFile:sourcePath options:0 error:&error];
-    if (!source) return 0;
-    size_t count = 0;
-    char *bytes = skyrim_game_language_ini(source.length ? source.bytes : "", source.length, gameLanguage, &count);
-    if (!bytes) return 0;
-    NSData *updated = [NSData dataWithBytesNoCopy:bytes length:count freeWhenDone:YES];
-    if ((!exists || ![source isEqualToData:updated]) &&
-        (![fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:&error] ||
-         ![updated writeToFile:target options:NSDataWritingAtomic error:&error])) return 0;
-    gameLanguagePrepared = YES;
-    return 1;
+    return gameLanguagePrepared;
 }
 static NSString *gameLanguageFallback(void) {
     if (!gameLanguagePrepared) return nil;
+    if (gameLanguage.text_reason == SKYRIM_GAME_MISSING_DEFAULT_INI ||
+        gameLanguage.voices_reason == SKYRIM_GAME_MISSING_DEFAULT_INI)
+        return L(@"English is in use. Copy Skyrim_default.ini next to TESV_unpacked.exe in this app’s Skyrim folder, then restart to apply your language settings.",
+                 @"今回は英語を使用します。選んだ言語を反映するには、このアプリの「Skyrim」フォルダでTESV_unpacked.exeと同じ場所にSkyrim_default.iniをコピーし、起動し直してください。");
     if (gameLanguage.text_reason && gameLanguage.voices_reason)
         return L(@"Japanese text and voices are not ready. English is in use. Install a complete, supported Japanese pack and restart.",
                  @"日本語のテキスト・音声を利用できないため英語で起動しました。対応する日本語パックを導入して再起動してください。");

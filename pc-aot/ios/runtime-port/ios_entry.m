@@ -175,7 +175,7 @@ static void classic_wait_for_game(NSURL *game) {
             return;
         }
         UIAlertController *info = [UIAlertController alertControllerWithTitle:@"ゲームファイルの場所"
-            message:@"「ファイル」→「このiPhone内」→「SkyrimIOS Classic Lab」→「Skyrim」に、ご自身のTESV_unpacked.exeとDataフォルダをコピーしてください。コピー後に「ゲームを起動」を押せます。"
+            message:@"「ファイル」→「このiPhone内」→「SkyrimIOS Classic Lab」→「Skyrim」に、ご自身のTESV_unpacked.exe、Skyrim_default.ini、Dataフォルダをコピーしてください。Skyrim_default.iniは本編の言語切り替えに使います。コピー後に「ゲームを起動」を押してください。"
             preferredStyle:UIAlertControllerStyleAlert];
         [info addAction:[UIAlertAction actionWithTitle:@"閉じる" style:UIAlertActionStyleCancel handler:nil]];
         [presenter presentViewController:info animated:YES completion:nil];

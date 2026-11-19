@@ -78,7 +78,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_SHADER_POLICY", "^IOS_SHADER_POLICY schema=1 module_cold=[01] cold_scope=[01]$") \
     X("IOS_GRAPHICS_POLICY", "^IOS_GRAPHICS_POLICY schema=1 (?:exact_state=0 wait_scope=0|exact_state=1 wait_scope=1)$") \
     X("IOS_STATE_CACHE", "^IOS_STATE_CACHE entries=[0-9]{1,20} shader_tuples=[0-9]{1,20} wakeup_links=[0-9]{1,20}$") \
-    X("IOS_GAME_LANGUAGE", "^IOS_GAME_LANGUAGE requested_text=[01] text=[01] text_reason=[0-3] requested_voices=[01] voices=[01] voices_reason=[0-3]$") \
+    X("IOS_GAME_LANGUAGE", "^IOS_GAME_LANGUAGE requested_text=[01] text=[01] text_reason=[0-4] requested_voices=[01] voices=[01] voices_reason=[0-4]$") \
     X("IOS_PROGRESS", "^IOS_PROGRESS present_phase=[0-9]{1,20} present_main=[01] phase_age_ms=[0-9]{1,20} ui_pump_age_ms=[0-9]{1,20}$") \
     X("IOS_PRESENT", "^IOS_PRESENT failure=0x[0-9a-fA-F]{8}$") \
     X("IOS_STAGE", "^IOS_STAGE (?:sdl-application-entry|guest-input-sha256-verified|private-guest-bound|first-successful-present-title-not-verified|runtime-start|guest-memory-bound|guest-entry|vulkan-window-ready) monotonic=[0-9]{1,20}[.][0-9]{9}$") \

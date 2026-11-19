@@ -96,6 +96,8 @@ class ReceiverTests(unittest.TestCase):
         self.assertFalse(list(self.config.storage.glob('.incoming-*')))
         for stage in ('runtime-start', 'guest-memory-bound', 'guest-entry', 'vulkan-window-ready'):
             self.schema.line('IOS_STAGE ' + stage + ' monotonic=1.000000000')
+        self.schema.line('IOS_GAME_LANGUAGE requested_text=1 text=0 text_reason=4 '
+                         'requested_voices=1 voices=0 voices_reason=4')
 
     def test_same_id_replay_idempotent_and_conflicting_content_never_overwritten(self):
         _, first = self.receive()

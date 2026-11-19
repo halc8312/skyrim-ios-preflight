@@ -205,6 +205,7 @@ Self-builds do not automatically send logs to the developer. An unpaired Diagnos
 | Capability rejected | Obtain an actually authorized profile; do not bypass the check. |
 | Install failure | Check device registration, expiry and matching App ID. |
 | Startup failure | Check input hash, folder layout and private startup log. |
+| Classic Lab closes after selecting Japanese game text or voices | In Files, open the Lab's own `Skyrim` folder and check for `Skyrim_default.ini` next to `TESV_unpacked.exe`. If missing, copy that one file from your own installation and reopen the Lab. |
 | Restart after Home | Preserve logs and iOS termination report; process reclamation remains possible. |
 
 Game-free helper checks:

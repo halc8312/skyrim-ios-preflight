@@ -101,6 +101,42 @@ static char *transform(const char *input, SkyrimGameLanguage language) {
     assert(again && size == size2 && !memcmp(result, again, size)); free(again);
     return result;
 }
+static void testMissingTemplate(const char *game) {
+    char folder[4096], target[4096], defaults[4096];
+    int n = snprintf(folder, sizeof folder, "%s/Profile", game);
+    assert(n > 0 && (size_t)n < sizeof folder);
+    SkyrimGameLanguagePacks ready = {SKYRIM_GAME_PACK_READY, SKYRIM_GAME_PACK_READY};
+    for (unsigned text = 0; text < 2; ++text) {
+        for (unsigned voices = 0; voices < 2; ++voices) {
+            SkyrimGameLanguage language = skyrim_game_language_select(text, voices, ready);
+            assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
+                sizeof target) == SKYRIM_PROFILE_INI_DEFERRED);
+            assert(language.requested_text == text && language.requested_voices == voices);
+            assert(!language.text && !language.voices);
+            assert(language.text_reason == (text ? SKYRIM_GAME_MISSING_DEFAULT_INI : 0));
+            assert(language.voices_reason == (voices ? SKYRIM_GAME_MISSING_DEFAULT_INI : 0));
+            assert(access(target, F_OK) && access(defaults, F_OK));
+        }
+    }
+    SkyrimGameLanguage language = skyrim_game_language_select(1, 1, ready);
+    assert(!symlink("absent", defaults));
+    assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
+        sizeof target) == SKYRIM_PROFILE_INI_ERROR);
+    assert(!unlink(defaults));
+    FILE *file = fopen(defaults, "wb"); assert(file);
+    assert(fputs("[General]\nsLanguage=ENGLISH\n", file) >= 0 && !fclose(file));
+    assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
+        sizeof target) == SKYRIM_PROFILE_INI_FROM_DEFAULT);
+    assert(language.text && language.voices && !language.text_reason && !language.voices_reason);
+    assert(!mkdir(folder, 0700) && !symlink("absent", target));
+    assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
+        sizeof target) == SKYRIM_PROFILE_INI_ERROR);
+    assert(!unlink(target) && !unlink(defaults));
+    file = fopen(target, "wb"); assert(file && !fclose(file));
+    assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
+        sizeof target) == SKYRIM_PROFILE_INI_EXISTING);
+    puts("missing template deferral and recovery PASS");
+}
 static void testIni(void) {
     SkyrimGameLanguage en = {0}, text = {.text=1}, both = {.text=1,.voices=1};
     static const char original[] = "; authored profile\r\n[General]\r\nsLanguage=ENGLISH\r\nKeep=42\r\n"
@@ -152,5 +188,5 @@ int main(int argc, char **argv) {
         SkyrimGameLanguagePacks packs; skyrim_game_language_probe(argv[2], &packs);
         printf("text=%u voices=%u\n", packs.text_status, packs.voices_status); return 0;
     }
-    assert(argc == 2); testPacks(argv[1]); testSelect(); testIni(); return 0;
+    assert(argc == 2); testPacks(argv[1]); testSelect(); testMissingTemplate(argv[1]); testIni(); return 0;
 }

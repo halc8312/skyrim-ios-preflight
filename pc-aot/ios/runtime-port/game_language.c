@@ -130,6 +130,25 @@ int skyrim_game_language_ini_path(const char *directory, unsigned kind,
     return !lstat(path, &st) && S_ISREG(st.st_mode) ? 1 : -1;
 }
 
+SkyrimGameIniSource skyrim_game_language_plan_profile(const char *game, const char *folder,
+    SkyrimGameLanguage *language, char *target, char *defaults, size_t capacity) {
+    if (!language) return SKYRIM_PROFILE_INI_ERROR;
+    int found = skyrim_game_language_ini_path(folder, SKYRIM_GAME_INI_PROFILE, target, capacity);
+    if (found < 0) return SKYRIM_PROFILE_INI_ERROR;
+    if (found) return SKYRIM_PROFILE_INI_EXISTING;
+    found = skyrim_game_language_ini_path(game, SKYRIM_GAME_INI_DEFAULT, defaults, capacity);
+    if (found < 0) return SKYRIM_PROFILE_INI_ERROR;
+    if (found) return SKYRIM_PROFILE_INI_FROM_DEFAULT;
+
+    /* A partial transfer can boot with the same defaults as the first launch.
+     * Creating a three-key profile here would discard the template's archives. */
+    language->text = SKYRIM_GAME_ENGLISH;
+    language->voices = SKYRIM_GAME_ENGLISH;
+    if (language->requested_text) language->text_reason = SKYRIM_GAME_MISSING_DEFAULT_INI;
+    if (language->requested_voices) language->voices_reason = SKYRIM_GAME_MISSING_DEFAULT_INI;
+    return SKYRIM_PROFILE_INI_DEFERRED;
+}
+
 static int equals(const char *s, size_t n, const char *literal) {
     return n == strlen(literal) && !strncasecmp(s, literal, n);
 }
