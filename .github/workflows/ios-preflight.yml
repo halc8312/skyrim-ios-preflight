@@ -100,6 +100,30 @@ jobs:
             exit 1
           fi
           tail -n 15 "$log"
+      - name: Verify the translation bridge in the iPhone executable
+        working-directory: pc-aot
+        run: |
+          set -euo pipefail
+          runs=(local/title-host/run-*)
+          test "${#runs[@]}" -eq 1
+          output="${runs[0]}/artifacts"
+          grep -Fq ' _OBJC_CLASS_$_SKTranslator' "${runs[0]}/app-symbols.txt"
+          grep -Fq '/Translation.framework/Translation' "$output/linked-libraries.txt"
+          grep -Fq '/SwiftUI.framework/SwiftUI' "$output/linked-libraries.txt"
+          python3 - "$(xcrun --sdk iphoneos --show-sdk-path)" "$output/ios-swift-sdk-stubs.txt" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+          sdk, output = map(Path, sys.argv[1:])
+          names = sorted({p.name for p in (sdk / "usr/lib/swift").glob("libswift*.tbd") if p.is_file()})
+          listing = "".join(name + "\n" for name in names).encode("utf-8")
+          output.write_bytes(listing)
+          result = output.with_name("result.json")
+          record = json.loads(result.read_text())
+          record["ios_swift_sdk_stubs_sha256"] = hashlib.sha256(listing).hexdigest()
+          result.write_text(json.dumps(record, indent=2) + "\n")
+          PY
       - name: Save the source-only iPhone host and public ABI headers
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -109,6 +133,7 @@ jobs:
             pc-aot/local/title-host/run-*/artifacts/result.json
             pc-aot/local/title-host/run-*/artifacts/platform.txt
             pc-aot/local/title-host/run-*/artifacts/linked-libraries.txt
+            pc-aot/local/title-host/run-*/artifacts/ios-swift-sdk-stubs.txt
             pc-aot/local/title-host/run-*/artifacts/*.h
           if-no-files-found: error
           compression-level: 0

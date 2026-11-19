@@ -189,15 +189,27 @@ xcrun nm "$RUN/build/SkyrimIOS.app/SkyrimIOS" > "$RUN/mod-full-symbols.txt"
 grep -q ' _skyrim_archive_list$' "$RUN/mod-full-symbols.txt"
 test -s "$RUN/build/SkyrimIOS.app/ModArchiveLicenses.txt"
 MOD_SIMULATOR_STATUS=0
-if bash ios/dependencies/build-mod-archive-dependencies.sh iphonesimulator; then
+mod_simulator_run="$RUN/mod-simulator"
+check_mod_simulator() {
   env -u IPHONEOS_DEPLOYMENT_TARGET -u SDKROOT bash scripts/check-mod-simulator.sh \
-    "$RUN/mod-simulator" "$MOD_DEPS_ROOT/prefix" "$MOD_DEPS_ROOT/mod-archive/iphonesimulator/prefix" \
-    || MOD_SIMULATOR_STATUS=$?
+    "$1" "$MOD_DEPS_ROOT/prefix" "$MOD_DEPS_ROOT/mod-archive/iphonesimulator/prefix"
+}
+if bash ios/dependencies/build-mod-archive-dependencies.sh iphonesimulator; then
+  check_mod_simulator "$mod_simulator_run" || MOD_SIMULATOR_STATUS=$?
+  if (( MOD_SIMULATOR_STATUS != 0 )); then
+    echo "MOD simulator attempt exited with status $MOD_SIMULATOR_STATUS. Retrying the full check on a fresh simulator."
+    if [[ -d "$mod_simulator_run/evidence" ]]; then
+      ditto -c -k --keepParent "$mod_simulator_run/evidence" "$RUN/artifacts/mod-simulator-first-attempt.zip"
+    fi
+    mod_simulator_run="$RUN/mod-simulator-retry"
+    MOD_SIMULATOR_STATUS=0
+    check_mod_simulator "$mod_simulator_run" || MOD_SIMULATOR_STATUS=$?
+  fi
 else
   MOD_SIMULATOR_STATUS=1
 fi
-if [[ -d "$RUN/mod-simulator/evidence" ]]; then
-  ditto -c -k --keepParent "$RUN/mod-simulator/evidence" "$RUN/artifacts/mod-simulator-checks.zip"
+if [[ -d "$mod_simulator_run/evidence" ]]; then
+  ditto -c -k --keepParent "$mod_simulator_run/evidence" "$RUN/artifacts/mod-simulator-checks.zip"
 else
   echo "MOD simulator evidence directory is missing." >&2
   MOD_SIMULATOR_STATUS=1
