@@ -83,6 +83,35 @@ class SelectedAssetTest(unittest.TestCase):
                 self.assertEqual(result.strip(), expected)
         self.assertEqual(asset.read_bytes(), b"data")
 
+    def test_windows_spelling_keeps_non_ascii_components_and_refuses_links(self):
+        child = self.root / "Data" / "SKSE" / "設定"
+        child.mkdir(parents=True)
+        asset = child / "選択.ini"
+        asset.write_bytes(b"data")
+        self.run_read("data/skse/設定/選択.INI", 0, b"data")
+        output = subprocess.check_output([self.binary, self.root, "DATA/sKsE/設定", "0", "attributes"],
+                                         text=True, timeout=4)
+        self.assertEqual(output.strip(), "0|16|0")
+        (self.root / "Link").symlink_to(child)
+        self.assertEqual(self.run_read("LINK/選択.INI", 5), 0)
+
+    def test_ambiguous_case_is_refused_without_opening_either_file(self):
+        (self.root / "Enabled.ini").write_bytes(b"first")
+        alternate = self.root / "ENABLED.ini"
+        if alternate.exists():
+            self.skipTest("Case-sensitive directory required")
+        alternate.write_bytes(b"second")
+        self.assertEqual(self.run_read("enabled.INI", 5), 0)
+        self.run_read("Enabled.ini", 0, b"first")
+        self.run_read("ENABLED.ini", 0, b"second")
+
+    def test_case_fallback_has_a_bound_and_exact_matches_still_work(self):
+        for index in range(4096):
+            (self.root / f"other{index}.ini").touch()
+        (self.root / "Exact.ini").write_bytes(b"small")
+        self.assertEqual(self.run_read("absent.ini", 13), 0)
+        self.run_read("Exact.ini", 0, b"small")
+
     def test_links_fifos_and_sockets_are_never_read(self):
         external = self.top / "private"
         external.mkdir()
@@ -150,7 +179,7 @@ class SelectedAssetTest(unittest.TestCase):
         nested = self.root / "nested"
         nested.mkdir()
         (nested / "sample").write_bytes(b"new folder data")
-        self.run_read("nested/sample", 13, mode="move-dir")
+        self.run_read("NESTED/sample", 13, mode="move-dir")
 
 
 if __name__ == "__main__":

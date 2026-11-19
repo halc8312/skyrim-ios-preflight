@@ -67,18 +67,6 @@ bool skse_win_asset_path(const uint16_t *units, size_t length, bool wide, char p
     return true;
 }
 
-static unsigned lower_ascii(unsigned value) {
-    return value >= 'A' && value <= 'Z' ? value + ('a' - 'A') : value;
-}
-
-static bool same_path(const char *first, const char *second) {
-    while (*first && lower_ascii((uint8_t)*first) == lower_ascii((uint8_t)*second)) {
-        ++first;
-        ++second;
-    }
-    return *first == *second;
-}
-
 uint32_t skse_win_file_open(SkseWinFiles *files, const char *path, bool shared, uint32_t *error) {
     if (!files->source.read) {
         *error = ACCESS_DENIED;
@@ -87,7 +75,7 @@ uint32_t skse_win_file_open(SkseWinFiles *files, const char *path, bool shared, 
     SkseWinFile *slot = NULL;
     for (unsigned i = 0; i < SKSE_WIN_OPEN_FILES; ++i) {
         SkseWinFile *current = &files->files[i];
-        if (current->token && (!shared || !current->shared) && same_path(current->path, path)) {
+        if (current->token && (!shared || !current->shared) && skse_win_asset_name_equal(current->path, path)) {
             *error = SHARING_VIOLATION;
             return UINT32_MAX;
         }

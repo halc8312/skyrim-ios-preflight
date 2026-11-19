@@ -54,7 +54,7 @@ def file_asset_fixture():
         put(data, DATA + table, "5I", 0x30a0, 0x30c0, 0x30e0, 0x3100, 0)
     for offset, name in ((0xa0, b"CreateFileA"), (0xc0, b"ReadFile"), (0xe0, b"CloseHandle"), (0x100, b"SetFilePointer")):
         zero_string(data, DATA + offset + 2, name)
-    zero_string(data, RD + 0x120, b"Data/SKSE/Plugins/Settings.ini")
+    zero_string(data, RD + 0x120, b"data/Skse/Plugins/settings.INI")
     put(data, SECTIONS + 8, "I", 0x180)
     put(data, RD + 0x60, "I", 0x1080)
     code = bytearray(b"\x53")  # Preserve EBX across the Classic cdecl call.

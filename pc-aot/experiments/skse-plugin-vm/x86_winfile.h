@@ -18,6 +18,18 @@ typedef enum {
 
 enum { SKSE_WIN_ATTRIBUTE_DIRECTORY = 0x10, SKSE_WIN_ATTRIBUTE_NORMAL = 0x80 };
 
+static inline unsigned skse_win_ascii_lower(unsigned value) {
+    return value >= 'A' && value <= 'Z' ? value + ('a' - 'A') : value;
+}
+
+static inline bool skse_win_asset_name_equal(const char *a, const char *b) {
+    while (*a && skse_win_ascii_lower((uint8_t)*a) == skse_win_ascii_lower((uint8_t)*b)) {
+        ++a;
+        ++b;
+    }
+    return *a == *b;
+}
+
 /* Return zero for an immutable snapshot allocated with malloc. On failure
  * return a Win32 error code. The lifetime of the source itself is call-only. */
 typedef uint32_t (*SkseWinReadAsset)(void *context, const char *path, size_t limit, uint8_t **bytes, size_t *length);
