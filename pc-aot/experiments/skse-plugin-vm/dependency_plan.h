@@ -30,10 +30,12 @@ typedef struct {
     char load_order[SKSE_DEPENDENCY_MAX_HELPERS][SKSE_PE_MAX_IMPORT_NAME];
     char requester[SKSE_PE_MAX_IMPORT_NAME]; /* Empty denotes the selected plugin. */
     char requested[SKSE_PE_MAX_IMPORT_NAME];
+    char import_symbol[SKSE_PE_MAX_IMPORT_NAME]; /* First named import with no binding. */
 } SkseDependencyTrace;
 
 typedef struct {
     SksePeImage images[SKSE_DEPENDENCY_MAX_MODULES]; /* The primary module is always at zero. */
+    SksePeTlsInfo tls[SKSE_DEPENDENCY_MAX_MODULES];
     unsigned count, helper_order[SKSE_DEPENDENCY_MAX_HELPERS];
     unsigned detach_steps[SKSE_DEPENDENCY_MAX_HELPERS]; /* Indices in helper_order. */
 } SkseDependencySpace;
@@ -45,7 +47,8 @@ typedef struct {
  * unload releases a consumer before its providers, picking the first discovered
  * of equally eligible siblings. Pass a fresh output or close it before reuse. */
 SkseDependencyStatus skse_dependency_map(SkseTrialDependency primary, const SkseTrialDependency *catalog, size_t count,
-                                        uint32_t primary_base, const SksePeImportBinding *services, size_t service_count,
+                                        uint32_t primary_base, unsigned static_tls,
+                                        const SksePeImportBinding *services, size_t service_count,
                                         SkseDependencySpace *out, SkseDependencyTrace *trace);
 void skse_dependency_close(SkseDependencySpace *space);
 int skse_trial_system_library(const char *name);

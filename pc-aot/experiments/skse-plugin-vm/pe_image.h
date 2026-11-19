@@ -12,7 +12,8 @@ extern "C" {
 enum { SKSE_PE_READ = 1, SKSE_PE_WRITE = 2, SKSE_PE_EXEC = 4 };
 enum { SKSE_PE_MAX_FILE_BYTES = 64 * 1024 * 1024 };
 enum { SKSE_PE_MAX_SECTIONS = 96, SKSE_PE_MAX_IMPORT_LIBRARIES = 32,
-       SKSE_PE_MAX_IMPORT_SYMBOLS = 256, SKSE_PE_MAX_IMPORT_NAME = 128 };
+       SKSE_PE_MAX_IMPORT_SYMBOLS = 256, SKSE_PE_MAX_IMPORT_NAME = 128,
+       SKSE_PE_MAX_TLS_CALLBACKS = 64 };
 
 typedef enum {
     SKSE_PE_OK = 0, SKSE_PE_BAD_ARGUMENT, SKSE_PE_TRUNCATED,
@@ -26,7 +27,7 @@ typedef enum {
     SKSE_PE_ORDINAL_IMPORT, SKSE_PE_BOUND_IMPORT, SKSE_PE_RELOCATIONS_REQUIRED,
     SKSE_PE_UNSUPPORTED_RELOCATION, SKSE_PE_BAD_RELOCATION,
     SKSE_PE_OVERLAPPING_RELOCATION, SKSE_PE_RELOCATION_IAT_CONFLICT,
-    SKSE_PE_MISSING_DEPENDENCY_EXPORT, SKSE_PE_FORWARDED_DEPENDENCY_EXPORT
+    SKSE_PE_MISSING_DEPENDENCY_EXPORT, SKSE_PE_FORWARDED_DEPENDENCY_EXPORT, SKSE_PE_BAD_TLS
 } SksePeStatus;
 
 typedef struct {
@@ -68,6 +69,11 @@ typedef struct {
     uint32_t address;
 } SksePeRequiredExport;
 
+typedef struct {
+    uint32_t present, template_rva, template_bytes, zero_fill, alignment, index_rva;
+    uint32_t callback_count, callback_rvas[SKSE_PE_MAX_TLS_CALLBACKS];
+} SksePeTlsInfo;
+
 enum { SKSE_PE_ALLOW_ENTRY = 1u };
 
 /* Inspect a file without allocating its image. The manifest describes regular
@@ -102,6 +108,17 @@ SksePeStatus skse_pe_map_at_base(const uint8_t *file, size_t length, uint32_t gu
 SksePeStatus skse_pe_map_library(const uint8_t *file, size_t length, uint32_t guest_base,
                                  const SksePeImportBinding *bindings, size_t binding_count, unsigned flags,
                                  SksePeRequiredExport *required, size_t required_count, SksePeImage *out);
+/* Opt in to reading static TLS metadata without assigning a slot, allocating
+ * thread data, or dispatching callbacks. All returned addresses are guest RVAs.
+ * Read template_bytes from out->bytes + template_rva; zero_fill follows the
+ * template when a caller creates its own block. Alignment zero means unspecified.
+ * guest_base zero selects the preferred base. A NULL/zero required list selects
+ * Classic Query/Load. An explicit list has the same contract as map_library.
+ * Both outputs and valid requested export slots are cleared on failure. */
+SksePeStatus skse_pe_map_tls(const uint8_t *file, size_t length, uint32_t guest_base,
+                             const SksePeImportBinding *bindings, size_t binding_count, unsigned flags,
+                             SksePeRequiredExport *required, size_t required_count,
+                             SksePeImage *out, SksePeTlsInfo *out_tls);
 void skse_pe_free(SksePeImage *image);
 /* Nonempty range must fit fully inside one region with every requested bit. */
 int skse_pe_allows(const SksePeImage *image, uint32_t va, size_t length, unsigned required);

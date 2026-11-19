@@ -60,7 +60,8 @@ class LocalFileProbeTest(unittest.TestCase):
             result = subprocess.check_output([binary, good, unknown, invalid, empty, big,
                                               link, fifo, root / "absent.dll", root],
                                              text=True, timeout=3).splitlines()
-            self.assertEqual(result, ["ready,7,Owned test plugin", "stopped,1,import absent from the service list,1",
+            self.assertEqual(result, ["ready,7,Owned test plugin",
+                                      "stopped,1,import absent from the service list,1,kernel32.DLL,OwnedUnsupported",
                                       "stopped,1,truncated headers,0", "2", "3", "1", "2", "1", "2"])
             self.assertEqual(good.read_bytes(), fixture)
             self.assertEqual(unknown.read_bytes(), with_import)

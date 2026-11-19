@@ -101,7 +101,7 @@ static void __cdecl observe_message(FixtureMessage *message) {
 }
 #endif
 
-#if FIXTURE_VARIANT == 9
+#if FIXTURE_VARIANT == 9 || FIXTURE_VARIANT == 16
 __declspec(dllimport) uint32_t __cdecl TransformFixtureValue(uint32_t);
 #endif
 
@@ -258,6 +258,34 @@ static _Bool setup_thread_values(void) {
 }
 #endif
 
+#if FIXTURE_VARIANT == 15 || FIXTURE_VARIANT == 16
+#include "test_tls_directory.h"
+static __declspec(thread) volatile unsigned tls_value = 7;
+
+static void __stdcall test_tls_first(void *module, unsigned reason, void *reserved) {
+    (void)reserved;
+    if (!module) __builtin_trap();
+    const unsigned expected = reason ? 7 : 25;
+    if (_tls_index == UINT32_MAX || tls_value != expected) __builtin_trap();
+    tls_value += 5;
+}
+
+static void __stdcall test_tls_second(void *module, unsigned reason, void *reserved) {
+    (void)reserved;
+    if (!module || tls_value != (reason ? 12u : 30u)) __builtin_trap();
+    tls_value += 6;
+}
+
+static const FixtureTlsCallback test_tls_callbacks[] = {test_tls_first, test_tls_second, NULL};
+FIXTURE_TLS_DIRECTORY(test_tls_callbacks);
+
+int __stdcall TestModuleEntry(void *image, unsigned reason, void *reserved) {
+    if (!image || reserved || tls_value != (reason ? 18u : 36u)) __builtin_trap();
+    if (reason) tls_value = 25;
+    return 1;
+}
+#endif
+
 _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (!api || !info) return 0;
     info->info_version = 1;
@@ -277,7 +305,7 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
 #if FIXTURE_VARIANT == 5
     initialize_string_buffers();
 #endif
-#if FIXTURE_VARIANT == 9
+#if FIXTURE_VARIANT == 9 || FIXTURE_VARIANT == 16
     if (TransformFixtureValue(1) != 14) return 0;
 #endif
 #if FIXTURE_VARIANT == 10 || FIXTURE_VARIANT == 11
@@ -291,6 +319,9 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
 #endif
 #if FIXTURE_VARIANT == 14
     if (supported && !setup_thread_values()) return 0;
+#endif
+#if FIXTURE_VARIANT == 15 || FIXTURE_VARIANT == 16
+    if (tls_value != 25) return 0;
 #endif
     return supported;
 }
@@ -328,7 +359,7 @@ _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
         !messenger->register_listener(handle, "sKsE", observe_message) ||
         !messenger->register_listener(handle, "SKSE", wrong_handler)) return 0;
 #endif
-#if FIXTURE_VARIANT == 9
+#if FIXTURE_VARIANT == 9 || FIXTURE_VARIANT == 16
     if (TransformFixtureValue(2) != 29) return 0;
 #endif
 #if FIXTURE_VARIANT == 10 || FIXTURE_VARIANT == 11
@@ -365,6 +396,9 @@ _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
     SetLastError(17);
     if (!TlsFree(index) || GetLastError() != 17) return 0;
     if (TlsGetValue(0xffffffffu) != NULL || GetLastError() != 87) return 0;
+#endif
+#if FIXTURE_VARIANT == 15 || FIXTURE_VARIANT == 16
+    if (tls_value != 25) return 0;
 #endif
     return 1;
 }

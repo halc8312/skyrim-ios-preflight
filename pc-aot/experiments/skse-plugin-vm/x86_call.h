@@ -53,11 +53,14 @@ typedef struct {
     SkseX86CoreMessaging *core_messaging;
     SkseX86Heap *heap;
     SkseWinThread *thread;
+    /* Both zero for calls without static TLS. The table and its blocks occupy
+     * the lower part of scratch, below the first address the stack may use. */
+    uint32_t static_tls_table, stack_floor;
 } SkseX86Services;
 
 typedef struct {
     SkseX86Status status;
-    uint32_t eax, instructions, instruction_va;
+    uint32_t eax, instructions, work, instruction_va;
     uint32_t service_calls[SKSE_X86_MAX_SERVICES];
 } SkseX86Result;
 

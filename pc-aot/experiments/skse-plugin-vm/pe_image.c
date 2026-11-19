@@ -46,6 +46,11 @@ typedef struct {
     size_t count;
 } ExportPlan;
 
+typedef struct {
+    SksePeTlsInfo info;
+    PeSpan callbacks; /* Includes the initialized null terminator, if present. */
+} TlsPlan;
+
 static uint16_t u16(const uint8_t *p) {
     return (uint16_t)((uint16_t)p[0] | (uint16_t)p[1] << 8);
 }
@@ -410,6 +415,69 @@ static int compare_rva(const void *left, const void *right) {
     return (a > b) - (a < b);
 }
 
+static int tls_region(const PeFile *pe, uint32_t rva, uint32_t length, unsigned permissions,
+                      int initialized) {
+    const SksePeSection *s = section_at(&pe->image, rva, length);
+    return s && (s->permissions & permissions) == permissions
+        && (!initialized || file_at_rva(pe, rva, length, NULL));
+}
+
+static SksePeStatus read_tls(const PeFile *pe, TlsPlan *tls) {
+    PeSpan dir = pe->dir[TLS];
+    if (dir.length != 24 || !tls_region(pe, dir.address, dir.length, SKSE_PE_READ, 1))
+        return SKSE_PE_BAD_TLS;
+    const uint8_t *d = file_at_rva(pe, dir.address, 24, NULL);
+    uint32_t start = u32(d), end = u32(d + 4), index = u32(d + 8), table = u32(d + 12);
+    uint32_t flags = u32(d + 20), exponent = flags >> 20;
+    SksePeTlsInfo *info = &tls->info;
+    info->zero_fill = u32(d + 16);
+    if ((flags & ~UINT32_C(0x00f00000)) || exponent > 14 || (!start != !end)
+        || end < start || (start && start < pe->preferred_base)
+        || index < pe->preferred_base || (index & 3))
+        return SKSE_PE_BAD_TLS;
+    info->alignment = exponent ? 1u << (exponent - 1) : 0;
+    info->template_rva = start ? start - pe->preferred_base : 0;
+    info->template_bytes = end - start;
+    if ((uint64_t)info->template_bytes + info->zero_fill > MAX_IMAGE_BYTES) return SKSE_PE_SIZE_LIMIT;
+    if (start && !tls_region(pe, info->template_rva, info->template_bytes,
+                             SKSE_PE_READ, info->template_bytes != 0))
+        return SKSE_PE_BAD_TLS;
+    info->index_rva = index - pe->preferred_base; /* _tls_index may be zero-initialized BSS. */
+    if (!tls_region(pe, info->index_rva, 4, SKSE_PE_READ | SKSE_PE_WRITE, 0)) return SKSE_PE_BAD_TLS;
+    if (table) {
+        if (table < pe->preferred_base || (table & 3)) return SKSE_PE_BAD_TLS;
+        uint32_t rva = table - pe->preferred_base;
+        if (!tls_region(pe, rva, 4, SKSE_PE_READ, 1)) return SKSE_PE_BAD_TLS;
+        size_t available;
+        const uint8_t *words = file_at_rva(pe, rva, 4, &available);
+        for (unsigned i = 0; ; i++) {
+            if ((i + 1u) * 4 > available) return SKSE_PE_BAD_TLS;
+            uint32_t target = u32(words + i * 4);
+            if (!target) {
+                tls->callbacks = (PeSpan){rva, (i + 1u) * 4};
+                break;
+            }
+            if (i == SKSE_PE_MAX_TLS_CALLBACKS) return SKSE_PE_SIZE_LIMIT;
+            if (target < pe->preferred_base ||
+                !tls_region(pe, target - pe->preferred_base, 1, SKSE_PE_EXEC, 1))
+                return SKSE_PE_BAD_TLS;
+            info->callback_rvas[info->callback_count++] = target - pe->preferred_base;
+        }
+    }
+    PeSpan index_cell = {info->index_rva, 4};
+    PeSpan ranges[] = {dir, {info->template_rva, info->template_bytes}, index_cell, tls->callbacks};
+    for (unsigned i = 0; i < sizeof(ranges) / sizeof(ranges[0]); ++i) {
+        if (overlaps(ranges[i], pe->dir[IAT]) || overlaps(ranges[i], pe->dir[RELOCS]))
+            return SKSE_PE_BAD_TLS;
+        for (unsigned j = 0; j < i; ++j)
+            if (overlaps(ranges[i], ranges[j])) return SKSE_PE_BAD_TLS;
+    }
+    for (unsigned i = 0; i < DIRECTORY_COUNT; ++i)
+        if (i != SECURITY && overlaps(index_cell, pe->dir[i])) return SKSE_PE_BAD_TLS;
+    info->present = 1;
+    return SKSE_PE_OK;
+}
+
 static SksePeStatus collect_relocation(const PeFile *pe, RelocationWords *move, uint32_t rva) {
     PeSpan word = {rva, 4};
     if (overlaps(word, pe->dir[IAT])) return SKSE_PE_RELOCATION_IAT_CONFLICT;
@@ -418,7 +486,10 @@ static SksePeStatus collect_relocation(const PeFile *pe, RelocationWords *move, 
     const uint8_t *stored = file_at_rva(pe, rva, 4, NULL);
     if (!stored) return SKSE_PE_BAD_RELOCATION;
     uint32_t address = u32(stored);
-    if (address < pe->preferred_base || address - pe->preferred_base >= pe->image.size)
+    int tls_end = pe->dir[TLS].address && rva == pe->dir[TLS].address + 4;
+    if (address < pe->preferred_base || address - pe->preferred_base > pe->image.size
+        || (address - pe->preferred_base == pe->image.size &&
+            (!tls_end || (uint64_t)pe->image.base + pe->image.size > UINT32_MAX)))
         return SKSE_PE_BAD_RELOCATION;
     move->rvas[move->count++] = rva;
     return SKSE_PE_OK;
@@ -466,6 +537,38 @@ static SksePeStatus check_relocations(const PeFile *pe, RelocationWords *move) {
         qsort(move->rvas, move->count, sizeof(*move->rvas), compare_rva);
         for (unsigned i = 1; i < move->count; i++)
             if (move->rvas[i] - move->rvas[i - 1] < 4) return SKSE_PE_OVERLAPPING_RELOCATION;
+    }
+    return SKSE_PE_OK;
+}
+
+/* A second base needs every nonzero directory and callback VA relocated at
+ * its own word. The index is a scalar that a simulated loader might assign
+ * later. Neither its contents nor the terminator are relocatable pointers. */
+static SksePeStatus check_tls_relocations(const PeFile *pe, const TlsPlan *tls, const RelocationWords *move) {
+    PeSpan dir = pe->dir[TLS];
+    const uint8_t *d = file_at_rva(pe, dir.address, 24, NULL);
+    for (unsigned i = 0; i < 4; ++i) {
+        uint32_t rva = dir.address + 4 * i;
+        if (u32(d + 4 * i) && !bsearch(&rva, move->rvas, move->count, sizeof(rva), compare_rva))
+            return SKSE_PE_BAD_RELOCATION;
+    }
+    for (unsigned i = 0; i < tls->info.callback_count; ++i) {
+        uint32_t rva = tls->callbacks.address + 4 * i;
+        if (!bsearch(&rva, move->rvas, move->count, sizeof(rva), compare_rva))
+            return SKSE_PE_BAD_RELOCATION;
+    }
+    PeSpan index = {tls->info.index_rva, 4};
+    for (unsigned i = 0; i < move->count; ++i) {
+        PeSpan word = {move->rvas[i], 4};
+        if (overlaps(word, index)) return SKSE_PE_BAD_RELOCATION;
+        if (overlaps(word, dir)) {
+            uint32_t offset = word.address - dir.address;
+            if (offset >= 16 || offset % 4 || !u32(d + offset)) return SKSE_PE_BAD_RELOCATION;
+        }
+        if (overlaps(word, tls->callbacks)) {
+            uint32_t offset = word.address - tls->callbacks.address;
+            if (offset % 4 || offset / 4 >= tls->info.callback_count) return SKSE_PE_BAD_RELOCATION;
+        }
     }
     return SKSE_PE_OK;
 }
@@ -523,7 +626,7 @@ static SksePeStatus read_exports(PeFile *pe, ExportPlan *requested) {
 }
 
 static SksePeStatus parse(PeFile *pe, SksePeReport *report, ImportPlan *plan, ExportPlan *requested,
-                          uint32_t guest_base, RelocationWords *move) {
+                          uint32_t guest_base, RelocationWords *move, TlsPlan *tls) {
     SksePeStatus status = read_headers(pe);
     if (status != SKSE_PE_OK) return status;
     if (guest_base) {
@@ -546,10 +649,15 @@ static SksePeStatus parse(PeFile *pe, SksePeReport *report, ImportPlan *plan, Ex
     status = read_imports(pe, report, plan);
     if (status != SKSE_PE_OK) return status;
     if (pe->has_writable_code) return SKSE_PE_UNSUPPORTED_WX;
-    if (pe->dir[TLS].address) return SKSE_PE_UNSUPPORTED_TLS;
+    if (pe->dir[TLS].address) {
+        if (!tls) return SKSE_PE_UNSUPPORTED_TLS;
+        status = read_tls(pe, tls);
+        if (status != SKSE_PE_OK) return status;
+    }
     if (pe->dir[DELAY_IMPORTS].address) return SKSE_PE_UNSUPPORTED_DELAY_IMPORTS;
     if (pe->dir[CLR].address) return SKSE_PE_UNSUPPORTED_CLR;
     uint32_t supported = (1u << EXPORTS) | (1u << RELOCS) | (1u << RESOURCES) | (1u << DEBUG_INFO);
+    if (tls) supported |= 1u << TLS;
     if (!plan) {
         if (pe->dir[IMPORTS].address || pe->dir[BOUND_IMPORTS].address || pe->dir[IAT].address)
             return SKSE_PE_UNSUPPORTED_IMPORTS;
@@ -562,7 +670,10 @@ static SksePeStatus parse(PeFile *pe, SksePeReport *report, ImportPlan *plan, Ex
     if (pe->directory_mask & ~supported) return SKSE_PE_UNSUPPORTED_DIRECTORY;
     if (pe->entry_rva && (!plan || !(plan->flags & SKSE_PE_ALLOW_ENTRY)))
         return SKSE_PE_UNSUPPORTED_ENTRY;
-    status = check_relocations(pe, pe->image.base == pe->preferred_base ? NULL : move);
+    int moved = pe->image.base != pe->preferred_base;
+    status = check_relocations(pe, moved ? move : NULL);
+    if (status == SKSE_PE_OK && moved && tls && tls->info.present)
+        status = check_tls_relocations(pe, tls, move);
     return status == SKSE_PE_OK ? read_exports(pe, requested) : status;
 }
 
@@ -570,7 +681,7 @@ SksePeStatus skse_pe_inspect(const uint8_t *file, size_t length, SksePeReport *r
     if (report) memset(report, 0, sizeof(*report));
     if (!file || !report) return SKSE_PE_BAD_ARGUMENT;
     PeFile pe = {.file = file, .file_length = length};
-    return parse(&pe, report, NULL, NULL, 0, NULL);
+    return parse(&pe, report, NULL, NULL, 0, NULL, NULL);
 }
 
 SksePeStatus skse_pe_classic_exports(const uint8_t *file, size_t length) {
@@ -605,27 +716,29 @@ static SksePeStatus copy_image(PeFile *pe, const ImportPlan *plan, const Relocat
 }
 
 static SksePeStatus map_image(const uint8_t *file, size_t length, uint32_t guest_base,
-                              ImportPlan *plan, ExportPlan *requested, SksePeImage *out) {
+                              ImportPlan *plan, ExportPlan *requested, SksePeImage *out, SksePeTlsInfo *out_tls) {
     if (!out) return SKSE_PE_BAD_ARGUMENT;
     memset(out, 0, sizeof(*out));
     if (!file) return SKSE_PE_BAD_ARGUMENT;
     PeFile pe = {.file = file, .file_length = length};
     RelocationWords move = {0};
-    SksePeStatus status = parse(&pe, NULL, plan, requested, guest_base, &move);
+    TlsPlan tls = {0};
+    SksePeStatus status = parse(&pe, NULL, plan, requested, guest_base, &move, out_tls ? &tls : NULL);
     if (status == SKSE_PE_OK) status = copy_image(&pe, plan, &move, out);
+    if (status == SKSE_PE_OK && out_tls) *out_tls = tls.info;
     free(move.rvas);
     return status;
 }
 
 SksePeStatus skse_pe_map(const uint8_t *file, size_t length, SksePeImage *out) {
-    return map_image(file, length, 0, NULL, NULL, out);
+    return map_image(file, length, 0, NULL, NULL, out, NULL);
 }
 
 SksePeStatus skse_pe_map_with_imports(const uint8_t *file, size_t length,
                                       const SksePeImportBinding *bindings, size_t binding_count,
                                       unsigned flags, SksePeImage *out) {
     ImportPlan plan = {.bindings = bindings, .binding_count = binding_count, .flags = flags};
-    return map_image(file, length, 0, &plan, NULL, out);
+    return map_image(file, length, 0, &plan, NULL, out, NULL);
 }
 
 SksePeStatus skse_pe_map_at_base(const uint8_t *file, size_t length, uint32_t guest_base,
@@ -636,12 +749,13 @@ SksePeStatus skse_pe_map_at_base(const uint8_t *file, size_t length, uint32_t gu
         return SKSE_PE_BAD_ARGUMENT;
     }
     ImportPlan plan = {.bindings = bindings, .binding_count = binding_count, .flags = flags};
-    return map_image(file, length, guest_base, &plan, NULL, out);
+    return map_image(file, length, guest_base, &plan, NULL, out, NULL);
 }
 
-SksePeStatus skse_pe_map_library(const uint8_t *file, size_t length, uint32_t guest_base,
-                                 const SksePeImportBinding *bindings, size_t binding_count, unsigned flags,
-                                 SksePeRequiredExport *required, size_t required_count, SksePeImage *out) {
+static SksePeStatus map_library(const uint8_t *file, size_t length, uint32_t guest_base,
+                                const SksePeImportBinding *bindings, size_t binding_count, unsigned flags,
+                                SksePeRequiredExport *required, size_t required_count,
+                                SksePeImage *out, SksePeTlsInfo *out_tls) {
     if (out) memset(out, 0, sizeof(*out));
     if (!required || !required_count || required_count > SKSE_PE_MAX_IMPORT_SYMBOLS) return SKSE_PE_BAD_ARGUMENT;
     for (size_t i = 0; i < required_count; ++i) required[i].address = 0;
@@ -652,10 +766,34 @@ SksePeStatus skse_pe_map_library(const uint8_t *file, size_t length, uint32_t gu
     }
     ImportPlan plan = {.bindings = bindings, .binding_count = binding_count, .flags = flags};
     ExportPlan requested = {.required = required, .count = required_count};
-    SksePeStatus status = map_image(file, length, guest_base, &plan, &requested, out);
+    SksePeStatus status = map_image(file, length, guest_base, &plan, &requested, out, out_tls);
     if (status != SKSE_PE_OK)
         for (size_t i = 0; i < required_count; ++i) required[i].address = 0;
     return status;
+}
+
+SksePeStatus skse_pe_map_library(const uint8_t *file, size_t length, uint32_t guest_base,
+                                 const SksePeImportBinding *bindings, size_t binding_count, unsigned flags,
+                                 SksePeRequiredExport *required, size_t required_count, SksePeImage *out) {
+    return map_library(file, length, guest_base, bindings, binding_count, flags, required, required_count, out, NULL);
+}
+
+SksePeStatus skse_pe_map_tls(const uint8_t *file, size_t length, uint32_t guest_base,
+                             const SksePeImportBinding *bindings, size_t binding_count, unsigned flags,
+                             SksePeRequiredExport *required, size_t required_count,
+                             SksePeImage *out, SksePeTlsInfo *out_tls) {
+    if (!out_tls) {
+        if (out) memset(out, 0, sizeof(*out));
+        if (required && required_count <= SKSE_PE_MAX_IMPORT_SYMBOLS)
+            for (size_t i = 0; i < required_count; ++i) required[i].address = 0;
+        return SKSE_PE_BAD_ARGUMENT;
+    }
+    memset(out_tls, 0, sizeof(*out_tls));
+    if (required || required_count)
+        return map_library(file, length, guest_base, bindings, binding_count, flags, required, required_count,
+                           out, out_tls);
+    ImportPlan plan = {.bindings = bindings, .binding_count = binding_count, .flags = flags};
+    return map_image(file, length, guest_base, &plan, NULL, out, out_tls);
 }
 
 void skse_pe_free(SksePeImage *image) {
@@ -675,7 +813,7 @@ const char *skse_pe_status_text(SksePeStatus status) {
         "import absent from the service list", "ordinal imports unsupported", "bound imports unsupported",
         "relocations required at alternate base", "unsupported relocation type", "invalid image relocation",
         "overlapping relocation words", "relocation overlaps import address table",
-        "missing dependency export", "forwarded dependency export"
+        "missing dependency export", "forwarded dependency export", "invalid static TLS metadata"
     };
     unsigned index = (unsigned)status;
     return index < sizeof(names) / sizeof(names[0]) ? names[index] : "unknown PE status";

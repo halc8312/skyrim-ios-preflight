@@ -283,7 +283,7 @@ static SkseProbeDirectoryStatus snapshot_all(DirectoryScan *scan) {
 
 static unsigned external_names(const Source *source, SksePeReport *imports, char first[SKSE_PE_MAX_IMPORT_NAME], char *second) {
     SksePeStatus status = skse_pe_inspect(source->bytes, source->length, imports);
-    if (status != SKSE_PE_OK && status != SKSE_PE_UNSUPPORTED_IMPORTS) return 0;
+    if (status != SKSE_PE_OK && status != SKSE_PE_UNSUPPORTED_IMPORTS && status != SKSE_PE_UNSUPPORTED_TLS) return 0;
     unsigned count = 0;
     for (uint16_t i = 0; i < imports->library_count; ++i) {
         const char *name = imports->libraries[i];
@@ -309,7 +309,7 @@ static void diagnose(const DirectoryScan *scan, const Source *source, uint32_t u
     file->is_plugin = 1;
     file->external_library_count = external_names(source, manifest, file->dependency_name, file->other_dependency_name);
     const SkseTrialOptions options = {0x01070030, 0x09200000, 0, 48, 1, 1, 1};
-    const SkseTrialRuntime runtime = {.uptime_ms = uptime_ms, .core_messages = 1};
+    const SkseTrialRuntime runtime = {.uptime_ms = uptime_ms, .core_messages = 1, .static_tls = 1};
     if (!file->external_library_count) {
         file->status = SKSE_PROBE_DLL_STANDALONE;
         file->trial = skse_plugin_trial_with_runtime(source->bytes, source->length, options, runtime);

@@ -31,10 +31,12 @@ def compare_with_windows(compiler, linker, emulator, directory, variant, opt,
     companion = directory / "OwnedWorker.dll"
     if with_dependency:
         dependency_obj, dependency_lib = directory / "worker.obj", directory / "worker.lib"
+        helper_flags = ("-DHELPER_STATIC_TLS",) if variant == 16 else ()
         run(compiler, "--target=i686-pc-windows-msvc", "-ffreestanding", "-fno-stack-protector", opt,
-            "-c", HERE / "test_dependency_dll.c", "-o", dependency_obj)
+            *helper_flags, "-c", HERE / "test_dependency_dll.c", "-o", dependency_obj)
         run(linker, "/dll", "/nodefaultlib", "/machine:x86", "/base:0x10000000",
-            "/entry:OwnedDependencyEntry@12", f"/out:{companion}", f"/implib:{dependency_lib}", dependency_obj)
+            "/entry:OwnedDependencyEntry@12", f"/out:{companion}", f"/implib:{dependency_lib}", dependency_obj,
+            *(imports if variant == 16 else ()))
         imports = (*imports, dependency_lib)
     entry = "/entry:TestModuleEntry@12" if attach else "/noentry"
     run(linker, "/dll", "/nodefaultlib", "/machine:x86", "/base:0x10000000",
@@ -42,7 +44,10 @@ def compare_with_windows(compiler, linker, emulator, directory, variant, opt,
     reference = directory / "reference.exe"
     run(compiler, "--target=i686-pc-windows-msvc", "-fuse-ld=lld", "-std=c11",
         HERE / "test_native_windows.c", "-o", reference)
-    expected = run(reference, *([mode] if mode else []), capture_output=True, text=True).stdout
+    try:
+        expected = run(reference, *([mode] if mode else []), capture_output=True, text=True).stdout
+    except subprocess.CalledProcessError as error:
+        raise AssertionError(error.stderr or f"Windows reference exited with {error.returncode}") from error
     command = [emulator, dll]
     if mode: command.append(mode)
     if with_dependency: command.append(companion)
@@ -50,8 +55,8 @@ def compare_with_windows(compiler, linker, emulator, directory, variant, opt,
         actual = run(*command, capture_output=True, text=True).stdout
     except subprocess.CalledProcessError as error:
         raise AssertionError(error.stderr or error.stdout or f"Interpreter exited with {error.returncode}") from error
-    if mode and not with_dependency:
-        moved = run(emulator, dll, mode, "move", capture_output=True, text=True).stdout
+    if mode and (not with_dependency or variant == 16):
+        moved = run(*command, "move", capture_output=True, text=True).stdout
         if moved != actual:
             raise AssertionError(f"Moving the DLL changed the interpreted output:\n{moved}\n{actual}")
     return expected, actual
@@ -201,12 +206,15 @@ class PluginInterpreterTests(unittest.TestCase):
             emulator = root / "trial.exe"
             compile_interpreter(cc, emulator, "test_interpreted.c",
                                 ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
-            for opt in ("-O0", "-O2"):
-                with self.subTest(optimization=opt):
-                    expected, actual = compare_with_windows(cc, linker, emulator, root / opt, 14, opt,
-                                                            mode="tls", imports=(kernel32[-1],))
-                    self.assertIn(",1,1,", expected)
-                    self.assertEqual(actual, expected)
+            for variant, mode in ((14, "tls"), (15, "static-tls"), (16, "static-tls-pair")):
+                for opt in ("-O0", "-O2"):
+                    with self.subTest(variant=variant, optimization=opt):
+                        expected, actual = compare_with_windows(cc, linker, emulator, root / f"{variant}-{opt}",
+                                                                variant, opt, mode=mode,
+                                                                imports=(kernel32[-1],), attach=variant != 14,
+                                                                with_dependency=variant == 16)
+                        self.assertIn(",1,1,", expected)
+                        self.assertEqual(actual, expected)
 
 if __name__ == "__main__":
     unittest.main()

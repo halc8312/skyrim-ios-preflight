@@ -19,10 +19,12 @@ int main(int argc, char *argv[]) {
     int memory = argc >= 3 && strcmp(argv[2], "memory") == 0;
     int allocation = argc >= 3 && strcmp(argv[2], "allocation") == 0;
     int tls = argc >= 3 && strcmp(argv[2], "tls") == 0;
+    int tls_pair = argc >= 4 && strcmp(argv[2], "static-tls-pair") == 0;
+    int static_tls = tls_pair || (argc >= 3 && strcmp(argv[2], "static-tls") == 0);
     int messages = argc >= 3 && strcmp(argv[2], "messages") == 0;
-    int dependency = argc == 4 && strcmp(argv[2], "dependency") == 0;
-    int moved = !dependency && argc == 4 && strcmp(argv[3], "move") == 0;
-    assert(argc == 2 || dependency || ((clock || memory || allocation || tls || messages) && (argc == 3 || moved)));
+    int dependency = tls_pair || (argc >= 4 && strcmp(argv[2], "dependency") == 0);
+    int moved = argc >= 4 && strcmp(argv[argc - 1], "move") == 0;
+    assert(argc == 2 || dependency || ((clock || memory || allocation || tls || static_tls || messages) && (argc == 3 || moved)));
     uint8_t bytes[64 * 1024];
     size_t length = read_owned_dll(argv[1], bytes, sizeof bytes);
     if (!length) return 2;
@@ -33,7 +35,7 @@ int main(int argc, char *argv[]) {
         SkseTrialRuntime runtime = {
             .uptime_ms = UINT32_C(0x9100abcd),
             .guest_base = moved ? UINT32_C(0x60000000) : 0,
-            .core_messages = (unsigned)messages
+            .core_messages = (unsigned)messages, .static_tls = (unsigned)static_tls
         };
         SkseTrialResult result = argc >= 3
             ? skse_plugin_trial_with_runtime(bytes, length, trial_cases[i], runtime)
@@ -52,10 +54,11 @@ int main(int argc, char *argv[]) {
         }
         if (result.status != SKSE_TRIAL_COMPLETED && result.status != SKSE_TRIAL_QUERY_DECLINED &&
             result.status != SKSE_TRIAL_LOAD_DECLINED && result.status != SKSE_TRIAL_MESSAGE_FAULT) {
-            fprintf(stderr, "case=%zu phase=%u PE=%u x86-query=%u at=0x%08x x86-load=%u at=0x%08x\n",
+            fprintf(stderr, "case=%zu phase=%u PE=%u x86-query=%u at=0x%08x x86-load=%u at=0x%08x TLS=%u at=0x%08x\n",
                     i, (unsigned)result.status, (unsigned)result.image_status,
                     (unsigned)result.query.status, result.query.instruction_va,
-                    (unsigned)result.load.status, result.load.instruction_va);
+                    (unsigned)result.load.status, result.load.instruction_va,
+                    (unsigned)result.tls_fault.status, result.tls_fault.instruction_va);
             return 1;
         }
         unsigned query = result.status != SKSE_TRIAL_QUERY_DECLINED;
@@ -68,6 +71,14 @@ int main(int argc, char *argv[]) {
         }
         if (memory) {
             for (unsigned service = 3; service <= 5; ++service) assert(result.query.service_calls[service] == 1);
+        }
+        if (static_tls) {
+            assert(result.tls_callbacks == (tls_pair ? 6u : 4u) && result.tls_fault.status == SKSE_X86_OK);
+            assert(result.attach.status == SKSE_X86_OK && result.attach.eax == 1 && result.attach.instructions > 0);
+            assert(result.detach.status == SKSE_X86_OK && result.detach.instructions > 0);
+            runtime.static_tls = 0;
+            SkseTrialResult disabled = skse_plugin_trial_with_runtime(bytes, length, trial_cases[i], runtime);
+            assert(disabled.status == SKSE_TRIAL_IMAGE_REFUSED && disabled.image_status == SKSE_PE_UNSUPPORTED_TLS);
         }
         print_trial(i, query, result.status == SKSE_TRIAL_COMPLETED || result.status == SKSE_TRIAL_MESSAGE_FAULT,
                     result.plugin_version, result.name,

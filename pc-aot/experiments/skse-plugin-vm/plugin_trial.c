@@ -10,12 +10,16 @@ enum {
     MESSAGING_INTERFACE_OFFSET = 128,
     MESSAGE_OFFSET = 160,
     SENDER_OFFSET = 176,
-    RELEASE_CALLBACK_OFFSET = SCRATCH_SIZE + 16,
+    TLS_TABLE_OFFSET = 256,
+    TLS_SCRATCH_LIMIT = 64 * 1024,
+    TLS_MAX_ALIGNMENT = 8192,
+    RELEASE_CALLBACK_OFFSET = 16,
     HANDLE_CALLBACK_OFFSET = RELEASE_CALLBACK_OFFSET + 4,
     QUERY_INTERFACE_OFFSET = HANDLE_CALLBACK_OFFSET + 4,
     REGISTER_CALLBACK_OFFSET = QUERY_INTERFACE_OFFSET + 4,
     UNAVAILABLE_CALLBACK_OFFSET = REGISTER_CALLBACK_OFFSET + 4,
-    CALL_BUDGET = 100000
+    CALL_BUDGET = 100000,
+    TRIAL_BUDGET = 1000000
 };
 static const struct {
     SksePeImportBinding binding;
@@ -56,6 +60,7 @@ typedef struct {
     size_t count;
     SkseX86Scratch scratch;
     SkseX86Services services;
+    uint32_t remaining_work;
 } TrialVm;
 
 static uint32_t read_word(const uint8_t *memory) {
@@ -109,11 +114,83 @@ static bool read_plugin_info(const SkseDependencySpace *space, const uint8_t *in
 
 static SkseX86Result call_trial(TrialVm *vm, uint32_t entry, const uint32_t *args,
                                 size_t count, SkseX86Convention convention) {
-    return skse_x86_call_in_space(vm->images, vm->count, entry, vm->scratch, args, count, CALL_BUDGET,
-                                 vm->services, convention);
+    if (!vm->remaining_work) return (SkseX86Result){.status = SKSE_X86_INSTRUCTION_LIMIT, .instruction_va = entry};
+    uint32_t limit = vm->remaining_work < CALL_BUDGET ? vm->remaining_work : CALL_BUDGET;
+    SkseX86Result result = skse_x86_call_in_space(vm->images, vm->count, entry, vm->scratch, args, count, limit,
+                                               vm->services, convention);
+    vm->remaining_work -= result.work;
+    return result;
+}
+
+static bool layout_static_tls(const SkseDependencySpace *space, uint32_t offsets[], uint32_t *extra_scratch) {
+    uint32_t end = TLS_TABLE_OFFSET + SKSE_DEPENDENCY_MAX_MODULES * 4;
+    for (unsigned i = 0; i < space->count; ++i) {
+        const SksePeTlsInfo *tls = &space->tls[i];
+        if (!tls->present) continue;
+        uint32_t alignment = tls->alignment ? tls->alignment : 4;
+        if (alignment > TLS_MAX_ALIGNMENT || (alignment & (alignment - 1))) return false;
+        uint32_t start = (end + alignment - 1) & ~(alignment - 1);
+        uint64_t length = (uint64_t)tls->template_bytes + tls->zero_fill;
+        if (!length) length = 1;
+        if (start >= TLS_SCRATCH_LIMIT || length > TLS_SCRATCH_LIMIT - start) return false;
+        offsets[i] = start;
+        end = start + (uint32_t)length;
+        *extra_scratch = (end + 15) & ~UINT32_C(15);
+    }
+    return true;
+}
+
+static void install_static_tls(SkseDependencySpace *space, const uint32_t offsets[], SkseX86Scratch scratch) {
+    for (unsigned i = 0; i < space->count; ++i) {
+        if (!offsets[i]) continue;
+        const SksePeTlsInfo *tls = &space->tls[i];
+        SksePeImage *image = &space->images[i];
+        if (tls->template_bytes)
+            memcpy(scratch.bytes + offsets[i], image->bytes + tls->template_rva, tls->template_bytes);
+        write_word(scratch.bytes + TLS_TABLE_OFFSET + 4 * i, scratch.base + offsets[i]);
+        write_word(image->bytes + tls->index_rva, i);
+    }
+}
+
+static bool run_tls_callbacks(TrialVm *vm, const SkseDependencySpace *space, unsigned index, uint32_t reason,
+                              SkseTrialResult *result) {
+    const SksePeTlsInfo *tls = &space->tls[index];
+    const uint32_t base = space->images[index].base;
+    const uint32_t parameters[] = {base, reason, 0};
+    for (unsigned i = 0; i < tls->callback_count; ++i) {
+        SkseX86Result call = call_trial(vm, base + tls->callback_rvas[i], parameters, 3, SKSE_X86_STDCALL);
+        if (call.status != SKSE_X86_OK) {
+            if (result->tls_fault.status == SKSE_X86_OK) result->tls_fault = call;
+            return false;
+        }
+        ++result->tls_callbacks;
+    }
+    return true;
 }
 
 typedef enum { NO_CATALOG, PACKAGE_CATALOG, EXPLICIT_HELPER } CatalogPolicy;
+
+static void identify_unavailable_import(SkseTrialDependency primary, SkseDependencyTrace *trace) {
+    SksePeReport *report = malloc(sizeof *report);
+    if (!report) return;
+    skse_pe_inspect(primary.bytes, primary.length, report);
+    for (uint16_t i = 0; i < report->symbol_count; ++i) {
+        const SksePeImportSymbol *symbol = &report->symbols[i];
+        if (symbol->by_ordinal || symbol->library_index >= report->library_count) continue;
+        const char *library = report->libraries[symbol->library_index];
+        size_t service = 0;
+        for (; service < WINDOWS_SERVICE_COUNT; ++service) {
+            const SksePeImportBinding *binding = &windows_services[service].binding;
+            if (skse_pe_library_name_equal(library, binding->library) && !strcmp(symbol->name, binding->symbol)) break;
+        }
+        if (service == WINDOWS_SERVICE_COUNT) {
+            memcpy(trace->requested, library, sizeof trace->requested);
+            memcpy(trace->import_symbol, symbol->name, sizeof trace->import_symbol);
+            break;
+        }
+    }
+    free(report);
+}
 
 static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions options, const SkseTrialRuntime *runtime,
                                  const SkseTrialDependency *catalog, size_t count, CatalogPolicy policy) {
@@ -133,7 +210,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
                 }
             }
             SkseDependencyStatus status = skse_dependency_map(primary, catalog, count, runtime->guest_base,
-                                        imports, WINDOWS_SERVICE_COUNT, &space, &result.dependencies);
+                                        runtime->static_tls, imports, WINDOWS_SERVICE_COUNT, &space, &result.dependencies);
             if (status != SKSE_DEPENDENCY_READY || (policy == EXPLICIT_HELPER && space.count != 2)) {
                 result.dependency_status = status == SKSE_DEPENDENCY_READY ? SKSE_PE_MISSING_DEPENDENCY_EXPORT
                                                                           : result.dependencies.image_status;
@@ -144,6 +221,9 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
                 skse_dependency_close(&space);
                 return result;
             }
+        } else if (runtime->static_tls) {
+            result.image_status = skse_pe_map_tls(primary.bytes, primary.length, runtime->guest_base,
+                               imports, WINDOWS_SERVICE_COUNT, SKSE_PE_ALLOW_ENTRY, NULL, 0, image, &space.tls[0]);
         } else {
             result.image_status = runtime->guest_base
                 ? skse_pe_map_at_base(primary.bytes, primary.length, runtime->guest_base, imports, WINDOWS_SERVICE_COUNT,
@@ -153,24 +233,38 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     } else {
         result.image_status = skse_pe_map(primary.bytes, primary.length, image);
     }
-    if (result.image_status != SKSE_PE_OK) return result;
+    if (result.image_status != SKSE_PE_OK) {
+        if (result.image_status == SKSE_PE_UNAPPROVED_IMPORT) identify_unavailable_import(primary, &result.dependencies);
+        return result;
+    }
     if (policy == NO_CATALOG) space.count = 1;
 
+    uint32_t tls_offsets[SKSE_DEPENDENCY_MAX_MODULES] = {0};
+    uint32_t tls_scratch = 0;
+    if (!layout_static_tls(&space, tls_offsets, &tls_scratch)) {
+        result.image_status = SKSE_PE_SIZE_LIMIT;
+        skse_dependency_close(&space);
+        return result;
+    }
+    uint32_t scratch_size = SCRATCH_SIZE + tls_scratch;
     static const uint32_t scratch_choices[] = {0x60000000, 0x30000000, 0x68000000, 0x70000000, 0x78000000};
     static const uint32_t heap_choices[] = {0x18000000, 0x28000000, 0x38000000, 0x48000000, 0x58000000};
     SkseX86Scratch scratch = {
-        .base = free_region(&space, scratch_choices, sizeof scratch_choices / sizeof scratch_choices[0], UNAVAILABLE_CALLBACK_OFFSET + 1),
-        .bytes = calloc(SCRATCH_SIZE, 1), .length = SCRATCH_SIZE
+        .base = free_region(&space, scratch_choices, sizeof scratch_choices / sizeof scratch_choices[0],
+                            scratch_size + UNAVAILABLE_CALLBACK_OFFSET + 1),
+        .bytes = calloc(scratch_size, 1), .length = scratch_size
     };
-    if (!scratch.bytes) {
+    if (!scratch.base || !scratch.bytes) {
         result.status = SKSE_TRIAL_NO_MEMORY;
+        free(scratch.bytes);
         skse_dependency_close(&space);
         return result;
     }
 
+    uint32_t callbacks_base = scratch.base + scratch_size;
     SkseX86Service entries[SKSE_X86_MAX_SERVICES] = {
-        {scratch.base + RELEASE_CALLBACK_OFFSET, options.release, SKSE_X86_SCALAR_RETURN},
-        {scratch.base + HANDLE_CALLBACK_OFFSET, options.plugin_handle, SKSE_X86_SCALAR_RETURN},
+        {callbacks_base + RELEASE_CALLBACK_OFFSET, options.release, SKSE_X86_SCALAR_RETURN},
+        {callbacks_base + HANDLE_CALLBACK_OFFSET, options.plugin_handle, SKSE_X86_SCALAR_RETURN},
     };
     bool enable_messages = runtime && runtime->core_messages && !options.editor;
     SkseX86CoreMessaging core = {
@@ -180,6 +274,11 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     SkseX86Heap heap = {.base = free_region(&space, heap_choices, sizeof heap_choices / sizeof heap_choices[0], SKSE_X86_HEAP_BYTES)};
     SkseWinThread thread = {.id = 1};
     SkseX86Services services = {.entries = entries, .count = 2};
+    if (tls_scratch) {
+        services.static_tls_table = scratch.base + TLS_TABLE_OFFSET;
+        services.stack_floor = scratch.base + tls_scratch;
+        install_static_tls(&space, tls_offsets, scratch);
+    }
     if (runtime) {
         services.heap = &heap;
         services.thread = &thread;
@@ -199,9 +298,9 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     if (options.expose_release) write_word(scratch.bytes + 24, entries[0].address);
     if (enable_messages) {
         services.core_messaging = &core;
-        uint32_t query_address = scratch.base + QUERY_INTERFACE_OFFSET;
-        uint32_t register_address = scratch.base + REGISTER_CALLBACK_OFFSET;
-        uint32_t unavailable_address = scratch.base + UNAVAILABLE_CALLBACK_OFFSET;
+        uint32_t query_address = callbacks_base + QUERY_INTERFACE_OFFSET;
+        uint32_t register_address = callbacks_base + REGISTER_CALLBACK_OFFSET;
+        uint32_t unavailable_address = callbacks_base + UNAVAILABLE_CALLBACK_OFFSET;
         entries[services.count++] = (SkseX86Service){query_address, 0, SKSE_X86_QUERY_CLASSIC};
         entries[services.count++] = (SkseX86Service){register_address, 0, SKSE_X86_REGISTER_CORE_LISTENER};
         entries[services.count++] = (SkseX86Service){unavailable_address, 0, SKSE_X86_UNAVAILABLE};
@@ -212,15 +311,22 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 12, unavailable_address);
     }
 
-    TrialVm vm = {.count = space.count, .scratch = scratch, .services = services};
+    TrialVm vm = {.count = space.count, .scratch = scratch, .services = services, .remaining_work = TRIAL_BUDGET};
     for (unsigned i = 0; i < space.count; ++i) vm.images[i] = &space.images[i];
     bool detach_helper[SKSE_DEPENDENCY_MAX_HELPERS] = {false};
     bool helpers_ready = false;
     for (unsigned i = 0; i < result.dependencies.helper_count; ++i) {
-        const SksePeImage *helper = &space.images[space.helper_order[i]];
-        if (!helper->entry_va) continue;
-        uint32_t args[] = {helper->base, 1, 0};
-        result.dependency_attach = call_trial(&vm, helper->entry_va, args, 3, SKSE_X86_STDCALL);
+        unsigned index = space.helper_order[i];
+        const SksePeImage *helper = &space.images[index];
+        if (!helper->entry_va && !space.tls[index].callback_count) continue;
+        if (!run_tls_callbacks(&vm, &space, index, 1, &result)) {
+            result.status = SKSE_TRIAL_TLS_ATTACH_FAULT;
+            memcpy(result.failing_helper, result.dependencies.load_order[i], sizeof result.failing_helper);
+            goto cleanup;
+        }
+        const uint32_t args[] = {helper->base, 1, 0};
+        result.dependency_attach = helper->entry_va ? call_trial(&vm, helper->entry_va, args, 3, SKSE_X86_STDCALL)
+                                                   : (SkseX86Result){.eax = 1};
         if (result.dependency_attach.status != SKSE_X86_OK) {
             result.status = SKSE_TRIAL_DEPENDENCY_ATTACH_FAULT;
             memcpy(result.failing_helper, result.dependencies.load_order[i], sizeof result.failing_helper);
@@ -236,6 +342,10 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     }
     helpers_ready = true;
     uint32_t entry_args[] = {image->base, 1, 0}; // Dynamic DLL_PROCESS_ATTACH.
+    if (!run_tls_callbacks(&vm, &space, 0, 1, &result)) {
+        result.status = SKSE_TRIAL_TLS_ATTACH_FAULT;
+        goto cleanup;
+    }
     if (image->entry_va) {
         result.attach = call_trial(&vm, image->entry_va, entry_args, 3, SKSE_X86_STDCALL);
         if (result.attach.status != SKSE_X86_OK) {
@@ -282,7 +392,9 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     }
 
 detach:
-    if (image->entry_va) {
+    if (!run_tls_callbacks(&vm, &space, 0, 0, &result)) {
+        if (result.status == SKSE_TRIAL_COMPLETED) result.status = SKSE_TRIAL_TLS_DETACH_FAULT;
+    } else if (image->entry_va) {
         entry_args[1] = 0; // DLL_PROCESS_DETACH, including a declined attach.
         result.detach = call_trial(&vm, image->entry_va, entry_args, 3, SKSE_X86_STDCALL);
         if (result.detach.status != SKSE_X86_OK && result.status == SKSE_TRIAL_COMPLETED)
@@ -292,9 +404,18 @@ cleanup:
     for (unsigned step = 0; step < result.dependencies.helper_count; ++step) {
         unsigned i = helpers_ready ? space.detach_steps[step] : result.dependencies.helper_count - 1 - step;
         if (!detach_helper[i]) continue;
-        const SksePeImage *helper = &space.images[space.helper_order[i]];
+        unsigned index = space.helper_order[i];
+        const SksePeImage *helper = &space.images[index];
+        if (!run_tls_callbacks(&vm, &space, index, 0, &result)) {
+            if (result.status == SKSE_TRIAL_COMPLETED) {
+                result.status = SKSE_TRIAL_TLS_DETACH_FAULT;
+                memcpy(result.failing_helper, result.dependencies.load_order[i], sizeof result.failing_helper);
+            }
+            continue;
+        }
         uint32_t args[] = {helper->base, 0, 0};
-        SkseX86Result detached = call_trial(&vm, helper->entry_va, args, 3, SKSE_X86_STDCALL);
+        SkseX86Result detached = helper->entry_va ? call_trial(&vm, helper->entry_va, args, 3, SKSE_X86_STDCALL)
+                                                : (SkseX86Result){0};
         if (result.dependency_detach.status == SKSE_X86_OK) result.dependency_detach = detached;
         if (detached.status == SKSE_X86_OK) ++result.helpers_detached;
         else if (result.status == SKSE_TRIAL_COMPLETED) {

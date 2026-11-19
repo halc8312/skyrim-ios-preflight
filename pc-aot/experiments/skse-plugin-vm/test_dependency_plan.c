@@ -9,7 +9,7 @@ static int arg_rejected(SkseTrialDependency primary, const SksePeImportBinding *
                         SkseDependencyStatus expected) {
     SkseDependencySpace space;
     SkseDependencyTrace trace;
-    if (skse_dependency_map(primary, NULL, 0, 0, services, count, &space, &trace) != expected || space.count) return 0;
+    if (skse_dependency_map(primary, NULL, 0, 0, 0, services, count, &space, &trace) != expected || space.count) return 0;
     for (unsigned i = 0; i < SKSE_DEPENDENCY_MAX_MODULES; ++i) if (space.images[i].bytes) return 0;
     return 1;
 }
@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
     if (only_map) {
         SkseDependencySpace space;
         SkseDependencyTrace trace;
-        skse_dependency_map(files[0], files + 1, (size_t)(argc - 3), 0, NULL, 0, &space, &trace);
+        skse_dependency_map(files[0], files + 1, (size_t)(argc - 3), 0, 0, NULL, 0, &space, &trace);
         unsigned owned = 0;
         for (unsigned i = 0; i < SKSE_DEPENDENCY_MAX_MODULES; ++i) owned += space.images[i].bytes != NULL;
         printf("count=%u\nowned=%u\n", space.count, owned);

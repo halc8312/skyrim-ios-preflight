@@ -12,8 +12,12 @@ int main(int argc, char **argv) {
         } else if (report.trial.status == SKSE_TRIAL_COMPLETED) {
             printf("ready,%u,%s\n", report.trial.plugin_version, report.trial.name);
         } else {
-            printf("stopped,%u,%s,%u\n", (unsigned)report.trial.status,
+            printf("stopped,%u,%s,%u", (unsigned)report.trial.status,
                    skse_pe_status_text(report.trial.image_status), (unsigned)report.imports.symbol_count);
+            if (report.trial.dependencies.import_symbol[0]) {
+                printf(",%s,%s", report.trial.dependencies.requested, report.trial.dependencies.import_symbol);
+            }
+            putchar('\n');
         }
     }
 }

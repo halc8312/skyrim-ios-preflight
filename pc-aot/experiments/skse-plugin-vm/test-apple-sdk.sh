@@ -6,7 +6,7 @@ root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/skse-dll-sdk.XXXXXXXX")"
 pushd "$here" >/dev/null
 
-CC=clang python3 -B -m unittest -v test_probe_local_file test_probe_directory test_skse_plugin_vm test_pe_image
+CC=clang python3 -B -m unittest -v test_probe_local_file test_probe_directory test_skse_plugin_vm test_pe_image test_dependency_plan
 device_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
 sources=(pe_image.c x86_call.c x86_heap.c x86_winthread.c dependency_plan.c plugin_trial.c probe_local_file.c probe_directory.c)
 for source in "${sources[@]}"; do

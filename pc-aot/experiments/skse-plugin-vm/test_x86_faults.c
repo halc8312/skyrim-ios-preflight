@@ -145,6 +145,25 @@ static void check_virtual_critical_sections(void) {
     assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_INIT, base, 0));
 }
 
+static void check_static_tls_address(void) {
+    SkseX86Services tls = {.static_tls_table = scratch_base + 16, .stack_floor = scratch_base + 256};
+    uint8_t direct[] = {0x64, 0xa1, 0x2c, 0, 0, 0, 0xc3};
+    uint8_t indirect[] = {0x64, 0x8b, 0x0d, 0x2c, 0, 0, 0, 0x89, 0xc8, 0xc3};
+    assert(ARRAY_RUN(direct).status == SKSE_X86_UNSUPPORTED_INSTRUCTION);
+    SkseX86Result result = run(direct, sizeof direct, 100, tls);
+    assert(result.status == SKSE_X86_OK && result.eax == tls.static_tls_table && result.work == 2);
+    result = run(indirect, sizeof indirect, 100, tls);
+    assert(result.status == SKSE_X86_OK && result.eax == tls.static_tls_table);
+    direct[2] = 0x18;
+    assert(run(direct, sizeof direct, 100, tls).status == SKSE_X86_UNSUPPORTED_INSTRUCTION);
+    uint8_t store[] = {0x64, 0xa3, 0x2c, 0, 0, 0, 0xc3};
+    assert(run(store, sizeof store, 100, tls).status == SKSE_X86_UNSUPPORTED_INSTRUCTION);
+    uint8_t underflow[] = {0xbc, 0, 1, 0x20, 0, 0x50, 0xc3};
+    assert(run(underflow, sizeof underflow, 100, tls).status == SKSE_X86_MEMORY_FAULT);
+    tls.static_tls_table = tls.stack_floor;
+    assert(run(indirect, sizeof indirect, 100, tls).status == SKSE_X86_BAD_ARGUMENT);
+}
+
 int main(void) {
     // CALL forwards to another x86 region and that callee returns into the caller.
     uint8_t nested[] = {0xe8, 1, 0, 0, 0, 0xc3, 0xb8, 42, 0, 0, 0, 0xc3};
@@ -247,5 +266,6 @@ int main(void) {
     check_bounded_heap();
     check_virtual_tls();
     check_virtual_critical_sections();
+    check_static_tls_address();
     return 0;
 }

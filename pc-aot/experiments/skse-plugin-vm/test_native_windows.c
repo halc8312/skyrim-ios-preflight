@@ -44,7 +44,10 @@ int main(int argc, char **argv) {
     if (!filename || wcscpy_s(filename + 1, MAX_PATH - (size_t)(filename + 1 - path), L"fixture.dll"))
         return 2;
     HMODULE dll = LoadLibraryExW(path, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (!dll) return 3;
+    if (!dll) {
+        fprintf(stderr, "Could not load the authored DLL (Win32 error %lu).\n", (unsigned long)GetLastError());
+        return 3;
+    }
     typedef _Bool (__cdecl *Query)(const FixtureInterface *, FixtureInfo *);
     typedef _Bool (__cdecl *Load)(const FixtureInterface *);
     Query query_export = (Query)GetProcAddress(dll, "SKSEPlugin_Query");

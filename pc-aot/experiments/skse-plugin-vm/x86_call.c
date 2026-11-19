@@ -17,7 +17,7 @@ typedef struct {
     SkseX86Result result;
     uint32_t registers[8], ip, flags, return_slot;
     uint8_t xmm[8][16];
-    uint32_t return_cleanup, limit, bulk_work;
+    uint32_t return_cleanup, limit, bulk_work, stack_floor;
     uint64_t code_start, code_end;
     const uint8_t *code_bytes;
     bool finished;
@@ -181,7 +181,7 @@ static Operand decode_rm(Vm *vm, uint32_t modrm) {
 
 static void push(Vm *vm, uint32_t value) {
     uint32_t address = vm->registers[ESP] - 4;
-    if (!in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, address, 4)) {
+    if (!in_range(vm->stack_floor, (uint64_t)vm->scratch.base + vm->scratch.length, address, 4)) {
         fail(vm, SKSE_X86_MEMORY_FAULT);
         return;
     }
@@ -191,7 +191,7 @@ static void push(Vm *vm, uint32_t value) {
 
 static uint32_t pop(Vm *vm) {
     uint32_t address = vm->registers[ESP];
-    if (!in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, address, 4)) {
+    if (!in_range(vm->stack_floor, (uint64_t)vm->scratch.base + vm->scratch.length, address, 4)) {
         fail(vm, SKSE_X86_MEMORY_FAULT);
         return 0;
     }
@@ -378,7 +378,7 @@ static bool reserve_bulk(Vm *vm, uint64_t cost) {
 
 static const uint8_t *service_parameters(Vm *vm, size_t size) {
     uint32_t stack = vm->registers[ESP];
-    if (!in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, stack, size)) {
+    if (!in_range(vm->stack_floor, (uint64_t)vm->scratch.base + vm->scratch.length, stack, size)) {
         fail(vm, SKSE_X86_MEMORY_FAULT);
         return NULL;
     }
@@ -824,8 +824,40 @@ static void two_byte_instruction(Vm *vm, unsigned width, bool repeat) {
     fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
 }
 
+static void read_static_tls_table(Vm *vm) {
+    // Both forms are emitted for the 32-bit compiler's TLS load. The segment
+    // itself is never mapped. Only this documented ABI offset is observable.
+    const uint32_t opcode = fetch(vm, 1);
+    Operand destination = reg(EAX);
+    uint32_t offset;
+    if (opcode == 0xa1) {
+        offset = fetch(vm, 4);
+    } else if (opcode == 0x8b) {
+        const uint32_t modrm = fetch(vm, 1);
+        const Operand source = decode_rm(vm, modrm);
+        if (source.is_register) {
+            fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+            return;
+        }
+        destination = reg((modrm >> 3) & 7);
+        offset = source.value;
+    } else {
+        fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+        return;
+    }
+    if (offset != 0x2c || !vm->services.static_tls_table) {
+        fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+        return;
+    }
+    write_operand(vm, destination, 4, vm->services.static_tls_table);
+}
+
 static void step(Vm *vm) {
     uint32_t opcode = fetch(vm, 1);
+    if (opcode == 0x64) {
+        read_static_tls_table(vm);
+        return;
+    }
     unsigned word = 4;
     bool repeat = opcode == 0xf3;
     if (repeat) opcode = fetch(vm, 1);
@@ -1071,6 +1103,12 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
         (services.count && !services.entries) ||
         (convention != SKSE_X86_CDECL && convention != SKSE_X86_STDCALL))
         return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
+    if ((services.static_tls_table || services.stack_floor) &&
+        (!services.static_tls_table || (services.static_tls_table & 3) ||
+         !services.stack_floor || (services.stack_floor & 15) ||
+         !in_range(scratch.base, services.stack_floor, services.static_tls_table, image_count * 4) ||
+         !in_range(scratch.base, scratch_end, services.stack_floor, 128)))
+        return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
@@ -1093,7 +1131,7 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
 
     static const uint32_t canaries[] = {0x13749894, 0x2269d748, 0x5ee56321, 0xf61fd490};
     Vm vm = {.images = images, .image_count = image_count, .recent_image = images[0], .scratch = scratch,
-             .services = services, .ip = entry,
+             .services = services, .ip = entry, .stack_floor = services.stack_floor ? services.stack_floor : scratch.base,
              .limit = instruction_limit};
     if (convention == SKSE_X86_STDCALL) vm.return_cleanup = (unsigned)arg_count * 4;
     vm.registers[EBX] = canaries[0];
@@ -1115,6 +1153,7 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
              vm.registers[ESI] != canaries[2] || vm.registers[EDI] != canaries[3])
         fail(&vm, SKSE_X86_BAD_CALL_RETURN);
     if (vm.result.status == SKSE_X86_OK) vm.result.eax = vm.registers[EAX];
+    vm.result.work = vm.result.instructions + vm.bulk_work;
     return vm.result;
 }
 

@@ -22,12 +22,24 @@ typedef struct {
     size_t catalog_count;
     const SksePeImportBinding *services;
     size_t service_count;
+    unsigned static_tls;
     SkseDependencyTrace *trace;
     SkseDependencySpace *space;
 } Plan;
 
 int skse_trial_system_library(const char *name) {
-    return name && (skse_pe_library_name_equal(name, "kernel32.dll") || skse_pe_library_name_equal(name, "msvcrt.dll"));
+    static const char *const system[] = {
+        "kernel32.dll", "kernelbase.dll", "ntdll.dll", "advapi32.dll",
+        "shell32.dll", "shlwapi.dll", "ws2_32.dll", "user32.dll", "gdi32.dll",
+        "ole32.dll", "oleaut32.dll", "comctl32.dll", "comdlg32.dll", "rpcrt4.dll",
+        "version.dll", "winmm.dll", "msvcrt.dll", "ucrtbase.dll",
+        "d3d9.dll", "d3dx9_42.dll", "d3dx9_43.dll", "dxgi.dll", "dinput8.dll"
+    };
+    if (!name) return false;
+    for (size_t i = 0; i < sizeof system / sizeof system[0]; ++i) {
+        if (skse_pe_library_name_equal(name, system[i])) return true;
+    }
+    return false;
 }
 
 int skse_dependency_local_name_valid(const char *name) {
@@ -114,6 +126,7 @@ static bool walk(Plan *plan, unsigned index) {
     /* A plain helper need not export SKSE functions. Full required exports,
      * import targets, relocations and the entry point are checked while mapping. */
     if (!(pe == SKSE_PE_OK || pe == SKSE_PE_UNSUPPORTED_IMPORTS || pe == SKSE_PE_UNSUPPORTED_ENTRY ||
+          (plan->static_tls && pe == SKSE_PE_UNSUPPORTED_TLS) ||
           (index && pe == SKSE_PE_MISSING_EXPORTS)))
         return reject(plan, index, name, SKSE_DEPENDENCY_INVALID_IMAGE, pe);
     if (module->manifest.image_size > SKSE_PE_MAX_FILE_BYTES - plan->image_bytes)
@@ -272,15 +285,25 @@ static bool map_module(Plan *plan, unsigned index) {
                 if (exported >= 0) address = provider->required[exported].address;
             }
         }
-        if (!address) return reject(plan, index, library, SKSE_DEPENDENCY_INVALID_IMAGE, SKSE_PE_UNAPPROVED_IMPORT);
+        if (!address) {
+            copy_name(plan->trace->import_symbol, symbol->name);
+            return reject(plan, index, library, SKSE_DEPENDENCY_INVALID_IMAGE, SKSE_PE_UNAPPROVED_IMPORT);
+        }
         bindings[count++] = (SksePeImportBinding){library, symbol->name, address};
     }
     const SkseTrialDependency *file = &module->source;
     SksePeImage *mapped = &plan->space->images[index];
-    SksePeStatus status = index
-        ? skse_pe_map_library(file->bytes, file->length, module->base, bindings, count, SKSE_PE_ALLOW_ENTRY,
-                              module->required, module->required_count, mapped)
-        : skse_pe_map_at_base(file->bytes, file->length, module->base, bindings, count, SKSE_PE_ALLOW_ENTRY, mapped);
+    SksePeStatus status;
+    if (plan->static_tls) {
+        status = skse_pe_map_tls(file->bytes, file->length, module->base, bindings, count, SKSE_PE_ALLOW_ENTRY,
+                                index ? module->required : NULL, index ? module->required_count : 0,
+                                mapped, &plan->space->tls[index]);
+    } else if (index) {
+        status = skse_pe_map_library(file->bytes, file->length, module->base, bindings, count, SKSE_PE_ALLOW_ENTRY,
+                                    module->required, module->required_count, mapped);
+    } else {
+        status = skse_pe_map_at_base(file->bytes, file->length, module->base, bindings, count, SKSE_PE_ALLOW_ENTRY, mapped);
+    }
     return status == SKSE_PE_OK || reject(plan, index, index ? file->file_name : NULL,
                                          status == SKSE_PE_NO_MEMORY ? SKSE_DEPENDENCY_NO_MEMORY : SKSE_DEPENDENCY_INVALID_IMAGE, status);
 }
@@ -292,7 +315,8 @@ void skse_dependency_close(SkseDependencySpace *space) {
 }
 
 SkseDependencyStatus skse_dependency_map(SkseTrialDependency primary, const SkseTrialDependency *catalog, size_t count,
-                                        uint32_t primary_base, const SksePeImportBinding *services, size_t service_count,
+                                        uint32_t primary_base, unsigned static_tls,
+                                        const SksePeImportBinding *services, size_t service_count,
                                         SkseDependencySpace *out, SkseDependencyTrace *trace) {
     if (out) memset(out, 0, sizeof *out);
     if (!trace) return SKSE_DEPENDENCY_INVALID_IMAGE;
@@ -321,6 +345,7 @@ SkseDependencyStatus skse_dependency_map(SkseTrialDependency primary, const Skse
     plan->catalog_count = count;
     plan->services = services;
     plan->service_count = service_count;
+    plan->static_tls = static_tls;
     bool valid = walk(plan, 0) && plan_detach(plan) && assign_addresses(plan, primary_base) && gather_exports(plan);
     for (unsigned i = 0; valid && i < plan->ordered; ++i) valid = map_module(plan, out->helper_order[i]);
     if (valid) valid = map_module(plan, 0);

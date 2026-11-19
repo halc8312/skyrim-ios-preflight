@@ -41,6 +41,15 @@
         [self diagnose:@"unsupported" extension:@"dll"];
         [self checkReport:japanese ? @"このDLLは診断用に読み込めませんでした。" : @"This DLL could not be loaded for testing."
                launchNext:^{
+            UITableView *table = self.probe.tableView;
+            BOOL foundImport = NO;
+            for (NSInteger i = 1; i < [self.probe tableView:table numberOfRowsInSection:1]; ++i) {
+                UITableViewCell *cell = [self.probe tableView:table
+                                         cellForRowAtIndexPath:[NSIndexPath indexPathForRow:i inSection:1]];
+                if ([cell.textLabel.text isEqualToString:@"kernel32.DLL · OwnedUnsupported"]) foundImport = YES;
+            }
+            if (!foundImport)
+                [NSException raise:NSInternalInconsistencyException format:@"Missing name of the unsupported Windows function"];
             [self diagnose:@"supported" extension:@"dll"];
             [self checkReport:japanese ? @"診断環境でSKSEの初期化が完了しました。" : @"SKSE initialization passed in the test environment."
                    launchNext:^{

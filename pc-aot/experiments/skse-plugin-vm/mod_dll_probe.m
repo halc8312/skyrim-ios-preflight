@@ -18,6 +18,7 @@ static NSString *ImageResult(BOOL japanese, SksePeStatus status) {
     case SKSE_PE_BAD_FORMAT: return @"Windows DLLのファイル構造を確認できませんでした。";
     case SKSE_PE_UNSUPPORTED_WX: return @"実行領域への書き込みが必要です。";
     case SKSE_PE_UNSUPPORTED_TLS: return @"Windowsのスレッド専用データ（TLS）が必要です。";
+    case SKSE_PE_BAD_TLS: return @"Windowsのスレッド専用データ（TLS）の配置を確認できませんでした。";
     case SKSE_PE_UNSUPPORTED_DELAY_IMPORTS: return @"実行中に追加のDLLを読み込む処理が必要です。";
     case SKSE_PE_UNSUPPORTED_CLR: return @".NETのDLLです。";
     case SKSE_PE_UNAPPROVED_IMPORT:
@@ -70,6 +71,16 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
                                            @"このDLLは診断用に読み込めませんでした。");
         SksePeStatus status = trial->status == SKSE_TRIAL_DEPENDENCY_REFUSED ? trial->dependency_status : trial->image_status;
         NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObjects:summary, ImageResult(japanese, status), nil];
+        const SkseDependencyTrace *dependency = &trial->dependencies;
+        if (dependency->import_symbol[0] && dependency->requested[0]) {
+            NSString *library = [NSString stringWithUTF8String:dependency->requested];
+            NSString *symbol = [NSString stringWithUTF8String:dependency->import_symbol];
+            if (library && symbol) [lines addObject:[NSString stringWithFormat:@"%@ · %@", library, symbol]];
+            if (!dependency->requester[0] && imports && !skse_trial_system_library(dependency->requested)) {
+                [lines addObject:Text(japanese, @"To look up its helper DLLs, choose the whole MOD folder.",
+                                              @"補助DLLを探す場合は、MODフォルダごと選んでください。")];
+            }
+        }
         if (!imports) return lines;
         for (uint16_t i = 0; i < imports->library_count && i < 8; ++i)
             [lines addObject:[NSString stringWithUTF8String:imports->libraries[i]]];
@@ -90,6 +101,11 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
     case SKSE_TRIAL_NO_MEMORY:
         return @[Text(japanese, @"There was insufficient memory to run the check.",
                                 @"診断に必要なメモリを確保できませんでした。")];
+    case SKSE_TRIAL_TLS_ATTACH_FAULT:
+    case SKSE_TRIAL_TLS_DETACH_FAULT:
+        return @[Text(japanese, @"The DLL stopped while handling its thread-local data.",
+                                @"DLLのスレッド専用データを処理する途中で停止しました。"),
+                 CallResult(japanese, trial->tls_fault.status)];
     default: {
         const SkseX86Result *fault = &trial->query;
         if (trial->status == SKSE_TRIAL_ATTACH_FAULT) fault = &trial->attach;

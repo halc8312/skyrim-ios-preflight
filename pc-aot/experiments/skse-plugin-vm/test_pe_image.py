@@ -48,6 +48,11 @@ class Binding(c.Structure):
 class RequiredExport(c.Structure):
     _fields_ = [("name", c.c_char_p), ("address", c.c_uint32)]
 
+class TlsInfo(c.Structure):
+    _fields_ = [(n, c.c_uint32) for n in ("present", "template_rva", "template_bytes", "zero_fill",
+                                          "alignment", "index_rva", "callback_count")] + [
+        ("callback_rvas", c.c_uint32 * 64)]
+
 CLOCK_BINDING = (b"KERNEL32.dll", b"GetTickCount", 0x60000110)
 
 
@@ -127,6 +132,18 @@ def add_code_relocation(d, pointed_rva=0x2040):
     put(d, 0x208, "I", BASE + pointed_rva)
 
 
+def add_tls(d):
+    directory(d, 9, 0x20c0, 24)
+    put(d, RD + 0xc0, "6I", BASE + 0x3120, BASE + 0x3128, BASE + 0x3210,
+        BASE + 0x20e0, 12, 0x300000)
+    put(d, RD + 0xe0, "4I", BASE + 0x1010, BASE + 0x1000, BASE + 0x1010, 0)
+    put(d, DATA + 0x120, "2I", 0x13579bdf, 0)
+    # All four TLS directory pointers and the three callbacks are HIGHLOW.
+    directory(d, 5, 0x3180, 24)
+    put(d, DATA + 0x180, "II8H", 0x2000, 24,
+        0x30c0, 0x30c4, 0x30c8, 0x30cc, 0x30e0, 0x30e4, 0x30e8, 0)
+
+
 def find_tool(*names):
     for name in names:
         found = shutil.which(name)
@@ -154,7 +171,8 @@ class PeReaderTest(unittest.TestCase):
         if sys.platform == "win32":
             path = cls.work / "owned_reader.dll"
             definitions = cls.work / "reader.def"
-            symbols = ("skse_pe_map", "skse_pe_map_with_imports", "skse_pe_map_at_base", "skse_pe_map_library", "skse_pe_inspect",
+            symbols = ("skse_pe_map", "skse_pe_map_with_imports", "skse_pe_map_at_base", "skse_pe_map_library",
+                       "skse_pe_map_tls", "skse_pe_inspect", "skse_pe_classic_exports",
                        "skse_pe_allows", "skse_pe_free", "skse_pe_status_text")
             definitions.write_text("EXPORTS\n" + "\n".join(symbols) + "\n", encoding="ascii")
             options.extend(["-shared", "-Xlinker", "/def:" + str(definitions)])
@@ -174,7 +192,9 @@ class PeReaderTest(unittest.TestCase):
         cls.lib.skse_pe_map_library.argtypes = [
             c.c_void_p, c.c_size_t, c.c_uint32, c.POINTER(Binding), c.c_size_t, c.c_uint,
             c.POINTER(RequiredExport), c.c_size_t, c.POINTER(Image)]
+        cls.lib.skse_pe_map_tls.argtypes = [*cls.lib.skse_pe_map_library.argtypes, c.POINTER(TlsInfo)]
         cls.lib.skse_pe_inspect.argtypes = [c.c_void_p, c.c_size_t, c.POINTER(Report)]
+        cls.lib.skse_pe_classic_exports.argtypes = [c.c_void_p, c.c_size_t]
         cls.lib.skse_pe_allows.argtypes = [c.POINTER(Image), c.c_uint32, c.c_size_t, c.c_uint]
         cls.lib.skse_pe_status_text.argtypes = [c.c_int]
         cls.lib.skse_pe_status_text.restype = c.c_char_p
@@ -239,6 +259,154 @@ class PeReaderTest(unittest.TestCase):
         self.lib.skse_pe_free(c.byref(im))
         self.assertFalse(im.bytes)
         self.assertFalse(self.lib.skse_pe_allows(c.byref(im), BASE, 1, R))
+
+    def map_tls(self, data, base=0, bindings=(), names=(), flags=0):
+        source = c.create_string_buffer(bytes(data))
+        services = (Binding * len(bindings))(*(Binding(*b) for b in bindings))
+        required = (RequiredExport * len(names))(*(RequiredExport(n, 0xbaded) for n in names)) if names else None
+        image, tls = Image(), TlsInfo()
+        c.memset(c.byref(tls), 0xa5, c.sizeof(tls))
+        status = self.lib.skse_pe_map_tls(source, len(data), base, services, len(bindings), flags,
+                                          required, len(names), c.byref(image), c.byref(tls))
+        self.addCleanup(self.lib.skse_pe_free, c.byref(image))
+        self.assertEqual(bytes(data), source.raw[:len(data)])
+        if status:
+            self.assertFalse(any(bytes(image)))
+            self.assertFalse(any(bytes(tls)))
+            self.assertTrue(all(e.address == 0 for e in (required or ())))
+        return self.lib.skse_pe_status_text(status).decode(), image, tls
+
+    def test_tls_opt_in_template_index_order_relocation_default_rejection(self):
+        d = make_image()
+        self.assertEqual(0, self.map_tls(d)[2].present)
+        add_tls(d)
+        self.expect(d, "TLS unsupported")
+        self.assertEqual(0, self.lib.skse_pe_classic_exports(bytes(d), len(d)))
+        for base in (BASE, 0x23000000):
+            status, im, tls = self.map_tls(d, base)
+            self.assertEqual("ok", status)
+            self.assertEqual((1, 0x3120, 8, 12, 4, 0x3210, 3), (
+                tls.present, tls.template_rva, tls.template_bytes, tls.zero_fill, tls.alignment,
+                tls.index_rva, tls.callback_count))
+            self.assertEqual([0x1010, 0x1000, 0x1010], list(tls.callback_rvas[:tls.callback_count]))
+            self.assertEqual(struct.pack("<2I", 0x13579bdf, 0), c.string_at(im.bytes + tls.template_rva, 8))
+            self.assertEqual(bytes(4), c.string_at(im.bytes + tls.index_rva, 4))
+            self.assertEqual((base+0x3120, base+0x3128, base+0x3210, base+0x20e0, 12, 0x300000),
+                             struct.unpack("<6I", c.string_at(im.bytes + 0x20c0, 24)))
+            self.assertEqual(tuple(base+r for r in [0x1010, 0x1000, 0x1010]) + (0,),
+                             struct.unpack("<4I", c.string_at(im.bytes + 0x20e0, 16)))
+
+    def test_tls_empty_absent_callbacks_alignment_and_callback_limit(self):
+        d = make_image()
+        add_tls(d)
+        put(d, RD+0xc0, "II", 0, 0)
+        put(d, RD+0xcc, "III", 0, 16, 0)
+        status, _, tls = self.map_tls(d)
+        self.assertEqual(("ok", 0, 16, 0, 0), (status, tls.template_bytes, tls.zero_fill,
+                                               tls.callback_count, tls.alignment))
+        put(d, RD+0xc0, "II", BASE + 0x3120, BASE + 0x3120)
+        put(d, RD+0xcc, "I", BASE + 0x3000)
+        put(d, DATA, "65I", *([BASE + 0x1010] * 64), 0)
+        status, _, tls = self.map_tls(d)
+        self.assertEqual(("ok", 64), (status, tls.callback_count))
+        put(d, DATA+64*4, "I", BASE + 0x1010)
+        self.assertEqual("parser limit exceeded", self.map_tls(d)[0])
+
+    def test_malformed_tls_metadata_does_not_publish(self):
+        cases = [
+            (0, 0), (0, BASE-1), (0, BASE+0x3129), (0, BASE+0x2fff), (1, BASE+0x3210),
+            (2, 0), (2, BASE+0x1000), (2, BASE+0x3124), (2, BASE+0x3211), (2, BASE+0x323e),
+            (3, BASE-1), (3, BASE+0x400), (3, BASE+0x20e1), (3, BASE+0x3200),
+            (5, 1), (5, 0xf00000), (5, 0x1300000),
+        ]
+        for field, value in cases:
+            with self.subTest(field=field, value=hex(value)):
+                d = make_image()
+                add_tls(d)
+                put(d, RD+0xc0+field*4, "I", value)
+                self.assertEqual("invalid static TLS metadata", self.map_tls(d)[0])
+        d = make_image()
+        add_tls(d)
+        directory(d, 9, 0x20c0, 20)
+        self.assertEqual("invalid static TLS metadata", self.map_tls(d)[0])
+        directory(d, 9, 0x20c0, 24)
+        put(d, RD+0xd0, "I", 0xffffffff)
+        self.assertEqual("parser limit exceeded", self.map_tls(d)[0])
+        put(d, RD+0xd0, "I", 0)
+        put(d, RD+0xcc, "I", BASE+0x31fc)
+        put(d, DATA+0x1fc, "I", BASE+0x1000)  # Its null terminator would lie in BSS.
+        self.assertEqual("invalid static TLS metadata", self.map_tls(d)[0])
+        for target in (BASE-1, BASE+0x40, BASE+0x1040, BASE+0x2000, BASE+0x3210):
+            with self.subTest(target=hex(target)):
+                put(d, RD+0xcc, "I", BASE+0x20e0)
+                put(d, RD+0xe0, "I", target)
+                self.assertEqual("invalid static TLS metadata", self.map_tls(d)[0])
+
+    def test_tls_missing_fixups_at_alternate_base_and_import_alias(self):
+        for missing in range(7):
+            d = make_image()
+            add_tls(d)
+            put(d, DATA+0x188+missing*2, "H", 0)
+            self.assertEqual("ok", self.map_tls(d)[0])
+            self.assertEqual("invalid image relocation", self.map_tls(d, 0x23000000)[0])
+        d = make_image()
+        add_named_clock(d)
+        add_tls(d)
+        for field, value in ((0, BASE+0x3060), (2, BASE+0x3060), (3, BASE+0x3060)):
+            sample = bytearray(d)
+            put(sample, RD+0xc0+field*4, "I", value)
+            if field == 0:
+                put(sample, RD+0xc4, "I", value+4)
+            self.assertEqual("invalid static TLS metadata", self.map_tls(sample, bindings=(CLOCK_BINDING,))[0])
+
+    def test_tls_rejects_relocated_index_and_keeps_one_past_template_end(self):
+        d = make_image()
+        add_tls(d)
+        put(d, RD+0xc8, "I", BASE+0x3140)
+        put(d, DATA+0x140, "I", BASE+0x2004)
+        directory(d, 5, 0x3180, 36)
+        put(d, DATA+0x198, "IIHH", 0x3000, 12, 0x3140, 0)
+        self.assertEqual("invalid image relocation", self.map_tls(d, 0x23000000)[0])
+        d = make_image()
+        add_tls(d)
+        # A real initialized section may end at the final image boundary.
+        # The half-open end is allowed unless rebasing would wrap it to zero.
+        d.extend(bytes(DATA+0xd000-len(d)))
+        put(d, OPT+56, "I", 0x10000)
+        put(d, SECTIONS+80+8, "III", 0xd000, 0x3000, 0xd000)
+        put(d, RD+0xc0, "II", BASE+0xfffc, BASE+0x10000)
+        status, im, tls = self.map_tls(d, 0x23000000)
+        self.assertEqual(("ok", 0xfffc, 4), (status, tls.template_rva, tls.template_bytes))
+        self.assertEqual(0x23010000, struct.unpack("<I", c.string_at(im.bytes+0x20c4, 4))[0])
+        self.assertEqual("invalid image relocation", self.map_tls(d, 0xffff0000)[0])
+
+    @unittest.skipUnless(sys.platform == "win32", "the Windows loader verifies the true native reference")
+    def test_real_windows_tls_matches_both_mapped_layouts(self):
+        llvm = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "LLVM/bin"
+        sdk = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / (
+            "Windows Kits/10/Lib/10.0.22621.0/um/x86/kernel32.lib")
+        if not sdk.is_file() or not all((llvm / name).is_file() for name in (
+                "clang.exe", "lld-link.exe", "llvm-readobj.exe", "llvm-objdump.exe")):
+            self.skipTest("the native reference requires the pinned Windows SDK and LLVM")
+        clang_version = subprocess.check_output([llvm / "clang.exe", "--version"], text=True).splitlines()[0]
+        if not re.match(r"clang version 19\.1\.1(?:\s|$)", clang_version):
+            self.skipTest("the reproducible native fixture uses LLVM 19.1.1")
+        comparison = HERE.parent / "classic-dll-tls" / "compare.py"
+        where = self.work / "tls-windows"
+        subprocess.run([sys.executable, comparison, "windows", where, "--llvm", llvm, "--kernel32-lib", sdk], check=True)
+        dll = (where / "OwnedTls.dll").read_bytes()
+        self.expect(dll, "TLS unsupported")
+        status = self.lib.skse_pe_classic_exports(dll, len(dll))
+        self.assertEqual("missing SKSE exports", self.lib.skse_pe_status_text(status).decode())
+        binding = [(b"KERNEL32.dll", b"MulDiv", 0x60000110)]
+        self.assertEqual("missing dependency export", self.map_tls(dll, 0, binding, [b"Missing"], 1)[0])
+        for base in (0x100000, 0x200000):
+            status, im, tls = self.map_tls(dll, base, binding, [b"ReadValue"], 1)
+            self.assertEqual("ok", status)
+            self.assertEqual((0x4000, 12, 12, 4, 0x3000, [0x11b0, 0x11d0]), (
+                tls.template_rva, tls.template_bytes, tls.zero_fill, tls.alignment, tls.index_rva,
+                list(tls.callback_rvas[:tls.callback_count])))
+            self.assertEqual(struct.pack("<3I", 0, 0x13579bdf, 0), c.string_at(im.bytes+tls.template_rva, 12))
 
     def test_every_input_truncation(self):
         data = make_image()
