@@ -94,7 +94,7 @@ jobs:
             -strict-concurrency=complete -warnings-as-errors -parse-as-library -typecheck mod_translate.swift
           defs=()
           if [[ "$SKYRIM_IOS_CLASSIC_SKSE" == 1 ]]; then
-            defs=(-DSKYRIM_IOS_CLASSIC_SKSE=1 -I../private-abi)
+            defs=(-DSKYRIM_IOS_CLASSIC_SKSE=1 -I../private-abi -I../../experiments/skse-cosave)
           fi
           xcrun --sdk iphoneos clang -isysroot "$sdk" -target arm64-apple-ios18.0 -fobjc-arc -fmodules \
             "${defs[@]}" -fsyntax-only mod_manager.m mod_fomod.m
