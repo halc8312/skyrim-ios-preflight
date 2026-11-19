@@ -11,6 +11,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 #include "mobile_ui.h"
 #include "mobile_core.h"
 #include "autosave_preferences.h"
@@ -368,7 +369,7 @@ static int readPluginHeader(NSString *path, SkyrimPluginHeader *header) {
     return status;
 }
 /* Called before guest entry, or read-only when the player opens the list. */
-static int scanModPlugins(BOOL publish) {
+static int scanModPlugins(BOOL publish, BOOL *skyuiListed) {
     const char *gameDirectory = modGamePath.fileSystemRepresentation;
     modPlugins = @[];
     if (!gameDirectory) return 1;
@@ -439,6 +440,14 @@ static int scanModPlugins(BOOL publish) {
                 char *text = skyrim_plugin_list_text(entries, order, loaded, &bytes);
                 published = text && skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, text, bytes) == 0;
                 free(text);
+                if (published && skyuiListed) {
+                    for (size_t i = 0; i < loaded; ++i) {
+                        if (strcasecmp(entries[order[i]].name, "SkyUI.esp") == 0) {
+                            *skyuiListed = YES;
+                            break;
+                        }
+                    }
+                }
             } else {
                 restored = skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, NULL, 0) == 0;
                 published = restored;
@@ -473,8 +482,17 @@ int skyrim_mobile_prepare_mods(const char *gameDirectory) {
     NSCAssert(NSThread.isMainThread, @"MOD selection is published before guest startup");
     modGamePath = gameDirectory ? [NSString stringWithUTF8String:gameDirectory] : nil;
     modPlugins = nil; modNotice = nil;
-    if (skyrim_mods_manages_plugins()) return scanModPlugins(YES);
-    return skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, NULL, 0) == 0;
+    BOOL *skyuiResult = NULL;
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    BOOL skyuiListed = NO;
+    skyuiResult = &skyuiListed;
+#endif
+    int prepared = skyrim_mods_manages_plugins() ? scanModPlugins(YES, skyuiResult) :
+        skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, NULL, 0) == 0;
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    if (prepared) return skyrim_mods_prepare_skyui_trial(skyuiListed);
+#endif
+    return prepared;
 }
 static NSString *modStateText(NSDictionary *row) {
     switch ([row[@"state"] intValue]) {
@@ -647,7 +665,7 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title=@"MOD";
     self.tableView.estimatedRowHeight=60; self.tableView.rowHeight=UITableViewAutomaticDimension;
-    if (!modPlugins) scanModPlugins(NO);
+    if (!modPlugins) scanModPlugins(NO, NULL);
     self.rows=[NSMutableArray array];
     for (NSDictionary *row in modPlugins) [self.rows addObject:[row mutableCopy]];
     if (self.rows.count)
@@ -731,8 +749,8 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     if (section==8) return modNotice ?: L(@"Import a classic Skyrim package or folder here. Apply your selection by restarting.", @"2011年版（LE）用のパッケージやフォルダはここから追加できます。変更は次回起動時に反映されます。");
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     if (section==7 && !skyrim_diagnostics_available())
-        return L(@"Share the SKSE registration counts and game calls recorded during this launch and the previous one.",
-                 @"今回と前回の起動で記録したSKSEの関数登録件数と、ゲームから呼び出された機能の記録を共有できます。");
+        return L(@"Share the SkyUI trial state, SKSE registration counts and game calls from this launch and the previous one.",
+                 @"今回と前回のSkyUI試験の状態、SKSEの関数登録件数、ゲームからの呼び出し記録を共有できます。");
 #endif
     if (section==7) return L(@"Send performance, settings and numeric error records from this launch and the previous launch to your paired PC. Game data and saves are excluded. Open the game system menu first; keep the PC awake and Tailscale connected. After receipt, tell us in the chat that you sent it.",
         @"今回と前回の起動の性能・設定・エラー番号を、登録した自分のPCへ送ります。ゲームデータやセーブは送りません。先にゲームのシステムメニューを開き、PCを起動してTailscaleを接続してください。送信できたら、このチャットで知らせてください。");

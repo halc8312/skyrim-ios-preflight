@@ -247,7 +247,8 @@ void skyrim_diagnostics_share_classic(void (^completion)(NSString *text)) {
             for (NSDictionary *session in report[@"sessions"]) {
                 NSMutableOrderedSet<NSString *> *observed = [NSMutableOrderedSet orderedSet];
                 for (NSString *line in session[@"lines"]) {
-                    if ([line hasPrefix:@"IOS_CLASSIC_VM "] || [line hasPrefix:@"IOS_CLASSIC_QUERY "])
+                    if ([line hasPrefix:@"IOS_CLASSIC_VM "] || [line hasPrefix:@"IOS_CLASSIC_QUERY "] ||
+                        [line hasPrefix:@"IOS_CLASSIC_SKYUI "])
                         [observed addObject:line];
                 }
                 if (observed.count) {

@@ -60,6 +60,7 @@ typedef enum SkyrimDiagnosticSettingKey {
 #define SKYRIM_DIAG_RULES(X) \
     X("IOS_CLASSIC_VM", "^IOS_CLASSIC_VM registered=[0-9]{1,4} primitive_passed=[0-9]{1,4}$") \
     X("IOS_CLASSIC_QUERY", "^IOS_CLASSIC_QUERY id=[0-6] handled=[01]$") \
+    X("IOS_CLASSIC_SKYUI", "^IOS_CLASSIC_SKYUI requested=[01] enabled=[01]$") \
     X("IOS_SHADER_LEAD", "^IOS_SHADER_LEAD schema=1 seq=[1-9][0-9]{0,19} result=[12] ready_ns=[0-9]{1,20} queued_ns=[0-9]{1,20} worker_ns=[0-9]{1,20} compile_ns=[0-9]{1,20} published_ns=[0-9]{1,20} wait_start_ns=[0-9]{1,20} wait_end_ns=[0-9]{1,20}$") \
     X("IOS_SHADER_LEAD_DROPS", "^IOS_SHADER_LEAD_DROPS schema=1 seq=[1-9][0-9]{0,19} busy=[0-9]{1,20} full=[0-9]{1,20}$") \
     X("IOS_LOCK", "^IOS_LOCK schema=1 threshold_ns=16666667 count=[0-9]{1,20} dropped_busy=[0-9]{1,20} dropped_full=[0-9]{1,20} window_start_ns=[0-9]{1,20} window_end_ns=[0-9]{1,20} totals=[0-9]{1,20}(?:,[0-9]{1,20}){5} fields=lock,phase,operation,instance,thread,owner_thread,owner_operation,start_ns,end_ns,cpu_ns,cpu_valid spans=[0-9,;]*$") \

@@ -15,6 +15,7 @@
 #import <objc/runtime.h>
 #include <CommonCrypto/CommonDigest.h>
 #include <errno.h>
+#include <stdlib.h>
 #include "mod_manager.h"
 #include "mod_archive.h"
 #include "mod_deploy.h"
@@ -56,7 +57,7 @@ static NSString *activeProfile;             /* this launch */
 static NSString *launchNotice;
 static BOOL launchWithoutMods, healthyMarked;
 static NSArray<NSDictionary *> *launchPlugins;
-static NSDictionary *launchSetup;
+static NSMutableDictionary *launchSetup;
 static BOOL launchHasPackages;
 
 static id MutableJSON(NSData *data) {
@@ -155,7 +156,34 @@ static BOOL AnyOn(NSArray *rows) {
     return NO;
 }
 
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+static BOOL SkyUITrialSelected(NSDictionary *profile) {
+    return [profile[@"skyuiTrial"] isEqual:@YES];
+}
+
+BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed) {
+    BOOL requested = SkyUITrialSelected(RunningProfile());
+    BOOL enabled = requested && !launchWithoutMods && skyui_listed;
+    if (setenv("LB_SKSE_SKYUI_PROBE", enabled ? "1" : "0", 1)) return NO;
+    if (enabled) launchSetup[@"skyuiTrial"] = @YES;
+    if (requested && !enabled && !launchNotice)
+        launchNotice = T(@"SkyUI trial is off for this session. Enable SkyUI.esp in this profile and restart.",
+                         @"今回はSkyUI試験が無効です。このプロファイルでSkyUI.espを有効にして、起動し直してください。");
+    fprintf(stderr, "IOS_CLASSIC_SKYUI requested=%d enabled=%d\n", (int)requested, (int)enabled);
+    return YES;
+}
+#endif
+
 /* ---- startup ----------------------------------------------------------- */
+static void RestoreLastGoodSetup(NSMutableDictionary *profile) {
+    NSDictionary *lastGood = profile[@"lastGood"];
+    profile[@"packages"] = [lastGood[@"packages"] mutableCopy];
+    profile[@"plugins"] = [lastGood[@"plugins"] mutableCopy];
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    profile[@"skyuiTrial"] = SkyUITrialSelected(lastGood) ? @YES : nil;
+#endif
+}
+
 static NSInteger AskBeforeLaunch(NSString *title, NSString *message, NSArray<NSString *> *choices) {
     UIWindow *window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes)
@@ -196,8 +224,7 @@ NSString *skyrim_mods_select_profile(NSString *defaultProfile) {
             launchWithoutMods = YES;
             launchNotice = T(@"Started without MODs. Avoid saving over a modded save.", @"MODなしで起動しました。MODを使ったセーブへの上書き保存は避けてください。");
         } else if (canRevert && answer == 1) {
-            profile[@"packages"] = [profile[@"lastGood"][@"packages"] mutableCopy];
-            profile[@"plugins"] = [profile[@"lastGood"][@"plugins"] mutableCopy];
+            RestoreLastGoodSetup(profile);
             launchPlugins = EffectivePlugins(profile);
             SaveState();
             launchNotice = T(@"Restored the last MOD setup that started.", @"前回正常に起動したMOD構成に戻しました。");
@@ -240,8 +267,8 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
     }
     /* Changes made in Settings during this session apply to the next
      * launch. Retain an independent copy of what actually started. */
-    launchSetup = @{@"packages":[[NSArray alloc] initWithArray:profile[@"packages"] copyItems:YES],
-                    @"plugins":[[NSArray alloc] initWithArray:profile[@"plugins"] copyItems:YES]};
+    launchSetup = [@{@"packages":[[NSArray alloc] initWithArray:profile[@"packages"] copyItems:YES],
+                     @"plugins":[[NSArray alloc] initWithArray:profile[@"plugins"] copyItems:YES]} mutableCopy];
     if (!WriteJSON(@{@"profile":profile[@"id"], @"hadMods":@YES, @"healthy":@NO, @"backgrounded":@NO,
                      @"started":@(NSDate.date.timeIntervalSince1970)}, LaunchPath())) {
         launchWithoutMods = YES; launchHasPackages = NO; launchPlugins = @[]; launchSetup = nil;
@@ -1089,6 +1116,9 @@ static NSArray<NSString *> *ReportLines(NSDictionary *package) {
 @property(nonatomic) BOOL pickingFolder, pickingList;
 @end
 enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, HubCount };
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+enum { HubCoSaveRow = 3, HubSkyUITrialRow };
+#endif
 @implementation SKModHub
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title = @"MOD";
@@ -1126,7 +1156,7 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
     case HubAdd: return 3;
     case HubTools:
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
-        return 4;
+        return HubSkyUITrialRow + 1;
 #else
         return 3;
 #endif
@@ -1188,10 +1218,19 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
     }
     case HubTools:
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
-        if (p.row == 3) {
+        if (p.row == HubCoSaveRow) {
             c.textLabel.text = T(@"Test DLL co-save", @"テストDLLの追加セーブ");
             c.imageView.image = [UIImage systemImageNamed:@"doc.badge.gearshape"];
             c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            break;
+        }
+        if (p.row == HubSkyUITrialRow) {
+            c.textLabel.text = T(@"SkyUI 5.1 trial", @"SkyUI 5.1 の試験");
+            c.detailTextLabel.text = T(@"Applies to this profile after a restart.", @"このプロファイルの次回起動から反映します。");
+            UISwitch *toggle = [UISwitch new]; toggle.on = SkyUITrialSelected(SelectedProfile());
+            toggle.accessibilityLabel = c.textLabel.text;
+            [toggle addTarget:self action:@selector(skyuiTrialToggled:) forControlEvents:UIControlEventValueChanged];
+            c.accessoryView = toggle; c.selectionStyle = UITableViewCellSelectionStyleNone;
             break;
         }
 #endif
@@ -1255,6 +1294,12 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
     [self presentViewController:sheet animated:YES completion:nil];
 }
 - (void)safeToggled:(UISwitch *)toggle { state[@"safeNext"] = @(toggle.on); [self changed:nil]; }
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+- (void)skyuiTrialToggled:(UISwitch *)toggle {
+    SelectedProfile()[@"skyuiTrial"] = toggle.on ? @YES : nil;
+    [self changed:T(@"SkyUI trial setting saved for the next launch.", @"SkyUI試験の設定を保存しました。次回起動から反映します。")];
+}
+#endif
 - (BOOL)tableView:(UITableView *)t canEditRowAtIndexPath:(NSIndexPath *)p { (void)t; return p.section == HubMods && self.rows.count; }
 - (BOOL)tableView:(UITableView *)t canMoveRowAtIndexPath:(NSIndexPath *)p { (void)t; return p.section == HubMods && self.rows.count > 1; }
 - (NSIndexPath *)tableView:(UITableView *)t targetIndexPathForMoveFromRowAtIndexPath:(NSIndexPath *)from toProposedIndexPath:(NSIndexPath *)to {
@@ -1350,7 +1395,8 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
         break;
     case HubTools:
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
-        if (p.row == 3) {
+        if (p.row == HubSkyUITrialRow) break;
+        if (p.row == HubCoSaveRow) {
             [self.navigationController pushViewController:skyrim_classic_probe_controller() animated:YES];
             break;
         }

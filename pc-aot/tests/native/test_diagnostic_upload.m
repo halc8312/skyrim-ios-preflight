@@ -290,13 +290,16 @@ static void classicShareTests(NSString *root) {
     NSString *current = [folder stringByAppendingPathComponent:@"run-classic.log"];
     NSString *query = @"IOS_CLASSIC_QUERY id=1 handled=0\n";
     NSString *vm = @"IOS_CLASSIC_VM registered=99 primitive_passed=36\n";
-    NSString *privateLines = @"IOS_CLASSIC_QUERY id=8 handled=1\nIOS_CLASSIC_QUERY id=1 handled=0 name=Private.esp\n";
-    writeText(current, [NSString stringWithFormat:@"%@%@%@%@%@", header(12), vm, query, query, privateLines]);
+    NSString *skyui = @"IOS_CLASSIC_SKYUI requested=1 enabled=1\n";
+    NSString *privateLines = @"IOS_CLASSIC_QUERY id=8 handled=1\nIOS_CLASSIC_QUERY id=1 handled=0 name=Private.esp\n"
+                              @"IOS_CLASSIC_SKYUI requested=1 enabled=1 name=Private.esp\n";
+    writeText(current, [NSString stringWithFormat:@"%@%@%@%@%@%@", header(12), skyui, vm, query, query, privateLines]);
     skyrim_diagnostics_set_log_path(current.fileSystemRepresentation);
     __block BOOL done = NO;
     skyrim_diagnostics_share_classic(^(NSString *summary) {
         assert(NSThread.isMainThread);
-        assert([summary isEqualToString:@"SkyrimIOS Classic Lab · current · build 12\nIOS_CLASSIC_VM registered=99 primitive_passed=36\nIOS_CLASSIC_QUERY id=1 handled=0"]);
+        assert([summary isEqualToString:@"SkyrimIOS Classic Lab · current · build 12\nIOS_CLASSIC_SKYUI requested=1 enabled=1\n"
+                                         @"IOS_CLASSIC_VM registered=99 primitive_passed=36\nIOS_CLASSIC_QUERY id=1 handled=0"]);
         done = YES;
     });
     pumpUntil(^BOOL{ return done; });

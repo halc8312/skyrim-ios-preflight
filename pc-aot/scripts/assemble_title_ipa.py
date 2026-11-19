@@ -145,9 +145,10 @@ def main():
     if classic_variant(info.get("PcGuestClassicSkseExperiment", False)) != guest_classic:
         raise ValueError("Host/guest Classic experiment mismatch")
     expected_id = "org.skyrimios.pc2011.classic-lab" if guest_classic else "org.skyrimios.pc2011"
+    expected_builds = {"16", "17"} if guest_classic else {"16"}
     if (info.get("CFBundleIdentifier") != expected_id
             or info.get("CFBundleExecutable") != "SkyrimIOS"
-            or str(info.get("CFBundleVersion")) != "16"):
+            or str(info.get("CFBundleVersion")) not in expected_builds):
         raise ValueError("Public-host identity mismatch")
     info["PcGuestExpectedInputSHA256"] = a.input_sha256
     info["LSSupportsGameMode"] = True

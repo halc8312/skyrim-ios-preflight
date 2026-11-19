@@ -159,6 +159,9 @@ if(SKYRIM_IOS_BUILD_APP)
         string(REPLACE "<key>CFBundleDisplayName</key><string>SkyrimIOS</string>"
             "<key>CFBundleDisplayName</key><string>SkyrimIOS Classic Lab</string>"
             classic_plist "${classic_plist}")
+        string(REGEX REPLACE "<key>CFBundleVersion</key><string>[0-9]+</string>"
+            "<key>CFBundleVersion</key><string>17</string>"
+            classic_plist "${classic_plist}")
         set(host_plist "${CMAKE_CURRENT_BINARY_DIR}/ClassicGuestInfo.plist.in")
         file(CONFIGURE OUTPUT "${host_plist}" CONTENT "${classic_plist}" @ONLY)
     endif()

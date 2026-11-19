@@ -137,19 +137,21 @@ class PackageIdentityTests(unittest.TestCase):
             framework.mkdir()
             binary = framework / "SkyrimGuest"
             binary.write_bytes(b"fixture")
-            archive, result, output = (base / name for name in ("host.zip", "result.json", "out.ipa"))
-            for host, guest, manifest, separate_id, succeeds in (
-                    (False, True, True, False, False), (True, False, False, True, False),
-                    (True, False, True, True, False), (True, True, True, False, False),
-                    (True, True, True, True, True)):
-                with self.subTest(host=host, guest=guest, manifest=manifest):
+            archive, result = (base / name for name in ("host.zip", "result.json"))
+            for host, guest, manifest, separate_id, version, succeeds in (
+                    (False, True, True, False, "16", False), (True, False, False, True, "16", False),
+                    (True, False, True, True, "16", False), (True, True, True, False, "16", False),
+                    (True, True, True, True, "16", True), (True, True, True, True, "17", True),
+                    (True, True, True, True, "18", False)):
+                with self.subTest(host=host, guest=guest, manifest=manifest, version=version):
+                    output = base / f"out-{version}.ipa"
                     result.write_text(json.dumps({"framework": str(framework), "strict_link_succeeded": True,
                         "signed": False, "sha256": assembly.sha(binary), "classic_skse_experiment": manifest}))
                     (framework / "Info.plist").write_bytes(plistlib.dumps(
                         {"CFBundleExecutable": "SkyrimGuest", "PcGuestClassicSkseExperiment": guest}))
                     info = plistlib.loads((ROOT / "ios/runtime-port/Info.plist.in").read_bytes())
                     info.update(CFBundleExecutable="SkyrimIOS", CFBundleIdentifier="org.skyrimios.pc2011",
-                                PcGuestClassicSkseExperiment=host)
+                                CFBundleVersion=version, PcGuestClassicSkseExperiment=host)
                     if separate_id:
                         info["CFBundleIdentifier"] += ".classic-lab"
                     with zipfile.ZipFile(archive, "w") as z:
