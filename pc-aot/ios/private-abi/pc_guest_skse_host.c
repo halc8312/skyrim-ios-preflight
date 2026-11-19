@@ -3,6 +3,8 @@
 #include "PcGuestSkseABI.h"
 #include "PcGuestSkseTrial.h"
 #include <dlfcn.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -12,11 +14,35 @@ extern void f_A60200(CPU *);
 extern void f_842140(CPU *);
 extern void f_873D70(CPU *);
 
+enum { PAPYRUS_HOOK = 1, MENU_HOOK = 2 };
+static pthread_t startup_thread;
+static atomic_uint observed_hooks;
+
+/* A returned hook is evidence of an actual call and its thread. It carries
+ * no CPU pointer and does not synthesize an SKSE lifecycle notification. */
+static void note_first_return(unsigned hook) {
+    if (atomic_load_explicit(&observed_hooks, memory_order_relaxed) & hook) return;
+    const unsigned previous = atomic_fetch_or_explicit(&observed_hooks, hook, memory_order_relaxed);
+    if (previous & hook) return;
+    fprintf(stderr, "IOS_CLASSIC_HOOK point=%u order=%u startup_thread=%u\n", hook,
+            previous ? 2u : 1u, pthread_equal(pthread_self(), startup_thread) ? 1u : 0u);
+}
+
+static void register_papyrus_extended(CPU *cpu) {
+    f_8F9720(cpu);
+    note_first_return(PAPYRUS_HOOK);
+}
+
+static void create_menu_extended(CPU *cpu) {
+    f_A60200(cpu);
+    note_first_return(MENU_HOOK);
+}
+
 static const PcGuestSkseCallbacks extended = {
     .version = PC_GUEST_SKSE_ABI,
     .bytes = sizeof(PcGuestSkseCallbacks),
-    .register_papyrus = f_8F9720,
-    .create_menu = f_A60200,
+    .register_papyrus = register_papyrus_extended,
+    .create_menu = create_menu_extended,
     .inventory_entry = f_842140,
     .inventory_form = f_873D70
 };
@@ -68,6 +94,7 @@ int pc_guest_select_classic_skse(int enabled) {
         unsetenv("LB_SKSE_SELFTEST");
         return -1;
     }
+    if (enabled) startup_thread = pthread_self();
     selected = enabled ? &extended : originals;
     pc_guest_classic_skse_active = enabled;
     selection_final = 1;

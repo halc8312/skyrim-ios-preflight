@@ -123,14 +123,21 @@ class NativeCallbacks(unittest.TestCase):
             bridge = stage / "bridge.o"
             subprocess.run([*flags, classic_mode, "-Dsetenv=fixture_setenv",
                             "-c", abi / "pc_guest_skse_host.c", "-o", bridge], check=True)
-            host_flags = [*flags, fixture, abi / "pc_guest_host.c"]
+            host_flags = [*flags, "-pthread", fixture, abi / "pc_guest_host.c"]
             loader_flags = [] if mac else ["-ldl"]
             trial_host, ordinary_host = stage / "trial-host", stage / "ordinary-host"
             subprocess.run([*host_flags, classic_mode, bridge, *loader_flags, "-o", trial_host], check=True)
             subprocess.run([*host_flags, *loader_flags, "-o", ordinary_host], check=True)
-            for mode in ("off", "on", "fail-first", "fail-second"):
+            for mode in ("off", "on", "fail-first", "fail-second", "worker"):
                 with self.subTest(mode=mode):
-                    subprocess.run([trial_host, paired, plain, malformed, mode], check=True)
+                    result = subprocess.run([trial_host, paired, plain, malformed, mode], check=True,
+                                            capture_output=True, text=True)
+                    hooks = [line for line in result.stderr.splitlines() if line.startswith("IOS_CLASSIC_HOOK ")]
+                    on_startup = int(mode != "worker")
+                    self.assertEqual(hooks, [] if mode == "off" else [
+                        f"IOS_CLASSIC_HOOK point={hook} order={hook} startup_thread={on_startup}"
+                        for hook in (1, 2)
+                    ])
             subprocess.run([ordinary_host, plain, "accepted"], check=True)
             subprocess.run([ordinary_host, paired, "wrong"], check=True)
 

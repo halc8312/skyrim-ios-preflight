@@ -59,6 +59,7 @@ void rt_setjmp3(CPU *c) { (void)c; abort(); }
 #include "PcGuestSkseTrial.h"
 #include <dlfcn.h>
 #include <errno.h>
+#include <pthread.h>
 static const char *fail_setting;
 int fixture_setenv(const char *name, const char *value, int overwrite) {
     if (fail_setting && !strcmp(name, fail_setting)) {
@@ -74,6 +75,12 @@ void f_8F9720(CPU *c) { f_8F9720_guest(c); ++c->r[0]; }
 void f_A60200(CPU *c) { f_A60200_guest(c); c->r[0] += 2; }
 void f_842140(CPU *c) { f_842140_guest(c); c->r[0] += 3; }
 void f_873D70(CPU *c) { f_873D70_guest(c); c->r[0] += 4; }
+
+static void *fixture_worker(void *context) {
+    void (*exercise)(unsigned) = *(void (**)(unsigned))context;
+    exercise(1);
+    return NULL;
+}
 
 int main(int argc, char **argv) {
     assert(argc == 5);
@@ -116,7 +123,13 @@ int main(int argc, char **argv) {
     assert(pc_guest_classic_skse_active == enabled);
     uint8_t memory = 0;
     assert(pc_guest_bind_memory(&memory) == 0 && pc_guest_bind_memory(&memory) != 0);
-    exercise(enabled);
+    if (!strcmp(argv[4], "worker")) {
+        pthread_t thread;
+        assert(pthread_create(&thread, NULL, fixture_worker, &exercise) == 0);
+        assert(pthread_join(thread, NULL) == 0);
+    } else {
+        exercise(enabled);
+    }
     assert(!bind(&callbacks) && pc_guest_bind_classic_skse(lib) != 0 && pc_guest_open(argv[1]) != 0);
     assert(pc_guest_select_classic_skse(enabled) != 0 && pc_guest_select_classic_skse(!enabled) != 0);
     assert(!strcmp(getenv("LB_SKSE_SKYUI_PROBE"), enabled ? "1" : "0"));
