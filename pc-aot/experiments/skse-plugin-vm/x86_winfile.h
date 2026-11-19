@@ -12,7 +12,7 @@ enum {
 
 typedef enum {
     SKSE_WIN_OPEN_FILE_A, SKSE_WIN_OPEN_FILE_W, SKSE_WIN_READ_FILE, SKSE_WIN_FILE_SIZE,
-    SKSE_WIN_FILE_SIZE_EX, SKSE_WIN_CLOSE_FILE, SKSE_WIN_FILE_OPERATION_COUNT
+    SKSE_WIN_FILE_SIZE_EX, SKSE_WIN_CLOSE_FILE, SKSE_WIN_SEEK_FILE_EX, SKSE_WIN_FILE_OPERATION_COUNT
 } SkseWinFileOperation;
 
 /* Return zero for an immutable snapshot allocated with malloc. On failure
@@ -28,7 +28,8 @@ typedef struct {
     uint32_t token;
     uint8_t *bytes;
     char *path;
-    size_t length, offset;
+    size_t length;
+    uint64_t offset;
     bool shared;
 } SkseWinFile;
 

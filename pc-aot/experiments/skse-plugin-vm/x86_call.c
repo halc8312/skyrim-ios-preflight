@@ -7,7 +7,7 @@ enum { EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI };
 enum { CF = 1, PF = 4, ZF = 0x40, SF = 0x80, DF = 0x400, OF = 0x800 };
 enum { ADD, OR, ADC, SBB, AND, SUB, XOR, CMP };
 enum { MAX_SCRATCH = 256 * 1024, MAX_ARGUMENTS = 16, MAX_STEPS = 1000000 };
-enum { SERVICE_SLOTS = 128 };
+enum { SERVICE_SLOT_BITS = 8, SERVICE_SLOTS = 1 << SERVICE_SLOT_BITS };
 _Static_assert(SKSE_X86_MAX_SERVICES * 2 <= SERVICE_SLOTS, "service table load factor");
 
 typedef struct {
@@ -64,7 +64,7 @@ static int64_t signed_word(uint32_t value, unsigned width) {
 }
 
 static size_t service_slot(const SkseX86Service *entries, const uint8_t index[SERVICE_SLOTS], uint32_t address) {
-    size_t slot = (uint32_t)(address * UINT32_C(0x9e3779b1)) >> 25;
+    size_t slot = (uint32_t)(address * UINT32_C(0x9e3779b1)) >> (32 - SERVICE_SLOT_BITS);
     while (index[slot] && entries[index[slot] - 1].address != address)
         slot = (slot + 1) & (SERVICE_SLOTS - 1);
     return slot;
@@ -804,21 +804,47 @@ static uint32_t win_read_asset(Vm *vm, const uint32_t args[]) {
         vm->services.thread->last_error = 6;
         return 0;
     }
-    size_t count = file->length - file->offset;
+    size_t count = file->offset < file->length ? file->length - (size_t)file->offset : 0;
     if (count > args[2]) count = args[2];
     if (count) {
         if (!reserve_bulk(vm, (count + 63) / 64)) return 0;
         uint8_t *buffer = memory(vm, args[1], count, SKSE_PE_WRITE);
         if (!buffer) return 0;
-        memcpy(buffer, file->bytes + file->offset, count);
+        memcpy(buffer, file->bytes + (size_t)file->offset, count);
         file->offset += count;
     }
     write_memory(vm, args[3], 4, (uint32_t)count);
     return 1;
 }
 
+static bool write_file_position(Vm *vm, uint32_t address, uint64_t position) {
+    uint8_t *result = memory(vm, address, 8, SKSE_PE_WRITE);
+    if (!result) return false;
+    for (unsigned i = 0; i < 8; ++i) result[i] = (uint8_t)(position >> (i * 8));
+    return true;
+}
+
+static uint32_t win_seek_asset(Vm *vm, SkseWinFile *file, const uint32_t args[]) {
+    const uint64_t distance = (uint64_t)args[2] << 32 | args[1];
+    uint64_t position;
+    switch (args[4]) {
+    case 0: position = 0; break; // FILE_BEGIN.
+    case 1: position = file->offset; break;
+    case 2: position = file->length; break;
+    default: vm->services.thread->last_error = 87; return 0;
+    }
+    if (distance > INT64_MAX ? 0 - distance > position : distance > INT64_MAX - position) {
+        vm->services.thread->last_error = 131; // ERROR_NEGATIVE_SEEK.
+        return 0;
+    }
+    position += distance;
+    if (args[3] && !write_file_position(vm, args[3], position)) return 0;
+    file->offset = position;
+    return 1;
+}
+
 static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
-    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1};
+    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1, 5};
     _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_FILE_OPERATION_COUNT, "file ABI");
     unsigned count = argument_counts[operation];
     const uint8_t *parameters = service_parameters(vm, count * 4);
@@ -844,11 +870,8 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
         if (args[1]) write_memory(vm, args[1], 4, 0);
         return (uint32_t)file->length;
     }
-    uint8_t *result = memory(vm, args[1], 8, SKSE_PE_WRITE);
-    if (!result) return 0;
-    for (unsigned i = 0; i < 4; ++i) result[i] = (uint8_t)(file->length >> (i * 8));
-    memset(result + 4, 0, 4);
-    return 1;
+    if (operation == SKSE_WIN_SEEK_FILE_EX) return win_seek_asset(vm, file, args);
+    return write_file_position(vm, args[1], file->length);
 }
 
 static uint32_t win_wait_events(Vm *vm, SkseWinEventOperation operation, const uint32_t args[]) {
