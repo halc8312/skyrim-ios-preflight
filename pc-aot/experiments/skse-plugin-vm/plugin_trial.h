@@ -65,4 +65,6 @@ SkseTrialResult skse_plugin_trial_with_runtime(const uint8_t *file, size_t lengt
 SkseTrialResult skse_plugin_trial_with_dependency(const uint8_t *file, size_t length,
                                                   SkseTrialOptions options, SkseTrialRuntime runtime,
                                                   SkseTrialDependency dependency);
+/* Names reserved for the diagnostic's built-in Windows services. */
+int skse_trial_system_library(const char *name);
 #endif

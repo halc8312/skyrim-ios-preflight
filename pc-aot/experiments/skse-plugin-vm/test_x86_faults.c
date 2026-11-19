@@ -19,6 +19,97 @@ static SkseX86Result run(uint8_t *code, size_t length, uint32_t limit, SkseX86Se
 
 #define ARRAY_RUN(code) run(code, sizeof code, 100, (SkseX86Services){0})
 
+static void append_word(uint8_t *code, size_t *used, uint32_t value) {
+    for (unsigned i = 0; i < 4; ++i) code[(*used)++] = (uint8_t)(value >> (8 * i));
+}
+
+static void check_alu(unsigned width, unsigned op, unsigned carry_in, uint32_t a, uint32_t b) {
+    uint8_t code[64];
+    size_t used = 0;
+    code[used++] = 0xb8; // MOV EAX, a
+    append_word(code, &used, a);
+    code[used++] = 0xb9; // MOV ECX, b
+    append_word(code, &used, b);
+    code[used++] = carry_in ? 0xf9 : 0xf8;
+    if (width == 2) code[used++] = 0x66;
+    static const uint8_t opcodes[] = {0x00, 0x10, 0x28, 0x18}; // ADD, ADC, SUB, SBB
+    code[used++] = opcodes[op] + (width != 1);
+    code[used++] = 0xc8; // Destination EAX or a sub-register, source ECX.
+    code[used++] = 0xa3; // MOV [scratch], EAX
+    append_word(code, &used, scratch_base);
+    static const uint8_t setcc[] = {0x92, 0x90, 0x94, 0x98, 0x9a}; // CF, OF, ZF, SF, PF
+    for (unsigned i = 0; i < sizeof setcc; ++i) {
+        code[used++] = 0x0f;
+        code[used++] = setcc[i];
+        code[used++] = 0x05;
+        append_word(code, &used, scratch_base + 4 + i);
+    }
+    code[used++] = 0xc3;
+    assert(used <= sizeof code);
+    SkseX86Result result = run(code, used, 100, (SkseX86Services){0});
+    assert(result.status == SKSE_X86_OK);
+
+    const int64_t modulus = INT64_C(1) << (8 * width);
+    const int64_t sign = modulus / 2;
+    const int64_t carry = (op & 1) ? carry_in : 0;
+    const int64_t left = a >= sign ? (int64_t)a - modulus : (int64_t)a;
+    const int64_t right = (b >= sign ? (int64_t)b - modulus : (int64_t)b) + carry;
+    const int64_t signed_value = op >= 2 ? left - right : left + right;
+    const int64_t unsigned_value = op >= 2 ? (int64_t)a - b - carry : (int64_t)a + b + carry;
+    const uint32_t value = (uint32_t)unsigned_value & (uint32_t)(modulus - 1);
+    unsigned parity = 0;
+    for (unsigned i = 0; i < 8; ++i) parity += (value >> i) & 1;
+    assert((result.eax & (uint32_t)(modulus - 1)) == value);
+    assert(scratch[4] == (unsigned_value < 0 || unsigned_value >= modulus));
+    assert(scratch[5] == (signed_value < -sign || signed_value >= sign));
+    assert(scratch[6] == (value == 0));
+    assert(scratch[7] == (value >= sign));
+    assert(scratch[8] == !(parity & 1));
+}
+
+static void check_arithmetic_flags(void) {
+    for (unsigned op = 0; op < 4; ++op) {
+        for (unsigned carry = 0; carry < 2; ++carry) {
+            for (unsigned a = 0; a < 256; ++a)
+                for (unsigned b = 0; b < 256; ++b) check_alu(1, op, carry, a, b);
+            uint32_t rng = 0x731edaff;
+            for (unsigned i = 0; i < 2048; ++i) {
+                uint32_t a = rng = rng * 1664525 + 1013904223;
+                uint32_t b = rng = rng * 1664525 + 1013904223;
+                check_alu(2, op, carry, a & 0xffff, b & 0xffff);
+                check_alu(4, op, carry, a, b);
+            }
+        }
+    }
+}
+
+static void check_bounded_heap(void) {
+    SkseX86Heap heap = {.base = 0x00300000};
+    assert(!heap.bytes && !skse_x86_heap_allocate(&heap, SKSE_X86_HEAP_BYTES + 1, false));
+    const uint32_t original = skse_x86_heap_allocate(&heap, 3, false);
+    assert(original == heap.base && heap.bytes);
+    uint8_t *data = skse_x86_heap_memory(&heap, original, 3);
+    assert(data && !skse_x86_heap_memory(&heap, original, 4) && !skse_x86_heap_memory(&heap, original + 3, 1));
+    memcpy(data, "abc", 3);
+    const uint32_t blocker = skse_x86_heap_allocate(&heap, 64, false);
+    assert(blocker == original + 16);
+    assert(!skse_x86_heap_resize(&heap, original, 48, true, true));
+    assert(skse_x86_heap_memory(&heap, original, 3) && !skse_x86_heap_release(&heap, original + 1));
+    uint32_t grown = skse_x86_heap_resize(&heap, original, 48, true, false);
+    assert(grown != original && grown > blocker);
+    assert(!skse_x86_heap_memory(&heap, original, 1));
+    data = skse_x86_heap_memory(&heap, grown, 48);
+    assert(data && !memcmp(data, "abc", 3));
+    for (unsigned i = 3; i < 48; ++i) assert(data[i] == 0);
+    assert(skse_x86_heap_release(&heap, blocker) && !skse_x86_heap_release(&heap, blocker));
+    assert(skse_x86_heap_resize(&heap, grown, 64, true, true) == grown);
+    assert(skse_x86_heap_release(&heap, grown));
+    assert(skse_x86_heap_allocate(&heap, SKSE_X86_HEAP_BYTES, true) == original);
+    assert(!skse_x86_heap_allocate(&heap, 1, false));
+    skse_x86_heap_close(&heap);
+    assert(!heap.bytes && !heap.count);
+}
+
 int main(void) {
     // CALL forwards to another x86 region and that callee returns into the caller.
     uint8_t nested[] = {0xe8, 1, 0, 0, 0, 0xc3, 0xb8, 42, 0, 0, 0, 0xc3};
@@ -85,5 +176,7 @@ int main(void) {
     const SkseX86Service aliases_code = {image_base, 0x1234, SKSE_X86_SCALAR_RETURN};
     assert(run(calls_service, sizeof calls_service, 100, (SkseX86Services){.entries = &aliases_code, .count = 1}).status ==
            SKSE_X86_BAD_ARGUMENT);
+    check_arithmetic_flags();
+    check_bounded_heap();
     return 0;
 }

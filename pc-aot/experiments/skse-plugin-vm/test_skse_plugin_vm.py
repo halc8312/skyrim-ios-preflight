@@ -17,7 +17,7 @@ def run(*args, **kwargs):
 
 def compile_interpreter(compiler, output, test_source, flag_list):
     run(compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", *flag_list,
-        HERE / "pe_image.c", HERE / "x86_call.c", HERE / "plugin_trial.c",
+        HERE / "pe_image.c", HERE / "x86_call.c", HERE / "x86_heap.c", HERE / "plugin_trial.c",
         HERE / test_source, "-o", output)
 
 
@@ -161,6 +161,28 @@ class PluginInterpreterTests(unittest.TestCase):
                                                             mode="dependency", with_dependency=True)
                     self.assertIn(",1,1,", expected)
                     self.assertEqual(actual, expected)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows runs the heap service reference")
+    def test_heap_allocations_match_windows_for_cdecl_and_stdcall(self):
+        cc, linker, dlltool = (LLVM / (name + ".exe") for name in ("clang", "lld-link", "llvm-dlltool"))
+        kits = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Windows Kits/10/Lib"
+        kernel32 = sorted(kits.glob("*/um/x86/kernel32.lib"))
+        if not all(path.is_file() for path in (cc, linker, dlltool)) or not kernel32:
+            self.skipTest("LLVM and the x86 Windows SDK required")
+        with tempfile.TemporaryDirectory(prefix="skse-import-heap-") as tmp:
+            root = Path(tmp)
+            emulator, module, definition = root / "trial.exe", root / "msvcrt.lib", root / "msvcrt.def"
+            compile_interpreter(cc, emulator, "test_interpreted.c",
+                                ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
+            definition.write_text("LIBRARY msvcrt.dll\nEXPORTS\nmalloc\ncalloc\nrealloc\nfree\n", encoding="ascii")
+            run(dlltool, "-m", "i386", "-d", definition, "-l", module)
+            for variant, library in ((10, module), (11, kernel32[-1])):
+                for opt in ("-O0", "-O2"):
+                    with self.subTest(variant=variant, optimization=opt):
+                        expected, actual = compare_with_windows(cc, linker, emulator, root / f"{variant}-{opt}",
+                                                                variant, opt, mode="allocation", imports=(library,))
+                        self.assertIn(",1,1,", expected)
+                        self.assertEqual(actual, expected)
 
 if __name__ == "__main__":
     unittest.main()

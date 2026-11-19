@@ -3,6 +3,7 @@
 #define SKYRIM_EXPERIMENT_SKSE_X86_CALL_H
 
 #include "pe_image.h"
+#include "x86_heap.h"
 
 typedef enum {
     SKSE_X86_OK,
@@ -22,11 +23,14 @@ typedef struct {
     size_t length;
 } SkseX86Scratch;
 
-enum { SKSE_X86_MAX_SERVICES = 10, SKSE_X86_MAX_IMAGES = 4, SKSE_CLASSIC_MESSAGING_ID = 5 };
+enum { SKSE_X86_MAX_SERVICES = 20, SKSE_X86_MAX_IMAGES = 4, SKSE_CLASSIC_MESSAGING_ID = 5 };
+#define SKSE_X86_PROCESS_HEAP UINT32_C(0xe1000000)
 
 typedef enum {
     SKSE_X86_SCALAR_RETURN, SKSE_X86_MEMCPY, SKSE_X86_MEMMOVE, SKSE_X86_MEMSET,
-    SKSE_X86_QUERY_CLASSIC, SKSE_X86_REGISTER_CORE_LISTENER, SKSE_X86_UNAVAILABLE
+    SKSE_X86_QUERY_CLASSIC, SKSE_X86_REGISTER_CORE_LISTENER, SKSE_X86_UNAVAILABLE,
+    SKSE_X86_MALLOC, SKSE_X86_CALLOC, SKSE_X86_REALLOC, SKSE_X86_FREE,
+    SKSE_X86_HEAP_ALLOC, SKSE_X86_HEAP_REALLOC, SKSE_X86_HEAP_FREE
 } SkseX86ServiceKind;
 
 /* A service address is a guest token outside the image and scratch. The
@@ -45,6 +49,7 @@ typedef struct {
     const SkseX86Service *entries;
     size_t count;
     SkseX86CoreMessaging *core_messaging;
+    SkseX86Heap *heap;
 } SkseX86Services;
 
 typedef struct {

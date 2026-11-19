@@ -6,9 +6,9 @@ root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/skse-dll-sdk.XXXXXXXX")"
 pushd "$here" >/dev/null
 
-CC=clang python3 -B -m unittest -v test_probe_local_file test_skse_plugin_vm test_pe_image
+CC=clang python3 -B -m unittest -v test_probe_local_file test_probe_directory test_skse_plugin_vm test_pe_image
 device_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
-sources=(pe_image.c x86_call.c plugin_trial.c probe_local_file.c)
+sources=(pe_image.c x86_call.c x86_heap.c plugin_trial.c probe_local_file.c probe_directory.c)
 for source in "${sources[@]}"; do
     xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" \
         -std=c11 -O2 -Wall -Wextra -Werror -c "$source" -o "$work/${source%.c}.o"
@@ -26,6 +26,7 @@ from pathlib import Path
 import plistlib
 import sys
 from test_probe_local_file import supported_fixture
+from test_probe_directory import helper, primary
 from test_pe_image import DATA, add_named_clock, zero_string
 
 app = Path(sys.argv[1])
@@ -34,6 +35,12 @@ fixture = supported_fixture()
 add_named_clock(fixture)
 zero_string(fixture, DATA + 0xa2, b"OwnedUnsupported")
 (app / "unsupported.dll").write_bytes(fixture)
+package = app / "ProbePackage" / "Data" / "SKSE" / "Plugins"
+package.mkdir(parents=True)
+(package / "Supported.dll").write_bytes(supported_fixture())
+(package / "Unsupported.dll").write_bytes(fixture)
+(package / "Paired.dll").write_bytes(primary())
+(package / "OwnedWorker.dll").write_bytes(helper())
 (app / "Info.plist").write_bytes(plistlib.dumps({
     "CFBundleIdentifier": "org.skyrimios.tests.dllcompatibility",
     "CFBundleName": "DLL Compatibility Fixture",
@@ -74,7 +81,7 @@ for language in english japanese; do
         if [[ -s "$evidence" ]]; then break; fi
         sleep 1
     done
-    grep -Fxq refused,passed "$evidence"
-    echo "DLL_SIMULATOR: ${language} refused an unknown import and passed the supported fixture."
+    grep -Fxq refused,passed,folder "$evidence"
+    echo "DLL_SIMULATOR: ${language} verified the single-file results and the MOD folder."
 done
 codesign --verify --strict "$app"

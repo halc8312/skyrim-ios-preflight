@@ -988,8 +988,24 @@ static UITableViewCell *ReusableCell(UITableView *t) {
 @interface SKListController : UITableViewController
 @property(nonatomic, copy) NSString *footer;
 @property(nonatomic, strong) NSArray<NSString *> *lines;
+#ifdef SKYRIM_IOS_SKSE_DLL_PROBE
+@property(nonatomic, strong) NSURL *dllProbeFolder;
+#endif
 @end
 @implementation SKListController
+#ifdef SKYRIM_IOS_SKSE_DLL_PROBE
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    if (self.dllProbeFolder)
+        self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:T(@"Check DLLs", @"DLLを診断")
+            style:UIBarButtonItemStylePlain target:self action:@selector(checkInstalledDlls)];
+}
+- (void)checkInstalledDlls {
+    BOOL japanese = atomic_load_explicit(&languageCache, memory_order_relaxed);
+    UIViewController *check = skyrim_mod_dll_probe_controller(japanese, self.dllProbeFolder);
+    [self.navigationController pushViewController:check animated:YES];
+}
+#endif
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { (void)t; (void)s; return (NSInteger)self.lines.count; }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s { (void)t; (void)s; return self.footer; }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)p {
@@ -1143,7 +1159,12 @@ static NSArray<NSString *> *ReportLines(NSDictionary *package) {
     unsigned (^n)(NSString *) = ^unsigned(NSString *k) { return [r[k] unsignedIntValue]; };
     if (n(@"sePlugins")) [bad addObject:[NSString stringWithFormat:T(@"⛔ %u Special Edition plugin(s): likely to crash", @"⛔ SE用のプラグイン %u個：落ちる可能性が高い"), n(@"sePlugins")]];
     if (n(@"esl")) [bad addObject:T(@"⛔ ESL files are not supported by the 2011 engine", @"⛔ ESLは2011年版のエンジンでは使えません")];
+#ifdef SKYRIM_IOS_SKSE_DLL_PROBE
+    if (n(@"skseDlls")) [bad addObject:[NSString stringWithFormat:T(@"%u SKSE DLLs can be checked in this MOD's details",
+        @"このMODのSKSE用DLL %u個は詳細画面から診断できます"), n(@"skseDlls")]];
+#else
     if (n(@"skseDlls")) [bad addObject:[NSString stringWithFormat:T(@"⛔ %u SKSE plugin DLL(s): cannot run on iPhone", @"⛔ SKSEプラグイン（DLL）%u個：iPhoneでは動きません"), n(@"skseDlls")]];
+#endif
     if (n(@"seMeshes")) [warn addObject:[NSString stringWithFormat:T(@"⚠️ %u Special Edition mesh(es): may look broken or crash", @"⚠️ SE用のメッシュ %u個：表示崩れや落ちる可能性"), n(@"seMeshes")]];
     if (n(@"skseScripts")) {
         NSString *missing = [r[@"skseMissing"] length] ? [NSString stringWithFormat:T(@" (not available: %@)", @"（未対応：%@）"), r[@"skseMissing"]] : @"";
@@ -1472,6 +1493,13 @@ enum {
         if ([pkg[@"plugins"] count]) [lines addObject:[NSString stringWithFormat:T(@"Plugins: %@", @"プラグイン：%@"), [pkg[@"plugins"] componentsJoinedByString:@", "]]];
         [lines addObjectsFromArray:ReportLines(pkg)];
         detail.lines = lines; detail.title = pkg[@"name"];
+#ifdef SKYRIM_IOS_SKSE_DLL_PROBE
+        NSDictionary *analysis = pkg[@"report"];
+        if ([analysis isKindOfClass:NSDictionary.class] && [analysis[@"skseDlls"] unsignedIntValue]) {
+            NSString *directory = PackageDir(pkg[@"id"]);
+            if (directory) detail.dllProbeFolder = [NSURL fileURLWithPath:directory isDirectory:YES];
+        }
+#endif
         [self.navigationController pushViewController:detail animated:YES];
         break;
     }
@@ -1487,7 +1515,7 @@ enum {
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
         if (p.row == HubDllProbeRow) {
             BOOL japanese = atomic_load_explicit(&languageCache, memory_order_relaxed);
-            [self.navigationController pushViewController:skyrim_mod_dll_probe_controller(japanese) animated:YES];
+            [self.navigationController pushViewController:skyrim_mod_dll_probe_controller(japanese, nil) animated:YES];
             break;
         }
 #endif

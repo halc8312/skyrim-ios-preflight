@@ -105,6 +105,51 @@ static void __cdecl observe_message(FixtureMessage *message) {
 __declspec(dllimport) uint32_t __cdecl TransformFixtureValue(uint32_t);
 #endif
 
+#if FIXTURE_VARIANT == 10
+__declspec(dllimport) void *__cdecl malloc(size_t);
+__declspec(dllimport) void *__cdecl calloc(size_t, size_t);
+__declspec(dllimport) void *__cdecl realloc(void *, size_t);
+__declspec(dllimport) void __cdecl free(void *);
+static unsigned char *session_buffer;
+
+static _Bool setup_allocation(void) {
+    unsigned char *buffer = calloc(4, 8);
+    unsigned char *blocking = malloc(24);
+    if (!buffer || !blocking) return 0;
+    if (buffer[0] || buffer[31]) return 0;
+    buffer[0] = 27;
+    buffer[31] = 59;
+    unsigned char *larger = realloc(buffer, 144);
+    free(blocking);
+    if (!larger || larger[0] != 27 || larger[31] != 59) return 0;
+    larger[143] = 17;
+    session_buffer = larger;
+    return 1;
+}
+#endif
+
+#if FIXTURE_VARIANT == 11
+__declspec(dllimport) void *__stdcall GetProcessHeap(void);
+__declspec(dllimport) void *__stdcall HeapAlloc(void *, unsigned long, size_t);
+__declspec(dllimport) void *__stdcall HeapReAlloc(void *, unsigned long, void *, size_t);
+__declspec(dllimport) int __stdcall HeapFree(void *, unsigned long, void *);
+static unsigned char *session_buffer;
+
+static _Bool setup_allocation(void) {
+    void *heap = GetProcessHeap();
+    if (!heap) return 0;
+    unsigned char *buffer = HeapAlloc(heap, 8, 32);
+    if (!buffer || buffer[0] || buffer[31]) return 0;
+    buffer[0] = 27;
+    buffer[31] = 59;
+    unsigned char *larger = HeapReAlloc(heap, 8, buffer, 144);
+    if (!larger || larger[0] != 27 || larger[31] != 59 || larger[32] || larger[143]) return 0;
+    larger[143] = 17;
+    session_buffer = larger;
+    return 1;
+}
+#endif
+
 _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (!api || !info) return 0;
     info->info_version = 1;
@@ -126,6 +171,9 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
 #endif
 #if FIXTURE_VARIANT == 9
     if (TransformFixtureValue(1) != 14) return 0;
+#endif
+#if FIXTURE_VARIANT == 10 || FIXTURE_VARIANT == 11
+    if (supported && !setup_allocation()) return 0;
 #endif
     return supported;
 }
@@ -165,6 +213,15 @@ _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
 #endif
 #if FIXTURE_VARIANT == 9
     if (TransformFixtureValue(2) != 29) return 0;
+#endif
+#if FIXTURE_VARIANT == 10 || FIXTURE_VARIANT == 11
+    if (!session_buffer || session_buffer[0] != 27 || session_buffer[31] != 59 || session_buffer[143] != 17) return 0;
+#if FIXTURE_VARIANT == 10
+    free(session_buffer);
+#else
+    if (!HeapFree(GetProcessHeap(), 0, session_buffer)) return 0;
+#endif
+    session_buffer = NULL;
 #endif
     return 1;
 }

@@ -17,10 +17,11 @@ static size_t read_owned_dll(const char *path, uint8_t *bytes, size_t capacity) 
 int main(int argc, char *argv[]) {
     int clock = argc >= 3 && strcmp(argv[2], "clock") == 0;
     int memory = argc >= 3 && strcmp(argv[2], "memory") == 0;
+    int allocation = argc >= 3 && strcmp(argv[2], "allocation") == 0;
     int messages = argc >= 3 && strcmp(argv[2], "messages") == 0;
     int dependency = argc == 4 && strcmp(argv[2], "dependency") == 0;
     int moved = !dependency && argc == 4 && strcmp(argv[3], "move") == 0;
-    assert(argc == 2 || dependency || ((clock || memory || messages) && (argc == 3 || moved)));
+    assert(argc == 2 || dependency || ((clock || memory || allocation || messages) && (argc == 3 || moved)));
     uint8_t bytes[64 * 1024];
     size_t length = read_owned_dll(argv[1], bytes, sizeof bytes);
     if (!length) return 2;

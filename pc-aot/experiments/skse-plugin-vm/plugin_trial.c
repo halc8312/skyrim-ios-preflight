@@ -17,10 +17,26 @@ enum {
     UNAVAILABLE_CALLBACK_OFFSET = REGISTER_CALLBACK_OFFSET + 4,
     CALL_BUDGET = 100000
 };
-static const uint32_t clock_token = UINT32_C(0xe0001000);
-static const uint32_t copy_token = UINT32_C(0xe0001010);
-static const uint32_t move_token = UINT32_C(0xe0001014);
-static const uint32_t set_token = UINT32_C(0xe0001018);
+static const struct {
+    SksePeImportBinding binding;
+    SkseX86ServiceKind kind;
+    uint32_t value;
+} windows_services[] = {
+    {{"KERNEL32.dll", "GetTickCount", 0xe0001000}, SKSE_X86_SCALAR_RETURN, 0},
+    {{"msvcrt.dll", "memcpy", 0xe0001010}, SKSE_X86_MEMCPY, 0},
+    {{"msvcrt.dll", "memmove", 0xe0001014}, SKSE_X86_MEMMOVE, 0},
+    {{"msvcrt.dll", "memset", 0xe0001018}, SKSE_X86_MEMSET, 0},
+    {{"msvcrt.dll", "malloc", 0xe0001020}, SKSE_X86_MALLOC, 0},
+    {{"msvcrt.dll", "calloc", 0xe0001024}, SKSE_X86_CALLOC, 0},
+    {{"msvcrt.dll", "realloc", 0xe0001028}, SKSE_X86_REALLOC, 0},
+    {{"msvcrt.dll", "free", 0xe000102c}, SKSE_X86_FREE, 0},
+    {{"KERNEL32.dll", "GetProcessHeap", 0xe0001030}, SKSE_X86_SCALAR_RETURN, SKSE_X86_PROCESS_HEAP},
+    {{"KERNEL32.dll", "HeapAlloc", 0xe0001034}, SKSE_X86_HEAP_ALLOC, 0},
+    {{"KERNEL32.dll", "HeapReAlloc", 0xe0001038}, SKSE_X86_HEAP_REALLOC, 0},
+    {{"KERNEL32.dll", "HeapFree", 0xe000103c}, SKSE_X86_HEAP_FREE, 0}
+};
+enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
+_Static_assert(WINDOWS_SERVICE_COUNT + 5 <= SKSE_X86_MAX_SERVICES, "trial service count");
 
 typedef struct {
     SksePeImage *images[2];
@@ -53,6 +69,16 @@ static uint32_t scratch_base(const SksePeImage *image, const SksePeImage *depend
     return 0;
 }
 
+static uint32_t heap_base(const SksePeImage *image, const SksePeImage *dependency) {
+    static const uint32_t addresses[] = {0x18000000, 0x28000000, 0x38000000};
+    for (size_t i = 0; i < sizeof addresses / sizeof addresses[0]; ++i) {
+        uint32_t candidate = addresses[i];
+        if (!overlaps(candidate, SKSE_X86_HEAP_BYTES, image->base, image->size) &&
+            !overlaps(candidate, SKSE_X86_HEAP_BYTES, dependency->base, dependency->size)) return candidate;
+    }
+    return 0;
+}
+
 static bool read_plugin_info(const SksePeImage *image, const uint8_t *info, SkseTrialResult *result) {
     uint32_t version = read_word(info);
     uint32_t address = read_word(info + 4);
@@ -73,6 +99,10 @@ static bool read_plugin_info(const SksePeImage *image, const uint8_t *info, Skse
     return false;
 }
 
+int skse_trial_system_library(const char *name) {
+    return name && (skse_pe_library_name_equal(name, "kernel32.dll") || skse_pe_library_name_equal(name, "msvcrt.dll"));
+}
+
 static bool dependency_name_valid(const char *name) {
     if (!name) return false;
     size_t i = 0;
@@ -81,7 +111,7 @@ static bool dependency_name_valid(const char *name) {
         if (c < 0x20 || c >= 0x7f || c == '/' || c == '\\' || c == ':') return false;
     }
     return i >= 5 && i < SKSE_PE_MAX_IMPORT_NAME && skse_pe_library_name_equal(name + i - 4, ".dll") &&
-           !skse_pe_library_name_equal(name, "kernel32.dll") && !skse_pe_library_name_equal(name, "msvcrt.dll");
+           !skse_trial_system_library(name);
 }
 
 static SksePeStatus map_dependency(const uint8_t *file, size_t length, uint32_t guest_base,
@@ -137,13 +167,9 @@ static SkseTrialResult run_trial(const uint8_t *file, size_t length, SkseTrialOp
     SksePeImage image = {0};
     SksePeImage helper = {0};
     if (runtime) {
-        SksePeImportBinding imports[SKSE_PE_MAX_IMPORT_SYMBOLS] = {
-            {"KERNEL32.dll", "GetTickCount", clock_token},
-            {"msvcrt.dll", "memcpy", copy_token},
-            {"msvcrt.dll", "memmove", move_token},
-            {"msvcrt.dll", "memset", set_token}
-        };
-        size_t count = 4;
+        SksePeImportBinding imports[SKSE_PE_MAX_IMPORT_SYMBOLS];
+        size_t count = WINDOWS_SERVICE_COUNT;
+        for (size_t i = 0; i < count; ++i) imports[i] = windows_services[i].binding;
         SksePeReport primary;
         if (dependency) {
             result.dependency_status = map_dependency(file, length, runtime->guest_base, dependency, imports, &count,
@@ -174,23 +200,26 @@ static SkseTrialResult run_trial(const uint8_t *file, size_t length, SkseTrialOp
         return result;
     }
 
-    SkseX86Service entries[] = {
+    SkseX86Service entries[SKSE_X86_MAX_SERVICES] = {
         {scratch.base + RELEASE_CALLBACK_OFFSET, options.release, SKSE_X86_SCALAR_RETURN},
         {scratch.base + HANDLE_CALLBACK_OFFSET, options.plugin_handle, SKSE_X86_SCALAR_RETURN},
-        {clock_token, runtime ? runtime->uptime_ms : 0, SKSE_X86_SCALAR_RETURN},
-        {copy_token, 0, SKSE_X86_MEMCPY},
-        {move_token, 0, SKSE_X86_MEMMOVE},
-        {set_token, 0, SKSE_X86_MEMSET},
-        {scratch.base + QUERY_INTERFACE_OFFSET, 0, SKSE_X86_QUERY_CLASSIC},
-        {scratch.base + REGISTER_CALLBACK_OFFSET, 0, SKSE_X86_REGISTER_CORE_LISTENER},
-        {scratch.base + UNAVAILABLE_CALLBACK_OFFSET, 0, SKSE_X86_UNAVAILABLE}
     };
     bool enable_messages = runtime && runtime->core_messages && !options.editor;
     SkseX86CoreMessaging core = {
         .interface_address = scratch.base + MESSAGING_INTERFACE_OFFSET,
         .owner_handle = options.plugin_handle
     };
-    SkseX86Services services = {.entries = entries, .count = runtime ? 6u : 2u};
+    SkseX86Heap heap = {.base = heap_base(&image, &helper)};
+    SkseX86Services services = {.entries = entries, .count = 2};
+    if (runtime) {
+        services.heap = &heap;
+        for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i) {
+            entries[services.count++] = (SkseX86Service){
+                windows_services[i].binding.service_token, windows_services[i].value, windows_services[i].kind
+            };
+        }
+        entries[2].value = runtime->uptime_ms;
+    }
     // Classic SKSE's public 32-bit interface. Callback fields are virtual
     // addresses owned by the VM.
     write_word(scratch.bytes, options.skse_version);
@@ -199,13 +228,18 @@ static SkseTrialResult run_trial(const uint8_t *file, size_t length, SkseTrialOp
     if (options.expose_handle) write_word(scratch.bytes + 20, entries[1].address);
     if (options.expose_release) write_word(scratch.bytes + 24, entries[0].address);
     if (enable_messages) {
-        services.count = sizeof entries / sizeof entries[0];
         services.core_messaging = &core;
-        write_word(scratch.bytes + 16, entries[6].address);
+        uint32_t query_address = scratch.base + QUERY_INTERFACE_OFFSET;
+        uint32_t register_address = scratch.base + REGISTER_CALLBACK_OFFSET;
+        uint32_t unavailable_address = scratch.base + UNAVAILABLE_CALLBACK_OFFSET;
+        entries[services.count++] = (SkseX86Service){query_address, 0, SKSE_X86_QUERY_CLASSIC};
+        entries[services.count++] = (SkseX86Service){register_address, 0, SKSE_X86_REGISTER_CORE_LISTENER};
+        entries[services.count++] = (SkseX86Service){unavailable_address, 0, SKSE_X86_UNAVAILABLE};
+        write_word(scratch.bytes + 16, query_address);
         write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET, 2);
-        write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 4, entries[7].address);
-        write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 8, entries[8].address);
-        write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 12, entries[8].address);
+        write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 4, register_address);
+        write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 8, unavailable_address);
+        write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 12, unavailable_address);
     }
 
     TrialVm vm = {.images = {&image, &helper}, .count = helper.bytes ? 2u : 1u, .scratch = scratch, .services = services};
@@ -285,6 +319,7 @@ cleanup:
     }
     result.unavailable_interface = core.unavailable_id;
     free(scratch.bytes);
+    skse_x86_heap_close(&heap);
     skse_pe_free(&image);
     skse_pe_free(&helper);
     return result;

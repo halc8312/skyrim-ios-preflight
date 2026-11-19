@@ -113,7 +113,9 @@ if(SKYRIM_IOS_SKSE_DLL_PROBE)
     target_sources(skyrim_ios_runtime PRIVATE
         "${dll_probe_source}/pe_image.c"
         "${dll_probe_source}/x86_call.c"
+        "${dll_probe_source}/x86_heap.c"
         "${dll_probe_source}/plugin_trial.c"
+        "${dll_probe_source}/probe_directory.c"
         "${dll_probe_source}/probe_local_file.c"
         "${dll_probe_source}/mod_dll_probe.m")
     target_include_directories(skyrim_ios_runtime PRIVATE "${dll_probe_source}")

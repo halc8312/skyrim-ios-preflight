@@ -5,6 +5,23 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
+static double cpu_seconds(void) {
+#ifdef _WIN32
+    // The Windows CRT's clock measures elapsed time. Use actual process CPU time.
+    FILETIME created, ended, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &ended, &kernel, &user)) return -1;
+    uint64_t kernel_ticks = (uint64_t)kernel.dwHighDateTime << 32 | kernel.dwLowDateTime;
+    uint64_t user_ticks = (uint64_t)user.dwHighDateTime << 32 | user.dwLowDateTime;
+    return (double)(kernel_ticks + user_ticks) / 10000000.0;
+#else
+    return (double)clock() / CLOCKS_PER_SEC;
+#endif
+}
 
 int main(void) {
     static uint8_t bytes[0x4000], workspace[4096];
@@ -21,13 +38,15 @@ int main(void) {
     };
     SkseX86Scratch scratch = {0x20000000, workspace, sizeof workspace};
     uint64_t steps = 0;
-    clock_t start = clock();
+    double start = cpu_seconds();
+    assert(start >= 0);
     for (unsigned i = 0; i < 40; ++i) {
         SkseX86Result result = skse_x86_call(&image, image.base + 0x1000, scratch, NULL, 0, 800000,
                                            (SkseX86Services){0}, SKSE_X86_CDECL);
         assert(result.status == SKSE_X86_OK && result.eax == (uint32_t)UINT64_C(31250125000));
         steps += result.instructions;
     }
-    double seconds = (double)(clock() - start) / CLOCKS_PER_SEC;
+    double seconds = cpu_seconds() - start;
+    assert(seconds >= 0);
     printf("%.6f %.0f\n", seconds, (double)steps);
 }

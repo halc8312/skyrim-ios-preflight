@@ -107,6 +107,13 @@ static uint8_t *memory(Vm *vm, uint32_t address, size_t width, unsigned permissi
     if (vm->result.status != SKSE_X86_OK) return NULL;
     if (in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, address, width))
         return vm->scratch.bytes + (address - vm->scratch.base);
+    SkseX86Heap *heap = vm->services.heap;
+    if (heap && heap->bytes && address >= heap->base && address - heap->base < SKSE_X86_HEAP_BYTES) {
+        uint8_t *range = skse_x86_heap_memory(heap, address, width);
+        if (range) return range;
+        fail(vm, SKSE_X86_MEMORY_FAULT);
+        return NULL;
+    }
     SksePeImage *image = image_at(vm, address);
     if (skse_pe_allows(image, address, width, permissions))
         return image->bytes + (address - image->base);
@@ -194,13 +201,11 @@ static uint32_t pop(Vm *vm) {
 
 static void set_flags(Vm *vm, uint32_t value, unsigned width, bool carry, bool overflow) {
     value &= width_mask(width);
-    unsigned parity = value & 0xff;
-    parity ^= parity >> 4;
-    parity ^= parity >> 2;
-    parity ^= parity >> 1;
+    unsigned parity_nibble = (value ^ (value >> 4)) & 15;
+    bool even_parity = ((0x9669u >> parity_nibble) & 1) != 0;
     vm->flags = (vm->flags & DF) | (carry ? CF : 0) | (overflow ? OF : 0) |
                 ((value & sign_mask(width)) ? SF : 0) | (value ? 0 : ZF) |
-                ((parity & 1) ? 0 : PF);
+                (even_parity ? PF : 0);
 }
 
 static uint32_t alu(Vm *vm, unsigned op, unsigned width, uint32_t a, uint32_t b) {
@@ -215,12 +220,11 @@ static uint32_t alu(Vm *vm, unsigned op, unsigned width, uint32_t a, uint32_t b)
     bool subtract = op == SUB || op == SBB || op == CMP;
     uint64_t right = (uint64_t)b + carry;
     uint64_t wide = subtract ? a - right : a + right;
-    int64_t signed_a = signed_word(a, width);
-    int64_t signed_b = signed_word(b, width) + carry;
-    int64_t signed_result = subtract ? signed_a - signed_b : signed_a + signed_b;
-    int64_t bound = sign_mask(width);
-    set_flags(vm, (uint32_t)wide, width, subtract ? a < right : wide > width_mask(width),
-              signed_result < -bound || signed_result >= bound);
+    // Overflow changes the sign of the left operand. For addition it
+    // requires equal operand signs. For subtraction it requires different signs.
+    uint32_t operand_signs = subtract ? a ^ b : ~(a ^ b);
+    bool overflow = ((a ^ (uint32_t)wide) & operand_signs & sign_mask(width)) != 0;
+    set_flags(vm, (uint32_t)wide, width, subtract ? a < right : wide > width_mask(width), overflow);
     return (uint32_t)wide;
 }
 
@@ -418,6 +422,68 @@ static uint32_t classic_service(Vm *vm, SkseX86ServiceKind kind) {
     return 1;
 }
 
+static bool reserve_heap_work(Vm *vm, uint32_t size, bool resizing) {
+    if (size > SKSE_X86_HEAP_BYTES) return false;
+    uint64_t bytes = (uint64_t)size * (resizing ? 2u : 1u);
+    if (!vm->services.heap->bytes) bytes += SKSE_X86_HEAP_BYTES;
+    return reserve_bulk(vm, (bytes + 63) / 64);
+}
+
+static uint32_t crt_heap_service(Vm *vm, SkseX86ServiceKind kind) {
+    bool multiple_arguments = kind == SKSE_X86_CALLOC || kind == SKSE_X86_REALLOC;
+    const uint8_t *parameters = service_parameters(vm, multiple_arguments ? 8u : 4u);
+    if (!parameters) return 0;
+    SkseX86Heap *heap = vm->services.heap;
+    const uint32_t first = little_endian(parameters, 4);
+    uint32_t requested = first;
+    if (kind == SKSE_X86_FREE) {
+        if (first && !skse_x86_heap_release(heap, first)) fail(vm, SKSE_X86_BAD_ARGUMENT);
+        return 0;
+    }
+    if (kind == SKSE_X86_REALLOC) {
+        requested = little_endian(parameters + 4, 4);
+        if (first) {
+            if (!requested) {
+                if (!skse_x86_heap_release(heap, first)) fail(vm, SKSE_X86_BAD_ARGUMENT);
+                return 0;
+            }
+            if (!reserve_heap_work(vm, requested, true)) return 0;
+            return skse_x86_heap_resize(heap, first, requested, false, false);
+        }
+    }
+    if (kind == SKSE_X86_CALLOC) {
+        const uint64_t product = (uint64_t)first * little_endian(parameters + 4, 4);
+        if (product > SKSE_X86_HEAP_BYTES) return 0;
+        requested = (uint32_t)product;
+    }
+    if (!reserve_heap_work(vm, requested, false)) return 0;
+    return skse_x86_heap_allocate(heap, requested, kind == SKSE_X86_CALLOC);
+}
+
+static uint32_t win_heap_service(Vm *vm, SkseX86ServiceKind kind) {
+    enum { ZERO_MEMORY = 8, IN_PLACE_ONLY = 0x10 };
+    bool resizing = kind == SKSE_X86_HEAP_REALLOC;
+    size_t bytes = resizing ? 16u : 12u;
+    const uint8_t *parameters = service_parameters(vm, bytes);
+    if (!parameters) return 0;
+    // CALL to an emulated stdcall service returns here instead of pushing
+    // a return address. Remove the arguments that the callee owns.
+    vm->registers[ESP] += (uint32_t)bytes;
+    if (little_endian(parameters, 4) != SKSE_X86_PROCESS_HEAP) return 0;
+    const uint32_t flags = little_endian(parameters + 4, 4), value = little_endian(parameters + 8, 4);
+    const uint32_t allowed = kind == SKSE_X86_HEAP_FREE ? 0u : ZERO_MEMORY | (resizing ? IN_PLACE_ONLY : 0u);
+    if (flags & ~allowed) {
+        fail(vm, SKSE_X86_UNSUPPORTED_API);
+        return 0;
+    }
+    SkseX86Heap *heap = vm->services.heap;
+    if (kind == SKSE_X86_HEAP_FREE) return skse_x86_heap_release(heap, value);
+    uint32_t requested = resizing ? little_endian(parameters + 12, 4) : value;
+    if (!reserve_heap_work(vm, requested, resizing)) return 0;
+    return resizing ? skse_x86_heap_resize(heap, value, requested, (flags & ZERO_MEMORY) != 0, (flags & IN_PLACE_ONLY) != 0)
+                    : skse_x86_heap_allocate(heap, requested, (flags & ZERO_MEMORY) != 0);
+}
+
 static void invoke(Vm *vm, uint32_t address) {
     if (vm->result.status != SKSE_X86_OK) return;
     for (size_t i = 0; i < vm->services.count; ++i) {
@@ -438,6 +504,17 @@ static void invoke(Vm *vm, uint32_t address) {
                 break;
             case SKSE_X86_UNAVAILABLE:
                 fail(vm, SKSE_X86_UNSUPPORTED_API);
+                break;
+            case SKSE_X86_MALLOC:
+            case SKSE_X86_CALLOC:
+            case SKSE_X86_REALLOC:
+            case SKSE_X86_FREE:
+                vm->registers[EAX] = crt_heap_service(vm, service->kind);
+                break;
+            case SKSE_X86_HEAP_ALLOC:
+            case SKSE_X86_HEAP_REALLOC:
+            case SKSE_X86_HEAP_FREE:
+                vm->registers[EAX] = win_heap_service(vm, service->kind);
                 break;
             }
             ++vm->result.service_calls[i];
@@ -644,6 +721,8 @@ static void step(Vm *vm) {
         alu(vm, AND, width, read_operand(vm, source, width), immediate);
         return;
     }
+    case 0xf8: vm->flags &= ~(uint32_t)CF; return;
+    case 0xf9: vm->flags |= CF; return;
     case 0xfc: vm->flags &= ~(uint32_t)DF; return;
     case 0xfd: vm->flags |= DF; return;
     case 0xff: {
@@ -663,15 +742,19 @@ static void step(Vm *vm) {
     fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
 }
 
-static bool valid_space(SksePeImage *const *images, size_t count, SkseX86Scratch scratch) {
+static bool valid_space(SksePeImage *const *images, size_t count, SkseX86Scratch scratch, const SkseX86Heap *heap) {
     if (!images || !count || count > SKSE_X86_MAX_IMAGES) return false;
     uint64_t scratch_end = (uint64_t)scratch.base + scratch.length;
+    uint64_t heap_end = heap ? (uint64_t)heap->base + SKSE_X86_HEAP_BYTES : 0;
+    if (heap && (!heap->base || heap_end > UINT64_C(0x100000000) ||
+        (scratch_end > heap->base && scratch.base < heap_end))) return false;
     for (size_t i = 0; i < count; ++i) {
         const SksePeImage *image = images[i];
         if (!image || !image->bytes || !image->size || !image->base ||
             image->section_count > SKSE_PE_MAX_SECTIONS || image->headers_size > image->size) return false;
         const uint64_t end = (uint64_t)image->base + image->size;
         if (end > UINT64_C(0x100000000) || (scratch_end > image->base && scratch.base < end)) return false;
+        if (heap && heap_end > image->base && heap->base < end) return false;
         for (size_t j = 0; j < i; ++j) {
             const SksePeImage *other = images[j];
             if (end > other->base && image->base < (uint64_t)other->base + other->size) return false;
@@ -686,7 +769,7 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
                                      SkseX86Services services, SkseX86Convention convention) {
     uint64_t scratch_end = (uint64_t)scratch.base + scratch.length;
     if (!scratch.bytes || !scratch.base || scratch.length < 128 ||
-        scratch.length > MAX_SCRATCH || scratch_end > UINT32_MAX || !valid_space(images, image_count, scratch) ||
+        scratch.length > MAX_SCRATCH || scratch_end > UINT32_MAX || !valid_space(images, image_count, scratch, services.heap) ||
         arg_count > MAX_ARGUMENTS || (arg_count && !args) || !instruction_limit ||
         instruction_limit > MAX_STEPS || services.count > SKSE_X86_MAX_SERVICES ||
         (services.count && !services.entries) ||
@@ -695,11 +778,13 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
-        if ((unsigned)kind > SKSE_X86_UNAVAILABLE || !address ||
+        if ((unsigned)kind > SKSE_X86_HEAP_FREE || !address ||
+            (kind >= SKSE_X86_MALLOC && !services.heap) ||
             ((kind == SKSE_X86_QUERY_CLASSIC || kind == SKSE_X86_REGISTER_CORE_LISTENER) &&
              (!services.core_messaging ||
               !in_range(scratch.base, scratch_end, services.core_messaging->interface_address, 16))) ||
-            in_range(scratch.base, scratch_end, address, 1))
+            in_range(scratch.base, scratch_end, address, 1) ||
+            (services.heap && address >= services.heap->base && address - services.heap->base < SKSE_X86_HEAP_BYTES))
             return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
         for (size_t j = 0; j < image_count; ++j)
             if (in_image(images[j], address)) return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
