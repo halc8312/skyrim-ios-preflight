@@ -64,9 +64,11 @@ xcrun simctl install "$device" "$app"
 bundle=org.skyrimios.tests.dllcompatibility
 container="$(xcrun simctl get_app_container "$device" "$bundle" data)"
 for language in english japanese; do
-    args=()
-    if [[ "$language" == japanese ]]; then args=(-TestJapanese); fi
-    xcrun simctl launch --terminate-running-process "$device" "$bundle" "${args[@]}"
+    if [[ "$language" == japanese ]]; then
+        xcrun simctl launch --terminate-running-process "$device" "$bundle" -TestJapanese
+    else
+        xcrun simctl launch --terminate-running-process "$device" "$bundle"
+    fi
     evidence="$container/Documents/$language.txt"
     for ((i=0; i<50; ++i)); do
         if [[ -s "$evidence" ]]; then break; fi

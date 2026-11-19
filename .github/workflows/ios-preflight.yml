@@ -174,4 +174,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Compile the device sources and run the isolated simulator fixture
-        run: bash pc-aot/experiments/skse-plugin-vm/test-apple-sdk.sh
+        run: |
+          set -euo pipefail
+          bash pc-aot/experiments/skse-plugin-vm/test-apple-sdk.sh | tee "$RUNNER_TEMP/dll-sdk.log"
+          grep -Fq 'DLL_SIMULATOR: english refused an unknown import and passed the supported fixture.' "$RUNNER_TEMP/dll-sdk.log"
+          grep -Fq 'DLL_SIMULATOR: japanese refused an unknown import and passed the supported fixture.' "$RUNNER_TEMP/dll-sdk.log"
