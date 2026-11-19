@@ -95,7 +95,11 @@ for language in english japanese; do
         if [[ -s "$evidence" ]]; then break; fi
         sleep 1
     done
-    grep -Fxq refused,passed,folder "$evidence"
+    if ! grep -Fxq refused,passed,folder "$evidence"; then
+        xcrun simctl spawn "$device" log show --style compact --last 3m \
+            --predicate 'process == "DllCompatibility"' | tail -n 40 || true
+        exit 1
+    fi
     echo "DLL_SIMULATOR: ${language} verified standalone DLLs, package dependencies, read-only assets, additional-save records, a worker and task delegates."
 done
 codesign --verify --strict "$app"
