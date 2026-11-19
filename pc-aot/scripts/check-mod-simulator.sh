@@ -67,7 +67,7 @@ def walk(value):
     elif isinstance(value, list):
         for v in value: walk(v)
 walk(manifest)
-required = {"settings","empty-hub","save-check","zip-imported","folder-imported","fomod-options",
+required = {"settings","mod-hub-japanese","empty-hub","save-check","zip-imported","folder-imported","fomod-options","fomod-full-text",
             "profile-renamed-selected","nexus-browser","export-share-sheet","conflict-summary",
             "conflict-files","separate-profile-saves","imported-profile","picker-AuthoredZip.zip",
             "picker-AuthoredFolder","picker-AuthoredInstaller.zip","picker-Trial Two.skyrimios-modlist.json"}

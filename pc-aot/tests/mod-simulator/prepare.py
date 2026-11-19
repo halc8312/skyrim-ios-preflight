@@ -32,7 +32,7 @@ def fixtures(directory):
         archive.writestr("Data/" + common, b"authored zip\n")
     xml = """<config><moduleName>Authored installer</moduleName><installSteps>
         <installStep name="Choose a colour"><optionalFileGroups><group name="Colour" type="SelectExactlyOne"><plugins>
-        <plugin name="Red"><files><file source="samples/red.txt" destination="interface/screens/choice.txt"/></files></plugin>
+        <plugin name="Red"><description>Install the red sample file.</description><files><file source="samples/red.txt" destination="interface/screens/choice.txt"/></files></plugin>
         <plugin name="Blue"><files><file source="samples/blue.txt" destination="interface/screens/choice.txt"/></files></plugin>
         </plugins></group></optionalFileGroups></installStep></installSteps></config>"""
     with ZipFile(inputs / "AuthoredInstaller.zip", "w", ZIP_DEFLATED) as archive:

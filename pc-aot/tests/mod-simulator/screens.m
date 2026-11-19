@@ -391,13 +391,24 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self capture:@"folder-imported"];
     [[self findRow:@"Add a zip file"] tap];
     [self pick:@"AuthoredInstaller.zip" folder:NO];
-    // The step number is the title; the MOD's own name stays above it and the
-    // step name is in the header, so the user knows whose choices these are.
+    // The package is named in the compact header or the regular navigation prompt.
     XCUIElement *installer = self.app.navigationBars[@"Step 1/1"];
     XCTAssertTrue([installer waitForExistenceWithTimeout:15]);
-    XCTAssertTrue(installer.staticTexts[@"AuthoredInstaller"].exists);
-    NSPredicate *stepName = [NSPredicate predicateWithFormat:@"label CONTAINS %@", @"Choose a colour"];
-    XCTAssertTrue([self.app.staticTexts matchingPredicate:stepName].count > 0);
+    XCUIElement *description = self.app.staticTexts[@"mod-installer-description"];
+    XCTAssertTrue([description waitForExistenceWithTimeout:8]);
+    XCTAssertTrue([description.label containsString:@"Choose a colour"]);
+    XCTAssertTrue([description.label containsString:@"AuthoredInstaller"] || installer.staticTexts[@"AuthoredInstaller"].exists);
+    [[self findRow:@"Red"] pressForDuration:.8];
+    XCUIElement *details = self.app.navigationBars[@"Option details"];
+    XCTAssertTrue([details waitForExistenceWithTimeout:8]);
+    XCUIElement *text = [[[self.app descendantsMatchingType:XCUIElementTypeAny]
+        matchingIdentifier:@"mod-option-full-text"] firstMatch];
+    XCTAssertTrue([text waitForExistenceWithTimeout:8]);
+    XCTAssertTrue([text.label containsString:@"Install the red sample file."] ||
+        [[text.value description] containsString:@"Install the red sample file."]);
+    XCTAssertTrue(details.buttons[@"Copy"].exists);
+    [self capture:@"fomod-full-text"];
+    [details.buttons[@"Done"] tap];
     [[self findRow:@"Red"] tap];
     [self capture:@"fomod-options"];
     [installer.buttons[@"Install"] tap];

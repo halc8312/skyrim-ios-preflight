@@ -397,18 +397,45 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
     }];
 }
 
-/* Full text, selectable, so iOS's own "Translate" menu also works. */
+/* Keep text inside the installer. The system text-selection menu can offer
+ * online translation providers. Copy is explicit and limited to this device. */
 @interface SKTextSheet : UIViewController
 @property(nonatomic, copy) NSString *text;
+@property(nonatomic, copy) NSString *original;
 @end
 @implementation SKTextSheet
+- (void)copyText:(NSString *)text {
+    [UIPasteboard.generalPasteboard setItems:@[@{@"public.utf8-plain-text":text}]
+                                    options:@{UIPasteboardOptionLocalOnly:@YES}];
+}
+- (void)copyAll { [self copyText:self.text]; }
+- (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.title = T(@"Option details", @"選択肢の詳細");
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:T(@"Done", @"閉じる")
+        style:UIBarButtonItemStylePlain target:self action:@selector(close)];
+    UIBarButtonItem *copyButton = [[UIBarButtonItem alloc] initWithTitle:T(@"Copy", @"コピー")
+        style:UIBarButtonItemStylePlain target:self action:@selector(copyAll)];
+    if (self.original.length && ![self.original isEqualToString:self.text]) {
+        __weak SKTextSheet *sheet = self;
+        UIAction *all = [UIAction actionWithTitle:T(@"Copy full text", @"全文をコピー") image:nil identifier:nil
+            handler:^(__unused UIAction *action){ [sheet copyAll]; }];
+        UIAction *original = [UIAction actionWithTitle:T(@"Copy original", @"原文をコピー") image:nil identifier:nil
+            handler:^(__unused UIAction *action){ [sheet copyText:sheet.original]; }];
+        copyButton = [[UIBarButtonItem alloc] initWithTitle:T(@"Copy", @"コピー")
+            menu:[UIMenu menuWithTitle:@"" children:@[all, original]]];
+    }
+    self.navigationItem.rightBarButtonItem = copyButton;
     UITextView *tv = [[UITextView alloc] initWithFrame:self.view.bounds];
     tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    tv.editable = NO; tv.selectable = YES; tv.text = self.text;
+    tv.editable = NO; tv.selectable = NO; tv.dataDetectorTypes = UIDataDetectorTypeNone;
+    tv.text = self.text;
+    tv.isAccessibilityElement = YES;
+    tv.accessibilityIdentifier = @"mod-option-full-text";
     tv.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    tv.adjustsFontForContentSizeCategory = YES;
     tv.textContainerInset = UIEdgeInsetsMake(20, 16, 20, 16);
     [self.view addSubview:tv];
 }
@@ -494,9 +521,15 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
     }
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(20, y, width - 40, 10)];
     label.numberOfLines = 0;
+    label.accessibilityIdentifier = @"mod-installer-description";
     label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     label.textColor = UIColor.secondaryLabelColor;
     NSMutableArray *lines = [NSMutableArray array];
+    // Compact landscape can hide navigation prompts. Keep the archive name
+    // visible at the start of the same section as its step description.
+    BOOL compact = self.traitCollection.verticalSizeClass == UIUserInterfaceSizeClassCompact;
+    self.navigationItem.prompt = compact ? nil : self.modName;
+    if (compact && self.modName.length) [lines addObject:self.modName];
     NSString *module = [self show:self.fomod.title];
     if (module.length && ![module isEqualToString:self.modName]) [lines addObject:[NSString stringWithFormat:T(@"Installer: %@", @"インストーラー：%@"), module]];
     if (self.visible.count) [lines addObject:[NSString stringWithFormat:T(@"Step %lu of %lu: %@", @"ステップ %lu／%lu：%@"),
@@ -515,8 +548,6 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
     self.visible = self.fomod.visibleStepIndexes;
     if (self.position >= self.visible.count) self.position = self.visible.count ? self.visible.count - 1 : 0;
     BOOL last = self.position + 1 >= self.visible.count;
-    /* The MOD's own name stays above the title on every step. */
-    self.navigationItem.prompt = self.modName;
     self.title = self.visible.count ? [NSString stringWithFormat:T(@"Step %lu/%lu", @"ステップ %lu/%lu"), (unsigned long)self.position + 1, (unsigned long)self.visible.count]
                                     : T(@"Install", @"インストール");
     UIBarButtonItem *back = [[UIBarButtonItem alloc] initWithTitle:self.position ? T(@"Back", @"戻る") : T(@"Cancel", @"キャンセル")
@@ -659,9 +690,11 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
     }
     SKTextSheet *sheet = [SKTextSheet new];
     sheet.text = [parts componentsJoinedByString:@"\n\n"];
-    sheet.sheetPresentationController.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];
-    sheet.sheetPresentationController.prefersGrabberVisible = YES;
-    [self presentViewController:sheet animated:YES completion:nil];
+    sheet.original = o.desc.length ? [NSString stringWithFormat:@"%@\n\n%@", o.name, o.desc] : o.name;
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:sheet];
+    nav.sheetPresentationController.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];
+    nav.sheetPresentationController.prefersGrabberVisible = YES;
+    [self presentViewController:nav animated:YES completion:nil];
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)p {
     [t deselectRowAtIndexPath:p animated:YES];
