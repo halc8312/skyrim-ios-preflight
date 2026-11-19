@@ -53,7 +53,8 @@ SkseProbeFileStatus skse_probe_local_dll(const char *path, uint32_t uptime_ms, S
         // Classic 1.7.3 API as presented to one isolated, temporary plugin.
         const SkseTrialOptions options = {0x01070030, 0x09200000, 0, 48, 1, 1, 1};
         const SkseTrialRuntime runtime = {
-            .uptime_ms = uptime_ms, .core_messages = 1, .static_tls = 1, .serialization = 1, .worker_thread = 1
+            .uptime_ms = uptime_ms, .core_messages = 1, .static_tls = 1, .serialization = 1, .worker_thread = 1,
+            .task_interface = 1
         };
         out->trial = skse_plugin_trial_with_runtime(bytes, length, options, runtime);
         if (out->trial.status == SKSE_TRIAL_IMAGE_REFUSED)

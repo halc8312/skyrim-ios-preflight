@@ -11,6 +11,7 @@ enum {
     MESSAGE_OFFSET = 160,
     SENDER_OFFSET = 176,
     SERIALIZATION_INTERFACE_OFFSET = 192,
+    TASK_INTERFACE_OFFSET = 244,
     TLS_TABLE_OFFSET = 256,
     TLS_SCRATCH_LIMIT = 64 * 1024,
     TLS_MAX_ALIGNMENT = 8192,
@@ -20,7 +21,8 @@ enum {
     REGISTER_CALLBACK_OFFSET = QUERY_INTERFACE_OFFSET + 4,
     UNAVAILABLE_CALLBACK_OFFSET = REGISTER_CALLBACK_OFFSET + 4,
     SERIALIZATION_CALLBACK_OFFSET = UNAVAILABLE_CALLBACK_OFFSET + 4,
-    CALLBACK_REGION_END = SERIALIZATION_CALLBACK_OFFSET + SKSE_SERIAL_METHOD_COUNT * 4,
+    TASK_CALLBACK_OFFSET = SERIALIZATION_CALLBACK_OFFSET + SKSE_SERIAL_METHOD_COUNT * 4,
+    CALLBACK_REGION_END = TASK_CALLBACK_OFFSET + SKSE_X86_TASK_TYPES * 4,
     CALL_BUDGET = 100000,
     TRIAL_BUDGET = 1000000
 };
@@ -86,8 +88,10 @@ static const struct {
     {{"KERNEL32.dll", "GetExitCodeThread", 0xe00010e8}, SKSE_X86_WIN_WORKER, SKSE_WIN_WORKER_EXIT_CODE}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
-_Static_assert(WINDOWS_SERVICE_COUNT + 5 + SKSE_SERIAL_METHOD_COUNT <= SKSE_X86_MAX_SERVICES, "trial service count");
-_Static_assert(SERIALIZATION_INTERFACE_OFFSET + 52 <= TLS_TABLE_OFFSET, "trial scratch ABI");
+_Static_assert(WINDOWS_SERVICE_COUNT + 5 + SKSE_SERIAL_METHOD_COUNT + SKSE_X86_TASK_TYPES <= SKSE_X86_MAX_SERVICES,
+               "trial service count");
+_Static_assert(SERIALIZATION_INTERFACE_OFFSET + 52 <= TASK_INTERFACE_OFFSET &&
+               TASK_INTERFACE_OFFSET + 12 <= TLS_TABLE_OFFSET, "trial scratch ABI");
 
 typedef struct {
     SksePeImage *images[SKSE_DEPENDENCY_MAX_MODULES];
@@ -288,6 +292,30 @@ static void exercise_serialization(TrialVm *vm, SkseX86Serialization *serial, Sk
     result->serialization_records = skse_x86_records_count(&serial->records);
 }
 
+static void exercise_tasks(TrialVm *vm, SkseX86Tasks *tasks, SkseTrialResult *result) {
+    for (unsigned type = 0; type < SKSE_X86_TASK_TYPES; ++type) {
+        SkseX86TaskQueue *queue = &tasks->queues[type];
+        while (queue->count) {
+            uint32_t delegate = queue->delegates[queue->head];
+            queue->head = (queue->head + 1) % SKSE_X86_TASK_LIMIT;
+            --queue->count;
+            for (unsigned slot = 0; slot < 2; ++slot) {
+                const uint32_t limit = vm->remaining_work < CALL_BUDGET ? vm->remaining_work : CALL_BUDGET;
+                SkseX86Result call = limit
+                    ? skse_x86_call_virtual(vm->images, vm->count, delegate, slot, vm->scratch, limit, vm->services)
+                    : (SkseX86Result){.status = SKSE_X86_INSTRUCTION_LIMIT};
+                vm->remaining_work -= call.work;
+                if (call.status != SKSE_X86_OK) {
+                    result->task_fault = call;
+                    result->status = SKSE_TRIAL_TASK_FAULT;
+                    return;
+                }
+            }
+            ++result->tasks_completed[type];
+        }
+    }
+}
+
 typedef enum { NO_CATALOG, PACKAGE_CATALOG, EXPLICIT_HELPER } CatalogPolicy;
 
 static void identify_unavailable_import(SkseTrialDependency primary, SkseDependencyTrace *trace) {
@@ -390,6 +418,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     };
     bool enable_messages = runtime && runtime->core_messages && !options.editor;
     bool enable_serialization = runtime && runtime->serialization && !options.editor;
+    bool enable_tasks = runtime && runtime->task_interface && !options.editor;
     SkseX86CoreMessaging core = {
         .interface_address = enable_messages ? scratch.base + MESSAGING_INTERFACE_OFFSET : 0,
         .owner_handle = options.plugin_handle
@@ -398,6 +427,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         .interface_address = scratch.base + SERIALIZATION_INTERFACE_OFFSET,
         .owner_handle = options.plugin_handle
     };
+    SkseX86Tasks tasks = {.interface_address = scratch.base + TASK_INTERFACE_OFFSET};
     SkseX86Heap heap = {.base = free_region(&space, heap_choices, sizeof heap_choices / sizeof heap_choices[0], SKSE_X86_HEAP_BYTES)};
     SkseWinThreadProcess thread_process = {0};
     SkseWinThread thread = {.process = &thread_process, .id = 1};
@@ -432,7 +462,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     write_word(scratch.bytes + 12, options.editor);
     if (options.expose_handle) write_word(scratch.bytes + 20, entries[1].address);
     if (options.expose_release) write_word(scratch.bytes + 24, entries[0].address);
-    if (enable_messages || enable_serialization) {
+    if (enable_messages || enable_serialization || enable_tasks) {
         services.core_messaging = &core;
         uint32_t query_address = callbacks_base + QUERY_INTERFACE_OFFSET;
         entries[services.count++] = (SkseX86Service){query_address, 0, SKSE_X86_QUERY_CLASSIC};
@@ -455,6 +485,16 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         for (unsigned i = 0; i < SKSE_SERIAL_METHOD_COUNT; ++i) {
             uint32_t address = callbacks_base + SERIALIZATION_CALLBACK_OFFSET + 4 * i;
             entries[services.count++] = (SkseX86Service){address, i, SKSE_X86_SERIALIZATION};
+            write_word(interface + 4 * (i + 1), address);
+        }
+    }
+    if (enable_tasks) {
+        services.tasks = &tasks;
+        uint8_t *interface = scratch.bytes + TASK_INTERFACE_OFFSET;
+        write_word(interface, 2);
+        for (unsigned i = 0; i < SKSE_X86_TASK_TYPES; ++i) {
+            uint32_t address = callbacks_base + TASK_CALLBACK_OFFSET + 4 * i;
+            entries[services.count++] = (SkseX86Service){address, i, SKSE_X86_ENQUEUE_TASK};
             write_word(interface + 4 * (i + 1), address);
         }
     }
@@ -550,12 +590,20 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         exercise_serialization(&vm, &serial, &result);
         entries[1].kind = SKSE_X86_SCALAR_RETURN;
     }
-    if (result.status == SKSE_TRIAL_COMPLETED && worker.id && !worker.complete) {
-        SkseX86Result call = skse_x86_finish_worker(&worker, vm.remaining_work);
-        vm.remaining_work -= call.work;
-        if (call.status != SKSE_X86_OK) {
-            result.worker_fault = call;
-            result.status = SKSE_TRIAL_WORKER_FAULT;
+    while (result.status == SKSE_TRIAL_COMPLETED) {
+        if (tasks.queues[SKSE_X86_GAME_TASK].count || tasks.queues[SKSE_X86_UI_TASK].count) {
+            entries[1].kind = SKSE_X86_UNAVAILABLE;
+            exercise_tasks(&vm, &tasks, &result);
+            entries[1].kind = SKSE_X86_SCALAR_RETURN;
+        } else if (worker.id && !worker.complete) {
+            SkseX86Result call = skse_x86_finish_worker(&worker, vm.remaining_work);
+            vm.remaining_work -= call.work;
+            if (call.status != SKSE_X86_OK) {
+                result.worker_fault = call;
+                result.status = SKSE_TRIAL_WORKER_FAULT;
+            }
+        } else {
+            break;
         }
     }
 

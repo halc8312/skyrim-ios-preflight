@@ -507,6 +507,7 @@ static uint32_t classic_service(Vm *vm, SkseX86ServiceKind kind) {
         if (id == SKSE_CLASSIC_MESSAGING_ID && core->interface_address) return core->interface_address;
         if (id == SKSE_CLASSIC_SERIALIZATION_ID && vm->services.serialization)
             return vm->services.serialization->interface_address;
+        if (id == SKSE_CLASSIC_TASK_ID && vm->services.tasks) return vm->services.tasks->interface_address;
         if (id && !core->unavailable_id) core->unavailable_id = id;
         return 0;
     }
@@ -529,6 +530,23 @@ static uint32_t classic_service(Vm *vm, SkseX86ServiceKind kind) {
     }
     core->listener = callback;
     return 1;
+}
+
+static void enqueue_task(Vm *vm, SkseX86TaskType type) {
+    const uint8_t *argument = service_parameters(vm, 4);
+    if (!argument) return;
+    uint32_t delegate = little_endian(argument, 4);
+    if (!delegate || !memory(vm, delegate, 4, SKSE_PE_READ)) {
+        fail(vm, SKSE_X86_MEMORY_FAULT);
+        return;
+    }
+    SkseX86TaskQueue *queue = &vm->services.tasks->queues[type];
+    if (queue->count == SKSE_X86_TASK_LIMIT) {
+        fail(vm, SKSE_X86_INSTRUCTION_LIMIT);
+        return;
+    }
+    queue->delegates[(queue->head + queue->count) % SKSE_X86_TASK_LIMIT] = delegate;
+    ++queue->count;
 }
 
 static uint32_t serialization_service(Vm *vm, SkseSerialMethod method) {
@@ -1092,6 +1110,9 @@ static void invoke_service(Vm *vm, unsigned i, bool tail) {
         break;
     case SKSE_X86_WIN_WORKER:
         vm->registers[EAX] = win_worker_service(vm, (SkseWinWorkerOperation)service->value);
+        break;
+    case SKSE_X86_ENQUEUE_TASK:
+        enqueue_task(vm, (SkseX86TaskType)service->value);
         break;
     }
     ++vm->result.service_calls[i];
@@ -1662,10 +1683,10 @@ static bool valid_space(SksePeImage *const *images, size_t count, SkseX86Scratch
     return true;
 }
 
-SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_count, uint32_t entry,
-                                     SkseX86Scratch scratch, const uint32_t *args,
-                                     size_t arg_count, uint32_t instruction_limit,
-                                     SkseX86Services services, SkseX86Convention convention) {
+static SkseX86Result call_in_space(SksePeImage *const *images, size_t image_count, uint32_t entry,
+                                  SkseX86Scratch scratch, const uint32_t *args, size_t arg_count,
+                                  uint32_t instruction_limit, SkseX86Services services,
+                                  SkseX86Convention convention, uint32_t object, unsigned slot) {
     uint64_t scratch_end = (uint64_t)scratch.base + scratch.length;
     if (!scratch.bytes || !scratch.base || scratch.length < 128 ||
         scratch.length > MAX_SCRATCH || scratch_end > UINT32_MAX || !valid_space(images, image_count, scratch, services.heap) ||
@@ -1685,7 +1706,7 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
-        if ((unsigned)kind > SKSE_X86_WIN_WORKER || !address ||
+        if ((unsigned)kind > SKSE_X86_ENQUEUE_TASK || !address ||
             (kind >= SKSE_X86_MALLOC && kind <= SKSE_X86_HEAP_FREE && !services.heap) ||
             (kind == SKSE_X86_WIN_THREAD &&
              (!services.thread || !services.thread->process || !services.thread->id ||
@@ -1703,6 +1724,9 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
               !in_range(scratch.base, scratch_end, services.serialization->interface_address, 52))) ||
             (kind == SKSE_X86_WIN_WORKER &&
              (!services.thread || services.entries[i].value >= SKSE_WIN_WORKER_OPERATION_COUNT)) ||
+            (kind == SKSE_X86_ENQUEUE_TASK &&
+             (!services.tasks || services.entries[i].value >= SKSE_X86_TASK_TYPES ||
+              !in_range(scratch.base, scratch_end, services.tasks->interface_address, 12))) ||
             (kind == SKSE_X86_QUERY_CLASSIC && !services.core_messaging) ||
             (kind == SKSE_X86_REGISTER_CORE_LISTENER &&
              (!services.core_messaging ||
@@ -1726,6 +1750,12 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
     vm.registers[EBP] = canaries[1];
     vm.registers[ESI] = canaries[2];
     vm.registers[EDI] = canaries[3];
+    if (object) {
+        const uint32_t table = read_memory(&vm, object, 4);
+        if (!table || slot > (UINT32_MAX - table) / 4) fail(&vm, SKSE_X86_MEMORY_FAULT);
+        else vm.ip = read_memory(&vm, table + 4 * slot, 4);
+        vm.registers[ECX] = object;
+    }
     vm.registers[ESP] = stack_top;
     for (size_t i = arg_count; i > 0; --i) push(&vm, args[i - 1]);
     push(&vm, 0);
@@ -1746,6 +1776,20 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
     vm.result.instruction_va = vm.instruction_va;
     vm.result.work = vm.instructions + vm.bulk_work;
     return vm.result;
+}
+
+SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_count, uint32_t entry,
+                                     SkseX86Scratch scratch, const uint32_t *args,
+                                     size_t arg_count, uint32_t instruction_limit,
+                                     SkseX86Services services, SkseX86Convention convention) {
+    return call_in_space(images, image_count, entry, scratch, args, arg_count, instruction_limit, services, convention, 0, 0);
+}
+
+SkseX86Result skse_x86_call_virtual(SksePeImage *const *images, size_t image_count,
+                                    uint32_t object, unsigned slot, SkseX86Scratch scratch,
+                                    uint32_t instruction_limit, SkseX86Services services) {
+    if (!object) return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
+    return call_in_space(images, image_count, 0, scratch, NULL, 0, instruction_limit, services, SKSE_X86_STDCALL, object, slot);
 }
 
 SkseX86Result skse_x86_call(SksePeImage *image, uint32_t entry,

@@ -19,7 +19,14 @@ xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" -
     -Wall -Wextra -Werror -fsyntax-only mod_dll_probe.m
 xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" -fmodules -fobjc-arc \
     -DSKYRIM_IOS_SKSE_DLL_PROBE=1 -DSKYRIM_IOS_CLASSIC_SKSE=1 -I"$here" -I"$root/ios/private-abi" \
-    -fsyntax-only "$root/ios/runtime-port/mod_manager.m"
+    -I"$root/experiments/skse-cosave" -fsyntax-only "$root/ios/runtime-port/mod_manager.m"
+for source in inspect records; do
+    xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" \
+        -std=c11 -O2 -Wall -Wextra -Werror -c "$root/experiments/skse-cosave/$source.c" -o "$work/cosave-$source.o"
+done
+xcrun --sdk macosx clang -std=c11 -O2 -Wall -Wextra -Werror "$root/tests/native/test_skse_cosave_inspect.c" \
+    "$root/experiments/skse-cosave/records.c" -o "$work/cosave-inspect"
+"$work/cosave-inspect"
 
 app="$work/DllCompatibility.app"
 mkdir "$app"
@@ -27,7 +34,7 @@ python3 -B - "$app" <<'PY'
 from pathlib import Path
 import plistlib
 import sys
-from test_probe_local_file import serializing_fixture, supported_fixture, worker_fixture
+from test_probe_local_file import serializing_fixture, supported_fixture, task_fixture, worker_fixture
 from test_probe_directory import file_asset_fixture, helper, primary
 from test_pe_image import DATA, add_named_clock, zero_string
 
@@ -47,6 +54,7 @@ package.mkdir(parents=True)
 (package / "Settings.ini").write_bytes(b"Authored settings")
 (package / "Serialization.dll").write_bytes(serializing_fixture())
 (package / "WorkerProbe.dll").write_bytes(worker_fixture())
+(package / "TaskProbe.dll").write_bytes(task_fixture())
 (app / "Info.plist").write_bytes(plistlib.dumps({
     "CFBundleIdentifier": "org.skyrimios.tests.dllcompatibility",
     "CFBundleName": "DLL Compatibility Fixture",
@@ -88,6 +96,6 @@ for language in english japanese; do
         sleep 1
     done
     grep -Fxq refused,passed,folder "$evidence"
-    echo "DLL_SIMULATOR: ${language} verified standalone DLLs, package dependencies, a read-only asset, an additional-save record and a worker."
+    echo "DLL_SIMULATOR: ${language} verified standalone DLLs, package dependencies, read-only assets, additional-save records, a worker and task delegates."
 done
 codesign --verify --strict "$app"

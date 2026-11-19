@@ -104,6 +104,38 @@ def worker_fixture(close_before_join=False, worker_runs_forever=False):
     return dll
 
 
+def task_fixture(bad_vtable=False):
+    dll = supported_fixture()
+    put(dll, SECTIONS + 8, "I", 0x200)
+    put(dll, RD + 0x60, "I", 0x1080)
+    put(dll, RD + 0x140, "2I", BASE + 0x1100, BASE + 0x1180)
+    put(dll, RD + 0x150, "2I", BASE + 0x1100, BASE + 0x1140)
+    for i in range(3):
+        table = 0xfffffffe if bad_vtable and i == 1 else BASE + 0x2140
+        put(dll, DATA + 0x140 + i * 8, "2I", table, i * 2)
+
+    # Keep the checked Classic interface in EBX, then enqueue two game tasks
+    # and one UI task whose delegates share methods but carry distinct state.
+    code = bytearray.fromhex("53 8b 44 24 08 6a 04 ff 50 10 83 c4 04 85 c0 75 02 0f 0b")
+    code.extend(bytes.fromhex("83 38 02 74 02 0f 0b 89 c3"))
+    for i in range(3):
+        code.extend(b"\x68" + struct.pack("<I", BASE + 0x3140 + i * 8))
+        code.extend(bytes((0xff, 0x53, 8 if i == 2 else 4, 0x83, 0xc4, 4)))
+    code.extend(bytes.fromhex("b8 01 00 00 00 5b c3"))
+    dll[0x280:0x280 + len(code)] = code
+
+    stage = struct.pack("<I", BASE + 0x31f0)
+    check_and_advance = bytes.fromhex("39 05") + stage + bytes.fromhex("74 02 0f 0b ff 05") + stage + b"\xc3"
+    for i in range(2):
+        # Run changes the vptr. Dispose must read the new slot, as Classic does.
+        action = b"\x40" if i else b"\xc7\x01" + struct.pack("<I", BASE + 0x2150)
+        method = bytes.fromhex("8b 41 04") + action + check_and_advance
+        at = 0x300 + 0x40 * i
+        dll[at:at + len(method)] = method
+    dll[0x380:0x382] = b"\x0f\x0b"
+    return dll
+
+
 @unittest.skipIf(sys.platform == "win32", "the selected-file wrapper uses Darwin/POSIX descriptors")
 class LocalFileProbeTest(unittest.TestCase):
     def test_regular_file_boundaries_symlinks_and_dll_results(self):
@@ -133,6 +165,9 @@ class LocalFileProbeTest(unittest.TestCase):
             worker.write_bytes(worker_fixture())
             closed.write_bytes(worker_fixture(close_before_join=True))
             bounded.write_bytes(worker_fixture(worker_runs_forever=True))
+            tasks, bad_task = root / "tasks.dll", root / "invalid-task.dll"
+            tasks.write_bytes(task_fixture())
+            bad_task.write_bytes(task_fixture(bad_vtable=True))
             invalid, empty, big = root / "invalid.dll", root / "empty.dll", root / "large.dll"
             invalid.write_bytes(b"not a PE file")
             empty.touch()
@@ -141,7 +176,7 @@ class LocalFileProbeTest(unittest.TestCase):
             link, fifo = root / "link.dll", root / "fifo.dll"
             link.symlink_to(good)
             os.mkfifo(fifo, mode=0o600)
-            result = subprocess.check_output([binary, good, unknown, serialized, worker, closed, bounded, invalid, empty, big,
+            result = subprocess.check_output([binary, good, unknown, serialized, worker, closed, bounded, tasks, bad_task, invalid, empty, big,
                                               link, fifo, root / "absent.dll", root],
                                              text=True, timeout=3).splitlines()
             self.assertEqual(result, ["ready,7,Owned test plugin",
@@ -150,6 +185,8 @@ class LocalFileProbeTest(unittest.TestCase):
                                       "ready,7,Owned test plugin,workers=1",
                                       "ready,7,Owned test plugin,workers=1",
                                       "stopped,8,ok,0,load=4",
+                                      "ready,7,Owned test plugin,tasks=2/1",
+                                      "stopped,20,ok,0,task=2",
                                       "stopped,1,truncated headers,0", "2", "3", "1", "2", "1", "2"])
             self.assertEqual(good.read_bytes(), fixture)
             self.assertEqual(unknown.read_bytes(), with_import)

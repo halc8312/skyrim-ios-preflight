@@ -106,6 +106,10 @@ target_compile_definitions(skyrim_ios_runtime PRIVATE GAME_SKYRIM DXVK_NATIVE
     SKYRIM_IOS=1 SKYDREAM_MOBILE=1 SKYRIM_IOS_GUEST_DIAGNOSTIC=1
     SDL_MAIN_HANDLED _FILE_OFFSET_BITS=64)
 if(SKYRIM_IOS_CLASSIC_SKSE)
+    set(cosave_source "${SKYRIM_IOS_ROOT}/experiments/skse-cosave")
+    target_sources(skyrim_ios_runtime PRIVATE
+        "${cosave_source}/inspect.c" "${cosave_source}/records.c")
+    target_include_directories(skyrim_ios_runtime PRIVATE "${cosave_source}")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_SKSE=1 SKYDREAM_SKSE=1)
 endif()
 if(SKYRIM_IOS_SKSE_DLL_PROBE)

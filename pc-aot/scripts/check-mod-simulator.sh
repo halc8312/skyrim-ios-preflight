@@ -77,6 +77,8 @@ if live:
     required = {"nexus-live-listing"}
 elif sys.argv[4] == "dll-probe":
     required = {"installed-dll-diagnosis"}
+if sys.argv[4] == "screens" and os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1":
+    required.add("additional-save-check")
 captured = set()
 # Retain the last visible screen when a system picker or a table action fails.
 labels = required | {"failure-screen", "row-unavailable"}

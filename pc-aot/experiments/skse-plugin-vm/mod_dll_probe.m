@@ -76,6 +76,11 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
                                                             @"終了まで確認した補助スレッド　%u 本"),
                               trial->workers_completed]];
         }
+        if (trial->tasks_completed[SKSE_X86_GAME_TASK] || trial->tasks_completed[SKSE_X86_UI_TASK]) {
+            [lines addObject:[NSString stringWithFormat:Text(japanese, @"Queued task test · Game %u · UI %u",
+                                                            @"タスクの試験　ゲーム %u 件、UI %u 件"),
+                              trial->tasks_completed[SKSE_X86_GAME_TASK], trial->tasks_completed[SKSE_X86_UI_TASK]]];
+        }
         return lines;
     }
     case SKSE_TRIAL_IMAGE_REFUSED:
@@ -127,6 +132,10 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
         return @[Text(japanese, @"The DLL stopped during a worker thread test.",
                                 @"DLLの補助スレッドの試験が途中で停止しました。"),
                  CallResult(japanese, trial->worker_fault.status)];
+    case SKSE_TRIAL_TASK_FAULT:
+        return @[Text(japanese, @"The DLL stopped during a queued SKSE task.",
+                                @"後から実行するSKSEタスクの処理が途中で停止しました。"),
+                 CallResult(japanese, trial->task_fault.status)];
     default: {
         const SkseX86Result *fault = &trial->query;
         if (trial->status == SKSE_TRIAL_ATTACH_FAULT) fault = &trial->attach;

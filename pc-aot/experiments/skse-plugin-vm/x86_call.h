@@ -30,7 +30,7 @@ typedef struct {
 
 enum {
     SKSE_X86_MAX_SERVICES = 96, SKSE_X86_MAX_IMAGES = 4,
-    SKSE_CLASSIC_SERIALIZATION_ID = 3, SKSE_CLASSIC_MESSAGING_ID = 5
+    SKSE_CLASSIC_SERIALIZATION_ID = 3, SKSE_CLASSIC_TASK_ID = 4, SKSE_CLASSIC_MESSAGING_ID = 5
 };
 #define SKSE_X86_PROCESS_HEAP UINT32_C(0xe1000000)
 
@@ -40,7 +40,7 @@ typedef enum {
     SKSE_X86_MALLOC, SKSE_X86_CALLOC, SKSE_X86_REALLOC, SKSE_X86_FREE,
     SKSE_X86_HEAP_ALLOC, SKSE_X86_HEAP_REALLOC, SKSE_X86_HEAP_FREE, SKSE_X86_WIN_THREAD,
     SKSE_X86_INTERLOCKED, SKSE_X86_MODULE_LOOKUP, SKSE_X86_READ_ONLY_FILES, SKSE_X86_WIN_SYNC,
-    SKSE_X86_SERIALIZATION, SKSE_X86_WIN_WORKER
+    SKSE_X86_SERIALIZATION, SKSE_X86_WIN_WORKER, SKSE_X86_ENQUEUE_TASK
 } SkseX86ServiceKind;
 
 typedef enum {
@@ -81,6 +81,17 @@ typedef struct {
     SkseX86RecordStream records;
 } SkseX86Serialization;
 
+enum { SKSE_X86_TASK_LIMIT = 16 };
+typedef enum { SKSE_X86_GAME_TASK, SKSE_X86_UI_TASK, SKSE_X86_TASK_TYPES } SkseX86TaskType;
+typedef struct {
+    uint32_t delegates[SKSE_X86_TASK_LIMIT];
+    unsigned head, count;
+} SkseX86TaskQueue;
+typedef struct {
+    uint32_t interface_address;
+    SkseX86TaskQueue queues[SKSE_X86_TASK_TYPES];
+} SkseX86Tasks;
+
 typedef struct {
     SkseX86Status status;
     uint32_t eax, instructions, work, instruction_va;
@@ -107,6 +118,7 @@ typedef struct {
     size_t count;
     SkseX86CoreMessaging *core_messaging;
     SkseX86Serialization *serialization;
+    SkseX86Tasks *tasks;
     SkseX86Heap *heap;
     SkseWinThread *thread;
     SkseWinFiles *files;
@@ -137,6 +149,11 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
                                      SkseX86Scratch scratch, const uint32_t *args,
                                      size_t arg_count, uint32_t instruction_limit,
                                      SkseX86Services services, SkseX86Convention convention);
+/* A parameterless MSVC i386 virtual method receives its object in ECX.
+ * Find that slot in the current checked guest memory on each call. */
+SkseX86Result skse_x86_call_virtual(SksePeImage *const *images, size_t image_count,
+                                    uint32_t object, unsigned slot, SkseX86Scratch scratch,
+                                    uint32_t instruction_limit, SkseX86Services services);
 
 const char *skse_x86_status_text(SkseX86Status status);
 #endif

@@ -394,6 +394,15 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCTAssertTrue([self.app.staticTexts[@"MODはまだありません"] waitForExistenceWithTimeout:8]);
     [self findRow:@"セーブの確認"];
     [self capture:@"mod-hub-japanese"];
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    [[self findRow:@"セーブの確認"] tap];
+    [[self findRow:@"Authored Save"] tap];
+    XCUIElement *japaneseCompanion = self.app.alerts[@"SKSE追加セーブ"];
+    XCTAssertTrue([japaneseCompanion waitForExistenceWithTimeout:5]);
+    XCTAssertTrue(japaneseCompanion.staticTexts[@"同名のSKSE Classic形式のファイルを確認しました。セクション 1 件、レコード 1 件。"].exists);
+    [japaneseCompanion.buttons[@"OK"] tap];
+    [self goBackFrom:@"セーブの確認"];
+#endif
     [self goBackFrom:@"MOD"];
     [[self findRow:@"アプリの言語"] tap];
     [self.app.buttons[@"English"] tap];
@@ -417,6 +426,14 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self findRow:@"Authored Save"];
     NSPredicate *missingPlugin = [NSPredicate predicateWithFormat:@"label CONTAINS %@", @"UnavailableFixture.esp"];
     XCTAssertTrue([self.app.staticTexts matchingPredicate:missingPlugin].count > 0);
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    [[self findRow:@"Authored Save"] tap];
+    XCUIElement *englishCompanion = self.app.alerts[@"SKSE additional save"];
+    XCTAssertTrue([englishCompanion waitForExistenceWithTimeout:5]);
+    XCTAssertTrue(englishCompanion.staticTexts[@"Found a same-name SKSE Classic file. Sections 1 · Records 1"].exists);
+    [self capture:@"additional-save-check"];
+    [englishCompanion.buttons[@"OK"] tap];
+#endif
     [self capture:@"save-check"]; [self goBackFrom:@"Save check"];
 
     [[self findRow:@"Add a zip file"] tap];
