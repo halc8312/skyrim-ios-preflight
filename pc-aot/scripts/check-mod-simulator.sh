@@ -65,6 +65,8 @@ required = {"settings","empty-hub","save-check","zip-imported","folder-imported"
             "conflict-files","separate-profile-saves","imported-profile","picker-AuthoredZip.zip",
             "picker-AuthoredFolder","picker-AuthoredInstaller.zip","picker-Trial Two.skyrimios-modlist.json"}
 captured = set()
+# Retain the last visible screen when a system picker or a table action fails.
+labels = required | {"failure-screen", "row-unavailable"}
 for entry in entries:
     path = source / Path(entry["exportedFileName"]).name
     if not path.is_file() or path.suffix.lower() not in {".png",".jpeg",".jpg"}:
@@ -72,13 +74,13 @@ for entry in entries:
     label = str(entry.get("suggestedHumanReadableName",""))
     # Xcode may append timestamps and the test's activity name.
     flat = lambda s: re.sub(r"[^a-z0-9]", "", s.lower())
-    name = next((n for n in sorted(required,key=len,reverse=True) if flat(n) in flat(label)),None)
+    name = next((n for n in sorted(labels,key=len,reverse=True) if flat(n) in flat(label)),None)
     if name:
         shutil.copyfile(path, target/(name+path.suffix.lower()))
         captured.add(name)
 if sys.argv[3] == "0" and not required.issubset(captured):
     raise SystemExit(f"Missing test screenshots: {sorted(required-captured)}")
-print(f"Retained {len(captured)} named simulator screenshots.")
+print(f"Retained {len(captured & required)} required simulator screenshots.")
 PY
 fi
 [[ "$status" -eq 0 ]] || exit "$status"

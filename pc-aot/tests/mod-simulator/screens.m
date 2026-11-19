@@ -6,6 +6,10 @@
 @property(nonatomic,strong) XCUIApplication *app;
 @end
 
+typedef NS_ENUM(NSUInteger, SKPickerLocation) {
+    SKPickerInitial, SKPickerBrowse, SKPickerLocal, SKPickerAppFolder, SKPickerSamples
+};
+
 @implementation ModScreensTests
 - (void)setUp {
     [super setUp];
@@ -19,6 +23,10 @@
     attachment.name = name;
     [self addAttachment:attachment];
 }
+- (void)tearDown {
+    if (self.testRun.totalFailureCount) [self capture:@"failure-screen"];
+    [super tearDown];
+}
 
 - (XCUIElement *)findRow:(NSString *)label {
     XCUIElement *table = self.app.tables.firstMatch;
@@ -29,7 +37,7 @@
     XCTAssertTrue([row waitForExistenceWithTimeout:15], @"Missing row %@. %@", label, table.debugDescription);
     XCUIElement *nav = self.app.navigationBars.firstMatch;
     CGFloat previousY = CGFLOAT_MAX;
-    for (NSUInteger i = 0; i < 16; ++i) {
+    for (NSUInteger i = 0; i < 40; ++i) {
         CGRect bounds = table.frame;
         CGFloat top = CGRectGetMinY(bounds) + 10;
         if (nav.exists) top = MAX(top, CGRectGetMaxY(nav.frame) + 8);
@@ -47,7 +55,6 @@
         XCUICoordinate *end = [table coordinateWithNormalizedOffset:CGVectorMake(.5, to)];
         [start pressForDuration:.08 thenDragToCoordinate:end withVelocity:420 thenHoldForDuration:.2];
     }
-    [self capture:@"row-unavailable"];
     XCTFail(@"Could not bring the row %@ onscreen. %@", label, table.debugDescription);
     return row;
 }
@@ -72,37 +79,95 @@
     [self.app.alerts.buttons[@"OK"] tap];
 }
 
-// The system Files picker may initially show Recents, Browse, or the last
-// directory. Select via its visible accessibility labels, including builds of
-// Files that hide recognized extensions. No importer callback is substituted.
-- (XCUIElement *)pickerItem:(NSString *)name {
+// The "File View" collection contains document cells; Files has separate
+// sidebar and tab collections which can stay visible even deep inside a folder.
+- (XCUIElement *)fileNamed:(NSString *)name inCollection:(XCUIElement *)files {
     NSString *shortName = name.stringByDeletingPathExtension;
     NSPredicate *matches = [NSPredicate predicateWithFormat:
-        @"label ==[c] %@ OR label ==[c] %@ OR label BEGINSWITH[c] %@ OR label BEGINSWITH[c] %@",
-        name, shortName, [name stringByAppendingString:@","], [shortName stringByAppendingString:@","]];
-    XCUIElementQuery *items = [[self.app descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:matches];
-    for (XCUIElement *item in items.allElementsBoundByIndex)
-        if (item.hittable) return item;
+        @"label IN[c] %@ OR identifier IN[c] %@ OR label BEGINSWITH[c] %@ OR label BEGINSWITH[c] %@ "
+         "OR identifier BEGINSWITH[c] %@ OR identifier BEGINSWITH[c] %@",
+        @[name, shortName], @[name, shortName], [name stringByAppendingString:@","], [shortName stringByAppendingString:@","],
+        [name stringByAppendingString:@","], [shortName stringByAppendingString:@","]];
+    XCUIElement *cell = [files.cells matchingPredicate:matches].firstMatch;
+    if (cell.exists) return cell;
+    // Some Files layouts present the display name only in a child title.
+    XCUIElement *displayName = [files.cells containingType:XCUIElementTypeStaticText identifier:shortName].firstMatch;
+    if ([shortName isEqualToString:name] || displayName.exists) return displayName;
+    return [files.cells containingType:XCUIElementTypeStaticText identifier:name].firstMatch;
+}
+- (void)scrollFiles:(XCUIElement *)files towardBottom:(BOOL)down {
+    CGRect bounds = files.frame;
+    CGFloat left = CGRectGetMinX(bounds) + 8, right = CGRectGetMaxX(bounds) - 8;
+    CGFloat top = CGRectGetMinY(bounds) + 8, bottom = CGRectGetMaxY(bounds) - 12;
+    XCUIElement *sidebar = self.app.collectionViews[@"Browse View"];
+    XCUIElement *bar = self.app.navigationBars[@"FullDocumentManagerViewControllerNavigationBar"];
+    XCUIElement *tabs = self.app.tabBars[@"DOC.browsingModeTabBar"];
+    if (sidebar.exists && sidebar.hittable) left = MAX(left, CGRectGetMaxX(sidebar.frame) + 8);
+    if (bar.exists) top = MAX(top, CGRectGetMaxY(bar.frame) + 8);
+    if (tabs.exists) bottom = MIN(bottom, CGRectGetMinY(tabs.frame) - 8);
+    if (right <= left || bottom - top < 45) return;
+    CGFloat x = ((left + right) / 2 - CGRectGetMinX(bounds)) / CGRectGetWidth(bounds);
+    CGFloat high = (top + .15 * (bottom - top) - CGRectGetMinY(bounds)) / CGRectGetHeight(bounds);
+    CGFloat low = (top + .85 * (bottom - top) - CGRectGetMinY(bounds)) / CGRectGetHeight(bounds);
+    XCUICoordinate *from = [files coordinateWithNormalizedOffset:CGVectorMake(x, down ? low : high)];
+    XCUICoordinate *to = [files coordinateWithNormalizedOffset:CGVectorMake(x, down ? high : low)];
+    [from pressForDuration:.08 thenDragToCoordinate:to withVelocity:300 thenHoldForDuration:.2];
+}
+- (XCUIElement *)locateFile:(NSString *)name {
+    XCUIElement *files = self.app.collectionViews[@"File View"];
+    XCUIElement *bar = self.app.navigationBars[@"FullDocumentManagerViewControllerNavigationBar"];
+    XCUIElement *local = self.app.cells[@"DOC.sidebar.item.On My iPhone"];
+    XCUIElement *browse = self.app.tabBars.buttons[@"Browse"];
+    SKPickerLocation stage = SKPickerInitial;
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:35];
+    NSDate *ready = [NSDate dateWithTimeIntervalSinceNow:3];
+    NSUInteger scrolls = 0;
+    while (deadline.timeIntervalSinceNow > 0) {
+        XCUIElement *item = [self fileNamed:name inCollection:files];
+        if (item.exists && item.hittable && item.enabled) return item;
+        if (stage < SKPickerSamples && bar.staticTexts[@"UI Samples"].exists) {
+            stage = SKPickerSamples;
+            ready = [NSDate dateWithTimeIntervalSinceNow:3];
+            deadline = [NSDate dateWithTimeIntervalSinceNow:22];
+        }
+        if (ready.timeIntervalSinceNow <= 0) {
+            if (stage == SKPickerSamples) {
+                // This state is terminal: a still-visible Browse button leads
+                // back to the root. Wait for File Provider to populate its list.
+                if (scrolls < 8 && files.exists && files.cells.count) {
+                    BOOL down = item.exists ? CGRectGetMidY(item.frame) >= CGRectGetMidY(files.frame) : scrolls < 4;
+                    [self scrollFiles:files towardBottom:down];
+                    ++scrolls;
+                    ready = [NSDate dateWithTimeIntervalSinceNow:.4];
+                }
+            } else {
+                XCUIElement *samples = [self fileNamed:@"UI Samples" inCollection:files];
+                XCUIElement *place = nil;
+                if (samples.exists && samples.hittable) { place = samples; stage = SKPickerSamples; }
+                if (!place && stage < SKPickerAppFolder) {
+                    XCUIElement *host = [self fileNamed:@"MOD Screen Test" inCollection:files];
+                    if (host.exists && host.hittable) { place = host; stage = SKPickerAppFolder; }
+                }
+                if (!place && stage < SKPickerLocal && local.exists && local.hittable) {
+                    place = local; stage = SKPickerLocal;
+                }
+                if (!place && stage < SKPickerBrowse && browse.exists && browse.hittable) {
+                    place = browse; stage = SKPickerBrowse;
+                }
+                if (place) {
+                    [place tap];
+                    ready = [NSDate dateWithTimeIntervalSinceNow:stage == SKPickerSamples ? 3 : .4];
+                    deadline = [NSDate dateWithTimeIntervalSinceNow:22];
+                }
+            }
+        }
+        [NSThread sleepForTimeInterval:.15];
+    }
+    XCTFail(@"Files could not locate %@ at stage %lu. %@", name, (unsigned long)stage, self.app.debugDescription);
     return nil;
 }
 - (void)pick:(NSString *)name folder:(BOOL)folder {
-    // Start from an actual picker (as presented by the selected settings row).
-    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:25];
-    BOOL sawBrowse=NO, sawLocal=NO, sawHost=NO, sawSamples=NO;
-    XCUIElement *item=nil;
-    while (!item && [deadline timeIntervalSinceNow]>0) {
-        item = [self pickerItem:name];
-        if (item) break;
-        // Files can ignore its initial directory until the local provider has
-        // appeared. Look up a fallback location only as far as the first match.
-        XCUIElement *place;
-        if (!sawSamples && (place=[self pickerItem:@"UI Samples"])) { [place tap]; sawSamples=YES; }
-        else if (!sawHost && (place=[self pickerItem:@"MOD Screen Test"])) { [place tap]; sawHost=YES; }
-        else if (!sawLocal && (place=[self pickerItem:@"On My iPhone"])) { [place tap]; sawLocal=YES; }
-        else if (!sawBrowse && (place=[self pickerItem:@"Browse"])) { [place tap]; sawBrowse=YES; }
-        else [NSThread sleepForTimeInterval:.2];
-    }
-    XCTAssertNotNil(item, @"Files could not locate %@: %@",name,self.app.debugDescription);
+    XCUIElement *item = [self locateFile:name];
     [self capture:[@"picker-" stringByAppendingString:name]];
     [item tap];
     // Folders must be opened then chosen; multi-select archives may require
@@ -114,7 +179,8 @@
         do {
             for (XCUIElement *confirm in choices.allElementsBoundByIndex)
                 if (confirm.hittable && confirm.enabled) { [confirm tap]; return; }
-            if (self.app.navigationBars[@"MOD"].buttons[@"Reorder"].hittable) return;
+            if (!self.app.collectionViews[@"File View"].exists &&
+                !self.app.navigationBars[@"FullDocumentManagerViewControllerNavigationBar"].exists) return;
             [NSThread sleepForTimeInterval:.15];
         } while (until.timeIntervalSinceNow > 0);
     }
@@ -152,7 +218,7 @@
     [self fillName:@"Trial" replacing:@"MOD"];
     XCUIElement *trial = [self findRow:@"Trial"];
     [trial swipeLeft];
-    if (![self.app.alerts[@"Rename"] waitForExistenceWithTimeout:1]) {
+    if (![self.app.alerts[@"Rename"] waitForExistenceWithTimeout:1.5]) {
         XCUIElement *rename = self.app.buttons[@"Rename"];
         XCTAssertTrue([rename waitForExistenceWithTimeout:6]);
         [rename tap];
@@ -168,10 +234,12 @@
     [[self findRow:@"Share this MOD list"] tap];
     // The activity sheet is genuine. The simulator host later copies this
     // exact exported file to its Files documents for deterministic re-import.
-    XCTAssertTrue([self.app.buttons[@"Copy"] waitForExistenceWithTimeout:10] ||
-                  self.app.staticTexts[@"Copy"].exists || self.app.staticTexts[@"Save to Files"].exists ||
-                  self.app.buttons[@"Save to Files"].exists || self.app.cells[@"Save to Files"].exists,
-                  @"Expected the standard share sheet. %@",self.app.debugDescription);
+    NSPredicate *shareDestination = [NSPredicate predicateWithFormat:
+        @"label IN[c] %@ OR identifier CONTAINS[c] %@", @[@"Copy", @"Save to Files"], @"SaveToFiles"];
+    XCUIElement *systemAction = [[self.app descendantsMatchingType:XCUIElementTypeAny]
+                                      matchingPredicate:shareDestination].firstMatch;
+    XCTAssertTrue([systemAction waitForExistenceWithTimeout:12],
+                  @"Expected an action in the standard share sheet. %@",self.app.debugDescription);
     [self capture:@"export-share-sheet"];
 
     [self.app terminate];
