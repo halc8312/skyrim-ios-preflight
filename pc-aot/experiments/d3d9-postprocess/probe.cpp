@@ -1,10 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#include "postprocess.h"
+#include "probe_checks.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <stdexcept>
-#include <string>
 #if defined(POSTFX_NATIVE_DXVK)
 #ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
@@ -14,18 +12,7 @@
 #endif
 
 namespace {
-void checked(HRESULT result, const char* action) {
-    if (FAILED(result)) {
-        char code[18];
-        std::snprintf(code, sizeof code, " (0x%08x)", static_cast<unsigned>(result));
-        throw std::runtime_error(std::string(action) + code);
-    }
-}
-#define TRY(call) checked((call), #call)
-void expect(bool ok, const char* action) {
-    if (!ok)
-        throw std::runtime_error(action);
-}
+using postfx_probe::expect;
 
 struct Window {
     HWND native = nullptr;
@@ -230,7 +217,7 @@ struct GameState {
     }
 };
 
-void run() {
+int run(bool testDepth) {
     Window window;
     PostFXRef<IDirect3D9> d3d;
     *d3d.put() = Direct3DCreate9(D3D_SDK_VERSION);
@@ -250,6 +237,8 @@ void run() {
     TRY(d3d->CreateDevice(0, D3DDEVTYPE_HAL, window.native, D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp,
                           device.put()));
     IDirect3DDevice9* d = device.get();
+    if (testDepth)
+        return postfx_probe::checkDepthInputs(d3d.get(), d) ? 0 : 77;
     D3DCAPS9 caps{};
     TRY(d->GetDeviceCaps(&caps));
     TwoTonePass pass;
@@ -323,14 +312,19 @@ void run() {
     }
     std::printf("Verified %u color passes, %u output pixels, %u multisample modes; MRTs=%u\n", cases,
                 pixels, multisample, unsigned(caps.NumSimultaneousRTs));
+    return 0;
 }
 } // namespace
-int main() {
+int main(int argc, char** argv) {
     try {
-        run();
+        if (argc == 1)
+            return run(false);
+        if (argc == 2 && !std::strcmp(argv[1], "--depth-input"))
+            return run(true);
+        std::fprintf(stderr, "Usage: d3d9_postprocess [--depth-input]\n");
+        return 2;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "D3D9 test failed: %s\n", e.what());
         return 1;
     }
-    return 0;
 }

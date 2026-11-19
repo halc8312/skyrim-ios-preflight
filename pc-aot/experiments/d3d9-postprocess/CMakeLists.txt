@@ -5,7 +5,7 @@ set(SKYDREAM_SOURCE "" CACHE PATH "Skydream checkout or pinned source archive ro
 set(POSTFX_SDL_INCLUDE "" CACHE PATH "Optional SDL2 include directory containing SDL.h")
 set(POSTFX_SDL_LIBRARY "" CACHE FILEPATH "Matching SDL2 library when using an explicit include directory")
 
-add_executable(d3d9_postprocess probe.cpp postprocess.cpp)
+add_executable(d3d9_postprocess probe.cpp postprocess.cpp depth_input.cpp)
 target_compile_features(d3d9_postprocess PRIVATE cxx_std_17)
 target_compile_definitions(d3d9_postprocess PRIVATE NOMINMAX)
 if(WIN32 AND NOT SKYDREAM_SOURCE)
@@ -40,3 +40,5 @@ endif()
 
 enable_testing()
 add_test(NAME d3d9_postprocess_pixels_and_state COMMAND d3d9_postprocess)
+add_test(NAME d3d9_postprocess_depth_input COMMAND d3d9_postprocess --depth-input)
+set_tests_properties(d3d9_postprocess_depth_input PROPERTIES SKIP_RETURN_CODE 77)

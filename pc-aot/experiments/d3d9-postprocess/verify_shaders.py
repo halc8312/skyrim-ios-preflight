@@ -11,11 +11,16 @@ import tempfile
 
 
 HERE = Path(__file__).resolve().parent
+SHADERS = {
+    "two-tone": ("two_tone.hlsl", "postprocess.cpp", "shaderCode"),
+    "depth-view": ("depth_view.hlsl", "depth_input.cpp", "depthViewCode"),
+}
 
 
-def embedded_tokens():
-    source = (HERE / "postprocess.cpp").read_text(encoding="utf-8")
-    match = re.search(r"constexpr DWORD shaderCode\[\] = \{([^{}]+)\};", source)
+def embedded_tokens(program="two-tone"):
+    _, filename, symbol = SHADERS[program]
+    source = (HERE / filename).read_text(encoding="utf-8")
+    match = re.search(rf"constexpr DWORD {symbol}\[\] = \{{([^{{}}]+)\}};", source)
     if not match:
         raise ValueError("The embedded pixel shader was not found")
     return tuple(int(v.strip(), 0) for v in match[1].split(","))
@@ -45,13 +50,13 @@ def without_comments(data):
     raise ValueError("Missing shader end")
 
 
-def check_hlsl(fxc):
+def check_hlsl(fxc, program="two-tone"):
     with tempfile.TemporaryDirectory() as temp:
         output = Path(temp) / "shader.dxso"
         subprocess.run([fxc, "/nologo", "/T", "ps_2_0", "/E", "main", "/O3", "/Fo", output,
-                        HERE / "two_tone.hlsl"], check=True)
+                        HERE / SHADERS[program][0]], check=True)
         tokens = without_comments(output.read_bytes())
-    if tokens != embedded_tokens():
+    if tokens != embedded_tokens(program):
         raise ValueError("FXC's executable instructions differ from the embedded shader")
     print(f"Matched all {len(tokens)} executable pixel-shader DWORDs")
 
@@ -61,7 +66,7 @@ def metal_tools(directory, name):
 
 
 def check_metal(args):
-    words = embedded_tokens()
+    words = embedded_tokens(args.program)
     shader = struct.pack(f"<{len(words)}I", *words)
     fragment = args.dump / ("FS_" + hashlib.sha1(shader).hexdigest() + ".spv")
     vertices = list(args.dump.glob("FF_VS_*.spv"))
@@ -79,7 +84,7 @@ def check_metal(args):
         subprocess.run([metal_tools(args.tools, "metal"), "-c", "-target", "air64-apple-ios18.0",
                         "-std=metal3.2", "-fno-fast-math", source, "-o", air], check=True)
         air_files.append(air)
-    library = args.output / "two-tone-ios18.metallib"
+    library = args.output / f"{args.program}-ios18.metallib"
     subprocess.run([metal_tools(args.tools, "metallib"), *air_files, "-o", library], check=True)
     listing = subprocess.check_output([metal_tools(args.tools, "metal-nm"), library], text=True)
     symbols = {line.split()[-1] for line in listing.splitlines() if " T " in line}
@@ -93,15 +98,17 @@ def main():
     modes = parser.add_subparsers(dest="mode", required=True)
     hlsl = modes.add_parser("hlsl", help="Compare the embedded shader with Microsoft FXC output")
     hlsl.add_argument("--fxc", type=Path, required=True)
+    hlsl.add_argument("--program", choices=SHADERS, default="two-tone")
     metal = modes.add_parser("metal", help="Use project-patched SPIRV-Cross and the Apple Metal tools")
     metal.add_argument("--dump", type=Path, required=True)
     metal.add_argument("--cross", type=Path, required=True)
     metal.add_argument("--tools", type=Path, required=True)
+    metal.add_argument("--program", choices=SHADERS, default="two-tone")
     metal.add_argument("--output", type=Path, required=True, help="A new directory for MSL, AIR and the metallib")
     args = parser.parse_args()
     try:
         if args.mode == "hlsl":
-            check_hlsl(args.fxc)
+            check_hlsl(args.fxc, args.program)
         else:
             check_metal(args)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:

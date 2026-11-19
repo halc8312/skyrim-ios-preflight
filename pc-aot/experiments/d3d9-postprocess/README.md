@@ -18,6 +18,22 @@ The probe fills four colored quadrants, verifies the input, runs the pass, then 
 
 Windows D3D9 on an RTX 4060 Ti passed 9 draws and 5,891 output pixels, including both 2× and 4× MSAA. Pinned DXVK 1.9.2 on Linux with Mesa lavapipe passed 8 draws and 5,340 pixels, including its advertised 4× mode. A direct draw into the multisampled target left some unfiltered subsamples at the top and left edges on DXVK. The pass now processes the resolved single-sample image and transfers the complete filtered result back to the MSAA target.
 
+## Scene depth for distance-based effects
+
+The separate `d3d9_postprocess --depth-input` case tests the depth input a fog or depth-of-field shader would need. A synthetic scene draws geometry at normalized depths 0.25 and 0.75, with a one-pixel guard initialized by clears. A pixel shader samples the depth and writes it to a grayscale target. The test checks all 527 pixels, then rebinds the original depth/stencil surface and draws at 0.5. It checks another 527 pixels, including a stripe rejected by stencil and a region rejected by depth. The depth values are in device space. Distance in world units would also require the scene projection.
+
+| Readable input | Windows D3D9, RTX 4060 Ti | Fixed DXVK, Mesa lavapipe |
+| --- | --- | --- |
+| Bound single-sample INTZ texture from `GetDepthStencilSurface` and `GetContainer` | Passed | Passed |
+| Standalone D24S8 surface queried for a texture container | `E_NOINTERFACE` | `E_NOINTERFACE` |
+| D24S8 copied to INTZ using the advertised RESZ extension | RESZ unavailable | Passed at 1× and 4×. The adapter did not expose 2× |
+
+For 4×, the test writes depth 0.125 to samples 1–3 across the interior and retains the original depth in sample 0. The extracted value matches sample 0. The second draw also checks its contribution to the resolved color. At 1× the fixed DXVK operation copies one depth image. At 4× it resolves into a separate single-sample depth texture. D3D9's ordinary depth `StretchRect` has restrictions that exclude a texture destination. [Fixed DXVK depth resolve](https://github.com/meizfl/skydream/blob/ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a/third_party/dxvk/src/d3d9/d3d9_device.cpp#L6796), [Microsoft depth copy restrictions](https://learn.microsoft.com/en-us/windows/win32/api/d3d9/nf-d3d9-idirect3ddevice9-stretchrect).
+
+The probe creates its own non-discardable resources. Finding the game's scene attachment before it is cleared, discarded, replaced for the HUD, or presented requires separate observation. Apple GPU depth sampling and capture cost remain unmeasured. This experiment runs independently of the app and its ENB compatibility. [Microsoft depth surface lifetime](https://learn.microsoft.com/en-us/windows/win32/api/d3d9/nf-d3d9-idirect3ddevice9-createdepthstencilsurface).
+
+Two deliberate input changes checked that the readback detects errors. Overwriting sample 0 along with samples 1–3 changed all 435 interior depth pixels on lavapipe. Reversing the stencil reference changed 225 pixels in the subsequent color draw.
+
 ## Reproduce the shader checks
 
 Microsoft FXC in the Windows SDK can regenerate all 45 embedded shader DWORDs from `two_tone.hlsl`.
@@ -35,6 +51,8 @@ python experiments/d3d9-postprocess/verify_shaders.py metal \
 ```
 
 Apple's Windows toolchain produced an iOS 18, MSL 3.2 library with both vertex and fragment entry points. It reported one unused generated specialization constant in each stage. This offline check uses the shaders that DXVK dumps before its pipeline-specific binding remap and uses explicit SPIRV-Cross options. The actual MoltenVK pipeline, Apple GPU readback, iPhone frame cost and ENB preset or binary compatibility remain untested.
+
+Pass `--program depth-view` to either shader check to select the depth probe. For the Metal check, collect a fresh DXVK dump with `d3d9_postprocess --depth-input`. The verification matched all 27 authored pixel-shader DWORDs from FXC and linked a 17,233-byte iOS 18 library containing the depth fragment and the fixed-function vertex shader. Each stage emitted one warning for a generated, unused specialization constant.
 
 ## Integration boundary
 
