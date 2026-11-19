@@ -856,7 +856,7 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
     if (operation == SKSE_WIN_OPEN_FILE_A || operation == SKSE_WIN_OPEN_FILE_W)
         return open_asset(vm, args, operation == SKSE_WIN_OPEN_FILE_W);
     if (operation == SKSE_WIN_READ_FILE) return win_read_asset(vm, args);
-    if (operation == SKSE_WIN_CLOSE_FILE && skse_win_event_close(vm->services.events, args[0])) return 1;
+    if (operation == SKSE_WIN_CLOSE_FILE && skse_win_sync_close(vm->services.sync, args[0])) return 1;
     SkseWinFile *file = skse_win_file_lookup(vm->services.files, args[0]);
     if (!file) {
         vm->services.thread->last_error = 6; // ERROR_INVALID_HANDLE.
@@ -874,7 +874,7 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
     return write_file_position(vm, args[1], file->length);
 }
 
-static uint32_t win_wait_events(Vm *vm, SkseWinEventOperation operation, const uint32_t args[]) {
+static uint32_t win_wait_objects(Vm *vm, SkseWinSyncOperation operation, const uint32_t args[]) {
     const bool many = operation == SKSE_WIN_WAIT_MANY || operation == SKSE_WIN_WAIT_MANY_EX;
     const bool alertable = (operation == SKSE_WIN_WAIT_ONE_EX && args[2]) ||
                            (operation == SKSE_WIN_WAIT_MANY_EX && args[4]);
@@ -882,12 +882,12 @@ static uint32_t win_wait_events(Vm *vm, SkseWinEventOperation operation, const u
         fail(vm, SKSE_X86_UNSUPPORTED_API);
         return UINT32_MAX;
     }
-    uint32_t tokens[SKSE_WIN_EVENT_LIMIT];
+    uint32_t tokens[SKSE_WIN_SYNC_LIMIT];
     unsigned count = 1;
     tokens[0] = args[0];
     if (many) {
         count = args[0];
-        if (!count || count > SKSE_WIN_EVENT_LIMIT) {
+        if (!count || count > SKSE_WIN_SYNC_LIMIT) {
             vm->services.thread->last_error = 87;
             return UINT32_MAX;
         }
@@ -895,16 +895,16 @@ static uint32_t win_wait_events(Vm *vm, SkseWinEventOperation operation, const u
         if (!source) return UINT32_MAX;
         for (unsigned i = 0; i < count; ++i) tokens[i] = little_endian(source + i * 4, 4);
     }
-    uint32_t result = skse_win_event_wait(vm->services.events, tokens, count, many && args[2],
+    uint32_t result = skse_win_sync_wait(vm->services.sync, tokens, count, many && args[2],
                                           &vm->services.thread->last_error);
     if (result == SKSE_WIN_WAIT_TIMEOUT && args[many ? 3 : 1])
         fail(vm, SKSE_X86_UNSUPPORTED_API); // Blocking needs another logical Windows thread.
     return result;
 }
 
-static uint32_t win_event_service(Vm *vm, SkseWinEventOperation operation) {
-    static const unsigned argument_counts[] = {4, 1, 1, 2, 3, 4, 5};
-    _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_EVENT_OPERATION_COUNT, "event ABI");
+static uint32_t win_sync_service(Vm *vm, SkseWinSyncOperation operation) {
+    static const unsigned argument_counts[] = {4, 1, 1, 2, 3, 4, 5, 4, 3};
+    _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_SYNC_OPERATION_COUNT, "wait ABI");
     unsigned count = argument_counts[operation];
     const uint8_t *parameters = service_parameters(vm, count * 4);
     if (!parameters) return 0;
@@ -912,18 +912,30 @@ static uint32_t win_event_service(Vm *vm, SkseWinEventOperation operation) {
     for (unsigned i = 0; i < count; ++i) args[i] = little_endian(parameters + 4 * i, 4);
     vm->registers[ESP] += count * 4;
 
-    if (operation >= SKSE_WIN_WAIT_ONE) return win_wait_events(vm, operation, args);
-    if (operation == SKSE_WIN_EVENT_CREATE) {
+    SkseWinSync *sync = vm->services.sync;
+    uint32_t *error = &vm->services.thread->last_error;
+    if (operation >= SKSE_WIN_WAIT_ONE && operation <= SKSE_WIN_WAIT_MANY_EX)
+        return win_wait_objects(vm, operation, args);
+    if (operation == SKSE_WIN_SEMAPHORE_RELEASE) {
+        uint8_t *out = args[2] ? memory(vm, args[2], 4, SKSE_PE_WRITE) : NULL;
+        if (args[2] && !out) return 0;
+        uint32_t prior;
+        if (!skse_win_semaphore_release(sync, args[0], args[1], &prior, error)) return 0;
+        if (out) for (unsigned i = 0; i < 4; ++i) out[i] = (uint8_t)(prior >> (8 * i));
+        return 1;
+    }
+    if (operation == SKSE_WIN_EVENT_CREATE || operation == SKSE_WIN_SEMAPHORE_CREATE) {
         if (args[0] || args[3]) {
-            vm->services.thread->last_error = 50; // Named events and security descriptors.
+            *error = 50; // Named objects and security descriptors.
             return 0;
         }
-        uint32_t token = skse_win_event_create(vm->services.events, args[1] != 0, args[2] != 0);
-        if (!token) vm->services.thread->last_error = 8;
+        if (operation == SKSE_WIN_SEMAPHORE_CREATE) return skse_win_semaphore_create(sync, args[1], args[2], error);
+        uint32_t token = skse_win_event_create(sync, args[1] != 0, args[2] != 0);
+        if (!token) *error = 8;
         return token;
     }
-    if (skse_win_event_signal(vm->services.events, args[0], operation == SKSE_WIN_EVENT_SET)) return 1;
-    vm->services.thread->last_error = 6;
+    if (skse_win_event_signal(sync, args[0], operation == SKSE_WIN_EVENT_SET)) return 1;
+    *error = 6;
     return 0;
 }
 
@@ -974,8 +986,8 @@ static void invoke_service(Vm *vm, unsigned i, bool tail) {
     case SKSE_X86_READ_ONLY_FILES:
         vm->registers[EAX] = win_file_service(vm, (SkseWinFileOperation)service->value);
         break;
-    case SKSE_X86_EVENTS:
-        vm->registers[EAX] = win_event_service(vm, (SkseWinEventOperation)service->value);
+    case SKSE_X86_WIN_SYNC:
+        vm->registers[EAX] = win_sync_service(vm, (SkseWinSyncOperation)service->value);
         break;
     case SKSE_X86_SERIALIZATION:
         vm->registers[EAX] = serialization_service(vm, (SkseSerialMethod)service->value);
@@ -1581,8 +1593,8 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
               services.system_export_count > SKSE_X86_MAX_SERVICES || services.entries[i].value >= SKSE_X86_MODULE_LOOKUP_COUNT)) ||
             (kind == SKSE_X86_READ_ONLY_FILES &&
              (!services.thread || !services.files || services.entries[i].value >= SKSE_WIN_FILE_OPERATION_COUNT)) ||
-            (kind == SKSE_X86_EVENTS &&
-             (!services.thread || !services.events || services.entries[i].value >= SKSE_WIN_EVENT_OPERATION_COUNT)) ||
+            (kind == SKSE_X86_WIN_SYNC &&
+             (!services.thread || !services.sync || services.entries[i].value >= SKSE_WIN_SYNC_OPERATION_COUNT)) ||
             (kind == SKSE_X86_SERIALIZATION &&
              (!services.serialization || services.entries[i].value >= SKSE_SERIAL_METHOD_COUNT ||
               !in_range(scratch.base, scratch_end, services.serialization->interface_address, 52))) ||

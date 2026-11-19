@@ -403,6 +403,9 @@ static _Bool check_file_assets(void) {
 #if FIXTURE_VARIANT == 21
 __declspec(dllimport) void *__stdcall CreateEventA(void *, int, int, const char *);
 __declspec(dllimport) void *__stdcall CreateEventW(void *, int, int, const wchar_t *);
+__declspec(dllimport) void *__stdcall CreateSemaphoreA(void *, long, long, const char *);
+__declspec(dllimport) void *__stdcall CreateSemaphoreW(void *, long, long, const wchar_t *);
+__declspec(dllimport) int __stdcall ReleaseSemaphore(void *, long, long *);
 __declspec(dllimport) int __stdcall SetEvent(void *);
 __declspec(dllimport) int __stdcall ResetEvent(void *);
 __declspec(dllimport) uint32_t __stdcall WaitForSingleObject(void *, uint32_t);
@@ -410,6 +413,26 @@ __declspec(dllimport) uint32_t __stdcall WaitForSingleObjectEx(void *, uint32_t,
 __declspec(dllimport) uint32_t __stdcall WaitForMultipleObjects(uint32_t, void *const *, int, uint32_t);
 __declspec(dllimport) uint32_t __stdcall WaitForMultipleObjectsEx(uint32_t, void *const *, int, uint32_t, int);
 __declspec(dllimport) int __stdcall CloseHandle(void *);
+__declspec(dllimport) unsigned long __stdcall GetLastError(void);
+
+static _Bool check_semaphores(void) {
+    const uint32_t timeout = 0x102;
+    void *ready = CreateSemaphoreA(NULL, 1, 3, NULL);
+    void *empty = CreateSemaphoreW(NULL, 0, 2, NULL);
+    void *gate = CreateEventW(NULL, 0, 0, NULL);
+    if (!ready || !empty || !gate || CreateSemaphoreW(NULL, 3, 2, NULL) || GetLastError() != 87) return 0;
+    void *items[] = {empty, ready, gate};
+    if (WaitForMultipleObjects(3, items, 1, 0) != timeout || WaitForMultipleObjects(3, items, 0, 0) != 1 ||
+        WaitForSingleObject(ready, 0) != timeout) return 0;
+    long prior = -1;
+    if (!ReleaseSemaphore(ready, 3, &prior) || prior != 0 ||
+        ReleaseSemaphore(ready, 1, &prior) || GetLastError() != 298 || prior ||
+        !ReleaseSemaphore(empty, 1, NULL) || !SetEvent(gate)) return 0;
+    if (WaitForMultipleObjectsEx(3, items, 1, 0, 0) != 0 || WaitForSingleObject(empty, 0) != timeout ||
+        WaitForSingleObject(gate, 0) != timeout || WaitForSingleObject(ready, 0) != 0 ||
+        WaitForSingleObject(ready, 0) != 0 || WaitForSingleObject(ready, 0) != timeout) return 0;
+    return CloseHandle(gate) && CloseHandle(empty) && CloseHandle(ready);
+}
 
 static _Bool check_events(void) {
     const uint32_t timeout = 0x102, infinite = UINT32_MAX;
@@ -423,7 +446,7 @@ static _Bool check_events(void) {
         WaitForMultipleObjects(2, items, 1, infinite) != 0 ||
         WaitForSingleObjectEx(manual, infinite, 0) != 0 || WaitForSingleObject(automatic, 0) != timeout) return 0;
     return ResetEvent(manual) && WaitForSingleObject(manual, 0) == timeout &&
-           CloseHandle(automatic) && CloseHandle(manual);
+           CloseHandle(automatic) && CloseHandle(manual) && check_semaphores();
 }
 #endif
 

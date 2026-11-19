@@ -6,7 +6,7 @@
 #include "x86_heap.h"
 #include "x86_winthread.h"
 #include "x86_winfile.h"
-#include "x86_winevent.h"
+#include "x86_winsync.h"
 #include "x86_skse_records.h"
 
 typedef enum {
@@ -39,7 +39,7 @@ typedef enum {
     SKSE_X86_QUERY_CLASSIC, SKSE_X86_REGISTER_CORE_LISTENER, SKSE_X86_UNAVAILABLE,
     SKSE_X86_MALLOC, SKSE_X86_CALLOC, SKSE_X86_REALLOC, SKSE_X86_FREE,
     SKSE_X86_HEAP_ALLOC, SKSE_X86_HEAP_REALLOC, SKSE_X86_HEAP_FREE, SKSE_X86_WIN_THREAD,
-    SKSE_X86_INTERLOCKED, SKSE_X86_MODULE_LOOKUP, SKSE_X86_READ_ONLY_FILES, SKSE_X86_EVENTS,
+    SKSE_X86_INTERLOCKED, SKSE_X86_MODULE_LOOKUP, SKSE_X86_READ_ONLY_FILES, SKSE_X86_WIN_SYNC,
     SKSE_X86_SERIALIZATION
 } SkseX86ServiceKind;
 
@@ -89,7 +89,7 @@ typedef struct {
     SkseX86Heap *heap;
     SkseWinThread *thread;
     SkseWinFiles *files;
-    SkseWinEvents *events;
+    SkseWinSync *sync;
     /* Optional export names for resolving symbols in the emulated system DLLs.
      * The result must also be present in entries as a service token. */
     const SksePeImportBinding *system_exports;

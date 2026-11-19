@@ -46,7 +46,7 @@ class DependencyPlanTests(unittest.TestCase):
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
             flags.extend(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
         sources = ("test_dependency_plan.c", "plugin_trial.c", "dependency_plan.c", "pe_image.c", "x86_call.c", "x86_heap.c",
-                   "x86_winthread.c", "x86_winfile.c", "x86_winevent.c", "x86_skse_records.c")
+                   "x86_winthread.c", "x86_winfile.c", "x86_winsync.c", "x86_skse_records.c")
         run(cc, *flags, *(HERE / source for source in sources), "-o", cls.binary)
 
     def setUp(self):

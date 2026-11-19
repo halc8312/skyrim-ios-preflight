@@ -12,7 +12,7 @@ Plugins can also resolve approved names from the virtual `kernel32` and `msvcrt`
 
 The folder diagnostic can supply read-only file snapshots to these calls from the selected MOD. The VM understands relative paths, including UTF-16 names, and reads each file into an immutable payload before exposing a virtual handle. A diagnostic can hold four files open, read up to 1 MiB per file and open 4 MiB in total. Synchronous reads, file sizes, 64-bit seeks, end-of-file and handle closure use the Windows ABI. A file chooser that grants a single DLL does not grant its folder. Path lookups use the selected filesystem's spelling rules.
 
-The experimental event services track unnamed manual-reset and auto-reset events in the same virtual process. They preserve signal consumption across single-event and multiple-event waits. Polling and already-satisfied waits are supported. An alertable wait or a wait that needs another Windows thread is reported as unsupported.
+The experimental synchronization services track unnamed manual-reset and auto-reset events and counting semaphores in the same virtual process. A wait can mix events and semaphores. Waiting for all of them consumes their signals or counts only if every object is ready. Polling and already-satisfied waits are supported. An alertable wait or a wait that needs another Windows thread is reported as unsupported.
 
 The Classic v4 serialization trial can run one DLL's registered save, revert and load callbacks against authored records kept in memory. It checks stream writes, partial reads, skipped record tails and end-of-stream without opening a saved game. Resolving a real form or handle and delivering a game-object deletion require the live game catalog and events.
 

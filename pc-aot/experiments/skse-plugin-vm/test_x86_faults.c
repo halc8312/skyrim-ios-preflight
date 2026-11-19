@@ -198,11 +198,11 @@ static void check_cached_image_bounds(void) {
 }
 
 static void check_services_need_live_state(void) {
-    SkseWinEvents events = {0};
+    SkseWinSync events = {0};
     SkseWinThread thread = {.id = 1};
     uint32_t token = skse_win_event_create(&events, false, false);
-    const SkseX86Service binding = {0x00401000, SKSE_WIN_WAIT_ONE, SKSE_X86_EVENTS};
-    SkseX86Services services = {.entries = &binding, .count = 1, .events = &events, .thread = &thread};
+    const SkseX86Service binding = {0x00401000, SKSE_WIN_WAIT_ONE, SKSE_X86_WIN_SYNC};
+    SkseX86Services services = {.entries = &binding, .count = 1, .sync = &events, .thread = &thread};
     uint8_t wait[18] = {0};
     size_t length = 0;
     wait[length++] = 0x68;

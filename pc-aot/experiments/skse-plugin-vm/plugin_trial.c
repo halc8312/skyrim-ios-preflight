@@ -68,15 +68,18 @@ static const struct {
     {{"KERNEL32.dll", "GetFileSize", 0xe00010a0}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_FILE_SIZE},
     {{"KERNEL32.dll", "GetFileSizeEx", 0xe00010a4}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_FILE_SIZE_EX},
     {{"KERNEL32.dll", "CloseHandle", 0xe00010a8}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_CLOSE_FILE},
-    {{"KERNEL32.dll", "CreateEventA", 0xe00010ac}, SKSE_X86_EVENTS, SKSE_WIN_EVENT_CREATE},
-    {{"KERNEL32.dll", "CreateEventW", 0xe00010b0}, SKSE_X86_EVENTS, SKSE_WIN_EVENT_CREATE},
-    {{"KERNEL32.dll", "SetEvent", 0xe00010b4}, SKSE_X86_EVENTS, SKSE_WIN_EVENT_SET},
-    {{"KERNEL32.dll", "ResetEvent", 0xe00010b8}, SKSE_X86_EVENTS, SKSE_WIN_EVENT_RESET},
-    {{"KERNEL32.dll", "WaitForSingleObject", 0xe00010bc}, SKSE_X86_EVENTS, SKSE_WIN_WAIT_ONE},
-    {{"KERNEL32.dll", "WaitForSingleObjectEx", 0xe00010c0}, SKSE_X86_EVENTS, SKSE_WIN_WAIT_ONE_EX},
-    {{"KERNEL32.dll", "WaitForMultipleObjects", 0xe00010c4}, SKSE_X86_EVENTS, SKSE_WIN_WAIT_MANY},
-    {{"KERNEL32.dll", "WaitForMultipleObjectsEx", 0xe00010c8}, SKSE_X86_EVENTS, SKSE_WIN_WAIT_MANY_EX},
-    {{"KERNEL32.dll", "SetFilePointerEx", 0xe00010cc}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_SEEK_FILE_EX}
+    {{"KERNEL32.dll", "CreateEventA", 0xe00010ac}, SKSE_X86_WIN_SYNC, SKSE_WIN_EVENT_CREATE},
+    {{"KERNEL32.dll", "CreateEventW", 0xe00010b0}, SKSE_X86_WIN_SYNC, SKSE_WIN_EVENT_CREATE},
+    {{"KERNEL32.dll", "SetEvent", 0xe00010b4}, SKSE_X86_WIN_SYNC, SKSE_WIN_EVENT_SET},
+    {{"KERNEL32.dll", "ResetEvent", 0xe00010b8}, SKSE_X86_WIN_SYNC, SKSE_WIN_EVENT_RESET},
+    {{"KERNEL32.dll", "WaitForSingleObject", 0xe00010bc}, SKSE_X86_WIN_SYNC, SKSE_WIN_WAIT_ONE},
+    {{"KERNEL32.dll", "WaitForSingleObjectEx", 0xe00010c0}, SKSE_X86_WIN_SYNC, SKSE_WIN_WAIT_ONE_EX},
+    {{"KERNEL32.dll", "WaitForMultipleObjects", 0xe00010c4}, SKSE_X86_WIN_SYNC, SKSE_WIN_WAIT_MANY},
+    {{"KERNEL32.dll", "WaitForMultipleObjectsEx", 0xe00010c8}, SKSE_X86_WIN_SYNC, SKSE_WIN_WAIT_MANY_EX},
+    {{"KERNEL32.dll", "SetFilePointerEx", 0xe00010cc}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_SEEK_FILE_EX},
+    {{"KERNEL32.dll", "CreateSemaphoreA", 0xe00010d0}, SKSE_X86_WIN_SYNC, SKSE_WIN_SEMAPHORE_CREATE},
+    {{"KERNEL32.dll", "CreateSemaphoreW", 0xe00010d4}, SKSE_X86_WIN_SYNC, SKSE_WIN_SEMAPHORE_CREATE},
+    {{"KERNEL32.dll", "ReleaseSemaphore", 0xe00010d8}, SKSE_X86_WIN_SYNC, SKSE_WIN_SEMAPHORE_RELEASE}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 _Static_assert(WINDOWS_SERVICE_COUNT + 5 + SKSE_SERIAL_METHOD_COUNT <= SKSE_X86_MAX_SERVICES, "trial service count");
@@ -334,7 +337,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     SkseX86Heap heap = {.base = free_region(&space, heap_choices, sizeof heap_choices / sizeof heap_choices[0], SKSE_X86_HEAP_BYTES)};
     SkseWinThread thread = {.id = 1};
     SkseWinFiles files = {0};
-    SkseWinEvents events = {0};
+    SkseWinSync sync = {0};
     SkseX86Services services = {.entries = entries, .count = 2};
     if (tls_scratch) {
         services.static_tls_table = scratch.base + TLS_TABLE_OFFSET;
@@ -346,7 +349,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         services.thread = &thread;
         files.source = runtime->assets;
         services.files = &files;
-        services.events = &events;
+        services.sync = &sync;
         services.system_exports = imports;
         services.system_export_count = WINDOWS_SERVICE_COUNT;
         for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i) {

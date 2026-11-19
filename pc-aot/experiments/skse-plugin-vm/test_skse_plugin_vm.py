@@ -18,7 +18,7 @@ def run(*args, **kwargs):
 def compile_interpreter(compiler, output, test_source, flag_list):
     run(compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", *flag_list,
         HERE / "pe_image.c", HERE / "x86_call.c", HERE / "x86_heap.c", HERE / "x86_winthread.c", HERE / "x86_winfile.c",
-        HERE / "x86_winevent.c", HERE / "x86_skse_records.c", HERE / "dependency_plan.c", HERE / "plugin_trial.c",
+        HERE / "x86_winsync.c", HERE / "x86_skse_records.c", HERE / "dependency_plan.c", HERE / "plugin_trial.c",
         HERE / test_source, "-o", output)
 
 
