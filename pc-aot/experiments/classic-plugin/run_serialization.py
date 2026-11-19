@@ -102,7 +102,8 @@ def exchange(work, skydream, out, cc="clang", darwin_headers=None):
 
 def finish(work, exchange_dir, out, llvm):
     original = authored_bytes(work / DLL, HASH)
-    value = checked_file(exchange_dir / "translated.skse", 21)
+    exchanged_file = exchange_dir / "translated.skse" if exchange_dir.is_dir() else exchange_dir
+    value = checked_file(exchanged_file, 21)
     if native_host(out, llvm) != original:
         raise ValueError("rebuilt fixture differs from the original Windows DLL")
     # Use the bytes supplied to the translator with a freshly built host.

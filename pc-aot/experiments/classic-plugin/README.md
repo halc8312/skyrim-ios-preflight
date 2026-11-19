@@ -52,3 +52,13 @@ python3 experiments/classic-plugin/run_serialization.py exchange \
 Pass `--darwin-headers` to compile the five translated functions, the function table, the harness and the co-save support for arm64 iOS 18.0. On Windows, complete the round trip with `py -3.12 experiments/classic-plugin/run_serialization.py finish local/serial-win local/serial-aot local/serial-return`.
 
 The test exercises whole-record write, iteration and read. Further tests are needed for partial record operations, form and handle remapping, plugin removal, asynchronous game saves and the real game lifecycle.
+
+## Classic Lab on iPhone
+
+The separately signed Classic Lab target includes the five translated functions from the authored serialization DLL. Its isolated guest memory is allocated when the test runs and released afterward. The same Windows input must produce the same four-byte owner record and preserve the separate opaque record on both platforms.
+
+1. Generate `windows.skse` with the Windows command above. Transfer this 83-byte file to Files on the iPhone.
+2. Open the Classic Lab serialization test, select `windows.skse`, and run the test. The expected values are 16 on input, 5 from the first save after Revert, and 21 on output. The result also records one record read and all three registered callbacks.
+3. Share both `translated.skse` and `classic-lab-result.json` back to Windows. Run `py -3.12 experiments/classic-plugin/verify_ios_return.py "path/to/translated.skse" "path/to/classic-lab-result.json" --build N`, replacing `N` with the bundle build number of the signed app. This compares the 83 bytes and the hashes, checks the bundle, build, app-reported platform, callback results and run ID, then opens the returned data with the pinned native Windows DLL in a fresh process. Windows must read 21 and save 26. The command creates a new evidence folder under `local/classic-lab-returns` and prints its path. For simulator controls, add `--simulator`. Resharing a previous success retains its original run ID and time.
+
+The phone needs the signed Classic Lab build and the small Windows input. The device or simulator label comes from the app's shared JSON. The test file is deterministic and has the same contents on both. To reproduce the app's three source snapshots from the fixed Windows DLL in the pinned translation environment, run `python3 experiments/classic-plugin/verify_ios_translation.py local/serial-win --skydream /path/to/skydream`. The app-private object target gives the test its own memory and dispatch symbols.

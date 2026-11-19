@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdlib.h>
 #include "funcs_serial.h"
 #include "rt_table.h"
 #include "serial_layout.h"
@@ -8,12 +9,25 @@ enum { SKSE = 0x3000, INFO = 0x3040, SERIAL = 0x3100, STACK = 0x8000 };
 enum { QIF = 0x1100, HANDLE, UID, REG_REVERT, REG_SAVE, REG_LOAD, WRITE, NEXT, READ };
 extern const FnEntry g_fn_table_serial[];
 extern const unsigned g_fn_count_serial;
+static GuestFn events[EVENT_COUNT];
+#ifdef SKYRIM_CLASSIC_EMBEDDED_FIXTURE
+uint8_t *MEM;
+int skyrim_serial_i386_allocate(void) {
+    MEM = calloc(1, SERIAL_IMAGE_END);
+    memset(events, 0, sizeof events);
+    return MEM != NULL;
+}
+void skyrim_serial_i386_release(void) {
+    free(MEM);
+    MEM = NULL;
+}
+#else
 static unsigned char memory[SERIAL_IMAGE_END];
 uint8_t *MEM = memory;
-static GuestFn events[EVENT_COUNT];
+#endif
 
 static void valid_word(uint32_t address) {
-    if (!address || address > sizeof memory - 4) fixture_fail("guest word outside fixture memory");
+    if (!address || address > SERIAL_IMAGE_END - 4) fixture_fail("guest word outside fixture memory");
 }
 static unsigned word(uint32_t address) { valid_word(address); return M32(address); }
 static void put(uint32_t address, unsigned value) { valid_word(address); M32(address) = value; }
