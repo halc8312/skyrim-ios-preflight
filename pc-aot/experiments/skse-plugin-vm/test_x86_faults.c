@@ -226,6 +226,20 @@ static void check_services_need_live_state(void) {
     assert(skse_x86_records_count(&serial.records) == 0);
 }
 
+static void check_service_index(void) {
+    // These two validated tokens have the same initial bucket.
+    SkseX86Service bindings[] = {
+        {0x00400004, 11, SKSE_X86_SCALAR_RETURN},
+        {0x00400094, 22, SKSE_X86_SCALAR_RETURN}
+    };
+    SkseX86Services services = {.entries = bindings, .count = 2};
+    uint8_t call[] = {0xb8, 0x94, 0, 0x40, 0, 0xff, 0xd0, 0xc3};
+    SkseX86Result result = run(call, sizeof call, 20, services);
+    assert(result.status == SKSE_X86_OK && result.eax == 22 && result.service_calls[1] == 1);
+    bindings[1].address = bindings[0].address;
+    assert(run(call, sizeof call, 20, services).status == SKSE_X86_BAD_ARGUMENT);
+}
+
 int main(void) {
     // CALL forwards to another x86 region and that callee returns into the caller.
     uint8_t nested[] = {0xe8, 1, 0, 0, 0, 0xc3, 0xb8, 42, 0, 0, 0, 0xc3};
@@ -331,5 +345,6 @@ int main(void) {
     check_static_tls_address();
     check_cached_image_bounds();
     check_services_need_live_state();
+    check_service_index();
     return 0;
 }

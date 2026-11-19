@@ -33,9 +33,13 @@ int main(int argc, char **argv) {
         0x03, 0x05, 0, 0x30, 0, 0x10, 0xff, 0x05, 0, 0x30, 0, 0x10,
         0x49, 0x75, 0xf1, 0xc3
     };
+    // Invoke the last binding from a full service table and return.
+    static const uint8_t service_code[] = {0xb8, 0xfc, 0x10, 0, 0xe0, 0xff, 0xd0, 0xc3};
     int data = argc == 2 && !strcmp(argv[1], "data");
-    if (argc != 1 && !data) return 2;
-    memcpy(bytes + 0x1000, data ? data_code : code, data ? sizeof data_code : sizeof code);
+    int services = argc == 2 && !strcmp(argv[1], "services");
+    if (argc != 1 && !data && !services) return 2;
+    if (services) memcpy(bytes + 0x1000, service_code, sizeof service_code);
+    else memcpy(bytes + 0x1000, data ? data_code : code, data ? sizeof data_code : sizeof code);
     SksePeImage image = {
         .base = 0x10000000, .size = sizeof bytes, .bytes = bytes, .headers_size = 0x400,
         .section_count = 3, .sections = {
@@ -45,13 +49,19 @@ int main(int argc, char **argv) {
         }
     };
     SkseX86Scratch scratch = {0x20000000, workspace, sizeof workspace};
+    SkseX86Service entries[64];
+    for (unsigned i = 0; i < 64; ++i) {
+        entries[i] = (SkseX86Service){UINT32_C(0xe0001000) + 4 * i, 100 + i, SKSE_X86_SCALAR_RETURN};
+    }
+    SkseX86Services model = services ? (SkseX86Services){.entries = entries, .count = 64} : (SkseX86Services){0};
     uint64_t steps = 0;
     double start = cpu_seconds();
     assert(start >= 0);
-    for (unsigned i = 0; i < 40; ++i) {
+    unsigned calls = services ? 250000 : 40;
+    for (unsigned i = 0; i < calls; ++i) {
         SkseX86Result result = skse_x86_call(&image, image.base + 0x1000, scratch, NULL, 0, 800000,
-                                           (SkseX86Services){0}, SKSE_X86_CDECL);
-        const uint64_t expected = data ? UINT64_C(7812437500) : UINT64_C(31250125000);
+                                           model, SKSE_X86_CDECL);
+        const uint64_t expected = services ? 163 : data ? UINT64_C(7812437500) : UINT64_C(31250125000);
         assert(result.status == SKSE_X86_OK && result.eax == (uint32_t)expected);
         steps += result.instructions;
     }

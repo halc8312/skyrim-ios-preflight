@@ -7,6 +7,8 @@ enum { EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI };
 enum { CF = 1, PF = 4, ZF = 0x40, SF = 0x80, DF = 0x400, OF = 0x800 };
 enum { ADD, OR, ADC, SBB, AND, SUB, XOR, CMP };
 enum { MAX_SCRATCH = 256 * 1024, MAX_ARGUMENTS = 16, MAX_STEPS = 1000000 };
+enum { SERVICE_SLOTS = 128 };
+_Static_assert(SKSE_X86_MAX_SERVICES * 2 <= SERVICE_SLOTS, "service table load factor");
 
 typedef struct {
     // Keep dispatch state together. The diagnostic counters and synthetic
@@ -26,6 +28,7 @@ typedef struct {
     SksePeImage *recent_image;
     SkseX86Scratch scratch;
     SkseX86Services services;
+    const uint8_t *service_index;
     SkseX86Result result;
     uint8_t xmm[8][16];
 } Vm;
@@ -58,6 +61,13 @@ static uint32_t sign_extend(uint32_t value, unsigned width) {
 static int64_t signed_word(uint32_t value, unsigned width) {
     value &= width_mask(width);
     return (value & sign_mask(width)) ? (int64_t)value - (INT64_C(1) << (8 * width)) : value;
+}
+
+static size_t service_slot(const SkseX86Service *entries, const uint8_t index[SERVICE_SLOTS], uint32_t address) {
+    size_t slot = (uint32_t)(address * UINT32_C(0x9e3779b1)) >> 25;
+    while (index[slot] && entries[index[slot] - 1].address != address)
+        slot = (slot + 1) & (SERVICE_SLOTS - 1);
+    return slot;
 }
 
 static bool in_range(uint64_t start, uint64_t end, uint32_t address, size_t count) {
@@ -894,71 +904,75 @@ static uint32_t win_event_service(Vm *vm, SkseWinEventOperation operation) {
     return 0;
 }
 
+static void invoke_service(Vm *vm, unsigned i, bool tail) {
+    const SkseX86Service *service = &vm->services.entries[i];
+    uint32_t stack = vm->registers[ESP];
+    if (tail) {
+        // An indirect import thunk reuses the caller's return slot.
+        if (!service_parameters(vm, 4)) return;
+        vm->registers[ESP] += 4;
+    }
+    switch (service->kind) {
+    case SKSE_X86_SCALAR_RETURN:
+        vm->registers[EAX] = service->value;
+        break;
+    case SKSE_X86_MEMCPY:
+    case SKSE_X86_MEMMOVE:
+    case SKSE_X86_MEMSET:
+        memory_service(vm, service->kind);
+        break;
+    case SKSE_X86_QUERY_CLASSIC:
+    case SKSE_X86_REGISTER_CORE_LISTENER:
+        vm->registers[EAX] = classic_service(vm, service->kind);
+        break;
+    case SKSE_X86_UNAVAILABLE:
+        fail(vm, SKSE_X86_UNSUPPORTED_API);
+        break;
+    case SKSE_X86_MALLOC:
+    case SKSE_X86_CALLOC:
+    case SKSE_X86_REALLOC:
+    case SKSE_X86_FREE:
+        vm->registers[EAX] = crt_heap_service(vm, service->kind);
+        break;
+    case SKSE_X86_HEAP_ALLOC:
+    case SKSE_X86_HEAP_REALLOC:
+    case SKSE_X86_HEAP_FREE:
+        vm->registers[EAX] = win_heap_service(vm, service->kind);
+        break;
+    case SKSE_X86_WIN_THREAD:
+        vm->registers[EAX] = win_thread_service(vm, (SkseWinThreadOperation)service->value);
+        break;
+    case SKSE_X86_INTERLOCKED:
+        vm->registers[EAX] = win_interlocked(vm, (SkseX86Interlocked)service->value);
+        break;
+    case SKSE_X86_MODULE_LOOKUP:
+        vm->registers[EAX] = win_module_lookup(vm, (SkseX86ModuleLookup)service->value);
+        break;
+    case SKSE_X86_READ_ONLY_FILES:
+        vm->registers[EAX] = win_file_service(vm, (SkseWinFileOperation)service->value);
+        break;
+    case SKSE_X86_EVENTS:
+        vm->registers[EAX] = win_event_service(vm, (SkseWinEventOperation)service->value);
+        break;
+    case SKSE_X86_SERIALIZATION:
+        vm->registers[EAX] = serialization_service(vm, (SkseSerialMethod)service->value);
+        break;
+    }
+    ++vm->result.service_calls[i];
+    if (tail) {
+        unsigned cleanup = vm->registers[ESP] - (stack + 4);
+        vm->registers[ESP] = stack;
+        if (vm->status == SKSE_X86_OK) return_from_call(vm, cleanup);
+    }
+}
+
 static void branch(Vm *vm, uint32_t address, bool tail) {
     if (vm->status != SKSE_X86_OK) return;
-    // Validated service tokens never lie inside an image's executable range.
-    size_t candidates = in_range(vm->code_start, vm->code_end, address, 1) ? 0 : vm->services.count;
-    for (size_t i = 0; i < candidates; ++i) {
-        const SkseX86Service *service = &vm->services.entries[i];
-        if (address == service->address) {
-            uint32_t stack = vm->registers[ESP];
-            if (tail) {
-                // An indirect import thunk reuses the caller's return slot.
-                if (!service_parameters(vm, 4)) return;
-                vm->registers[ESP] += 4;
-            }
-            switch (service->kind) {
-            case SKSE_X86_SCALAR_RETURN:
-                vm->registers[EAX] = service->value;
-                break;
-            case SKSE_X86_MEMCPY:
-            case SKSE_X86_MEMMOVE:
-            case SKSE_X86_MEMSET:
-                memory_service(vm, service->kind);
-                break;
-            case SKSE_X86_QUERY_CLASSIC:
-            case SKSE_X86_REGISTER_CORE_LISTENER:
-                vm->registers[EAX] = classic_service(vm, service->kind);
-                break;
-            case SKSE_X86_UNAVAILABLE:
-                fail(vm, SKSE_X86_UNSUPPORTED_API);
-                break;
-            case SKSE_X86_MALLOC:
-            case SKSE_X86_CALLOC:
-            case SKSE_X86_REALLOC:
-            case SKSE_X86_FREE:
-                vm->registers[EAX] = crt_heap_service(vm, service->kind);
-                break;
-            case SKSE_X86_HEAP_ALLOC:
-            case SKSE_X86_HEAP_REALLOC:
-            case SKSE_X86_HEAP_FREE:
-                vm->registers[EAX] = win_heap_service(vm, service->kind);
-                break;
-            case SKSE_X86_WIN_THREAD:
-                vm->registers[EAX] = win_thread_service(vm, (SkseWinThreadOperation)service->value);
-                break;
-            case SKSE_X86_INTERLOCKED:
-                vm->registers[EAX] = win_interlocked(vm, (SkseX86Interlocked)service->value);
-                break;
-            case SKSE_X86_MODULE_LOOKUP:
-                vm->registers[EAX] = win_module_lookup(vm, (SkseX86ModuleLookup)service->value);
-                break;
-            case SKSE_X86_READ_ONLY_FILES:
-                vm->registers[EAX] = win_file_service(vm, (SkseWinFileOperation)service->value);
-                break;
-            case SKSE_X86_EVENTS:
-                vm->registers[EAX] = win_event_service(vm, (SkseWinEventOperation)service->value);
-                break;
-            case SKSE_X86_SERIALIZATION:
-                vm->registers[EAX] = serialization_service(vm, (SkseSerialMethod)service->value);
-                break;
-            }
-            ++vm->result.service_calls[i];
-            if (tail) {
-                unsigned cleanup = vm->registers[ESP] - (stack + 4);
-                vm->registers[ESP] = stack;
-                if (vm->status == SKSE_X86_OK) return_from_call(vm, cleanup);
-            }
+    // Service tokens never lie inside an executable section.
+    if (vm->services.count && !in_range(vm->code_start, vm->code_end, address, 1)) {
+        size_t slot = service_slot(vm->services.entries, vm->service_index, address);
+        if (vm->service_index[slot]) {
+            invoke_service(vm, vm->service_index[slot] - 1, tail);
             return;
         }
     }
@@ -1530,6 +1544,7 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
          !in_range(scratch.base, services.stack_floor, services.static_tls_table, image_count * 4) ||
          !in_range(scratch.base, scratch_end, services.stack_floor, 128)))
         return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
+    uint8_t service_index[SERVICE_SLOTS] = {0};
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
@@ -1557,14 +1572,14 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
             return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
         for (size_t j = 0; j < image_count; ++j)
             if (in_image(images[j], address)) return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
-        for (size_t j = 0; j < i; ++j)
-            if (address == services.entries[j].address)
-                return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
+        size_t slot = service_slot(services.entries, service_index, address);
+        if (service_index[slot]) return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
+        service_index[slot] = (uint8_t)(i + 1);
     }
 
     static const uint32_t canaries[] = {0x13749894, 0x2269d748, 0x5ee56321, 0xf61fd490};
     Vm vm = {.images = images, .image_count = image_count, .recent_image = images[0], .scratch = scratch,
-             .services = services, .ip = entry, .stack_floor = services.stack_floor ? services.stack_floor : scratch.base,
+             .services = services, .service_index = service_index, .ip = entry, .stack_floor = services.stack_floor ? services.stack_floor : scratch.base,
              .limit = instruction_limit};
     if (convention == SKSE_X86_STDCALL) vm.return_cleanup = (unsigned)arg_count * 4;
     vm.registers[EBX] = canaries[0];
