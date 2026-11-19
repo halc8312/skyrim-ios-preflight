@@ -33,6 +33,9 @@ class ArtifactBindingTests(unittest.TestCase):
         abi = self.root / "ios/private-abi/PcGuestABI.h"
         abi.parent.mkdir(parents=True)
         abi.write_bytes(b"synthetic binding\n")
+        template = Path("ios/runtime-port/Info.plist.in")
+        (self.root / template).parent.mkdir()
+        (self.root / template).write_bytes((ROOT / template).read_bytes())
         (runtime / "x86.h").write_bytes(b"synthetic cpu\r\n")
         (runtime / "rt_table.h").write_bytes(b"extern const FnModule g_modules[];\n")
         (self.host / "x86.h").write_bytes(b"synthetic cpu\n")
