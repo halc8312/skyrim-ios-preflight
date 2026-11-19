@@ -80,47 +80,86 @@ int main(int argc, char **argv) {
             alternative.write_bytes(b"Second.esp\n")
             self.assertEqual(read(profile), (3, b""))
 
-    def test_pinned_importer_requests_the_selected_localized_files(self):
-        source = Path(os.environ.get("SKYDREAM_SOURCE_DIR", ROOT / "vendor/skydream")) / "runtime/skse_translation.c"
+    def test_importer_uses_ready_inputs_once_in_plugin_order(self):
+        vendor = Path(os.environ.get("SKYDREAM_SOURCE_DIR", ROOT / "vendor/skydream"))
+        source = vendor / "runtime/skse_translation.c"
         if not source.exists():
             self.skipTest("pinned public Skydream checkout required")
         original = source.read_text(encoding="utf-8")
         with self.assertRaises(ValueError):
             adapt(original + "\n")
         staged = adapt(original)
-        self.assertIn('#ifdef SKYDREAM_SKSE\n#include "classic_skse_translation_list.h"', staged)
-        self.assertNotIn('/Documents/Skyrim/Plugins.txt', staged)
-        # Exercise the real public import loop. Only the game-memory accessors
-        # and final resource open are substituted by this host test.
-        importer = staged[staged.index("void skse_import_translations(CPU *c) {"):staged.rindex("#endif")]
-        exe = self.compile_driver('''
-#include <stdint.h>
-#include <strings.h>
-#include <pthread.h>
-typedef int CPU;
-static const char *g_save_dir;
-static uint32_t translated_loader, references = 2;
-static pthread_mutex_t translation_lock = PTHREAD_MUTEX_INITIALIZER;
-#define M32(x) ((void)(x), 1u)
-#define GPTR(x) ((void)(x), &references)
-#define GSTR(x) ((void)(x), "JAPANESE")
-static uint32_t skse_virtual(CPU *c, uint32_t obj, int slot, int count, const uint32_t *args) {
-    (void)c; (void)obj; (void)slot; (void)count; (void)args; return 1;
+        self.assertNotIn("/Documents/Skyrim/Plugins.txt", staged)
+        start = staged.index('#include "classic_skse_translation_import.h"')
+        importer = staged[start:staged.rindex("#endif")]
+        fixture = (ROOT / "tests/native/classic_translation_import_fixture.c").read_text(encoding="utf-8")
+        exe = self.compile_driver(fixture + "\n" + importer + r'''
+int main(int argc, char **argv) {
+    assert(argc == 3);
+    const char *mode = argv[1], *profile = argv[2];
+    g_save_dir = profile;
+    expected_language = "JAPANESE";
+    guest_language = "ENGLISH";  /* The guest's early default. */
+    trial = 1;
+    resource_ready = 1;
+    if (!strcmp(mode, "auto")) { expected_language = NULL; guest_language = NULL; }
+    if (!strcmp(mode, "english")) expected_language = "ENGLISH";
+    if (!strcmp(mode, "late-list")) g_save_dir = NULL;
+    if (!strcmp(mode, "late-bsa") || !strcmp(mode, "missing-bsa")) resource_ready = 0;
+    if (!strcmp(mode, "no-trial")) trial = 0;
+    skse_import_translations(NULL);
+    unsigned first = calls, first_requests = skyui_requests;
+    for (int i = 0; i < 100; ++i) skse_import_translations(NULL);
+    assert(calls == first && skyui_requests == first_requests && !reserved);
+    if (!strcmp(mode, "auto")) guest_language = "JAPANESE";
+    if (!strcmp(mode, "late-list")) g_save_dir = profile;
+    if (!strcmp(mode, "late-bsa")) resource_ready = 1;
+    if (!strcmp(mode, "missing-bsa")) {
+        const unsigned deadlines[] = {1, 3, 7, 15, 31, 63};
+        unsigned due = 0;
+        for (ticks = 1; ticks <= 100; ++ticks) {
+            if (due < sizeof deadlines / sizeof deadlines[0] && ticks == deadlines[due]) ++due;
+            skse_import_translations(NULL);
+            assert(skyui_requests == 1 + due && !reserved && references == 2);
+        }
+    }
+    unsigned attempts_before_stop = 0;
+    for (int i = 0; i < 20; ++i) {
+        ticks += 65;
+        skse_import_translations(NULL);
+        if (i == 9) attempts_before_stop = skyui_requests;
+        assert(references == 2 && !reserved);
+    }
+    assert(attempts_before_stop == skyui_requests);
+    fprintf(stderr, "%u %u %u %u\n", first, calls, inserted, skyui_requests);
+    if (!strcmp(mode, "fresh-loader")) {
+        mock_loader = 2;
+        skse_import_translations(NULL);
+        assert(calls == first * 2 && skyui_requests == 2 && references == 2 && !reserved);
+    }
+    return 0;
 }
-#define skse_ini_setting(c, name) ((void)(c), (void)(name), 1u)
-static void import_file(CPU *c, uint32_t translator, const char *path) {
-    (void)c; (void)translator; puts(path);
-}
-''' + importer + '''
-int main(int argc, char **argv) { if (argc != 2) return 1; g_save_dir = argv[1]; skse_import_translations(NULL); }
 ''')
         profile = self.root / "selected"
         target = profile / "documents/SkYRim/PLUGINS.TXT"
         target.parent.mkdir(parents=True)
-        target.write_text("*雪.ESP\r\n# ignored.esp\r\n../Other.esm\r\nLore.esm\r\n", encoding="utf-8-sig")
-        result = subprocess.run([str(exe), str(profile)], check=True, capture_output=True, timeout=3)
-        self.assertEqual(result.stdout.decode("utf-8").splitlines(),
-                         [r"Interface\Translations\雪_JAPANESE.txt", r"Interface\Translations\Lore_JAPANESE.txt"])
+        target.write_text("*雪.ESP\r\n# ignored.esp\r\nNone.esm\r\n../Other.esm\r\n"
+                          "SkyUI.esp\r\nLore.esm\r\n", encoding="utf-8-sig")
+        for mode, expected in {
+            "ready": (4, 4, 3, 1), "english": (4, 4, 3, 1), "auto": (0, 4, 3, 1),
+            "late-list": (0, 4, 3, 1), "late-bsa": (0, 4, 3, 2),
+            "missing-bsa": (0, 3, 2, 7), "no-trial": (4, 4, 3, 0),
+            "fresh-loader": (4, 4, 3, 1),
+        }.items():
+            with self.subTest(mode=mode):
+                result = subprocess.run([str(exe), mode, str(profile)], check=True,
+                                        capture_output=True, timeout=3)
+                self.assertEqual(tuple(map(int, result.stderr.split())), expected)
+                language = "ENGLISH" if mode == "english" else "JAPANESE"
+                names = ["雪", "Lore"] if mode == "missing-bsa" else ["雪", "SkyUI", "Lore"]
+                output = [f"Interface\\Translations\\{name}_{language}.txt" for name in names]
+                self.assertEqual(result.stdout.decode("utf-8").splitlines(),
+                                 output * (2 if mode == "fresh-loader" else 1))
 
 
 if __name__ == "__main__":

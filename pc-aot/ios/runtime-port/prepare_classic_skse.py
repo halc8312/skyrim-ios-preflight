@@ -110,7 +110,7 @@ static void run_native(CPU *c) {""", name)
 
 
 def prepare(source, runtime):
-    from classic_skse_translation import adapt as adapt_translation
+    from classic_skse_translation import adapt as adapt_translation, adapt_profile_list
 
     source = (source / "runtime").resolve(strict=True)
     runtime = runtime.resolve(strict=True)
@@ -119,7 +119,7 @@ def prepare(source, runtime):
     changes = []
     for name in (*PINNED, "skse_translation.c"):
         original = (source / name).read_text(encoding="utf-8")
-        previous = original if name == "skse_translation.c" else adapt_ini(name, original)
+        previous = adapt_profile_list(original) if name == "skse_translation.c" else adapt_ini(name, original)
         adapted = adapt_translation(original) if name == "skse_translation.c" else adapt_mod_queries(name, previous)
         new = adapt_skyui_selftest(adapted) if name == "skse_compat.c" else adapted
         target = runtime / name

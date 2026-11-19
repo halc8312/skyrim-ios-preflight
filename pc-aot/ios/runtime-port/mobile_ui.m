@@ -305,6 +305,13 @@ int skyrim_mobile_prepare_game_language(const char *gameDirectory) {
         gameLanguage.requested_voices, gameLanguage.voices, gameLanguage.voices_reason);
     return gameLanguagePrepared;
 }
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+const char *skyrim_mobile_classic_text_language(void) {
+    if (!gameLanguagePrepared || (!startup[@"game_text"] && !startup[@"game_voices"])) return NULL;
+    return gameLanguage.text == SKYRIM_GAME_JAPANESE ? "JAPANESE" : "ENGLISH";
+}
+#endif
+
 static NSString *gameLanguageFallback(void) {
     if (!gameLanguagePrepared) return nil;
     if (gameLanguage.text_reason == SKYRIM_GAME_MISSING_DEFAULT_INI ||
