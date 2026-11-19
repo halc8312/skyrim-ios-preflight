@@ -377,7 +377,10 @@ static int scanModPlugins(BOOL publish, BOOL *skyuiListed) {
     char resolved[PATH_MAX];
     if (skyrim_plugin_child_path(gameDirectory, "Data", resolved, sizeof resolved) != 1) {
         fprintf(stderr, "IOS_MODS found=0 data_folder=0\n");
-        if (publish) skyrim_mods_no_plugin_loaded();
+        if (publish) {
+            skyrim_mods_plugin_list_failed();
+            skyrim_mods_no_plugin_loaded();
+        }
         return !publish || skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, NULL, 0) == 0;
     }
     NSString *data = [NSString stringWithUTF8String:resolved];
@@ -392,7 +395,12 @@ static int scanModPlugins(BOOL publish, BOOL *skyuiListed) {
     const size_t count = names.count;
     SkyrimPluginHeader *headers = calloc(count ? count : 1, sizeof *headers);
     int *status = calloc(count ? count : 1, sizeof *status);
-    if (!headers || !status) { free(headers); free(status); modNotice = L(@"Not enough memory to read the MOD list.", @"メモリ不足のためMODの一覧を読めませんでした。"); return 1; }
+    if (!headers || !status) {
+        if (publish) skyrim_mods_plugin_list_failed();
+        free(headers); free(status);
+        modNotice = L(@"Not enough memory to read the MOD list.", @"メモリ不足のためMODの一覧を読めませんでした。");
+        return 1;
+    }
     NSMutableDictionary<NSString *, NSNumber *> *index = [NSMutableDictionary dictionary];
     for (size_t i = 0; i < count; ++i) {
         status[i] = readPluginHeader([data stringByAppendingPathComponent:names[i]], &headers[i]);
@@ -474,6 +482,7 @@ static int scanModPlugins(BOOL publish, BOOL *skyuiListed) {
     } else {
         modNotice = L(@"Not enough memory to read the MOD list.", @"メモリ不足のためMODの一覧を読めませんでした。");
     }
+    if (publish && !published) skyrim_mods_plugin_list_failed();
     for (size_t i = 0; i < count; ++i) skyrim_plugin_header_free(&headers[i]);
     free(headers); free(status); free(entries); free(order); free(state); free(problem);
     return restored;

@@ -59,6 +59,7 @@ static BOOL launchWithoutMods, healthyMarked;
 static NSArray<NSDictionary *> *launchPlugins;
 static NSMutableDictionary *launchSetup;
 static BOOL launchHasPackages;
+static BOOL launchPluginListFailed;
 
 static id MutableJSON(NSData *data) {
     if (!data) return nil;
@@ -256,6 +257,7 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
     NSMutableDictionary *profile = RunningProfile();
     NSArray *ids = launchWithoutMods ? @[] : EnabledPackageIds(profile);
     launchHasPackages = ids.count > 0;
+    launchPluginListFailed = NO;
     if (launchWithoutMods) launchPlugins = @[];
     if (!ids.count && !AnyOn(launchPlugins)) {
         /* Consume a previous MOD run once. A fresh/vanilla launch creates
@@ -317,6 +319,7 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
 NSString *skyrim_mods_launch_notice(void) { return launchNotice; }
 BOOL skyrim_mods_manages_plugins(void) { return !launchWithoutMods && AnyOn(launchPlugins); }
 NSArray<NSDictionary *> *skyrim_mods_launch_plugin_choices(void) { return launchWithoutMods ? @[] : launchPlugins; }
+void skyrim_mods_plugin_list_failed(void) { launchPluginListFailed = YES; }
 void skyrim_mods_no_plugin_loaded(void) {
     if (launchHasPackages || !launchSetup) return;
     launchSetup = nil;
@@ -340,7 +343,7 @@ void skyrim_mods_frame(uint64_t frames) {
     healthyMarked = YES;
     NSMutableDictionary *l = MutableJSON([NSData dataWithContentsOfFile:LaunchPath()]);
     if ([l isKindOfClass:NSMutableDictionary.class]) { l[@"healthy"] = @YES; WriteJSON(l, LaunchPath()); }
-    if (launchWithoutMods || !state) return;
+    if (launchWithoutMods || launchPluginListFailed || !state) return;
     NSMutableDictionary *p = RunningProfile();
     p[@"lastGood"] = launchSetup;
     SaveState();

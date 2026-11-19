@@ -22,6 +22,7 @@ NSArray<NSDictionary *> *skyrim_mods_plugin_choices(void);
  * and a safe-mode or failed-deployment fallback. */
 BOOL skyrim_mods_manages_plugins(void);
 NSArray<NSDictionary *> *skyrim_mods_launch_plugin_choices(void);
+void skyrim_mods_plugin_list_failed(void);
 void skyrim_mods_no_plugin_loaded(void);
 void skyrim_mods_set_plugin_choices(NSArray *rows);
 #ifdef SKYRIM_IOS_CLASSIC_SKSE

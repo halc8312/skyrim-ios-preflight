@@ -45,18 +45,25 @@ class ClassicSkyUITrialTests(unittest.TestCase):
 #include <string.h>
 #include <strings.h>
 #include "mod_plugins.h"
-static BOOL launchWithoutMods;
-static NSMutableDictionary *running, *launchSetup;
+static BOOL launchWithoutMods, launchPluginListFailed, healthyMarked;
+static NSMutableDictionary *state, *running, *launchSetup;
 static NSString *launchNotice, *profilePath, *modGamePath, *modNotice;
 static NSArray<NSDictionary *> *launchPlugins, *modPlugins;
 static NSMutableDictionary *RunningProfile(void) { return running; }
 static NSString *T(NSString *english, NSString *japanese) { (void)japanese; return english; }
+static NSString *StatePath(void) { return [profilePath stringByAppendingPathComponent:@"state.json"]; }
+static NSString *LaunchPath(void) { return [profilePath stringByAppendingPathComponent:@"launch.json"]; }
 #define L T
 static void skyrim_mods_no_plugin_loaded(void) {}
-''' + between(manager, "static BOOL AnyOn(", "static NSInteger AskBeforeLaunch(")
+''' + between(manager, "static id MutableJSON(", "static NSMutableArray<NSMutableDictionary *> *Profiles(")
+    + between(manager, "static BOOL AnyOn(", "static NSInteger AskBeforeLaunch(")
     + between(manager, "BOOL skyrim_mods_manages_plugins(", "void skyrim_mods_no_plugin_loaded(")
+    + between(manager, "void skyrim_mods_frame(", "/* ---- import")
     + between(mobile, "static int readPluginHeader(", "static NSString *modStateText(") + r'''
 static void start(NSString *game, int expected) {
+    launchPluginListFailed = NO;
+    healthyMarked = NO;
+    assert(WriteJSON(@{@"healthy":@NO}, LaunchPath()));
     launchSetup = [@{@"packages":@[], @"plugins":launchPlugins} mutableCopy];
     launchNotice = nil;
     assert(skyrim_mobile_prepare_mods(game.fileSystemRepresentation));
@@ -78,12 +85,15 @@ int main(int argc, char **argv) { @autoreleasepool {
     launchPlugins = @[@{@"name":@"SkyUI.esp", @"on":@YES}];
 
     running = [NSMutableDictionary dictionary];
+    state = [@{@"profile":running} mutableCopy];
     start(game, 0);
     running[@"skyuiTrial"] = @YES;
     start(game, 1);
     NSString *published = [NSString stringWithContentsOfFile:list encoding:NSUTF8StringEncoding error:NULL];
     assert([published containsString:@"sKyUI.EsP"]);
-    running[@"lastGood"] = [launchSetup copy];
+    skyrim_mods_frame(1800);
+    NSDictionary *knownGood = running[@"lastGood"];
+    assert(SkyUITrialSelected(knownGood));
     [running removeObjectForKey:@"skyuiTrial"];
     RestoreLastGoodSetup(running);
     assert(SkyUITrialSelected(running));
@@ -100,6 +110,10 @@ int main(int argc, char **argv) { @autoreleasepool {
     assert([fm createDirectoryAtPath:list withIntermediateDirectories:NO attributes:nil error:NULL]);
     start(game, 0);
     assert(SkyUITrialSelected(running) && launchNotice.length);
+    assert(launchPluginListFailed);
+    skyrim_mods_frame(1800);
+    assert(running[@"lastGood"] == knownGood);
+    assert([MutableJSON([NSData dataWithContentsOfFile:LaunchPath()])[@"healthy"] boolValue]);
     assert([fm removeItemAtPath:list error:NULL]);
 
     NSString *plugin = [game stringByAppendingPathComponent:@"Data/sKyUI.EsP"];
