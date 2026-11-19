@@ -24,7 +24,8 @@ typedef enum {
     SKSE_TRIAL_DEPENDENCY_DETACH_FAULT,
     SKSE_TRIAL_TLS_ATTACH_FAULT,
     SKSE_TRIAL_TLS_DETACH_FAULT,
-    SKSE_TRIAL_SERIALIZATION_FAULT
+    SKSE_TRIAL_SERIALIZATION_FAULT,
+    SKSE_TRIAL_WORKER_FAULT
 } SkseTrialStatus;
 
 typedef struct {
@@ -35,7 +36,7 @@ typedef struct {
 typedef struct {
     uint32_t uptime_ms;
     uint32_t guest_base; // Zero selects the preferred address in the PE file.
-    unsigned core_messages, static_tls, serialization;
+    unsigned core_messages, static_tls, serialization, worker_thread;
     SkseWinAssets assets;
 } SkseTrialRuntime;
 
@@ -54,6 +55,8 @@ typedef struct {
     uint32_t tls_callbacks;
     SkseX86Result serialization_fault;
     uint32_t serialization_callbacks, serialization_records;
+    SkseX86Result worker_fault;
+    unsigned workers_completed;
 } SkseTrialResult;
 
 /* Exercise the two cdecl exports in a private image. The only available

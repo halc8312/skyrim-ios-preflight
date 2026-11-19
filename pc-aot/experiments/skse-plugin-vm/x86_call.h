@@ -40,7 +40,7 @@ typedef enum {
     SKSE_X86_MALLOC, SKSE_X86_CALLOC, SKSE_X86_REALLOC, SKSE_X86_FREE,
     SKSE_X86_HEAP_ALLOC, SKSE_X86_HEAP_REALLOC, SKSE_X86_HEAP_FREE, SKSE_X86_WIN_THREAD,
     SKSE_X86_INTERLOCKED, SKSE_X86_MODULE_LOOKUP, SKSE_X86_READ_ONLY_FILES, SKSE_X86_WIN_SYNC,
-    SKSE_X86_SERIALIZATION
+    SKSE_X86_SERIALIZATION, SKSE_X86_WIN_WORKER
 } SkseX86ServiceKind;
 
 typedef enum {
@@ -82,6 +82,27 @@ typedef struct {
 } SkseX86Serialization;
 
 typedef struct {
+    SkseX86Status status;
+    uint32_t eax, instructions, work, instruction_va;
+    uint32_t service_calls[SKSE_X86_MAX_SERVICES];
+} SkseX86Result;
+
+typedef enum {
+    SKSE_WIN_WORKER_CREATE, SKSE_WIN_WORKER_RESUME, SKSE_WIN_WORKER_EXIT_CODE, SKSE_WIN_WORKER_OPERATION_COUNT
+} SkseWinWorkerOperation;
+
+typedef SkseX86Result (*SkseX86RunWorker)(void *context, uint32_t id, uint32_t entry, uint32_t parameter, uint32_t budget);
+
+/* One joinable diagnostic worker. Closing the handle leaves the worker
+ * eligible to run until the owning trial is torn down. */
+typedef struct {
+    SkseX86RunWorker run;
+    void *context;
+    uint32_t id, handle, entry, parameter, exit_code;
+    bool open, suspended, running, complete, failed, loader_locked, tearing_down;
+} SkseX86Worker;
+
+typedef struct {
     const SkseX86Service *entries;
     size_t count;
     SkseX86CoreMessaging *core_messaging;
@@ -90,20 +111,17 @@ typedef struct {
     SkseWinThread *thread;
     SkseWinFiles *files;
     SkseWinSync *sync;
+    SkseX86Worker *worker;
     /* Optional export names for resolving symbols in the emulated system DLLs.
      * The result must also be present in entries as a service token. */
     const SksePeImportBinding *system_exports;
     size_t system_export_count;
-    /* Both zero for calls without static TLS. The table and its blocks occupy
-     * the lower part of scratch, below the first address the stack may use. */
-    uint32_t static_tls_table, stack_floor;
+    /* The static TLS table, when present, is below the stack. A zero stack
+     * bound uses the corresponding end of the full scratch allocation. */
+    uint32_t static_tls_table, stack_floor, stack_top;
 } SkseX86Services;
 
-typedef struct {
-    SkseX86Status status;
-    uint32_t eax, instructions, work, instruction_va;
-    uint32_t service_calls[SKSE_X86_MAX_SERVICES];
-} SkseX86Result;
+SkseX86Result skse_x86_finish_worker(SkseX86Worker *worker, uint32_t budget);
 
 /* Invoke one 32-bit function using a mapped PE and private data storage.
  * Scratch at low addresses can hold argument structures. The stack begins at

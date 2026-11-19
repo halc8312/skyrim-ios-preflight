@@ -27,7 +27,7 @@ python3 -B - "$app" <<'PY'
 from pathlib import Path
 import plistlib
 import sys
-from test_probe_local_file import serializing_fixture, supported_fixture
+from test_probe_local_file import serializing_fixture, supported_fixture, worker_fixture
 from test_probe_directory import file_asset_fixture, helper, primary
 from test_pe_image import DATA, add_named_clock, zero_string
 
@@ -46,6 +46,7 @@ package.mkdir(parents=True)
 (package / "AssetProbe.dll").write_bytes(file_asset_fixture())
 (package / "Settings.ini").write_bytes(b"Authored settings")
 (package / "Serialization.dll").write_bytes(serializing_fixture())
+(package / "WorkerProbe.dll").write_bytes(worker_fixture())
 (app / "Info.plist").write_bytes(plistlib.dumps({
     "CFBundleIdentifier": "org.skyrimios.tests.dllcompatibility",
     "CFBundleName": "DLL Compatibility Fixture",
@@ -87,6 +88,6 @@ for language in english japanese; do
         sleep 1
     done
     grep -Fxq refused,passed,folder "$evidence"
-    echo "DLL_SIMULATOR: ${language} verified standalone DLLs, package dependencies, a read-only asset and additional-save records."
+    echo "DLL_SIMULATOR: ${language} verified standalone DLLs, package dependencies, a read-only asset, an additional-save record and a worker."
 done
 codesign --verify --strict "$app"

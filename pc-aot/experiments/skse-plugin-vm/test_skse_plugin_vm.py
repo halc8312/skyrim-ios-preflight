@@ -104,6 +104,24 @@ class PluginInterpreterTests(unittest.TestCase):
                     self.assertEqual(len(expected.strip().splitlines()), 8)
                     self.assertIn(",1,1,", expected)
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows runs the worker-thread reference")
+    def test_worker_stack_tls_and_exit_match_an_owned_native_dll(self):
+        cc, linker = LLVM / "clang.exe", LLVM / "lld-link.exe"
+        kits = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Windows Kits/10/Lib"
+        kernel32 = sorted(kits.glob("*/um/x86/kernel32.lib"))
+        if not cc.is_file() or not linker.is_file() or not kernel32:
+            self.skipTest("Windows LLVM and x86 Windows SDK required")
+        with tempfile.TemporaryDirectory(prefix="skse-import-worker-") as tmp:
+            root = Path(tmp)
+            emulator = root / "trial.exe"
+            compile_interpreter(cc, emulator, "test_interpreted.c", ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
+            for opt in ("-O0", "-O2"):
+                with self.subTest(optimization=opt):
+                    expected, actual = compare_with_windows(cc, linker, emulator, root / opt, 23, opt,
+                                                            imports=(kernel32[-1],), attach=True, mode="worker")
+                    self.assertEqual(actual, expected)
+                    self.assertIn("0,1,1,17,ClassicProbe,1,1", expected)
+
     @unittest.skipUnless(sys.platform == "win32", "Windows SDK required for the imported clock reference")
     def test_stdcall_dll_entry_and_tick_count_import(self):
         cc, linker = LLVM / "clang.exe", LLVM / "lld-link.exe"

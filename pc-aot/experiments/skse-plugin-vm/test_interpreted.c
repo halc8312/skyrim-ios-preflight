@@ -36,6 +36,7 @@ int main(int argc, char *argv[]) {
     int module_lookup = argc >= 3 && strcmp(argv[2], "module-lookup") == 0;
     int file_assets = argc >= 3 && strcmp(argv[2], "file-assets") == 0;
     int events = argc >= 3 && strcmp(argv[2], "events") == 0;
+    int worker = argc >= 3 && strcmp(argv[2], "worker") == 0;
     int tls = argc >= 3 && strcmp(argv[2], "tls") == 0;
     int tls_pair = argc >= 4 && strcmp(argv[2], "static-tls-pair") == 0;
     int static_tls = tls_pair || (argc >= 3 && strcmp(argv[2], "static-tls") == 0);
@@ -44,7 +45,8 @@ int main(int argc, char *argv[]) {
     int dependency = tls_pair || (argc >= 4 && strcmp(argv[2], "dependency") == 0);
     int moved = argc >= 4 && strcmp(argv[argc - 1], "move") == 0;
     assert(argc == 2 || dependency ||
-        ((clock || memory || allocation || interlocked || module_lookup || file_assets || events || tls || static_tls || messages || serialization) &&
+        ((clock || memory || allocation || interlocked || module_lookup || file_assets || events || tls || static_tls ||
+          messages || serialization || worker) &&
          (argc == 3 || moved)));
     uint8_t bytes[64 * 1024];
     size_t length = read_owned_dll(argv[1], bytes, sizeof bytes);
@@ -56,8 +58,8 @@ int main(int argc, char *argv[]) {
         SkseTrialRuntime runtime = {
             .uptime_ms = UINT32_C(0x9100abcd),
             .guest_base = moved ? UINT32_C(0x60000000) : 0,
-            .core_messages = (unsigned)messages, .static_tls = (unsigned)static_tls,
-            .serialization = (unsigned)serialization,
+            .core_messages = (unsigned)messages, .static_tls = (unsigned)(static_tls || worker),
+            .serialization = (unsigned)serialization, .worker_thread = (unsigned)worker,
             .assets = {.read = file_assets ? read_authored_asset : NULL}
         };
         SkseTrialResult result = argc >= 3
@@ -77,12 +79,13 @@ int main(int argc, char *argv[]) {
         }
         if (result.status != SKSE_TRIAL_COMPLETED && result.status != SKSE_TRIAL_QUERY_DECLINED &&
             result.status != SKSE_TRIAL_LOAD_DECLINED && result.status != SKSE_TRIAL_MESSAGE_FAULT) {
-            fprintf(stderr, "case=%zu phase=%u PE=%u x86-query=%u at=0x%08x x86-load=%u at=0x%08x TLS=%u at=0x%08x serial=%u at=0x%08x\n",
+            fprintf(stderr, "case=%zu phase=%u PE=%u x86-query=%u at=0x%08x x86-load=%u at=0x%08x TLS=%u at=0x%08x serial=%u at=0x%08x worker=%u at=0x%08x\n",
                     i, (unsigned)result.status, (unsigned)result.image_status,
                     (unsigned)result.query.status, result.query.instruction_va,
                     (unsigned)result.load.status, result.load.instruction_va,
                     (unsigned)result.tls_fault.status, result.tls_fault.instruction_va,
-                    (unsigned)result.serialization_fault.status, result.serialization_fault.instruction_va);
+                    (unsigned)result.serialization_fault.status, result.serialization_fault.instruction_va,
+                    (unsigned)result.worker_fault.status, result.worker_fault.instruction_va);
             return 1;
         }
         unsigned query = result.status != SKSE_TRIAL_QUERY_DECLINED;
@@ -92,6 +95,10 @@ int main(int argc, char *argv[]) {
             assert(result.attach.status == SKSE_X86_OK && result.attach.service_calls[2] == 1);
             assert(result.detach.status == SKSE_X86_OK && result.detach.instructions > 0);
             if (result.status == SKSE_TRIAL_COMPLETED) assert(result.load.service_calls[2] == 1);
+        }
+        if (worker) {
+            assert(result.workers_completed == query && result.tls_callbacks == (query ? 4u : 2u));
+            assert(result.worker_fault.status == SKSE_X86_OK);
         }
         if (memory) {
             for (unsigned service = 3; service <= 5; ++service) assert(result.query.service_calls[service] == 1);

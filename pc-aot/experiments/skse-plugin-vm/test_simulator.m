@@ -54,12 +54,12 @@
             [self checkReport:japanese ? @"診断環境でSKSEの初期化が完了しました。" : @"SKSE initialization passed in the test environment."
                    launchNext:^{
                 [self diagnose:@"ProbePackage" extension:nil];
-                [self checkReport:japanese ? @"SKSE用DLLを5個見つけました。" : @"Found 5 SKSE DLLs in this folder."
+                [self checkReport:japanese ? @"SKSE用DLLを6個見つけました。" : @"Found 6 SKSE DLLs in this folder."
                        launchNext:^{
                     UITableView *table = self.probe.tableView;
                     NSInteger rows = [self.probe tableView:table numberOfRowsInSection:1];
                     BOOL verifiedPair = NO, verifiedAsset = NO;
-                    BOOL verifiedSerialization = NO;
+                    BOOL verifiedSerialization = NO, verifiedWorker = NO;
                     for (NSInteger i = 1; i < rows; ++i) {
                         UITableViewCell *cell = [self.probe tableView:table
                                                 cellForRowAtIndexPath:[NSIndexPath indexPathForRow:i inSection:1]];
@@ -75,9 +75,13 @@
                                                             @"Additional save test · Calls 2 · Records 1"]) {
                             verifiedSerialization = YES;
                         }
+                        if ([text hasPrefix:@"Data/SKSE/Plugins/WorkerProbe.dll\n"] && ready &&
+                            [text containsString:japanese ? @"終了まで確認した補助スレッド　1 本" : @"Worker threads completed · 1"]) {
+                            verifiedWorker = YES;
+                        }
                     }
-                    if (!verifiedPair || !verifiedAsset || !verifiedSerialization) {
-                        [NSException raise:NSInternalInconsistencyException format:@"Missing companion, asset or serialization result"];
+                    if (!verifiedPair || !verifiedAsset || !verifiedSerialization || !verifiedWorker) {
+                        [NSException raise:NSInternalInconsistencyException format:@"Missing companion, asset, serialization or worker result"];
                     }
                     NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
                     NSURL *evidence = [documents URLByAppendingPathComponent:japanese ? @"japanese.txt" : @"english.txt"];
