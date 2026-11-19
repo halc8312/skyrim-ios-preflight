@@ -19,6 +19,7 @@ SOURCE_SUFFIXES = {".md", ".txt", ".json", ".yaml", ".yml", ".py", ".sh", ".ps1"
 ROOT_NAMES = {".gitignore", ".gitattributes", "LICENSE", "NOTICE", "CMakeLists.txt"}
 AUTHORED_SHADER_SOURCES = {
     "experiments/d3d9-postprocess/two_tone.hlsl",
+    "experiments/d3d9-postprocess/depth_view.hlsl",
     "experiments/d3d9-present-grade/warm_grade.glsl",
 }
 FORBIDDEN_SUFFIXES = {".exe", ".dll", ".bsa", ".ba2", ".esm", ".esp", ".esl",
