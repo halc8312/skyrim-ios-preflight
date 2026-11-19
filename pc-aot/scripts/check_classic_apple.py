@@ -85,11 +85,13 @@ def native_fixtures(source):
     os.environ.update(SKYRIM_SKYDREAM_SOURCE=str(source), SKYDREAM_SOURCE_DIR=str(source))
     tests = ROOT / "tests"
     suite = unittest.TestSuite()
-    for pattern in ("test_classic_skse_*.py", "test_classic_cosave.py"):
+    for pattern in ("test_classic_skse_*.py", "test_classic_cosave.py", "test_classic_skyui_trial.py"):
         group = unittest.defaultTestLoader.discover(str(tests), pattern=pattern)
         if not group.countTestCases():
             raise ValueError(f"No tests matched {pattern}")
         suite.addTests(group)
+    suite.addTests(unittest.defaultTestLoader.loadTestsFromName(
+        "test_game_language.GameLanguageTests.test_actual_startup_keeps_unconfigured_profile_and_atomically_updates_only_profile"))
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful() or result.skipped:
         raise ValueError("Classic fixtures must all execute and pass")
