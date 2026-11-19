@@ -9,6 +9,7 @@ import io
 import json
 from pathlib import Path
 import plistlib
+import struct
 import tempfile
 import time
 import unittest
@@ -62,6 +63,8 @@ class PrivateOTAProductTests(unittest.TestCase):
         actual = ipa_bundle or bundle
         expiry = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=-1 if expired_profile else 1)
         info = {"CFBundleIdentifier": actual, "CFBundleVersion": build}
+        if actual == "org.skyrimios.pc2011.classic-lab":
+            info["PcGuestClassicSkseExperiment"] = True
         ent = {"application-identifier": "ABCDEFGHIJ." + (profile_bundle or actual), **(entitlements or {})}
         profile = {"Entitlements": ent, "ProvisionedDevices": ["SYNTHETIC-NOT-A-DEVICE"], "ExpirationDate": expiry}
         with zipfile.ZipFile(ipa, "x") as archive:
@@ -105,6 +108,32 @@ class PrivateOTAProductTests(unittest.TestCase):
         self.assertIn("iOS 26以上", package.page.decode())
         self.assertNotIn("SkyrimIOS.ipa", package.page.decode())
         self.assertNotIn("@@", package.page.decode())
+
+    def test_classic_lab_serves_only_the_windows_sample_on_its_own_private_route(self):
+        bundle = "org.skyrimios.pc2011.classic-lab"
+        config = self.authored(bundle)
+        config["base_url"] = "https://fixture.ts.net/skyrim-classic-lab"
+        sample = self.root / "windows.skse"
+        data = (b"SKSE" + struct.pack("<10I", 1, 0x01070030, 0x09200000, 2,
+                0xf3e2d1c0, 1, 23, 0xdeca1234, 9, 11) + b"opaque\x00\xff\x80\x01!"
+                + struct.pack("<7I", 0x46585452, 1, 16, 0x56414c55, 1, 4, 16))
+        sample.write_bytes(data)
+        config["windows_sample"] = str(sample)
+        package = ota.Package(config)
+        self.assertEqual(plistlib.loads(package.manifest)["items"][0]["metadata"]["bundle-identifier"], bundle)
+        self.assertIn(b"windows.skse", package.page)
+        route = package.public_path + "windows.skse"
+        status, headers, body = request(package, route)
+        self.assertEqual((status, body), (200, data))
+        self.assertIn("attachment;", headers["Content-Disposition"])
+        self.assertEqual(request(package, route, method="HEAD")[2], b"")
+        self.assertEqual(request(package, route, login=None)[0], 404)
+        self.assertEqual(request(package, "/skyrim-ios" + package.route + "windows.skse")[0], 404)
+        ordinary = ota.Package(self.authored())
+        self.assertEqual(request(ordinary, ordinary.public_path + "windows.skse")[0], 404)
+        sample.write_bytes(data + b"x")
+        with self.assertRaisesRegex(ValueError, "Different Windows co-save"):
+            ota.Package(config)
 
     def test_cross_product_routes_resources_and_unknown_products_are_rejected(self):
         pairs = (("org.skyrimios.pc2011", "/metal-probe", "MetalProbe.ipa"),

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>SkyrimIOS Classic Lab</title>
+<style>
+body{max-width:34rem;margin:4rem auto;padding:0 1.3rem;font:1rem/1.65 system-ui,sans-serif}h1{line-height:1.2}a{color:LinkText}.install{display:inline-block;background:#21566a;color:white;border-radius:.6rem;padding:.7rem 1.2rem;text-decoration:none}li{margin-block:.85rem}
+</style>
+<main>
+  <h1>SkyrimIOS Classic Lab</h1>
+  <p>ビルド @@BUILD@@ · @@SIZE@@ MB。普段のSkyrimIOSと並べてインストールできます。追加セーブのテストだけならゲームのコピーは不要です。</p>
+  <p><a class="install" href="@@INSTALL@@">Classic Labをインストール</a></p>
+  <ol>
+    <li>Safariで<a href="windows.skse" download="windows.skse">Windowsのテスト用追加セーブ</a>をダウンロードします。</li>
+    <li>Classic Labを開き、ダウンロードした <code>windows.skse</code> を選んでテストします。ゲーム起動後は「設定」→「MOD」→「詳細」からも開けます。</li>
+    <li>実行後、「結果を共有」から <code>translated.skse</code> と <code>classic-lab-result.json</code> の2つをこのチャットに添付してください。</li>
+  </ol>
+</main>
+</html>

@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 
-# Only these two separately signed applications may use this service. A product
+# Only these separately signed applications may use this service. A product
 # selects its own route, resource name and reviewed page; configuration cannot
 # turn one application's link into an update for the other.
 PRODUCTS = {
@@ -32,7 +32,13 @@ PRODUCTS = {
         "path": "/metal-probe", "filename": "MetalProbe.ipa",
         "title": "Metal比較", "template": "metal_probe_ota.html.in",
     },
+    "org.skyrimios.pc2011.classic-lab": {
+        "path": "/skyrim-classic-lab", "filename": "SkyrimClassicLab.ipa",
+        "title": "SkyrimIOS Classic Lab", "template": "classic_lab_ota.html.in",
+    },
 }
+
+CLASSIC_SAMPLE_SHA256 = "54af4dbfbdbb19a7f8b0516e5b97f72eb1a7dab686484b56221dce3efe9c8a36"
 
 
 class Package:
@@ -83,6 +89,15 @@ class Package:
         self.build = str(info["CFBundleVersion"])
         if self.bundle != config["bundle_id"] or self.build != str(config["build"]):
             raise ValueError("Application identity/build differs from configuration")
+        self.sample = None
+        if self.bundle == "org.skyrimios.pc2011.classic-lab":
+            if info.get("PcGuestClassicSkseExperiment") is not True:
+                raise ValueError("Expected the Classic Lab application marker")
+            with Path(config["windows_sample"]).open("rb") as stream:
+                sample = stream.read(84)
+            if len(sample) != 83 or hashlib.sha256(sample).hexdigest() != CLASSIC_SAMPLE_SHA256:
+                raise ValueError("Different Windows co-save sample")
+            self.sample = sample
         entitlements = profile["Entitlements"]
         if not entitlements["application-identifier"].endswith("." + self.bundle):
             raise ValueError("Application and provisioning profile do not match")
@@ -180,13 +195,20 @@ def handler_for(package: Package):
             if route is None or parsed.query or parsed.fragment:
                 return self.empty(404)
             resource = path[len(route):]
-            if resource not in ("", "manifest.plist", package.filename, "status.json"):
+            is_sample = resource == "windows.skse" and package.sample is not None
+            if not is_sample and resource not in ("", "manifest.plist", package.filename, "status.json"):
                 return self.empty(404)
             if time.time() >= package.expires:
                 return self.empty(410)
             try:
                 if not package.unchanged():
                     return self.empty(503)
+                if is_sample:
+                    self.headers_out(200, len(package.sample), "application/octet-stream",
+                                     [("Content-Disposition", 'attachment; filename="windows.skse"')])
+                    if body:
+                        self.wfile.write(package.sample)
+                    return
                 if resource == package.filename:
                     try:
                         start, end, partial = byte_range(self.headers.get("Range"),
