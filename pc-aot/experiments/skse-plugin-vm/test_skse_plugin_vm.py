@@ -17,7 +17,7 @@ def run(*args, **kwargs):
 
 def compile_interpreter(compiler, output, test_source, flag_list):
     run(compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", *flag_list,
-        HERE / "pe_image.c", HERE / "x86_call.c", HERE / "x86_heap.c", HERE / "x86_winthread.c",
+        HERE / "pe_image.c", HERE / "x86_call.c", HERE / "x86_heap.c", HERE / "x86_winthread.c", HERE / "x86_winfile.c",
         HERE / "dependency_plan.c", HERE / "plugin_trial.c",
         HERE / test_source, "-o", output)
 
@@ -44,8 +44,13 @@ def compare_with_windows(compiler, linker, emulator, directory, variant, opt,
     reference = directory / "reference.exe"
     run(compiler, "--target=i686-pc-windows-msvc", "-fuse-ld=lld", "-std=c11",
         HERE / "test_native_windows.c", "-o", reference)
+    if mode == "file-assets":
+        asset_root = directory / "Data/SKSE/Plugins"
+        asset_root.mkdir(parents=True)
+        (asset_root / "Settings.ini").write_bytes(b"ABCDEFG")
+        (asset_root / "設定.ini").write_bytes(b"jp\r\n")
     try:
-        expected = run(reference, *([mode] if mode else []), capture_output=True, text=True).stdout
+        expected = run(reference, *([mode] if mode else []), cwd=directory, capture_output=True, text=True).stdout
     except subprocess.CalledProcessError as error:
         raise AssertionError(error.stderr or f"Windows reference exited with {error.returncode}") from error
     command = [emulator, dll]
@@ -207,7 +212,7 @@ class PluginInterpreterTests(unittest.TestCase):
             compile_interpreter(cc, emulator, "test_interpreted.c",
                                 ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
             for variant, mode in ((14, "tls"), (15, "static-tls"), (16, "static-tls-pair"), (17, "interlocked"),
-                                  (18, "module-lookup")):
+                                  (18, "module-lookup"), (19, "locked-instructions"), (20, "file-assets")):
                 for opt in ("-O0", "-O2"):
                     with self.subTest(variant=variant, optimization=opt):
                         expected, actual = compare_with_windows(cc, linker, emulator, root / f"{variant}-{opt}",

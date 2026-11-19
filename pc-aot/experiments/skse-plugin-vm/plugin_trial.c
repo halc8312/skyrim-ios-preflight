@@ -58,7 +58,13 @@ static const struct {
     {{"KERNEL32.dll", "InterlockedCompareExchange", 0xe0001084}, SKSE_X86_INTERLOCKED, SKSE_X86_ATOMIC_COMPARE_EXCHANGE},
     {{"KERNEL32.dll", "GetModuleHandleA", 0xe0001088}, SKSE_X86_MODULE_LOOKUP, SKSE_X86_MODULE_ANSI},
     {{"KERNEL32.dll", "GetModuleHandleW", 0xe000108c}, SKSE_X86_MODULE_LOOKUP, SKSE_X86_MODULE_WIDE},
-    {{"KERNEL32.dll", "GetProcAddress", 0xe0001090}, SKSE_X86_MODULE_LOOKUP, SKSE_X86_PROCEDURE}
+    {{"KERNEL32.dll", "GetProcAddress", 0xe0001090}, SKSE_X86_MODULE_LOOKUP, SKSE_X86_PROCEDURE},
+    {{"KERNEL32.dll", "CreateFileA", 0xe0001094}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_OPEN_FILE_A},
+    {{"KERNEL32.dll", "CreateFileW", 0xe0001098}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_OPEN_FILE_W},
+    {{"KERNEL32.dll", "ReadFile", 0xe000109c}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_READ_FILE},
+    {{"KERNEL32.dll", "GetFileSize", 0xe00010a0}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_FILE_SIZE},
+    {{"KERNEL32.dll", "GetFileSizeEx", 0xe00010a4}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_FILE_SIZE_EX},
+    {{"KERNEL32.dll", "CloseHandle", 0xe00010a8}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_CLOSE_FILE}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 _Static_assert(WINDOWS_SERVICE_COUNT + 5 <= SKSE_X86_MAX_SERVICES, "trial service count");
@@ -281,6 +287,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     };
     SkseX86Heap heap = {.base = free_region(&space, heap_choices, sizeof heap_choices / sizeof heap_choices[0], SKSE_X86_HEAP_BYTES)};
     SkseWinThread thread = {.id = 1};
+    SkseWinFiles files = {0};
     SkseX86Services services = {.entries = entries, .count = 2};
     if (tls_scratch) {
         services.static_tls_table = scratch.base + TLS_TABLE_OFFSET;
@@ -290,6 +297,8 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     if (runtime) {
         services.heap = &heap;
         services.thread = &thread;
+        files.source = runtime->assets;
+        services.files = &files;
         services.system_exports = imports;
         services.system_export_count = WINDOWS_SERVICE_COUNT;
         for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i) {
@@ -434,6 +443,7 @@ cleanup:
         }
     }
     result.unavailable_interface = core.unavailable_id;
+    skse_win_files_close(&files);
     free(scratch.bytes);
     skse_x86_heap_close(&heap);
     skse_dependency_close(&space);

@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 
-from test_pe_image import BASE, DATA, OPT, RD, add_named_clock, directory, make_image, put, zero_string
+from test_pe_image import BASE, DATA, OPT, RD, SECTIONS, add_named_clock, directory, make_image, put, zero_string
 from test_probe_local_file import supported_fixture
 
 HERE = Path(__file__).resolve().parent
@@ -46,6 +46,54 @@ def add_second_import(data, name):
     zero_string(data, DATA + 0x140, name)
 
 
+def file_asset_fixture():
+    data = supported_fixture()
+    add_named_clock(data)
+    directory(data, 12, 0x3060, 16)
+    for table in (0x60, 0x80):
+        put(data, DATA + table, "4I", 0x30a0, 0x30c0, 0x30e0, 0)
+    for offset, name in ((0xa0, b"CreateFileA"), (0xc0, b"ReadFile"), (0xe0, b"CloseHandle")):
+        zero_string(data, DATA + offset + 2, name)
+    zero_string(data, RD + 0x120, b"Data/SKSE/Plugins/Settings.ini")
+    put(data, SECTIONS + 8, "I", 0x180)
+    put(data, RD + 0x60, "I", 0x1080)
+    code = bytearray(b"\x53")  # Preserve EBX across the Classic cdecl call.
+    failure_jumps = []
+
+    def push(value):
+        code.extend(b"\x68" + struct.pack("<I", value))
+
+    def call(slot):
+        code.extend(b"\xff\x15" + struct.pack("<I", BASE + 0x3060 + slot * 4))
+
+    def jump_to_failure(opcode):
+        code.extend(bytes((opcode, 0)))
+        failure_jumps.append(len(code) - 1)
+
+    for value in (0, 0x80, 3, 0, 1, 0x80000000, BASE + 0x2120):
+        push(value)
+    call(0)
+    code.extend(b"\x83\xf8\xff")  # Reject INVALID_HANDLE_VALUE.
+    jump_to_failure(0x74)
+    code.extend(b"\x89\xc3")  # EBX holds the descriptor.
+    for value in (0, BASE + 0x3140, 1, BASE + 0x3144):
+        push(value)
+    code.append(0x53)
+    call(1)
+    code.extend(b"\x85\xc0")
+    jump_to_failure(0x74)
+    code.extend(b"\x80\x3d" + struct.pack("<I", BASE + 0x3144) + b"A")
+    jump_to_failure(0x75)
+    code.append(0x53)
+    call(2)
+    code.extend(b"\x5b\xc3")
+    for displacement in failure_jumps:
+        code[displacement] = len(code) - displacement - 1
+    code.extend(b"\x31\xc0\x5b\xc3")
+    data[0x280:0x280 + len(code)] = code
+    return data
+
+
 @unittest.skipIf(sys.platform == "win32", "Darwin/POSIX directory descriptors required")
 class DirectoryProbeTests(unittest.TestCase):
     @classmethod
@@ -60,7 +108,7 @@ class DirectoryProbeTests(unittest.TestCase):
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
             flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         sources = ["test_probe_directory.c", "probe_directory.c", "plugin_trial.c", "dependency_plan.c", "pe_image.c",
-                   "x86_call.c", "x86_heap.c", "x86_winthread.c"]
+                   "x86_call.c", "x86_heap.c", "x86_winthread.c", "x86_winfile.c", "probe_asset_file.c"]
         subprocess.run([compiler, *flags, *(HERE / s for s in sources), "-o", cls.binary], check=True, timeout=90)
 
     def setUp(self):
@@ -102,6 +150,20 @@ class DirectoryProbeTests(unittest.TestCase):
         (parent / "Leaf.dll").rename(alternate / "Leaf.dll")
         _, records = self.scan()
         self.assertEqual(records["Main.dll"][:6], ["missing", "1", "0", "2", "LEAF.dll", "A.dll"])
+
+    def test_read_only_file_uses_the_selected_package(self):
+        (self.selected / "AssetProbe.dll").write_bytes(file_asset_fixture())
+        accessories = self.selected / "Data/SKSE/Plugins"
+        accessories.mkdir(parents=True)
+        asset = accessories / "Settings.ini"
+        asset.write_bytes(b"Authored settings")
+        self.assertEqual(self.scan()[1]["AssetProbe.dll"][6], "yes")
+        self.assertEqual(asset.read_bytes(), b"Authored settings")
+        outside = self.root / "Settings.ini"
+        asset.rename(outside)
+        asset.symlink_to(outside)
+        self.assertEqual(self.scan()[1]["AssetProbe.dll"][6], "no")
+        self.assertEqual(outside.read_bytes(), b"Authored settings")
 
     def test_pair_across_approved_paths_is_sorted_and_read_only(self):
         deep = self.selected / "dAtA/sKse/pLuGIns"

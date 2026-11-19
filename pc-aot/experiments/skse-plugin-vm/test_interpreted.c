@@ -14,12 +14,27 @@ static size_t read_owned_dll(const char *path, uint8_t *bytes, size_t capacity) 
     return unusable ? 0 : length;
 }
 
+static uint32_t read_authored_asset(void *context, const char *path, size_t limit, uint8_t **bytes, size_t *length) {
+    (void)context;
+    const char *content = NULL;
+    if (!strcmp(path, "Data/SKSE/Plugins/Settings.ini")) content = "ABCDEFG";
+    if (!strcmp(path, "Data/SKSE/Plugins/\xe8\xa8\xad\xe5\xae\x9a.ini")) content = "jp\r\n";
+    if (!content) return 2;
+    *length = strlen(content);
+    if (*length > limit) return 223;
+    *bytes = malloc(*length);
+    if (!*bytes) return 8;
+    memcpy(*bytes, content, *length);
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     int clock = argc >= 3 && strcmp(argv[2], "clock") == 0;
     int memory = argc >= 3 && strcmp(argv[2], "memory") == 0;
     int allocation = argc >= 3 && strcmp(argv[2], "allocation") == 0;
-    int interlocked = argc >= 3 && strcmp(argv[2], "interlocked") == 0;
+    int interlocked = argc >= 3 && (!strcmp(argv[2], "interlocked") || !strcmp(argv[2], "locked-instructions"));
     int module_lookup = argc >= 3 && strcmp(argv[2], "module-lookup") == 0;
+    int file_assets = argc >= 3 && strcmp(argv[2], "file-assets") == 0;
     int tls = argc >= 3 && strcmp(argv[2], "tls") == 0;
     int tls_pair = argc >= 4 && strcmp(argv[2], "static-tls-pair") == 0;
     int static_tls = tls_pair || (argc >= 3 && strcmp(argv[2], "static-tls") == 0);
@@ -27,7 +42,7 @@ int main(int argc, char *argv[]) {
     int dependency = tls_pair || (argc >= 4 && strcmp(argv[2], "dependency") == 0);
     int moved = argc >= 4 && strcmp(argv[argc - 1], "move") == 0;
     assert(argc == 2 || dependency ||
-        ((clock || memory || allocation || interlocked || module_lookup || tls || static_tls || messages) &&
+        ((clock || memory || allocation || interlocked || module_lookup || file_assets || tls || static_tls || messages) &&
          (argc == 3 || moved)));
     uint8_t bytes[64 * 1024];
     size_t length = read_owned_dll(argv[1], bytes, sizeof bytes);
@@ -39,7 +54,8 @@ int main(int argc, char *argv[]) {
         SkseTrialRuntime runtime = {
             .uptime_ms = UINT32_C(0x9100abcd),
             .guest_base = moved ? UINT32_C(0x60000000) : 0,
-            .core_messages = (unsigned)messages, .static_tls = (unsigned)static_tls
+            .core_messages = (unsigned)messages, .static_tls = (unsigned)static_tls,
+            .assets = {.read = file_assets ? read_authored_asset : NULL}
         };
         SkseTrialResult result = argc >= 3
             ? skse_plugin_trial_with_runtime(bytes, length, trial_cases[i], runtime)

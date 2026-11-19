@@ -1,0 +1,47 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#ifndef SKYRIM_EXPERIMENT_SKSE_X86_WINFILE_H
+#define SKYRIM_EXPERIMENT_SKSE_X86_WINFILE_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+enum {
+    SKSE_WIN_PATH_UNITS = 260, SKSE_WIN_PATH_BYTES = 1024, SKSE_WIN_OPEN_FILES = 4
+};
+
+typedef enum {
+    SKSE_WIN_OPEN_FILE_A, SKSE_WIN_OPEN_FILE_W, SKSE_WIN_READ_FILE, SKSE_WIN_FILE_SIZE,
+    SKSE_WIN_FILE_SIZE_EX, SKSE_WIN_CLOSE_FILE, SKSE_WIN_FILE_OPERATION_COUNT
+} SkseWinFileOperation;
+
+/* Return zero for an immutable snapshot allocated with malloc. On failure
+ * return a Win32 error code. The lifetime of the source itself is call-only. */
+typedef uint32_t (*SkseWinReadAsset)(void *context, const char *path, size_t limit, uint8_t **bytes, size_t *length);
+
+typedef struct {
+    SkseWinReadAsset read;
+    void *context;
+} SkseWinAssets;
+
+typedef struct {
+    uint32_t token;
+    uint8_t *bytes;
+    char *path;
+    size_t length, offset;
+    bool shared;
+} SkseWinFile;
+
+typedef struct {
+    SkseWinAssets source;
+    size_t opened_bytes;
+    unsigned requests;
+    SkseWinFile files[SKSE_WIN_OPEN_FILES];
+} SkseWinFiles;
+
+bool skse_win_asset_path(const uint16_t *units, size_t length, bool wide, char path[SKSE_WIN_PATH_BYTES]);
+uint32_t skse_win_file_open(SkseWinFiles *files, const char *path, bool shared, uint32_t *error);
+SkseWinFile *skse_win_file_lookup(SkseWinFiles *files, uint32_t token);
+void skse_win_file_close(SkseWinFile *file);
+void skse_win_files_close(SkseWinFiles *files);
+#endif

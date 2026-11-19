@@ -35,6 +35,7 @@ typedef struct {
     uint32_t uptime_ms;
     uint32_t guest_base; // Zero selects the preferred address in the PE file.
     unsigned core_messages, static_tls;
+    SkseWinAssets assets;
 } SkseTrialRuntime;
 
 typedef struct {

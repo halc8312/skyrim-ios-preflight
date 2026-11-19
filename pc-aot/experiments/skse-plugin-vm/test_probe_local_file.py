@@ -38,7 +38,7 @@ class LocalFileProbeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="dll-local-file-") as directory:
             root = Path(directory)
             binary = root / "probe"
-            sources = ("pe_image.c", "x86_call.c", "x86_heap.c", "x86_winthread.c", "dependency_plan.c",
+            sources = ("pe_image.c", "x86_call.c", "x86_heap.c", "x86_winthread.c", "x86_winfile.c", "dependency_plan.c",
                        "plugin_trial.c", "probe_local_file.c",
                        "test_probe_local_file.c")
             subprocess.run([cc, *flags, *(HERE / source for source in sources), "-o", binary], check=True, timeout=60)

@@ -187,6 +187,14 @@ static void check_cached_image_bounds(void) {
     result = skse_x86_call(&image, image_base, work, NULL, 0, 100,
                           (SkseX86Services){0}, SKSE_X86_CDECL);
     assert(result.status == SKSE_X86_MEMORY_FAULT);
+
+    // A failed comparison still requires write permission on the target.
+    const uint8_t compare[] = {0x31, 0xc0, 0xf0, 0x0f, 0xb1, 0x0d, 0x40, 0, 0x10, 0, 0xc3};
+    memcpy(bytes, compare, sizeof compare);
+    result = skse_x86_call(&image, image_base, work, NULL, 0, 100, (SkseX86Services){0}, SKSE_X86_CDECL);
+    assert(result.status == SKSE_X86_MEMORY_FAULT && bytes[0x40] == 91);
+    uint8_t register_lock[] = {0xf0, 0x0f, 0xc1, 0xc9, 0xc3};
+    assert(ARRAY_RUN(register_lock).status == SKSE_X86_UNSUPPORTED_INSTRUCTION);
 }
 
 int main(void) {
