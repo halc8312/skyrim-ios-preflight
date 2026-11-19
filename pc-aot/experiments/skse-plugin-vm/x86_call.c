@@ -865,27 +865,58 @@ static bool write_file_position(Vm *vm, uint32_t address, uint64_t position) {
     return true;
 }
 
-static uint32_t win_seek_asset(Vm *vm, SkseWinFile *file, const uint32_t args[]) {
-    const uint64_t distance = (uint64_t)args[2] << 32 | args[1];
+static bool win_seek_position(Vm *vm, const SkseWinFile *file, uint64_t distance,
+                              uint32_t origin, uint64_t *result) {
     uint64_t position;
-    switch (args[4]) {
+    switch (origin) {
     case 0: position = 0; break; // FILE_BEGIN.
     case 1: position = file->offset; break;
     case 2: position = file->length; break;
-    default: vm->services.thread->last_error = 87; return 0;
+    default: vm->services.thread->last_error = 87; return false;
     }
     if (distance > INT64_MAX ? 0 - distance > position : distance > INT64_MAX - position) {
         vm->services.thread->last_error = 131; // ERROR_NEGATIVE_SEEK.
-        return 0;
+        return false;
     }
-    position += distance;
+    *result = position + distance;
+    return true;
+}
+
+static uint32_t win_seek_asset_ex(Vm *vm, SkseWinFile *file, const uint32_t args[]) {
+    const uint64_t distance = (uint64_t)args[2] << 32 | args[1];
+    uint64_t position;
+    if (!win_seek_position(vm, file, distance, args[4], &position)) return 0;
     if (args[3] && !write_file_position(vm, args[3], position)) return 0;
     file->offset = position;
     return 1;
 }
 
+static uint32_t win_seek_asset(Vm *vm, SkseWinFile *file, const uint32_t args[]) {
+    uint32_t high = args[1] > INT32_MAX ? UINT32_MAX : 0;
+    if (args[2]) {
+        high = read_memory(vm, args[2], 4);
+        if (vm->status != SKSE_X86_OK) return UINT32_MAX;
+    }
+    const uint64_t distance = (uint64_t)high << 32 | args[1];
+    uint64_t position;
+    if (!win_seek_position(vm, file, distance, args[3], &position)) return UINT32_MAX;
+    if (!args[2] && position > UINT32_MAX) {
+        vm->services.thread->last_error = 87; // ERROR_INVALID_PARAMETER.
+        return UINT32_MAX;
+    }
+    if (args[2]) {
+        write_memory(vm, args[2], 4, (uint32_t)(position >> 32));
+        if (vm->status != SKSE_X86_OK) return UINT32_MAX;
+    }
+    file->offset = position;
+    const uint32_t low = (uint32_t)position;
+    // The successful position can have the same low word as the failure sentinel.
+    if (low == UINT32_MAX) vm->services.thread->last_error = 0;
+    return low;
+}
+
 static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
-    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1, 5, 1, 1, 1};
+    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1, 5, 1, 1, 1, 4};
     _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_FILE_OPERATION_COUNT, "file ABI");
     unsigned count = argument_counts[operation];
     const uint8_t *parameters = service_parameters(vm, count * 4);
@@ -908,7 +939,7 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
     SkseWinFile *file = skse_win_file_lookup(vm->services.files, args[0]);
     if (!file) {
         vm->services.thread->last_error = 6; // ERROR_INVALID_HANDLE.
-        return operation == SKSE_WIN_FILE_SIZE ? UINT32_MAX : 0;
+        return operation == SKSE_WIN_FILE_SIZE || operation == SKSE_WIN_SEEK_FILE ? UINT32_MAX : 0;
     }
     if (operation == SKSE_WIN_CLOSE_FILE) {
         skse_win_file_close(file);
@@ -918,7 +949,8 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
         if (args[1]) write_memory(vm, args[1], 4, 0);
         return (uint32_t)file->length;
     }
-    if (operation == SKSE_WIN_SEEK_FILE_EX) return win_seek_asset(vm, file, args);
+    if (operation == SKSE_WIN_SEEK_FILE_EX) return win_seek_asset_ex(vm, file, args);
+    if (operation == SKSE_WIN_SEEK_FILE) return win_seek_asset(vm, file, args);
     if (operation == SKSE_WIN_FILE_TYPE) return 1; // FILE_TYPE_DISK.
     return write_file_position(vm, args[1], file->length);
 }

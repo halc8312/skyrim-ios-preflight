@@ -369,8 +369,31 @@ __declspec(dllimport) uint32_t __stdcall GetFileType(void *);
 __declspec(dllimport) uint32_t __stdcall GetFileAttributesA(const char *);
 __declspec(dllimport) uint32_t __stdcall GetFileAttributesW(const wchar_t *);
 __declspec(dllimport) int __stdcall SetFilePointerEx(void *, int64_t, int64_t *, uint32_t);
+__declspec(dllimport) uint32_t __stdcall SetFilePointer(void *, int32_t, int32_t *, uint32_t);
 __declspec(dllimport) int __stdcall CloseHandle(void *);
 __declspec(dllimport) unsigned long __stdcall GetLastError(void);
+__declspec(dllimport) void __stdcall SetLastError(unsigned long);
+
+static _Bool check_legacy_seek(void *file) {
+    int64_t position = -1;
+    int32_t high = 0;
+    SetLastError(777);
+    if (SetFilePointer(file, 5, NULL, 0) != 5 || GetLastError() != 777 ||
+        SetFilePointer(file, -1, NULL, 1) != 4 ||
+        SetFilePointer(file, -8, NULL, 2) != UINT32_MAX || GetLastError() != 131 ||
+        SetFilePointer(file, 0, NULL, 1) != 4) return 0;
+    SetLastError(777);
+    if (SetFilePointer(file, -1, &high, 0) != UINT32_MAX || GetLastError() != 0 || high ||
+        SetFilePointer(file, 1, NULL, 1) != UINT32_MAX || GetLastError() != 87 ||
+        !SetFilePointerEx(file, 0, &position, 1) || position != 0xffffffffLL) return 0;
+    high = 1;
+    if (SetFilePointer(file, 3, &high, 0) != 3 || high != 1 ||
+        SetFilePointer(file, -4, &high, 9) != UINT32_MAX || GetLastError() != 87 || high != 1 ||
+        !SetFilePointerEx(file, 0, &position, 1) || position != 0x100000003LL) return 0;
+    high = -1;
+    return SetFilePointer(file, -4, &high, 1) == UINT32_MAX && GetLastError() == 0 && !high &&
+           SetFilePointer(file, 0, NULL, 0) == 0;
+}
 
 static _Bool check_file_assets(void) {
     const uint32_t read_access = 0x80000000u;
@@ -388,6 +411,7 @@ static _Bool check_file_assets(void) {
     int64_t size = -1;
     if (GetFileType(file) != 1 || GetFileType(invalid) || GetLastError() != 6 ||
         GetFileSize(file, &high) != 7 || high || !GetFileSizeEx(file, &size) || size != 7) return 0;
+    if (SetFilePointer(invalid, 0, NULL, 0) != UINT32_MAX || GetLastError() != 6 || !check_legacy_seek(file)) return 0;
     unsigned char bytes[8];
     uint32_t transferred = 19;
     if (!ReadFile(file, bytes, 2, &transferred, NULL) || transferred != 2 || bytes[0] != 'A' || bytes[1] != 'B') return 0;
