@@ -1,5 +1,11 @@
 # 開発状況
 
+**2026-11-19　Classic Labのアプリ全体と追加セーブをMacで検証**
+
+GitHubの標準Macで、専用アプリのiPhoneOS版をリンクし、シミュレーターで実際の画面からWindows製のテスト用追加セーブを読み込んだ。自作DLLを事前変換したコードは値16を復元し、状態をリセットして5を保存、元のデータを読み直して21を保存できた。MOD画面の操作、iPhoneOS向けMetalシェーダー8件のコンパイル、MacのGPUでの20件の描画検査も合格した。[Macの検査結果](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44499923901)
+
+所有者のPCで、このMacの成果物とiPhone向けのゲーム部分を組み合わせ、専用アプリIDで署名した。追加セーブの実機試験はゲームのコピーなしで開始できる。端末から戻した2ファイルを照合し、Windowsの元のDLLが21を読み込み26を書き出せることが合格条件。実機での往復は未確認。ゲーム本体のセーブ、ロード、スクリプト登録に関係する7か所は所有するゲームの生成コードと照合済みで、呼び出し順の観測は別実験とした。[端末から戻したファイルの検証手順](../experiments/classic-plugin/README.md)・[ゲーム内の保存処理を観測する実験](../experiments/classic-lifecycle/README.md)
+
 **2026-11-19　Classic Lab で Windows 用 DLL の初期化と追加セーブの往復を検証**
 
 同じ自作 32 ビット DLL の初期化を Windows と事前変換後の PC 上で動かし、10 条件の結果が一致した。別の自作 DLL では、Windows で保存した値 16 を事前変換後に復元して 21 に更新し、Windows 側に戻して再び復元できた。別 MOD の記録は全バイト一致した。さらに、公式 Classic SKSE の Windows 用処理で作った追加セーブに対する置換・追加・削除を、同じ公式処理で読み戻した。[DLL の検証手順](../experiments/classic-plugin/README.md)
