@@ -7,13 +7,17 @@ on:
         description: Run the unsigned Classic SKSE component checks
         type: boolean
         default: false
+      classic_full_host:
+        description: Build the complete unsigned Classic Lab host and run its Apple checks
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   apple-sdk-preflight:
-    if: ${{ !inputs.classic_skse }}
+    if: ${{ !inputs.classic_skse && !inputs.classic_full_host }}
     runs-on: macos-26
     timeout-minutes: 25
     env:
@@ -60,7 +64,7 @@ jobs:
           retention-days: 7
 
   classic-skse-apple:
-    if: ${{ inputs.classic_skse }}
+    if: ${{ inputs.classic_skse && !inputs.classic_full_host }}
     runs-on: macos-26
     timeout-minutes: 15
     env:
@@ -75,3 +79,52 @@ jobs:
       - name: Execute macOS fixtures and compile and link iPhoneOS components
         working-directory: pc-aot
         run: python3 scripts/check_classic_apple.py
+
+  classic-full-host:
+    if: ${{ inputs.classic_full_host }}
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      IPHONEOS_DEPLOYMENT_TARGET: '18.0'
+      JOBS: '2'
+      SKYRIM_IOS_CLASSIC_SKSE: '1'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Prepare the public renderer build tools
+        run: |
+          set -euo pipefail
+          df -h "$GITHUB_WORKSPACE"
+          brew install bison make cmake
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+      - name: Link Classic Lab and run the Metal, MOD and Classic UI checks
+        id: build
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/classic-full-host.log"
+          if ! bash pc-aot/scripts/build-title-host.sh >"$log" 2>&1; then
+            grep -Em 35 '^(FAILED|ERROR|FAIL:|CMake Error|fatal:)|: error:|FAILED:|failed;|Missing |Unexpected |mismatch' "$log" || true
+            tail -n 55 "$log"
+            df -h "$GITHUB_WORKSPACE"
+            exit 1
+          fi
+          grep -E '^(Verified the actual UIKit|METAL_SHADER_FIXTURE:|METAL_ARITHMETIC:|CLASSIC_APP:|MOD_ARCHIVE:)' "$log" || true
+          tail -n 8 "$log"
+      - name: Verify the unsigned application, source commit and public ABI headers
+        env:
+          HOST_ARTIFACTS: ${{ steps.build.outputs.classic_host_artifacts }}
+        run: python3 pc-aot/scripts/stage_classic_host_artifact.py "$HOST_ARTIFACTS" "$RUNNER_TEMP/classic-host" --commit "$GITHUB_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: classic-lab-unsigned-host-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/classic-host/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1

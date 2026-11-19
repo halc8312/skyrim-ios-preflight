@@ -65,6 +65,10 @@ PY
   run_validation() { "$@" || HOST_CHECK_STATUS=1; }
   run_validation python3 -m unittest discover -s tests -p 'test_build_title_guest.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_classic_*.py' -v
+  if [[ "$CLASSIC_SKSE" == 1 ]]; then
+    run_validation env -u SDKROOT python3 tests/classic-probe-ui/check_simulator.py \
+      --skydream "$ROOT/vendor/skydream" --output "$RUN/classic-probe-ui"
+  fi
   run_validation python3 -m unittest discover -s tests -p 'test_title_assembly.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_title_signing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_owned_data.py' -v
@@ -223,6 +227,19 @@ fi
 APP="$RUN/build/SkyrimIOS.app"
 test -s "$APP/SkyrimIOS"
 xcrun nm "$APP/SkyrimIOS" > "$RUN/app-symbols.txt"
+if [[ "$CLASSIC_SKSE" == 1 ]]; then
+  # The authored plugin has hidden entry points. Inspect the linked application including local definitions.
+  xcrun nm -a "$APP/SkyrimIOS" > "$RUN/classic-app-symbols.txt"
+  for symbol in _pc_guest_bind_classic_skse _skse_register_natives _skse_system_run \
+      _skyrim_classic_probe_controller _skyrim_classic_fixture_run \
+      _skyrim_serial_i386_query _skyrim_serial_i386_load _skyrim_serial_i386_revert \
+      _skyrim_serial_i386_save _skyrim_serial_i386_restore; do
+    grep -Eq " [Tt] ${symbol}$" "$RUN/classic-app-symbols.txt" || {
+      echo "Missing linked Classic app symbol: $symbol" >&2; exit 1;
+    }
+  done
+  echo 'CLASSIC_APP: verified 10 linked runtime, UIKit and translated plugin definitions.'
+fi
 if grep -q '_skyrim_gpu_' "$RUN/app-symbols.txt"; then
   echo 'Rejected lifecycle gate remains in the app; refusing package.' >&2; exit 1
 fi
@@ -263,4 +280,7 @@ if classic:
     result['classic_skse_experiment'] = True
 (out/'result.json').write_text(json.dumps(result,indent=2)+'\n')
 PY
+if [[ "$CLASSIC_SKSE" == 1 && -n "${GITHUB_OUTPUT:-}" ]]; then
+  printf 'classic_host_artifacts=%s\n' "$RUN/artifacts" >> "$GITHUB_OUTPUT"
+fi
 echo 'Public host built; local private-framework assembly and signing still required.'

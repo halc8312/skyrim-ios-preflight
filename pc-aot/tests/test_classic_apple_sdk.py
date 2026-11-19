@@ -71,13 +71,38 @@ class ClassicAppleChecks(unittest.TestCase):
             self.skipTest("published workspace workflow is absent from this standalone source copy")
         header, normal = path.read_text().split("  apple-sdk-preflight:\n")
         normal, classic = normal.split("  classic-skse-apple:\n")
+        classic, full = classic.split("  classic-full-host:\n")
         self.assertIn("type: boolean\n        default: false", header)
-        self.assertIn("if: ${{ !inputs.classic_skse }}", normal)
-        self.assertIn("if: ${{ inputs.classic_skse }}", classic)
+        self.assertIn("if: ${{ !inputs.classic_skse && !inputs.classic_full_host }}", normal)
+        self.assertIn("if: ${{ inputs.classic_skse && !inputs.classic_full_host }}", classic)
         self.assertIn("build-ios.sh unsigned", normal)
         self.assertIn("runs-on: macos-26", classic)
         self.assertIn("run: python3 scripts/check_classic_apple.py", classic)
         self.assertNotIn("upload-artifact", classic)
+        self.assertIn("if: ${{ inputs.classic_full_host }}", full)
+        self.assertIn("runs-on: macos-26", full)
+        self.assertIn("SKYRIM_IOS_CLASSIC_SKSE: '1'", full)
+        self.assertIn("bash pc-aot/scripts/build-title-host.sh", full)
+        self.assertIn("stage_classic_host_artifact.py", full)
+        self.assertIn("retention-days: 1\n", full)
+        self.assertNotIn("if: always()", full)
+        self.assertNotIn("actions/cache", full)
+
+    def test_full_host_runs_both_simulators_and_checks_linked_classic_entry_points_before_packaging(self):
+        recipe = (ROOT / "scripts/build-title-host.sh").read_text()
+        before_package, _ = recipe.split('ditto -c -k --keepParent "$APP"')
+        mod_checks, classic_checks = before_package.split('xcrun nm "$APP/SkyrimIOS"')
+        self.assertIn("scripts/check-mod-simulator.sh", mod_checks)
+        self.assertIn('if [[ "$CLASSIC_SKSE" == 1 ]]; then', classic_checks)
+        self.assertIn('if [[ "$CLASSIC_SKSE" == 1 ]]; then\n    run_validation env -u SDKROOT python3 '
+                      'tests/classic-probe-ui/check_simulator.py', mod_checks)
+        self.assertIn('--skydream "$ROOT/vendor/skydream"', mod_checks)
+        self.assertIn('xcrun nm -a "$APP/SkyrimIOS"', classic_checks)
+        for entry in ("skyrim_classic_probe_controller", "skyrim_classic_fixture_run", "skyrim_serial_i386_query",
+                      "skyrim_serial_i386_load", "skyrim_serial_i386_revert", "skyrim_serial_i386_save",
+                      "skyrim_serial_i386_restore", "pc_guest_bind_classic_skse", "skse_register_natives",
+                      "skse_system_run"):
+            self.assertIn(f"_{entry}", classic_checks)
 
 
 if __name__ == "__main__":
