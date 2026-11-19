@@ -15,7 +15,8 @@ typedef enum {
     SKSE_TRIAL_INVALID_INFO,
     SKSE_TRIAL_LOAD_FAULT,
     SKSE_TRIAL_LOAD_DECLINED,
-    SKSE_TRIAL_DETACH_FAULT
+    SKSE_TRIAL_DETACH_FAULT,
+    SKSE_TRIAL_MESSAGE_FAULT
 } SkseTrialStatus;
 
 typedef struct {
@@ -26,13 +27,14 @@ typedef struct {
 typedef struct {
     uint32_t uptime_ms;
     uint32_t guest_base; // Zero selects the preferred address in the PE file.
+    unsigned core_messages;
 } SkseTrialRuntime;
 
 typedef struct {
     SkseTrialStatus status;
     SksePeStatus image_status;
-    SkseX86Result attach, query, load, detach;
-    uint32_t info_version, plugin_version;
+    SkseX86Result attach, query, load, detach, message;
+    uint32_t info_version, plugin_version, messages_delivered, unavailable_interface;
     char name[128];
 } SkseTrialResult;
 
@@ -42,7 +44,8 @@ typedef struct {
 SkseTrialResult skse_plugin_trial(const uint8_t *file, size_t length, SkseTrialOptions options);
 
 /* Also interpret a PE entry point and the supported Win32/CRT imports.
- * Supply one uptime sample in milliseconds before the probe. */
+ * Supply one uptime sample in milliseconds before the probe. The optional
+ * core messages are the two data-free Classic startup notifications. */
 SkseTrialResult skse_plugin_trial_with_runtime(const uint8_t *file, size_t length,
                                                SkseTrialOptions options, SkseTrialRuntime runtime);
 #endif

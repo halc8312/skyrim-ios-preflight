@@ -10,7 +10,8 @@ typedef enum {
     SKSE_X86_MEMORY_FAULT,
     SKSE_X86_UNSUPPORTED_INSTRUCTION,
     SKSE_X86_INSTRUCTION_LIMIT,
-    SKSE_X86_BAD_CALL_RETURN
+    SKSE_X86_BAD_CALL_RETURN,
+    SKSE_X86_UNSUPPORTED_API
 } SkseX86Status;
 
 typedef enum { SKSE_X86_CDECL, SKSE_X86_STDCALL } SkseX86Convention;
@@ -21,10 +22,11 @@ typedef struct {
     size_t length;
 } SkseX86Scratch;
 
-enum { SKSE_X86_MAX_SERVICES = 8 };
+enum { SKSE_X86_MAX_SERVICES = 10, SKSE_CLASSIC_MESSAGING_ID = 5 };
 
 typedef enum {
-    SKSE_X86_SCALAR_RETURN, SKSE_X86_MEMCPY, SKSE_X86_MEMMOVE, SKSE_X86_MEMSET
+    SKSE_X86_SCALAR_RETURN, SKSE_X86_MEMCPY, SKSE_X86_MEMMOVE, SKSE_X86_MEMSET,
+    SKSE_X86_QUERY_CLASSIC, SKSE_X86_REGISTER_CORE_LISTENER, SKSE_X86_UNAVAILABLE
 } SkseX86ServiceKind;
 
 /* A service address is a guest token outside the image and scratch. The
@@ -35,8 +37,14 @@ typedef struct {
 } SkseX86Service;
 
 typedef struct {
+    uint32_t interface_address, owner_handle;
+    uint32_t listener, unavailable_id;
+} SkseX86CoreMessaging;
+
+typedef struct {
     const SkseX86Service *entries;
     size_t count;
+    SkseX86CoreMessaging *core_messaging;
 } SkseX86Services;
 
 typedef struct {

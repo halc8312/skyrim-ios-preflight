@@ -33,7 +33,7 @@ def compare_with_windows(compiler, linker, emulator, directory, variant, opt,
     reference = directory / "reference.exe"
     run(compiler, "--target=i686-pc-windows-msvc", "-fuse-ld=lld", "-std=c11",
         HERE / "test_native_windows.c", "-o", reference)
-    expected = run(reference, capture_output=True, text=True).stdout
+    expected = run(reference, *([mode] if mode else []), capture_output=True, text=True).stdout
     actual = run(emulator, dll, *([mode] if mode else []), capture_output=True, text=True).stdout
     if mode:
         moved = run(emulator, dll, mode, "move", capture_output=True, text=True).stdout
@@ -115,6 +115,24 @@ class PluginInterpreterTests(unittest.TestCase):
                                                             4, opt, imports=(module,), mode="memory")
                     self.assertEqual(actual, expected)
                     self.assertIn(",1,1,", actual)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows runs the native Classic callback reference")
+    def test_core_messaging_matches_windows_and_reports_missing_interfaces(self):
+        cc, linker = LLVM / "clang.exe", LLVM / "lld-link.exe"
+        if not cc.is_file() or not linker.is_file():
+            self.skipTest("Windows LLVM clang and lld-link required")
+        with tempfile.TemporaryDirectory(prefix="skse-import-messages-") as tmp:
+            root = Path(tmp)
+            emulator = root / "trial.exe"
+            compile_interpreter(cc, emulator, "test_interpreted.c",
+                                ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
+            for variant, witness in ((6, "messages,2,0,0"), (7, "messages,2,0,2"), (8, "messages,0,1,0")):
+                for opt in ("-O0", "-O2"):
+                    with self.subTest(variant=variant, optimization=opt):
+                        expected, actual = compare_with_windows(cc, linker, emulator, root / f"{variant}-{opt}",
+                                                                variant, opt, mode="messages")
+                        self.assertEqual(actual, expected)
+                        self.assertIn(witness, actual)
 
 if __name__ == "__main__":
     unittest.main()

@@ -74,7 +74,7 @@ int main(void) {
     assert(result.status == SKSE_X86_OK);
 
     const SkseX86Service service = {0x00300000, 0x1234, SKSE_X86_SCALAR_RETURN};
-    SkseX86Services services = {&service, 1};
+    SkseX86Services services = {.entries = &service, .count = 1};
     uint8_t calls_service[] = {0xb8, 0, 0, 0x30, 0, 0xff, 0xd0, 0xc3};
     result = run(calls_service, sizeof calls_service, 100, services);
     assert(result.status == SKSE_X86_OK && result.eax == 0x1234 && result.service_calls[0] == 1);
@@ -83,7 +83,7 @@ int main(void) {
     assert(result.status == SKSE_X86_MEMORY_FAULT && result.service_calls[0] == 0);
 
     const SkseX86Service aliases_code = {image_base, 0x1234, SKSE_X86_SCALAR_RETURN};
-    assert(run(calls_service, sizeof calls_service, 100, (SkseX86Services){&aliases_code, 1}).status ==
+    assert(run(calls_service, sizeof calls_service, 100, (SkseX86Services){.entries = &aliases_code, .count = 1}).status ==
            SKSE_X86_BAD_ARGUMENT);
     return 0;
 }

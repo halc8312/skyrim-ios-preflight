@@ -78,6 +78,29 @@ static void initialize_string_buffers(void) {
 }
 #endif
 
+#if FIXTURE_VARIANT >= 6
+static const FixtureMessaging *messenger;
+static volatile unsigned next_message;
+
+static void __cdecl wrong_handler(FixtureMessage *message) {
+    (void)message;
+    messenger->get_dispatcher(1000);
+}
+
+static void __cdecl observe_message(FixtureMessage *message) {
+    const char *sender = message->sender;
+    if (message->type != next_message || message->type >= 2 || message->length || message->data ||
+        !sender || sender[0] != 'S' || sender[1] != 'K' || sender[2] != 'S' || sender[3] != 'E' || sender[4]) {
+        wrong_handler(message);
+        return;
+    }
+    ++next_message;
+#if FIXTURE_VARIANT == 8
+    messenger->get_dispatcher(1);
+#endif
+}
+#endif
+
 _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (!api || !info) return 0;
     info->info_version = 1;
@@ -118,5 +141,20 @@ _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
         slab[41] != 0xa1 || slab[42] != 0x34 || slab[80] != 0) return 0;
 #endif
     if (api->get_release_index() != 48) return 0;
-    return api->get_plugin_handle() != 0xffffffffu;
+    unsigned handle = api->get_plugin_handle();
+    if (handle == 0xffffffffu) return 0;
+#if FIXTURE_VARIANT >= 6
+    if (!api->query_interface) return 0;
+#if FIXTURE_VARIANT == 7
+    if (api->query_interface(2)) return 0;
+#endif
+    messenger = api->query_interface(5);
+    if (!messenger || messenger->version < 2) return 0;
+    next_message = 0;
+    if (!messenger->register_listener(handle, NULL, wrong_handler) ||
+        messenger->register_listener(handle, "another plugin", wrong_handler) ||
+        !messenger->register_listener(handle, "sKsE", observe_message) ||
+        !messenger->register_listener(handle, "SKSE", wrong_handler)) return 0;
+#endif
+    return 1;
 }

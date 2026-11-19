@@ -15,8 +15,24 @@ typedef struct {
     uint32_t plugin_version;
 } FixtureInfo;
 
+typedef struct {
+    const char *sender;
+    uint32_t type, length;
+    void *data;
+} FixtureMessage;
+
+typedef void (__cdecl *FixtureMessageHandler)(FixtureMessage *);
+typedef struct {
+    uint32_t version;
+    _Bool (__cdecl *register_listener)(unsigned, const char *, FixtureMessageHandler);
+    _Bool (__cdecl *dispatch)(unsigned, unsigned, void *, unsigned, const char *);
+    void *(__cdecl *get_dispatcher)(unsigned);
+} FixtureMessaging;
+
 _Static_assert(sizeof(FixtureInterface) == 28, "Classic i386 interface layout");
 _Static_assert(sizeof(FixtureInfo) == 12, "Classic i386 plugin info layout");
+_Static_assert(sizeof(FixtureMessage) == 16, "Classic i386 message layout");
+_Static_assert(sizeof(FixtureMessaging) == 16, "Classic i386 messaging v2 layout");
 
 #ifdef BUILD_FIXTURE
 #define FIXTURE_EXPORT __declspec(dllexport)

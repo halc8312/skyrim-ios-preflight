@@ -264,15 +264,21 @@ static bool reserve_bulk(Vm *vm, uint64_t cost) {
     return true;
 }
 
-static void memory_service(Vm *vm, SkseX86ServiceKind kind) {
+static const uint8_t *service_parameters(Vm *vm, size_t size) {
     uint32_t stack = vm->registers[ESP];
-    if (!in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, stack, 12)) {
+    if (!in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, stack, size)) {
         fail(vm, SKSE_X86_MEMORY_FAULT);
-        return;
+        return NULL;
     }
-    uint32_t destination = read_memory(vm, stack, 4);
-    uint32_t source_or_value = read_memory(vm, stack + 4, 4);
-    uint32_t count = read_memory(vm, stack + 8, 4);
+    return vm->scratch.bytes + (stack - vm->scratch.base);
+}
+
+static void memory_service(Vm *vm, SkseX86ServiceKind kind) {
+    const uint8_t *parameters = service_parameters(vm, 12);
+    if (!parameters) return;
+    uint32_t destination = little_endian(parameters, 4);
+    uint32_t source_or_value = little_endian(parameters + 4, 4);
+    uint32_t count = little_endian(parameters + 8, 4);
     if (count != 0) {
         // Charge bulk operations as well as decoded instructions. A single
         // imported function call must not acquire an unbounded CPU budget.
@@ -351,13 +357,67 @@ static void string_memory(Vm *vm, bool moving, bool repeat, unsigned width) {
     if (repeat) vm->registers[ECX] = 0;
 }
 
+static bool is_core_sender(Vm *vm, uint32_t name) {
+    static const uint8_t expected[] = "skse";
+    if (!name || name > UINT32_MAX - 4) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if ((read_memory(vm, name + i, 1) | 0x20) != expected[i]) return false;
+    return read_memory(vm, name + 4, 1) == 0;
+}
+
+static uint32_t classic_service(Vm *vm, SkseX86ServiceKind kind) {
+    SkseX86CoreMessaging *core = vm->services.core_messaging;
+    if (kind == SKSE_X86_QUERY_CLASSIC) {
+        const uint8_t *argument = service_parameters(vm, 4);
+        if (!argument) return 0;
+        uint32_t id = little_endian(argument, 4);
+        if (id == SKSE_CLASSIC_MESSAGING_ID) return core->interface_address;
+        if (id && !core->unavailable_id) core->unavailable_id = id;
+        return 0;
+    }
+
+    const uint8_t *arguments = service_parameters(vm, 12);
+    if (!arguments) return 0;
+    const uint32_t handle = little_endian(arguments, 4), sender = little_endian(arguments + 4, 4);
+    const uint32_t callback = little_endian(arguments + 8, 4);
+    if (handle != core->owner_handle || !handle || handle == UINT32_MAX || !callback) return 0;
+    if (!sender) {
+        // Classic's wildcard selects other loaded plugins. The diagnostic
+        // has none and therefore adds no callback for the SKSE sender.
+        return 1;
+    }
+    if (!is_core_sender(vm, sender)) return 0;
+    if (core->listener) return 1;
+    if (!skse_pe_allows(vm->image, callback, 1, SKSE_PE_EXEC)) {
+        fail(vm, SKSE_X86_MEMORY_FAULT);
+        return 0;
+    }
+    core->listener = callback;
+    return 1;
+}
+
 static void invoke(Vm *vm, uint32_t address) {
     if (vm->result.status != SKSE_X86_OK) return;
     for (size_t i = 0; i < vm->services.count; ++i) {
         const SkseX86Service *service = &vm->services.entries[i];
         if (address == service->address) {
-            if (service->kind == SKSE_X86_SCALAR_RETURN) vm->registers[EAX] = service->value;
-            else memory_service(vm, service->kind);
+            switch (service->kind) {
+            case SKSE_X86_SCALAR_RETURN:
+                vm->registers[EAX] = service->value;
+                break;
+            case SKSE_X86_MEMCPY:
+            case SKSE_X86_MEMMOVE:
+            case SKSE_X86_MEMSET:
+                memory_service(vm, service->kind);
+                break;
+            case SKSE_X86_QUERY_CLASSIC:
+            case SKSE_X86_REGISTER_CORE_LISTENER:
+                vm->registers[EAX] = classic_service(vm, service->kind);
+                break;
+            case SKSE_X86_UNAVAILABLE:
+                fail(vm, SKSE_X86_UNSUPPORTED_API);
+                break;
+            }
             ++vm->result.service_calls[i];
             return;
         }
@@ -596,7 +656,11 @@ SkseX86Result skse_x86_call(SksePeImage *image, uint32_t entry,
         return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
-        if ((unsigned)services.entries[i].kind > SKSE_X86_MEMSET || !address ||
+        SkseX86ServiceKind kind = services.entries[i].kind;
+        if ((unsigned)kind > SKSE_X86_UNAVAILABLE || !address ||
+            ((kind == SKSE_X86_QUERY_CLASSIC || kind == SKSE_X86_REGISTER_CORE_LISTENER) &&
+             (!services.core_messaging ||
+              !in_range(scratch.base, scratch_end, services.core_messaging->interface_address, 16))) ||
             in_range(image->base, (uint64_t)image->base + image->size, address, 1) ||
             in_range(scratch.base, scratch_end, address, 1))
             return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
@@ -639,6 +703,7 @@ const char *skse_x86_status_text(SkseX86Status status) {
     case SKSE_X86_UNSUPPORTED_INSTRUCTION: return "The plugin needs an unsupported x86 instruction";
     case SKSE_X86_INSTRUCTION_LIMIT: return "The call exceeded its x86 execution budget";
     case SKSE_X86_BAD_CALL_RETURN: return "The call did not preserve its expected stack and registers";
+    case SKSE_X86_UNSUPPORTED_API: return "The plugin called a Windows or SKSE service unavailable in this test";
     }
     return "Unknown x86 result";
 }

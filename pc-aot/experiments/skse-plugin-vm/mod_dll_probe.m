@@ -26,6 +26,10 @@ static NSArray<NSString *> *ReportLines(BOOL japanese, SkseProbeFileStatus statu
     const SkseTrialResult *trial = &report->trial;
     switch (trial->status) {
     case SKSE_TRIAL_COMPLETED:
+        if (trial->unavailable_interface)
+            return @[Text(japanese, @"Initialization passed. The DLL also queried an unavailable SKSE interface.",
+                                    @"初期化は完了しました。DLLは未対応のSKSEインターフェイスも要求しました。"),
+                     [NSString stringWithFormat:@"SKSE interface %u", trial->unavailable_interface]];
         return @[Text(japanese, @"SKSE initialization passed in the test environment.",
                                 @"診断環境でSKSEの初期化が完了しました。"),
                  [NSString stringWithFormat:@"%s", trial->name]];
@@ -58,6 +62,7 @@ static NSArray<NSString *> *ReportLines(BOOL japanese, SkseProbeFileStatus statu
         if (trial->status == SKSE_TRIAL_ATTACH_FAULT) fault = &trial->attach;
         if (trial->status == SKSE_TRIAL_LOAD_FAULT) fault = &trial->load;
         if (trial->status == SKSE_TRIAL_DETACH_FAULT) fault = &trial->detach;
+        if (trial->status == SKSE_TRIAL_MESSAGE_FAULT) fault = &trial->message;
         return @[Text(japanese, @"The DLL encountered an unsupported operation during initialization.",
                                 @"このDLLは初期化中に未対応の処理に入りました。"),
                  [NSString stringWithUTF8String:skse_x86_status_text(fault->status)]];
