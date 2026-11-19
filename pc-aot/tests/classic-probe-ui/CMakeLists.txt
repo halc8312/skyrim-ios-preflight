@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.24)
+project(ClassicProbeUIFixture LANGUAGES C)
+set(root "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+include("${root}/experiments/classic-plugin/ios/ClassicPlugin.cmake")
+add_library(classic_probe_ui_core STATIC "${root}/ios/runtime-port/classic_cosave.c")
+skyrim_add_classic_plugin_probe(classic_probe_ui_core "${RUNTIME_HEADERS}")

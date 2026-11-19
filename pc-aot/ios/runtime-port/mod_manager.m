@@ -22,6 +22,9 @@
 #include "mod_analyze.h"
 #include "mod_optimize.h"
 #include "mod_install.h"
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+#include "classic_probe_ui.h"
+#endif
 #ifdef SKYRIM_HAVE_LIBARCHIVE
 #include "mod_libarchive.h"
 #endif
@@ -1121,7 +1124,12 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
     switch (s) {
     case HubMods: return self.rows.count ? (NSInteger)self.rows.count : 1;
     case HubAdd: return 3;
-    case HubTools: return 3;
+    case HubTools:
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        return 4;
+#else
+        return 3;
+#endif
     case HubOptimize: return 2;
     case HubShare: return 2;
     default: return 1;
@@ -1179,6 +1187,14 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
         break;
     }
     case HubTools:
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        if (p.row == 3) {
+            c.textLabel.text = T(@"Test DLL co-save", @"テストDLLの追加セーブ");
+            c.imageView.image = [UIImage systemImageNamed:@"doc.badge.gearshape"];
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            break;
+        }
+#endif
         c.textLabel.text = @[T(@"Plugin order", @"プラグインの並び"), T(@"Conflicts", @"競合"), T(@"Save check", @"セーブの確認")][p.row];
         c.imageView.image = [UIImage systemImageNamed:@[@"list.number", @"arrow.triangle.merge", @"checkmark.shield"][p.row]];
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
@@ -1333,6 +1349,12 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
         else [self.navigationController pushViewController:skyrim_mods_browser_controller() animated:YES];
         break;
     case HubTools:
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        if (p.row == 3) {
+            [self.navigationController pushViewController:skyrim_classic_probe_controller() animated:YES];
+            break;
+        }
+#endif
         if (p.row == 0) [self.navigationController pushViewController:skyrim_mobile_plugin_controller() animated:YES];
         else if (p.row == 1) [self.navigationController pushViewController:[[SKConflicts alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
         else [self.navigationController pushViewController:[[SKSaves alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];

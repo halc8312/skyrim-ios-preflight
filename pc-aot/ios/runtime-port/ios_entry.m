@@ -19,6 +19,9 @@
 #include "device_policy.h"
 #include "diagnostic_upload.h"
 #include "PcGuestABI.h"
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+#import "classic_probe_ui.h"
+#endif
 
 __attribute__((noreturn)) static void startup_failure(NSString *message) {
     NSLog(@"SkyrimIOS startup failed: %@", message);
@@ -137,6 +140,59 @@ static void verify_guest_input(NSURL *game) {
     skyrim_ios_stage("guest-input-sha256-verified");
 }
 
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+static BOOL classic_has_game_input(NSURL *game) {
+    NSString *path = [game URLByAppendingPathComponent:@"TESV_unpacked.exe"].path;
+    BOOL directory = NO;
+    NSFileManager *files = NSFileManager.defaultManager;
+    return [files fileExistsAtPath:path isDirectory:&directory] && !directory &&
+           [files isReadableFileAtPath:path];
+}
+
+/* SDL calls its entry on UIKit's main thread. On a fresh Lab installation
+ * allow the independent DLL test while the user prepares their game files. */
+static void classic_wait_for_game(NSURL *game) {
+    if (classic_has_game_input(game)) return;
+    UIApplication *app = UIApplication.sharedApplication;
+    UIWindow *previous = [app.delegate respondsToSelector:@selector(window)] ? app.delegate.window : nil;
+    UIWindowScene *scene = previous.windowScene;
+    for (UIScene *candidate in app.connectedScenes) {
+        if (scene) break;
+        if ([candidate isKindOfClass:UIWindowScene.class] &&
+            candidate.activationState != UISceneActivationStateUnattached)
+            scene = (UIWindowScene *)candidate;
+    }
+    UIWindow *window = scene ? [[UIWindow alloc] initWithWindowScene:scene] :
+        [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    UIViewController *controller = skyrim_classic_probe_controller();
+    controller.navigationItem.prompt = @"ゲームをコピーする前でも追加セーブのテストができます";
+    __block BOOL launchGame = NO;
+    __weak UIViewController *presenter = controller;
+    UIAction *launch = [UIAction actionWithTitle:@"ゲームを起動" image:nil identifier:nil handler:^(UIAction *action) {
+        (void)action;
+        if (classic_has_game_input(game)) {
+            launchGame = YES;
+            return;
+        }
+        UIAlertController *info = [UIAlertController alertControllerWithTitle:@"ゲームファイルの場所"
+            message:@"「ファイル」→「このiPhone内」→「SkyrimIOS Classic Lab」→「Skyrim」に、ご自身のTESV_unpacked.exeとDataフォルダをコピーしてください。コピー後に「ゲームを起動」を押せます。"
+            preferredStyle:UIAlertControllerStyleAlert];
+        [info addAction:[UIAlertAction actionWithTitle:@"閉じる" style:UIAlertActionStyleCancel handler:nil]];
+        [presenter presentViewController:info animated:YES completion:nil];
+    }];
+    controller.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithPrimaryAction:launch];
+    window.rootViewController = [[UINavigationController alloc] initWithRootViewController:controller];
+    [window makeKeyAndVisible];
+    while (!launchGame) {
+        @autoreleasepool {
+            [NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:NSDate.distantFuture];
+        }
+    }
+    window.hidden = YES;
+    if (previous && !previous.hidden) [previous makeKeyWindow];
+}
+#endif
+
 int SDL_main(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -146,6 +202,9 @@ int SDL_main(int argc, char **argv) {
         skyrim_ios_stage("sdl-application-entry");
         skyrim_device_platform_initialize();
         NSURL *game = directory(NSDocumentDirectory, @"Skyrim");
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        classic_wait_for_game(game);
+#endif
         NSURL *defaultProfile = directory(NSApplicationSupportDirectory, @"SkyrimIOS/Profile");
         NSURL *cache = directory(NSCachesDirectory, @"SkyrimIOS/DXVK");
         // MOD profiles: the default keeps the existing saves; others have their
