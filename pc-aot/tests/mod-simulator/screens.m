@@ -286,43 +286,59 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
          "This site can.t be reached|failed to connect to the server).*"];
     NSPredicate *interstitial = [NSPredicate predicateWithFormat:@"label MATCHES[c] %@",
         @".*(We value your privacy|Before you continue to Nexus Mods).*"];
-    XCUIElementQuery *signals = [[web descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:
-        [NSCompoundPredicate orPredicateWithSubpredicates:@[listing, challenge, siteError, interstitial]]];
+    XCUIElementQuery *document = [web descendantsMatchingType:XCUIElementTypeAny];
+    XCUIElementQuery *blockers = [document matchingPredicate:
+        [NSCompoundPredicate orPredicateWithSubpredicates:@[challenge, siteError, interstitial]]];
+    XCUIElementQuery *markers = [document matchingPredicate:listing];
+    CGRect screen = elementFrame(self.app), nav = elementFrame(bar);
+    XCTAssertFalse(CGRectIsNull(screen) || CGRectIsNull(nav), @"The browser has no finite onscreen viewport.");
+    CGFloat top = MAX(CGRectGetMinY(screen), CGRectGetMaxY(nav));
+    CGRect content = CGRectMake(CGRectGetMinX(screen), top, CGRectGetWidth(screen), CGRectGetMaxY(screen) - top);
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:60];
     NSString *result = @"unconfirmed", *detail = @"No visible listing marker.";
     NSUInteger scrolls = 0;
     do {
-        if (bar.buttons[@"nexus-live-network-error"].exists) {
+        BOOL officialURL = bar.buttons[@"nexus-live-listing-url"].exists;
+        if (!officialURL && bar.buttons[@"nexus-live-network-error"].exists) {
             result = @"network-error"; detail = @"WebKit reported a top-level URL loading error."; break;
         }
-        if (bar.buttons[@"nexus-live-navigation-error"].exists) {
+        if (!officialURL && bar.buttons[@"nexus-live-navigation-error"].exists) {
             result = @"navigation-error"; detail = @"WebKit reported a top-level navigation error."; break;
         }
-        BOOL officialURL = bar.buttons[@"nexus-live-listing-url"].exists;
         NSString *marker = nil;
         NSString *blocker = [challenge evaluateWithObject:web] ? @"challenge" : nil;
         BOOL listingBelow = NO;
-        CGFloat top = MAX(CGRectGetMinY(web.frame), CGRectGetMaxY(bar.frame));
-        CGFloat bottom = MIN(CGRectGetMaxY(web.frame), CGRectGetMaxY(self.app.frame));
-        for (XCUIElement *element in signals.allElementsBoundByIndex) {
-            XCUIElementType type = element.elementType;
-            if (type == XCUIElementTypeWebView && [challenge evaluateWithObject:element]) {
-                blocker = @"challenge"; break;
+        CGRect viewport = CGRectIntersection(content, elementFrame(web));
+        // Check overlays before looking for listing text. A genuine heading
+        // may be AX Other with no activation point. Read its frame and label
+        // from the same snapshot, and stop querying as soon as it is visible.
+        for (XCUIElementQuery *group in @[blockers, markers]) {
+            BOOL lookingForListing = group == markers;
+            if (blocker || CGRectIsEmpty(viewport) || (lookingForListing && !officialURL)) break;
+            for (XCUIElement *element in group.allElementsBoundByIndex) {
+                NSError *error = nil;
+                id<XCUIElementSnapshot> match = [element snapshotWithError:&error];
+                if (!match) continue;
+                if (lookingForListing && ![listing evaluateWithObject:match]) continue;
+                XCUIElementType type = match.elementType;
+                if (!lookingForListing && type == XCUIElementTypeWebView && [challenge evaluateWithObject:match]) {
+                    blocker = @"challenge"; break;
+                }
+                if (type != XCUIElementTypeStaticText && type != XCUIElementTypeLink &&
+                    type != XCUIElementTypeButton && type != XCUIElementTypeOther) continue;
+                CGRect frame = match.frame;
+                if (CGRectIsEmpty(frame) || CGRectIsInfinite(frame) || !isfinite(frame.origin.x) ||
+                    !isfinite(frame.origin.y) || !isfinite(frame.size.width) || !isfinite(frame.size.height) ||
+                    (lookingForListing && type == XCUIElementTypeOther &&
+                     CGRectGetHeight(frame) > CGRectGetHeight(viewport) / 2)) continue;
+                if (lookingForListing && CGRectGetMinY(frame) >= CGRectGetMaxY(viewport)) listingBelow = YES;
+                CGRect visible = CGRectIntersection(viewport, frame);
+                if (CGRectIsEmpty(visible) || CGRectGetWidth(visible) < 2 || CGRectGetHeight(visible) < 2) continue;
+                if (lookingForListing) marker = match.label;
+                else blocker = [challenge evaluateWithObject:match] ? @"challenge" :
+                               [siteError evaluateWithObject:match] ? @"site-error" : @"interstitial";
+                break;
             }
-            if (type != XCUIElementTypeStaticText && type != XCUIElementTypeLink &&
-                type != XCUIElementTypeButton && type != XCUIElementTypeOther) continue;
-            CGRect frame = elementFrame(element);
-            if (CGRectIsNull(frame) || CGRectGetWidth(frame) < 2 || CGRectGetHeight(frame) < 2 ||
-                (type == XCUIElementTypeOther && CGRectGetHeight(frame) > (bottom - top) / 2)) continue;
-            if (CGRectGetMinY(frame) >= bottom) {
-                if ([listing evaluateWithObject:element]) listingBelow = YES;
-                continue;
-            }
-            if (CGRectGetMaxY(frame) <= top || !element.hittable) continue;
-            if ([listing evaluateWithObject:element]) { marker = element.label; continue; }
-            blocker = [challenge evaluateWithObject:element] ? @"challenge" :
-                      [siteError evaluateWithObject:element] ? @"site-error" : @"interstitial";
-            break;
         }
         if (blocker) {
             result = blocker; detail = @"The website displayed an interstitial or error.";
@@ -330,7 +346,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
             [self recordNexusResult:@"listing" detail:[@"Visible on the committed Skyrim listing URL: " stringByAppendingString:marker]];
             return;
         } else {
-            result = bar.buttons[@"nexus-live-other-url"].exists ? @"other-url" : @"unconfirmed";
+            result = !officialURL && bar.buttons[@"nexus-live-other-url"].exists ? @"other-url" : @"unconfirmed";
             detail = officialURL ? @"The Skyrim listing URL committed, but no listing content was visible." :
                                    @"No visible listing on a committed Skyrim listing URL.";
             // Reveal text already present in the document when its landmark
