@@ -7,6 +7,13 @@
 #import <objc/runtime.h>
 #include "mobile_ui.h"
 #include "mod_manager.h"
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+#include "PcGuestSkseTrial.h"
+
+// The fixture has no paired game framework or SkyUI plugin. Enabling the
+// setting in UIKit may persist, but starting the runtime in this mode cannot.
+int pc_guest_select_classic_skse(int enabled) { return enabled ? -1 : 0; }
+#endif
 
 static NSURL *directory(NSSearchPathDirectory kind) {
     return [NSFileManager.defaultManager URLsForDirectory:kind inDomains:NSUserDomainMask].firstObject;

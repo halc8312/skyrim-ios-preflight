@@ -5,6 +5,11 @@ umask 077
 [[ "$(uname -s)" == Darwin ]] || { echo 'Apple iPhoneOS SDK required' >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+CLASSIC_SKSE="${SKYRIM_IOS_CLASSIC_SKSE-0}"
+case "$CLASSIC_SKSE" in
+  0|1) ;;
+  *) echo 'SKYRIM_IOS_CLASSIC_SKSE must be 0 or 1' >&2; exit 2 ;;
+esac
 python3 scripts/check-public-tree.py
 mkdir -p local/title-host
 RUN="$(mktemp -d "$ROOT/local/title-host/run-XXXXXX")"
@@ -60,6 +65,10 @@ PY
   run_validation() { "$@" || HOST_CHECK_STATUS=1; }
   run_validation python3 -m unittest discover -s tests -p 'test_build_title_guest.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_title_assembly.py' -v
+  if [[ "$CLASSIC_SKSE" == 1 ]]; then
+    run_validation env SKYRIM_SKYDREAM_SOURCE="$ROOT/vendor/skydream" SKYDREAM_SOURCE_DIR="$ROOT/vendor/skydream" \
+      python3 -m unittest discover -s tests -p 'test_classic_*.py' -v
+  fi
   run_validation python3 -m unittest discover -s tests -p 'test_title_signing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_owned_data.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_ordered_stores.py' -v
@@ -170,6 +179,7 @@ cmake -S ios/runtime-port -B "$RUN/build" -G 'Unix Makefiles' \
   -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=18.0 -DCMAKE_BUILD_TYPE=Release \
   -DSKYRIM_IOS_BUILD_APP=ON -DSKYRIM_IOS_BUNDLE_IDENTIFIER=org.skyrimios.pc2011 \
+  "-DSKYRIM_IOS_CLASSIC_SKSE=$CLASSIC_SKSE" \
   "-DSKYDREAM_SOURCE_DIR=$RUN/source" \
   "-DSKYRIM_IOS_RUNTIME_OVERLAY_DIR=$RUN/overlay/runtime" \
   "-DSKYRIM_IOS_BINDING_SOURCES=$ROOT/ios/private-abi/pc_guest_host.c" \
@@ -225,6 +235,16 @@ fi
 APP="$RUN/build/SkyrimIOS.app"
 test -s "$APP/SkyrimIOS"
 xcrun nm "$APP/SkyrimIOS" > "$RUN/app-symbols.txt"
+if [[ "$CLASSIC_SKSE" == 1 ]]; then
+  for symbol in _pc_guest_bind_classic_skse _pc_guest_select_classic_skse _skse_register_natives _skse_system_run; do
+    grep -Eq " [Tt] ${symbol}$" "$RUN/app-symbols.txt" || { echo "Missing Classic runtime symbol $symbol" >&2; exit 1; }
+  done
+elif grep -Eq ' [Tt] (_pc_guest_bind_classic_skse|_skse_register_natives)$' "$RUN/app-symbols.txt"; then
+  echo 'A Classic runtime entry point is present in a host built without the feature.' >&2; exit 1
+fi
+if grep -Eq ' [Tt] (_skyrim_classic_probe_controller|_skyrim_classic_fixture_run|_skyrim_serial_i386_.*)$' "$RUN/app-symbols.txt"; then
+  echo 'Unexpected lab fixture in the standard application.' >&2; exit 1
+fi
 if grep -q '_skyrim_gpu_' "$RUN/app-symbols.txt"; then
   echo 'Rejected lifecycle gate remains in the app; refusing package.' >&2; exit 1
 fi
@@ -235,17 +255,30 @@ xcrun otool -L "$APP/SkyrimIOS" > "$RUN/artifacts/linked-libraries.txt"
 cp "$RUN/overlay/runtime/x86.h" "$RUN/artifacts/x86.h"
 cp "$RUN/overlay/runtime/rt_table.h" "$RUN/artifacts/rt_table.h"
 cp ios/private-abi/PcGuestABI.h "$RUN/artifacts/"
+if [[ "$CLASSIC_SKSE" == 1 ]]; then
+  cp ios/private-abi/PcGuestSkseABI.h "$RUN/artifacts/"
+fi
 ditto -c -k --keepParent "$APP" "$RUN/artifacts/SkyrimIOS-public-host.zip"
-python3 - "$RUN/artifacts" <<'PY'
+python3 - "$RUN/artifacts" "$APP/Info.plist" "$CLASSIC_SKSE" <<'PY'
 from pathlib import Path
-import hashlib, json, os, sys
+import hashlib, json, os, plistlib, sys
 out=Path(sys.argv[1]); app=out/'SkyrimIOS-public-host.zip'
-(out/'result.json').write_text(json.dumps({
+info = plistlib.loads(Path(sys.argv[2]).read_bytes())
+classic = sys.argv[3] == '1'
+if info.get('CFBundleIdentifier') != 'org.skyrimios.pc2011' or info.get('CFBundleDisplayName') != 'SkyrimIOS':
+    raise SystemExit('Unexpected standard iPhone product identity')
+if ((classic and info.get('PcGuestClassicSkseExperiment') is not True)
+        or (not classic and 'PcGuestClassicSkseExperiment' in info)):
+    raise SystemExit('The app does not match the selected Classic guest ABI')
+result = {
  'schema':1,'source_commit':os.environ.get('GITHUB_SHA') or os.environ.get('CM_COMMIT'),
  'artifact_sha256':hashlib.sha256(app.read_bytes()).hexdigest(),
  'target':'arm64-apple-ios','public_host_sdk_build':True,
  'private_guest_included':False,'game_executed':False,
  'physical_iphone_verified':False,'signed_for_installation':False
-},indent=2)+'\n')
+}
+if classic:
+    result['classic_skse_experiment'] = True
+(out/'result.json').write_text(json.dumps(result,indent=2)+'\n')
 PY
 echo 'Public host built; local private-framework assembly and signing still required.'

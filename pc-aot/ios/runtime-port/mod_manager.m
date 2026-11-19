@@ -18,6 +18,9 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include "mod_manager.h"
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+#include "PcGuestSkseTrial.h"
+#endif
 #include "mod_archive.h"
 #include "mod_deploy.h"
 #include "mod_plugins.h"
@@ -74,8 +77,8 @@ static NSString *activeProfile;             /* this launch */
 static NSString *launchNotice;
 static BOOL launchWithoutMods, healthyMarked;
 static NSArray<NSDictionary *> *launchPlugins;
-static NSDictionary *launchSetup;
-static BOOL launchHasPackages;
+static NSMutableDictionary *launchSetup;
+static BOOL launchHasPackages, launchPluginListFailed;
 
 static id MutableJSON(NSData *data) {
     if (!data) return nil;
@@ -85,7 +88,7 @@ static BOOL WriteJSON(id object, NSString *path) {
     NSData *data = [NSJSONSerialization dataWithJSONObject:object options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:NULL];
     return data && [data writeToFile:path options:NSDataWritingAtomic error:NULL];
 }
-static void SaveState(void) { if (state) WriteJSON(state, StatePath()); }
+static BOOL SaveState(void) { return state && WriteJSON(state, StatePath()); }
 static NSMutableArray<NSMutableDictionary *> *Profiles(void) { return state[@"profiles"]; }
 static NSMutableDictionary *ProfileById(NSString *pid) {
     for (NSMutableDictionary *p in Profiles()) if ([p[@"id"] isEqual:pid]) return p;
@@ -216,7 +219,38 @@ static BOOL AnyOn(NSArray *rows) {
     return NO;
 }
 
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+static BOOL SkyUITrialSelected(NSDictionary *profile) {
+    return [profile[@"skyuiTrial"] isEqual:@YES];
+}
+
+BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed) {
+    BOOL requested = SkyUITrialSelected(RunningProfile());
+    BOOL enabled = requested && !launchWithoutMods && !launchPluginListFailed && skyui_listed;
+    if (pc_guest_select_classic_skse(enabled) != 0) return NO;
+    if (enabled) launchSetup[@"skyuiTrial"] = @YES;
+    if (requested && !enabled && !launchNotice) {
+        launchNotice = launchPluginListFailed
+            ? T(@"SkyUI is off for this launch because the active plugin list could not be verified.",
+                @"起動時のプラグイン一覧を確認できなかったため、今回のSkyUI試験はオフです。")
+            : T(@"SkyUI trial is off for this session. Enable SkyUI.esp in this profile and restart.",
+                @"今回はSkyUI試験が無効です。このプロファイルでSkyUI.espを有効にして、起動し直してください。");
+    }
+    fprintf(stderr, "IOS_CLASSIC_SKYUI requested=%d enabled=%d\n", (int)requested, (int)enabled);
+    return YES;
+}
+#endif
+
 /* ---- startup ----------------------------------------------------------- */
+static void RestoreLastGoodSetup(NSMutableDictionary *profile) {
+    NSDictionary *lastGood = profile[@"lastGood"];
+    profile[@"packages"] = [lastGood[@"packages"] mutableCopy];
+    profile[@"plugins"] = [lastGood[@"plugins"] mutableCopy];
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    profile[@"skyuiTrial"] = SkyUITrialSelected(lastGood) ? @YES : nil;
+#endif
+}
+
 static NSInteger AskBeforeLaunch(NSString *title, NSString *message, NSArray<NSString *> *choices) {
     UIWindow *window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes)
@@ -257,8 +291,7 @@ NSString *skyrim_mods_select_profile(NSString *defaultProfile) {
             launchWithoutMods = YES;
             launchNotice = T(@"Started without MODs. Avoid saving over a modded save.", @"MODなしで起動しました。MODを使ったセーブへの上書き保存は避けてください。");
         } else if (canRevert && answer == 1) {
-            profile[@"packages"] = [profile[@"lastGood"][@"packages"] mutableCopy];
-            profile[@"plugins"] = [profile[@"lastGood"][@"plugins"] mutableCopy];
+            RestoreLastGoodSetup(profile);
             launchPlugins = EffectivePlugins(profile);
             SaveState();
             launchNotice = T(@"Restored the last MOD setup that started.", @"前回正常に起動したMOD構成に戻しました。");
@@ -290,6 +323,7 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
     NSMutableDictionary *profile = RunningProfile();
     NSArray *ids = launchWithoutMods ? @[] : EnabledPackageIds(profile);
     launchHasPackages = ids.count > 0;
+    launchPluginListFailed = NO;
     if (launchWithoutMods) launchPlugins = @[];
     if (!ids.count && !AnyOn(launchPlugins)) {
         /* Consume a previous MOD run once. A fresh/vanilla launch creates
@@ -301,8 +335,8 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
     }
     /* Changes made in Settings during this session apply to the next
      * launch. Retain an independent copy of what actually started. */
-    launchSetup = @{@"packages":[[NSArray alloc] initWithArray:profile[@"packages"] copyItems:YES],
-                    @"plugins":[[NSArray alloc] initWithArray:profile[@"plugins"] copyItems:YES]};
+    launchSetup = [@{@"packages":[[NSArray alloc] initWithArray:profile[@"packages"] copyItems:YES],
+                     @"plugins":[[NSArray alloc] initWithArray:profile[@"plugins"] copyItems:YES]} mutableCopy];
     if (!WriteJSON(@{@"profile":profile[@"id"], @"hadMods":@YES, @"healthy":@NO, @"backgrounded":@NO,
                      @"started":@(NSDate.date.timeIntervalSince1970)}, LaunchPath())) {
         launchWithoutMods = YES; launchHasPackages = NO; launchPlugins = @[]; launchSetup = nil;
@@ -351,6 +385,7 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
 NSString *skyrim_mods_launch_notice(void) { return launchNotice; }
 BOOL skyrim_mods_manages_plugins(void) { return !launchWithoutMods && AnyOn(launchPlugins); }
 NSArray<NSDictionary *> *skyrim_mods_launch_plugin_choices(void) { return launchWithoutMods ? @[] : launchPlugins; }
+void skyrim_mods_plugin_list_failed(void) { launchPluginListFailed = YES; }
 void skyrim_mods_no_plugin_loaded(void) {
     if (launchHasPackages || !launchSetup) return;
     launchSetup = nil;
@@ -374,7 +409,7 @@ void skyrim_mods_frame(uint64_t frames) {
     healthyMarked = YES;
     NSMutableDictionary *l = MutableJSON([NSData dataWithContentsOfFile:LaunchPath()]);
     if ([l isKindOfClass:NSMutableDictionary.class]) { l[@"healthy"] = @YES; WriteJSON(l, LaunchPath()); }
-    if (launchWithoutMods || !state) return;
+    if (launchWithoutMods || launchPluginListFailed || !state) return;
     NSMutableDictionary *p = RunningProfile();
     p[@"lastGood"] = launchSetup;
     SaveState();
@@ -1138,6 +1173,9 @@ static NSArray<NSString *> *ReportLines(NSDictionary *package) {
 @property(nonatomic) BOOL pickingFolder, pickingList;
 @end
 enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, HubCount };
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+enum { HubSkyUITrialRow = 3 };
+#endif
 @implementation SKModHub
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title = @"MOD";
@@ -1193,7 +1231,12 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
     switch (s) {
     case HubMods: return self.rows.count ? (NSInteger)self.rows.count : 1;
     case HubAdd: return 3;
-    case HubTools: return 3;
+    case HubTools:
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        return HubSkyUITrialRow + 1;
+#else
+        return 3;
+#endif
     case HubOptimize: return 2;
     case HubShare: return 2;
     default: return 1;
@@ -1246,6 +1289,18 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
         break;
     }
     case HubTools:
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        if (p.row == HubSkyUITrialRow) {
+            c.textLabel.text = T(@"SkyUI 5.1 trial", @"SkyUI 5.1 の試験");
+            c.detailTextLabel.text = T(@"Enable SkyUI.esp in this profile, then restart.", @"このプロファイルでSkyUI.espを有効にし、アプリを起動し直してください。");
+            UISwitch *toggle = [UISwitch new]; toggle.on = SkyUITrialSelected(SelectedProfile());
+            toggle.accessibilityLabel = c.textLabel.text;
+            toggle.accessibilityIdentifier = @"mod-skyui-trial";
+            [toggle addTarget:self action:@selector(skyuiTrialToggled:) forControlEvents:UIControlEventValueChanged];
+            c.accessoryView = toggle; c.selectionStyle = UITableViewCellSelectionStyleNone;
+            break;
+        }
+#endif
         c.textLabel.text = @[T(@"Plugin order", @"プラグインの並び"), T(@"Conflicts", @"競合"), T(@"Save check", @"セーブの確認")][p.row];
         c.imageView.image = [UIImage systemImageNamed:@[@"list.number", @"arrow.triangle.merge", @"checkmark.shield"][p.row]];
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
@@ -1306,6 +1361,20 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
     [self presentViewController:sheet animated:YES completion:nil];
 }
 - (void)safeToggled:(UISwitch *)toggle { state[@"safeNext"] = @(toggle.on); [self changed:nil]; }
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+- (void)skyuiTrialToggled:(UISwitch *)toggle {
+    NSMutableDictionary *profile = SelectedProfile();
+    BOOL previous = SkyUITrialSelected(profile);
+    profile[@"skyuiTrial"] = toggle.on ? @YES : nil;
+    if (!SaveState()) {
+        profile[@"skyuiTrial"] = previous ? @YES : nil;
+        toggle.on = previous;
+        skyrim_mobile_show_notice(T(@"Could not save the SkyUI trial setting.", @"SkyUI試験の設定を保存できませんでした。"));
+        return;
+    }
+    skyrim_mobile_show_notice(T(@"SkyUI trial setting saved for the next launch.", @"SkyUI試験の設定を保存しました。次回起動から反映します。"));
+}
+#endif
 - (BOOL)tableView:(UITableView *)t canEditRowAtIndexPath:(NSIndexPath *)p { (void)t; return p.section == HubMods && self.rows.count; }
 - (BOOL)tableView:(UITableView *)t canMoveRowAtIndexPath:(NSIndexPath *)p { (void)t; return p.section == HubMods && self.rows.count > 1; }
 - (NSIndexPath *)tableView:(UITableView *)t targetIndexPathForMoveFromRowAtIndexPath:(NSIndexPath *)from toProposedIndexPath:(NSIndexPath *)to {
@@ -1402,6 +1471,9 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
         else [self.navigationController pushViewController:skyrim_mods_browser_controller() animated:YES];
         break;
     case HubTools:
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        if (p.row == HubSkyUITrialRow) break;
+#endif
         if (p.row == 0) [self.navigationController pushViewController:skyrim_mobile_plugin_controller() animated:YES];
         else if (p.row == 1) [self.navigationController pushViewController:[[SKConflicts alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
         else [self.navigationController pushViewController:[[SKSaves alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];

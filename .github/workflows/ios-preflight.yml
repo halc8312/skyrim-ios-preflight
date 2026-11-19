@@ -7,13 +7,17 @@ on:
         description: Build the unsigned standard iPhone app and run the MOD simulator tests
         type: boolean
         default: false
+      classic_trial:
+        description: Include the per-profile SkyUI 5.1 trial in the unsigned standard iPhone app
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   apple-sdk-preflight:
-    if: ${{ !inputs.full_title_host }}
+    if: ${{ !inputs.full_title_host && !inputs.classic_trial }}
     runs-on: macos-26
     timeout-minutes: 25
     env:
@@ -60,12 +64,13 @@ jobs:
           retention-days: 7
 
   standard-title-host:
-    if: ${{ inputs.full_title_host }}
+    if: ${{ inputs.full_title_host || inputs.classic_trial }}
     runs-on: macos-26
     timeout-minutes: 120
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       IPHONEOS_DEPLOYMENT_TARGET: '18.0'
+      SKYRIM_IOS_CLASSIC_SKSE: ${{ inputs.classic_trial && '1' || '0' }}
       JOBS: '2'
       HOMEBREW_NO_AUTO_UPDATE: '1'
     steps:
@@ -82,8 +87,12 @@ jobs:
           sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
           xcrun --sdk iphoneos swiftc -sdk "$sdk" -target arm64-apple-ios18.0 -swift-version 6 \
             -strict-concurrency=complete -warnings-as-errors -parse-as-library -typecheck mod_translate.swift
+          defs=()
+          if [[ "$SKYRIM_IOS_CLASSIC_SKSE" == 1 ]]; then
+            defs=(-DSKYRIM_IOS_CLASSIC_SKSE=1 -I../private-abi)
+          fi
           xcrun --sdk iphoneos clang -isysroot "$sdk" -target arm64-apple-ios18.0 -fobjc-arc -fmodules \
-            -fsyntax-only mod_manager.m mod_fomod.m
+            "${defs[@]}" -fsyntax-only mod_manager.m mod_fomod.m
       - name: Prepare the public build tools
         run: |
           set -euo pipefail

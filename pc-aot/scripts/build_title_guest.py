@@ -146,6 +146,8 @@ def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("stage",type=Path)
     p.add_argument("--jobs",type=int,choices=[1,2],default=2)
+    p.add_argument("--classic-skse", action="store_true",
+                   help="Build the opt-in experimental Classic VM/menu guest in its own directory")
     p.add_argument("--llvm-bin",type=Path,help="Windows LLVM bin directory; defaults to SKYRIM_LLVM_BIN, PATH, or Program Files/LLVM/bin")
     p.add_argument("--darwin-headers",type=Path,help="Windows public any-darwin-any include directory; alternatively set SKYRIM_DARWIN_HEADERS")
     a=p.parse_args(argv)
@@ -157,6 +159,9 @@ def main(argv=None):
     state=json.loads((stage/"generation.json").read_text())
     if not state.get("generation_finished") or not state.get("inputs_unchanged") or state.get("fixed_native_replacements"):
         raise ValueError("Completed original-body generation required")
+    if a.classic_skse:
+        from classic_skse_guest import prepare_sources, validate_generation
+        validate_generation(state)
     inputs={key:state.get(key) for key in ("candidate_sha256","discovery_sha256")}
     if any(not isinstance(value,str) or not re.fullmatch(r"[0-9a-f]{64}",value) for value in inputs.values()):
         raise ValueError("Generation must bind exact candidate_sha256 and discovery_sha256")
@@ -167,7 +172,7 @@ def main(argv=None):
         tool=toolchain(a.llvm_bin,a.darwin_headers)
     except (ValueError,OSError,subprocess.SubprocessError) as error:
         p.error(str(error))
-    build=stage/"arm64-ios"
+    build=stage/("arm64-ios-classic-skse" if a.classic_skse else "arm64-ios")
     objects=build/"objects"
     logs=build/"logs"
     objects.mkdir(parents=True,exist_ok=True)
@@ -177,10 +182,18 @@ def main(argv=None):
         if digest(runtime/name)!=expected:
             raise ValueError("Generated-code ABI header changed: "+name)
     flags=[*tool["compile_flags"],"-I",str(runtime),"-I",str(stage/"gen"),"-I",str(ABI)]
+    declarations_hash = None
+    if a.classic_skse:
+        declarations_hash = digest(stage/"gen/funcs_exe.h")
+        generated_sources=prepare_sources(generated_sources, build/"classic-sources")
     sources=generated_sources+[ABI/"pc_guest_library.c"]
     contract={"compiler":output([tool["clang"],"--version"]),"toolchain":tool["identity"],
               "inputs":inputs,"source_commit":state["source_commit"],
               "flags":flags,"headers":state["source_headers_sha256"],"abi_header_sha256":digest(ABI/"PcGuestABI.h")}
+    if a.classic_skse:
+        sources.append(ABI/"pc_guest_skse_library.c")
+        contract.update(classic_skse_experiment=True,
+                        classic_abi_header_sha256=digest(ABI/"PcGuestSkseABI.h"))
     contract_file=build/"compile-contract.json"
     if contract_file.exists() and json.loads(contract_file.read_text())!=contract:
         raise ValueError("Compilation settings changed; preserve the old stage")
@@ -191,12 +204,17 @@ def main(argv=None):
         source_hash=digest(source)
         if obj.is_file() and stamp.is_file():
             old=json.loads(stamp.read_text())
-            if old.get("source_sha256")==source_hash and old.get("object_sha256")==digest(obj):
+            if (old.get("source_sha256")==source_hash and old.get("object_sha256")==digest(obj)
+                    and (not a.classic_skse or old.get("generated_declarations_sha256")==declarations_hash)):
                 return source.name,True
         started=time.monotonic()
-        command([tool["clang"],*flags,"-c",source,"-o",obj],logs/(source.stem+".log"))
-        stamp.write_text(json.dumps({"source_sha256":source_hash,"object_sha256":digest(obj),
-                                    "seconds":round(time.monotonic()-started,2)})+"\n")
+        options = [*flags, "-DSKYRIM_IOS_CLASSIC_SKSE=1"] if a.classic_skse and source.parent == ABI else flags
+        command([tool["clang"],*options,"-c",source,"-o",obj],logs/(source.stem+".log"))
+        evidence = {"source_sha256":source_hash, "object_sha256":digest(obj),
+                    "seconds":round(time.monotonic()-started,2)}
+        if a.classic_skse:
+            evidence["generated_declarations_sha256"] = declarations_hash
+        stamp.write_text(json.dumps(evidence)+"\n")
         return source.name,False
     print(f"Compiling {len(sources)} private translation units, jobs={a.jobs}",flush=True)
     with ThreadPoolExecutor(max_workers=a.jobs) as pool:
@@ -221,12 +239,15 @@ def main(argv=None):
     framework.mkdir(exist_ok=True)
     binary=framework/"SkyrimGuest"
     exports=build/"exports.txt"
-    exports.write_text("_skyrim_guest_api_v1\n")
+    exports.write_text("_skyrim_guest_classic_api_v1\n_skyrim_guest_bind_classic_v1\n"
+                       if a.classic_skse else "_skyrim_guest_api_v1\n")
     command(link_command(tool,build,response,exports,binary,imports),logs/"link.log",timeout=600)
     info={"CFBundleDevelopmentRegion":"en","CFBundleExecutable":"SkyrimGuest",
           "CFBundleIdentifier":"org.skyrimios.pcguest","CFBundleInfoDictionaryVersion":"6.0",
           "CFBundleName":"SkyrimGuest","CFBundlePackageType":"FMWK",
           "CFBundleShortVersionString":"0.1.0","CFBundleVersion":"1","MinimumOSVersion":"18.0"}
+    if a.classic_skse:
+        info["PcGuestClassicSkseExperiment"] = True
     (framework/"Info.plist").write_bytes(plistlib.dumps(info))
     result={"schema":1,"framework":str(framework),"bytes":binary.stat().st_size,
             "sha256":digest(binary),"translation_units":len(sources),"target":"arm64-apple-ios18.0",
@@ -235,6 +256,8 @@ def main(argv=None):
             "public_headers_only":not tool["official_apple_sdk_used"],
             "official_apple_sdk_used":tool["official_apple_sdk_used"],"signed":False,
             "game_executed":False,"physical_iphone_verified":False}
+    if a.classic_skse:
+        result["classic_skse_experiment"] = True
     (build/"result.json").write_text(json.dumps(result,indent=2)+"\n")
     print(json.dumps(result),flush=True)
 

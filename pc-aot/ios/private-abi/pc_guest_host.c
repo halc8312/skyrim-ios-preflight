@@ -1,5 +1,11 @@
 /* Public iOS runtime: bind a locally assembled, signed original-body guest. */
 #include "PcGuestABI.h"
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+#include "PcGuestSkseABI.h"
+#define PC_GUEST_BASE_SYMBOL PC_GUEST_SKSE_API_SYMBOL
+#else
+#define PC_GUEST_BASE_SYMBOL "skyrim_guest_api_v1"
+#endif
 #include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,6 +15,15 @@ const unsigned g_nmodules = 1;
 const char *const g_dll_modules[] = {NULL};
 const uint32_t g_dll_bases[] = {0};
 static void *library;
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+static int reject_guest(int result) {
+    dlclose(library);
+    library = NULL;
+    return result;
+}
+#else
+#define reject_guest(result) (result)
+#endif
 static const PcGuestAPI *guest;
 static int memory_bound;
 static const uint32_t expected_layout[] = PC_GUEST_LAYOUT_INITIALIZER;
@@ -21,18 +36,21 @@ int pc_guest_open(const char *path) {
     if (library || !path) return -1;
     library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!library) { fprintf(stderr, "PRIVATE_GUEST dlopen failed: %s\n", dlerror()); return -2; }
-    PcGuestGetAPI get = (PcGuestGetAPI)dlsym(library, "skyrim_guest_api_v1");
-    if (!get) { fprintf(stderr, "PRIVATE_GUEST missing API\n"); return -3; }
+    PcGuestGetAPI get = (PcGuestGetAPI)dlsym(library, PC_GUEST_BASE_SYMBOL);
+    if (!get) { fprintf(stderr, "PRIVATE_GUEST missing API\n"); return reject_guest(-3); }
     const PcGuestAPI *g = get();
     if (!g || g->version != PC_GUEST_ABI || g->bytes != sizeof(*g) || g->reserved ||
         !g->functions || !g->bind_memory || !g->function_count || g->function_count > 1000000 ||
         memcmp(g->cpu_layout, expected_layout, sizeof(expected_layout))) {
-        fprintf(stderr, "PRIVATE_GUEST incompatible CPU/ABI layout\n"); return -4;
+        fprintf(stderr, "PRIVATE_GUEST incompatible CPU/ABI layout\n"); return reject_guest(-4);
     }
     for (uint32_t n=0;n<g->function_count;n++) {
         if (!g->functions[n].fn || !g->functions[n].addr ||
-            (n && g->functions[n-1].addr >= g->functions[n].addr)) return -5;
+            (n && g->functions[n-1].addr >= g->functions[n].addr)) return reject_guest(-5);
     }
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    if (pc_guest_bind_classic_skse(library) != 0) return reject_guest(-6);
+#endif
     guest = g;
     g_modules[0] = (FnModule){"TESV.exe", guest->functions, guest->function_count};
     fprintf(stderr, "PRIVATE_GUEST loaded %u original functions, CPU bytes %u, flags offset %u\n",

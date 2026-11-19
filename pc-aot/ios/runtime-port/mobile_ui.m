@@ -11,6 +11,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 #include "mobile_ui.h"
 #include "mobile_core.h"
 #include "autosave_preferences.h"
@@ -265,51 +266,58 @@ void skyrim_mobile_initialize(const char *profile) {
         integerINI("Decals","uMaxSkinDecalPerActor",enabled ? 20 : 0);
     }
 }
+static BOOL applyGameLanguageProfile(const char *gameDirectory) {
+    NSString *folder = [profilePath stringByAppendingPathComponent:@"Documents/My Games/Skyrim"];
+    char profileFile[PATH_MAX], defaultFile[PATH_MAX];
+    SkyrimGameIniSource origin = skyrim_game_language_plan_profile(gameDirectory,
+        folder.fileSystemRepresentation, &gameLanguage, profileFile, defaultFile, sizeof profileFile);
+    if (origin == SKYRIM_PROFILE_INI_ERROR) return NO;
+    if (origin == SKYRIM_PROFILE_INI_DEFERRED) return YES;
+    BOOL exists = origin == SKYRIM_PROFILE_INI_EXISTING;
+    NSString *target = [NSString stringWithUTF8String:profileFile];
+    NSString *sourcePath = exists ? target : [NSString stringWithUTF8String:defaultFile];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSError *error = nil;
+    NSDictionary *attributes = [fm attributesOfItemAtPath:sourcePath error:&error];
+    if (!attributes || ![attributes[NSFileType] isEqual:NSFileTypeRegular] ||
+        [attributes[NSFileSize] unsignedLongLongValue] > 1024 * 1024) return NO;
+    NSData *source = [NSData dataWithContentsOfFile:sourcePath options:0 error:&error];
+    if (!source) return NO;
+    size_t count = 0;
+    char *bytes = skyrim_game_language_ini(source.length ? source.bytes : "", source.length, gameLanguage, &count);
+    if (!bytes) return NO;
+    NSData *updated = [NSData dataWithBytesNoCopy:bytes length:count freeWhenDone:YES];
+    if ((!exists || ![source isEqualToData:updated]) &&
+        (![fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:&error] ||
+         ![updated writeToFile:target options:NSDataWritingAtomic error:&error])) return NO;
+    return YES;
+}
 int skyrim_mobile_prepare_game_language(const char *gameDirectory) {
     NSCAssert(NSThread.isMainThread, @"game language is selected before guest startup");
     skyrim_game_language_probe(gameDirectory, &gameLanguagePacks);
     gameLanguage = skyrim_game_language_select([startup[@"game_text"] unsignedIntValue],
         [startup[@"game_voices"] unsignedIntValue], gameLanguagePacks);
+    // Choosing only the app's display language leaves the game's profile untouched.
+    BOOL explicitSelection = startup[@"game_text"] != nil || startup[@"game_voices"] != nil;
+    gameLanguagePrepared = !explicitSelection || applyGameLanguageProfile(gameDirectory);
     fprintf(stderr, "IOS_GAME_LANGUAGE requested_text=%u text=%u text_reason=%u requested_voices=%u voices=%u voices_reason=%u\n",
         gameLanguage.requested_text, gameLanguage.text, gameLanguage.text_reason,
         gameLanguage.requested_voices, gameLanguage.voices, gameLanguage.voices_reason);
-    // An upgrade with no explicit game-language selection keeps the existing
-    // English profile byte-for-byte. UI language alone never changes this path.
-    if (!startup[@"game_text"] && !startup[@"game_voices"]) {
-        gameLanguagePrepared = YES;
-        return 1;
-    }
-    NSFileManager *fm = NSFileManager.defaultManager;
-    NSString *folder = [profilePath stringByAppendingPathComponent:@"Documents/My Games/Skyrim"];
-    char resolved[PATH_MAX];
-    int exists = skyrim_game_language_ini_path(folder.fileSystemRepresentation,
-        SKYRIM_GAME_INI_PROFILE, resolved, sizeof resolved);
-    if (exists < 0) return 0;
-    NSString *target = [NSString stringWithUTF8String:resolved];
-    NSString *sourcePath = target;
-    if (!exists) {
-        if (skyrim_game_language_ini_path(gameDirectory, SKYRIM_GAME_INI_DEFAULT,
-            resolved, sizeof resolved) != 1) return 0;
-        sourcePath = [NSString stringWithUTF8String:resolved];
-    }
-    NSError *error = nil;
-    NSDictionary *attributes = [fm attributesOfItemAtPath:sourcePath error:&error];
-    if (!attributes || ![attributes[NSFileType] isEqual:NSFileTypeRegular] ||
-        [attributes[NSFileSize] unsignedLongLongValue] > 1024 * 1024) return 0;
-    NSData *source = [NSData dataWithContentsOfFile:sourcePath options:0 error:&error];
-    if (!source) return 0;
-    size_t count = 0;
-    char *bytes = skyrim_game_language_ini(source.length ? source.bytes : "", source.length, gameLanguage, &count);
-    if (!bytes) return 0;
-    NSData *updated = [NSData dataWithBytesNoCopy:bytes length:count freeWhenDone:YES];
-    if ((!exists || ![source isEqualToData:updated]) &&
-        (![fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:&error] ||
-         ![updated writeToFile:target options:NSDataWritingAtomic error:&error])) return 0;
-    gameLanguagePrepared = YES;
-    return 1;
+    return gameLanguagePrepared;
 }
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+const char *skyrim_mobile_classic_text_language(void) {
+    if (!gameLanguagePrepared || (!startup[@"game_text"] && !startup[@"game_voices"])) return NULL;
+    return gameLanguage.text == SKYRIM_GAME_JAPANESE ? "JAPANESE" : "ENGLISH";
+}
+#endif
+
 static NSString *gameLanguageFallback(void) {
     if (!gameLanguagePrepared) return nil;
+    if (gameLanguage.text_reason == SKYRIM_GAME_MISSING_DEFAULT_INI ||
+        gameLanguage.voices_reason == SKYRIM_GAME_MISSING_DEFAULT_INI)
+        return L(@"English is in use. Copy Skyrim_default.ini next to TESV_unpacked.exe in this app’s Skyrim folder, then restart to apply your language settings.",
+                 @"今回は英語を使用します。選んだ言語を反映するには、このアプリの「Skyrim」フォルダでTESV_unpacked.exeと同じ場所にSkyrim_default.iniをコピーし、起動し直してください。");
     if (gameLanguage.text_reason && gameLanguage.voices_reason)
         return L(@"Japanese text and voices are not ready. English is in use. Install a complete, supported Japanese pack and restart.",
                  @"日本語のテキスト・音声を利用できないため英語で起動しました。対応する日本語パックを導入して再起動してください。");
@@ -368,21 +376,27 @@ static int readPluginHeader(NSString *path, SkyrimPluginHeader *header) {
     return status;
 }
 /* Called before guest entry, or read-only when the player opens the list. */
-static int scanModPlugins(BOOL publish) {
+static int scanModPlugins(BOOL publish, BOOL *skyuiListed) {
     const char *gameDirectory = modGamePath.fileSystemRepresentation;
     modPlugins = @[];
-    if (!gameDirectory) return 1;
+    if (skyuiListed) *skyuiListed = NO;
     int restored = 1;
     char resolved[PATH_MAX];
-    if (skyrim_plugin_child_path(gameDirectory, "Data", resolved, sizeof resolved) != 1) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *data = nil;
+    if (gameDirectory && skyrim_plugin_child_path(gameDirectory, "Data", resolved, sizeof resolved) == 1)
+        data = [NSString stringWithUTF8String:resolved];
+    NSArray<NSString *> *files = data ? [fm contentsOfDirectoryAtPath:data error:NULL] : nil;
+    if (!files) {
         fprintf(stderr, "IOS_MODS found=0 data_folder=0\n");
-        if (publish) skyrim_mods_no_plugin_loaded();
+        if (publish) {
+            skyrim_mods_plugin_list_failed();
+            skyrim_mods_no_plugin_loaded();
+        }
         return !publish || skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, NULL, 0) == 0;
     }
-    NSString *data = [NSString stringWithUTF8String:resolved];
-    NSFileManager *fm = NSFileManager.defaultManager;
     NSMutableArray<NSString *> *names = [NSMutableArray array];
-    for (NSString *name in [fm contentsOfDirectoryAtPath:data error:NULL]) {
+    for (NSString *name in files) {
         NSString *ext = name.pathExtension.lowercaseString;
         if (!([ext isEqualToString:@"esp"] || [ext isEqualToString:@"esm"]) || skyrim_plugin_is_base(name.UTF8String)) continue;
         NSDictionary *attributes = [fm attributesOfItemAtPath:[data stringByAppendingPathComponent:name] error:NULL];
@@ -391,7 +405,12 @@ static int scanModPlugins(BOOL publish) {
     const size_t count = names.count;
     SkyrimPluginHeader *headers = calloc(count ? count : 1, sizeof *headers);
     int *status = calloc(count ? count : 1, sizeof *status);
-    if (!headers || !status) { free(headers); free(status); modNotice = L(@"Not enough memory to read the MOD list.", @"メモリ不足のためMODの一覧を読めませんでした。"); return 1; }
+    if (!headers || !status) {
+        if (publish) skyrim_mods_plugin_list_failed();
+        free(headers); free(status);
+        modNotice = L(@"Not enough memory to read the MOD list.", @"メモリ不足のためMODの一覧を読めませんでした。");
+        return 1;
+    }
     NSMutableDictionary<NSString *, NSNumber *> *index = [NSMutableDictionary dictionary];
     for (size_t i = 0; i < count; ++i) {
         status[i] = readPluginHeader([data stringByAppendingPathComponent:names[i]], &headers[i]);
@@ -439,6 +458,14 @@ static int scanModPlugins(BOOL publish) {
                 char *text = skyrim_plugin_list_text(entries, order, loaded, &bytes);
                 published = text && skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, text, bytes) == 0;
                 free(text);
+                if (published && skyuiListed) {
+                    for (size_t i = 0; i < loaded; ++i) {
+                        if (strcasecmp(entries[order[i]].name, "SkyUI.esp") == 0) {
+                            *skyuiListed = YES;
+                            break;
+                        }
+                    }
+                }
             } else {
                 restored = skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, NULL, 0) == 0;
                 published = restored;
@@ -465,6 +492,7 @@ static int scanModPlugins(BOOL publish) {
     } else {
         modNotice = L(@"Not enough memory to read the MOD list.", @"メモリ不足のためMODの一覧を読めませんでした。");
     }
+    if (publish && !published) skyrim_mods_plugin_list_failed();
     for (size_t i = 0; i < count; ++i) skyrim_plugin_header_free(&headers[i]);
     free(headers); free(status); free(entries); free(order); free(state); free(problem);
     return restored;
@@ -473,8 +501,17 @@ int skyrim_mobile_prepare_mods(const char *gameDirectory) {
     NSCAssert(NSThread.isMainThread, @"MOD selection is published before guest startup");
     modGamePath = gameDirectory ? [NSString stringWithUTF8String:gameDirectory] : nil;
     modPlugins = nil; modNotice = nil;
-    if (skyrim_mods_manages_plugins()) return scanModPlugins(YES);
-    return skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, NULL, 0) == 0;
+    BOOL *skyuiResult = NULL;
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    BOOL skyuiListed = NO;
+    skyuiResult = &skyuiListed;
+#endif
+    int prepared = skyrim_mods_manages_plugins() ? scanModPlugins(YES, skyuiResult) :
+        skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, NULL, 0) == 0;
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    if (prepared) return skyrim_mods_prepare_skyui_trial(skyuiListed);
+#endif
+    return prepared;
 }
 static NSString *modStateText(NSDictionary *row) {
     switch ([row[@"state"] intValue]) {
@@ -649,7 +686,7 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title=@"MOD";
     self.tableView.estimatedRowHeight=60; self.tableView.rowHeight=UITableViewAutomaticDimension;
-    if (!modPlugins) scanModPlugins(NO);
+    if (!modPlugins) scanModPlugins(NO, NULL);
     self.rows=[NSMutableArray array];
     for (NSDictionary *row in modPlugins) [self.rows addObject:[row mutableCopy]];
     if (self.rows.count)

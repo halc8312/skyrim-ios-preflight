@@ -8,7 +8,12 @@ extern "C" {
 enum { SKYRIM_GAME_ENGLISH, SKYRIM_GAME_JAPANESE };
 enum { SKYRIM_GAME_PACK_READY, SKYRIM_GAME_PACK_MISSING,
        SKYRIM_GAME_PACK_INCOMPLETE, SKYRIM_GAME_PACK_UNSUPPORTED };
+enum { SKYRIM_GAME_MISSING_DEFAULT_INI = 4 }; /* effective-language reason */
 enum { SKYRIM_GAME_INI_PROFILE, SKYRIM_GAME_INI_DEFAULT };
+typedef enum {
+    SKYRIM_PROFILE_INI_ERROR = -1, SKYRIM_PROFILE_INI_DEFERRED,
+    SKYRIM_PROFILE_INI_EXISTING, SKYRIM_PROFILE_INI_FROM_DEFAULT
+} SkyrimGameIniSource;
 typedef struct {
     unsigned text_status, voices_status;
 } SkyrimGameLanguagePacks;
@@ -30,6 +35,11 @@ SkyrimGameLanguage skyrim_game_language_select(unsigned text, unsigned voices,
  * -1 for errors/ambiguous aliases. Never rename, delete or write here. */
 int skyrim_game_language_ini_path(const char *directory, unsigned kind,
                                  char *path, size_t capacity);
+/* Select the existing profile or its original template. If both are absent,
+ * defer explicit Japanese settings and leave the game's initial profile alone.
+ * Only the effective selection changes. Call again on the next launch. */
+SkyrimGameIniSource skyrim_game_language_plan_profile(const char *game, const char *folder,
+    SkyrimGameLanguage *language, char *target, char *defaults, size_t capacity);
 /* Transform only the app profile's language keys. Caller owns returned malloc
  * buffer and must publish it atomically before guest threads start. NULL means
  * invalid/oversized input or allocation failure; it is never partial success. */

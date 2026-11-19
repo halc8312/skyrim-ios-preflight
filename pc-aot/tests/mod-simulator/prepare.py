@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import plistlib
 import re
 import struct
@@ -170,16 +171,18 @@ def project(work, sdl_prefix, archive_prefix):
         "CLANG_ENABLE_MODULES":"YES", "CLANG_ENABLE_OBJC_ARC":"YES", "TARGETED_DEVICE_FAMILY":"1",
         "GCC_C_LANGUAGE_STANDARD":"gnu11", "ONLY_ACTIVE_ARCH":"YES", "CODE_SIGN_STYLE":"Automatic"})
     frameworks = ["Foundation","UIKit","QuartzCore","UniformTypeIdentifiers","WebKit","SwiftUI","Translation"]
+    classic_defines = ["SKYRIM_IOS_CLASSIC_SKSE=1"] if os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1" else []
     app_configs = configs(APP, {
         "PRODUCT_NAME":APP, "PRODUCT_BUNDLE_IDENTIFIER":APP_ID, "INFOPLIST_FILE":str(work/"HostInfo.plist"),
         "SWIFT_VERSION":"6.0", "SWIFT_STRICT_CONCURRENCY":"complete",
-        "HEADER_SEARCH_PATHS":[str(PORT),str(sdl_prefix/"include"),str(archive_prefix/"include")],
+        "HEADER_SEARCH_PATHS":[str(PORT),str(ROOT/"ios/private-abi"),str(sdl_prefix/"include"),str(archive_prefix/"include")],
         "SYSTEM_HEADER_SEARCH_PATHS":[str(ROOT/"vendor/bcdec"),str(ROOT/"vendor/stb")],
-        "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", "SKYRIM_HAVE_LIBARCHIVE=1"],
+        "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", "SKYRIM_HAVE_LIBARCHIVE=1", *classic_defines],
         "OTHER_LDFLAGS":["$(inherited)",*map(str,static_libs),"-lz","-liconv",
                          *[arg for name in frameworks for arg in ("-framework", name)]]})
     test_configs = configs(TEST, {
         "PRODUCT_NAME":TEST, "PRODUCT_BUNDLE_IDENTIFIER":APP_ID+".uitests", "GENERATE_INFOPLIST_FILE":"YES",
+        "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", *classic_defines],
         "TEST_TARGET_NAME":APP, "ENABLE_TESTING_SEARCH_PATHS":"YES", "OTHER_LDFLAGS":["$(inherited)","-framework","XCTest"],
         "LD_RUNPATH_SEARCH_PATHS":["$(inherited)","@executable_path/Frameworks","@loader_path/Frameworks"]})
     def target(name, config, phases, dependencies, product, kind):

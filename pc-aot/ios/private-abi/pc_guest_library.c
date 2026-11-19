@@ -1,6 +1,9 @@
 /* Compiled locally together with privately generated game functions. */
 #include "PcGuestABI.h"
 #include <string.h>
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+#include "PcGuestSkseABI.h"
+#endif
 
 uint8_t *MEM;
 static PcGuestHostAPI host;
@@ -10,6 +13,9 @@ static const uint32_t layout[] = PC_GUEST_LAYOUT_INITIALIZER;
 
 static int bind(const PcGuestHostAPI *h, uint8_t *memory) {
     if (MEM || !h || !memory || h->version != PC_GUEST_ABI || h->bytes != sizeof(*h)) return -1;
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    if (!pc_guest_skse_is_bound()) return -4;
+#endif
     if (memcmp(h->cpu_layout, layout, sizeof(layout))) return -2;
     if (!h->call || !h->call_ic || !h->unimpl || !h->int3 || !h->cpuid || !h->rdtsc ||
         !h->load80 || !h->store80 || !h->examine || !h->remainder || !h->environment ||
@@ -20,7 +26,11 @@ static int bind(const PcGuestHostAPI *h, uint8_t *memory) {
 }
 
 __attribute__((visibility("default")))
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+const PcGuestAPI *skyrim_guest_classic_api_v1(void) {
+#else
 const PcGuestAPI *skyrim_guest_api_v1(void) {
+#endif
     static PcGuestAPI api = {PC_GUEST_ABI, sizeof(PcGuestAPI), PC_GUEST_LAYOUT_INITIALIZER,
                              g_fn_table_exe, 0, 0, bind};
     api.function_count = g_fn_count_exe;

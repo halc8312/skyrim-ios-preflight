@@ -381,6 +381,19 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self openHub];
     XCTAssertTrue(self.app.staticTexts[@"No MODs yet"].exists);
     [self capture:@"empty-hub"];
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    [self findRow:@"SkyUI 5.1 trial"];
+    XCUIElement *trial = self.app.switches[@"mod-skyui-trial"];
+    XCTAssertEqualObjects(trial.value, @"0");
+    [trial tap];
+    XCTAssertEqualObjects(trial.value, @"1");
+    [self goBackFrom:@"MOD"];
+    [self openHub];
+    [self findRow:@"SkyUI 5.1 trial"];
+    XCTAssertEqualObjects(trial.value, @"1");
+    [trial tap];
+    XCTAssertEqualObjects(trial.value, @"0");
+#endif
     [[self findRow:@"Save check"] tap];
     [self findRow:@"Authored Save"];
     NSPredicate *missingPlugin = [NSPredicate predicateWithFormat:@"label CONTAINS %@", @"UnavailableFixture.esp"];

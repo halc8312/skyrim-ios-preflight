@@ -34,6 +34,15 @@ def sha(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def classic_capable(record, key="classic_skse_experiment"):
+    # The older Classic guest uses this name. It distinguishes the callback ABI,
+    # independently of which product bundles the framework.
+    value = record.get(key, False)
+    if type(value) is not bool:
+        raise ValueError("Invalid Classic capability marker")
+    return value
+
+
 def host_artifacts(directory, guest_result, input_sha256):
     """Bind the easy self-build route to the actual host/guest ABI evidence."""
     result = json.loads((directory / "result.json").read_text())
@@ -49,6 +58,9 @@ def host_artifacts(directory, guest_result, input_sha256):
     build = guest_result.resolve().parent
     stage = build.parent
     contract = json.loads((build / "compile-contract.json").read_text())
+    classic = classic_capable(guest)
+    if classic != classic_capable(result) or classic != classic_capable(contract):
+        raise ValueError("Host/guest Classic ABI mismatch")
     runtime = stage / "source/runtime"
     for name in ("x86.h", "rt_table.h"):
         source = runtime / name
@@ -67,6 +79,12 @@ def host_artifacts(directory, guest_result, input_sha256):
             or (directory / "PcGuestABI.h").read_bytes().replace(b"\r\n", b"\n")
             != abi.read_bytes().replace(b"\r\n", b"\n")):
         raise ValueError("Host/guest binding header mismatch")
+    if classic:
+        extension = abi.with_name("PcGuestSkseABI.h")
+        if (contract.get("classic_abi_header_sha256") != sha(extension)
+                or (directory / extension.name).read_bytes().replace(b"\r\n", b"\n")
+                != extension.read_bytes().replace(b"\r\n", b"\n")):
+            raise ValueError("Host/guest Classic binding header mismatch")
     return archive, result["artifact_sha256"]
 
 
@@ -97,6 +115,12 @@ def main():
     binary = framework / "SkyrimGuest"
     if not guest.get("strict_link_succeeded") or guest.get("signed") or sha(binary) != guest["sha256"]:
         raise ValueError("Guest build result does not match the unsigned framework")
+    classic = classic_capable(guest)
+    framework_plist = (framework / "Info.plist").read_bytes()
+    if classic != classic_capable(plistlib.loads(framework_plist), "PcGuestClassicSkseExperiment"):
+        raise ValueError("Guest framework Classic ABI mismatch")
+    if classic and not a.host_artifacts:
+        raise ValueError("Classic assembly requires --host-artifacts with all four ABI headers")
     a.output.parent.mkdir(parents=True, exist_ok=True)
     records = {}
     total = 0
@@ -121,6 +145,8 @@ def main():
                 raise ValueError("Public host exceeds expected size")
             records[relative] = (source.read(member), mode & 0o777 or 0o644)
     info = plistlib.loads(records["Info.plist"][0])
+    if classic != classic_capable(info, "PcGuestClassicSkseExperiment"):
+        raise ValueError("Host/guest Classic ABI mismatch")
     if (info.get("CFBundleIdentifier") != "org.skyrimios.pc2011"
             or info.get("CFBundleExecutable") != "SkyrimIOS"
             or str(info.get("CFBundleVersion")) != "17"):
@@ -135,9 +161,8 @@ def main():
     if a.diagnostics_pairing:
         info["PcDiagnostics"] = load_diagnostics_pairing(a.diagnostics_pairing)
     records["Info.plist"] = (plistlib.dumps(info), 0o644)
-    for name in ("SkyrimGuest", "Info.plist"):
-        records["Frameworks/SkyrimGuest.framework/" + name] = (
-            (framework / name).read_bytes(), 0o755 if name == "SkyrimGuest" else 0o644)
+    records["Frameworks/SkyrimGuest.framework/SkyrimGuest"] = (binary.read_bytes(), 0o755)
+    records["Frameworks/SkyrimGuest.framework/Info.plist"] = (framework_plist, 0o644)
     with a.output.open("xb") as dest:
         with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as target:
             for relative, (raw, mode) in sorted(records.items()):

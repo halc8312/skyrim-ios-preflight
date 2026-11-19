@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -178,6 +179,43 @@ class BuildTests(unittest.TestCase):
             self.build()
         self.assertEqual(self.calls,[])
 
+    def test_classic_variant_uses_separate_objects_bindings_and_framework_identity(self):
+        with mock.patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
+            import classic_skse_guest as classic
+            self.state.update(source_commit=classic.PIN, candidate_sha256=classic.CANDIDATE_SHA,
+                              discovery_sha256=classic.DISCOVERY_SHA)
+            self.state_path.write_text(json.dumps(self.state))
+            gen = self.stage / "gen"
+            declarations = gen / "funcs_exe.h"
+            declarations.write_bytes(b"/* authored declarations */")
+            (gen / "exe_0.c").write_bytes(b"\n".join(
+                b"void f_" + name + b"(CPU *c) { return; }" for name in classic.ENTRIES))
+            (gen / "exe_table.c").write_bytes(b"\n".join(
+                b"{0x" + name + b"u, f_" + name + b"}," for name in classic.ENTRIES))
+            (self.abi / "PcGuestSkseABI.h").write_bytes(b"authored experimental ABI")
+            (self.abi / "pc_guest_skse_library.c").write_bytes(b"/* test */")
+            self.build()
+            self.calls.clear()
+            builder.main([str(self.stage), "--jobs", "1", "--classic-skse"])
+            self.calls.clear()
+            builder.main([str(self.stage), "--jobs", "1", "--classic-skse"])
+            self.assertFalse(any("-c" in cmd for cmd in self.calls))
+            declarations.write_bytes(b"/* changed declarations */")
+            self.calls.clear()
+            builder.main([str(self.stage), "--jobs", "1", "--classic-skse"])
+            self.assertEqual(sum("-c" in cmd for cmd in self.calls), 4)
+        extra = self.stage / "arm64-ios-classic-skse"
+        normal = self.stage / "arm64-ios"
+        self.assertNotIn("classic_skse_experiment", json.loads((normal / "result.json").read_text()))
+        self.assertIs(json.loads((extra / "result.json").read_text())["classic_skse_experiment"], True)
+        self.assertIs(plistlib.loads((extra / "SkyrimGuest.framework/Info.plist").read_bytes())
+                      ["PcGuestClassicSkseExperiment"], True)
+        self.assertEqual(set((extra / "exports.txt").read_text().splitlines()),
+                         {"_skyrim_guest_classic_api_v1", "_skyrim_guest_bind_classic_v1"})
+        for cmd in (c for c in self.calls if "-c" in c):
+            is_guest_binding = Path(cmd[cmd.index("-c")+1]).parent == self.abi
+            self.assertEqual("-DSKYRIM_IOS_CLASSIC_SKSE=1" in cmd, is_guest_binding)
+
     def test_unknown_import_blocks_link_and_success_result(self):
         self.import_mock.return_value=(["_not_allowed"],["_not_allowed"])
         with self.assertRaisesRegex(RuntimeError,"Unexpected private framework imports"):
@@ -221,6 +259,68 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"Compilation settings changed"):
             self.build()
         self.assertEqual(self.calls,[])
+
+
+@unittest.skipUnless(shutil.which("cmake"), "CMake configuration fixture requires cmake")
+class HostClassicOptionTests(unittest.TestCase):
+    def test_switching_the_real_cmake_option_preserves_normal_inputs_and_product(self):
+        # Use the actual configuration blocks with no compilers, linking, SDK, or game.
+        cmake = (ROOT/"ios/runtime-port/CMakeLists.txt").read_text(encoding="utf-8")
+        option = next(line for line in cmake.splitlines() if line.startswith("option(SKYRIM_IOS_CLASSIC_SKSE "))
+        start = cmake.index("if(NOT SKYRIM_IOS_RUNTIME_OVERLAY_DIR OR SKYRIM_IOS_CLASSIC_SKSE)")
+        preparation = cmake[start:cmake.index("add_library(skyrim_ios_runtime ", start)]
+        start = cmake.index('    set(host_plist "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")')
+        plist_block = cmake[start:cmake.index("    if(_mod_archive_notice)", start)]
+        with tempfile.TemporaryDirectory(prefix="classic-capability-") as tmp:
+            root = Path(tmp)
+            port, abi = root/"ios/runtime-port", root/"ios/private-abi"
+            overlay, vendor = root/"original overlay", root/"vendor"
+            for path in (port, abi, overlay, vendor):
+                path.mkdir(parents=True)
+            (overlay/"main.c").write_text("ordinary\n")
+            (overlay/"skse_compat.c").write_text("/* synthetic */\n")
+            (overlay/"rt_table.h").write_bytes(b"extern const FnModule g_modules[];\n")
+            (abi/"PcGuestSkseABI.h").write_bytes(b"/* synthetic ABI declaration */\n")
+            shutil.copyfile(ROOT/"ios/private-abi/prepare_private_abi.py", abi/"prepare_private_abi.py")
+            shutil.copyfile(ROOT/"ios/runtime-port/Info.plist.in", port/"Info.plist.in")
+            (port/"classic_skse_translation.py").write_text("")
+            (port/"prepare_classic_skse.py").write_text(
+                "from pathlib import Path\nimport argparse\n"
+                "p=argparse.ArgumentParser()\np.add_argument('--runtime', type=Path)\n"
+                "p.add_argument('--source', type=Path)\na=p.parse_args()\n"
+                "assert a.source == Path(__file__).resolve().parents[2] / 'vendor'\n"
+                "assert (a.runtime/'main.c').read_text() == 'ordinary\\n'\n"
+                "(a.runtime/'main.c').write_text('classic\\n')\n")
+            # Capture only target metadata. Commands that stage directories and configure
+            # the plist below are genuine CMake; the fixture has no executable target.
+            (port/"CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.24)\nproject(Capability NONE)\n" +
+                option + "\nfunction(target_compile_definitions target visibility)\n"
+                "  set(app_definitions \"${ARGN}\" PARENT_SCOPE)\nendfunction()\n"
+                "function(target_sources target visibility)\n  set(app_sources \"${ARGN}\" PARENT_SCOPE)\nendfunction()\n" +
+                preparation + plist_block +
+                '\nfile(WRITE "${CMAKE_BINARY_DIR}/state" "${SKYRIM_IOS_RUNTIME_OVERLAY_DIR}\\n${host_plist}\\n'
+                '${runtime_sources}\\n${app_sources}\\n${app_definitions}\\n")\n')
+            command = ["cmake", "-S", str(port), "-B", str(root/"build"),
+                       f"-DSKYRIM_IOS_RUNTIME_OVERLAY_DIR={overlay.as_posix()}",
+                       f"-DSKYDREAM_SOURCE_DIR={vendor.as_posix()}", f"-DSKYRIM_IOS_BINDING_INCLUDE_DIR={abi.as_posix()}"]
+            if shutil.which("ninja"):
+                command += ["-G", "Ninja"]
+            normal_info = plistlib.loads((port/"Info.plist.in").read_bytes())
+            for feature in (None, True, False):
+                args = [] if feature is None else ["-DSKYRIM_IOS_CLASSIC_SKSE=" + ("1" if feature else "0")]
+                check = subprocess.run(command + args, capture_output=True, text=True, timeout=60)
+                self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+                runtime, plist, sources, app_sources, defines = (root/"build/state").read_text().splitlines()
+                expected = dict(normal_info)
+                if feature:
+                    expected["PcGuestClassicSkseExperiment"] = True
+                self.assertEqual(plistlib.loads(Path(plist).read_bytes()), expected)
+                self.assertEqual("skse_compat.c" in sources, bool(feature))
+                self.assertEqual("pc_guest_skse_host.c" in app_sources, bool(feature))
+                self.assertEqual("SKYRIM_IOS_CLASSIC_SKSE=1" in defines, bool(feature))
+                self.assertEqual((Path(runtime)/"main.c").read_text(), "classic\n" if feature else "ordinary\n")
+                self.assertEqual((overlay/"main.c").read_text(), "ordinary\n")
+                self.assertEqual((overlay/"rt_table.h").read_bytes(), b"extern const FnModule g_modules[];\n")
 
 
 @unittest.skipUnless(sys.platform=="darwin" and shutil.which("xcrun"),

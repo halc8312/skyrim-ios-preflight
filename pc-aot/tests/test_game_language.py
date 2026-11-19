@@ -29,6 +29,7 @@ class GameLanguageTests(unittest.TestCase):
                 str(ROOT / "tests/native/test_game_language.c"), "-o", str(binary)], check=True, timeout=60)
             result = subprocess.run([str(binary), str(pack)], check=True, text=True, capture_output=True, timeout=15)
             self.assertIn("pack completeness PASS", result.stdout)
+            self.assertIn("missing template deferral and recovery PASS", result.stdout)
             self.assertIn("profile preservation and switching PASS", result.stdout)
 
     def test_real_guest_reads_the_same_case_sensitive_profile_we_select(self):
@@ -89,7 +90,7 @@ static const char *k_win_user_prefix = "\\users\\player\\";
     @unittest.skipUnless(sys.platform == "darwin", "Foundation startup path executes on the Mac validation host")
     def test_actual_startup_keeps_unconfigured_profile_and_atomically_updates_only_profile(self):
         source = (PORT / "mobile_ui.m").read_text()
-        function = source[source.index("int skyrim_mobile_prepare_game_language("):
+        function = source[source.index("static BOOL applyGameLanguageProfile("):
                           source.index("static NSString *gameLanguageFallback(")]
         with tempfile.TemporaryDirectory(prefix="game-language-apple-") as tmp:
             native = Path(tmp) / "startup.m"
@@ -98,6 +99,7 @@ static const char *k_win_user_prefix = "\\users\\player\\";
 #include <assert.h>
 #include <limits.h>
 #include <stdio.h>
+#include <string.h>
 #include "game_language.h"
 static NSString *profilePath;
 static NSDictionary *startup;
@@ -107,6 +109,7 @@ static BOOL gameLanguagePrepared;
 ''' + function + r'''
 int main(int argc, char **argv) { @autoreleasepool {
     assert(argc == 2);
+    assert(skyrim_mobile_classic_text_language() == NULL);
     NSString *root = [NSString stringWithUTF8String:argv[1]];
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *game = [root stringByAppendingPathComponent:@"Game"];
@@ -115,11 +118,31 @@ int main(int argc, char **argv) { @autoreleasepool {
     assert([fm createDirectoryAtPath:game withIntermediateDirectories:YES attributes:nil error:NULL]);
     assert([fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:NULL]);
     NSString *target = [folder stringByAppendingPathComponent:@"Skyrim.INI"];
+    NSString *defaults = [game stringByAppendingPathComponent:@"Skyrim_Default.ini"];
     NSData *original = [@"; existing profile\n[General]\nsLanguage=ENGLISH\nOther=42\n" dataUsingEncoding:NSUTF8StringEncoding];
+    // A fresh copy with only the executable and Data must pass language preparation.
+    startup = @{@"game_text":@1,@"game_voices":@1};
+    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+    assert(gameLanguagePrepared && gameLanguage.requested_text && gameLanguage.requested_voices);
+    assert(!gameLanguage.text && !gameLanguage.voices);
+    assert(!strcmp(skyrim_mobile_classic_text_language(), "ENGLISH"));
+    assert(gameLanguage.text_reason == SKYRIM_GAME_MISSING_DEFAULT_INI &&
+           gameLanguage.voices_reason == SKYRIM_GAME_MISSING_DEFAULT_INI);
+    assert(![fm fileExistsAtPath:target] && ![fm fileExistsAtPath:defaults]);
+    // Restore just the template and relaunch with the same preferences. The
+    // authored game has no Japanese packs, so ordinary pack selection resumes.
+    assert([original writeToFile:defaults options:0 error:NULL]);
+    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+    assert(gameLanguage.requested_text && gameLanguage.requested_voices);
+    assert(gameLanguage.text_reason == SKYRIM_GAME_PACK_MISSING &&
+           gameLanguage.voices_reason == SKYRIM_GAME_PACK_MISSING);
+    assert([[NSData dataWithContentsOfFile:defaults] isEqualToData:original]);
+    assert([fm fileExistsAtPath:target] && [fm removeItemAtPath:defaults error:NULL]);
     assert([original writeToFile:target options:0 error:NULL]);
     // UI language alone must neither touch the profile nor need a default INI.
     startup = @{@"language":@1};
     assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+    assert(skyrim_mobile_classic_text_language() == NULL);
     assert(gameLanguagePrepared && !gameLanguage.text && !gameLanguage.voices);
     assert([[NSData dataWithContentsOfFile:target] isEqualToData:original]);
     NSDictionary *attributes = [fm attributesOfItemAtPath:target error:NULL];
@@ -137,9 +160,10 @@ int main(int argc, char **argv) { @autoreleasepool {
     NSData *bad = [NSData dataWithBytes:"a\0b" length:3];
     assert([bad writeToFile:target options:0 error:NULL]);
     assert(!skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+    assert(!gameLanguagePrepared);
+    assert(skyrim_mobile_classic_text_language() == NULL);
     assert([[NSData dataWithContentsOfFile:target] isEqualToData:bad]);
     assert([fm removeItemAtPath:target error:NULL]);
-    NSString *defaults = [game stringByAppendingPathComponent:@"Skyrim_Default.ini"];
     assert([original writeToFile:defaults options:0 error:NULL]);
     startup = @{@"game_text":@0};
     assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
@@ -160,6 +184,12 @@ int main(int argc, char **argv) { @autoreleasepool {
         assert([current containsString:@"sLanguage=ENGLISH"] && [current containsString:@"Unused=99"]);
         puts("Foundation case-sensitive selection PASS");
     } else puts("Foundation case-sensitive selection SKIP: case-insensitive volume; other startup contracts checked");
+    // The pack validator is also exercised in the native pack test. With its
+    // ready result, the Classic dictionary follows game text even with English UI.
+    startup = @{@"language":@0, @"game_text":@1};
+    SkyrimGameLanguagePacks ready = {SKYRIM_GAME_PACK_READY, SKYRIM_GAME_PACK_MISSING};
+    gameLanguage = skyrim_game_language_select(SKYRIM_GAME_JAPANESE, SKYRIM_GAME_ENGLISH, ready);
+    assert(!strcmp(skyrim_mobile_classic_text_language(), "JAPANESE"));
     puts("startup profile-only changes PASS");
 } }
 ''')
@@ -168,6 +198,7 @@ int main(int argc, char **argv) { @autoreleasepool {
             subprocess.run(["clang", "-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(PORT),
                 "-c", str(PORT / "game_language.c"), "-o", str(obj)], check=True, timeout=60)
             subprocess.run(["clang", "-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror", "-fobjc-arc",
+                "-DSKYRIM_IOS_CLASSIC_SKSE=1",
                 "-I", str(PORT), str(native), str(obj), "-framework", "Foundation", "-o", str(binary)],
                 check=True, timeout=60)
             result = subprocess.run([str(binary), tmp], check=True, text=True, capture_output=True, timeout=15)
