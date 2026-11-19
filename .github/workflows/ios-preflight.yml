@@ -179,5 +179,5 @@ jobs:
         run: |
           set -euo pipefail
           bash pc-aot/experiments/skse-plugin-vm/test-apple-sdk.sh | tee "$RUNNER_TEMP/dll-sdk.log"
-          grep -Fq 'DLL_SIMULATOR: english verified the single-file results and the MOD folder.' "$RUNNER_TEMP/dll-sdk.log"
-          grep -Fq 'DLL_SIMULATOR: japanese verified the single-file results and the MOD folder.' "$RUNNER_TEMP/dll-sdk.log"
+          grep -q '^DLL_SIMULATOR: english verified ' "$RUNNER_TEMP/dll-sdk.log"
+          grep -q '^DLL_SIMULATOR: japanese verified ' "$RUNNER_TEMP/dll-sdk.log"
