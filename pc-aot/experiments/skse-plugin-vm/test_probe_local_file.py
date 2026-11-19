@@ -200,6 +200,8 @@ class LocalFileProbeTest(unittest.TestCase):
             self.assertEqual(unknown.read_bytes(), with_import)
             resident = subprocess.check_output([binary, "--session", tasks], text=True, timeout=3)
             self.assertEqual(resident.strip(), "resident tasks=3/1 independent-lifetime=ok budget-refusal=ok")
+            resident_worker = subprocess.check_output([binary, "--session-worker", closed], text=True, timeout=3)
+            self.assertEqual(resident_worker.strip(), "resident worker completed once on the explicit step")
 
 
 if __name__ == "__main__":

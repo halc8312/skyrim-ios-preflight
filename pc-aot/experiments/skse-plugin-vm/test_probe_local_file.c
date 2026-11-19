@@ -5,14 +5,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void check_session(const char *path) {
+static uint8_t *read_fixture(const char *path, size_t *length) {
     const size_t capacity = 64 * 1024;
     uint8_t *bytes = malloc(capacity);
     FILE *fixture = fopen(path, "rb");
     assert(bytes && fixture);
-    const size_t length = fread(bytes, 1, capacity, fixture);
-    assert(length && feof(fixture) && fclose(fixture) == 0);
+    *length = fread(bytes, 1, capacity, fixture);
+    assert(*length && feof(fixture) && fclose(fixture) == 0);
+    return bytes;
+}
 
+static void check_session(const char *path) {
+    size_t length;
+    uint8_t *bytes = read_fixture(path, &length);
     const SkseTrialDependency plugin = {"Tasks.dll", bytes, length};
     const SkseTrialOptions options = {0x01070030, 0x09200000, 0, 48, 1, 1, 1};
     const SkseTrialRuntime runtime = {.task_interface = 1};
@@ -26,7 +31,8 @@ static void check_session(const char *path) {
     const uint32_t budget = 10000;
     assert(skse_plugin_session_step(session, SKSE_SESSION_POST_POST_LOAD, budget, 100) == SKSE_SESSION_OUT_OF_ORDER);
     assert(skse_plugin_session_step(session, SKSE_SESSION_GAME_TASKS, budget, 100) == SKSE_SESSION_OUT_OF_ORDER);
-    assert(skse_plugin_session_step(session, SKSE_SESSION_POST_LOAD, 0, 100) == SKSE_SESSION_OUT_OF_ORDER);
+    assert(skse_plugin_session_step(session, SKSE_SESSION_POST_LOAD, 0, 100) == SKSE_SESSION_ARGUMENT);
+    assert(skse_plugin_session_step(session, SKSE_SESSION_POST_LOAD, UINT32_MAX, 100) == SKSE_SESSION_ARGUMENT);
     assert(skse_plugin_session_step(session, SKSE_SESSION_POST_LOAD, budget, 100) == SKSE_SESSION_OK);
     assert(skse_plugin_session_step(session, SKSE_SESSION_POST_LOAD, budget, 100) == SKSE_SESSION_OUT_OF_ORDER);
     assert(skse_plugin_session_step(session, SKSE_SESSION_POST_POST_LOAD, budget, 110) == SKSE_SESSION_OK);
@@ -49,10 +55,36 @@ static void check_session(const char *path) {
     puts("resident tasks=3/1 independent-lifetime=ok budget-refusal=ok");
 }
 
+static void check_worker_session(const char *path) {
+    size_t length;
+    uint8_t *bytes = read_fixture(path, &length);
+    const SkseTrialDependency plugin = {"Worker.dll", bytes, length};
+    const SkseTrialOptions options = {0x01070030, 0x09200000, 0, 48, 1, 1, 1};
+    const SkseTrialRuntime runtime = {.worker_thread = 1};
+    SkseTrialResult result;
+    SksePluginSession *session = skse_plugin_session_open(plugin, NULL, 0, options, runtime, &result);
+    free(bytes);
+    assert(session && !result.workers_completed);
+    const uint32_t budget = 10000;
+    assert(skse_plugin_session_step(session, SKSE_SESSION_WORKER, budget, 100) == SKSE_SESSION_OUT_OF_ORDER);
+    assert(skse_plugin_session_step(session, SKSE_SESSION_POST_LOAD, budget, 100) == SKSE_SESSION_OK);
+    assert(skse_plugin_session_step(session, SKSE_SESSION_POST_POST_LOAD, budget, 110) == SKSE_SESSION_OK);
+    assert(!skse_plugin_session_report(session)->workers_completed);
+    assert(skse_plugin_session_step(session, SKSE_SESSION_WORKER, budget, 120) == SKSE_SESSION_OK);
+    assert(skse_plugin_session_step(session, SKSE_SESSION_WORKER, budget, 130) == SKSE_SESSION_OK);
+    skse_plugin_session_close(session, &result);
+    assert(result.status == SKSE_TRIAL_COMPLETED && result.workers_completed == 1);
+    puts("resident worker completed once on the explicit step");
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) return 2;
     if (argc == 3 && !strcmp(argv[1], "--session")) {
         check_session(argv[2]);
+        return 0;
+    }
+    if (argc == 3 && !strcmp(argv[1], "--session-worker")) {
+        check_worker_session(argv[2]);
         return 0;
     }
     for (int i = 1; i < argc; ++i) {

@@ -759,7 +759,7 @@ SksePluginSession *skse_plugin_session_open(SkseTrialDependency primary, const S
 SkseSessionResult skse_plugin_session_step(SksePluginSession *session, SkseSessionEvent event,
                                          uint32_t work_limit, uint32_t uptime_ms) {
     if (!session || !work_limit || work_limit > TRIAL_BUDGET || (unsigned)event > SKSE_SESSION_WORKER)
-        return SKSE_SESSION_OUT_OF_ORDER;
+        return SKSE_SESSION_ARGUMENT;
     if (session->result.status != SKSE_TRIAL_COMPLETED) return SKSE_SESSION_FAULTED;
     const bool startup = event <= SKSE_SESSION_POST_POST_LOAD;
     if (startup ? (unsigned)event != session->startup_events : session->startup_events != 2)

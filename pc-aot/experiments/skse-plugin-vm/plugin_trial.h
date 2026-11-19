@@ -87,7 +87,9 @@ typedef enum {
     SKSE_SESSION_POST_LOAD, SKSE_SESSION_POST_POST_LOAD, SKSE_SESSION_GAME_TASKS,
     SKSE_SESSION_UI_TASKS, SKSE_SESSION_WORKER
 } SkseSessionEvent;
-typedef enum { SKSE_SESSION_OK, SKSE_SESSION_OUT_OF_ORDER, SKSE_SESSION_FAULTED } SkseSessionResult;
+typedef enum {
+    SKSE_SESSION_OK, SKSE_SESSION_ARGUMENT, SKSE_SESSION_OUT_OF_ORDER, SKSE_SESSION_FAULTED
+} SkseSessionResult;
 
 /* Owns the validated images and all VM state after Query/Load succeeds. The
  * caller serializes calls and keeps any supplied asset callback context alive
@@ -96,11 +98,13 @@ SksePluginSession *skse_plugin_session_open(SkseTrialDependency primary, const S
                                             size_t count, SkseTrialOptions options, SkseTrialRuntime runtime,
                                             SkseTrialResult *report);
 /* The two startup events are sent in order, once each. Queue events drain the
- * selected FIFO. Each event has a fresh budget of 1 to 1,000,000 units. A fault
- * stops delivery until close. This session has no live game pointers or hooks. */
+ * selected FIFO. A worker event runs any pending logical worker. Each event
+ * has a fresh budget of 1 to 1,000,000 units. A fault stops later events. */
 SkseSessionResult skse_plugin_session_step(SksePluginSession *session, SkseSessionEvent event,
                                          uint32_t work_limit, uint32_t uptime_ms);
+/* The report is borrowed for the session's lifetime and changes after a step. */
 const SkseTrialResult *skse_plugin_session_report(const SksePluginSession *session);
+/* Run detach callbacks and discard pending work. Optionally copy the final report. */
 void skse_plugin_session_close(SksePluginSession *session, SkseTrialResult *report);
 
 const char *skse_trial_windows_service_name(uint32_t token);
