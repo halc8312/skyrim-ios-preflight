@@ -132,6 +132,7 @@ def adapt_present(text):
 
 
 def prepare(source, runtime):
+    from classic_skse_extra import adapt as adapt_extra
     from classic_skse_translation import adapt as adapt_translation, adapt_profile_list
 
     source = (source / "runtime").resolve(strict=True)
@@ -143,13 +144,14 @@ def prepare(source, runtime):
         original = (source / name).read_text(encoding="utf-8")
         previous = adapt_profile_list(original) if name == "skse_translation.c" else adapt_ini(name, original)
         adapted = adapt_translation(original) if name == "skse_translation.c" else adapt_mod_queries(name, previous)
-        new = adapt_skyui_selftest(adapted) if name == "skse_compat.c" else adapted
+        before_input_queries = adapt_skyui_selftest(adapted) if name == "skse_compat.c" else adapted
+        new = adapt_extra(name, before_input_queries)
         target = runtime / name
         if target.is_symlink() or target.samefile(source / name):
             raise ValueError(f"{name}: expected an independent staged copy")
         old = target.read_text(encoding="utf-8")
         if old != new:
-            if old not in (original, previous, adapted):
+            if old not in (original, previous, adapted, before_input_queries):
                 raise ValueError(f"{name}: unrecognized contents in staged runtime")
             changes.append((target, new))
     # The ordinary runtime adapter already transforms the SDL implementation.

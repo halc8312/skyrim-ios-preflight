@@ -64,7 +64,8 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
     set(SKYRIM_IOS_RUNTIME_OVERLAY_DIR "${classic_overlay}/runtime")
     set(classic_adapter "${CMAKE_CURRENT_SOURCE_DIR}/prepare_classic_skse.py")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${classic_adapter}" "${CMAKE_CURRENT_SOURCE_DIR}/classic_skse_translation.py")
+        "${classic_adapter}" "${CMAKE_CURRENT_SOURCE_DIR}/classic_skse_translation.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/classic_skse_extra.py")
     execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../private-abi/prepare_private_abi.py"
         "${classic_overlay}" COMMAND_ERROR_IS_FATAL ANY)
     execute_process(COMMAND "${Python3_EXECUTABLE}" "${classic_adapter}"

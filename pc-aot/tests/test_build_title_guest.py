@@ -272,7 +272,7 @@ class HostClassicOptionTests(unittest.TestCase):
         start = cmake.index('    set(host_plist "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")')
         plist_block = cmake[start:cmake.index("    if(_mod_archive_notice)", start)]
         with tempfile.TemporaryDirectory(prefix="classic-capability-") as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             port, abi = root/"ios/runtime-port", root/"ios/private-abi"
             overlay, vendor = root/"original overlay", root/"vendor"
             for path in (port, abi, overlay, vendor):
@@ -288,7 +288,7 @@ class HostClassicOptionTests(unittest.TestCase):
                 "from pathlib import Path\nimport argparse\n"
                 "p=argparse.ArgumentParser()\np.add_argument('--runtime', type=Path)\n"
                 "p.add_argument('--source', type=Path)\na=p.parse_args()\n"
-                "assert a.source == Path(__file__).resolve().parents[2] / 'vendor'\n"
+                "assert a.source.resolve() == Path(__file__).resolve().parents[2] / 'vendor'\n"
                 "assert (a.runtime/'main.c').read_text() == 'ordinary\\n'\n"
                 "(a.runtime/'main.c').write_text('classic\\n')\n")
             # Capture only target metadata. Commands that stage directories and configure
