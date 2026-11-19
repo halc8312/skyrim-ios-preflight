@@ -2,6 +2,7 @@
  * Simulator-only host for the shipping Settings and MOD controllers.
  * Only synthetic data in this dedicated bundle's sandbox is used. */
 #import <UIKit/UIKit.h>
+#import <WebKit/WebKit.h>
 #import <objc/runtime.h>
 #include "mobile_ui.h"
 #include "mod_manager.h"
@@ -30,6 +31,40 @@ static void configureFixturePicker(void) {
     });
     if (!class_addMethod(hub, action, withDirectory, method_getTypeEncoding(inherited)))
         [NSException raise:NSInternalInconsistencyException format:@"MOD hub now implements its own presentation"];
+}
+
+// Observe the real top-level navigation in the opt-in live test. The native
+// reload item's test identifier carries the result outside the web subtree,
+// so only page content can satisfy the separate visible-listing assertion.
+static void configureLiveNexusObservation(void) {
+    Class browser = NSClassFromString(@"SKModBrowser");
+    void (^committed)(UIViewController *, WKWebView *, WKNavigation *) =
+        ^(UIViewController *owner, WKWebView *web, WKNavigation *navigation) {
+            (void)navigation;
+            NSURL *url = web.URL;
+            BOOL listing = [url.scheme.lowercaseString isEqualToString:@"https"] &&
+                [@[@"nexusmods.com", @"www.nexusmods.com"] containsObject:url.host.lowercaseString ?: @""] &&
+                [@[@"/skyrim/mods", @"/skyrim/mods/", @"/games/skyrim/mods", @"/games/skyrim/mods/"]
+                    containsObject:url.path ?: @""];
+            owner.navigationItem.rightBarButtonItems.firstObject.accessibilityIdentifier =
+                listing ? @"nexus-live-listing-url" : @"nexus-live-other-url";
+        };
+    void (^failed)(UIViewController *, WKWebView *, WKNavigation *, NSError *) =
+        ^(UIViewController *owner, WKWebView *web, WKNavigation *navigation, NSError *error) {
+            (void)web; (void)navigation;
+            BOOL transport = [error.domain isEqualToString:NSURLErrorDomain];
+            if (transport && error.code == NSURLErrorCancelled) return;
+            owner.navigationItem.rightBarButtonItems.firstObject.accessibilityIdentifier =
+                transport ? @"nexus-live-network-error" : @"nexus-live-navigation-error";
+        };
+    SEL selectors[] = { @selector(webView:didCommitNavigation:), @selector(webView:didFailProvisionalNavigation:withError:),
+                        @selector(webView:didFailNavigation:withError:) };
+    IMP observers[] = { imp_implementationWithBlock(committed), imp_implementationWithBlock(failed), imp_implementationWithBlock(failed) };
+    for (NSUInteger i = 0; i < sizeof(selectors)/sizeof(selectors[0]); ++i) {
+        struct objc_method_description method = protocol_getMethodDescription(@protocol(WKNavigationDelegate), selectors[i], NO, YES);
+        if (!method.types || !class_addMethod(browser, selectors[i], observers[i], method.types))
+            [NSException raise:NSInternalInconsistencyException format:@"Cannot attach passive Nexus navigation observation"];
+    }
 }
 
 static void prepareDirectory(NSURL *url) {
@@ -106,6 +141,8 @@ static void copyFixture(NSURL *source, NSURL *destination) {
 int main(int argc, char **argv) {
     @autoreleasepool {
         configureFixturePicker();
+        if ([NSProcessInfo.processInfo.arguments containsObject:@"-ObserveNexusLiveNavigation"])
+            configureLiveNexusObservation();
         return UIApplicationMain(argc, argv, nil, NSStringFromClass(SKFixtureDelegate.class));
     }
 }

@@ -2,6 +2,11 @@
 # Run the MOD settings UI suite with simulator libraries and public SDL headers.
 set -euo pipefail
 [[ "$(uname -s)" == Darwin ]] || { echo "The iOS Simulator requires macOS." >&2; exit 2; }
+mode="${1:-screens}"
+if [[ $# -gt 1 || ( "$mode" != screens && "$mode" != nexus-live ) ]]; then
+    echo "Usage: $0 [screens|nexus-live]" >&2
+    exit 2
+fi
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 base="${SKYRIM_IOS_DEPS_ROOT:-$root/local/ios-dependencies-build15}"
@@ -43,7 +48,7 @@ OBJC
 bash scripts/fetch-mod-codecs.sh
 bash ios/dependencies/build-mod-archive-dependencies.sh iphonesimulator
 status=0
-bash scripts/check-mod-simulator.sh "$run/check" "$sdl" "$base/mod-archive/iphonesimulator/prefix" || status=$?
+bash scripts/check-mod-simulator.sh "$run/check" "$sdl" "$base/mod-archive/iphonesimulator/prefix" "$mode" || status=$?
 for entry in evidence ModScreens.xcresult; do
     if [[ -d "$run/check/$entry" ]]; then
         ditto -c -k --keepParent "$run/check/$entry" "$artifacts/$entry.zip"

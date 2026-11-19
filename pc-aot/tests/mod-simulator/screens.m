@@ -206,6 +206,95 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
         } while (until.timeIntervalSinceNow > 0);
     }
 }
+- (void)recordNexusResult:(NSString *)result detail:(NSString *)detail {
+    [self capture:[@"nexus-live-" stringByAppendingString:result]];
+    NSString *text = [NSString stringWithFormat:@"result=%@\n%@\n", result, detail];
+    XCTAttachment *report = [XCTAttachment attachmentWithData:[text dataUsingEncoding:NSUTF8StringEncoding]
+                                       uniformTypeIdentifier:@"public.utf8-plain-text"];
+    report.name = @"nexus-live-result.txt";
+    report.lifetime = XCTAttachmentLifetimeKeepAlways;
+    [self addAttachment:report];
+}
+
+// Run this network-dependent test on its own fresh simulator. Do not tap a
+// link, dismiss a third-party interstitial, sign in, or request a download.
+- (void)testLiveNexusListing {
+    self.app.launchArguments = [self.app.launchArguments arrayByAddingObject:@"-ObserveNexusLiveNavigation"];
+    [self.app launch];
+    [self openHub];
+    [[self findRow:@"Find on Nexus Mods"] tap];
+    XCUIElement *bar = self.app.navigationBars[@"Nexus Mods"];
+    XCUIElement *web = self.app.webViews.firstMatch;
+    XCTAssertTrue([bar waitForExistenceWithTimeout:10]);
+    XCTAssertTrue([web waitForExistenceWithTimeout:12]);
+
+    NSPredicate *listing = [NSPredicate predicateWithFormat:@"label MATCHES[c] %@",
+        @"(Skyrim mods|Clear game filter|Search parameters|Browse the internet['’]s best mods.*)"];
+    NSPredicate *challenge = [NSPredicate predicateWithFormat:@"label MATCHES[c] %@",
+        @".*(Just a moment|verif(y|ying) (that )?you are human|checking your browser|security verification|"
+         "checking if the site connection is secure|review the security of your connection|attention required).*"];
+    NSPredicate *siteError = [NSPredicate predicateWithFormat:@"label MATCHES[c] %@",
+        @".*(Access denied|403 Forbidden|Bad gateway|Gateway time.?out|Service unavailable|"
+         "This site can.t be reached|failed to connect to the server).*"];
+    NSPredicate *interstitial = [NSPredicate predicateWithFormat:@"label MATCHES[c] %@",
+        @".*(We value your privacy|Before you continue to Nexus Mods).*"];
+    XCUIElementQuery *signals = [[web descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:
+        [NSCompoundPredicate orPredicateWithSubpredicates:@[listing, challenge, siteError, interstitial]]];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:60];
+    NSString *result = @"unconfirmed", *detail = @"No visible listing marker.";
+    NSUInteger scrolls = 0;
+    do {
+        if (bar.buttons[@"nexus-live-network-error"].exists) {
+            result = @"network-error"; detail = @"WebKit reported a top-level URL loading error."; break;
+        }
+        if (bar.buttons[@"nexus-live-navigation-error"].exists) {
+            result = @"navigation-error"; detail = @"WebKit reported a top-level navigation error."; break;
+        }
+        BOOL officialURL = bar.buttons[@"nexus-live-listing-url"].exists;
+        NSString *marker = nil;
+        NSString *blocker = [challenge evaluateWithObject:web] ? @"challenge" : nil;
+        BOOL listingBelow = NO;
+        CGFloat top = MAX(CGRectGetMinY(web.frame), CGRectGetMaxY(bar.frame));
+        CGFloat bottom = MIN(CGRectGetMaxY(web.frame), CGRectGetMaxY(self.app.frame));
+        for (XCUIElement *element in signals.allElementsBoundByIndex) {
+            XCUIElementType type = element.elementType;
+            if (type == XCUIElementTypeWebView && [challenge evaluateWithObject:element]) {
+                blocker = @"challenge"; break;
+            }
+            if (type != XCUIElementTypeStaticText && type != XCUIElementTypeLink &&
+                type != XCUIElementTypeButton && type != XCUIElementTypeOther) continue;
+            CGRect frame = element.frame;
+            if (CGRectGetWidth(frame) < 2 || CGRectGetHeight(frame) < 2 ||
+                (type == XCUIElementTypeOther && CGRectGetHeight(frame) > (bottom - top) / 2)) continue;
+            if (CGRectGetMinY(frame) >= bottom) {
+                if ([listing evaluateWithObject:element]) listingBelow = YES;
+                continue;
+            }
+            if (CGRectGetMaxY(frame) <= top || !element.hittable) continue;
+            if ([listing evaluateWithObject:element]) { marker = element.label; continue; }
+            blocker = [challenge evaluateWithObject:element] ? @"challenge" :
+                      [siteError evaluateWithObject:element] ? @"site-error" : @"interstitial";
+            break;
+        }
+        if (blocker) {
+            result = blocker; detail = @"The website displayed an interstitial or error.";
+        } else if (officialURL && marker) {
+            [self recordNexusResult:@"listing" detail:[@"Visible on the committed Skyrim listing URL: " stringByAppendingString:marker]];
+            return;
+        } else {
+            result = bar.buttons[@"nexus-live-other-url"].exists ? @"other-url" : @"unconfirmed";
+            detail = officialURL ? @"The Skyrim listing URL committed, but no listing content was visible." :
+                                   @"No visible listing on a committed Skyrim listing URL.";
+            // Reveal text already present in the document when its landmark
+            // is below the landscape viewport. Never scroll an interstitial.
+            if (officialURL && listingBelow && scrolls < 2) { [web swipeUp]; ++scrolls; }
+        }
+        [NSThread sleepForTimeInterval:1];
+    } while (deadline.timeIntervalSinceNow > 0);
+    [self recordNexusResult:result detail:detail];
+    XCTFail(@"Nexus live result %@: %@", result, detail);
+}
+
 - (void)testActualSettingsModScreens {
     [self.app launch];
     [self capture:@"settings"];
