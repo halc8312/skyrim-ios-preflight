@@ -1,6 +1,22 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #import <XCTest/XCTest.h>
 #import <CoreGraphics/CoreGraphics.h>
+#include <math.h>
+
+// A virtualized cell can still exist in the tree with {{inf,inf},{0,0}}
+// during dismissal. XCTest records a test failure if asked to hit-test it.
+static CGRect elementFrame(XCUIElement *element) {
+    if (!element.exists) return CGRectNull;
+    CGRect frame = element.frame;
+    if (CGRectIsEmpty(frame) || CGRectIsInfinite(frame) ||
+        !isfinite(frame.origin.x) || !isfinite(frame.origin.y) ||
+        !isfinite(frame.size.width) || !isfinite(frame.size.height)) return CGRectNull;
+    return frame;
+}
+
+static BOOL canHit(XCUIElement *element) {
+    return !CGRectIsNull(elementFrame(element)) && element.hittable;
+}
 
 @interface ModScreensTests : XCTestCase
 @property(nonatomic,strong) XCUIApplication *app;
@@ -37,7 +53,11 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     do {
         for (XCUIElement *candidate in tables.allElementsBoundByIndex.reverseObjectEnumerator) {
             XCUIElement *cell = [candidate.cells containingType:XCUIElementTypeStaticText identifier:label].firstMatch;
-            if (cell.hittable || candidate.hittable) { table = candidate; row = cell; break; }
+            CGRect cellFrame = elementFrame(cell), tableFrame = elementFrame(candidate);
+            if (CGRectIsNull(tableFrame) || CGRectIsNull(cellFrame)) continue;
+            if (candidate.hittable || (CGRectIntersectsRect(cellFrame, tableFrame) && canHit(cell))) {
+                table = candidate; row = cell; break;
+            }
         }
         if (table) break;
         [NSThread sleepForTimeInterval:.15];
@@ -47,15 +67,24 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     // have the same placeholder Y. Use the cell for scrolling and the final tap.
     XCUIElement *nav = nil;
     for (XCUIElement *candidate in self.app.navigationBars.allElementsBoundByIndex.reverseObjectEnumerator)
-        if (candidate.hittable) { nav = candidate; break; }
+        if (canHit(candidate)) { nav = candidate; break; }
     CGFloat previousY = CGFLOAT_MAX;
     for (NSUInteger i = 0; i < 40; ++i) {
-        CGRect bounds = table.frame;
+        CGRect bounds = elementFrame(table), cellFrame = elementFrame(row);
+        if (CGRectIsNull(bounds) || CGRectIsNull(cellFrame)) {
+            [NSThread sleepForTimeInterval:.15];
+            continue;
+        }
         CGFloat top = CGRectGetMinY(bounds) + 10;
-        if (nav) top = MAX(top, CGRectGetMaxY(nav.frame) + 8);
+        CGRect navFrame = elementFrame(nav);
+        if (!CGRectIsNull(navFrame)) top = MAX(top, CGRectGetMaxY(navFrame) + 8);
         CGFloat bottom = CGRectGetMaxY(bounds) - 22;
-        CGFloat y = CGRectGetMidY(row.frame);
-        if (y >= top && y <= bottom && row.hittable) return row;
+        CGFloat y = CGRectGetMidY(cellFrame);
+        if (y >= top && y <= bottom) {
+            if (canHit(row)) return row;
+            [NSThread sleepForTimeInterval:.15];
+            continue;
+        }
         if (bottom <= top || ABS(y - previousY) < 1) break;
         previousY = y;
         CGFloat middle = (top + bottom) / 2;
@@ -73,11 +102,17 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 - (void)goBackFrom:(NSString *)title {
     XCUIElement *bar = self.app.navigationBars[title];
     XCTAssertTrue([bar waitForExistenceWithTimeout:8], @"Missing navigation bar %@", title);
+    XCUIElement *nativeBack = bar.buttons[@"BackButton"];
+    if (nativeBack.exists) { [nativeBack tap]; return; }
+    CGRect barFrame = elementFrame(bar);
+    XCTAssertFalse(CGRectIsNull(barFrame), @"Invalid navigation bar on %@", title);
     XCUIElement *back = nil;
-    CGFloat leading = CGRectGetMidX(bar.frame);
+    CGFloat leading = CGRectGetMidX(barFrame);
     for (XCUIElement *button in bar.buttons.allElementsBoundByIndex) {
-        CGFloat x = CGRectGetMidX(button.frame);
-        if (button.hittable && x < leading) { back = button; leading = x; }
+        CGRect frame = elementFrame(button);
+        if (CGRectIsNull(frame)) continue;
+        CGFloat x = CGRectGetMidX(frame);
+        if (x < leading && button.hittable) { back = button; leading = x; }
     }
     XCTAssertNotNil(back, @"Missing leading back button on %@. %@", title, bar.debugDescription);
     [back tap];
@@ -117,15 +152,17 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     return [files.cells containingType:XCUIElementTypeStaticText identifier:name].firstMatch;
 }
 - (void)scrollFiles:(XCUIElement *)files towardBottom:(BOOL)down {
-    CGRect bounds = files.frame;
+    CGRect bounds = elementFrame(files);
+    if (CGRectIsNull(bounds)) return;
     CGFloat left = CGRectGetMinX(bounds) + 8, right = CGRectGetMaxX(bounds) - 8;
     CGFloat top = CGRectGetMinY(bounds) + 8, bottom = CGRectGetMaxY(bounds) - 12;
     XCUIElement *sidebar = self.app.collectionViews[@"Browse View"];
     XCUIElement *bar = self.app.navigationBars[@"FullDocumentManagerViewControllerNavigationBar"];
     XCUIElement *tabs = self.app.tabBars[@"DOC.browsingModeTabBar"];
-    if (sidebar.exists && sidebar.hittable) left = MAX(left, CGRectGetMaxX(sidebar.frame) + 8);
-    if (bar.exists) top = MAX(top, CGRectGetMaxY(bar.frame) + 8);
-    if (tabs.exists) bottom = MIN(bottom, CGRectGetMinY(tabs.frame) - 8);
+    CGRect sideFrame = elementFrame(sidebar), barFrame = elementFrame(bar), tabFrame = elementFrame(tabs);
+    if (!CGRectIsNull(sideFrame) && sidebar.hittable) left = MAX(left, CGRectGetMaxX(sideFrame) + 8);
+    if (!CGRectIsNull(barFrame)) top = MAX(top, CGRectGetMaxY(barFrame) + 8);
+    if (!CGRectIsNull(tabFrame)) bottom = MIN(bottom, CGRectGetMinY(tabFrame) - 8);
     if (right <= left || bottom - top < 45) return;
     CGFloat x = ((left + right) / 2 - CGRectGetMinX(bounds)) / CGRectGetWidth(bounds);
     CGFloat high = (top + .15 * (bottom - top) - CGRectGetMinY(bounds)) / CGRectGetHeight(bounds);
@@ -145,7 +182,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     NSUInteger scrolls = 0;
     while (deadline.timeIntervalSinceNow > 0) {
         XCUIElement *item = [self fileNamed:name inCollection:files];
-        if (item.exists && item.hittable && item.enabled) return item;
+        if (canHit(item) && item.enabled) return item;
         if (stage < SKPickerSamples && bar.staticTexts[@"UI Samples"].exists) {
             stage = SKPickerSamples;
             ready = [NSDate dateWithTimeIntervalSinceNow:3];
@@ -156,7 +193,8 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
                 // This state is terminal: a still-visible Browse button leads
                 // back to the root. Wait for File Provider to populate its list.
                 if (scrolls < 8 && files.exists && files.cells.count) {
-                    BOOL down = item.exists ? CGRectGetMidY(item.frame) >= CGRectGetMidY(files.frame) : scrolls < 4;
+                    CGRect frame = elementFrame(item);
+                    BOOL down = CGRectIsNull(frame) ? scrolls < 4 : CGRectGetMidY(frame) >= CGRectGetMidY(files.frame);
                     [self scrollFiles:files towardBottom:down];
                     ++scrolls;
                     ready = [NSDate dateWithTimeIntervalSinceNow:.4];
@@ -164,15 +202,15 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
             } else {
                 XCUIElement *samples = [self fileNamed:@"UI Samples" inCollection:files];
                 XCUIElement *place = nil;
-                if (samples.exists && samples.hittable) { place = samples; stage = SKPickerSamples; }
+                if (canHit(samples)) { place = samples; stage = SKPickerSamples; }
                 if (!place && stage < SKPickerAppFolder) {
                     XCUIElement *host = [self fileNamed:@"MOD Screen Test" inCollection:files];
-                    if (host.exists && host.hittable) { place = host; stage = SKPickerAppFolder; }
+                    if (canHit(host)) { place = host; stage = SKPickerAppFolder; }
                 }
-                if (!place && stage < SKPickerLocal && local.exists && local.hittable) {
+                if (!place && stage < SKPickerLocal && canHit(local)) {
                     place = local; stage = SKPickerLocal;
                 }
-                if (!place && stage < SKPickerBrowse && browse.exists && browse.hittable) {
+                if (!place && stage < SKPickerBrowse && canHit(browse)) {
                     place = browse; stage = SKPickerBrowse;
                 }
                 if (place) {
@@ -199,11 +237,21 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
         NSDate *until = [NSDate dateWithTimeIntervalSinceNow:6];
         do {
             for (XCUIElement *confirm in choices.allElementsBoundByIndex)
-                if (confirm.hittable && confirm.enabled) { [confirm tap]; return; }
+                if (canHit(confirm) && confirm.enabled) { [confirm tap]; return; }
             if (!self.app.collectionViews[@"File View"].exists &&
                 !self.app.navigationBars[@"FullDocumentManagerViewControllerNavigationBar"].exists) return;
             [NSThread sleepForTimeInterval:.15];
         } while (until.timeIntervalSinceNow > 0);
+    } else {
+        XCUIElement *files = self.app.collectionViews[@"File View"];
+        XCUIElement *picker = self.app.navigationBars[@"FullDocumentManagerViewControllerNavigationBar"];
+        XCUIElement *hub = self.app.navigationBars[@"MOD"];
+        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:18];
+        do {
+            if (!files.exists && !picker.exists && canHit(hub)) return;
+            [NSThread sleepForTimeInterval:.15];
+        } while (until.timeIntervalSinceNow > 0);
+        XCTFail(@"Files did not close and return to MOD after selecting %@.", name);
     }
 }
 - (void)recordNexusResult:(NSString *)result detail:(NSString *)detail {
@@ -263,8 +311,8 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
             }
             if (type != XCUIElementTypeStaticText && type != XCUIElementTypeLink &&
                 type != XCUIElementTypeButton && type != XCUIElementTypeOther) continue;
-            CGRect frame = element.frame;
-            if (CGRectGetWidth(frame) < 2 || CGRectGetHeight(frame) < 2 ||
+            CGRect frame = elementFrame(element);
+            if (CGRectIsNull(frame) || CGRectGetWidth(frame) < 2 || CGRectGetHeight(frame) < 2 ||
                 (type == XCUIElementTypeOther && CGRectGetHeight(frame) > (bottom - top) / 2)) continue;
             if (CGRectGetMinY(frame) >= bottom) {
                 if ([listing evaluateWithObject:element]) listingBelow = YES;
