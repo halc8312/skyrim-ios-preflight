@@ -71,5 +71,18 @@ int main(int argc, char **argv) {
         free(names);
         return 0;
     }
+    if (!strcmp(argv[1], "cosave") && argc == 4) {
+        SkyrimCoSaveInfo info;
+        SkyrimCoSaveStatus status = skyrim_save_cosave(argv[2], argv[3], &info);
+        static const char *const names[] = {
+            [SKYRIM_COSAVE_OK] = "ok", [SKYRIM_COSAVE_ABSENT] = "absent",
+            [SKYRIM_COSAVE_UNSUPPORTED] = "unsupported", [SKYRIM_COSAVE_TRUNCATED] = "truncated",
+            [SKYRIM_COSAVE_MALFORMED] = "malformed", [SKYRIM_COSAVE_UNREADABLE] = "unreadable",
+            [SKYRIM_COSAVE_LIMIT] = "limit"
+        };
+        printf("%s %u %u %u %08x %08x\n", names[status], info.plugin_count, info.record_count,
+               info.format_version, info.skse_version, info.runtime_version);
+        return 0;
+    }
     return 2;
 }

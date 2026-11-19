@@ -369,7 +369,14 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self findRow:@"Authored Save"];
     NSPredicate *missingPlugin = [NSPredicate predicateWithFormat:@"label CONTAINS %@", @"UnavailableFixture.esp"];
     XCTAssertTrue([self.app.staticTexts matchingPredicate:missingPlugin].count > 0);
-    [self capture:@"save-check"]; [self goBackFrom:@"Save check"];
+    [self capture:@"save-check"];
+    [[self findRow:@"Authored Save"] tap];
+    XCUIElement *coSave = self.app.alerts[@"Authored Save.skse"];
+    XCTAssertTrue([coSave waitForExistenceWithTimeout:6]);
+    NSPredicate *counts = [NSPredicate predicateWithFormat:@"label CONTAINS %@", @"Plugin sections: 1. Records: 1."];
+    XCTAssertTrue([coSave.staticTexts matchingPredicate:counts].firstMatch.exists);
+    [coSave.buttons[@"OK"] tap];
+    [self goBackFrom:@"Save check"];
 
     [[self findRow:@"Add a zip file"] tap];
     [self pick:@"AuthoredZip.zip" folder:NO];

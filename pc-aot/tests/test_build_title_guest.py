@@ -178,6 +178,44 @@ class BuildTests(unittest.TestCase):
             self.build()
         self.assertEqual(self.calls,[])
 
+    def test_classic_variant_uses_separate_objects_bindings_and_framework_identity(self):
+        import plistlib
+        with mock.patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
+            import classic_skse_guest as classic
+            self.state.update(source_commit=classic.PIN, candidate_sha256=classic.CANDIDATE_SHA,
+                              discovery_sha256=classic.DISCOVERY_SHA)
+            self.state_path.write_text(json.dumps(self.state))
+            gen = self.stage / "gen"
+            declarations = gen / "funcs_exe.h"
+            declarations.write_bytes(b"/* authored declarations */")
+            (gen / "exe_0.c").write_bytes(b"\n".join(
+                b"void f_" + name + b"(CPU *c) { return; }" for name in classic.ENTRIES))
+            (gen / "exe_table.c").write_bytes(b"\n".join(
+                b"{0x" + name + b"u, f_" + name + b"}," for name in classic.ENTRIES))
+            (self.abi / "PcGuestSkseABI.h").write_bytes(b"authored experimental ABI")
+            (self.abi / "pc_guest_skse_library.c").write_bytes(b"/* test */")
+            self.build()
+            self.calls.clear()
+            builder.main([str(self.stage), "--jobs", "1", "--classic-skse"])
+            self.calls.clear()
+            builder.main([str(self.stage), "--jobs", "1", "--classic-skse"])
+            self.assertFalse(any("-c" in cmd for cmd in self.calls))
+            declarations.write_bytes(b"/* changed declarations */")
+            self.calls.clear()
+            builder.main([str(self.stage), "--jobs", "1", "--classic-skse"])
+            self.assertEqual(sum("-c" in cmd for cmd in self.calls), 4)
+        extra = self.stage / "arm64-ios-classic-skse"
+        normal = self.stage / "arm64-ios"
+        self.assertNotIn("classic_skse_experiment", json.loads((normal / "result.json").read_text()))
+        self.assertIs(json.loads((extra / "result.json").read_text())["classic_skse_experiment"], True)
+        self.assertIs(plistlib.loads((extra / "SkyrimGuest.framework/Info.plist").read_bytes())
+                      ["PcGuestClassicSkseExperiment"], True)
+        self.assertEqual(set((extra / "exports.txt").read_text().splitlines()),
+                         {"_skyrim_guest_classic_api_v1", "_skyrim_guest_bind_classic_v1"})
+        for cmd in (c for c in self.calls if "-c" in c):
+            is_host_binding = Path(cmd[cmd.index("-c")+1]).parent == self.abi
+            self.assertEqual("-DSKYRIM_IOS_CLASSIC_SKSE=1" in cmd, is_host_binding)
+
     def test_unknown_import_blocks_link_and_success_result(self):
         self.import_mock.return_value=(["_not_allowed"],["_not_allowed"])
         with self.assertRaisesRegex(RuntimeError,"Unexpected private framework imports"):

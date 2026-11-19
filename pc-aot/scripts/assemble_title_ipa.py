@@ -34,6 +34,13 @@ def sha(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def classic_variant(value):
+    """Older ordinary manifests have no marker. Only actual booleans are valid."""
+    if type(value) is not bool:
+        raise ValueError("Invalid Classic experiment marker")
+    return value
+
+
 def host_artifacts(directory, guest_result, input_sha256):
     """Bind the easy self-build route to the actual host/guest ABI evidence."""
     result = json.loads((directory / "result.json").read_text())
@@ -49,6 +56,10 @@ def host_artifacts(directory, guest_result, input_sha256):
     build = guest_result.resolve().parent
     stage = build.parent
     contract = json.loads((build / "compile-contract.json").read_text())
+    classic = classic_variant(guest.get("classic_skse_experiment", False))
+    if (classic != classic_variant(result.get("classic_skse_experiment", False))
+            or classic != classic_variant(contract.get("classic_skse_experiment", False))):
+        raise ValueError("Host/guest Classic experiment mismatch")
     runtime = stage / "source/runtime"
     for name in ("x86.h", "rt_table.h"):
         source = runtime / name
@@ -67,6 +78,12 @@ def host_artifacts(directory, guest_result, input_sha256):
             or (directory / "PcGuestABI.h").read_bytes().replace(b"\r\n", b"\n")
             != abi.read_bytes().replace(b"\r\n", b"\n")):
         raise ValueError("Host/guest binding header mismatch")
+    if classic:
+        classic_abi = abi.with_name("PcGuestSkseABI.h")
+        if (contract.get("classic_abi_header_sha256") != sha(classic_abi)
+                or (directory / classic_abi.name).read_bytes().replace(b"\r\n", b"\n")
+                != classic_abi.read_bytes().replace(b"\r\n", b"\n")):
+            raise ValueError("Host/guest Classic binding header mismatch")
     return archive, result["artifact_sha256"]
 
 
@@ -97,6 +114,10 @@ def main():
     binary = framework / "SkyrimGuest"
     if not guest.get("strict_link_succeeded") or guest.get("signed") or sha(binary) != guest["sha256"]:
         raise ValueError("Guest build result does not match the unsigned framework")
+    guest_classic = classic_variant(guest.get("classic_skse_experiment", False))
+    guest_info = plistlib.loads((framework / "Info.plist").read_bytes())
+    if classic_variant(guest_info.get("PcGuestClassicSkseExperiment", False)) != guest_classic:
+        raise ValueError("Guest framework Classic experiment mismatch")
     a.output.parent.mkdir(parents=True, exist_ok=True)
     records = {}
     total = 0
@@ -121,7 +142,10 @@ def main():
                 raise ValueError("Public host exceeds expected size")
             records[relative] = (source.read(member), mode & 0o777 or 0o644)
     info = plistlib.loads(records["Info.plist"][0])
-    if (info.get("CFBundleIdentifier") != "org.skyrimios.pc2011"
+    if classic_variant(info.get("PcGuestClassicSkseExperiment", False)) != guest_classic:
+        raise ValueError("Host/guest Classic experiment mismatch")
+    expected_id = "org.skyrimios.pc2011.classic-lab" if guest_classic else "org.skyrimios.pc2011"
+    if (info.get("CFBundleIdentifier") != expected_id
             or info.get("CFBundleExecutable") != "SkyrimIOS"
             or str(info.get("CFBundleVersion")) != "16"):
         raise ValueError("Public-host identity mismatch")

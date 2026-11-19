@@ -214,6 +214,77 @@ class ModOptimizeTests(unittest.TestCase):
         self.assertIn("save 0 count 3", out)
         self.assertIn("plugin CoolMod.esp", out)
 
+    def test_classic_cosave_pairing_and_unknown_records(self):
+        # Authored v1 envelope. IDs and record contents belong to individual plugins.
+        hdr = lambda plugins: struct.pack("<4sIIII", b"SKSE", 1, 0x01070030, 0x09200000, plugins)
+        field = lambda uid, n, length: struct.pack("<III", uid, n, length)
+        p = self.dir / "cosave-profile"
+        p.mkdir()
+        save = p / "Slot.A.ess"
+        save.write_bytes(b"original save")
+        self.assertTrue(self.drive("cosave", p, save.name).startswith("absent"))
+        (p / "Slot.skse").write_bytes(hdr(0))
+        self.assertTrue(self.drive("cosave", p, save.name).startswith("absent"))
+        side = p / "Slot.A.SkSe"
+        side.write_bytes(hdr(0))
+        self.assertEqual(self.drive("cosave", p, save.name).strip(), "ok 0 0 1 01070030 09200000")
+        first = field(0x1234, 4, 3) + b"abc" + field(0x1234, 7, 0)
+        second = field(7, 3, 2) + b"xy"
+        content = hdr(2) + field(0xFFFFFFFF, 2, len(first)) + first + field(1, 1, len(second)) + second
+        side.write_bytes(content)
+        self.assertEqual(self.drive("cosave", p, save.name).strip(), "ok 2 3 1 01070030 09200000")
+        other = self.dir / "other-cosave-profile"
+        other.mkdir()
+        self.assertTrue(self.drive("cosave", other, save.name).startswith("absent"))
+        self.assertEqual(side.read_bytes(), content)
+        self.assertEqual(save.read_bytes(), b"original save")
+
+    def test_classic_cosave_rejects_incomplete_or_incompatible_data(self):
+        header = struct.pack("<4sIIII", b"SKSE", 1, 0x01070030, 0x09200000, 1)
+        field = lambda count, length: struct.pack("<III", 1, count, length)
+        body = field(1, 15) + field(1, 3) + b"abc"
+        cases = {
+            "header cut": (header[:18], "truncated"),
+            "plugin header cut": (header + body[:9], "truncated"),
+            "payload cut": (header + body[:-1], "truncated"),
+            "plugin oversize": (header + field(1, 0xFFFFFFFF), "truncated"),
+            "count exceeds plugin": (header + field(0xFFFFFFFF, 0), "malformed"),
+            "bad inner length": (header + field(1, 12) + field(1, 0xFFFFFFFF), "malformed"),
+            "extra plugin bytes": (header + field(0, 1) + b"x", "malformed"),
+            "trailing bytes": (header + body + b"x", "malformed"),
+            "wrong signature order": (b"ESKS" + header[4:] + body, "malformed"),
+            "reserved zero format": (header[:4] + bytes(4) + header[8:], "malformed"),
+            "new format": (header[:4] + struct.pack("<I", 2) + header[8:], "unsupported"),
+            "SE runtime": (header[:12] + struct.pack("<I", 0x01050610) + header[16:], "unsupported"),
+            "too many headers": (header + field(100000, 1200000) + bytes(1200000), "limit"),
+        }
+        path = self.dir / "Broken.skse"
+        for reason, (data, expected) in cases.items():
+            with self.subTest(reason=reason):
+                path.write_bytes(data)
+                self.assertEqual(self.drive("cosave", self.dir, "Broken.ess").split()[:3], [expected, "0", "0"])
+                self.assertEqual(path.read_bytes(), data)
+
+    def test_classic_cosave_rejects_links_and_ambiguous_names(self):
+        directory = self.dir / "cosave-names"
+        directory.mkdir()
+        target = self.write("unrelated-data", b"keep")
+        alias = directory / "Pair.skse"
+        alias.symlink_to(target)
+        self.assertTrue(self.drive("cosave", directory, "Pair.ess").startswith("unreadable"))
+        self.assertTrue(self.drive("cosave", directory, "../Pair.ess").startswith("unreadable"))
+        self.assertTrue(self.drive("cosave", directory, "Pair.ess.bak").startswith("unreadable"))
+        alias.unlink()
+        alias.mkdir()
+        self.assertTrue(self.drive("cosave", directory, "Pair.ess").startswith("unreadable"))
+        alias.rmdir()
+        alias.write_bytes(b"test")
+        second = directory / "pair.SKSE"
+        if not second.exists():  # Case-sensitive save volume.
+            second.write_bytes(b"test")
+            self.assertTrue(self.drive("cosave", directory, "Pair.ess").startswith("unreadable"))
+        self.assertEqual(target.read_bytes(), b"keep")
+
 
 if __name__ == "__main__":
     unittest.main()

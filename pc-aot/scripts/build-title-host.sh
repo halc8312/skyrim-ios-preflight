@@ -5,6 +5,11 @@ umask 077
 [[ "$(uname -s)" == Darwin ]] || { echo 'Apple iPhoneOS SDK required' >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+CLASSIC_SKSE="${SKYRIM_IOS_CLASSIC_SKSE-0}"
+case "$CLASSIC_SKSE" in
+  0|1) ;;
+  *) echo 'SKYRIM_IOS_CLASSIC_SKSE must be 0 or 1' >&2; exit 2 ;;
+esac
 python3 scripts/check-public-tree.py
 mkdir -p local/title-host
 RUN="$(mktemp -d "$ROOT/local/title-host/run-XXXXXX")"
@@ -59,6 +64,7 @@ PY
   HOST_CHECK_STATUS=0
   run_validation() { "$@" || HOST_CHECK_STATUS=1; }
   run_validation python3 -m unittest discover -s tests -p 'test_build_title_guest.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_classic_*.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_title_assembly.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_title_signing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_owned_data.py' -v
@@ -165,11 +171,15 @@ for patch in patches/skydream/0001-auxiliary-carry.patch patches/skydream/0005-c
   git -C "$RUN/overlay" apply --include='runtime/*' "$ROOT/$patch"
 done
 python3 ios/private-abi/prepare_private_abi.py "$RUN/overlay"
+if [[ "$CLASSIC_SKSE" == 1 ]]; then
+  python3 ios/runtime-port/prepare_classic_skse.py --runtime "$RUN/overlay/runtime"
+fi
 
 cmake -S ios/runtime-port -B "$RUN/build" -G 'Unix Makefiles' \
   -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=18.0 -DCMAKE_BUILD_TYPE=Release \
   -DSKYRIM_IOS_BUILD_APP=ON -DSKYRIM_IOS_BUNDLE_IDENTIFIER=org.skyrimios.pc2011 \
+  "-DSKYRIM_IOS_CLASSIC_SKSE=$CLASSIC_SKSE" \
   "-DSKYDREAM_SOURCE_DIR=$RUN/source" \
   "-DSKYRIM_IOS_RUNTIME_OVERLAY_DIR=$RUN/overlay/runtime" \
   "-DSKYRIM_IOS_BINDING_SOURCES=$ROOT/ios/private-abi/pc_guest_host.c" \
@@ -223,17 +233,34 @@ xcrun otool -L "$APP/SkyrimIOS" > "$RUN/artifacts/linked-libraries.txt"
 cp "$RUN/overlay/runtime/x86.h" "$RUN/artifacts/x86.h"
 cp "$RUN/overlay/runtime/rt_table.h" "$RUN/artifacts/rt_table.h"
 cp ios/private-abi/PcGuestABI.h "$RUN/artifacts/"
+if [[ "$CLASSIC_SKSE" == 1 ]]; then
+  cp ios/private-abi/PcGuestSkseABI.h "$RUN/artifacts/"
+fi
 ditto -c -k --keepParent "$APP" "$RUN/artifacts/SkyrimIOS-public-host.zip"
-python3 - "$RUN/artifacts" <<'PY'
+python3 - "$RUN/artifacts" "$APP/Info.plist" "$CLASSIC_SKSE" <<'PY'
 from pathlib import Path
-import hashlib, json, os, sys
+import hashlib, json, os, plistlib, sys
 out=Path(sys.argv[1]); app=out/'SkyrimIOS-public-host.zip'
-(out/'result.json').write_text(json.dumps({
+classic = sys.argv[3] == '1'
+info = plistlib.loads(Path(sys.argv[2]).read_bytes())
+if classic:
+    if info.get('PcGuestClassicSkseExperiment') is not True:
+        raise SystemExit('Missing classic experiment marker in built iPhone app')
+    if (info.get('CFBundleIdentifier') != 'org.skyrimios.pc2011.classic-lab'
+            or info.get('CFBundleDisplayName') != 'SkyrimIOS Classic Lab'):
+        raise SystemExit('Classic Lab requires its own application identity and display name')
+else:
+    if 'PcGuestClassicSkseExperiment' in info or info.get('CFBundleIdentifier') != 'org.skyrimios.pc2011':
+        raise SystemExit('Unexpected classic marker or application identifier in ordinary iPhone app')
+result = {
  'schema':1,'source_commit':os.environ.get('GITHUB_SHA') or os.environ.get('CM_COMMIT'),
  'artifact_sha256':hashlib.sha256(app.read_bytes()).hexdigest(),
  'target':'arm64-apple-ios','public_host_sdk_build':True,
  'private_guest_included':False,'game_executed':False,
  'physical_iphone_verified':False,'signed_for_installation':False
-},indent=2)+'\n')
+}
+if classic:
+    result['classic_skse_experiment'] = True
+(out/'result.json').write_text(json.dumps(result,indent=2)+'\n')
 PY
 echo 'Public host built; local private-framework assembly and signing still required.'

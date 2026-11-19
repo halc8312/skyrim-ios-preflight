@@ -46,6 +46,26 @@ int skyrim_mod_analyze(const char *data_dir, SkyrimModReport *report);
 /* Plugins named in a classic .ess save header. *names receives count
  * NUL-terminated names back to back (free with free()). 0 on success. */
 int skyrim_save_plugins(const char *path, char **names, unsigned *count);
+
+typedef enum {
+    SKYRIM_COSAVE_OK,
+    SKYRIM_COSAVE_ABSENT,
+    SKYRIM_COSAVE_UNSUPPORTED,
+    SKYRIM_COSAVE_TRUNCATED,
+    SKYRIM_COSAVE_MALFORMED,
+    SKYRIM_COSAVE_UNREADABLE,
+    SKYRIM_COSAVE_LIMIT
+} SkyrimCoSaveStatus;
+
+/* An inspection budget, not a restriction of the file format. */
+enum { SKYRIM_COSAVE_HEADER_LIMIT = 100000 };
+typedef struct {
+    uint32_t format_version, skse_version, runtime_version;
+    uint32_t plugin_count, record_count;   /* available only on OK */
+} SkyrimCoSaveInfo;
+/* Inspect the classic .skse companion of an .ess in this save directory.
+ * Checks container boundaries without interpreting plugin data or changing files. */
+SkyrimCoSaveStatus skyrim_save_cosave(const char *directory, const char *ess_name, SkyrimCoSaveInfo *info);
 #ifdef __cplusplus
 }
 #endif

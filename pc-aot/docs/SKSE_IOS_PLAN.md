@@ -1,81 +1,35 @@
-# SKSE compatibility on iPhone — enablement plan
+# Skyrim LE 用 Classic SKSE 互換計画
 
-Status 2026-11-19: plan only. Nothing here is enabled. The current build
-contract (`ios/runtime-port/ios_build_contract.h`) still rejects
-`SKYDREAM_SKSE` / `SKYDREAM_SKYUI`, and `ios/runtime-port/CMakeLists.txt`
-still filters `runtime/skse_*.c` out of the runtime.
+対象は TESV 1.9.32 と Classic SKSE 1.7.3。目標は、LE 用の MOD が必要とするスクリプト、UI、Windows 用プラグイン、追加セーブが PC と同様に動くこと。配布済みの build 16 と、別アプリとして検証する SkyrimIOS Classic Lab の到達点を以下に記録する。[SKSE 公式配布・対象バージョン](https://skse.silverlock.org/)
 
-## What already exists upstream
+## 完全対応の判定
 
-The pinned skydream runtime (`vendor/skydream`, `ecf814f`) contains an
-independent, partial classic SKSE Papyrus layer for TESV 1.9.32
-(`docs/SKSE_COMPATIBILITY.md` there): 90 non-latent registrations (Math,
-StringUtil except Split, ColorComponent, SKSE version queries, UI get/set/
-invoke, menu/key/mod-event registration, Input.GetMappedControl, numeric INI
-access), native Scaleform objects and callbacks, extended inventory data and
-translation loading. The upstream tester reports SkyUI 5.1 inventory and MCM
-working on Linux, with settings persisting. Favorites, active effects and
-crafting menus are not validated. Windows DLL plugins and SKSE co-saves are
-not supported and cannot become supported by this route.
+| 対象 | 合格に必要な証拠 | 現在の証拠 |
+| --- | --- | --- |
+| Papyrus とゲーム内 UI | 公式の対象関数について型・戻り値・副作用・イベントの順序を照合する。SkyUI 5.1 LE のインベントリ、MCM、クラフト、魔法効果、お気に入りを端末で操作し、設定が再起動後も戻ることを確認する | 固定版の公開ランタイムを iOS 向けに組み込み、PC で一部の型・境界値・コールバックを検証。上流が報告する SkyUI インベントリ・MCM の実績は Linux 上 |
+| Windows 用 DLL が必須の MOD | 同一の LE 用 32 ビット DLL を PC 版と iPhone 用の事前変換に入力し、必要な API、初期化、実際の MOD 機能と終了処理を比較する。動いた DLL 名と版を残す | 自作の 32 ビット DLL を使い、`audit_classic_plugin.py` が Query と Load の二つの入口を検出することを確認。Windows 用プラグインの実機動作は未確認 |
+| SKSE 追加セーブ | 同じ MOD 構成で PC → iPhone → PC と往復し、プラグイン固有の状態、フォーム参照、イベント登録が戻ることを確認。通常・自動・クイックセーブと中断復旧も検証する | 公式の Windows 用書出し処理が出力した自作データを、実験版の読取り検査で確認。空のファイルと 2 プラグイン・3 レコードのファイルを識別できた。プラグイン状態の復元・書き戻しは未実装 |
+| ENBSeries 本体と既存プリセット | 対象の LE 版 ENBSeries・プリセット・必要な機能について、利用条件を確かめたうえで、実際に読み込み PC と iPhone の同一場面を比較する | 独立した描画互換作業。既存の ENB 本体やプリセットをこの実験で実行した実績はない |
 
-It does not load `skse_1_9_32.dll` and copies no SKSE code; keep it that way
-(the SKSE package forbids redistribution of modified versions).
+Papyrus の名前一致数は照合の入口である。公式配布物の固定ソースからコメントを除いて数えた、クラス名と関数名の組は 789 件。条件付きでコンパイルされる登録も含む。固定移植元では 90 件中 88 件が公式と一致する。Classic Lab の表は 92 件中 90 件が一致し、公式側のみに残るのは 699 件。残る 2 件はゲーム本体側の名前である。個数から対応率や実機動作は算出しない。
 
-## Steps for the iOS build
+## 実験版で用意したもの
 
-1. **Build variant.** Add an explicit option (for example
-   `SKYRIM_IOS_SKSE=ON`, default OFF) that keeps `runtime/skse_*.c`, defines
-   `SKYDREAM_SKSE=1` (and `SKYDREAM_SKYUI=1` for the SkyUI variant), and lifts
-   the contract `#error` only for that variant. Keep the default build
-   byte-identical to today.
-2. **Papyrus registration.** Upstream wraps the original registration symbol
-   at link time on Linux. ld64 has no `--wrap`; do the equivalent through the
-   private guest binding: rename the generated registration function the same
-   way `tools/prepare_skse_hooks.py` renames hook targets (`f_X` →
-   `f_X_guest`) and provide the host `f_X` that calls the guest one and then
-   `skse_register_natives`. Record the address in the binding manifest.
-3. **Scaleform hooks.** Run `tools/prepare_skse_hooks.py` on the private
-   generated guest C for the iOS translation (it is idempotent and checks
-   that all 16 targets exist), then rebuild the guest framework. Public CI
-   never sees generated code.
-4. **Scripts.** SKSE's `.pex` scripts are needed by mods but may not be
-   redistributed. The user imports their own classic SKSE 1.7.3 archive as a
-   MOD package (Settings > MOD > Add); the importer keeps `Data/Scripts` and
-   reports the DLLs as unusable, which is correct. Do not bundle scripts.
-5. **Version reporting.** Upstream reports 0.1.0 by default; SkyUI checks for
-   1.7.3. Ship the SkyUI variant with the upstream SKYUI define (which
-   advertises 1.7.3) only after step 6 passes, and say clearly in the app that
-   SKSE support is partial.
-6. **Validation.** First the upstream self-test (`LB_SKSE_SELFTEST=1`,
-   expects `primitive guest ABI probes passed` in the run log). Then, in a new
-   MOD profile with a copied save: SkyUI 5.1 (LE) inventory, MCM page open/
-   change/save/reload, and one Papyrus-only MCM mod. Note failures per menu.
-7. **Coverage growth.** `tools/audit_skse.py` inventories the 798 classic
-   registrations from a user-supplied SKSE source tree. The MOD analyzer in
-   this app (`mod_analyze.c`) lists, per imported MOD, SKSE functions that the
-   layer lacks; collect those names from real use to decide what to implement
-   next, independently and without copying SKSE code.
+- 通常版では SKSE を除外する。実験版では公開ホストを `SKYRIM_IOS_CLASSIC_SKSE=1` で、所有者のゲームから作るゲストを `build_title_guest.py --classic-skse` で準備する。通常版と異なるアプリ ID とビルド出力を使い、双方のマーカーと ABI が一致する場合にのみ組み立てる。通常版のシェーダーキャッシュを決めるソースには変更を加えない。
+- ゲーム本来の Papyrus 登録と三つの UI・アイテム処理は残し、移植元が使う四つの接点だけをつなぐ。他の物理・描画処理への置き換えはない。起動時の自己試験を有効にし、固定ランタイム本来の互換バージョンを返す。
+- `Utility.GetINIBool` と `Utility.GetINIString` を追加。`GetINIInt` と `GetINIFloat` は、型が違う設定を読むと公式と同じ既定値を返す。PC の試験では真偽値の先頭バイト、負数、小数、空文字と未設定の区別、UTF-8 文字列を確認した。実際のゲーム VM が文字列の参照を解放するタイミングは端末で確認する。
+- 翻訳一覧は選択中のプロファイルを基準に探す。大文字・小文字の違いと UTF-8 BOM を含むファイルを自作データで検証した。追加セーブの検査は「設定 → MOD → セーブ」で利用者が選んだファイルだけを読み、ゲーム内の保存やフレーム処理に介入しない。
+- 所有者の PC だけで `scripts/audit_classic_skse.py` に展開済みの公式 Classic と固定版移植元を渡すと名前を再照合できる。`--candidate` は変更済みの実験版の登録表を照合する。公式スクリプト、ゲーム本体、実際の MOD やセーブは公開ソースに含めない。[固定版移植元の実績](https://github.com/meizfl/skydream/blob/ecf814f58292d70ad5cfb19a5c61b5d8d8006a4a/docs/SKSE_COMPATIBILITY.md)
 
-## What the user will be told
+## 次の検証と実装順
 
-- Works when enabled: SkyUI (partial), MCM menus, Papyrus-only mods whose SKSE
-  functions are implemented.
-- Never works: SKSE DLL plugins (RaceMenu's skee, Crash Fixes, etc.), mods that
-  store data in SKSE co-saves.
-- The MOD list marks each MOD with the SKSE functions it would need that are
-  not available yet.
+1. **Mac と iPhone で登録経路を通す。** Apple SDK で実験用ホストとゲストを組み立て、専用アプリ ID で署名する。コピーしたセーブと所有者の Classic スクリプトで起動し、詳細ログで 36 件の基本自己試験の完了を確認する。公式の版番号を要求する MOD では、その確認があることだけを理由に互換バージョンを偽装しない。
+2. **実際の MOD で使う機能を増やす。** 登録名に加えて引数・戻り型、オブジェクト寿命、潜在関数、イベント登録と解除を照合する。まず SkyUI と小さな MCM 対応 MOD を PC と比較し、不足分をクラスごとに実装する。通常版と同じ地点を同じ画質で走り、機能を使わない場面と多数のイベントが起きる場面でフレーム時間・メモリも比較する。
+3. **DLL と追加セーブを一緒に往復させる。** Classic の外部プラグイン用インターフェースは Scaleform、Papyrus、Serialization、Task、Messaging の 5 系統から検証する。自作の 32 ビット DLL が設定値を保存して復元する小さなケースから始める。次に実在の LE 用 DLL に進み、外部依存・ゲーム固有の参照・スレッドや描画上の前提を版ごとに検証する。対象 DLL を iPhone 用に事前変換して署名する経路と、ソースから機能を移植したものは区別して記録する。[iOS のコード署名](https://support.apple.com/guide/security/app-code-signing-process-sec7c917bf14/web)
+4. **ENB の対象を確定する。** LE 用本体の D3D9 呼び出しと実際のプリセットが必要とする描画機能を、正規に扱える材料で確認する。作者の規約には既存プリセットを別の描画方式で読取り・変換する際の許諾条件がある。Metal で独自に実装した露出やブルームは個別の画質機能として記録し、既存 ENB 対応の判定には実物による比較を使う。[ENBSeries の利用条件](https://enbdev.com/license_en.htm)
+
+追加セーブで同じファイル名が見つかっても、直前の `.ess` と同じ世代であることまでは分からない。特に同名のクイックセーブが更新される場合がある。専用アプリと独立したプロファイルで、保存の成功境界にあるコールバック、未知レコードの保持、参照 ID の解決、2 ファイルの組のバックアップと書込み中断後の復旧を検証する。PC で生成したデータが iPhone で戻り、逆向きに PC の同じ MOD で状態が戻って初めて、その MOD の追加セーブを対応済みとする。
 
 ## 2026-11-19 estimate for a separate experiment
 
-Budget **2–4 engineering days** for an opt-in prototype that builds the private
-guest with the pinned upstream compatibility code and passes its registration
-self-test on an iPhone. Budget a further **3–7 engineering days** to exercise
-SkyUI 5.1 inventory, MCM persistence and one Papyrus-only MOD on copied saves,
-including a comparison against the ordinary build. These are planning estimates
-assuming access to the owner's game and script archives, a Mac builder and a
-test iPhone. A mismatch in the private guest bindings would require a new estimate.
-
-The upstream runtime implements 90 native registrations and reports its SkyUI
-tests on Linux. iPhone compatibility depends on the two device milestones above.
-An arbitrary Windows DLL or a MOD depending on SKSE co-save serialization would
-require a separate project. Build 16 keeps the existing compile-time exclusion.
+従来の「2〜4 開発日」は端末で登録自己試験を通すまで、「さらに 3〜7 開発日」は SkyUI の一部メニューと MCM の確認までの概算。Windows DLL、セーブの往復、ENB を含めた完全対応の日程は、これらの数字からは見積もれない。

@@ -89,6 +89,33 @@ class ArtifactBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "after compilation"):
             self.check()
 
+    def test_classic_requires_matching_host_contract_and_reviewed_extra_header(self):
+        key = "classic_skse_experiment"
+        self.result.write_text(json.dumps({"candidate_sha256": self.input_hash, key: True}))
+        with self.assertRaisesRegex(ValueError, "experiment mismatch"):
+            self.check()
+        self.host_result[key] = True
+        self.write_host_result()
+        with self.assertRaisesRegex(ValueError, "experiment mismatch"):
+            self.check()
+        path = self.build / "compile-contract.json"
+        contract = json.loads(path.read_text())
+        extension = self.root / "ios/private-abi/PcGuestSkseABI.h"
+        extension.write_bytes(b"authored classic declaration\n")
+        host_header = self.host / extension.name
+        host_header.write_bytes(b"authored classic declaration\r\n")
+        contract.update(classic_skse_experiment=True, classic_abi_header_sha256=assembly.sha(extension))
+        path.write_text(json.dumps(contract))
+        self.assertEqual(self.check()[0], self.host / "SkyrimIOS-public-host.zip")
+        host_header.write_bytes(b"wrong declaration\n")
+        with self.assertRaisesRegex(ValueError, "Classic binding header mismatch"):
+            self.check()
+        for wrong in (1, "true", None):
+            self.host_result[key] = wrong
+            self.write_host_result()
+            with self.subTest(marker=wrong), self.assertRaisesRegex(ValueError, "Invalid Classic"):
+                self.check()
+
     def test_rejects_non_host_or_non_device_artifact(self):
         for key, wrong in (("public_host_sdk_build", False), ("private_guest_included", True),
                            ("target", "arm64-apple-ios-simulator")):
@@ -101,6 +128,44 @@ class ArtifactBindingTests(unittest.TestCase):
 
 
 class PackageIdentityTests(unittest.TestCase):
+    def test_raw_archive_and_embedded_framework_must_match_classic_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            game = base / "authored-input"
+            game.write_bytes(b"test")
+            framework = base / "SkyrimGuest.framework"
+            framework.mkdir()
+            binary = framework / "SkyrimGuest"
+            binary.write_bytes(b"fixture")
+            archive, result, output = (base / name for name in ("host.zip", "result.json", "out.ipa"))
+            for host, guest, manifest, separate_id, succeeds in (
+                    (False, True, True, False, False), (True, False, False, True, False),
+                    (True, False, True, True, False), (True, True, True, False, False),
+                    (True, True, True, True, True)):
+                with self.subTest(host=host, guest=guest, manifest=manifest):
+                    result.write_text(json.dumps({"framework": str(framework), "strict_link_succeeded": True,
+                        "signed": False, "sha256": assembly.sha(binary), "classic_skse_experiment": manifest}))
+                    (framework / "Info.plist").write_bytes(plistlib.dumps(
+                        {"CFBundleExecutable": "SkyrimGuest", "PcGuestClassicSkseExperiment": guest}))
+                    info = plistlib.loads((ROOT / "ios/runtime-port/Info.plist.in").read_bytes())
+                    info.update(CFBundleExecutable="SkyrimIOS", CFBundleIdentifier="org.skyrimios.pc2011",
+                                PcGuestClassicSkseExperiment=host)
+                    if separate_id:
+                        info["CFBundleIdentifier"] += ".classic-lab"
+                    with zipfile.ZipFile(archive, "w") as z:
+                        z.writestr("SkyrimIOS.app/Info.plist", plistlib.dumps(info))
+                        z.writestr("SkyrimIOS.app/SkyrimIOS", b"host")
+                    argv = ["assemble_title_ipa.py", "--host-zip", str(archive), "--host-sha256",
+                            assembly.sha(archive), "--guest-result", str(result), "--input", str(game),
+                            "--input-sha256", assembly.sha(game), "--output", str(output)]
+                    with patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
+                        if succeeds:
+                            assembly.main()
+                        else:
+                            with self.assertRaisesRegex(ValueError, "experiment mismatch|identity mismatch"):
+                                assembly.main()
+                    self.assertEqual(output.exists(), succeeds)
+
     def test_packages_current_app_build_and_rejects_other_versions(self):
         info = plistlib.loads((ROOT / "ios/runtime-port/Info.plist.in").read_bytes())
         current = str(info["CFBundleVersion"])

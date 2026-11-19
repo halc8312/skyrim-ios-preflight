@@ -172,7 +172,8 @@ def unsigned_members(archive):
     return files
 
 
-def validate_app_info(archive, files):
+def validate_app_info(archive, files, signing_bundle_id=None):
+    host_classic = False
     for relative, executable in (("Info.plist", "SkyrimIOS"),
                                  (FRAMEWORK + "/Info.plist", "SkyrimGuest")):
         member = files[APP + "/" + relative]
@@ -180,7 +181,16 @@ def validate_app_info(archive, files):
         info = plistlib.loads(archive.read(member))
         require(isinstance(info, dict) and info.get("CFBundleExecutable") == executable,
                 "Unexpected bundle executable")
+        classic = info.get("PcGuestClassicSkseExperiment", False)
+        require(type(classic) is bool, "Invalid Classic experiment marker")
         if executable == "SkyrimIOS":
+            host_classic = classic
+            if classic:
+                require(info.get("CFBundleIdentifier") == "org.skyrimios.pc2011.classic-lab",
+                        "Expected the isolated Classic Lab host")
+                if signing_bundle_id is not None:
+                    require(signing_bundle_id.endswith(".classic-lab"),
+                            "Use a dedicated Classic Lab signing ID ending in .classic-lab")
             require("PcDiagnostics" not in info,
                     "Friend builds must not contain another person's diagnostic pairing")
             require(isinstance(info.get("PcGuestExpectedInputSHA256"), str) and
@@ -189,6 +199,8 @@ def validate_app_info(archive, files):
             require(info.get("MinimumOSVersion") == "18.0" and
                     info.get("CFBundleSupportedPlatforms") == ["iPhoneOS"],
                     "Expected the iOS 18+ device host")
+        else:
+            require(classic == host_classic, "Host/guest Classic experiment mismatch")
         binary_name = APP + "/" + ("" if executable == "SkyrimIOS" else FRAMEWORK + "/") + executable
         with archive.open(files[binary_name]) as stream:
             header = stream.read(32)
@@ -274,7 +286,7 @@ def sign_package(unsigned, profile, identity, bundle_id, output, *, root=ROOT, r
         stage.mkdir()
         with zipfile.ZipFile(work / "unsigned.ipa") as archive:
             files = unsigned_members(archive)
-            validate_app_info(archive, files)
+            validate_app_info(archive, files, bundle_id)
             for name, member in files.items():
                 target = stage / name
                 target.parent.mkdir(parents=True, exist_ok=True)

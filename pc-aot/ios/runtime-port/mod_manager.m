@@ -788,10 +788,14 @@ static NSArray<NSDictionary *> *ConflictSummary(void) {
 }
 
 /* ---- save consistency ---------------------------------------------------- */
+static NSString *RunningSavesDir(void) {
+    return [ProfileDir(RunningProfile()) stringByAppendingPathComponent:@"Documents/My Games/Skyrim/Saves"];
+}
+
 /* Saves of the running profile, newest first, with plugins they list that
  * this launch does not load. Reads only the save header. */
 static NSArray<NSDictionary *> *SaveChecks(NSUInteger limit) {
-    NSString *dir = [ProfileDir(RunningProfile()) stringByAppendingPathComponent:@"Documents/My Games/Skyrim/Saves"];
+    NSString *dir = RunningSavesDir();
     NSMutableArray *saves = [NSMutableArray array];
     for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:NULL]) {
         if (![name.pathExtension.lowercaseString isEqualToString:@"ess"]) continue;
@@ -834,25 +838,70 @@ NSString *skyrim_mods_save_notice(void) {
 @interface SKSaves : UITableViewController
 @property(nonatomic, strong) NSArray<NSDictionary *> *saves;
 @end
+
+static NSString *CoSaveDescription(SkyrimCoSaveStatus status, SkyrimCoSaveInfo info) {
+    switch (status) {
+        case SKYRIM_COSAVE_OK:
+            return [NSString stringWithFormat:T(@"Classic SKSE file structure verified. Plugin sections: %u. Records: %u. Restoring plugin data is not supported in this build.",
+                @"Classic SKSE形式を確認しました。プラグイン区画 %u 件、レコード %u 件です。この版ではプラグインのデータを復元できません。"),
+                info.plugin_count, info.record_count];
+        case SKYRIM_COSAVE_ABSENT:
+            return T(@"There is no matching .skse file in this save folder.", @"このセーブと同じ名前の .skse ファイルはありません。");
+        case SKYRIM_COSAVE_UNSUPPORTED:
+            return [NSString stringWithFormat:T(@"Unsupported co-save version. Format %u, game version code 0x%08X.",
+                @"この追加セーブの版は検査対象外です。形式 %u、ゲーム版コード 0x%08X。"), info.format_version, info.runtime_version];
+        case SKYRIM_COSAVE_TRUNCATED:
+            return T(@"The co-save ends before its declared data is complete.", @"追加セーブが途中で終わっており、必要なデータが足りません。");
+        case SKYRIM_COSAVE_MALFORMED:
+            return T(@"The signature, section sizes or record counts do not match the classic file structure.",
+                     @"識別子、区画の長さ、レコード数のいずれかがClassic形式と整合しません。");
+        case SKYRIM_COSAVE_LIMIT:
+            return [NSString stringWithFormat:T(@"Inspection stopped at the %u-header limit.", @"ヘッダー数が検査上限の %u 件を超えました。"),
+                                              (unsigned)SKYRIM_COSAVE_HEADER_LIMIT];
+        case SKYRIM_COSAVE_UNREADABLE:
+            return T(@"Could not identify and read a single matching file.", @"一致するファイルを一つに特定して読み取れませんでした。");
+    }
+    return nil;
+}
+
 @implementation SKSaves
 - (void)viewDidLoad { [super viewDidLoad]; self.title = T(@"Save check", @"セーブの確認"); self.saves = SaveChecks(50); }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { (void)t; (void)s; return self.saves.count ? (NSInteger)self.saves.count : 1; }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
     (void)t; (void)s;
-    return T(@"Compared with the plugins loaded in this launch. Loading a save without a MOD it used removes that MOD's items and changes from the save once you save again.",
-             @"今回の起動で読み込んだプラグインと比べています。使っていたMODがない状態で読み込んで保存すると、そのMODの物や変化がセーブから消えます。");
+    return T(@"Compared with the plugins loaded in this launch. Loading a save without a MOD it used removes that MOD's items and changes from the save once you save again. Select a save to inspect its SKSE co-save.",
+             @"今回の起動で読み込んだプラグインと比べています。使っていたMODがない状態で読み込んで保存すると、そのMODの物や変化がセーブから消えます。セーブを選ぶとSKSEの追加セーブを確認できます。");
 }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)p {
     (void)t;
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    c.selectionStyle = UITableViewCellSelectionStyleNone; c.detailTextLabel.numberOfLines = 0;
-    if (!self.saves.count) { c.textLabel.text = T(@"No saves in this profile", @"このプロファイルにセーブはありません"); return c; }
+    c.detailTextLabel.numberOfLines = 0;
+    if (!self.saves.count) { c.selectionStyle = UITableViewCellSelectionStyleNone; c.textLabel.text = T(@"No saves in this profile", @"このプロファイルにセーブはありません"); return c; }
+    c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     NSDictionary *save = self.saves[p.row];
     c.textLabel.text = [save[@"name"] stringByDeletingPathExtension];
     NSArray *missing = save[@"missing"];
     c.detailTextLabel.text = [save[@"unreadable"] boolValue] ? T(@"Could not read this save", @"このセーブは読めませんでした") :
-        missing.count ? [NSString stringWithFormat:T(@"⚠️ Missing: %@", @"⚠️ 足りないMOD：%@"), [missing componentsJoinedByString:@", "]] : T(@"✅ All MODs present", @"✅ MODはすべてそろっています");
+        missing.count ? [NSString stringWithFormat:T(@"⚠️ Missing: %@", @"⚠️ 足りないMOD：%@"), [missing componentsJoinedByString:@", "]] : T(@"All plugins listed by this save are loaded", @"このセーブに記録されたプラグインはすべて読み込み済みです");
     return c;
+}
+- (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)index {
+    if (!self.saves.count) return;
+    NSString *name = self.saves[index.row][@"name"];
+    NSString *dir = RunningSavesDir();
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        SkyrimCoSaveInfo info;
+        SkyrimCoSaveStatus status = skyrim_save_cosave(dir.fileSystemRepresentation, name.fileSystemRepresentation, &info);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!self.view.window || self.presentedViewController || ![table.indexPathForSelectedRow isEqual:index]) return;
+            [table deselectRowAtIndexPath:index animated:YES];
+            NSString *title = [name.stringByDeletingPathExtension stringByAppendingPathExtension:@"skse"];
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:CoSaveDescription(status, info)
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:T(@"OK", @"閉じる") style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:alert animated:YES completion:nil];
+        });
+    });
 }
 @end
 
@@ -1005,7 +1054,7 @@ static NSArray<NSString *> *ReportLines(NSDictionary *package) {
     unsigned (^n)(NSString *) = ^unsigned(NSString *k) { return [r[k] unsignedIntValue]; };
     if (n(@"sePlugins")) [bad addObject:[NSString stringWithFormat:T(@"⛔ %u Special Edition plugin(s): likely to crash", @"⛔ SE用のプラグイン %u個：落ちる可能性が高い"), n(@"sePlugins")]];
     if (n(@"esl")) [bad addObject:T(@"⛔ ESL files are not supported by the 2011 engine", @"⛔ ESLは2011年版のエンジンでは使えません")];
-    if (n(@"skseDlls")) [bad addObject:[NSString stringWithFormat:T(@"⛔ %u SKSE plugin DLL(s): cannot run on iPhone", @"⛔ SKSEプラグイン（DLL）%u個：iPhoneでは動きません"), n(@"skseDlls")]];
+    if (n(@"skseDlls")) [bad addObject:[NSString stringWithFormat:T(@"⛔ This build cannot load %u SKSE plugin DLL(s).", @"⛔ この版ではSKSEプラグイン（DLL）%u個を読み込めません。"), n(@"skseDlls")]];
     if (n(@"seMeshes")) [warn addObject:[NSString stringWithFormat:T(@"⚠️ %u Special Edition mesh(es): may look broken or crash", @"⚠️ SE用のメッシュ %u個：表示崩れや落ちる可能性"), n(@"seMeshes")]];
     if (n(@"skseScripts")) {
         NSString *missing = [r[@"skseMissing"] length] ? [NSString stringWithFormat:T(@" (not available: %@)", @"（未対応：%@）"), r[@"skseMissing"]] : @"";

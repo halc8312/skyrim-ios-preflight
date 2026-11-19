@@ -53,6 +53,10 @@ def fixtures(directory):
     save = (b"TESV_SAVEGAME" + struct.pack("<I", len(header)) + header + b"\0"*3
             + bytes([74]) + struct.pack("<I", len(plugins)) + plugins)
     (directory / "Authored Save.ess").write_bytes(save)
+    record = struct.pack("<III", 1, 42, 3) + b"abc"
+    cosave = struct.pack("<4sIIII", b"SKSE", 1, 0x01070030, 0x09200000, 1)
+    cosave += struct.pack("<III", 7, 1, len(record)) + record
+    (directory / "Authored Save.skse").write_bytes(cosave)
 
 
 def stable_id(name):
@@ -232,6 +236,7 @@ def verify(container, assets, summary):
     assert contents(container/"Documents/Skyrim") == contents(assets/"Original")
     assert (base/"Profile/Documents/Skyrim/plugins.txt").read_bytes() == (assets/"initial-plugins.txt").read_bytes()
     assert (base/"Profile/Documents/My Games/Skyrim/Saves/Authored Save.ess").read_bytes() == (assets/"Authored Save.ess").read_bytes()
+    assert (base/"Profile/Documents/My Games/Skyrim/Saves/Authored Save.skse").read_bytes() == (assets/"Authored Save.skse").read_bytes()
     state = json.loads((base/"mods-state.json").read_text())
     profiles = {p["name"]:p for p in state["profiles"]}
     active = profiles["Trial Two"]

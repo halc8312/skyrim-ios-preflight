@@ -1,5 +1,11 @@
 /* Public iOS runtime: bind a locally assembled, signed original-body guest. */
 #include "PcGuestABI.h"
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+#include "PcGuestSkseABI.h"
+#define PC_GUEST_BASE_SYMBOL PC_GUEST_SKSE_API_SYMBOL
+#else
+#define PC_GUEST_BASE_SYMBOL "skyrim_guest_api_v1"
+#endif
 #include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,11 +23,8 @@ extern void rt_call_ic(CPU *, uint32_t, const FnEntry **);
 extern jmp_buf *rt_setjmp_slot(CPU *, uint32_t);
 extern void rt_setjmp3(CPU *);
 
-int pc_guest_open(const char *path) {
-    if (library || !path) return -1;
-    library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
-    if (!library) { fprintf(stderr, "PRIVATE_GUEST dlopen failed: %s\n", dlerror()); return -2; }
-    PcGuestGetAPI get = (PcGuestGetAPI)dlsym(library, "skyrim_guest_api_v1");
+static int bind_guest(void *candidate) {
+    PcGuestGetAPI get = (PcGuestGetAPI)dlsym(candidate, PC_GUEST_BASE_SYMBOL);
     if (!get) { fprintf(stderr, "PRIVATE_GUEST missing API\n"); return -3; }
     const PcGuestAPI *g = get();
     if (!g || g->version != PC_GUEST_ABI || g->bytes != sizeof(*g) || g->reserved ||
@@ -31,13 +34,29 @@ int pc_guest_open(const char *path) {
     }
     for (uint32_t n=0;n<g->function_count;n++) {
         if (!g->functions[n].fn || !g->functions[n].addr ||
-            (n && g->functions[n-1].addr >= g->functions[n].addr)) return -5;
+            (n && g->functions[n-1].addr >= g->functions[n].addr)) {
+            fprintf(stderr, "PRIVATE_GUEST invalid function table at entry %u\n", n);
+            return -5;
+        }
     }
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    if (pc_guest_bind_classic_skse(candidate) != 0) return -6;
+#endif
     guest = g;
     g_modules[0] = (FnModule){"TESV.exe", guest->functions, guest->function_count};
     fprintf(stderr, "PRIVATE_GUEST loaded %u original functions, CPU bytes %u, flags offset %u\n",
             guest->function_count, expected_layout[0], expected_layout[18]);
     return 0;
+}
+
+int pc_guest_open(const char *path) {
+    if (library || !path) return -1;
+    void *candidate = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (!candidate) { fprintf(stderr, "PRIVATE_GUEST dlopen failed: %s\n", dlerror()); return -2; }
+    int result = bind_guest(candidate);
+    if (result) dlclose(candidate);
+    else library = candidate;
+    return result;
 }
 
 int pc_guest_bind_memory(uint8_t *memory) {

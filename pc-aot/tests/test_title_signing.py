@@ -224,6 +224,27 @@ class SigningFlowTests(unittest.TestCase):
         return SIGN.sign_package(self.unsigned, self.profile, IDENTITY, BUNDLE,
                                  output or self.output, root=self.root, runner=runner)
 
+    def test_classic_lab_can_only_sign_as_a_separate_application(self):
+        entries = app_files()
+        for name in (SIGN.APP + "/Info.plist", SIGN.APP + "/" + SIGN.FRAMEWORK + "/Info.plist"):
+            info = plistlib.loads(entries[name])
+            info["PcGuestClassicSkseExperiment"] = True
+            if name == SIGN.APP + "/Info.plist":
+                info["CFBundleIdentifier"] += ".classic-lab"
+            entries[name] = plistlib.dumps(info)
+        write_archive(self.unsigned, entries)
+        with self.assertRaisesRegex(ValueError, "dedicated Classic Lab"):
+            self.sign(FakeAppleTools(profile()))
+        self.assertFalse(self.output.exists())
+        lab_id = BUNDLE + ".classic-lab"
+        lab_profile = profile()
+        lab_profile["Entitlements"]["application-identifier"] = "PREFIX0001." + lab_id
+        result = SIGN.sign_package(self.unsigned, self.profile, IDENTITY, lab_id, self.output,
+                                   root=self.root, runner=FakeAppleTools(lab_profile))
+        self.assertTrue(result["signed"])
+        with zipfile.ZipFile(self.output) as archive:
+            self.assertEqual(plistlib.loads(archive.read(SIGN.APP + "/Info.plist"))["CFBundleIdentifier"], lab_id)
+
     def test_ordered_signing_profile_subset_and_atomic_no_replace(self):
         unsigned_hash = SIGN.sha(self.unsigned)
         runner = FakeAppleTools(profile())

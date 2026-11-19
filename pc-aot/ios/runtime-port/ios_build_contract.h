@@ -20,6 +20,13 @@
 #if !defined(SKYRIM_IOS_GUEST_DIAGNOSTIC) || SKYRIM_IOS_GUEST_DIAGNOSTIC != 1
 #error "This runtime archive requires original-guest diagnostic mode"
 #endif
-#if defined(SKYDREAM_SKSE) || defined(SKYDREAM_SKYUI) || defined(SKYDREAM_EMBEDDED_IMAGE)
-#error "SKSE, SkyUI and embedded-image builds are not supported by this diagnostic archive"
+#if defined(SKYDREAM_SKYUI) || defined(SKYDREAM_EMBEDDED_IMAGE)
+#error "SkyUI and embedded-image builds are not supported by this diagnostic archive"
+#endif
+#if defined(SKYRIM_IOS_CLASSIC_SKSE)
+#if SKYRIM_IOS_CLASSIC_SKSE != 1 || !defined(SKYDREAM_SKSE) || SKYDREAM_SKSE != 1
+#error "The classic Papyrus experiment requires the matching SKSE runtime"
+#endif
+#elif defined(SKYDREAM_SKSE)
+#error "The ordinary iOS diagnostic archive does not include SKSE"
 #endif

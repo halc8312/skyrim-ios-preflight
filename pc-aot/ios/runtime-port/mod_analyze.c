@@ -5,11 +5,15 @@
 #include "mod_analyze.h"
 #include "mod_plugins.h"
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 static uint32_t le32(const unsigned char *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static uint16_t le16(const unsigned char *p) { return (uint16_t)(p[0] | p[1] << 8); }
@@ -125,7 +129,11 @@ static const char *const k_compat_functions[] = {"GetVersion", "GetVersionMinor"
     "IsTextInputEnabled", "RegisterForMenu", "UnregisterForMenu", "UnregisterForAllMenus", "RegisterForKey",
     "UnregisterForKey", "UnregisterForAllKeys", "RegisterForModEvent", "UnregisterForModEvent",
     "UnregisterForAllModEvents", "SendModEvent", "GetMappedControl", "UsingGamepad", "GetINIFloat",
-    "GetINIInt", "SetINIFloat", NULL};
+    "GetINIInt", "SetINIFloat",
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    "GetINIBool", "GetINIString",
+#endif
+    NULL};
 static int in_list(const char *const *list, const char *s, size_t n) {
     for (int i = 0; list[i]; ++i) if (strlen(list[i]) == n && !strncasecmp(list[i], s, n)) return 1;
     return 0;
@@ -300,4 +308,87 @@ int skyrim_save_plugins(const char *path, char **names_out, unsigned *count_out)
     }
     fclose(f);
     return status;
+}
+
+/* The classic 1.7.3 writer uses literal "SKSE", little-endian fields,
+ * and a plugin length covering all of its record headers and payloads.
+ * Check the declared nesting; do not infer which plugin owns an unknown ID. */
+static SkyrimCoSaveStatus inspect_cosave(FILE *file, uint64_t file_size, SkyrimCoSaveInfo *info) {
+    unsigned char header[20];
+    if (fread(header, 1, sizeof header, file) != sizeof header)
+        return ferror(file) ? SKYRIM_COSAVE_UNREADABLE : SKYRIM_COSAVE_TRUNCATED;
+    if (memcmp(header, "SKSE", 4)) return SKYRIM_COSAVE_MALFORMED;
+    info->format_version = le32(header + 4);
+    info->skse_version = le32(header + 8);
+    info->runtime_version = le32(header + 12);
+    if (!info->format_version) return SKYRIM_COSAVE_MALFORMED;
+    if (info->format_version != 1 || info->runtime_version != 0x09200000u) /* TESV 1.9.32 */
+        return SKYRIM_COSAVE_UNSUPPORTED;
+
+    const uint32_t plugins = le32(header + 16);
+    if (file_size < sizeof header) return SKYRIM_COSAVE_TRUNCATED;
+    uint64_t remaining = file_size - sizeof header;
+    unsigned char block[12];
+    if (plugins > remaining / sizeof block) return SKYRIM_COSAVE_TRUNCATED;
+    if (plugins > SKYRIM_COSAVE_HEADER_LIMIT) return SKYRIM_COSAVE_LIMIT;
+    uint32_t records = 0;
+    for (uint32_t i = 0; i < plugins; ++i) {
+        if (fread(block, 1, sizeof block, file) != sizeof block)
+            return ferror(file) ? SKYRIM_COSAVE_UNREADABLE : SKYRIM_COSAVE_TRUNCATED;
+        const uint32_t count = le32(block + 4);
+        uint32_t length = le32(block + 8);
+        if (remaining < sizeof block + (uint64_t)length) return SKYRIM_COSAVE_TRUNCATED;
+        remaining -= sizeof block + (uint64_t)length;
+        if (count > length / sizeof block) return SKYRIM_COSAVE_MALFORMED;
+        if (count > SKYRIM_COSAVE_HEADER_LIMIT - plugins - records) return SKYRIM_COSAVE_LIMIT;
+        for (uint32_t j = 0; j < count; ++j) {
+            if (length < sizeof block) return SKYRIM_COSAVE_MALFORMED;
+            if (fread(block, 1, sizeof block, file) != sizeof block)
+                return ferror(file) ? SKYRIM_COSAVE_UNREADABLE : SKYRIM_COSAVE_TRUNCATED;
+            const uint32_t payload = le32(block + 8);
+            length -= sizeof block;
+            if (payload > length) return SKYRIM_COSAVE_MALFORMED;
+            if (payload && fseeko(file, (off_t)payload, SEEK_CUR)) return SKYRIM_COSAVE_UNREADABLE;
+            length -= payload;
+        }
+        if (length) return SKYRIM_COSAVE_MALFORMED;
+        records += count;
+    }
+    if (remaining) return SKYRIM_COSAVE_MALFORMED;
+    info->plugin_count = plugins;
+    info->record_count = records;
+    return SKYRIM_COSAVE_OK;
+}
+
+SkyrimCoSaveStatus skyrim_save_cosave(const char *directory, const char *ess_name, SkyrimCoSaveInfo *info) {
+    if (!info) return SKYRIM_COSAVE_UNREADABLE;
+    memset(info, 0, sizeof *info);
+    if (!directory || !ess_name || strpbrk(ess_name, "/\\")) return SKYRIM_COSAVE_UNREADABLE;
+    const char *ext = strrchr(ess_name, '.');
+    if (!ext || ext == ess_name || strcasecmp(ext, ".ess")) return SKYRIM_COSAVE_UNREADABLE;
+    size_t stem = (size_t)(ext - ess_name);
+    char name[SKYRIM_PLUGIN_NAME_MAX], path[PATH_MAX];
+    if (stem + sizeof ".skse" > sizeof name) return SKYRIM_COSAVE_UNREADABLE;
+    memcpy(name, ess_name, stem);
+    memcpy(name + stem, ".skse", sizeof ".skse");
+    if (skyrim_plugin_child_path(directory, name, path, sizeof path) < 0) return SKYRIM_COSAVE_UNREADABLE;
+
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) return errno == ENOENT ? SKYRIM_COSAVE_ABSENT : SKYRIM_COSAVE_UNREADABLE;
+    struct stat st;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0) {
+        close(fd);
+        return SKYRIM_COSAVE_UNREADABLE;
+    }
+    FILE *file = fdopen(fd, "rb");
+    if (!file) { close(fd); return SKYRIM_COSAVE_UNREADABLE; }
+    SkyrimCoSaveStatus result = inspect_cosave(file, (uint64_t)st.st_size, info);
+    struct stat after;
+    if (result == SKYRIM_COSAVE_OK &&
+        (fstat(fd, &after) || after.st_size != st.st_size || after.st_mtime != st.st_mtime)) {
+        memset(info, 0, sizeof *info);
+        result = SKYRIM_COSAVE_UNREADABLE;
+    }
+    fclose(file);
+    return result;
 }
