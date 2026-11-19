@@ -16,20 +16,30 @@ typedef enum {
     SKSE_WIN_CRITICAL_LEAVE, SKSE_WIN_CRITICAL_TRY, SKSE_WIN_CRITICAL_DELETE, SKSE_WIN_THREAD_OPERATION_COUNT
 } SkseWinThreadOperation;
 
-/* One logical Windows thread shared by the images in a diagnostic run.
- * TLS values are 32-bit guest numbers. Allocating, reading or resetting these
- * slots has no relationship to TLS in the host process. */
 typedef struct {
-    uint32_t address, depth;
+    uint32_t address, owner, depth;
 } SkseWinCriticalSection;
 
 typedef struct {
     uint64_t allocated[SKSE_WIN_TLS_WORDS];
-    uint32_t value[SKSE_WIN_TLS_SLOTS];
-    uint32_t id, last_error;
+    uint32_t generation, slot_generation[SKSE_WIN_TLS_SLOTS];
     SkseWinCriticalSection sections[SKSE_WIN_CRITICAL_SECTIONS];
+} SkseWinThreadProcess;
+
+/* The selected images share a process model. Each logical thread has its
+ * own TLS values and last-error state, stored as 32-bit guest data. */
+typedef struct {
+    SkseWinThreadProcess *process;
+    uint32_t value[SKSE_WIN_TLS_SLOTS];
+    uint32_t value_generation[SKSE_WIN_TLS_SLOTS];
+    uint32_t id, last_error;
 } SkseWinThread;
+
+typedef enum {
+    SKSE_WIN_CRITICAL_ACQUIRED, SKSE_WIN_CRITICAL_CONTENDED, SKSE_WIN_CRITICAL_INVALID
+} SkseWinCriticalResult;
 
 unsigned skse_win_thread_argument_count(SkseWinThreadOperation operation);
 uint32_t skse_win_thread_call(SkseWinThread *thread, SkseWinThreadOperation operation, uint32_t index, uint32_t value);
+SkseWinCriticalResult skse_win_critical_section(SkseWinThread *thread, SkseWinThreadOperation operation, uint32_t address);
 #endif
