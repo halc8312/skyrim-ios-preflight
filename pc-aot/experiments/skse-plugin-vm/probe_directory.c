@@ -373,7 +373,7 @@ SkseProbeDirectoryStatus skse_probe_local_directory(const char *path, uint32_t u
         if (!manifest) status = SKSE_PROBE_DIRECTORY_NO_MEMORY;
     }
     if (status == SKSE_PROBE_DIRECTORY_CHECKED) {
-        SkseWinAssets assets = {.read = skse_probe_asset_read, .context = &root};
+        SkseWinAssets assets = {.read = skse_probe_asset_read, .attributes = skse_probe_asset_attributes, .context = &root};
         for (unsigned i = 0; i < scan.count; ++i) {
             diagnose(&scan, &scan.files[i], uptime_ms, manifest, assets, &out->files[i]);
             out->plugin_count += out->files[i].is_plugin;

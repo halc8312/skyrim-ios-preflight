@@ -12,15 +12,20 @@ enum {
 
 typedef enum {
     SKSE_WIN_OPEN_FILE_A, SKSE_WIN_OPEN_FILE_W, SKSE_WIN_READ_FILE, SKSE_WIN_FILE_SIZE,
-    SKSE_WIN_FILE_SIZE_EX, SKSE_WIN_CLOSE_FILE, SKSE_WIN_SEEK_FILE_EX, SKSE_WIN_FILE_TYPE, SKSE_WIN_FILE_OPERATION_COUNT
+    SKSE_WIN_FILE_SIZE_EX, SKSE_WIN_CLOSE_FILE, SKSE_WIN_SEEK_FILE_EX, SKSE_WIN_FILE_TYPE,
+    SKSE_WIN_ATTRIBUTES_A, SKSE_WIN_ATTRIBUTES_W, SKSE_WIN_FILE_OPERATION_COUNT
 } SkseWinFileOperation;
+
+enum { SKSE_WIN_ATTRIBUTE_DIRECTORY = 0x10, SKSE_WIN_ATTRIBUTE_NORMAL = 0x80 };
 
 /* Return zero for an immutable snapshot allocated with malloc. On failure
  * return a Win32 error code. The lifetime of the source itself is call-only. */
 typedef uint32_t (*SkseWinReadAsset)(void *context, const char *path, size_t limit, uint8_t **bytes, size_t *length);
+typedef uint32_t (*SkseWinAssetAttributes)(void *context, const char *path, uint32_t *attributes);
 
 typedef struct {
     SkseWinReadAsset read;
+    SkseWinAssetAttributes attributes;
     void *context;
 } SkseWinAssets;
 
@@ -36,7 +41,7 @@ typedef struct {
 typedef struct {
     SkseWinAssets source;
     size_t opened_bytes;
-    unsigned requests;
+    unsigned requests, attribute_requests;
     SkseWinFile files[SKSE_WIN_OPEN_FILES];
 } SkseWinFiles;
 

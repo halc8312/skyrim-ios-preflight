@@ -776,6 +776,32 @@ static uint32_t win_module_lookup(Vm *vm, SkseX86ModuleLookup operation) {
     return 0;
 }
 
+static bool read_asset_path(Vm *vm, uint32_t name, bool wide, char path[SKSE_WIN_PATH_BYTES]) {
+    uint16_t units[SKSE_WIN_PATH_UNITS];
+    size_t length = 0;
+    unsigned width = wide ? 2 : 1;
+    if (!name) {
+        vm->services.thread->last_error = 123;
+        return false;
+    }
+    for (; length < SKSE_WIN_PATH_UNITS; ++length) {
+        size_t offset = length * width;
+        if (name > UINT32_MAX - offset) {
+            fail(vm, SKSE_X86_MEMORY_FAULT);
+            return false;
+        }
+        uint32_t unit = read_memory(vm, name + (uint32_t)offset, width);
+        if (vm->status != SKSE_X86_OK) return false;
+        if (!unit) break;
+        units[length] = (uint16_t)unit;
+    }
+    if (!skse_win_asset_path(units, length, wide, path)) {
+        vm->services.thread->last_error = 123; // ERROR_INVALID_NAME.
+        return false;
+    }
+    return true;
+}
+
 static uint32_t open_asset(Vm *vm, const uint32_t args[], bool wide) {
     const uint32_t GENERIC_READ = UINT32_C(0x80000000);
     const uint32_t read_hints = UINT32_C(0x18000080); // Normal, sequential or random access.
@@ -784,30 +810,27 @@ static uint32_t open_asset(Vm *vm, const uint32_t args[], bool wide) {
         vm->services.thread->last_error = 5;
         return UINT32_MAX;
     }
-    uint16_t units[SKSE_WIN_PATH_UNITS];
-    size_t length = 0;
-    unsigned width = wide ? 2 : 1;
-    if (!args[0]) {
-        vm->services.thread->last_error = 123;
-        return UINT32_MAX;
-    }
-    for (; length < SKSE_WIN_PATH_UNITS; ++length) {
-        size_t offset = length * width;
-        if (args[0] > UINT32_MAX - offset) {
-            fail(vm, SKSE_X86_MEMORY_FAULT);
+    char path[SKSE_WIN_PATH_BYTES];
+    if (!read_asset_path(vm, args[0], wide, path)) return UINT32_MAX;
+    return skse_win_file_open(vm->services.files, path, (args[2] & 1) != 0, &vm->services.thread->last_error);
+}
+
+static uint32_t win_asset_attributes(Vm *vm, uint32_t name, bool wide) {
+    SkseWinFiles *files = vm->services.files;
+    char path[SKSE_WIN_PATH_BYTES];
+    if (!read_asset_path(vm, name, wide, path)) return UINT32_MAX;
+    uint32_t error = 5, attributes = 0;
+    if (files->source.attributes) {
+        if (files->attribute_requests == 1024) {
+            fail(vm, SKSE_X86_INSTRUCTION_LIMIT);
             return UINT32_MAX;
         }
-        uint32_t unit = read_memory(vm, args[0] + (uint32_t)offset, width);
-        if (vm->status != SKSE_X86_OK) return UINT32_MAX;
-        if (!unit) break;
-        units[length] = (uint16_t)unit;
+        ++files->attribute_requests;
+        error = files->source.attributes(files->source.context, path, &attributes);
     }
-    char path[SKSE_WIN_PATH_BYTES];
-    if (!skse_win_asset_path(units, length, wide, path)) {
-        vm->services.thread->last_error = 123; // ERROR_INVALID_NAME.
-        return UINT32_MAX;
-    }
-    return skse_win_file_open(vm->services.files, path, (args[2] & 1) != 0, &vm->services.thread->last_error);
+    if (!error) return attributes;
+    vm->services.thread->last_error = error;
+    return UINT32_MAX;
 }
 
 static uint32_t win_read_asset(Vm *vm, const uint32_t args[]) {
@@ -862,7 +885,7 @@ static uint32_t win_seek_asset(Vm *vm, SkseWinFile *file, const uint32_t args[])
 }
 
 static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
-    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1, 5, 1};
+    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1, 5, 1, 1, 1};
     _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_FILE_OPERATION_COUNT, "file ABI");
     unsigned count = argument_counts[operation];
     const uint8_t *parameters = service_parameters(vm, count * 4);
@@ -873,6 +896,8 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
 
     if (operation == SKSE_WIN_OPEN_FILE_A || operation == SKSE_WIN_OPEN_FILE_W)
         return open_asset(vm, args, operation == SKSE_WIN_OPEN_FILE_W);
+    if (operation == SKSE_WIN_ATTRIBUTES_A || operation == SKSE_WIN_ATTRIBUTES_W)
+        return win_asset_attributes(vm, args[0], operation == SKSE_WIN_ATTRIBUTES_W);
     if (operation == SKSE_WIN_READ_FILE) return win_read_asset(vm, args);
     if (operation == SKSE_WIN_CLOSE_FILE && skse_win_sync_close(vm->services.sync, args[0])) return 1;
     SkseX86Worker *worker = vm->services.worker;

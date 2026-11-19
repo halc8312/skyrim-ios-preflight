@@ -67,6 +67,22 @@ class SelectedAssetTest(unittest.TestCase):
         for mode in ("no-context", "bad-fd", "no-path", "no-bytes", "no-length"):
             self.run_read("plain", 5, mode=mode)
 
+    def test_attributes_use_only_selected_metadata_without_reading_bytes(self):
+        child = self.root / "設定"
+        child.mkdir()
+        asset = child / "選択.ini"
+        asset.write_bytes(b"data")
+        (self.root / "linked").symlink_to(child)
+        for path, expected in (
+            ("設定", "0|16|0"), ("設定/選択.ini", "0|128|0"), ("設定/missing.ini", "2|0|0"),
+            ("unavailable/missing.ini", "3|0|0"), ("linked/選択.ini", "5|0|0"),
+            ("../設定", "5|0|0"), ("linked", "5|0|0")
+        ):
+            with self.subTest(path=path):
+                result = subprocess.check_output([self.binary, self.root, path, "0", "attributes"], text=True, timeout=4)
+                self.assertEqual(result.strip(), expected)
+        self.assertEqual(asset.read_bytes(), b"data")
+
     def test_links_fifos_and_sockets_are_never_read(self):
         external = self.top / "private"
         external.mkdir()

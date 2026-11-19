@@ -366,6 +366,8 @@ __declspec(dllimport) int __stdcall ReadFile(void *, void *, uint32_t, uint32_t 
 __declspec(dllimport) uint32_t __stdcall GetFileSize(void *, uint32_t *);
 __declspec(dllimport) int __stdcall GetFileSizeEx(void *, int64_t *);
 __declspec(dllimport) uint32_t __stdcall GetFileType(void *);
+__declspec(dllimport) uint32_t __stdcall GetFileAttributesA(const char *);
+__declspec(dllimport) uint32_t __stdcall GetFileAttributesW(const wchar_t *);
 __declspec(dllimport) int __stdcall SetFilePointerEx(void *, int64_t, int64_t *, uint32_t);
 __declspec(dllimport) int __stdcall CloseHandle(void *);
 __declspec(dllimport) unsigned long __stdcall GetLastError(void);
@@ -373,6 +375,11 @@ __declspec(dllimport) unsigned long __stdcall GetLastError(void);
 static _Bool check_file_assets(void) {
     const uint32_t read_access = 0x80000000u;
     void *const invalid = (void *)(uintptr_t)UINT32_MAX;
+    uint32_t attributes = GetFileAttributesA("Data\\SKSE");
+    if (attributes == UINT32_MAX || !(attributes & 0x10)) return 0;
+    attributes = GetFileAttributesW(L"Data/SKSE/Plugins/\u8a2d\u5b9a.ini");
+    if (attributes == UINT32_MAX || (attributes & 0x10) ||
+        GetFileAttributesW(L"OwnedAbsent.ini") != UINT32_MAX || GetLastError() != 2) return 0;
     void *file = CreateFileA("Data\\SKSE\\Plugins\\Settings.ini", read_access, 0, NULL, 3, 0x80, NULL);
     if (file == invalid) return 0;
     void *second = CreateFileW(L"Data/SKSE/Plugins/Settings.ini", read_access, 1, NULL, 3, 0x80, NULL);

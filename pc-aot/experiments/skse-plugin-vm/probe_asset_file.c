@@ -152,16 +152,23 @@ static uint32_t snapshot_file(int fd, const struct stat *before, size_t max_size
     return 0;
 }
 
+static int authorized_directory(void *context, struct stat *directory) {
+    if (!context) return -1;
+    const int root = *(const int *)context;
+    const int flags = fcntl(root, F_GETFL);
+    if (flags < 0 || (flags & O_ACCMODE) != O_RDONLY || fstat(root, directory) < 0 ||
+        !S_ISDIR(directory->st_mode)) return -1;
+    return root;
+}
+
 uint32_t skse_probe_asset_read(void *context, const char *path, size_t max_size,
                                uint8_t **bytes, size_t *length) {
     if (bytes) *bytes = NULL;
     if (length) *length = 0;
-    if (!bytes || !length || !context || !normalized_path(path)) return DENIED;
-    const int root = *(const int *)context;
+    if (!bytes || !length || !normalized_path(path)) return DENIED;
     struct stat directory;
-    const int flags = fcntl(root, F_GETFL);
-    if (flags < 0 || (flags & O_ACCMODE) != O_RDONLY || fstat(root, &directory) < 0 ||
-        !S_ISDIR(directory.st_mode)) return DENIED;
+    int root = authorized_directory(context, &directory);
+    if (root < 0) return DENIED;
 
     int parent = -1, file = -1;
     const char *leaf = NULL;
@@ -200,5 +207,30 @@ uint32_t skse_probe_asset_read(void *context, const char *path, size_t max_size,
         *bytes = candidate;
         *length = size;
     }
+    return result;
+}
+
+uint32_t skse_probe_asset_attributes(void *context, const char *path, uint32_t *attributes) {
+    if (!attributes) return DENIED;
+    *attributes = 0;
+    if (!normalized_path(path)) return DENIED;
+    struct stat directory;
+    const int root = authorized_directory(context, &directory);
+    if (root < 0) return DENIED;
+    int parent;
+    const char *leaf;
+    uint32_t result = open_parent(root, directory.st_dev, path, &parent, &leaf);
+    if (result) return result;
+    struct stat listed;
+    if (fstatat(parent, leaf, &listed, AT_SYMLINK_NOFOLLOW) < 0) {
+        result = lookup_error(errno, FILE_MISSING);
+    } else if (S_ISDIR(listed.st_mode) && listed.st_dev == directory.st_dev) {
+        *attributes = SKSE_WIN_ATTRIBUTE_DIRECTORY;
+    } else if (regular_asset(&listed, directory.st_dev)) {
+        *attributes = SKSE_WIN_ATTRIBUTE_NORMAL;
+    } else {
+        result = DENIED;
+    }
+    close(parent);
     return result;
 }
