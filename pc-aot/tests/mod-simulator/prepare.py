@@ -157,7 +157,7 @@ def project(work, sdl_prefix, archive_prefix):
     ]
     dll_enabled = os.environ.get("SKYRIM_IOS_SKSE_DLL_PROBE") == "1"
     dll_sources = [DLL_PROBE / p for p in [
-        "pe_image.c", "x86_call.c", "x86_heap.c", "x86_winthread.c", "x86_winfile.c", "x86_winevent.c",
+        "pe_image.c", "x86_call.c", "x86_heap.c", "x86_winthread.c", "x86_winfile.c", "x86_winsync.c",
         "x86_skse_records.c", "dependency_plan.c", "plugin_trial.c",
         "probe_local_file.c", "probe_directory.c", "probe_asset_file.c", "mod_dll_probe.m"
     ]] if dll_enabled else []
