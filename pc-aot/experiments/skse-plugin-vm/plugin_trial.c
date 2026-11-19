@@ -88,7 +88,8 @@ static const struct {
     {{"KERNEL32.dll", "GetExitCodeThread", 0xe00010e8}, SKSE_X86_WIN_WORKER, SKSE_WIN_WORKER_EXIT_CODE},
     {{"KERNEL32.dll", "GetFileAttributesA", 0xe00010ec}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_ATTRIBUTES_A},
     {{"KERNEL32.dll", "GetFileAttributesW", 0xe00010f0}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_ATTRIBUTES_W},
-    {{"KERNEL32.dll", "SetFilePointer", 0xe00010f4}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_SEEK_FILE}
+    {{"KERNEL32.dll", "SetFilePointer", 0xe00010f4}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_SEEK_FILE},
+    {{"KERNEL32.dll", "InitializeCriticalSectionEx", 0xe00010f8}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_INIT_EX}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 _Static_assert(WINDOWS_SERVICE_COUNT + 5 + SKSE_SERIAL_METHOD_COUNT + SKSE_X86_TASK_TYPES <= SKSE_X86_MAX_SERVICES,

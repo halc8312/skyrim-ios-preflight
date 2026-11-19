@@ -673,6 +673,15 @@ static uint32_t win_thread_service(Vm *vm, SkseWinThreadOperation operation) {
         first = little_endian(parameters, 4);
         if (count == 2) second = little_endian(parameters + 4, 4);
         vm->registers[ESP] += 4 * count;
+        if (operation == SKSE_WIN_CRITICAL_INIT_EX) {
+            const uint32_t no_debug_info = UINT32_C(0x01000000);
+            if (little_endian(parameters + 8, 4) & ~no_debug_info) {
+                fail(vm, SKSE_X86_UNSUPPORTED_API);
+                return 0;
+            }
+            // The virtual process keeps lock state without native debug records or spinning.
+            operation = SKSE_WIN_CRITICAL_SPIN_INIT;
+        }
     }
     if (operation < SKSE_WIN_CRITICAL_INIT) return skse_win_thread_call(vm->services.thread, operation, first, second);
     if (!first || (first & 3) || !memory(vm, first, SKSE_WIN_CRITICAL_SECTION_BYTES, SKSE_PE_READ | SKSE_PE_WRITE)) {

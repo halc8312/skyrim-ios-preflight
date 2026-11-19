@@ -237,6 +237,7 @@ __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
 typedef struct { unsigned words[6]; } FixtureCriticalSection;
 __declspec(dllimport) void __stdcall InitializeCriticalSection(FixtureCriticalSection *);
 __declspec(dllimport) int __stdcall InitializeCriticalSectionAndSpinCount(FixtureCriticalSection *, unsigned long);
+__declspec(dllimport) int __stdcall InitializeCriticalSectionEx(FixtureCriticalSection *, unsigned long, unsigned long);
 __declspec(dllimport) void __stdcall EnterCriticalSection(FixtureCriticalSection *);
 __declspec(dllimport) int __stdcall TryEnterCriticalSection(FixtureCriticalSection *);
 __declspec(dllimport) void __stdcall LeaveCriticalSection(FixtureCriticalSection *);
@@ -253,6 +254,15 @@ static _Bool setup_thread_values(void) {
     if (!TlsSetValue(index, (void *)0x12345678u) || GetLastError() != 0x5678) return 0;
     original_thread = GetCurrentThreadId();
     if (!original_thread || !InitializeCriticalSectionAndSpinCount(&section, 42)) return 0;
+    FixtureCriticalSection extended;
+    if (!InitializeCriticalSectionEx(&extended, 42, 0x01000000u)) return 0;
+    EnterCriticalSection(&extended);
+    if (!TryEnterCriticalSection(&extended)) return 0;
+    LeaveCriticalSection(&extended);
+    LeaveCriticalSection(&extended);
+    DeleteCriticalSection(&extended);
+    if (!InitializeCriticalSectionEx(&extended, 0, 0)) return 0;
+    DeleteCriticalSection(&extended);
     EnterCriticalSection(&section);
     return TryEnterCriticalSection(&section) != 0;
 }

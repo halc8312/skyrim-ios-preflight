@@ -6,7 +6,7 @@ enum { OUT_OF_MEMORY = 8, INVALID_PARAMETER = 87 };
 unsigned skse_win_thread_argument_count(SkseWinThreadOperation operation) {
     static const unsigned argument_counts[] = {
         0, 1, 1, 2, 0, 1, 0, // TLS and thread-local error state.
-        1, 2, 1, 1, 1, 1     // Critical section operations.
+        1, 2, 1, 1, 1, 1, 3  // Critical section operations.
     };
     _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_THREAD_OPERATION_COUNT,
                    "Win32 thread operation signatures");
