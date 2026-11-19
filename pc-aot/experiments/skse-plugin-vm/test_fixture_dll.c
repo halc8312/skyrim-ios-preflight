@@ -286,6 +286,25 @@ int __stdcall TestModuleEntry(void *image, unsigned reason, void *reserved) {
 }
 #endif
 
+#if FIXTURE_VARIANT == 17
+__declspec(dllimport) long __stdcall InterlockedIncrement(volatile long *);
+__declspec(dllimport) long __stdcall InterlockedDecrement(volatile long *);
+__declspec(dllimport) long __stdcall InterlockedExchange(volatile long *, long);
+__declspec(dllimport) long __stdcall InterlockedExchangeAdd(volatile long *, long);
+__declspec(dllimport) long __stdcall InterlockedCompareExchange(volatile long *, long, long);
+static volatile long interlocked_value;
+
+static _Bool check_interlocked(void) {
+    interlocked_value = 2147483647;
+    if (InterlockedIncrement(&interlocked_value) != (-2147483647L - 1L)) return 0;
+    if (InterlockedDecrement(&interlocked_value) != 2147483647L) return 0;
+    if (InterlockedExchange(&interlocked_value, 19) != 2147483647L) return 0;
+    if (InterlockedExchangeAdd(&interlocked_value, -23) != 19 || interlocked_value != -4) return 0;
+    if (InterlockedCompareExchange(&interlocked_value, 31, 9) != -4 || interlocked_value != -4) return 0;
+    return InterlockedCompareExchange(&interlocked_value, 31, -4) == -4 && interlocked_value == 31;
+}
+#endif
+
 _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (!api || !info) return 0;
     info->info_version = 1;
@@ -322,6 +341,9 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
 #endif
 #if FIXTURE_VARIANT == 15 || FIXTURE_VARIANT == 16
     if (tls_value != 25) return 0;
+#endif
+#if FIXTURE_VARIANT == 17
+    if (supported && !check_interlocked()) return 0;
 #endif
     return supported;
 }
@@ -399,6 +421,9 @@ _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
 #endif
 #if FIXTURE_VARIANT == 15 || FIXTURE_VARIANT == 16
     if (tls_value != 25) return 0;
+#endif
+#if FIXTURE_VARIANT == 17
+    if (interlocked_value != 31) return 0;
 #endif
     return 1;
 }

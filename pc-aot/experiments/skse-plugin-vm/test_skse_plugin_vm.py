@@ -206,12 +206,12 @@ class PluginInterpreterTests(unittest.TestCase):
             emulator = root / "trial.exe"
             compile_interpreter(cc, emulator, "test_interpreted.c",
                                 ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
-            for variant, mode in ((14, "tls"), (15, "static-tls"), (16, "static-tls-pair")):
+            for variant, mode in ((14, "tls"), (15, "static-tls"), (16, "static-tls-pair"), (17, "interlocked")):
                 for opt in ("-O0", "-O2"):
                     with self.subTest(variant=variant, optimization=opt):
                         expected, actual = compare_with_windows(cc, linker, emulator, root / f"{variant}-{opt}",
                                                                 variant, opt, mode=mode,
-                                                                imports=(kernel32[-1],), attach=variant != 14,
+                                                                imports=(kernel32[-1],), attach=variant in (15, 16),
                                                                 with_dependency=variant == 16)
                         self.assertIn(",1,1,", expected)
                         self.assertEqual(actual, expected)

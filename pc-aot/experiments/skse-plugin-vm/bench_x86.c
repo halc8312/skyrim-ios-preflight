@@ -23,11 +23,19 @@ static double cpu_seconds(void) {
 #endif
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     static uint8_t bytes[0x4000], workspace[4096];
     // mov ecx,250000; xor eax,eax; add eax,ecx; dec ecx; jnz add; ret
     static const uint8_t code[] = {0xb9, 0x90, 0xd0, 0x03, 0, 0x31, 0xc0, 0x01, 0xc8, 0x49, 0x75, 0xfb, 0xc3};
-    memcpy(bytes + 0x1000, code, sizeof code);
+    // Sum 125,000 values read from a writable PE section.
+    static const uint8_t data_code[] = {
+        0xb9, 0x48, 0xe8, 1, 0, 0x31, 0xc0, 0xa3, 0, 0x30, 0, 0x10,
+        0x03, 0x05, 0, 0x30, 0, 0x10, 0xff, 0x05, 0, 0x30, 0, 0x10,
+        0x49, 0x75, 0xf1, 0xc3
+    };
+    int data = argc == 2 && !strcmp(argv[1], "data");
+    if (argc != 1 && !data) return 2;
+    memcpy(bytes + 0x1000, data ? data_code : code, data ? sizeof data_code : sizeof code);
     SksePeImage image = {
         .base = 0x10000000, .size = sizeof bytes, .bytes = bytes, .headers_size = 0x400,
         .section_count = 3, .sections = {
@@ -43,7 +51,8 @@ int main(void) {
     for (unsigned i = 0; i < 40; ++i) {
         SkseX86Result result = skse_x86_call(&image, image.base + 0x1000, scratch, NULL, 0, 800000,
                                            (SkseX86Services){0}, SKSE_X86_CDECL);
-        assert(result.status == SKSE_X86_OK && result.eax == (uint32_t)UINT64_C(31250125000));
+        const uint64_t expected = data ? UINT64_C(7812437500) : UINT64_C(31250125000);
+        assert(result.status == SKSE_X86_OK && result.eax == (uint32_t)expected);
         steps += result.instructions;
     }
     double seconds = cpu_seconds() - start;

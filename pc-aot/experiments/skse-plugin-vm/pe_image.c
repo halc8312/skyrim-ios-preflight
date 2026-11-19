@@ -85,15 +85,30 @@ static const SksePeSection *section_at(const SksePeImage *image, uint32_t rva, s
     return NULL;
 }
 
-int skse_pe_allows(const SksePeImage *image, uint32_t va, size_t length, unsigned required) {
+int skse_pe_region(const SksePeImage *image, uint32_t va, size_t length, unsigned required, SksePeSection *out) {
     if (!image || !image->bytes || !length || !required
         || (required & ~(unsigned)(SKSE_PE_READ | SKSE_PE_WRITE | SKSE_PE_EXEC)) || va < image->base)
         return 0;
     uint32_t rva = va - image->base;
     if (!fits(rva, length, image->size)) return 0;
-    if (fits(rva, length, image->headers_size)) return required == SKSE_PE_READ;
+    if (fits(rva, length, image->headers_size)) {
+        if (required != SKSE_PE_READ) return 0;
+        uint32_t limit = image->headers_size < image->size ? image->headers_size : image->size;
+        if (out) *out = (SksePeSection){0, limit, SKSE_PE_READ};
+        return 1;
+    }
+    if (image->section_count > SKSE_PE_MAX_SECTIONS) return 0;
     const SksePeSection *section = section_at(image, rva, length);
-    return section && (section->permissions & required) == required;
+    if (!section || (section->permissions & required) != required) return 0;
+    if (out) {
+        *out = *section;
+        if (out->length > image->size - out->rva) out->length = image->size - out->rva;
+    }
+    return 1;
+}
+
+int skse_pe_allows(const SksePeImage *image, uint32_t va, size_t length, unsigned required) {
+    return skse_pe_region(image, va, length, required, NULL);
 }
 
 /* Metadata must use initialized bytes in the source file. A zero-filled BSS

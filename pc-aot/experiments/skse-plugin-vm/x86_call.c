@@ -9,18 +9,25 @@ enum { ADD, OR, ADC, SBB, AND, SUB, XOR, CMP };
 enum { MAX_SCRATCH = 256 * 1024, MAX_ARGUMENTS = 16, MAX_STEPS = 1000000 };
 
 typedef struct {
+    // Keep dispatch state together. The diagnostic counters and synthetic
+    // Windows services are used much less often than the CPU state.
+    uint32_t registers[8], ip, flags, instructions, instruction_va;
+    uint32_t limit, bulk_work;
+    SkseX86Status status;
+    bool finished;
+    uint64_t code_start, code_end;
+    const uint8_t *code_bytes;
+    uint64_t data_start, data_end;
+    uint8_t *data_bytes;
+    unsigned data_permissions;
+    uint32_t return_slot, return_cleanup, stack_floor;
     SksePeImage *const *images;
     size_t image_count;
     SksePeImage *recent_image;
     SkseX86Scratch scratch;
     SkseX86Services services;
     SkseX86Result result;
-    uint32_t registers[8], ip, flags, return_slot;
     uint8_t xmm[8][16];
-    uint32_t return_cleanup, limit, bulk_work, stack_floor;
-    uint64_t code_start, code_end;
-    const uint8_t *code_bytes;
-    bool finished;
 } Vm;
 
 typedef struct {
@@ -74,30 +81,23 @@ static SksePeImage *image_at(Vm *vm, uint32_t address) {
 }
 
 static void fail(Vm *vm, SkseX86Status status) {
-    if (vm->result.status == SKSE_X86_OK) vm->result.status = status;
+    if (vm->status == SKSE_X86_OK) vm->status = status;
 }
 
 static uint32_t fetch(Vm *vm, unsigned width) {
-    if (vm->result.status != SKSE_X86_OK) return 0;
+    if (vm->status != SKSE_X86_OK) return 0;
     if (!in_range(vm->code_start, vm->code_end, vm->ip, width)) {
         const SksePeImage *image = image_at(vm, vm->ip);
-        if (!skse_pe_allows(image, vm->ip, width, SKSE_PE_EXEC)) {
+        SksePeSection code;
+        if (!skse_pe_region(image, vm->ip, width, SKSE_PE_EXEC, &code)) {
             fail(vm, SKSE_X86_MEMORY_FAULT);
             return 0;
         }
         // Cache the current immutable code section so subsequent bytes skip
         // section lookup. The loader rejects sections that are writable code.
-        uint32_t rva = vm->ip - image->base;
-        for (uint16_t i = 0; i < image->section_count; ++i) {
-            const SksePeSection *section = &image->sections[i];
-            if ((section->permissions & SKSE_PE_EXEC) && rva >= section->rva &&
-                rva - section->rva < section->length) {
-                vm->code_start = (uint64_t)image->base + section->rva;
-                vm->code_end = vm->code_start + section->length;
-                vm->code_bytes = image->bytes + section->rva;
-                break;
-            }
-        }
+        vm->code_start = (uint64_t)image->base + code.rva;
+        vm->code_end = vm->code_start + code.length;
+        vm->code_bytes = image->bytes + code.rva;
     }
     uint32_t value = little_endian(vm->code_bytes + (vm->ip - vm->code_start), width);
     vm->ip += width;
@@ -105,9 +105,12 @@ static uint32_t fetch(Vm *vm, unsigned width) {
 }
 
 static uint8_t *memory(Vm *vm, uint32_t address, size_t width, unsigned permissions) {
-    if (vm->result.status != SKSE_X86_OK) return NULL;
+    if (vm->status != SKSE_X86_OK) return NULL;
     if (in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, address, width))
         return vm->scratch.bytes + (address - vm->scratch.base);
+    if ((vm->data_permissions & permissions) == permissions &&
+        in_range(vm->data_start, vm->data_end, address, width))
+        return vm->data_bytes + (address - vm->data_start);
     SkseX86Heap *heap = vm->services.heap;
     if (heap && heap->bytes && address >= heap->base && address - heap->base < SKSE_X86_HEAP_BYTES) {
         uint8_t *range = skse_x86_heap_memory(heap, address, width);
@@ -116,8 +119,16 @@ static uint8_t *memory(Vm *vm, uint32_t address, size_t width, unsigned permissi
         return NULL;
     }
     SksePeImage *image = image_at(vm, address);
-    if (skse_pe_allows(image, address, width, permissions))
+    SksePeSection data;
+    if (skse_pe_region(image, address, width, permissions, &data)) {
+        // Image permissions are fixed for the life of this call. Heap blocks
+        // can be freed or resized and never enter this cache.
+        vm->data_start = (uint64_t)image->base + data.rva;
+        vm->data_end = vm->data_start + data.length;
+        vm->data_bytes = image->bytes + data.rva;
+        vm->data_permissions = data.permissions;
         return image->bytes + (address - image->base);
+    }
     fail(vm, SKSE_X86_MEMORY_FAULT);
     return NULL;
 }
@@ -148,7 +159,7 @@ static void write_operand(Vm *vm, Operand operand, unsigned width, uint32_t valu
         write_memory(vm, operand.value, width, value);
         return;
     }
-    if (vm->result.status != SKSE_X86_OK) return;
+    if (vm->status != SKSE_X86_OK) return;
     uint32_t mask = width_mask(width);
     unsigned index = operand.value;
     if (width == 1 && index >= 4) {
@@ -302,7 +313,7 @@ static int64_t signed_pair(uint64_t raw, unsigned bits) {
 }
 
 static void accumulator_divide(Vm *vm, unsigned width, uint32_t divisor, bool is_signed) {
-    if (vm->result.status != SKSE_X86_OK) return;
+    if (vm->status != SKSE_X86_OK) return;
     if (!divisor) {
         fail(vm, SKSE_X86_DIVIDE_FAULT);
         return;
@@ -354,7 +365,7 @@ static bool condition(const Vm *vm, unsigned condition_code) {
 static void return_from_call(Vm *vm, unsigned discard) {
     uint32_t slot = vm->registers[ESP];
     uint32_t target = pop(vm);
-    if (vm->result.status != SKSE_X86_OK) return;
+    if (vm->status != SKSE_X86_OK) return;
     if (target == 0) {
         // Only the outer call can consume the sentinel at its original slot.
         if (slot != vm->return_slot || discard != vm->return_cleanup)
@@ -368,7 +379,7 @@ static void return_from_call(Vm *vm, unsigned discard) {
 }
 
 static bool reserve_bulk(Vm *vm, uint64_t cost) {
-    if (cost > vm->limit - vm->result.instructions - vm->bulk_work) {
+    if (cost > vm->limit - vm->instructions - vm->bulk_work) {
         fail(vm, SKSE_X86_INSTRUCTION_LIMIT);
         return false;
     }
@@ -429,7 +440,7 @@ static void fill_string(uint8_t *dst, size_t length, unsigned width, uint32_t va
 }
 
 static void string_memory(Vm *vm, bool moving, bool repeat, unsigned width) {
-    if (vm->result.status != SKSE_X86_OK) return;
+    if (vm->status != SKSE_X86_OK) return;
     const uint32_t count = repeat ? vm->registers[ECX] : 1;
     if (!count) return;
     const bool backwards = (vm->flags & DF) != 0;
@@ -592,9 +603,44 @@ static uint32_t win_thread_service(Vm *vm, SkseWinThreadOperation operation) {
     return result;
 }
 
+static uint32_t win_interlocked(Vm *vm, SkseX86Interlocked operation) {
+    const unsigned count = operation <= SKSE_X86_ATOMIC_DEC ? 1 :
+                           operation == SKSE_X86_ATOMIC_COMPARE_EXCHANGE ? 3 : 2;
+    const uint8_t *args = service_parameters(vm, count * 4);
+    if (!args) return 0;
+    vm->registers[ESP] += count * 4;
+
+    const uint32_t address = little_endian(args, 4);
+    if (address & 3) {
+        fail(vm, SKSE_X86_MEMORY_FAULT);
+        return 0;
+    }
+    uint8_t *storage = memory(vm, address, 4, SKSE_PE_READ | SKSE_PE_WRITE);
+    if (!storage) return 0;
+    const uint32_t old = little_endian(storage, 4);
+    const uint32_t input = count >= 2 ? little_endian(args + 4, 4) : 0;
+
+    // Every invocation shares one logical CPU. This memory belongs to the VM.
+    uint32_t value = input;
+    switch (operation) {
+    case SKSE_X86_ATOMIC_INC: value = old + 1; break;
+    case SKSE_X86_ATOMIC_DEC: value = old - 1; break;
+    case SKSE_X86_ATOMIC_ADD: value = old + input; break;
+    case SKSE_X86_ATOMIC_COMPARE_EXCHANGE:
+        if (old != little_endian(args + 8, 4)) return old;
+        break;
+    case SKSE_X86_ATOMIC_EXCHANGE: break;
+    default: fail(vm, SKSE_X86_BAD_ARGUMENT); return 0;
+    }
+    for (unsigned i = 0; i < 4; ++i) storage[i] = (uint8_t)(value >> (8 * i));
+    return operation <= SKSE_X86_ATOMIC_DEC ? value : old;
+}
+
 static void branch(Vm *vm, uint32_t address, bool tail) {
-    if (vm->result.status != SKSE_X86_OK) return;
-    for (size_t i = 0; i < vm->services.count; ++i) {
+    if (vm->status != SKSE_X86_OK) return;
+    // Validated service tokens never lie inside an image's executable range.
+    size_t candidates = in_range(vm->code_start, vm->code_end, address, 1) ? 0 : vm->services.count;
+    for (size_t i = 0; i < candidates; ++i) {
         const SkseX86Service *service = &vm->services.entries[i];
         if (address == service->address) {
             uint32_t stack = vm->registers[ESP];
@@ -633,12 +679,15 @@ static void branch(Vm *vm, uint32_t address, bool tail) {
             case SKSE_X86_WIN_THREAD:
                 vm->registers[EAX] = win_thread_service(vm, (SkseWinThreadOperation)service->value);
                 break;
+            case SKSE_X86_INTERLOCKED:
+                vm->registers[EAX] = win_interlocked(vm, (SkseX86Interlocked)service->value);
+                break;
             }
             ++vm->result.service_calls[i];
             if (tail) {
                 unsigned cleanup = vm->registers[ESP] - (stack + 4);
                 vm->registers[ESP] = stack;
-                if (vm->result.status == SKSE_X86_OK) return_from_call(vm, cleanup);
+                if (vm->status == SKSE_X86_OK) return_from_call(vm, cleanup);
             }
             return;
         }
@@ -727,7 +776,7 @@ static bool vector_instruction(Vm *vm, uint32_t opcode, unsigned prefix) {
 
     uint32_t modrm = fetch(vm, 1);
     Operand rm = decode_rm(vm, modrm);
-    if (vm->result.status != SKSE_X86_OK) return true;
+    if (vm->status != SKSE_X86_OK) return true;
     if (aligned_access && !rm.is_register && (rm.value & 15)) {
         fail(vm, SKSE_X86_MEMORY_FAULT);
         return true;
@@ -735,7 +784,7 @@ static bool vector_instruction(Vm *vm, uint32_t opcode, unsigned prefix) {
     uint8_t *xmm = vm->xmm[(modrm >> 3) & 7];
     if (operation == VECTOR_FROM_GPR) {
         uint32_t value = read_operand(vm, rm, 4);
-        if (vm->result.status != SKSE_X86_OK) return true;
+        if (vm->status != SKSE_X86_OK) return true;
         memset(xmm, 0, 16);
         for (unsigned i = 0; i < 4; ++i) xmm[i] = (uint8_t)(value >> (i * 8));
         return true;
@@ -1112,10 +1161,11 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
-        if ((unsigned)kind > SKSE_X86_WIN_THREAD || !address ||
+        if ((unsigned)kind > SKSE_X86_INTERLOCKED || !address ||
             (kind >= SKSE_X86_MALLOC && kind <= SKSE_X86_HEAP_FREE && !services.heap) ||
             (kind == SKSE_X86_WIN_THREAD &&
              (!services.thread || services.entries[i].value >= SKSE_WIN_THREAD_OPERATION_COUNT)) ||
+            (kind == SKSE_X86_INTERLOCKED && services.entries[i].value >= SKSE_X86_ATOMIC_COUNT) ||
             ((kind == SKSE_X86_QUERY_CLASSIC || kind == SKSE_X86_REGISTER_CORE_LISTENER) &&
              (!services.core_messaging ||
               !in_range(scratch.base, scratch_end, services.core_messaging->interface_address, 16))) ||
@@ -1142,18 +1192,21 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
     for (size_t i = arg_count; i > 0; --i) push(&vm, args[i - 1]);
     push(&vm, 0);
     vm.return_slot = vm.registers[ESP];
-    while (!vm.finished && vm.result.status == SKSE_X86_OK &&
-           vm.result.instructions + vm.bulk_work < vm.limit) {
-        vm.result.instruction_va = vm.ip;
-        ++vm.result.instructions;
+    while (!vm.finished && vm.status == SKSE_X86_OK &&
+           vm.instructions + vm.bulk_work < vm.limit) {
+        vm.instruction_va = vm.ip;
+        ++vm.instructions;
         step(&vm);
     }
     if (!vm.finished) fail(&vm, SKSE_X86_INSTRUCTION_LIMIT);
     else if ((vm.flags & DF) || vm.registers[EBX] != canaries[0] || vm.registers[EBP] != canaries[1] ||
              vm.registers[ESI] != canaries[2] || vm.registers[EDI] != canaries[3])
         fail(&vm, SKSE_X86_BAD_CALL_RETURN);
-    if (vm.result.status == SKSE_X86_OK) vm.result.eax = vm.registers[EAX];
-    vm.result.work = vm.result.instructions + vm.bulk_work;
+    if (vm.status == SKSE_X86_OK) vm.result.eax = vm.registers[EAX];
+    vm.result.status = vm.status;
+    vm.result.instructions = vm.instructions;
+    vm.result.instruction_va = vm.instruction_va;
+    vm.result.work = vm.instructions + vm.bulk_work;
     return vm.result;
 }
 

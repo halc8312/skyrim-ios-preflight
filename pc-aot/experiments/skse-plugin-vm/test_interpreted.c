@@ -18,13 +18,15 @@ int main(int argc, char *argv[]) {
     int clock = argc >= 3 && strcmp(argv[2], "clock") == 0;
     int memory = argc >= 3 && strcmp(argv[2], "memory") == 0;
     int allocation = argc >= 3 && strcmp(argv[2], "allocation") == 0;
+    int interlocked = argc >= 3 && strcmp(argv[2], "interlocked") == 0;
     int tls = argc >= 3 && strcmp(argv[2], "tls") == 0;
     int tls_pair = argc >= 4 && strcmp(argv[2], "static-tls-pair") == 0;
     int static_tls = tls_pair || (argc >= 3 && strcmp(argv[2], "static-tls") == 0);
     int messages = argc >= 3 && strcmp(argv[2], "messages") == 0;
     int dependency = tls_pair || (argc >= 4 && strcmp(argv[2], "dependency") == 0);
     int moved = argc >= 4 && strcmp(argv[argc - 1], "move") == 0;
-    assert(argc == 2 || dependency || ((clock || memory || allocation || tls || static_tls || messages) && (argc == 3 || moved)));
+    assert(argc == 2 || dependency ||
+        ((clock || memory || allocation || interlocked || tls || static_tls || messages) && (argc == 3 || moved)));
     uint8_t bytes[64 * 1024];
     size_t length = read_owned_dll(argv[1], bytes, sizeof bytes);
     if (!length) return 2;

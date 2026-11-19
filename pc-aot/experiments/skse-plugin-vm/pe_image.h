@@ -122,6 +122,9 @@ SksePeStatus skse_pe_map_tls(const uint8_t *file, size_t length, uint32_t guest_
 void skse_pe_free(SksePeImage *image);
 /* Nonempty range must fit fully inside one region with every requested bit. */
 int skse_pe_allows(const SksePeImage *image, uint32_t va, size_t length, unsigned required);
+/* The returned region is clipped to the image allocation. Headers form a
+ * read-only region. Passing NULL performs only the permission check. */
+int skse_pe_region(const SksePeImage *image, uint32_t va, size_t length, unsigned required, SksePeSection *out);
 const char *skse_pe_status_text(SksePeStatus status);
 /* PE library names use ASCII case-insensitive comparison. */
 int skse_pe_library_name_equal(const char *a, const char *b);

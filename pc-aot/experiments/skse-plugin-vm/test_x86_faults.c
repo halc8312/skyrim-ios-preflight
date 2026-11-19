@@ -164,6 +164,31 @@ static void check_static_tls_address(void) {
     assert(run(indirect, sizeof indirect, 100, tls).status == SKSE_X86_BAD_ARGUMENT);
 }
 
+static void check_cached_image_bounds(void) {
+    uint8_t bytes[128] = {0};
+    // Read one word from a read-only region, then try writing through the
+    // populated data cache. The second operation must still see permissions.
+    const uint8_t read_then_write[] = {
+        0xa1, 0x40, 0, 0x10, 0, 0xa3, 0x40, 0, 0x10, 0, 0xc3
+    };
+    memcpy(bytes, read_then_write, sizeof read_then_write);
+    bytes[0x40] = 91;
+    SksePeImage image = {
+        .base = image_base, .size = sizeof bytes, .bytes = bytes, .section_count = 2,
+        .sections = {{0, 0x20, SKSE_PE_READ | SKSE_PE_EXEC}, {0x40, 8, SKSE_PE_READ}}
+    };
+    SkseX86Scratch work = {scratch_base, scratch, sizeof scratch};
+    SkseX86Result result = skse_x86_call(&image, image_base, work, NULL, 0, 100,
+                                        (SkseX86Services){0}, SKSE_X86_CDECL);
+    assert(result.status == SKSE_X86_MEMORY_FAULT && bytes[0x40] == 91);
+    // Replace the write with a read that crosses this same region's end.
+    bytes[5] = 0xa1;
+    bytes[6] = 0x46;
+    result = skse_x86_call(&image, image_base, work, NULL, 0, 100,
+                          (SkseX86Services){0}, SKSE_X86_CDECL);
+    assert(result.status == SKSE_X86_MEMORY_FAULT);
+}
+
 int main(void) {
     // CALL forwards to another x86 region and that callee returns into the caller.
     uint8_t nested[] = {0xe8, 1, 0, 0, 0, 0xc3, 0xb8, 42, 0, 0, 0, 0xc3};
@@ -267,5 +292,6 @@ int main(void) {
     check_virtual_tls();
     check_virtual_critical_sections();
     check_static_tls_address();
+    check_cached_image_bounds();
     return 0;
 }

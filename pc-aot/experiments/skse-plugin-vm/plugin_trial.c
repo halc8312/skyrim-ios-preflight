@@ -50,7 +50,12 @@ static const struct {
     {{"KERNEL32.dll", "EnterCriticalSection", 0xe0001064}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_ENTER},
     {{"KERNEL32.dll", "LeaveCriticalSection", 0xe0001068}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_LEAVE},
     {{"KERNEL32.dll", "TryEnterCriticalSection", 0xe000106c}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_TRY},
-    {{"KERNEL32.dll", "DeleteCriticalSection", 0xe0001070}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_DELETE}
+    {{"KERNEL32.dll", "DeleteCriticalSection", 0xe0001070}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_DELETE},
+    {{"KERNEL32.dll", "InterlockedIncrement", 0xe0001074}, SKSE_X86_INTERLOCKED, SKSE_X86_ATOMIC_INC},
+    {{"KERNEL32.dll", "InterlockedDecrement", 0xe0001078}, SKSE_X86_INTERLOCKED, SKSE_X86_ATOMIC_DEC},
+    {{"KERNEL32.dll", "InterlockedExchange", 0xe000107c}, SKSE_X86_INTERLOCKED, SKSE_X86_ATOMIC_EXCHANGE},
+    {{"KERNEL32.dll", "InterlockedExchangeAdd", 0xe0001080}, SKSE_X86_INTERLOCKED, SKSE_X86_ATOMIC_ADD},
+    {{"KERNEL32.dll", "InterlockedCompareExchange", 0xe0001084}, SKSE_X86_INTERLOCKED, SKSE_X86_ATOMIC_COMPARE_EXCHANGE}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 _Static_assert(WINDOWS_SERVICE_COUNT + 5 <= SKSE_X86_MAX_SERVICES, "trial service count");
