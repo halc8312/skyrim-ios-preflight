@@ -16,6 +16,8 @@ The experimental event services track unnamed manual-reset and auto-reset events
 
 The Classic v4 serialization trial can run one DLL's registered save, revert and load callbacks against authored records kept in memory. It checks stream writes, partial reads, skipped record tails and end-of-stream without opening a saved game. Resolving a real form or handle and delivering a game-object deletion require the live game catalog and events.
 
+`bench_x86.c` measures process CPU time for authored arithmetic, PE data access and calls through a full service table. For 250,000 short invocations, indexing the 64 validated service addresses reduced the median CPU time from 0.359 to 0.109 seconds on the Windows host over nine paired samples. This benchmark measures diagnostic startup and dispatch on the host.
+
 The app option `SKYRIM_IOS_SKSE_DLL_PROBE` defaults to OFF. In an experimental build, open Settings → MOD → Details → DLL Compatibility. Remaining work includes plugin gameplay, broader Windows support, engine interfaces and ENB rendering. The diagnostic runs only when opened, outside the ordinary rendering path.
 
 The tests generate their own DLLs. On Windows, `python -B -m unittest -v test_pe_image test_skse_plugin_vm test_dependency_plan` compares interpreted initialization to authored DLLs run by Windows, including relocations, allocated memory, thread-local values, callbacks and the attach and detach order of a four-DLL package. On Mac, `bash test-apple-sdk.sh` also checks the iPhoneOS sources and runs the same UI controller in an iOS simulator. It supplies selected URLs to the document picker's delegate and verifies the isolated diagnostic results in English and Japanese. Physical Files providers and gameplay need separate tests.
