@@ -127,6 +127,10 @@ static void copyFixture(NSURL *source, NSURL *destination) {
         copyFixture([fixtures URLByAppendingPathComponent:@"Original"], game);
         copyFixture([fixtures URLByAppendingPathComponent:@"Authored Save.ess"],
             [profile URLByAppendingPathComponent:@"Documents/My Games/Skyrim/Saves/Authored Save.ess"]);
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        copyFixture([fixtures URLByAppendingPathComponent:@"Authored Save.skse"],
+            [profile URLByAppendingPathComponent:@"Documents/My Games/Skyrim/Saves/Authored Save.skse"]);
+#endif
         copyFixture(baseline, plugins);
     }
     // Capture the real export for a later picker round trip. This copies only a

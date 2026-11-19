@@ -15,6 +15,8 @@ int main(int argc, char **argv) {
                 printf(",%u,%u", report.trial.serialization_callbacks, report.trial.serialization_records);
             }
             if (report.trial.workers_completed) printf(",workers=%u", report.trial.workers_completed);
+            if (report.trial.tasks_completed[0] || report.trial.tasks_completed[1])
+                printf(",tasks=%u/%u", report.trial.tasks_completed[0], report.trial.tasks_completed[1]);
             putchar('\n');
         } else {
             printf("stopped,%u,%s,%u", (unsigned)report.trial.status,
@@ -23,6 +25,7 @@ int main(int argc, char **argv) {
                 printf(",%s,%s", report.trial.dependencies.requested, report.trial.dependencies.import_symbol);
             }
             if (report.trial.load.status != SKSE_X86_OK) printf(",load=%u", (unsigned)report.trial.load.status);
+            if (report.trial.task_fault.status != SKSE_X86_OK) printf(",task=%u", (unsigned)report.trial.task_fault.status);
             putchar('\n');
         }
     }

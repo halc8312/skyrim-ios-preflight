@@ -54,12 +54,12 @@
             [self checkReport:japanese ? @"診断環境でSKSEの初期化が完了しました。" : @"SKSE initialization passed in the test environment."
                    launchNext:^{
                 [self diagnose:@"ProbePackage" extension:nil];
-                [self checkReport:japanese ? @"SKSE用DLLを6個見つけました。" : @"Found 6 SKSE DLLs in this folder."
+                [self checkReport:japanese ? @"SKSE用DLLを7個見つけました。" : @"Found 7 SKSE DLLs in this folder."
                        launchNext:^{
                     UITableView *table = self.probe.tableView;
                     NSInteger rows = [self.probe tableView:table numberOfRowsInSection:1];
                     BOOL verifiedPair = NO, verifiedAsset = NO;
-                    BOOL verifiedSerialization = NO, verifiedWorker = NO;
+                    BOOL verifiedSerialization = NO, verifiedWorker = NO, verifiedTasks = NO;
                     for (NSInteger i = 1; i < rows; ++i) {
                         UITableViewCell *cell = [self.probe tableView:table
                                                 cellForRowAtIndexPath:[NSIndexPath indexPathForRow:i inSection:1]];
@@ -79,9 +79,13 @@
                             [text containsString:japanese ? @"終了まで確認した補助スレッド　1 本" : @"Worker threads completed · 1"]) {
                             verifiedWorker = YES;
                         }
+                        if ([text hasPrefix:@"Data/SKSE/Plugins/TaskProbe.dll\n"] && ready &&
+                            [text containsString:japanese ? @"タスクの試験　ゲーム 2 件、UI 1 件" : @"Queued task test · Game 2 · UI 1"]) {
+                            verifiedTasks = YES;
+                        }
                     }
-                    if (!verifiedPair || !verifiedAsset || !verifiedSerialization || !verifiedWorker) {
-                        [NSException raise:NSInternalInconsistencyException format:@"Missing companion, asset, serialization or worker result"];
+                    if (!verifiedPair || !verifiedAsset || !verifiedSerialization || !verifiedWorker || !verifiedTasks) {
+                        [NSException raise:NSInternalInconsistencyException format:@"Missing companion, asset, serialization, worker or task result"];
                     }
                     NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
                     NSURL *evidence = [documents URLByAppendingPathComponent:japanese ? @"japanese.txt" : @"english.txt"];

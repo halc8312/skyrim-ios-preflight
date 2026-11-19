@@ -17,9 +17,11 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #include "mod_manager.h"
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 #include "PcGuestSkseTrial.h"
+#include "inspect.h"
 #endif
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
 #include "mod_dll_probe.h"
@@ -943,11 +945,32 @@ NSString *skyrim_mods_save_notice(void) {
 
 @interface SKSaves : UITableViewController
 @property(nonatomic, strong) NSArray<NSDictionary *> *saves;
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+@property(nonatomic, copy) NSString *companionDirectory;
+@property(nonatomic) BOOL checkingCompanion;
+#endif
 @end
 @implementation SKSaves
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title = T(@"Save check", @"セーブの確認"); self.saves = nil;
     NSString *dir = SavesDir(); NSSet *loaded = LoadedPluginSet();
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    // Resolve Apple's container alias. Save paths below Application Support
+    // still go through the inspector's per-component link checks.
+    NSString *support = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                            inDomains:NSUserDomainMask].firstObject.path;
+    if (support.length) {
+        NSString *prefix = [support stringByAppendingString:@"/"];
+        if ([dir hasPrefix:prefix]) {
+            char *resolved = realpath(support.fileSystemRepresentation, NULL);
+            if (resolved) {
+                NSString *root = [NSFileManager.defaultManager stringWithFileSystemRepresentation:resolved length:strlen(resolved)];
+                free(resolved);
+                self.companionDirectory = [root stringByAppendingPathComponent:[dir substringFromIndex:prefix.length]];
+            }
+        }
+    }
+#endif
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSArray *saves = SaveChecksIn(dir, loaded, 50);
         dispatch_async(dispatch_get_main_queue(), ^{ self.saves = saves; [self.tableView reloadData]; });
@@ -966,11 +989,72 @@ NSString *skyrim_mods_save_notice(void) {
     if (!self.saves.count) { c.textLabel.text = self.saves ? T(@"No saves in this profile", @"このプロファイルにセーブはありません") : T(@"Loading…", @"読み込み中…"); return c; }
     NSDictionary *save = self.saves[p.row];
     c.textLabel.text = [save[@"name"] stringByDeletingPathExtension];
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    if (self.companionDirectory) {
+        c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    }
+#endif
     NSArray *missing = save[@"missing"];
     c.detailTextLabel.text = [save[@"unreadable"] boolValue] ? T(@"Could not read this save", @"このセーブは読めませんでした") :
         missing.count ? [NSString stringWithFormat:T(@"⚠️ Missing: %@", @"⚠️ 足りないMOD：%@"), [missing componentsJoinedByString:@", "]] : T(@"✅ All MODs present", @"✅ MODはすべてそろっています");
     return c;
 }
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+static NSString *CompanionResult(SkseInspectStatus status, const SkseInspectInfo *info) {
+    switch (status) {
+    case SKSE_INSPECT_OK:
+        return [NSString stringWithFormat:T(@"Found a same-name SKSE Classic file. Sections %u · Records %u",
+                                             @"同名のSKSE Classic形式のファイルを確認しました。セクション %u 件、レコード %u 件。"),
+                info->owners, info->records];
+    case SKSE_INSPECT_MISSING:
+        return T(@"There is no same-name .skse file in this profile.", @"このプロファイルに同名の .skse ファイルがありません。");
+    case SKSE_INSPECT_BASE_MISSING:
+        return T(@"This save disappeared before it could be checked.", @"確認する前に元のセーブが見つからなくなりました。");
+    case SKSE_INSPECT_AMBIGUOUS:
+        return T(@"More than one file matches this name.", @"同じ名前に該当するファイルが複数あります。");
+    case SKSE_INSPECT_UNSUPPORTED:
+        return T(@"The .skse file uses a different format or game version.", @"この .skse ファイルの形式かゲームの版が対応範囲外です。");
+    case SKSE_INSPECT_INVALID:
+        return T(@"The .skse file is incomplete or malformed.", @"この .skse ファイルは記録が欠けているか形式が壊れています。");
+    case SKSE_INSPECT_LIMIT:
+        return T(@"The .skse file exceeds the inspection limit.", @"この .skse ファイルは確認できる容量か件数の上限を超えています。");
+    case SKSE_INSPECT_UNSTABLE:
+        return T(@"The save changed during the check. Try again.", @"確認中に保存内容が変わりました。もう一度お試しください。");
+    case SKSE_INSPECT_IO:
+    case SKSE_INSPECT_ARGUMENT:
+        return T(@"The additional save could not be read.", @"追加セーブを読み取れませんでした。");
+    }
+    return T(@"The additional save could not be read.", @"追加セーブを読み取れませんでした。");
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (!self.companionDirectory || self.checkingCompanion || (NSUInteger)indexPath.row >= self.saves.count) return;
+    self.checkingCompanion = YES;
+    NSString *directory = self.companionDirectory;
+    NSString *name = self.saves[indexPath.row][@"name"];
+    UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
+    UIActivityIndicatorView *progress = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+    cell.accessoryView = progress;
+    [progress startAnimating];
+    __weak SKSaves *weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        SkseInspectInfo info = {0};
+        SkseInspectStatus status = skse_inspect_companion(directory.fileSystemRepresentation, name.fileSystemRepresentation, &info);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            SKSaves *view = weakSelf;
+            view.checkingCompanion = NO;
+            cell.accessoryView = nil;
+            if (!view.viewIfLoaded.window || view.navigationController.topViewController != view || view.presentedViewController) return;
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:T(@"SKSE additional save", @"SKSE追加セーブ")
+                message:CompanionResult(status, &info) preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [view presentViewController:alert animated:YES completion:nil];
+        });
+    });
+}
+#endif
 @end
 
 /* ---- UI ---------------------------------------------------------------- */

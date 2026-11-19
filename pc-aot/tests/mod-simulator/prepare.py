@@ -23,6 +23,7 @@ APP = "ModScreensHost"
 TEST = "ModScreensUITests"
 SCHEME = "ModScreens"
 DLL_PROBE = ROOT / "experiments/skse-plugin-vm"
+COSAVE = ROOT / "experiments/skse-cosave"
 
 
 def fixtures(directory):
@@ -62,6 +63,9 @@ def fixtures(directory):
     save = (b"TESV_SAVEGAME" + struct.pack("<I", len(header)) + header + b"\0"*3
             + bytes([74]) + struct.pack("<I", len(plugins)) + plugins)
     (directory / "Authored Save.ess").write_bytes(save)
+    if os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1":
+        companion = b"SKSE" + struct.pack("<10I", 1, 0x01070030, 0x09200000, 1, 0x4242, 1, 13, 0x41544144, 1, 1)
+        (directory / "Authored Save.skse").write_bytes(companion + b"X")
 
 
 def stable_id(name):
@@ -161,7 +165,11 @@ def project(work, sdl_prefix, archive_prefix):
         "x86_skse_records.c", "dependency_plan.c", "plugin_trial.c",
         "probe_local_file.c", "probe_directory.c", "probe_asset_file.c", "mod_dll_probe.m"
     ]] if dll_enabled else []
-    app_source_phase = source_phase(APP, [HERE/"host.m", HERE/"guest_boundary.m", *(PORT/p for p in app_sources), *dll_sources])
+    classic_enabled = os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1"
+    cosave_sources = [COSAVE / p for p in ("inspect.c", "records.c")] if classic_enabled else []
+    app_source_phase = source_phase(APP, [
+        HERE/"host.m", HERE/"guest_boundary.m", *(PORT/p for p in app_sources), *dll_sources, *cosave_sources
+    ])
     test_source_phase = source_phase(TEST, [HERE/"screens.m"])
     if not (sdl_prefix / "include/SDL2/SDL.h").is_file():
         raise SystemExit("Simulator host requires real public SDL headers from the prepared dependency prefix")
@@ -185,13 +193,13 @@ def project(work, sdl_prefix, archive_prefix):
         "CLANG_ENABLE_MODULES":"YES", "CLANG_ENABLE_OBJC_ARC":"YES", "TARGETED_DEVICE_FAMILY":"1",
         "GCC_C_LANGUAGE_STANDARD":"gnu11", "ONLY_ACTIVE_ARCH":"YES", "CODE_SIGN_STYLE":"Automatic"})
     frameworks = ["Foundation","UIKit","QuartzCore","UniformTypeIdentifiers","WebKit","SwiftUI","Translation"]
-    classic_defines = ["SKYRIM_IOS_CLASSIC_SKSE=1"] if os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1" else []
+    classic_defines = ["SKYRIM_IOS_CLASSIC_SKSE=1"] if classic_enabled else []
     dll_defines = ["SKYRIM_IOS_SKSE_DLL_PROBE=1"] if dll_enabled else []
     app_configs = configs(APP, {
         "PRODUCT_NAME":APP, "PRODUCT_BUNDLE_IDENTIFIER":APP_ID, "INFOPLIST_FILE":str(work/"HostInfo.plist"),
         "SWIFT_VERSION":"6.0", "SWIFT_STRICT_CONCURRENCY":"complete",
         "HEADER_SEARCH_PATHS":[str(PORT),str(ROOT/"ios/private-abi"),str(sdl_prefix/"include"),str(archive_prefix/"include"),
-                               *([str(DLL_PROBE)] if dll_enabled else [])],
+                               *([str(DLL_PROBE)] if dll_enabled else []), *([str(COSAVE)] if classic_enabled else [])],
         "SYSTEM_HEADER_SEARCH_PATHS":[str(ROOT/"vendor/bcdec"),str(ROOT/"vendor/stb")],
         "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", "SKYRIM_HAVE_LIBARCHIVE=1", *classic_defines, *dll_defines],
         "OTHER_LDFLAGS":["$(inherited)",*map(str,static_libs),"-lz","-liconv",
@@ -253,6 +261,9 @@ def verify_original(container, assets, summary):
     assert contents(container/"Documents/Skyrim") == contents(assets/"Original")
     assert (base/"Profile/Documents/Skyrim/plugins.txt").read_bytes() == (assets/"initial-plugins.txt").read_bytes()
     assert (base/"Profile/Documents/My Games/Skyrim/Saves/Authored Save.ess").read_bytes() == (assets/"Authored Save.ess").read_bytes()
+    companion = assets / "Authored Save.skse"
+    if companion.is_file():
+        assert (base/"Profile/Documents/My Games/Skyrim/Saves/Authored Save.skse").read_bytes() == companion.read_bytes()
     return base
 
 

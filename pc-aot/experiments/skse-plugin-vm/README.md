@@ -16,6 +16,8 @@ The experimental synchronization services track unnamed manual-reset and auto-re
 
 A single-module diagnostic can run one logical Windows worker at a time. It has its own stack, static and dynamic TLS values and last-error state. The worker runs when the caller joins it with an infinite single-object wait or when the last startup callback has returned. The trial keeps its execution budget, and closing the handle leaves the worker eligible to run. Worker startup and termination notify the DLL. Finite waits on active workers, nested workers, mixed worker waits and alertable waits are reported as unsupported.
 
+The Classic Task interface accepts up to 16 pending delegates in each of its game and UI queues. The diagnostic drains each queue in submission order after initialization. It calls the delegate's current `Run` and then `Dispose` as i386 virtual methods. Tasks added during a callback stay behind already-queued entries of that type. All callbacks run in the isolated diagnostic and share its work budget.
+
 The Classic v4 serialization trial can run one DLL's registered save, revert and load callbacks against authored records kept in memory. It checks stream writes, partial reads, skipped record tails and end-of-stream without opening a saved game. Resolving a real form or handle and delivering a game-object deletion require the live game catalog and events.
 
 `bench_x86.c` measures process CPU time for authored arithmetic, PE data access and calls through a full service table. For 250,000 short invocations, indexing the 64 validated service addresses reduced the median CPU time from 0.359 to 0.109 seconds on the Windows host over nine paired samples. This benchmark measures diagnostic startup and dispatch on the host.
