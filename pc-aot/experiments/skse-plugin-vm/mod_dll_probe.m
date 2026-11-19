@@ -56,15 +56,23 @@ static NSString *CallResult(BOOL japanese, SkseX86Status status) {
 
 static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *trial, const SksePeReport *imports) {
     switch (trial->status) {
-    case SKSE_TRIAL_COMPLETED:
-        if (trial->unavailable_interface)
-            return @[Text(japanese, @"Initialization passed. The DLL also queried an unavailable SKSE interface.",
-                                    @"初期化は完了しました。DLLは未対応のSKSEインターフェイスも要求しました。"),
-                     [NSString stringWithFormat:Text(japanese, @"SKSE interface %u", @"SKSEインターフェイス %u"),
-                      trial->unavailable_interface]];
-        return @[Text(japanese, @"SKSE initialization passed in the test environment.",
-                                @"診断環境でSKSEの初期化が完了しました。"),
-                 [NSString stringWithFormat:@"%s", trial->name]];
+    case SKSE_TRIAL_COMPLETED: {
+        NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObjects:
+            Text(japanese, @"SKSE initialization passed in the test environment.",
+                           @"診断環境でSKSEの初期化が完了しました。"),
+            [NSString stringWithFormat:@"%s", trial->name], nil];
+        if (trial->unavailable_interface) {
+            [lines addObject:[NSString stringWithFormat:Text(japanese, @"Also requested unavailable SKSE interface %u",
+                                                            @"未対応のSKSEインターフェイス %u も要求されました。"),
+                              trial->unavailable_interface]];
+        }
+        if (trial->serialization_callbacks) {
+            [lines addObject:[NSString stringWithFormat:Text(japanese, @"Additional save test · Calls %u · Records %u",
+                                                            @"追加セーブの試験　呼び出し %u 回、記録 %u 件"),
+                              trial->serialization_callbacks, trial->serialization_records]];
+        }
+        return lines;
+    }
     case SKSE_TRIAL_IMAGE_REFUSED:
     case SKSE_TRIAL_DEPENDENCY_REFUSED: {
         NSString *summary = Text(japanese, @"This DLL could not be loaded for testing.",
@@ -106,6 +114,10 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
         return @[Text(japanese, @"The DLL stopped while handling its thread-local data.",
                                 @"DLLのスレッド専用データを処理する途中で停止しました。"),
                  CallResult(japanese, trial->tls_fault.status)];
+    case SKSE_TRIAL_SERIALIZATION_FAULT:
+        return @[Text(japanese, @"The DLL stopped during the test of its additional save data.",
+                                @"DLLの追加セーブ処理の試験が途中で停止しました。"),
+                 CallResult(japanese, trial->serialization_fault.status)];
     default: {
         const SkseX86Result *fault = &trial->query;
         if (trial->status == SKSE_TRIAL_ATTACH_FAULT) fault = &trial->attach;

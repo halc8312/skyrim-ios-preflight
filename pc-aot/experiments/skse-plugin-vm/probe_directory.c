@@ -310,7 +310,9 @@ static void diagnose(const DirectoryScan *scan, const Source *source, uint32_t u
     file->is_plugin = 1;
     file->external_library_count = external_names(source, manifest, file->dependency_name, file->other_dependency_name);
     const SkseTrialOptions options = {0x01070030, 0x09200000, 0, 48, 1, 1, 1};
-    const SkseTrialRuntime runtime = {.uptime_ms = uptime_ms, .core_messages = 1, .static_tls = 1, .assets = assets};
+    const SkseTrialRuntime runtime = {
+        .uptime_ms = uptime_ms, .core_messages = 1, .static_tls = 1, .serialization = 1, .assets = assets
+    };
     if (!file->external_library_count) {
         file->status = SKSE_PROBE_DLL_STANDALONE;
         file->trial = skse_plugin_trial_with_runtime(source->bytes, source->length, options, runtime);

@@ -14,6 +14,8 @@ The folder diagnostic can supply read-only file snapshots to these calls from th
 
 The experimental event services track unnamed manual-reset and auto-reset events in the same virtual process. They preserve signal consumption across single-event and multiple-event waits. Polling and already-satisfied waits are supported. An alertable wait or a wait that needs another Windows thread is reported as unsupported.
 
+The Classic v4 serialization trial can run one DLL's registered save, revert and load callbacks against authored records kept in memory. It checks stream writes, partial reads, skipped record tails and end-of-stream without opening a saved game. Resolving a real form or handle and delivering a game-object deletion require the live game catalog and events.
+
 The app option `SKYRIM_IOS_SKSE_DLL_PROBE` defaults to OFF. In an experimental build, open Settings → MOD → Details → DLL Compatibility. Remaining work includes plugin gameplay, broader Windows support, engine interfaces and ENB rendering. The diagnostic runs only when opened, outside the ordinary rendering path.
 
 The tests generate their own DLLs. On Windows, `python -B -m unittest -v test_pe_image test_skse_plugin_vm test_dependency_plan` compares interpreted initialization to authored DLLs run by Windows, including relocations, allocated memory, thread-local values, callbacks and the attach and detach order of a four-DLL package. On Mac, `bash test-apple-sdk.sh` also checks the iPhoneOS sources and runs the same UI controller in an iOS simulator. It supplies selected URLs to the document picker's delegate and verifies the isolated diagnostic results in English and Japanese. Physical Files providers and gameplay need separate tests.

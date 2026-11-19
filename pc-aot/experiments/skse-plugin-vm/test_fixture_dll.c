@@ -417,6 +417,42 @@ static _Bool check_events(void) {
 }
 #endif
 
+#if FIXTURE_VARIANT == 22
+static const FixtureSerialization *save_api;
+static unsigned save_stage;
+
+static void __cdecl make_test_records(const FixtureSerialization *api) {
+    unsigned char payload[] = {'m', 'o', 'd', '!'};
+    if (api != save_api || save_stage != 5 || !api->write(0x54534554, 4, payload, 4) ||
+        !api->open(0x48544f4d, 7) || !api->append(payload + 1, 1)) __builtin_trap();
+    payload[0] = 'X';
+    if (!api->append(payload, 1)) __builtin_trap();
+    save_stage = 9;
+}
+
+static void __cdecl revert_test_records(const FixtureSerialization *api) {
+    if (api != save_api || save_stage != 9) __builtin_trap();
+    save_stage = 0;
+}
+
+static void __cdecl read_test_records(const FixtureSerialization *api) {
+    uint32_t type, version, length;
+    unsigned char part[4];
+    if (api != save_api || save_stage || !api->next(&type, &version, &length) ||
+        type != 0x54534554 || version != 4 || length != 4 || api->read(part, 2) != 2 ||
+        part[0] != 'm' || part[1] != 'o') __builtin_trap();
+    if (!api->next(&type, &version, &length) || type != 0x48544f4d || version != 7 ||
+        length != 2 || api->read(part, 4) != 2 || part[0] != 'o' || part[1] != 'X' ||
+        api->read(part, 1) || api->next(&type, &version, &length)) __builtin_trap();
+    save_stage = 11;
+}
+
+static void __cdecl reject_synthetic_form_delete(uint64_t handle) {
+    (void)handle;
+    __builtin_trap();
+}
+#endif
+
 _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (!api || !info) return 0;
     info->info_version = 1;
@@ -548,6 +584,17 @@ _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
 #endif
 #if FIXTURE_VARIANT == 17
     if (interlocked_value != 31) return 0;
+#endif
+#if FIXTURE_VARIANT == 22
+    if (!api->query_interface) return 0;
+    save_api = api->query_interface(3);
+    if (!save_api || save_api->version != 4) return 0;
+    save_api->set_uid(handle, 0x1ced1591);
+    save_api->set_revert(handle, revert_test_records);
+    save_api->set_save(handle, make_test_records);
+    save_api->set_load(handle, read_test_records);
+    save_api->set_deleted(handle, reject_synthetic_form_delete);
+    save_stage = 5;
 #endif
     return 1;
 }

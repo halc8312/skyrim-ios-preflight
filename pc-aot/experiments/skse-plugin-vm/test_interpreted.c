@@ -40,10 +40,11 @@ int main(int argc, char *argv[]) {
     int tls_pair = argc >= 4 && strcmp(argv[2], "static-tls-pair") == 0;
     int static_tls = tls_pair || (argc >= 3 && strcmp(argv[2], "static-tls") == 0);
     int messages = argc >= 3 && strcmp(argv[2], "messages") == 0;
+    int serialization = argc >= 3 && strcmp(argv[2], "serialization") == 0;
     int dependency = tls_pair || (argc >= 4 && strcmp(argv[2], "dependency") == 0);
     int moved = argc >= 4 && strcmp(argv[argc - 1], "move") == 0;
     assert(argc == 2 || dependency ||
-        ((clock || memory || allocation || interlocked || module_lookup || file_assets || events || tls || static_tls || messages) &&
+        ((clock || memory || allocation || interlocked || module_lookup || file_assets || events || tls || static_tls || messages || serialization) &&
          (argc == 3 || moved)));
     uint8_t bytes[64 * 1024];
     size_t length = read_owned_dll(argv[1], bytes, sizeof bytes);
@@ -56,6 +57,7 @@ int main(int argc, char *argv[]) {
             .uptime_ms = UINT32_C(0x9100abcd),
             .guest_base = moved ? UINT32_C(0x60000000) : 0,
             .core_messages = (unsigned)messages, .static_tls = (unsigned)static_tls,
+            .serialization = (unsigned)serialization,
             .assets = {.read = file_assets ? read_authored_asset : NULL}
         };
         SkseTrialResult result = argc >= 3
@@ -75,11 +77,12 @@ int main(int argc, char *argv[]) {
         }
         if (result.status != SKSE_TRIAL_COMPLETED && result.status != SKSE_TRIAL_QUERY_DECLINED &&
             result.status != SKSE_TRIAL_LOAD_DECLINED && result.status != SKSE_TRIAL_MESSAGE_FAULT) {
-            fprintf(stderr, "case=%zu phase=%u PE=%u x86-query=%u at=0x%08x x86-load=%u at=0x%08x TLS=%u at=0x%08x\n",
+            fprintf(stderr, "case=%zu phase=%u PE=%u x86-query=%u at=0x%08x x86-load=%u at=0x%08x TLS=%u at=0x%08x serial=%u at=0x%08x\n",
                     i, (unsigned)result.status, (unsigned)result.image_status,
                     (unsigned)result.query.status, result.query.instruction_va,
                     (unsigned)result.load.status, result.load.instruction_va,
-                    (unsigned)result.tls_fault.status, result.tls_fault.instruction_va);
+                    (unsigned)result.tls_fault.status, result.tls_fault.instruction_va,
+                    (unsigned)result.serialization_fault.status, result.serialization_fault.instruction_va);
             return 1;
         }
         unsigned query = result.status != SKSE_TRIAL_QUERY_DECLINED;
@@ -109,6 +112,7 @@ int main(int argc, char *argv[]) {
             if (fault) assert(result.message.status == SKSE_X86_UNSUPPORTED_API);
             printf("messages,%u,%u,%u\n", result.messages_delivered, fault, result.unavailable_interface);
         }
+        if (serialization) printf("serialization,%u,%u\n", result.serialization_callbacks, result.serialization_records);
     }
     return 0;
 }

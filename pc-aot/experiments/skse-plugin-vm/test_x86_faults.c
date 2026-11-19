@@ -197,6 +197,35 @@ static void check_cached_image_bounds(void) {
     assert(ARRAY_RUN(register_lock).status == SKSE_X86_UNSUPPORTED_INSTRUCTION);
 }
 
+static void check_services_need_live_state(void) {
+    SkseWinEvents events = {0};
+    SkseWinThread thread = {.id = 1};
+    uint32_t token = skse_win_event_create(&events, false, false);
+    const SkseX86Service binding = {0x00401000, SKSE_WIN_WAIT_ONE, SKSE_X86_EVENTS};
+    SkseX86Services services = {.entries = &binding, .count = 1, .events = &events, .thread = &thread};
+    uint8_t wait[18] = {0};
+    size_t length = 0;
+    wait[length++] = 0x68;
+    append_word(wait, &length, UINT32_MAX);
+    wait[length++] = 0x68;
+    append_word(wait, &length, token);
+    wait[length++] = 0xb8;
+    append_word(wait, &length, binding.address);
+    wait[length++] = 0xff;
+    wait[length++] = 0xd0;
+    wait[length++] = 0xc3;
+    assert(run(wait, length, 50, services).status == SKSE_X86_UNSUPPORTED_API);
+    assert(skse_win_event_signal(&events, token, true));
+    SkseX86Result result = run(wait, length, 50, services);
+    assert(result.status == SKSE_X86_OK && result.eax == 0);
+
+    SkseX86Serialization serial = {.interface_address = scratch_base + 64, .owner_handle = 12};
+    const SkseX86Service resolver = {0x00401000, SKSE_SERIAL_RESOLVE_FORM, SKSE_X86_SERIALIZATION};
+    services = (SkseX86Services){.entries = &resolver, .count = 1, .serialization = &serial};
+    assert(run(wait + 10, length - 10, 50, services).status == SKSE_X86_UNSUPPORTED_API);
+    assert(skse_x86_records_count(&serial.records) == 0);
+}
+
 int main(void) {
     // CALL forwards to another x86 region and that callee returns into the caller.
     uint8_t nested[] = {0xe8, 1, 0, 0, 0, 0xc3, 0xb8, 42, 0, 0, 0, 0xc3};
@@ -301,5 +330,6 @@ int main(void) {
     check_virtual_critical_sections();
     check_static_tls_address();
     check_cached_image_bounds();
+    check_services_need_live_state();
     return 0;
 }

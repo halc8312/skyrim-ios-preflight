@@ -7,6 +7,7 @@
 #include "x86_winthread.h"
 #include "x86_winfile.h"
 #include "x86_winevent.h"
+#include "x86_skse_records.h"
 
 typedef enum {
     SKSE_X86_OK,
@@ -27,7 +28,10 @@ typedef struct {
     size_t length;
 } SkseX86Scratch;
 
-enum { SKSE_X86_MAX_SERVICES = 64, SKSE_X86_MAX_IMAGES = 4, SKSE_CLASSIC_MESSAGING_ID = 5 };
+enum {
+    SKSE_X86_MAX_SERVICES = 64, SKSE_X86_MAX_IMAGES = 4,
+    SKSE_CLASSIC_SERIALIZATION_ID = 3, SKSE_CLASSIC_MESSAGING_ID = 5
+};
 #define SKSE_X86_PROCESS_HEAP UINT32_C(0xe1000000)
 
 typedef enum {
@@ -35,7 +39,8 @@ typedef enum {
     SKSE_X86_QUERY_CLASSIC, SKSE_X86_REGISTER_CORE_LISTENER, SKSE_X86_UNAVAILABLE,
     SKSE_X86_MALLOC, SKSE_X86_CALLOC, SKSE_X86_REALLOC, SKSE_X86_FREE,
     SKSE_X86_HEAP_ALLOC, SKSE_X86_HEAP_REALLOC, SKSE_X86_HEAP_FREE, SKSE_X86_WIN_THREAD,
-    SKSE_X86_INTERLOCKED, SKSE_X86_MODULE_LOOKUP, SKSE_X86_READ_ONLY_FILES, SKSE_X86_EVENTS
+    SKSE_X86_INTERLOCKED, SKSE_X86_MODULE_LOOKUP, SKSE_X86_READ_ONLY_FILES, SKSE_X86_EVENTS,
+    SKSE_X86_SERIALIZATION
 } SkseX86ServiceKind;
 
 typedef enum {
@@ -59,10 +64,28 @@ typedef struct {
     uint32_t listener, unavailable_id;
 } SkseX86CoreMessaging;
 
+typedef enum {
+    SKSE_SERIAL_UID, SKSE_SERIAL_REVERT, SKSE_SERIAL_SAVE, SKSE_SERIAL_LOAD, SKSE_SERIAL_FORM_DELETE,
+    SKSE_SERIAL_WRITE, SKSE_SERIAL_OPEN, SKSE_SERIAL_APPEND, SKSE_SERIAL_NEXT, SKSE_SERIAL_READ,
+    SKSE_SERIAL_RESOLVE_HANDLE, SKSE_SERIAL_RESOLVE_FORM, SKSE_SERIAL_METHOD_COUNT
+} SkseSerialMethod;
+
+typedef enum {
+    SKSE_SERIAL_IDLE, SKSE_SERIAL_WRITING, SKSE_SERIAL_READING
+} SkseSerialPhase;
+
+typedef struct {
+    uint32_t interface_address, owner_handle, uid;
+    uint32_t callbacks[4];
+    SkseSerialPhase phase;
+    SkseX86RecordStream records;
+} SkseX86Serialization;
+
 typedef struct {
     const SkseX86Service *entries;
     size_t count;
     SkseX86CoreMessaging *core_messaging;
+    SkseX86Serialization *serialization;
     SkseX86Heap *heap;
     SkseWinThread *thread;
     SkseWinFiles *files;

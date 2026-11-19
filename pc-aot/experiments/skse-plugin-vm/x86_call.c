@@ -494,7 +494,9 @@ static uint32_t classic_service(Vm *vm, SkseX86ServiceKind kind) {
         const uint8_t *argument = service_parameters(vm, 4);
         if (!argument) return 0;
         uint32_t id = little_endian(argument, 4);
-        if (id == SKSE_CLASSIC_MESSAGING_ID) return core->interface_address;
+        if (id == SKSE_CLASSIC_MESSAGING_ID && core->interface_address) return core->interface_address;
+        if (id == SKSE_CLASSIC_SERIALIZATION_ID && vm->services.serialization)
+            return vm->services.serialization->interface_address;
         if (id && !core->unavailable_id) core->unavailable_id = id;
         return 0;
     }
@@ -516,6 +518,59 @@ static uint32_t classic_service(Vm *vm, SkseX86ServiceKind kind) {
         return 0;
     }
     core->listener = callback;
+    return 1;
+}
+
+static uint32_t serialization_service(Vm *vm, SkseSerialMethod method) {
+    static const unsigned argument_counts[] = {2, 2, 2, 2, 2, 4, 2, 2, 3, 2, 3, 2};
+    _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_SERIAL_METHOD_COUNT, "serialization ABI");
+    if (method >= SKSE_SERIAL_RESOLVE_HANDLE) {
+        fail(vm, SKSE_X86_UNSUPPORTED_API); // A live save's object catalog is required.
+        return 0;
+    }
+    unsigned count = argument_counts[method];
+    const uint8_t *arguments = service_parameters(vm, count * 4);
+    if (!arguments) return 0;
+    uint32_t args[4];
+    for (unsigned i = 0; i < count; ++i) args[i] = little_endian(arguments + 4 * i, 4);
+
+    SkseX86Serialization *serial = vm->services.serialization;
+    if (method <= SKSE_SERIAL_FORM_DELETE) {
+        if (!args[0] || args[0] != serial->owner_handle || args[0] == UINT32_MAX) return 0;
+        if (method == SKSE_SERIAL_UID) {
+            if (args[1]) serial->uid = args[1];
+        } else if (!args[1] || skse_pe_allows(image_at(vm, args[1]), args[1], 1, SKSE_PE_EXEC)) {
+            serial->callbacks[method - SKSE_SERIAL_REVERT] = args[1];
+        } else {
+            fail(vm, SKSE_X86_MEMORY_FAULT);
+        }
+        return 0;
+    }
+    if (method <= SKSE_SERIAL_APPEND) {
+        if (serial->phase != SKSE_SERIAL_WRITING) return 0;
+        if (method == SKSE_SERIAL_OPEN) return skse_x86_records_open(&serial->records, args[0], args[1]);
+        unsigned index = method == SKSE_SERIAL_WRITE ? 2 : 0;
+        uint32_t length = args[index + 1];
+        if (length > SKSE_X86_RECORD_BYTES || !reserve_bulk(vm, (length + 63) / 64)) return 0;
+        const uint8_t *data = length ? memory(vm, args[index], length, SKSE_PE_READ) : NULL;
+        if (length && !data) return 0;
+        return method == SKSE_SERIAL_WRITE ?
+            skse_x86_records_write(&serial->records, args[0], args[1], data, length) :
+            skse_x86_records_append(&serial->records, data, length);
+    }
+    if (serial->phase != SKSE_SERIAL_READING) return 0;
+    if (method == SKSE_SERIAL_READ) {
+        if (!args[1] || args[1] > SKSE_X86_RECORD_BYTES || !reserve_bulk(vm, (args[1] + 63) / 64)) return 0;
+        uint8_t *buffer = memory(vm, args[0], args[1], SKSE_PE_WRITE);
+        return buffer ? skse_x86_records_read(&serial->records, buffer, args[1]) : 0;
+    }
+    for (unsigned i = 0; i < 3; ++i)
+        if (!memory(vm, args[i], 4, SKSE_PE_WRITE)) return 0;
+    uint32_t type, version, length;
+    if (!skse_x86_records_next(&serial->records, &type, &version, &length)) return 0;
+    write_memory(vm, args[0], 4, type);
+    write_memory(vm, args[1], 4, version);
+    write_memory(vm, args[2], 4, length);
     return 1;
 }
 
@@ -893,6 +948,9 @@ static void branch(Vm *vm, uint32_t address, bool tail) {
                 break;
             case SKSE_X86_EVENTS:
                 vm->registers[EAX] = win_event_service(vm, (SkseWinEventOperation)service->value);
+                break;
+            case SKSE_X86_SERIALIZATION:
+                vm->registers[EAX] = serialization_service(vm, (SkseSerialMethod)service->value);
                 break;
             }
             ++vm->result.service_calls[i];
@@ -1475,7 +1533,7 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
-        if ((unsigned)kind > SKSE_X86_EVENTS || !address ||
+        if ((unsigned)kind > SKSE_X86_SERIALIZATION || !address ||
             (kind >= SKSE_X86_MALLOC && kind <= SKSE_X86_HEAP_FREE && !services.heap) ||
             (kind == SKSE_X86_WIN_THREAD &&
              (!services.thread || services.entries[i].value >= SKSE_WIN_THREAD_OPERATION_COUNT)) ||
@@ -1487,7 +1545,11 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
              (!services.thread || !services.files || services.entries[i].value >= SKSE_WIN_FILE_OPERATION_COUNT)) ||
             (kind == SKSE_X86_EVENTS &&
              (!services.thread || !services.events || services.entries[i].value >= SKSE_WIN_EVENT_OPERATION_COUNT)) ||
-            ((kind == SKSE_X86_QUERY_CLASSIC || kind == SKSE_X86_REGISTER_CORE_LISTENER) &&
+            (kind == SKSE_X86_SERIALIZATION &&
+             (!services.serialization || services.entries[i].value >= SKSE_SERIAL_METHOD_COUNT ||
+              !in_range(scratch.base, scratch_end, services.serialization->interface_address, 52))) ||
+            (kind == SKSE_X86_QUERY_CLASSIC && !services.core_messaging) ||
+            (kind == SKSE_X86_REGISTER_CORE_LISTENER &&
              (!services.core_messaging ||
               !in_range(scratch.base, scratch_end, services.core_messaging->interface_address, 16))) ||
             in_range(scratch.base, scratch_end, address, 1) ||

@@ -13,6 +13,46 @@ static unsigned __cdecl get_handle(void) { ++handle_calls; return handle_value; 
 
 static FixtureMessageHandler core_listener;
 static unsigned callback_failed, unavailable;
+static int serialization_selected;
+static uint32_t serialization_uid;
+static FixtureSaveCallback saver, loader, reverter;
+static SkseX86RecordStream stream;
+static void __cdecl set_uid(uint32_t handle, uint32_t uid) {
+    if (handle == handle_value) serialization_uid = uid;
+}
+static void __cdecl set_reverter(uint32_t handle, FixtureSaveCallback cb) {
+    if (handle == handle_value) reverter = cb;
+}
+static void __cdecl set_saver(uint32_t handle, FixtureSaveCallback cb) {
+    if (handle == handle_value) saver = cb;
+}
+static void __cdecl set_loader(uint32_t handle, FixtureSaveCallback cb) {
+    if (handle == handle_value) loader = cb;
+}
+static void __cdecl set_delete(uint32_t handle, FixtureDeleteCallback cb) {
+    (void)handle;
+    (void)cb; // The test does not delete a game object.
+}
+static _Bool __cdecl write_record(uint32_t type, uint32_t version, const void *bytes, uint32_t length) {
+    return skse_x86_records_write(&stream, type, version, bytes, length);
+}
+static _Bool __cdecl open_record(uint32_t type, uint32_t version) {
+    return skse_x86_records_open(&stream, type, version);
+}
+static _Bool __cdecl write_data(const void *bytes, uint32_t length) {
+    return skse_x86_records_append(&stream, bytes, length);
+}
+static _Bool __cdecl next_record(uint32_t *type, uint32_t *version, uint32_t *length) {
+    return skse_x86_records_next(&stream, type, version, length);
+}
+static uint32_t __cdecl read_data(void *bytes, uint32_t length) {
+    return skse_x86_records_read(&stream, bytes, length);
+}
+static FixtureSerialization serial = {
+    4, set_uid, set_reverter, set_saver, set_loader, set_delete,
+    write_record, open_record, write_data, next_record, read_data, NULL, NULL
+};
+
 static _Bool __cdecl register_listener(unsigned handle, const char *sender, FixtureMessageHandler callback) {
     if (handle != handle_value || handle == 0xffffffffu || !callback) return 0;
     if (sender) {
@@ -29,12 +69,14 @@ static void *__cdecl get_dispatcher(unsigned id) {
 static void *__cdecl query_interface(unsigned id) {
     static FixtureMessaging messaging = {2, register_listener, NULL, get_dispatcher};
     if (id == 5) return &messaging;
+    if (id == 3 && serialization_selected) return &serial;
     if (id && !unavailable) unavailable = id;
     return NULL;
 }
 
 int main(int argc, char **argv) {
     int do_messages = argc == 2 && strcmp(argv[1], "messages") == 0;
+    serialization_selected = argc == 2 && strcmp(argv[1], "serialization") == 0;
     // Match the interpreter's dynamic-load entry contract. This loader is
     // used only for the fixture built next to this test executable.
     wchar_t path[MAX_PATH];
@@ -57,7 +99,7 @@ int main(int argc, char **argv) {
         const SkseTrialOptions *options = &trial_cases[i];
         const FixtureInterface api = {
             options->skse_version, options->runtime_version, 0, options->editor,
-            do_messages ? query_interface : NULL,
+            do_messages || serialization_selected ? query_interface : NULL,
             options->expose_handle ? get_handle : NULL,
             options->expose_release ? get_release : NULL
         };
@@ -82,6 +124,24 @@ int main(int argc, char **argv) {
                 }
             }
             printf("messages,%u,%u,%u\n", delivered, callback_failed, unavailable);
+        }
+        if (serialization_selected) {
+            unsigned invoked = 0;
+            if (load && serialization_uid && saver && loader) {
+                saver(&serial);
+                ++invoked;
+                if (reverter) {
+                    reverter(&serial);
+                    ++invoked;
+                }
+                if (!skse_x86_records_reset_reading(&stream)) return 6;
+                loader(&serial);
+                ++invoked;
+            }
+            printf("serialization,%u,%u\n", invoked, skse_x86_records_count(&stream));
+            skse_x86_records_close(&stream);
+            saver = loader = reverter = NULL;
+            serialization_uid = 0;
         }
     }
     if (!FreeLibrary(dll)) return 5;

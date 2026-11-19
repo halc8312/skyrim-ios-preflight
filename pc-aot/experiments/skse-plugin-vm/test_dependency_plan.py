@@ -46,7 +46,7 @@ class DependencyPlanTests(unittest.TestCase):
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
             flags.extend(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
         sources = ("test_dependency_plan.c", "plugin_trial.c", "dependency_plan.c", "pe_image.c", "x86_call.c", "x86_heap.c",
-                   "x86_winthread.c", "x86_winfile.c", "x86_winevent.c")
+                   "x86_winthread.c", "x86_winfile.c", "x86_winevent.c", "x86_skse_records.c")
         run(cc, *flags, *(HERE / source for source in sources), "-o", cls.binary)
 
     def setUp(self):
@@ -217,8 +217,9 @@ class DependencyPlanTests(unittest.TestCase):
                 if sys.platform == "win32":
                     for source, destination in (("test_native_windows.c", "native.exe"),
                                                 ("test_dependency_order_windows.c", "order.exe")):
+                        extra_sources = (HERE / "x86_skse_records.c",) if source == "test_native_windows.c" else ()
                         run(cc, "--target=i686-pc-windows-msvc", "-fuse-ld=lld", "-std=c11", HERE / source,
-                            "-o", destination, cwd=stage)
+                            *extra_sources, "-o", destination, cwd=stage)
                     self.assertEqual(table, run(stage / "native.exe", cwd=stage))
                     self.assertEqual(sequence, int(run(stage / "order.exe", cwd=stage).strip()))
 
