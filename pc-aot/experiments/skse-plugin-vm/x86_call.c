@@ -1,0 +1,568 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#include "x86_call.h"
+#include <stdbool.h>
+#include <string.h>
+
+enum { EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI };
+enum { CF = 1, PF = 4, ZF = 0x40, SF = 0x80, OF = 0x800 };
+enum { ADD, OR, ADC, SBB, AND, SUB, XOR, CMP };
+enum { MAX_SCRATCH = 256 * 1024, MAX_ARGUMENTS = 16, MAX_STEPS = 1000000 };
+
+typedef struct {
+    SksePeImage *image;
+    SkseX86Scratch scratch;
+    SkseX86Services services;
+    SkseX86Result result;
+    uint32_t registers[8], ip, flags, return_slot;
+    uint32_t return_cleanup, limit, bulk_work;
+    uint64_t code_start, code_end;
+    bool finished;
+} Vm;
+
+typedef struct {
+    bool is_register;
+    uint32_t value;
+} Operand;
+
+static uint32_t little_endian(const uint8_t *data, unsigned width) {
+    uint32_t word = 0;
+    for (unsigned i = 0; i < width; ++i)
+        word |= (uint32_t)data[i] << (8 * i);
+    return word;
+}
+
+static uint32_t width_mask(unsigned width) {
+    return UINT32_MAX >> (32 - 8 * width);
+}
+
+static uint32_t sign_mask(unsigned width) {
+    return UINT32_C(1) << (8 * width - 1);
+}
+
+static uint32_t sign_extend(uint32_t value, unsigned width) {
+    uint32_t sign = sign_mask(width);
+    return ((value & width_mask(width)) ^ sign) - sign;
+}
+
+static int64_t signed_word(uint32_t value, unsigned width) {
+    value &= width_mask(width);
+    return (value & sign_mask(width)) ? (int64_t)value - (INT64_C(1) << (8 * width)) : value;
+}
+
+static bool in_range(uint64_t start, uint64_t end, uint32_t address, size_t count) {
+    return address >= start && address < end && count <= end - address;
+}
+
+static void fail(Vm *vm, SkseX86Status status) {
+    if (vm->result.status == SKSE_X86_OK) vm->result.status = status;
+}
+
+static uint32_t fetch(Vm *vm, unsigned width) {
+    if (vm->result.status != SKSE_X86_OK) return 0;
+    if (!in_range(vm->code_start, vm->code_end, vm->ip, width)) {
+        if (!skse_pe_allows(vm->image, vm->ip, width, SKSE_PE_EXEC)) {
+            fail(vm, SKSE_X86_MEMORY_FAULT);
+            return 0;
+        }
+        // Cache the current immutable code section so subsequent bytes skip
+        // section lookup. The loader rejects sections that are writable code.
+        uint32_t rva = vm->ip - vm->image->base;
+        for (uint16_t i = 0; i < vm->image->section_count; ++i) {
+            const SksePeSection *section = &vm->image->sections[i];
+            if ((section->permissions & SKSE_PE_EXEC) && rva >= section->rva &&
+                rva - section->rva < section->length) {
+                vm->code_start = (uint64_t)vm->image->base + section->rva;
+                vm->code_end = vm->code_start + section->length;
+                break;
+            }
+        }
+    }
+    uint32_t value = little_endian(vm->image->bytes + (vm->ip - vm->image->base), width);
+    vm->ip += width;
+    return value;
+}
+
+static uint8_t *memory(Vm *vm, uint32_t address, size_t width, unsigned permissions) {
+    if (vm->result.status != SKSE_X86_OK) return NULL;
+    if (in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, address, width))
+        return vm->scratch.bytes + (address - vm->scratch.base);
+    if (skse_pe_allows(vm->image, address, width, permissions))
+        return vm->image->bytes + (address - vm->image->base);
+    fail(vm, SKSE_X86_MEMORY_FAULT);
+    return NULL;
+}
+
+static uint32_t read_memory(Vm *vm, uint32_t address, unsigned width) {
+    const uint8_t *bytes = memory(vm, address, width, SKSE_PE_READ);
+    return bytes ? little_endian(bytes, width) : 0;
+}
+
+static void write_memory(Vm *vm, uint32_t address, unsigned width, uint32_t value) {
+    uint8_t *bytes = memory(vm, address, width, SKSE_PE_WRITE);
+    if (bytes) {
+        for (unsigned i = 0; i < width; ++i) bytes[i] = (uint8_t)(value >> (8 * i));
+    }
+}
+
+static Operand reg(unsigned index) { return (Operand){true, index}; }
+
+static uint32_t read_operand(Vm *vm, Operand operand, unsigned width) {
+    if (!operand.is_register) return read_memory(vm, operand.value, width);
+    if (width == 1 && operand.value >= 4)
+        return (vm->registers[operand.value - 4] >> 8) & 0xff;
+    return vm->registers[operand.value] & width_mask(width);
+}
+
+static void write_operand(Vm *vm, Operand operand, unsigned width, uint32_t value) {
+    if (!operand.is_register) {
+        write_memory(vm, operand.value, width, value);
+        return;
+    }
+    if (vm->result.status != SKSE_X86_OK) return;
+    uint32_t mask = width_mask(width);
+    unsigned index = operand.value;
+    if (width == 1 && index >= 4) {
+        index -= 4;
+        mask <<= 8;
+        value <<= 8;
+    }
+    vm->registers[index] = (vm->registers[index] & ~mask) | (value & mask);
+}
+
+static Operand decode_rm(Vm *vm, uint32_t modrm) {
+    unsigned mode = modrm >> 6;
+    unsigned base = modrm & 7;
+    if (mode == 3) return reg(base);
+    uint32_t address = 0;
+    if (base == ESP) {
+        uint32_t sib = fetch(vm, 1);
+        unsigned index = (sib >> 3) & 7;
+        base = sib & 7;
+        if (index != ESP) address = vm->registers[index] << (sib >> 6);
+    }
+    if (mode == 0 && base == EBP)
+        address += fetch(vm, 4);
+    else
+        address += vm->registers[base];
+    if (mode == 1) address += sign_extend(fetch(vm, 1), 1);
+    if (mode == 2) address += fetch(vm, 4);
+    return (Operand){false, address};
+}
+
+static void push(Vm *vm, uint32_t value) {
+    uint32_t address = vm->registers[ESP] - 4;
+    if (!in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, address, 4)) {
+        fail(vm, SKSE_X86_MEMORY_FAULT);
+        return;
+    }
+    write_memory(vm, address, 4, value);
+    vm->registers[ESP] = address;
+}
+
+static uint32_t pop(Vm *vm) {
+    uint32_t address = vm->registers[ESP];
+    if (!in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, address, 4)) {
+        fail(vm, SKSE_X86_MEMORY_FAULT);
+        return 0;
+    }
+    uint32_t value = read_memory(vm, address, 4);
+    vm->registers[ESP] += 4;
+    return value;
+}
+
+static void set_flags(Vm *vm, uint32_t value, unsigned width, bool carry, bool overflow) {
+    value &= width_mask(width);
+    unsigned parity = value & 0xff;
+    parity ^= parity >> 4;
+    parity ^= parity >> 2;
+    parity ^= parity >> 1;
+    vm->flags = (carry ? CF : 0) | (overflow ? OF : 0) |
+                ((value & sign_mask(width)) ? SF : 0) | (value ? 0 : ZF) |
+                ((parity & 1) ? 0 : PF);
+}
+
+static uint32_t alu(Vm *vm, unsigned op, unsigned width, uint32_t a, uint32_t b) {
+    a &= width_mask(width);
+    b &= width_mask(width);
+    if (op == AND || op == OR || op == XOR) {
+        uint32_t value = op == AND ? a & b : op == OR ? a | b : a ^ b;
+        set_flags(vm, value, width, false, false);
+        return value;
+    }
+    unsigned carry = (op == ADC || op == SBB) && (vm->flags & CF);
+    bool subtract = op == SUB || op == SBB || op == CMP;
+    uint64_t right = (uint64_t)b + carry;
+    uint64_t wide = subtract ? a - right : a + right;
+    int64_t signed_a = signed_word(a, width);
+    int64_t signed_b = signed_word(b, width) + carry;
+    int64_t signed_result = subtract ? signed_a - signed_b : signed_a + signed_b;
+    int64_t bound = sign_mask(width);
+    set_flags(vm, (uint32_t)wide, width, subtract ? a < right : wide > width_mask(width),
+              signed_result < -bound || signed_result >= bound);
+    return (uint32_t)wide;
+}
+
+static void update_operand(Vm *vm, unsigned op, Operand destination, unsigned width, uint32_t value) {
+    uint32_t original = read_operand(vm, destination, width);
+    uint32_t updated = alu(vm, op, width, original, value);
+    if (op != CMP) write_operand(vm, destination, width, updated);
+}
+
+static void increment(Vm *vm, Operand destination, unsigned width, bool decrement) {
+    uint32_t carry = vm->flags & CF;
+    update_operand(vm, decrement ? SUB : ADD, destination, width, 1);
+    vm->flags = (vm->flags & ~(uint32_t)CF) | carry;
+}
+
+static void multiply(Vm *vm, Operand destination, unsigned width, uint32_t a, uint32_t b) {
+    int64_t product = signed_word(a, width) * signed_word(b, width);
+    uint32_t value = (uint32_t)product & width_mask(width);
+    vm->flags &= ~(uint32_t)(CF | OF);
+    if (signed_word(value, width) != product) vm->flags |= CF | OF;
+    write_operand(vm, destination, width, value);
+}
+
+static bool condition(const Vm *vm, unsigned condition_code) {
+    bool carry = vm->flags & CF, zero = vm->flags & ZF;
+    bool sign = vm->flags & SF, overflow = vm->flags & OF;
+    bool result;
+    switch ((condition_code & 15) >> 1) {
+    case 0: result = overflow; break;
+    case 1: result = carry; break;
+    case 2: result = zero; break;
+    case 3: result = carry || zero; break;
+    case 4: result = sign; break;
+    case 5: result = (vm->flags & PF) != 0; break;
+    case 6: result = sign != overflow; break;
+    default: result = zero || sign != overflow; break;
+    }
+    return (condition_code & 1) ? !result : result;
+}
+
+static void return_from_call(Vm *vm, unsigned discard) {
+    uint32_t slot = vm->registers[ESP];
+    uint32_t target = pop(vm);
+    if (vm->result.status != SKSE_X86_OK) return;
+    if (target == 0) {
+        // Only the outer call can consume the sentinel at its original slot.
+        if (slot != vm->return_slot || discard != vm->return_cleanup)
+            fail(vm, SKSE_X86_BAD_CALL_RETURN);
+        else
+            vm->finished = true;
+        return;
+    }
+    vm->registers[ESP] += discard;
+    vm->ip = target;
+}
+
+static void memory_service(Vm *vm, SkseX86ServiceKind kind) {
+    uint32_t stack = vm->registers[ESP];
+    if (!in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, stack, 12)) {
+        fail(vm, SKSE_X86_MEMORY_FAULT);
+        return;
+    }
+    uint32_t destination = read_memory(vm, stack, 4);
+    uint32_t source_or_value = read_memory(vm, stack + 4, 4);
+    uint32_t count = read_memory(vm, stack + 8, 4);
+    if (count != 0) {
+        // Charge bulk operations as well as decoded instructions. A single
+        // imported function call must not acquire an unbounded CPU budget.
+        uint32_t cost = count / 64 + (count % 64 != 0);
+        if (cost > vm->limit - vm->result.instructions - vm->bulk_work) {
+            fail(vm, SKSE_X86_INSTRUCTION_LIMIT);
+            return;
+        }
+        uint8_t *dst = memory(vm, destination, count, SKSE_PE_WRITE);
+        if (!dst) return;
+        if (kind == SKSE_X86_MEMSET) {
+            memset(dst, (int)(uint8_t)source_or_value, count);
+        } else {
+            const uint8_t *src = memory(vm, source_or_value, count, SKSE_PE_READ);
+            if (!src) return;
+            if (kind == SKSE_X86_MEMCPY && (uint64_t)destination + count > source_or_value &&
+                (uint64_t)source_or_value + count > destination) {
+                fail(vm, SKSE_X86_BAD_ARGUMENT);
+                return;
+            }
+            memmove(dst, src, count);
+        }
+        vm->bulk_work += cost;
+    }
+    vm->registers[EAX] = destination;
+}
+
+static void invoke(Vm *vm, uint32_t address) {
+    if (vm->result.status != SKSE_X86_OK) return;
+    for (size_t i = 0; i < vm->services.count; ++i) {
+        const SkseX86Service *service = &vm->services.entries[i];
+        if (address == service->address) {
+            if (service->kind == SKSE_X86_SCALAR_RETURN) vm->registers[EAX] = service->value;
+            else memory_service(vm, service->kind);
+            ++vm->result.service_calls[i];
+            return;
+        }
+    }
+    push(vm, vm->ip);
+    vm->ip = address;
+}
+
+static void two_byte_instruction(Vm *vm, unsigned width) {
+    uint32_t opcode = fetch(vm, 1);
+    if (opcode >= 0x80 && opcode <= 0x8f) {
+        if (width != 4) { fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION); return; }
+        uint32_t displacement = fetch(vm, 4);
+        if (condition(vm, opcode)) vm->ip += displacement;
+        return;
+    }
+    if ((opcode >= 0x90 && opcode <= 0x9f) || (opcode >= 0x40 && opcode <= 0x4f) ||
+        opcode == 0xb6 || opcode == 0xb7 || opcode == 0xbe || opcode == 0xbf ||
+        opcode == 0xaf || opcode == 0x1f) {
+        uint32_t modrm = fetch(vm, 1);
+        Operand source = decode_rm(vm, modrm);
+        Operand destination = reg((modrm >> 3) & 7);
+        if (opcode == 0x1f) {
+            if ((modrm >> 3) & 7) fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+            return;
+        }
+        if (opcode >= 0x90 && opcode <= 0x9f) {
+            write_operand(vm, source, 1, condition(vm, opcode));
+        } else if (opcode >= 0x40 && opcode <= 0x4f) {
+            uint32_t value = read_operand(vm, source, width);
+            if (condition(vm, opcode)) write_operand(vm, destination, width, value);
+        } else if (opcode == 0xaf) {
+            uint32_t a = read_operand(vm, destination, width);
+            multiply(vm, destination, width, a, read_operand(vm, source, width));
+        } else {
+            unsigned size = opcode & 1 ? 2 : 1;
+            uint32_t value = read_operand(vm, source, size);
+            write_operand(vm, destination, width, (opcode & 8) ? sign_extend(value, size) : value);
+        }
+        return;
+    }
+    fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+}
+
+static void step(Vm *vm) {
+    uint32_t opcode = fetch(vm, 1);
+    unsigned word = 4;
+    if (opcode == 0x66) { word = 2; opcode = fetch(vm, 1); }
+    uint32_t form = opcode & 7;
+    if (opcode <= 0x3d && form <= 5) {
+        unsigned operation = opcode >> 3;
+        unsigned width = form & 1 ? word : 1;
+        if (form >= 4) {
+            update_operand(vm, operation, reg(EAX), width, fetch(vm, width));
+        } else {
+            uint32_t modrm = fetch(vm, 1);
+            Operand rm = decode_rm(vm, modrm), other = reg((modrm >> 3) & 7);
+            Operand dst = form & 2 ? other : rm, src = form & 2 ? rm : other;
+            update_operand(vm, operation, dst, width, read_operand(vm, src, width));
+        }
+        return;
+    }
+    if (opcode >= 0x40 && opcode <= 0x4f) {
+        increment(vm, reg(form), word, (opcode & 8) != 0);
+        return;
+    }
+    if (word == 4 && opcode >= 0x50 && opcode <= 0x57) { push(vm, vm->registers[form]); return; }
+    if (word == 4 && opcode >= 0x58 && opcode <= 0x5f) {
+        write_operand(vm, reg(form), 4, pop(vm));
+        return;
+    }
+    if (opcode >= 0x70 && opcode <= 0x7f) {
+        if (word != 4) { fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION); return; }
+        uint32_t displacement = sign_extend(fetch(vm, 1), 1);
+        if (condition(vm, opcode)) vm->ip += displacement;
+        return;
+    }
+    if (opcode >= 0xb0 && opcode <= 0xbf) {
+        unsigned width = opcode & 8 ? word : 1;
+        write_operand(vm, reg(form), width, fetch(vm, width));
+        return;
+    }
+    switch (opcode) {
+    case 0x0f: two_byte_instruction(vm, word); return;
+    case 0x68:
+    case 0x6a:
+        if (word != 4) break;
+        push(vm, opcode == 0x68 ? fetch(vm, 4) : sign_extend(fetch(vm, 1), 1));
+        return;
+    case 0x69:
+    case 0x6b: {
+        uint32_t modrm = fetch(vm, 1);
+        Operand source = decode_rm(vm, modrm);
+        uint32_t a = read_operand(vm, source, word);
+        uint32_t b = opcode == 0x69 ? fetch(vm, word) : sign_extend(fetch(vm, 1), 1);
+        multiply(vm, reg((modrm >> 3) & 7), word, a, b);
+        return;
+    }
+    case 0x80:
+    case 0x81:
+    case 0x83: {
+        uint32_t modrm = fetch(vm, 1);
+        Operand destination = decode_rm(vm, modrm);
+        unsigned width = opcode == 0x80 ? 1 : word;
+        uint32_t value = opcode == 0x83 ? sign_extend(fetch(vm, 1), 1) : fetch(vm, width);
+        update_operand(vm, (modrm >> 3) & 7, destination, width, value);
+        return;
+    }
+    case 0x84:
+    case 0x85: {
+        uint32_t modrm = fetch(vm, 1);
+        Operand rm = decode_rm(vm, modrm);
+        unsigned width = opcode == 0x84 ? 1 : word;
+        uint32_t left = read_operand(vm, rm, width);
+        alu(vm, AND, width, left, read_operand(vm, reg((modrm >> 3) & 7), width));
+        return;
+    }
+    case 0x88:
+    case 0x89:
+    case 0x8a:
+    case 0x8b:
+    case 0x8d: {
+        uint32_t modrm = fetch(vm, 1);
+        Operand rm = decode_rm(vm, modrm), other = reg((modrm >> 3) & 7);
+        if (opcode == 0x8d) {
+            if (rm.is_register) break;
+            write_operand(vm, other, word, rm.value);
+        } else {
+            unsigned width = opcode & 1 ? word : 1;
+            Operand dst = opcode & 2 ? other : rm, src = opcode & 2 ? rm : other;
+            write_operand(vm, dst, width, read_operand(vm, src, width));
+        }
+        return;
+    }
+    case 0x90: return;
+    case 0xa0:
+    case 0xa1:
+    case 0xa2:
+    case 0xa3: {
+        Operand mem = {false, fetch(vm, 4)};
+        unsigned width = opcode & 1 ? word : 1;
+        if (opcode & 2) write_operand(vm, mem, width, read_operand(vm, reg(EAX), width));
+        else write_operand(vm, reg(EAX), width, read_operand(vm, mem, width));
+        return;
+    }
+    case 0xa8:
+    case 0xa9: {
+        unsigned width = opcode == 0xa8 ? 1 : word;
+        uint32_t operand = fetch(vm, width);
+        alu(vm, AND, width, read_operand(vm, reg(EAX), width), operand);
+        return;
+    }
+    case 0xc2:
+    case 0xc3:
+        if (word != 4) break;
+        return_from_call(vm, opcode == 0xc2 ? fetch(vm, 2) : 0);
+        return;
+    case 0xc6:
+    case 0xc7: {
+        uint32_t modrm = fetch(vm, 1);
+        if ((modrm >> 3) & 7) break;
+        Operand destination = decode_rm(vm, modrm);
+        unsigned width = opcode == 0xc6 ? 1 : word;
+        write_operand(vm, destination, width, fetch(vm, width));
+        return;
+    }
+    case 0xc9:
+        if (word != 4) break;
+        vm->registers[ESP] = vm->registers[EBP];
+        write_operand(vm, reg(EBP), 4, pop(vm));
+        return;
+    case 0xe8:
+    case 0xe9:
+    case 0xeb: {
+        if (word != 4) break;
+        uint32_t offset = opcode == 0xeb ? sign_extend(fetch(vm, 1), 1) : fetch(vm, 4);
+        if (opcode == 0xe8) invoke(vm, vm->ip + offset);
+        else vm->ip += offset;
+        return;
+    }
+    case 0xf6:
+    case 0xf7: {
+        uint32_t modrm = fetch(vm, 1);
+        if ((modrm >> 3) & 7) break;
+        Operand source = decode_rm(vm, modrm);
+        unsigned width = opcode == 0xf6 ? 1 : word;
+        uint32_t immediate = fetch(vm, width);
+        alu(vm, AND, width, read_operand(vm, source, width), immediate);
+        return;
+    }
+    case 0xff: {
+        uint32_t modrm = fetch(vm, 1);
+        unsigned group = (modrm >> 3) & 7;
+        Operand operand = decode_rm(vm, modrm);
+        if (group == 0 || group == 1) { increment(vm, operand, word, group == 1); return; }
+        if (word != 4 || (group != 2 && group != 4 && group != 6)) break;
+        uint32_t value = read_operand(vm, operand, 4);
+        if (group == 6) { push(vm, value); return; }
+        if (group == 2) invoke(vm, value);
+        else vm->ip = value;
+        return;
+    }
+    default: break;
+    }
+    fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+}
+
+SkseX86Result skse_x86_call(SksePeImage *image, uint32_t entry,
+                            SkseX86Scratch scratch, const uint32_t *args,
+                            size_t arg_count, uint32_t instruction_limit,
+                            SkseX86Services services, SkseX86Convention convention) {
+    uint64_t scratch_end = (uint64_t)scratch.base + scratch.length;
+    if (!image || !image->bytes || !scratch.bytes || !scratch.base ||
+        scratch.length < 128 || scratch.length > MAX_SCRATCH || scratch_end > UINT32_MAX ||
+        (scratch_end > image->base && scratch.base < (uint64_t)image->base + image->size) ||
+        arg_count > MAX_ARGUMENTS || (arg_count && !args) || !instruction_limit ||
+        instruction_limit > MAX_STEPS || services.count > SKSE_X86_MAX_SERVICES ||
+        (services.count && !services.entries) ||
+        (convention != SKSE_X86_CDECL && convention != SKSE_X86_STDCALL))
+        return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
+    for (size_t i = 0; i < services.count; ++i) {
+        uint32_t address = services.entries[i].address;
+        if ((unsigned)services.entries[i].kind > SKSE_X86_MEMSET || !address ||
+            in_range(image->base, (uint64_t)image->base + image->size, address, 1) ||
+            in_range(scratch.base, scratch_end, address, 1))
+            return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
+        for (size_t j = 0; j < i; ++j)
+            if (address == services.entries[j].address)
+                return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
+    }
+
+    static const uint32_t canaries[] = {0x13749894, 0x2269d748, 0x5ee56321, 0xf61fd490};
+    Vm vm = {.image = image, .scratch = scratch, .services = services, .ip = entry,
+             .limit = instruction_limit};
+    if (convention == SKSE_X86_STDCALL) vm.return_cleanup = (unsigned)arg_count * 4;
+    vm.registers[EBX] = canaries[0];
+    vm.registers[EBP] = canaries[1];
+    vm.registers[ESI] = canaries[2];
+    vm.registers[EDI] = canaries[3];
+    vm.registers[ESP] = (uint32_t)(scratch_end & ~UINT64_C(15));
+    for (size_t i = arg_count; i > 0; --i) push(&vm, args[i - 1]);
+    push(&vm, 0);
+    vm.return_slot = vm.registers[ESP];
+    while (!vm.finished && vm.result.status == SKSE_X86_OK &&
+           vm.result.instructions + vm.bulk_work < vm.limit) {
+        vm.result.instruction_va = vm.ip;
+        ++vm.result.instructions;
+        step(&vm);
+    }
+    if (!vm.finished) fail(&vm, SKSE_X86_INSTRUCTION_LIMIT);
+    else if (vm.registers[EBX] != canaries[0] || vm.registers[EBP] != canaries[1] ||
+             vm.registers[ESI] != canaries[2] || vm.registers[EDI] != canaries[3])
+        fail(&vm, SKSE_X86_BAD_CALL_RETURN);
+    if (vm.result.status == SKSE_X86_OK) vm.result.eax = vm.registers[EAX];
+    return vm.result;
+}
+
+const char *skse_x86_status_text(SkseX86Status status) {
+    switch (status) {
+    case SKSE_X86_OK: return "Completed";
+    case SKSE_X86_BAD_ARGUMENT: return "Invalid mapped image, scratch, or call arguments";
+    case SKSE_X86_MEMORY_FAULT: return "The plugin used a region without the required permissions";
+    case SKSE_X86_UNSUPPORTED_INSTRUCTION: return "The plugin needs an unsupported x86 instruction";
+    case SKSE_X86_INSTRUCTION_LIMIT: return "The call exceeded its x86 execution budget";
+    case SKSE_X86_BAD_CALL_RETURN: return "The call did not preserve its expected stack and registers";
+    }
+    return "Unknown x86 result";
+}

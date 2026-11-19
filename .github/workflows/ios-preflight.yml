@@ -11,13 +11,17 @@ on:
         description: Include the per-profile SkyUI 5.1 trial in the unsigned standard iPhone app
         type: boolean
         default: false
+      dll_probe:
+        description: Check the isolated LE DLL diagnostic with the device SDK and simulator
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   apple-sdk-preflight:
-    if: ${{ !inputs.full_title_host && !inputs.classic_trial }}
+    if: ${{ !inputs.full_title_host && !inputs.classic_trial && !inputs.dll_probe }}
     runs-on: macos-26
     timeout-minutes: 25
     env:
@@ -158,3 +162,16 @@ jobs:
             pc-aot/local/title-host/run-*/mod-simulator/evidence/*.log
           if-no-files-found: warn
           retention-days: 1
+
+  dll-probe-sdk:
+    if: ${{ inputs.dll_probe }}
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Compile the device sources and run the isolated simulator fixture
+        run: bash pc-aot/experiments/skse-plugin-vm/test-apple-sdk.sh

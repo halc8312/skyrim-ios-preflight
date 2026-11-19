@@ -21,6 +21,9 @@
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 #include "PcGuestSkseTrial.h"
 #endif
+#ifdef SKYRIM_IOS_SKSE_DLL_PROBE
+#include "mod_dll_probe.h"
+#endif
 #include "mod_archive.h"
 #include "mod_deploy.h"
 #include "mod_plugins.h"
@@ -1173,9 +1176,16 @@ static NSArray<NSString *> *ReportLines(NSDictionary *package) {
 @property(nonatomic) BOOL pickingFolder, pickingList;
 @end
 enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, HubCount };
+enum {
+    HubOrderRow, HubConflictRow, HubSavesRow,
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
-enum { HubSkyUITrialRow = 3 };
+    HubSkyUITrialRow,
 #endif
+#ifdef SKYRIM_IOS_SKSE_DLL_PROBE
+    HubDllProbeRow,
+#endif
+    HubToolCount
+};
 @implementation SKModHub
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title = @"MOD";
@@ -1231,12 +1241,7 @@ enum { HubSkyUITrialRow = 3 };
     switch (s) {
     case HubMods: return self.rows.count ? (NSInteger)self.rows.count : 1;
     case HubAdd: return 3;
-    case HubTools:
-#ifdef SKYRIM_IOS_CLASSIC_SKSE
-        return HubSkyUITrialRow + 1;
-#else
-        return 3;
-#endif
+    case HubTools: return HubToolCount;
     case HubOptimize: return 2;
     case HubShare: return 2;
     default: return 1;
@@ -1289,6 +1294,14 @@ enum { HubSkyUITrialRow = 3 };
         break;
     }
     case HubTools:
+#ifdef SKYRIM_IOS_SKSE_DLL_PROBE
+        if (p.row == HubDllProbeRow) {
+            c.textLabel.text = T(@"DLL Compatibility", @"DLL互換性診断");
+            c.imageView.image = [UIImage systemImageNamed:@"doc.text.magnifyingglass"];
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            break;
+        }
+#endif
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
         if (p.row == HubSkyUITrialRow) {
             c.textLabel.text = T(@"SkyUI 5.1 trial", @"SkyUI 5.1 の試験");
@@ -1471,12 +1484,19 @@ enum { HubSkyUITrialRow = 3 };
         else [self.navigationController pushViewController:skyrim_mods_browser_controller() animated:YES];
         break;
     case HubTools:
+#ifdef SKYRIM_IOS_SKSE_DLL_PROBE
+        if (p.row == HubDllProbeRow) {
+            BOOL japanese = atomic_load_explicit(&languageCache, memory_order_relaxed);
+            [self.navigationController pushViewController:skyrim_mod_dll_probe_controller(japanese) animated:YES];
+            break;
+        }
+#endif
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
         if (p.row == HubSkyUITrialRow) break;
 #endif
-        if (p.row == 0) [self.navigationController pushViewController:skyrim_mobile_plugin_controller() animated:YES];
-        else if (p.row == 1) [self.navigationController pushViewController:[[SKConflicts alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
-        else [self.navigationController pushViewController:[[SKSaves alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
+        if (p.row == HubOrderRow) [self.navigationController pushViewController:skyrim_mobile_plugin_controller() animated:YES];
+        else if (p.row == HubConflictRow) [self.navigationController pushViewController:[[SKConflicts alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
+        else if (p.row == HubSavesRow) [self.navigationController pushViewController:[[SKSaves alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
         break;
     case HubOptimize:
         if (p.row == 1) [self chooseLimit:p];
