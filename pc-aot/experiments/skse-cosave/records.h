@@ -3,6 +3,14 @@
 #include "generation.h"
 
 typedef struct { uint8_t *data; size_t size; } SksePairImage;
+/* Return one after copying exactly n bytes at offset. The caller bounds
+ * the source to size and checks its version around the complete scan.
+ * Valid containers return counts. Unsupported versions return only header
+ * fields. Other failures leave the summary zeroed. */
+typedef int (*SkseRecordsReadAt)(void *context, size_t offset, void *out, size_t n);
+typedef struct { uint32_t format_version, skse_version, runtime_version, owners, records; } SkseRecordsSummary;
+SksePairResult skse_records_inspect(size_t size, SkseRecordsReadAt read_at, void *context,
+                                    SkseRecordsSummary *out);
 /* A bounded internal transaction edits a validated stage. Errors are sticky
  * until drop. The editor publishes its complete image only on success. */
 typedef SksePairResult (*SkseStageEditor)(SksePairImage *image, void *context);
