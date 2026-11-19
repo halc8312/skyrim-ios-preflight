@@ -127,10 +127,16 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCUIElement *alert = self.app.alerts[title];
     XCUIElement *field = alert.textFields.firstMatch;
     XCTAssertTrue([field waitForExistenceWithTimeout:6]);
-    [field tap];
-    NSMutableString *keys = [NSMutableString string];
-    for (NSUInteger i=0; i<initial.length+1; ++i) [keys appendString:XCUIKeyboardKeyDelete];
-    [field typeText:keys]; [field typeText:name];
+    XCTAssertEqualObjects(field.value, initial);
+    [[field coordinateWithNormalizedOffset:CGVectorMake(0.8, 0.5)] tap];
+    if ([name hasPrefix:initial]) {
+        [field typeText:[name substringFromIndex:initial.length]];
+    } else {
+        NSMutableString *keys = [NSMutableString string];
+        for (NSUInteger i = 0; i < initial.length; ++i) [keys appendString:XCUIKeyboardKeyDelete];
+        [keys appendString:name];
+        [field typeText:keys];
+    }
     XCTAssertEqualObjects(field.value,name);
     [alert.buttons[@"OK"] tap];
 }

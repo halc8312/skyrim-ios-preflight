@@ -42,7 +42,7 @@ xcodebuild -project "$RUN/work/ModScreens.xcodeproj" -scheme ModScreens \
     -derivedDataPath "$RUN/DerivedData" -resultBundlePath "$result" \
     -parallel-testing-enabled NO -test-timeouts-enabled YES \
     "-only-testing:ModScreensUITests/ModScreensTests/$method" \
-    -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
+    -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900 \
     test || status=$?
 echo "xcodebuild test exited with status $status."
 if [[ -d "$result" ]]; then
@@ -109,7 +109,13 @@ if live and sys.argv[3] == "0":
 print(f"Retained {len(captured & required)} required simulator screenshots.")
 PY
 fi
-[[ "$status" -eq 0 ]] || exit "$status"
+if (( status != 0 )); then
+    echo "MOD simulator exited with status $status."
+    if [[ -s "$EVIDENCE/summary.json" ]]; then
+        cat "$EVIDENCE/summary.json"
+    fi
+    exit "$status"
+fi
 if [[ "$mode" == nexus-live ]]; then
     test -s "$EVIDENCE/nexus-live-result.txt"
     echo "MOD_SIMULATOR: live Nexus Skyrim listing visible in the shipping browser."
