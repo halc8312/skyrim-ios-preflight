@@ -18,8 +18,11 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 PORT = ROOT / "ios/runtime-port"
 sys.path.insert(0, str(ROOT / "experiments/classic-plugin"))
-from run import stage
-from run_serialization import checked_file, expected_bytes
+try:
+    from run import stage
+    from run_serialization import checked_file, expected_bytes
+finally:
+    sys.path.pop(0)
 
 BUNDLE = "org.skyrimios.tests.classic-probe-ui"
 

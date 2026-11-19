@@ -53,7 +53,8 @@ typedef NS_ENUM(NSInteger, Stage) { PresentPicker, PickInvalid, PickValid, Retry
 - (NSString *)status {
     UITableViewCell *cell = [self.probe.tableView.dataSource tableView:self.probe.tableView
                                                  cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:1]];
-    return cell.textLabel.text;
+    UIListContentConfiguration *content = (UIListContentConfiguration *)cell.contentConfiguration;
+    return content.text;
 }
 - (void)deliver:(NSURL *)url picker:(UIDocumentPickerViewController *)picker {
     id<UIDocumentPickerDelegate> recipient = (id<UIDocumentPickerDelegate>)self.probe;

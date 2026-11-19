@@ -112,6 +112,12 @@ static NSData *runSelected(NSURL *url, SkyrimClassicFixtureStatus *status, Skyri
         *status = SKYRIM_CLASSIC_FIXTURE_INPUT; return nil;
     }
     BOOL access = [url startAccessingSecurityScopedResource];
+    NSNumber *reportedSize = nil;
+    if ([url getResourceValue:&reportedSize forKey:NSURLFileSizeKey error:NULL] &&
+        [reportedSize isKindOfClass:NSNumber.class] && reportedSize.unsignedLongLongValue != FixtureBytes) {
+        if (access) [url stopAccessingSecurityScopedResource];
+        *status = SKYRIM_CLASSIC_FIXTURE_INPUT; return nil;
+    }
     __block NSData *input = nil;
     __block SkyrimClassicFixtureStatus selected = SKYRIM_CLASSIC_FIXTURE_IO;
     NSError *error = nil;
@@ -196,21 +202,24 @@ static NSString *failure(SkyrimClassicFixtureStatus status) {
 - (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)p {
     (void)table;
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
-    cell.textLabel.numberOfLines = 0;
+    UIListContentConfiguration *content = [cell defaultContentConfiguration];
+    content.textProperties.numberOfLines = 0;
     if (p.section == 0) {
-        cell.textLabel.text = self.busy ? text(@"Checking…", @"検査中…") : text(@"Choose Windows sample", @"Windowsのサンプルを選ぶ");
+        content.text = self.busy ? text(@"Checking…", @"検査中…") : text(@"Choose Windows sample", @"Windowsのサンプルを選ぶ");
         cell.accessibilityIdentifier = @"classic-probe-select";
     } else if (p.row == 0) {
-        cell.textLabel.text = self.status;
+        content.text = self.status;
         cell.accessibilityIdentifier = @"classic-probe-result";
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        cell.contentConfiguration = content;
         return cell;
     } else {
-        cell.textLabel.text = text(@"Share last successful result", @"最後に成功した結果を共有");
+        content.text = text(@"Share last successful result", @"最後に成功した結果を共有");
         cell.accessibilityIdentifier = @"classic-probe-share";
     }
     cell.userInteractionEnabled = !self.busy;
-    cell.textLabel.textColor = self.busy ? UIColor.secondaryLabelColor : self.view.tintColor;
+    content.textProperties.color = self.busy ? UIColor.secondaryLabelColor : self.view.tintColor;
+    cell.contentConfiguration = content;
     return cell;
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)p {
