@@ -93,6 +93,7 @@ target_compile_definitions(skyrim_ios_runtime PRIVATE GAME_SKYRIM DXVK_NATIVE
     SDL_MAIN_HANDLED _FILE_OFFSET_BITS=64)
 if(SKYRIM_IOS_CLASSIC_SKSE)
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_SKSE=1 SKYDREAM_SKSE=1)
+    target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/classic_cosave.c")
 endif()
 target_compile_options(skyrim_ios_runtime PRIVATE -O2 -fno-strict-aliasing -fwrapv -fsigned-char
     "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>"
