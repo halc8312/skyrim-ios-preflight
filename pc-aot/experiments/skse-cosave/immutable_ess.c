@@ -7,6 +7,9 @@
 #include "immutable_ess.h"
 #include <errno.h>
 #include <fcntl.h>
+#if defined(__linux__)
+#include <stdio.h>
+#endif
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -14,11 +17,18 @@
 #include <sys/clonefile.h>
 #elif defined(__linux__) && !defined(SKSE_TEST_NAMED_CLONE)
 #include <linux/fs.h>
-#include <stdio.h>
 #include <sys/ioctl.h>
 #endif
 
 struct SkseImmutableEss { int fd, hashed; SkseEssDigest digest; };
+
+#if defined(__linux__)
+static int open_readonly_description(int fd) {
+    char path[64];
+    int n = snprintf(path, sizeof path, "/proc/self/fd/%d", fd);
+    return n > 0 && (size_t)n < sizeof path ? open(path, O_RDONLY | O_CLOEXEC) : -1;
+}
+#endif
 
 #if defined(__APPLE__) || defined(__linux__) || defined(SKSE_TEST_NAMED_CLONE)
 static SksePairResult clone_error(int error) {
@@ -71,11 +81,7 @@ static SksePairResult capture_file(int source, int dir, int *out) {
     if (writer < 0) return clone_error(errno);
     int cloned = ioctl(writer, FICLONE, source);
     int error = errno;
-    if (cloned == 0) {
-        char path[64];
-        int length = snprintf(path, sizeof path, "/proc/self/fd/%d", writer);
-        if (length > 0 && (size_t)length < sizeof path) *out = open(path, O_RDONLY | O_CLOEXEC);
-    }
+    if (cloned == 0) *out = open_readonly_description(writer);
     close(writer);
     if (cloned != 0) return clone_error(error);
     return *out < 0 ? SKSE_PAIR_STORAGE : SKSE_PAIR_OK;
@@ -122,6 +128,24 @@ SksePairResult skse_ess_read_immutable(SkseImmutableEss *snapshot, SkseEssDigest
     }
     *out = snapshot->digest;
     return SKSE_PAIR_OK;
+}
+int skse_ess_take_immutable_fd(SkseImmutableEss *snapshot) {
+#if defined(__linux__)
+    /* A sealed memfd capture may share its open file description with the
+     * caller. The guest needs its own seek position, starting at byte zero. */
+    int fd = open_readonly_description(snapshot->fd);
+    struct stat captured, reopened;
+    if (fd >= 0 && (fstat(snapshot->fd, &captured) || fstat(fd, &reopened) ||
+                    !skse_ess_same_version(&captured, &reopened))) {
+        close(fd);
+        fd = -1;
+    }
+    close(snapshot->fd);
+#else
+    int fd = snapshot->fd;
+#endif
+    free(snapshot);
+    return fd;
 }
 void skse_ess_release_immutable(SkseImmutableEss *snapshot) {
     if (snapshot) { close(snapshot->fd); free(snapshot); }

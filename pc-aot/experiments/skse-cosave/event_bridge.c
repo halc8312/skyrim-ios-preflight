@@ -29,6 +29,12 @@ struct SkseDeferredSave {
     SkseImmutableEss *snapshot;
     int directory;
 };
+struct SkseLoadInput {
+    SkseEventBridge *bridge;
+    SkseGameEvent requested;
+    int held_fd;
+    struct stat at_open;
+};
 
 static int has_id(const uint8_t id[16]) {
     static const uint8_t zero[16] = {0};
@@ -216,6 +222,83 @@ void skse_bridge_drop(SksePendingSave *save) {
         skse_pair_discard(save->stage);
         free(save);
     }
+}
+
+SkseBridgeResult skse_bridge_prepare_load_input(SkseEventBridge *bridge, const SkseGameEvent *requested,
+    int source, int scratch, SkseLoadInput **out, int *loader_fd, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (out) *out = NULL;
+    if (loader_fd) *loader_fd = -1;
+    if (!out || !loader_fd) return SKSE_BRIDGE_ARGUMENT;
+    SkseBridgeResult status = request_matches(bridge, requested);
+    if (status != SKSE_BRIDGE_OK) return status;
+    SkseImmutableEss *snapshot = NULL;
+    status = from_pair(skse_ess_capture_immutable(source, scratch, &snapshot), detail);
+    if (status != SKSE_BRIDGE_OK) return status;
+    int held_fd = skse_ess_take_immutable_fd(snapshot);
+    if (held_fd < 0) return SKSE_BRIDGE_IO;
+    struct stat first;
+    if (fstat(held_fd, &first)) { close(held_fd); return SKSE_BRIDGE_IO; }
+    int guest_fd = fcntl(held_fd, F_DUPFD_CLOEXEC, 0);
+    if (guest_fd < 0) { close(held_fd); return SKSE_BRIDGE_IO; }
+    SkseLoadInput *input = malloc(sizeof *input);
+    if (!input) { close(held_fd); close(guest_fd); return SKSE_BRIDGE_IO; }
+    *input = (SkseLoadInput){bridge, *requested, held_fd, first};
+    *out = input;
+    *loader_fd = guest_fd;
+    return SKSE_BRIDGE_OK;
+}
+
+void skse_bridge_drop_load_input(SkseLoadInput *input) {
+    if (input) { close(input->held_fd); free(input); }
+}
+
+static SksePairResult check_open_input(SkseLoadInput *input) {
+    struct stat now;
+    if (fstat(input->held_fd, &now)) return SKSE_PAIR_STORAGE;
+    return now.st_mode == input->at_open.st_mode && skse_ess_same_version(&now, &input->at_open)
+        ? SKSE_PAIR_OK : SKSE_PAIR_ESS_CHANGED;
+}
+
+static SksePairResult check_consumed_input(SkseLoadInput *input, int fd) {
+    SksePairResult status = check_open_input(input);
+    if (status != SKSE_PAIR_OK) return status;
+    struct stat consumed;
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0 || fstat(fd, &consumed)) return SKSE_PAIR_STORAGE;
+    return (flags & O_ACCMODE) == O_RDONLY && skse_ess_same_version(&input->at_open, &consumed)
+        ? SKSE_PAIR_OK : SKSE_PAIR_WRONG_GENERATION;
+}
+
+SkseBridgeResult skse_bridge_finish_load_input(SkseLoadInput **pending, const SkseEventTrace *trace,
+    const SkseBaseEvidence *completed, void **companion, size_t *length, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (companion) *companion = NULL;
+    if (length) *length = 0;
+    if (!pending) return SKSE_BRIDGE_ARGUMENT;
+    SkseLoadInput *input = *pending;
+    if (!input) return SKSE_BRIDGE_STATE;
+    *pending = NULL;
+    if (!companion || !length) {
+        skse_bridge_drop_load_input(input);
+        return SKSE_BRIDGE_ARGUMENT;
+    }
+    SkseBridgeResult status = verify(&input->requested, SkyrimLoadSlot, trace, completed);
+    if (status == SKSE_BRIDGE_OK) status = from_pair(check_consumed_input(input, completed->ess_fd), detail);
+    if (status == SKSE_BRIDGE_OK) {
+        SksePairGeneration generation = {input->requested.saved, input->held_fd};
+        status = from_pair(skse_pair_export(input->bridge->store, &generation, companion, length), detail);
+    }
+    if (status == SKSE_BRIDGE_OK) {
+        status = from_pair(check_open_input(input), detail);
+        if (status != SKSE_BRIDGE_OK) {
+            free(*companion);
+            *companion = NULL;
+            *length = 0;
+        }
+    }
+    skse_bridge_drop_load_input(input);
+    return status;
 }
 
 SkseBridgeResult skse_bridge_load(SkseEventBridge *bridge, const SkseGameEvent *requested,

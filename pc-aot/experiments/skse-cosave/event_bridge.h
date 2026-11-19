@@ -11,6 +11,7 @@ extern "C" {
 typedef struct SkseEventBridge SkseEventBridge;
 typedef struct SksePendingSave SksePendingSave;
 typedef struct SkseDeferredSave SkseDeferredSave;
+typedef struct SkseLoadInput SkseLoadInput;
 
 /* An independent process nonce and the running profile. Text and voices
  * are the effective game settings (0 English, 1 Japanese). */
@@ -91,6 +92,21 @@ SkseBridgeResult skse_bridge_defer_save(SksePendingSave *pending, const SkseEven
 SkseBridgeResult skse_bridge_publish_deferred(SkseEventBridge *worker, SkseDeferredSave *job,
                                              SksePairResult *detail);
 void skse_bridge_drop_deferred(SkseDeferredSave *job);
+
+/* Start at an identified load's genuine input-open boundary, before any base
+ * bytes are consumed. A successful capture returns an owned CLOEXEC read-only
+ * descriptor. The loader must consume that immutable input and identify it
+ * independently at completion. The scratch-directory contract matches
+ * skse_bridge_defer_save(). Keep the bridge alive on the owner thread. */
+SkseBridgeResult skse_bridge_prepare_load_input(SkseEventBridge *bridge, const SkseGameEvent *requested,
+    int source, int private_scratch, SkseLoadInput **pending, int *loader_fd, SksePairResult *detail);
+/* One completion attempt consumes *pending. After the game and VM have
+ * accepted the same immutable input and the stored generation digest agrees,
+ * returns an owned Classic image for inspection. Caller frees it with free().
+ * On error the result is NULL/zero. No plugin callbacks or VM changes occur. */
+SkseBridgeResult skse_bridge_finish_load_input(SkseLoadInput **pending, const SkseEventTrace *trace,
+    const SkseBaseEvidence *completed, void **companion, size_t *length, SksePairResult *detail);
+void skse_bridge_drop_load_input(SkseLoadInput *pending);
 
 /* This restores only private reversible scratch state. Discarding that state
  * cannot alter an active world. The caller owns any later VM handoff. */
