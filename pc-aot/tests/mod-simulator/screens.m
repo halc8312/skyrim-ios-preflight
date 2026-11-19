@@ -383,16 +383,17 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self capture:@"empty-hub"];
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     [self findRow:@"SkyUI 5.1 trial"];
-    XCUIElement *trial = self.app.switches[@"mod-skyui-trial"];
-    XCTAssertEqualObjects(trial.value, @"0");
-    [trial tap];
-    XCTAssertEqualObjects(trial.value, @"1");
+    XCUIElement *trialToggle = self.app.switches[@"mod-skyui-trial"];
+    XCTAssertTrue([trialToggle waitForExistenceWithTimeout:5]);
+    XCTAssertEqualObjects([trialToggle.value description], @"0");
+    [trialToggle tap];
+    XCTAssertEqualObjects([trialToggle.value description], @"1");
     [self goBackFrom:@"MOD"];
     [self openHub];
     [self findRow:@"SkyUI 5.1 trial"];
-    XCTAssertEqualObjects(trial.value, @"1");
-    [trial tap];
-    XCTAssertEqualObjects(trial.value, @"0");
+    XCTAssertEqualObjects([trialToggle.value description], @"1");
+    [trialToggle tap];
+    XCTAssertEqualObjects([trialToggle.value description], @"0");
 #endif
     [[self findRow:@"Save check"] tap];
     [self findRow:@"Authored Save"];
