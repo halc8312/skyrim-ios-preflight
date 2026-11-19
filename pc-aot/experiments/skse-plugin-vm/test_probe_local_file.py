@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 
-from test_pe_image import BASE, DATA, RD, SECTIONS, add_named_clock, make_image, put, zero_string
+from test_pe_image import BASE, DATA, RD, SECTIONS, add_named_clock, directory, make_image, put, zero_string
 
 HERE = Path(__file__).resolve().parent
 
@@ -67,6 +67,43 @@ def serializing_fixture():
     return dll
 
 
+def worker_fixture(close_before_join=False, worker_runs_forever=False):
+    dll = supported_fixture()
+    add_named_clock(dll)
+    directory(dll, 12, 0x3060, 16)
+    for table in (0x60, 0x80):
+        put(dll, DATA + table, "4I", 0x30a0, 0x30c0, 0x30e0, 0)
+    for offset, name in ((0xa0, b"CreateThread"), (0xc0, b"WaitForSingleObject"), (0xe0, b"CloseHandle")):
+        zero_string(dll, DATA + offset + 2, name)
+    put(dll, SECTIONS + 8, "I", 0x200)
+    put(dll, RD + 0x60, "I", 0x1080)
+    output = BASE + 0x3140
+    code = bytearray(b"\x53")  # Keep the worker handle in EBX.
+
+    def call(slot):
+        code.extend(b"\xff\x15" + struct.pack("<I", BASE + 0x3060 + slot * 4))
+
+    for value in (0, 0, output, BASE + 0x1100, 0, 0):
+        code.extend(b"\x68" + struct.pack("<I", value))
+    call(0)
+    code.extend(bytes.fromhex("85 c0 75 02 0f 0b 89 c3"))
+    if not close_before_join:
+        code.extend(bytes.fromhex("6a ff 53"))
+        call(1)
+        code.extend(bytes.fromhex("85 c0 74 02 0f 0b"))
+        code.extend(bytes.fromhex("83 3d") + struct.pack("<I", output) + bytes.fromhex("49 74 02 0f 0b"))
+    code.append(0x53)
+    call(2)
+    code.extend(bytes.fromhex("5b c3"))
+    dll[0x280:0x280 + len(code)] = code
+    # The worker receives a pointer and leaves an observable value before returning.
+    worker = bytes.fromhex("8b 44 24 04 c7 00 49 00 00 00 31 c0 c2 04 00")
+    if worker_runs_forever:
+        worker = bytes.fromhex("eb fe")
+    dll[0x300:0x300 + len(worker)] = worker
+    return dll
+
+
 @unittest.skipIf(sys.platform == "win32", "the selected-file wrapper uses Darwin/POSIX descriptors")
 class LocalFileProbeTest(unittest.TestCase):
     def test_regular_file_boundaries_symlinks_and_dll_results(self):
@@ -92,6 +129,10 @@ class LocalFileProbeTest(unittest.TestCase):
             zero_string(with_import, DATA + 0xa2, b"OwnedUnsupported")
             unknown.write_bytes(with_import)
             serialized.write_bytes(serializing_fixture())
+            worker, closed, bounded = root / "worker.dll", root / "closed.dll", root / "bounded.dll"
+            worker.write_bytes(worker_fixture())
+            closed.write_bytes(worker_fixture(close_before_join=True))
+            bounded.write_bytes(worker_fixture(worker_runs_forever=True))
             invalid, empty, big = root / "invalid.dll", root / "empty.dll", root / "large.dll"
             invalid.write_bytes(b"not a PE file")
             empty.touch()
@@ -100,12 +141,15 @@ class LocalFileProbeTest(unittest.TestCase):
             link, fifo = root / "link.dll", root / "fifo.dll"
             link.symlink_to(good)
             os.mkfifo(fifo, mode=0o600)
-            result = subprocess.check_output([binary, good, unknown, serialized, invalid, empty, big,
+            result = subprocess.check_output([binary, good, unknown, serialized, worker, closed, bounded, invalid, empty, big,
                                               link, fifo, root / "absent.dll", root],
                                              text=True, timeout=3).splitlines()
             self.assertEqual(result, ["ready,7,Owned test plugin",
                                       "stopped,1,import absent from the service list,1,kernel32.DLL,OwnedUnsupported",
                                       "ready,7,Owned test plugin,2,1",
+                                      "ready,7,Owned test plugin,workers=1",
+                                      "ready,7,Owned test plugin,workers=1",
+                                      "stopped,8,ok,0,load=4",
                                       "stopped,1,truncated headers,0", "2", "3", "1", "2", "1", "2"])
             self.assertEqual(good.read_bytes(), fixture)
             self.assertEqual(unknown.read_bytes(), with_import)

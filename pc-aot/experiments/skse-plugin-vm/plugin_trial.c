@@ -79,7 +79,11 @@ static const struct {
     {{"KERNEL32.dll", "SetFilePointerEx", 0xe00010cc}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_SEEK_FILE_EX},
     {{"KERNEL32.dll", "CreateSemaphoreA", 0xe00010d0}, SKSE_X86_WIN_SYNC, SKSE_WIN_SEMAPHORE_CREATE},
     {{"KERNEL32.dll", "CreateSemaphoreW", 0xe00010d4}, SKSE_X86_WIN_SYNC, SKSE_WIN_SEMAPHORE_CREATE},
-    {{"KERNEL32.dll", "ReleaseSemaphore", 0xe00010d8}, SKSE_X86_WIN_SYNC, SKSE_WIN_SEMAPHORE_RELEASE}
+    {{"KERNEL32.dll", "ReleaseSemaphore", 0xe00010d8}, SKSE_X86_WIN_SYNC, SKSE_WIN_SEMAPHORE_RELEASE},
+    {{"KERNEL32.dll", "GetFileType", 0xe00010dc}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_FILE_TYPE},
+    {{"KERNEL32.dll", "CreateThread", 0xe00010e0}, SKSE_X86_WIN_WORKER, SKSE_WIN_WORKER_CREATE},
+    {{"KERNEL32.dll", "ResumeThread", 0xe00010e4}, SKSE_X86_WIN_WORKER, SKSE_WIN_WORKER_RESUME},
+    {{"KERNEL32.dll", "GetExitCodeThread", 0xe00010e8}, SKSE_X86_WIN_WORKER, SKSE_WIN_WORKER_EXIT_CODE}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 _Static_assert(WINDOWS_SERVICE_COUNT + 5 + SKSE_SERIAL_METHOD_COUNT <= SKSE_X86_MAX_SERVICES, "trial service count");
@@ -170,7 +174,7 @@ static bool layout_static_tls(const SkseDependencySpace *space, uint32_t offsets
     return true;
 }
 
-static void install_static_tls(SkseDependencySpace *space, const uint32_t offsets[], SkseX86Scratch scratch) {
+static void install_static_tls(SkseDependencySpace *space, const uint32_t offsets[], SkseX86Scratch scratch, bool assign_indices) {
     for (unsigned i = 0; i < space->count; ++i) {
         if (!offsets[i]) continue;
         const SksePeTlsInfo *tls = &space->tls[i];
@@ -178,7 +182,7 @@ static void install_static_tls(SkseDependencySpace *space, const uint32_t offset
         if (tls->template_bytes)
             memcpy(scratch.bytes + offsets[i], image->bytes + tls->template_rva, tls->template_bytes);
         write_word(scratch.bytes + TLS_TABLE_OFFSET + 4 * i, scratch.base + offsets[i]);
-        write_word(image->bytes + tls->index_rva, i);
+        if (assign_indices) write_word(image->bytes + tls->index_rva, i);
     }
 }
 
@@ -196,6 +200,64 @@ static bool run_tls_callbacks(TrialVm *vm, const SkseDependencySpace *space, uns
         ++result->tls_callbacks;
     }
     return true;
+}
+
+typedef struct {
+    TrialVm *parent;
+    SkseDependencySpace *space;
+    SkseTrialResult *result;
+    const uint32_t *tls_offsets;
+    uint32_t stack_offset, tls_scratch;
+} TrialWorkerContext;
+
+static SkseX86Result run_worker(void *opaque, uint32_t id, uint32_t entry, uint32_t parameter, uint32_t budget) {
+    TrialWorkerContext *context = opaque;
+    SkseTrialResult *result = context->result;
+    TrialVm child = *context->parent;
+    SkseWinThread thread = {.process = child.services.thread->process, .id = id};
+    SkseX86Scratch worker_area = {
+        .base = child.scratch.base + context->stack_offset,
+        .bytes = child.scratch.bytes + context->stack_offset,
+        .length = child.scratch.length - context->stack_offset
+    };
+    child.services.thread = &thread;
+    child.services.stack_floor = worker_area.base + context->tls_scratch;
+    child.services.stack_top = worker_area.base + (uint32_t)worker_area.length;
+    child.remaining_work = budget;
+    if (context->tls_scratch) {
+        memset(worker_area.bytes, 0, context->tls_scratch);
+        install_static_tls(context->space, context->tls_offsets, worker_area, false);
+        child.services.static_tls_table = worker_area.base + TLS_TABLE_OFFSET;
+    }
+    uint32_t notifications[] = {context->space->images[0].base, 2, 0}; // DLL_THREAD_ATTACH.
+    SkseX86Result call;
+    uint32_t exit_code = 0, dll_main = context->space->images[0].entry_va;
+    if (!run_tls_callbacks(&child, context->space, 0, notifications[1], result)) {
+        call = result->tls_fault;
+        goto done;
+    }
+    if (dll_main) {
+        call = call_trial(&child, dll_main, notifications, 3, SKSE_X86_STDCALL);
+        if (call.status != SKSE_X86_OK) goto done;
+    }
+    call = call_trial(&child, entry, &parameter, 1, SKSE_X86_STDCALL);
+    if (call.status != SKSE_X86_OK) goto done;
+    exit_code = call.eax;
+    notifications[1] = 3; // DLL_THREAD_DETACH.
+    if (!run_tls_callbacks(&child, context->space, 0, notifications[1], result)) {
+        call = result->tls_fault;
+        goto done;
+    }
+    if (dll_main) call = call_trial(&child, dll_main, notifications, 3, SKSE_X86_STDCALL);
+done:
+    call.work = budget - child.remaining_work;
+    if (call.status == SKSE_X86_OK) {
+        call.eax = exit_code;
+        ++result->workers_completed;
+    } else {
+        result->worker_fault = call;
+    }
+    return call;
 }
 
 static void exercise_serialization(TrialVm *vm, SkseX86Serialization *serial, SkseTrialResult *result) {
@@ -304,7 +366,9 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         skse_dependency_close(&space);
         return result;
     }
-    uint32_t scratch_size = SCRATCH_SIZE + tls_scratch;
+    uint32_t primary_scratch = SCRATCH_SIZE + tls_scratch;
+    bool worker_supported = runtime && runtime->worker_thread && space.count == 1;
+    uint32_t scratch_size = worker_supported ? 2 * primary_scratch : primary_scratch;
     static const uint32_t scratch_choices[] = {0x60000000, 0x30000000, 0x68000000, 0x70000000, 0x78000000};
     static const uint32_t heap_choices[] = {0x18000000, 0x28000000, 0x38000000, 0x48000000, 0x58000000};
     SkseX86Scratch scratch = {
@@ -343,8 +407,9 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     if (tls_scratch) {
         services.static_tls_table = scratch.base + TLS_TABLE_OFFSET;
         services.stack_floor = scratch.base + tls_scratch;
-        install_static_tls(&space, tls_offsets, scratch);
+        install_static_tls(&space, tls_offsets, scratch, true);
     }
+    if (worker_supported) services.stack_top = scratch.base + primary_scratch;
     if (runtime) {
         services.heap = &heap;
         services.thread = &thread;
@@ -395,6 +460,12 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     }
 
     TrialVm vm = {.count = space.count, .scratch = scratch, .services = services, .remaining_work = TRIAL_BUDGET};
+    TrialWorkerContext worker_context = {
+        .parent = &vm, .space = &space, .result = &result, .tls_offsets = tls_offsets,
+        .stack_offset = primary_scratch, .tls_scratch = tls_scratch
+    };
+    SkseX86Worker worker = {.run = run_worker, .context = &worker_context, .loader_locked = true};
+    if (worker_supported) vm.services.worker = &worker;
     for (unsigned i = 0; i < space.count; ++i) vm.images[i] = &space.images[i];
     bool detach_helper[SKSE_DEPENDENCY_MAX_HELPERS] = {false};
     bool helpers_ready = false;
@@ -441,6 +512,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         }
     }
 
+    worker.loader_locked = false;
     const uint32_t args[] = {scratch.base, scratch.base + INFO_OFFSET};
     result.query = call_trial(&vm, image->query_va, args, 2, SKSE_X86_CDECL);
     if (result.query.status != SKSE_X86_OK) {
@@ -478,8 +550,18 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         exercise_serialization(&vm, &serial, &result);
         entries[1].kind = SKSE_X86_SCALAR_RETURN;
     }
+    if (result.status == SKSE_TRIAL_COMPLETED && worker.id && !worker.complete) {
+        SkseX86Result call = skse_x86_finish_worker(&worker, vm.remaining_work);
+        vm.remaining_work -= call.work;
+        if (call.status != SKSE_X86_OK) {
+            result.worker_fault = call;
+            result.status = SKSE_TRIAL_WORKER_FAULT;
+        }
+    }
 
 detach:
+    worker.loader_locked = true;
+    worker.tearing_down = true;
     if (!run_tls_callbacks(&vm, &space, 0, 0, &result)) {
         if (result.status == SKSE_TRIAL_COMPLETED) result.status = SKSE_TRIAL_TLS_DETACH_FAULT;
     } else if (image->entry_va) {

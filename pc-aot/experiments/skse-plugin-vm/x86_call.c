@@ -22,7 +22,7 @@ typedef struct {
     uint64_t data_start, data_end;
     uint8_t *data_bytes;
     unsigned data_permissions;
-    uint32_t return_slot, return_cleanup, stack_floor;
+    uint32_t return_slot, return_cleanup, stack_floor, stack_top;
     SksePeImage *const *images;
     size_t image_count;
     SksePeImage *recent_image;
@@ -202,7 +202,7 @@ static Operand decode_rm(Vm *vm, uint32_t modrm) {
 
 static void push(Vm *vm, uint32_t value) {
     uint32_t address = vm->registers[ESP] - 4;
-    if (!in_range(vm->stack_floor, (uint64_t)vm->scratch.base + vm->scratch.length, address, 4)) {
+    if (!in_range(vm->stack_floor, vm->stack_top, address, 4)) {
         fail(vm, SKSE_X86_MEMORY_FAULT);
         return;
     }
@@ -212,7 +212,7 @@ static void push(Vm *vm, uint32_t value) {
 
 static uint32_t pop(Vm *vm) {
     uint32_t address = vm->registers[ESP];
-    if (!in_range(vm->stack_floor, (uint64_t)vm->scratch.base + vm->scratch.length, address, 4)) {
+    if (!in_range(vm->stack_floor, vm->stack_top, address, 4)) {
         fail(vm, SKSE_X86_MEMORY_FAULT);
         return 0;
     }
@@ -399,7 +399,7 @@ static bool reserve_bulk(Vm *vm, uint64_t cost) {
 
 static const uint8_t *service_parameters(Vm *vm, size_t size) {
     uint32_t stack = vm->registers[ESP];
-    if (!in_range(vm->stack_floor, (uint64_t)vm->scratch.base + vm->scratch.length, stack, size)) {
+    if (!in_range(vm->stack_floor, vm->stack_top, stack, size)) {
         fail(vm, SKSE_X86_MEMORY_FAULT);
         return NULL;
     }
@@ -845,7 +845,7 @@ static uint32_t win_seek_asset(Vm *vm, SkseWinFile *file, const uint32_t args[])
 }
 
 static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
-    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1, 5};
+    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1, 5, 1};
     _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_FILE_OPERATION_COUNT, "file ABI");
     unsigned count = argument_counts[operation];
     const uint8_t *parameters = service_parameters(vm, count * 4);
@@ -858,6 +858,11 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
         return open_asset(vm, args, operation == SKSE_WIN_OPEN_FILE_W);
     if (operation == SKSE_WIN_READ_FILE) return win_read_asset(vm, args);
     if (operation == SKSE_WIN_CLOSE_FILE && skse_win_sync_close(vm->services.sync, args[0])) return 1;
+    SkseX86Worker *worker = vm->services.worker;
+    if (operation == SKSE_WIN_CLOSE_FILE && worker && worker->open && worker->handle == args[0]) {
+        worker->open = false;
+        return 1;
+    }
     SkseWinFile *file = skse_win_file_lookup(vm->services.files, args[0]);
     if (!file) {
         vm->services.thread->last_error = 6; // ERROR_INVALID_HANDLE.
@@ -872,7 +877,80 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
         return (uint32_t)file->length;
     }
     if (operation == SKSE_WIN_SEEK_FILE_EX) return win_seek_asset(vm, file, args);
+    if (operation == SKSE_WIN_FILE_TYPE) return 1; // FILE_TYPE_DISK.
     return write_file_position(vm, args[1], file->length);
+}
+
+SkseX86Result skse_x86_finish_worker(SkseX86Worker *worker, uint32_t budget) {
+    if (!worker->run || !worker->id || worker->suspended || worker->running || worker->loader_locked || worker->complete)
+        return (SkseX86Result){.status = SKSE_X86_UNSUPPORTED_API};
+    if (!budget) return (SkseX86Result){.status = SKSE_X86_INSTRUCTION_LIMIT};
+    worker->running = true;
+    SkseX86Result result = worker->run(worker->context, worker->id, worker->entry, worker->parameter, budget);
+    worker->running = false;
+    worker->complete = true;
+    worker->failed = result.status != SKSE_X86_OK;
+    worker->exit_code = result.eax;
+    return result;
+}
+
+static uint32_t win_worker_service(Vm *vm, SkseWinWorkerOperation op) {
+    static const unsigned argument_counts[] = {6, 1, 2};
+    _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_WORKER_OPERATION_COUNT, "worker ABI");
+    const unsigned count = argument_counts[op];
+    const uint8_t *parameters = service_parameters(vm, count * 4);
+    if (!parameters) return 0;
+    uint32_t args[6];
+    for (unsigned i = 0; i < count; ++i) args[i] = little_endian(parameters + i * 4, 4);
+    vm->registers[ESP] += count * 4;
+    SkseX86Worker *worker = vm->services.worker;
+    if (!worker || !worker->run || worker->running) {
+        fail(vm, SKSE_X86_UNSUPPORTED_API);
+        return 0;
+    }
+    if (op == SKSE_WIN_WORKER_CREATE) {
+        if (worker->tearing_down || args[0] || args[1] || (args[4] & ~UINT32_C(4)) ||
+            (worker->id && (worker->open || !worker->complete))) {
+            fail(vm, SKSE_X86_UNSUPPORTED_API);
+            return 0;
+        }
+        const SksePeImage *image = image_at(vm, args[2]);
+        if (!skse_pe_allows(image, args[2], 1, SKSE_PE_EXEC)) {
+            fail(vm, SKSE_X86_MEMORY_FAULT);
+            return 0;
+        }
+        const uint32_t id = worker->id ? worker->id + 1 : 2;
+        if (id >= UINT32_C(0x01000000)) {
+            fail(vm, SKSE_X86_UNSUPPORTED_API);
+            return 0;
+        }
+        if (args[5]) write_memory(vm, args[5], 4, id);
+        if (vm->status != SKSE_X86_OK) return 0;
+        worker->id = id;
+        worker->handle = UINT32_C(0xe5000000) + id;
+        worker->entry = args[2];
+        worker->parameter = args[3];
+        worker->exit_code = 259; // STILL_ACTIVE.
+        worker->open = true;
+        worker->suspended = args[4] == 4;
+        worker->failed = worker->complete = false;
+        return worker->handle;
+    }
+    if (!worker->open || worker->handle != args[0]) {
+        vm->services.thread->last_error = 6;
+        return op == SKSE_WIN_WORKER_RESUME ? UINT32_MAX : 0;
+    }
+    if (worker->failed) {
+        fail(vm, SKSE_X86_UNSUPPORTED_API);
+        return 0;
+    }
+    if (op == SKSE_WIN_WORKER_EXIT_CODE) {
+        write_memory(vm, args[1], 4, worker->exit_code);
+        return vm->status == SKSE_X86_OK;
+    }
+    uint32_t suspended = worker->suspended;
+    worker->suspended = false;
+    return suspended;
 }
 
 static uint32_t win_wait_objects(Vm *vm, SkseWinSyncOperation operation, const uint32_t args[]) {
@@ -895,6 +973,25 @@ static uint32_t win_wait_objects(Vm *vm, SkseWinSyncOperation operation, const u
         const uint8_t *source = memory(vm, args[1], count * 4, SKSE_PE_READ);
         if (!source) return UINT32_MAX;
         for (unsigned i = 0; i < count; ++i) tokens[i] = little_endian(source + i * 4, 4);
+    }
+    SkseX86Worker *worker = vm->services.worker;
+    if (worker && worker->open) {
+        for (unsigned i = 0; i < count; ++i) {
+            if (tokens[i] != worker->handle) continue;
+            if (many || worker->failed || worker->running ||
+                (!worker->complete && args[1] && args[1] != UINT32_MAX)) {
+                fail(vm, SKSE_X86_UNSUPPORTED_API);
+                return UINT32_MAX;
+            }
+            if (worker->complete) return 0;
+            if (!args[1]) return SKSE_WIN_WAIT_TIMEOUT;
+            SkseX86Result worker_result = skse_x86_finish_worker(worker, vm->limit - vm->instructions - vm->bulk_work);
+            reserve_bulk(vm, worker_result.work);
+            if (worker_result.status == SKSE_X86_OK) return 0;
+            fail(vm, worker_result.status);
+            if (worker_result.instruction_va) vm->instruction_va = worker_result.instruction_va;
+            return UINT32_MAX;
+        }
     }
     uint32_t result = skse_win_sync_wait(vm->services.sync, tokens, count, many && args[2],
                                           &vm->services.thread->last_error);
@@ -992,6 +1089,9 @@ static void invoke_service(Vm *vm, unsigned i, bool tail) {
         break;
     case SKSE_X86_SERIALIZATION:
         vm->registers[EAX] = serialization_service(vm, (SkseSerialMethod)service->value);
+        break;
+    case SKSE_X86_WIN_WORKER:
+        vm->registers[EAX] = win_worker_service(vm, (SkseWinWorkerOperation)service->value);
         break;
     }
     ++vm->result.service_calls[i];
@@ -1574,17 +1674,18 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
         (services.count && !services.entries) ||
         (convention != SKSE_X86_CDECL && convention != SKSE_X86_STDCALL))
         return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
-    if ((services.static_tls_table || services.stack_floor) &&
-        (!services.static_tls_table || (services.static_tls_table & 3) ||
-         !services.stack_floor || (services.stack_floor & 15) ||
-         !in_range(scratch.base, services.stack_floor, services.static_tls_table, image_count * 4) ||
-         !in_range(scratch.base, scratch_end, services.stack_floor, 128)))
+    const uint32_t stack_floor = services.stack_floor ? services.stack_floor : scratch.base;
+    const uint32_t stack_top = services.stack_top ? services.stack_top : (uint32_t)(scratch_end & ~UINT64_C(15));
+    if ((services.stack_floor & 15) || (stack_top & 15) || stack_top > scratch_end ||
+        !in_range(scratch.base, stack_top, stack_floor, 128) ||
+        (services.static_tls_table && ((services.static_tls_table & 3) ||
+         !in_range(scratch.base, stack_floor, services.static_tls_table, image_count * 4))))
         return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
     uint8_t service_index[SERVICE_SLOTS] = {0};
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
-        if ((unsigned)kind > SKSE_X86_SERIALIZATION || !address ||
+        if ((unsigned)kind > SKSE_X86_WIN_WORKER || !address ||
             (kind >= SKSE_X86_MALLOC && kind <= SKSE_X86_HEAP_FREE && !services.heap) ||
             (kind == SKSE_X86_WIN_THREAD &&
              (!services.thread || !services.thread->process || !services.thread->id ||
@@ -1600,6 +1701,8 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
             (kind == SKSE_X86_SERIALIZATION &&
              (!services.serialization || services.entries[i].value >= SKSE_SERIAL_METHOD_COUNT ||
               !in_range(scratch.base, scratch_end, services.serialization->interface_address, 52))) ||
+            (kind == SKSE_X86_WIN_WORKER &&
+             (!services.thread || services.entries[i].value >= SKSE_WIN_WORKER_OPERATION_COUNT)) ||
             (kind == SKSE_X86_QUERY_CLASSIC && !services.core_messaging) ||
             (kind == SKSE_X86_REGISTER_CORE_LISTENER &&
              (!services.core_messaging ||
@@ -1616,14 +1719,14 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
 
     static const uint32_t canaries[] = {0x13749894, 0x2269d748, 0x5ee56321, 0xf61fd490};
     Vm vm = {.images = images, .image_count = image_count, .recent_image = images[0], .scratch = scratch,
-             .services = services, .service_index = service_index, .ip = entry, .stack_floor = services.stack_floor ? services.stack_floor : scratch.base,
+             .services = services, .service_index = service_index, .ip = entry, .stack_floor = stack_floor, .stack_top = stack_top,
              .limit = instruction_limit};
     if (convention == SKSE_X86_STDCALL) vm.return_cleanup = (unsigned)arg_count * 4;
     vm.registers[EBX] = canaries[0];
     vm.registers[EBP] = canaries[1];
     vm.registers[ESI] = canaries[2];
     vm.registers[EDI] = canaries[3];
-    vm.registers[ESP] = (uint32_t)(scratch_end & ~UINT64_C(15));
+    vm.registers[ESP] = stack_top;
     for (size_t i = arg_count; i > 0; --i) push(&vm, args[i - 1]);
     push(&vm, 0);
     vm.return_slot = vm.registers[ESP];

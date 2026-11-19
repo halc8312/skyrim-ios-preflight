@@ -365,6 +365,7 @@ __declspec(dllimport) void *__stdcall CreateFileW(const wchar_t *, uint32_t, uin
 __declspec(dllimport) int __stdcall ReadFile(void *, void *, uint32_t, uint32_t *, void *);
 __declspec(dllimport) uint32_t __stdcall GetFileSize(void *, uint32_t *);
 __declspec(dllimport) int __stdcall GetFileSizeEx(void *, int64_t *);
+__declspec(dllimport) uint32_t __stdcall GetFileType(void *);
 __declspec(dllimport) int __stdcall SetFilePointerEx(void *, int64_t, int64_t *, uint32_t);
 __declspec(dllimport) int __stdcall CloseHandle(void *);
 __declspec(dllimport) unsigned long __stdcall GetLastError(void);
@@ -378,7 +379,8 @@ static _Bool check_file_assets(void) {
     if (second != invalid || GetLastError() != 32) return 0;
     uint32_t high = 12;
     int64_t size = -1;
-    if (GetFileSize(file, &high) != 7 || high || !GetFileSizeEx(file, &size) || size != 7) return 0;
+    if (GetFileType(file) != 1 || GetFileType(invalid) || GetLastError() != 6 ||
+        GetFileSize(file, &high) != 7 || high || !GetFileSizeEx(file, &size) || size != 7) return 0;
     unsigned char bytes[8];
     uint32_t transferred = 19;
     if (!ReadFile(file, bytes, 2, &transferred, NULL) || transferred != 2 || bytes[0] != 'A' || bytes[1] != 'B') return 0;
@@ -447,6 +449,111 @@ static _Bool check_events(void) {
         WaitForSingleObjectEx(manual, infinite, 0) != 0 || WaitForSingleObject(automatic, 0) != timeout) return 0;
     return ResetEvent(manual) && WaitForSingleObject(manual, 0) == timeout &&
            CloseHandle(automatic) && CloseHandle(manual) && check_semaphores();
+}
+#endif
+
+#if FIXTURE_VARIANT == 23
+#include "test_tls_directory.h"
+
+typedef uint32_t (__stdcall *FixtureWorker)(void *);
+__declspec(dllimport) void *__stdcall CreateThread(void *, size_t, FixtureWorker, void *, uint32_t, uint32_t *);
+__declspec(dllimport) uint32_t __stdcall ResumeThread(void *);
+__declspec(dllimport) int __stdcall GetExitCodeThread(void *, uint32_t *);
+__declspec(dllimport) uint32_t __stdcall WaitForSingleObject(void *, uint32_t);
+__declspec(dllimport) int __stdcall CloseHandle(void *);
+__declspec(dllimport) uint32_t __stdcall TlsAlloc(void);
+__declspec(dllimport) int __stdcall TlsFree(uint32_t);
+__declspec(dllimport) void *__stdcall TlsGetValue(uint32_t);
+__declspec(dllimport) int __stdcall TlsSetValue(uint32_t, void *);
+__declspec(dllimport) uint32_t __stdcall GetCurrentThreadId(void);
+__declspec(dllimport) uint32_t __stdcall GetLastError(void);
+__declspec(dllimport) void __stdcall SetLastError(uint32_t);
+
+static __declspec(thread) volatile uint32_t local_mark = 7;
+static volatile uint32_t child_stage;
+static uint32_t child_id;
+
+typedef struct {
+    uint32_t slot, parent_id;
+    volatile uint32_t answer;
+} FixtureWorkerInput;
+
+static void __stdcall worker_tls_callback(void *module, unsigned reason, void *reserved) {
+    (void)reserved;
+    if (!module) __builtin_trap();
+    if (reason == 1) {
+        if (local_mark != 7) __builtin_trap();
+        local_mark = 13;
+    } else if (reason == 2 && GetCurrentThreadId() == child_id) {
+        if (local_mark != 7 || child_stage != 0) __builtin_trap();
+        local_mark = 11;
+        child_stage = 1;
+    } else if (reason == 3 && GetCurrentThreadId() == child_id) {
+        if (local_mark != 37 || child_stage != 3) __builtin_trap();
+        local_mark = 41;
+        child_stage = 4;
+    }
+}
+static const FixtureTlsCallback worker_tls_callbacks[] = {worker_tls_callback, NULL};
+FIXTURE_TLS_DIRECTORY(worker_tls_callbacks);
+
+int __stdcall TestModuleEntry(void *module, unsigned reason, void *reserved) {
+    (void)reserved;
+    if (!module) return 0;
+    if (reason == 1) {
+        if (local_mark != 13) return 0;
+        local_mark = 25;
+    } else if (reason == 2 && GetCurrentThreadId() == child_id) {
+        if (local_mark != 11 || child_stage != 1) __builtin_trap();
+        local_mark = 17;
+        child_stage = 2;
+    } else if (reason == 3 && GetCurrentThreadId() == child_id) {
+        if (local_mark != 41 || child_stage != 4) __builtin_trap();
+        child_stage = 5;
+        SetLastError(0x2222);
+    }
+    return 1;
+}
+
+static uint32_t __stdcall fixture_worker(void *parameter) {
+    FixtureWorkerInput *input = parameter;
+    uint32_t tid = GetCurrentThreadId();
+    if (!input || !tid || tid != child_id || tid == input->parent_id ||
+        child_stage != 2 || local_mark != 17) return 1;
+    SetLastError(0x1234);
+    if (TlsGetValue(input->slot) != NULL || GetLastError() != 0 ||
+        !TlsSetValue(input->slot, (void *)0x5555) ||
+        TlsGetValue(input->slot) != (void *)0x5555) return 2;
+    local_mark = 37;
+    input->answer = 73;
+    child_stage = 3;
+    return 42;
+}
+
+static _Bool check_child_thread(void) {
+    if (local_mark != 25) return 0;
+    FixtureWorkerInput input;
+    input.slot = TlsAlloc();
+    input.parent_id = GetCurrentThreadId();
+    input.answer = 0;
+    if (input.slot == UINT32_MAX || !input.parent_id || !TlsSetValue(input.slot, &input)) return 0;
+    child_stage = 0;
+    child_id = 0;
+    void *thread = CreateThread(NULL, 0, fixture_worker, &input, 4, &child_id); // CREATE_SUSPENDED.
+    if (!thread) { TlsFree(input.slot); return 0; }
+    uint32_t code;
+    _Bool ok = child_id && child_id != input.parent_id && child_stage == 0 &&
+        WaitForSingleObject(thread, 0) == 258 && GetExitCodeThread(thread, &code) && code == 259;
+    SetLastError(0x1111);
+    if (ResumeThread(thread) != 1) __builtin_trap();
+    // Successful resume and wait on the native reference preserve this thread's value.
+    if (WaitForSingleObject(thread, UINT32_MAX) != 0) __builtin_trap();
+    ok = ok && GetLastError() == 0x1111 && GetExitCodeThread(thread, &code) && code == 42 &&
+        WaitForSingleObject(thread, 0) == 0 && child_stage == 5 && input.answer == 73 &&
+        local_mark == 25 && GetCurrentThreadId() == input.parent_id && TlsGetValue(input.slot) == &input;
+    child_id = 0;
+    int closed = CloseHandle(thread);
+    return TlsFree(input.slot) && closed && ok;
 }
 #endif
 
@@ -537,6 +644,9 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
 #endif
 #if FIXTURE_VARIANT == 21
     if (supported && !check_events()) return 0;
+#endif
+#if FIXTURE_VARIANT == 23
+    if (supported && !check_child_thread()) return 0;
 #endif
     return supported;
 }

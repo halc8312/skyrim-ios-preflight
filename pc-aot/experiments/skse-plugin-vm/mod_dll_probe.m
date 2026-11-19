@@ -71,6 +71,11 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
                                                             @"追加セーブの試験　呼び出し %u 回、記録 %u 件"),
                               trial->serialization_callbacks, trial->serialization_records]];
         }
+        if (trial->workers_completed) {
+            [lines addObject:[NSString stringWithFormat:Text(japanese, @"Worker threads completed · %u",
+                                                            @"終了まで確認した補助スレッド　%u 本"),
+                              trial->workers_completed]];
+        }
         return lines;
     }
     case SKSE_TRIAL_IMAGE_REFUSED:
@@ -118,6 +123,10 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
         return @[Text(japanese, @"The DLL stopped during the test of its additional save data.",
                                 @"DLLの追加セーブ処理の試験が途中で停止しました。"),
                  CallResult(japanese, trial->serialization_fault.status)];
+    case SKSE_TRIAL_WORKER_FAULT:
+        return @[Text(japanese, @"The DLL stopped during a worker thread test.",
+                                @"DLLの補助スレッドの試験が途中で停止しました。"),
+                 CallResult(japanese, trial->worker_fault.status)];
     default: {
         const SkseX86Result *fault = &trial->query;
         if (trial->status == SKSE_TRIAL_ATTACH_FAULT) fault = &trial->attach;
