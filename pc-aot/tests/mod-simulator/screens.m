@@ -369,7 +369,9 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 - (void)checkInstalledModDllDiagnostics {
     [[self findRow:@"Add a zip file"] tap];
     [self pick:@"AuthoredDLL.zip" folder:NO];
-    [[self findRow:@"AuthoredDLL"] tap];
+    XCUIElement *row = [self findRow:@"AuthoredDLL"];
+    // The accessory is the enable switch. A tap on the name opens details.
+    [row.staticTexts[@"AuthoredDLL"] tap];
     XCUIElement *check = self.app.navigationBars[@"AuthoredDLL"].buttons[@"Check DLLs"];
     XCTAssertTrue([check waitForExistenceWithTimeout:8]);
     [check tap];
