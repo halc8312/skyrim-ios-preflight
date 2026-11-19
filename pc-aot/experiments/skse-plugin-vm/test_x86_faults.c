@@ -111,7 +111,9 @@ static void check_bounded_heap(void) {
 }
 
 static void check_virtual_tls(void) {
-    SkseWinThread thread = {.id = 3, .last_error = 0x1234};
+    SkseWinThreadProcess process = {0};
+    SkseWinThread thread = {.process = &process, .id = 3, .last_error = 0x1234};
+    SkseWinThread worker = {.process = &process, .id = 4, .last_error = 0x4321};
     for (unsigned i = 0; i < SKSE_WIN_TLS_SLOTS; ++i)
         assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_ALLOC, 0, 0) == i);
     assert(thread.last_error == 0x1234);
@@ -119,30 +121,46 @@ static void check_virtual_tls(void) {
     assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_GET, 109, 0) == 0 && thread.last_error == 0);
     assert(skse_win_thread_call(&thread, SKSE_WIN_SET_LAST_ERROR, 44, 0) == 0);
     assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_SET, 109, 0x12345678) && thread.last_error == 44);
+    assert(skse_win_thread_call(&worker, SKSE_WIN_TLS_GET, 109, 0) == 0 && worker.last_error == 0);
+    assert(skse_win_thread_call(&worker, SKSE_WIN_TLS_SET, 109, 0x3400));
+    assert(skse_win_thread_call(&worker, SKSE_WIN_SET_LAST_ERROR, 77, 0) == 0);
+    assert(thread.last_error == 44);
     assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_GET, 109, 0) == 0x12345678 && thread.last_error == 0);
+    assert(worker.last_error == 77 && skse_win_thread_call(&worker, SKSE_WIN_TLS_GET, 109, 0) == 0x3400);
     assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_FREE, 109, 0));
     assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_GET, UINT32_MAX, 0) == 0 && thread.last_error == 87);
     assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_ALLOC, 0, 0) == 109);
     assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_GET, 109, 0) == 0 && thread.last_error == 0);
+    assert(skse_win_thread_call(&worker, SKSE_WIN_TLS_GET, 109, 0) == 0 && worker.last_error == 0);
     assert(skse_win_thread_call(&thread, SKSE_WIN_CURRENT_THREAD_ID, 0, 0) == 3);
 }
 
 static void check_virtual_critical_sections(void) {
-    SkseWinThread thread = {.id = 1, .last_error = 42};
+    SkseWinThreadProcess process = {0};
+    SkseWinThread thread = {.process = &process, .id = 1, .last_error = 42};
+    SkseWinThread worker = {.process = &process, .id = 2, .last_error = 66};
     const uint32_t base = 0x1234, size = SKSE_WIN_CRITICAL_SECTION_BYTES;
     for (unsigned i = 0; i < SKSE_WIN_CRITICAL_SECTIONS; ++i)
-        assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_SPIN_INIT, base + i * size, 12) == 1);
+        assert(skse_win_critical_section(&thread, SKSE_WIN_CRITICAL_SPIN_INIT, base + i * size) == SKSE_WIN_CRITICAL_ACQUIRED);
     assert(thread.last_error == 42);
-    assert(!skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_SPIN_INIT, base + SKSE_WIN_CRITICAL_SECTIONS * size, 12));
+    assert(skse_win_critical_section(&thread, SKSE_WIN_CRITICAL_SPIN_INIT, base + SKSE_WIN_CRITICAL_SECTIONS * size) ==
+           SKSE_WIN_CRITICAL_INVALID);
     assert(thread.last_error == 8);
-    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_ENTER, base, 0));
-    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_TRY, base, 0));
-    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_LEAVE, base, 0));
-    assert(!skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_DELETE, base, 0) && thread.last_error == 87);
-    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_LEAVE, base, 0));
-    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_DELETE, base, 0));
-    assert(!skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_ENTER, base, 0));
-    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_INIT, base, 0));
+    assert(skse_win_critical_section(&thread, SKSE_WIN_CRITICAL_ENTER, base) == SKSE_WIN_CRITICAL_ACQUIRED);
+    assert(skse_win_critical_section(&thread, SKSE_WIN_CRITICAL_TRY, base) == SKSE_WIN_CRITICAL_ACQUIRED);
+    assert(skse_win_critical_section(&worker, SKSE_WIN_CRITICAL_TRY, base) == SKSE_WIN_CRITICAL_CONTENDED);
+    assert(worker.last_error == 66);
+    assert(skse_win_critical_section(&worker, SKSE_WIN_CRITICAL_LEAVE, base) == SKSE_WIN_CRITICAL_INVALID);
+    assert(skse_win_critical_section(&thread, SKSE_WIN_CRITICAL_LEAVE, base) == SKSE_WIN_CRITICAL_ACQUIRED);
+    assert(skse_win_critical_section(&worker, SKSE_WIN_CRITICAL_ENTER, base) == SKSE_WIN_CRITICAL_CONTENDED);
+    assert(skse_win_critical_section(&thread, SKSE_WIN_CRITICAL_DELETE, base) == SKSE_WIN_CRITICAL_INVALID);
+    assert(thread.last_error == 87);
+    assert(skse_win_critical_section(&thread, SKSE_WIN_CRITICAL_LEAVE, base) == SKSE_WIN_CRITICAL_ACQUIRED);
+    assert(skse_win_critical_section(&worker, SKSE_WIN_CRITICAL_ENTER, base) == SKSE_WIN_CRITICAL_ACQUIRED);
+    assert(skse_win_critical_section(&worker, SKSE_WIN_CRITICAL_LEAVE, base) == SKSE_WIN_CRITICAL_ACQUIRED);
+    assert(skse_win_critical_section(&thread, SKSE_WIN_CRITICAL_DELETE, base) == SKSE_WIN_CRITICAL_ACQUIRED);
+    assert(skse_win_critical_section(&thread, SKSE_WIN_CRITICAL_ENTER, base) == SKSE_WIN_CRITICAL_INVALID);
+    assert(skse_win_critical_section(&thread, SKSE_WIN_CRITICAL_INIT, base) == SKSE_WIN_CRITICAL_ACQUIRED);
 }
 
 static void check_static_tls_address(void) {

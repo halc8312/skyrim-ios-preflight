@@ -656,16 +656,17 @@ static uint32_t win_thread_service(Vm *vm, SkseWinThreadOperation operation) {
         if (count == 2) second = little_endian(parameters + 4, 4);
         vm->registers[ESP] += 4 * count;
     }
-    const bool critical = operation >= SKSE_WIN_CRITICAL_INIT;
-    if (critical && (!first || (first & 3) ||
-        !memory(vm, first, SKSE_WIN_CRITICAL_SECTION_BYTES, SKSE_PE_READ | SKSE_PE_WRITE))) {
+    if (operation < SKSE_WIN_CRITICAL_INIT) return skse_win_thread_call(vm->services.thread, operation, first, second);
+    if (!first || (first & 3) || !memory(vm, first, SKSE_WIN_CRITICAL_SECTION_BYTES, SKSE_PE_READ | SKSE_PE_WRITE)) {
         fail(vm, SKSE_X86_MEMORY_FAULT);
         return 0;
     }
-    const uint32_t result = skse_win_thread_call(vm->services.thread, operation, first, second);
-    if (critical && !result && operation != SKSE_WIN_CRITICAL_SPIN_INIT)
+    SkseWinCriticalResult result = skse_win_critical_section(vm->services.thread, operation, first);
+    if (result == SKSE_WIN_CRITICAL_CONTENDED && operation == SKSE_WIN_CRITICAL_ENTER)
+        fail(vm, SKSE_X86_UNSUPPORTED_API);
+    if (result == SKSE_WIN_CRITICAL_INVALID && operation != SKSE_WIN_CRITICAL_SPIN_INIT)
         fail(vm, SKSE_X86_BAD_ARGUMENT);
-    return result;
+    return result == SKSE_WIN_CRITICAL_ACQUIRED;
 }
 
 static uint32_t win_interlocked(Vm *vm, SkseX86Interlocked operation) {
@@ -1586,7 +1587,8 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
         if ((unsigned)kind > SKSE_X86_SERIALIZATION || !address ||
             (kind >= SKSE_X86_MALLOC && kind <= SKSE_X86_HEAP_FREE && !services.heap) ||
             (kind == SKSE_X86_WIN_THREAD &&
-             (!services.thread || services.entries[i].value >= SKSE_WIN_THREAD_OPERATION_COUNT)) ||
+             (!services.thread || !services.thread->process || !services.thread->id ||
+              services.entries[i].value >= SKSE_WIN_THREAD_OPERATION_COUNT)) ||
             (kind == SKSE_X86_INTERLOCKED && services.entries[i].value >= SKSE_X86_ATOMIC_COUNT) ||
             (kind == SKSE_X86_MODULE_LOOKUP &&
              (!services.thread || !services.system_exports || !services.system_export_count ||

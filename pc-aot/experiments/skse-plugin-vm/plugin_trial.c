@@ -335,7 +335,8 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         .owner_handle = options.plugin_handle
     };
     SkseX86Heap heap = {.base = free_region(&space, heap_choices, sizeof heap_choices / sizeof heap_choices[0], SKSE_X86_HEAP_BYTES)};
-    SkseWinThread thread = {.id = 1};
+    SkseWinThreadProcess thread_process = {0};
+    SkseWinThread thread = {.process = &thread_process, .id = 1};
     SkseWinFiles files = {0};
     SkseWinSync sync = {0};
     SkseX86Services services = {.entries = entries, .count = 2};
