@@ -1,9 +1,32 @@
 # SKSE compatibility on iPhone — enablement plan
 
-Status 2026-11-19: plan only. Nothing here is enabled. The current build
-contract (`ios/runtime-port/ios_build_contract.h`) still rejects
-`SKYDREAM_SKSE` / `SKYDREAM_SKYUI`, and `ios/runtime-port/CMakeLists.txt`
-still filters `runtime/skse_*.c` out of the runtime.
+On 2026-11-20 the normal app's test configuration includes the Classic v1
+guest and a per-profile SkyUI 5.1 trial. That setting defaults to off. The
+trial is selected at startup after the matching guest has been bound and
+the profile has successfully published an enabled `SkyUI.esp`. The signed
+normal build 18 and the newer diagnostic builds are tracked in [STATUS.md](STATUS.md).
+
+## General compatibility for imported DLLs
+
+1. Import the MOD from Files. The app validates the 32-bit Windows image and
+   follows named imports to reachable helpers in the same package. The
+   diagnostic uses a disposable guest address space and runs only when opened.
+2. Grow shared Windows and SKSE services around verified contracts. The
+   diagnostic already has file snapshots, basic Windows synchronization,
+   one logical worker, the Classic serialization callbacks and the two task
+   queues. A test reports the operation that prevented the run. The app can
+   exercise the supported part without a per-MOD conversion step on a PC.
+3. Connect enabled plugins to the game through checked handles and the
+   actual game and UI callbacks. Verify their thread ownership, lifetimes
+   and timing on iPhone before running them during play. Keep slow work on
+   an appropriate worker and measure CPU time on the game thread.
+4. Validate an additional save's structure inside the selected profile.
+   Restoring live MOD state also requires evidence that the companion
+   belongs to the completed base save and an owning VM that accepted that
+   load. [Additional-save experiment](../experiments/skse-cosave/README.md)
+5. Extend the D3D9 bridge where rendering plugins need real device state and
+   presentation callbacks. Verify output and GPU time against reference cases.
+   The tested color treatment is one small rendering prototype. [D3D9 presentation experiment](../experiments/d3d9-present-grade/README.md)
 
 ## What already exists upstream
 
@@ -21,7 +44,7 @@ not supported and cannot become supported by this route.
 It does not load `skse_1_9_32.dll` and copies no SKSE code; keep it that way
 (the SKSE package forbids redistribution of modified versions).
 
-## Steps for the iOS build
+## Original iOS enablement outline
 
 1. **Build variant.** Add an explicit option (for example
    `SKYRIM_IOS_SKSE=ON`, default OFF) that keeps `runtime/skse_*.c`, defines
@@ -58,12 +81,12 @@ It does not load `skse_1_9_32.dll` and copies no SKSE code; keep it that way
 
 ## What the user will be told
 
-- Works when enabled: SkyUI (partial), MCM menus, Papyrus-only mods whose SKSE
-  functions are implemented.
-- Never works: SKSE DLL plugins (RaceMenu's skee, Crash Fixes, etc.), mods that
-  store data in SKSE co-saves.
-- The MOD list marks each MOD with the SKSE functions it would need that are
-  not available yet.
+- The opt-in trial covers part of SkyUI and the Papyrus calls its supported
+  menus use. Test each menu and its saved settings on the target iPhone.
+- Windows DLL gameplay, restoration of live `.skse` state and ENB presets
+  are development work. Available checks are exposed in the app's diagnostic
+  or save-check screens.
+- The MOD list reports missing SKSE functions for imported packages.
 
 ## 2026-11-19 estimate for a separate experiment
 
