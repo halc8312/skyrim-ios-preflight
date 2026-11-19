@@ -39,10 +39,10 @@ def helper(success=True):
 
 def add_second_import(data, name):
     directory(data, 1, 0x3000, 60)
-    directory(data, 12, 0, 0)
-    put(data, DATA + 20, "IIIII", 0x3120, 0, 0, 0x3140, 0x3160)
+    directory(data, 12, 0x3060, 16)
+    put(data, DATA + 20, "IIIII", 0x3120, 0, 0, 0x3140, 0x3068)
     put(data, DATA + 0x120, "II", 0x30a0, 0)
-    put(data, DATA + 0x160, "II", 0x30a0, 0)
+    put(data, DATA + 0x68, "II", 0x30a0, 0)
     zero_string(data, DATA + 0x140, name)
 
 
@@ -59,7 +59,8 @@ class DirectoryProbeTests(unittest.TestCase):
         flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror"]
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
             flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-        sources = ["test_probe_directory.c", "probe_directory.c", "plugin_trial.c", "pe_image.c", "x86_call.c", "x86_heap.c"]
+        sources = ["test_probe_directory.c", "probe_directory.c", "plugin_trial.c", "dependency_plan.c", "pe_image.c",
+                   "x86_call.c", "x86_heap.c", "x86_winthread.c"]
         subprocess.run([compiler, *flags, *(HERE / s for s in sources), "-o", cls.binary], check=True, timeout=90)
 
     def setUp(self):
@@ -77,6 +78,30 @@ class DirectoryProbeTests(unittest.TestCase):
         self.assertEqual(int(header[1]), len(files))
         self.assertEqual(list(files), sorted(files, key=lambda path: path.encode()))
         return header, files
+
+    def test_three_reachable_helpers_are_taken_only_from_selected_mod_folders(self):
+        parent = self.selected / "Data/SKSE/Plugins"
+        parent.mkdir(parents=True)
+        root = primary(b"A.dll")
+        add_second_import(root, b"B.dll")
+        (self.selected / "Main.dll").write_bytes(root)
+        for slot, name in enumerate(("A.dll", "B.dll", "Leaf.dll"), 1):
+            data = helper()
+            put(data, OPT + 28, "I", BASE + slot * 0x100000)
+            if name != "Leaf.dll":
+                add_named_clock(data)
+                zero_string(data, DATA + 0x40, b"LEAF.dll")
+                zero_string(data, DATA + 0xa2, b"OwnedCheck")
+            (parent / name).write_bytes(data)
+        header, records = self.scan()
+        self.assertEqual(header, ["checked", "4", "1"])
+        self.assertEqual(records["Main.dll"][:7], ["paired", "1", "1", "2", "A.dll", "B.dll", "yes"])
+        self.assertEqual(records["Main.dll"][-1], "7")
+        alternate = self.selected / "ignored"
+        alternate.mkdir()
+        (parent / "Leaf.dll").rename(alternate / "Leaf.dll")
+        _, records = self.scan()
+        self.assertEqual(records["Main.dll"][:6], ["missing", "1", "0", "2", "LEAF.dll", "A.dll"])
 
     def test_pair_across_approved_paths_is_sorted_and_read_only(self):
         deep = self.selected / "dAtA/sKse/pLuGIns"
@@ -119,7 +144,9 @@ class DirectoryProbeTests(unittest.TestCase):
         more = primary()
         add_second_import(more, b"Other.dll")
         main.write_bytes(more)
-        self.assertEqual(self.scan()[1]["Main.dll"][:6], ["multiple", "1", "0", "2", "OwnedWorker.dll", "Other.dll"])
+        self.assertEqual(self.scan()[1]["Main.dll"][:6], ["missing", "1", "0", "2", "Other.dll", ""])
+        (self.selected / "Other.dll").write_bytes(helper())
+        self.assertEqual(self.scan()[1]["Main.dll"][0], "dependency-limit")  # Two fixed helper images at one VA.
         # Windows case folding deduplicates distinct descriptors for the same library.
         same = primary()
         add_second_import(same, b"OWNEDworker.DLL")
@@ -138,7 +165,7 @@ class DirectoryProbeTests(unittest.TestCase):
         add_named_clock(nested)
         zero_string(nested, DATA + 0x40, b"Extra.dll")
         (self.selected / "OwnedWorker.dll").write_bytes(nested)
-        self.assertEqual(self.scan()[1]["Main.dll"][:6], ["chain", "1", "0", "1", "OwnedWorker.dll", "Extra.dll"])
+        self.assertEqual(self.scan()[1]["Main.dll"][:6], ["missing", "1", "0", "1", "Extra.dll", "OwnedWorker.dll"])
 
     def test_reserved_system_names_are_never_resolved_to_local_dlls(self):
         (self.selected / "main.dll").write_bytes(primary(b"Kernel32.dll", b"OwnedCheck"))

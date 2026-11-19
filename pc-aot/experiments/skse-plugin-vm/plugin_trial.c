@@ -33,13 +33,26 @@ static const struct {
     {{"KERNEL32.dll", "GetProcessHeap", 0xe0001030}, SKSE_X86_SCALAR_RETURN, SKSE_X86_PROCESS_HEAP},
     {{"KERNEL32.dll", "HeapAlloc", 0xe0001034}, SKSE_X86_HEAP_ALLOC, 0},
     {{"KERNEL32.dll", "HeapReAlloc", 0xe0001038}, SKSE_X86_HEAP_REALLOC, 0},
-    {{"KERNEL32.dll", "HeapFree", 0xe000103c}, SKSE_X86_HEAP_FREE, 0}
+    {{"KERNEL32.dll", "HeapFree", 0xe000103c}, SKSE_X86_HEAP_FREE, 0},
+    {{"KERNEL32.dll", "TlsAlloc", 0xe0001040}, SKSE_X86_WIN_THREAD, SKSE_WIN_TLS_ALLOC},
+    {{"KERNEL32.dll", "TlsFree", 0xe0001044}, SKSE_X86_WIN_THREAD, SKSE_WIN_TLS_FREE},
+    {{"KERNEL32.dll", "TlsGetValue", 0xe0001048}, SKSE_X86_WIN_THREAD, SKSE_WIN_TLS_GET},
+    {{"KERNEL32.dll", "TlsSetValue", 0xe000104c}, SKSE_X86_WIN_THREAD, SKSE_WIN_TLS_SET},
+    {{"KERNEL32.dll", "GetLastError", 0xe0001050}, SKSE_X86_WIN_THREAD, SKSE_WIN_GET_LAST_ERROR},
+    {{"KERNEL32.dll", "SetLastError", 0xe0001054}, SKSE_X86_WIN_THREAD, SKSE_WIN_SET_LAST_ERROR},
+    {{"KERNEL32.dll", "GetCurrentThreadId", 0xe0001058}, SKSE_X86_WIN_THREAD, SKSE_WIN_CURRENT_THREAD_ID},
+    {{"KERNEL32.dll", "InitializeCriticalSection", 0xe000105c}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_INIT},
+    {{"KERNEL32.dll", "InitializeCriticalSectionAndSpinCount", 0xe0001060}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_SPIN_INIT},
+    {{"KERNEL32.dll", "EnterCriticalSection", 0xe0001064}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_ENTER},
+    {{"KERNEL32.dll", "LeaveCriticalSection", 0xe0001068}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_LEAVE},
+    {{"KERNEL32.dll", "TryEnterCriticalSection", 0xe000106c}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_TRY},
+    {{"KERNEL32.dll", "DeleteCriticalSection", 0xe0001070}, SKSE_X86_WIN_THREAD, SKSE_WIN_CRITICAL_DELETE}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 _Static_assert(WINDOWS_SERVICE_COUNT + 5 <= SKSE_X86_MAX_SERVICES, "trial service count");
 
 typedef struct {
-    SksePeImage *images[2];
+    SksePeImage *images[SKSE_DEPENDENCY_MAX_MODULES];
     size_t count;
     SkseX86Scratch scratch;
     SkseX86Services services;
@@ -58,31 +71,26 @@ static bool overlaps(uint32_t a, uint32_t a_size, uint32_t b, uint32_t b_size) {
     return a_size && b_size && (uint64_t)a + a_size > b && (uint64_t)b + b_size > a;
 }
 
-static uint32_t scratch_base(const SksePeImage *image, const SksePeImage *dependency) {
-    static const uint32_t addresses[] = {0x60000000, 0x30000000, 0x68000000};
-    const uint32_t extent = UNAVAILABLE_CALLBACK_OFFSET + 1;
-    for (size_t i = 0; i < sizeof addresses / sizeof addresses[0]; ++i) {
-        uint32_t candidate = addresses[i];
-        if (!overlaps(candidate, extent, image->base, image->size) &&
-            !overlaps(candidate, extent, dependency->base, dependency->size)) return candidate;
+_Static_assert((unsigned)SKSE_DEPENDENCY_MAX_MODULES <= (unsigned)SKSE_X86_MAX_IMAGES, "module capacity");
+
+static uint32_t free_region(const SkseDependencySpace *space, const uint32_t *choices, size_t count, uint32_t extent) {
+    for (size_t i = 0; i < count; ++i) {
+        unsigned j = 0;
+        while (j < space->count && !overlaps(choices[i], extent, space->images[j].base, space->images[j].size)) ++j;
+        if (j == space->count) return choices[i];
     }
     return 0;
 }
 
-static uint32_t heap_base(const SksePeImage *image, const SksePeImage *dependency) {
-    static const uint32_t addresses[] = {0x18000000, 0x28000000, 0x38000000};
-    for (size_t i = 0; i < sizeof addresses / sizeof addresses[0]; ++i) {
-        uint32_t candidate = addresses[i];
-        if (!overlaps(candidate, SKSE_X86_HEAP_BYTES, image->base, image->size) &&
-            !overlaps(candidate, SKSE_X86_HEAP_BYTES, dependency->base, dependency->size)) return candidate;
-    }
-    return 0;
-}
-
-static bool read_plugin_info(const SksePeImage *image, const uint8_t *info, SkseTrialResult *result) {
+static bool read_plugin_info(const SkseDependencySpace *space, const uint8_t *info, SkseTrialResult *result) {
     uint32_t version = read_word(info);
     uint32_t address = read_word(info + 4);
     if (version != 1 || !address) return false;
+    const SksePeImage *image = NULL;
+    for (unsigned i = 0; i < space->count; ++i) {
+        if (skse_pe_allows(&space->images[i], address, 1, SKSE_PE_READ)) { image = &space->images[i]; break; }
+    }
+    if (!image) return false;
     for (size_t i = 0; i < sizeof result->name; ++i) {
         if (i > UINT32_MAX - address ||
             !skse_pe_allows(image, address + (uint32_t)i, 1, SKSE_PE_READ)) return false;
@@ -99,104 +107,64 @@ static bool read_plugin_info(const SksePeImage *image, const uint8_t *info, Skse
     return false;
 }
 
-int skse_trial_system_library(const char *name) {
-    return name && (skse_pe_library_name_equal(name, "kernel32.dll") || skse_pe_library_name_equal(name, "msvcrt.dll"));
-}
-
-static bool dependency_name_valid(const char *name) {
-    if (!name) return false;
-    size_t i = 0;
-    for (; i < SKSE_PE_MAX_IMPORT_NAME && name[i]; ++i) {
-        unsigned c = (uint8_t)name[i];
-        if (c < 0x20 || c >= 0x7f || c == '/' || c == '\\' || c == ':') return false;
-    }
-    return i >= 5 && i < SKSE_PE_MAX_IMPORT_NAME && skse_pe_library_name_equal(name + i - 4, ".dll") &&
-           !skse_trial_system_library(name);
-}
-
-static SksePeStatus map_dependency(const uint8_t *file, size_t length, uint32_t guest_base,
-                                   const SkseTrialDependency *dependency, SksePeImportBinding *bindings,
-                                   size_t *binding_count, SksePeReport *primary, SksePeImage *image) {
-    const char *name = dependency->file_name;
-    if (!dependency_name_valid(name) || !dependency->bytes || !dependency->length) return SKSE_PE_BAD_ARGUMENT;
-    if (length > SKSE_PE_MAX_FILE_BYTES || dependency->length > SKSE_PE_MAX_FILE_BYTES - length)
-        return SKSE_PE_SIZE_LIMIT;
-    SksePeStatus status = skse_pe_inspect(file, length, primary);
-    if (status != SKSE_PE_UNSUPPORTED_IMPORTS && status != SKSE_PE_OK) return status;
-    SksePeRequiredExport required[SKSE_PE_MAX_IMPORT_SYMBOLS] = {0};
-    size_t count = 0;
-    for (uint16_t i = 0; i < primary->symbol_count; ++i) {
-        const SksePeImportSymbol *symbol = &primary->symbols[i];
-        if (!skse_pe_library_name_equal(name, primary->libraries[symbol->library_index])) continue;
-        if (symbol->by_ordinal) return SKSE_PE_ORDINAL_IMPORT;
-        size_t j = 0;
-        while (j < count && strcmp(required[j].name, symbol->name)) ++j;
-        if (j == count) required[count++].name = symbol->name;
-    }
-    if (!count) return SKSE_PE_MISSING_DEPENDENCY_EXPORT;
-    if (count > SKSE_PE_MAX_IMPORT_SYMBOLS - *binding_count) return SKSE_PE_SIZE_LIMIT;
-
-    SksePeReport helper_layout;
-    skse_pe_inspect(dependency->bytes, dependency->length, &helper_layout);
-    uint32_t primary_base = guest_base ? guest_base : primary->preferred_base;
-    uint32_t placement = 0;
-    if (overlaps(primary_base, primary->image_size, helper_layout.preferred_base, helper_layout.image_size)) {
-        placement = 0x40000000;
-        if (overlaps(primary_base, primary->image_size, placement, helper_layout.image_size)) placement = 0x50000000;
-    }
-    status = skse_pe_map_library(dependency->bytes, dependency->length, placement, bindings, *binding_count,
-                                  SKSE_PE_ALLOW_ENTRY, required, count, image);
-    if (status != SKSE_PE_OK) return status;
-    for (size_t i = 0; i < count; ++i) {
-        // required[i].name points to the caller's live import manifest.
-        bindings[*binding_count + i] = (SksePeImportBinding){name, required[i].name, required[i].address};
-    }
-    *binding_count += count;
-    return SKSE_PE_OK;
-}
-
 static SkseX86Result call_trial(TrialVm *vm, uint32_t entry, const uint32_t *args,
                                 size_t count, SkseX86Convention convention) {
     return skse_x86_call_in_space(vm->images, vm->count, entry, vm->scratch, args, count, CALL_BUDGET,
                                  vm->services, convention);
 }
 
-static SkseTrialResult run_trial(const uint8_t *file, size_t length, SkseTrialOptions options,
-                                  const SkseTrialRuntime *runtime, const SkseTrialDependency *dependency) {
+typedef enum { NO_CATALOG, PACKAGE_CATALOG, EXPLICIT_HELPER } CatalogPolicy;
+
+static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions options, const SkseTrialRuntime *runtime,
+                                 const SkseTrialDependency *catalog, size_t count, CatalogPolicy policy) {
     SkseTrialResult result = {.status = SKSE_TRIAL_IMAGE_REFUSED};
-    SksePeImage image = {0};
-    SksePeImage helper = {0};
+    SkseDependencySpace space = {0};
+    SksePeImage *image = &space.images[0];
     if (runtime) {
-        SksePeImportBinding imports[SKSE_PE_MAX_IMPORT_SYMBOLS];
-        size_t count = WINDOWS_SERVICE_COUNT;
-        for (size_t i = 0; i < count; ++i) imports[i] = windows_services[i].binding;
-        SksePeReport primary;
-        if (dependency) {
-            result.dependency_status = map_dependency(file, length, runtime->guest_base, dependency, imports, &count,
-                                                      &primary, &helper);
-            if (result.dependency_status != SKSE_PE_OK) {
-                result.status = SKSE_TRIAL_DEPENDENCY_REFUSED;
+        SksePeImportBinding imports[WINDOWS_SERVICE_COUNT];
+        for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i) imports[i] = windows_services[i].binding;
+        if (policy != NO_CATALOG) {
+            if (policy == EXPLICIT_HELPER) {
+                bool too_large = primary.length > SKSE_PE_MAX_FILE_BYTES || catalog[0].length > SKSE_PE_MAX_FILE_BYTES - primary.length;
+                if (too_large || !skse_dependency_local_name_valid(catalog[0].file_name) || !catalog[0].bytes || !catalog[0].length) {
+                    result.status = SKSE_TRIAL_DEPENDENCY_REFUSED;
+                    result.dependency_status = too_large ? SKSE_PE_SIZE_LIMIT : SKSE_PE_BAD_ARGUMENT;
+                    return result;
+                }
+            }
+            SkseDependencyStatus status = skse_dependency_map(primary, catalog, count, runtime->guest_base,
+                                        imports, WINDOWS_SERVICE_COUNT, &space, &result.dependencies);
+            if (status != SKSE_DEPENDENCY_READY || (policy == EXPLICIT_HELPER && space.count != 2)) {
+                result.dependency_status = status == SKSE_DEPENDENCY_READY ? SKSE_PE_MISSING_DEPENDENCY_EXPORT
+                                                                          : result.dependencies.image_status;
+                if (status == SKSE_DEPENDENCY_NO_MEMORY) result.status = SKSE_TRIAL_NO_MEMORY;
+                else if (result.dependencies.root_image_error && policy != EXPLICIT_HELPER)
+                    result.image_status = result.dependency_status;
+                else result.status = SKSE_TRIAL_DEPENDENCY_REFUSED;
+                skse_dependency_close(&space);
                 return result;
             }
+        } else {
+            result.image_status = runtime->guest_base
+                ? skse_pe_map_at_base(primary.bytes, primary.length, runtime->guest_base, imports, WINDOWS_SERVICE_COUNT,
+                                      SKSE_PE_ALLOW_ENTRY, image)
+                : skse_pe_map_with_imports(primary.bytes, primary.length, imports, WINDOWS_SERVICE_COUNT, SKSE_PE_ALLOW_ENTRY, image);
         }
-        result.image_status = runtime->guest_base
-            ? skse_pe_map_at_base(file, length, runtime->guest_base, imports, count, SKSE_PE_ALLOW_ENTRY, &image)
-            : skse_pe_map_with_imports(file, length, imports, count, SKSE_PE_ALLOW_ENTRY, &image);
     } else {
-        result.image_status = skse_pe_map(file, length, &image);
+        result.image_status = skse_pe_map(primary.bytes, primary.length, image);
     }
-    if (result.image_status != SKSE_PE_OK) {
-        skse_pe_free(&helper);
-        return result;
-    }
+    if (result.image_status != SKSE_PE_OK) return result;
+    if (policy == NO_CATALOG) space.count = 1;
 
+    static const uint32_t scratch_choices[] = {0x60000000, 0x30000000, 0x68000000, 0x70000000, 0x78000000};
+    static const uint32_t heap_choices[] = {0x18000000, 0x28000000, 0x38000000, 0x48000000, 0x58000000};
     SkseX86Scratch scratch = {
-        .base = scratch_base(&image, &helper), .bytes = calloc(SCRATCH_SIZE, 1), .length = SCRATCH_SIZE
+        .base = free_region(&space, scratch_choices, sizeof scratch_choices / sizeof scratch_choices[0], UNAVAILABLE_CALLBACK_OFFSET + 1),
+        .bytes = calloc(SCRATCH_SIZE, 1), .length = SCRATCH_SIZE
     };
     if (!scratch.bytes) {
         result.status = SKSE_TRIAL_NO_MEMORY;
-        skse_pe_free(&image);
-        skse_pe_free(&helper);
+        skse_dependency_close(&space);
         return result;
     }
 
@@ -209,10 +177,12 @@ static SkseTrialResult run_trial(const uint8_t *file, size_t length, SkseTrialOp
         .interface_address = scratch.base + MESSAGING_INTERFACE_OFFSET,
         .owner_handle = options.plugin_handle
     };
-    SkseX86Heap heap = {.base = heap_base(&image, &helper)};
+    SkseX86Heap heap = {.base = free_region(&space, heap_choices, sizeof heap_choices / sizeof heap_choices[0], SKSE_X86_HEAP_BYTES)};
+    SkseWinThread thread = {.id = 1};
     SkseX86Services services = {.entries = entries, .count = 2};
     if (runtime) {
         services.heap = &heap;
+        services.thread = &thread;
         for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i) {
             entries[services.count++] = (SkseX86Service){
                 windows_services[i].binding.service_token, windows_services[i].value, windows_services[i].kind
@@ -242,24 +212,32 @@ static SkseTrialResult run_trial(const uint8_t *file, size_t length, SkseTrialOp
         write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 12, unavailable_address);
     }
 
-    TrialVm vm = {.images = {&image, &helper}, .count = helper.bytes ? 2u : 1u, .scratch = scratch, .services = services};
-    bool helper_attached = false;
-    uint32_t helper_args[] = {helper.base, 1, 0};
-    if (helper.entry_va) {
-        result.dependency_attach = call_trial(&vm, helper.entry_va, helper_args, 3, SKSE_X86_STDCALL);
+    TrialVm vm = {.count = space.count, .scratch = scratch, .services = services};
+    for (unsigned i = 0; i < space.count; ++i) vm.images[i] = &space.images[i];
+    bool detach_helper[SKSE_DEPENDENCY_MAX_HELPERS] = {false};
+    bool helpers_ready = false;
+    for (unsigned i = 0; i < result.dependencies.helper_count; ++i) {
+        const SksePeImage *helper = &space.images[space.helper_order[i]];
+        if (!helper->entry_va) continue;
+        uint32_t args[] = {helper->base, 1, 0};
+        result.dependency_attach = call_trial(&vm, helper->entry_va, args, 3, SKSE_X86_STDCALL);
         if (result.dependency_attach.status != SKSE_X86_OK) {
             result.status = SKSE_TRIAL_DEPENDENCY_ATTACH_FAULT;
+            memcpy(result.failing_helper, result.dependencies.load_order[i], sizeof result.failing_helper);
             goto cleanup;
         }
-        helper_attached = true;
+        detach_helper[i] = true;
         if (!result.dependency_attach.eax) {
             result.status = SKSE_TRIAL_DEPENDENCY_ATTACH_DECLINED;
+            memcpy(result.failing_helper, result.dependencies.load_order[i], sizeof result.failing_helper);
             goto cleanup;
         }
+        ++result.helpers_attached;
     }
-    uint32_t entry_args[] = {image.base, 1, 0}; // Dynamic DLL_PROCESS_ATTACH.
-    if (image.entry_va) {
-        result.attach = call_trial(&vm, image.entry_va, entry_args, 3, SKSE_X86_STDCALL);
+    helpers_ready = true;
+    uint32_t entry_args[] = {image->base, 1, 0}; // Dynamic DLL_PROCESS_ATTACH.
+    if (image->entry_va) {
+        result.attach = call_trial(&vm, image->entry_va, entry_args, 3, SKSE_X86_STDCALL);
         if (result.attach.status != SKSE_X86_OK) {
             result.status = SKSE_TRIAL_ATTACH_FAULT;
             goto cleanup;
@@ -271,15 +249,15 @@ static SkseTrialResult run_trial(const uint8_t *file, size_t length, SkseTrialOp
     }
 
     const uint32_t args[] = {scratch.base, scratch.base + INFO_OFFSET};
-    result.query = call_trial(&vm, image.query_va, args, 2, SKSE_X86_CDECL);
+    result.query = call_trial(&vm, image->query_va, args, 2, SKSE_X86_CDECL);
     if (result.query.status != SKSE_X86_OK) {
         result.status = SKSE_TRIAL_QUERY_FAULT;
     } else if (!(result.query.eax & 0xff)) {
         result.status = SKSE_TRIAL_QUERY_DECLINED;
-    } else if (!read_plugin_info(&image, scratch.bytes + INFO_OFFSET, &result)) {
+    } else if (!read_plugin_info(&space, scratch.bytes + INFO_OFFSET, &result)) {
         result.status = SKSE_TRIAL_INVALID_INFO;
     } else {
-        result.load = call_trial(&vm, image.load_va, args, 1, SKSE_X86_CDECL);
+        result.load = call_trial(&vm, image->load_va, args, 1, SKSE_X86_CDECL);
         if (result.load.status != SKSE_X86_OK) result.status = SKSE_TRIAL_LOAD_FAULT;
         else result.status = (result.load.eax & 0xff) ? SKSE_TRIAL_COMPLETED : SKSE_TRIAL_LOAD_DECLINED;
     }
@@ -304,38 +282,49 @@ static SkseTrialResult run_trial(const uint8_t *file, size_t length, SkseTrialOp
     }
 
 detach:
-    if (image.entry_va) {
+    if (image->entry_va) {
         entry_args[1] = 0; // DLL_PROCESS_DETACH, including a declined attach.
-        result.detach = call_trial(&vm, image.entry_va, entry_args, 3, SKSE_X86_STDCALL);
+        result.detach = call_trial(&vm, image->entry_va, entry_args, 3, SKSE_X86_STDCALL);
         if (result.detach.status != SKSE_X86_OK && result.status == SKSE_TRIAL_COMPLETED)
             result.status = SKSE_TRIAL_DETACH_FAULT;
     }
 cleanup:
-    if (helper_attached) {
-        helper_args[1] = 0;
-        result.dependency_detach = call_trial(&vm, helper.entry_va, helper_args, 3, SKSE_X86_STDCALL);
-        if (result.dependency_detach.status != SKSE_X86_OK && result.status == SKSE_TRIAL_COMPLETED)
+    for (unsigned step = 0; step < result.dependencies.helper_count; ++step) {
+        unsigned i = helpers_ready ? space.detach_steps[step] : result.dependencies.helper_count - 1 - step;
+        if (!detach_helper[i]) continue;
+        const SksePeImage *helper = &space.images[space.helper_order[i]];
+        uint32_t args[] = {helper->base, 0, 0};
+        SkseX86Result detached = call_trial(&vm, helper->entry_va, args, 3, SKSE_X86_STDCALL);
+        if (result.dependency_detach.status == SKSE_X86_OK) result.dependency_detach = detached;
+        if (detached.status == SKSE_X86_OK) ++result.helpers_detached;
+        else if (result.status == SKSE_TRIAL_COMPLETED) {
             result.status = SKSE_TRIAL_DEPENDENCY_DETACH_FAULT;
+            memcpy(result.failing_helper, result.dependencies.load_order[i], sizeof result.failing_helper);
+        }
     }
     result.unavailable_interface = core.unavailable_id;
     free(scratch.bytes);
     skse_x86_heap_close(&heap);
-    skse_pe_free(&image);
-    skse_pe_free(&helper);
+    skse_dependency_close(&space);
     return result;
 }
 
 SkseTrialResult skse_plugin_trial(const uint8_t *file, size_t length, SkseTrialOptions options) {
-    return run_trial(file, length, options, NULL, NULL);
+    return run_trial((SkseTrialDependency){NULL, file, length}, options, NULL, NULL, 0, NO_CATALOG);
 }
 
 SkseTrialResult skse_plugin_trial_with_runtime(const uint8_t *file, size_t length,
                                                SkseTrialOptions options, SkseTrialRuntime runtime) {
-    return run_trial(file, length, options, &runtime, NULL);
+    return run_trial((SkseTrialDependency){NULL, file, length}, options, &runtime, NULL, 0, NO_CATALOG);
 }
 
 SkseTrialResult skse_plugin_trial_with_dependency(const uint8_t *file, size_t length,
                                                   SkseTrialOptions options, SkseTrialRuntime runtime,
                                                   SkseTrialDependency dependency) {
-    return run_trial(file, length, options, &runtime, &dependency);
+    return run_trial((SkseTrialDependency){NULL, file, length}, options, &runtime, &dependency, 1, EXPLICIT_HELPER);
+}
+
+SkseTrialResult skse_plugin_trial_with_package(SkseTrialDependency primary, const SkseTrialDependency *catalog,
+                                              size_t count, SkseTrialOptions options, SkseTrialRuntime runtime) {
+    return run_trial(primary, options, &runtime, catalog, count, PACKAGE_CATALOG);
 }

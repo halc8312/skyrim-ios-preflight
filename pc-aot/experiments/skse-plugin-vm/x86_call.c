@@ -570,6 +570,28 @@ static uint32_t win_heap_service(Vm *vm, SkseX86ServiceKind kind) {
                     : skse_x86_heap_allocate(heap, requested, (flags & ZERO_MEMORY) != 0);
 }
 
+static uint32_t win_thread_service(Vm *vm, SkseWinThreadOperation operation) {
+    unsigned count = skse_win_thread_argument_count(operation);
+    uint32_t first = 0, second = 0;
+    if (count) {
+        const uint8_t *parameters = service_parameters(vm, 4 * count);
+        if (!parameters) return 0;
+        first = little_endian(parameters, 4);
+        if (count == 2) second = little_endian(parameters + 4, 4);
+        vm->registers[ESP] += 4 * count;
+    }
+    const bool critical = operation >= SKSE_WIN_CRITICAL_INIT;
+    if (critical && (!first || (first & 3) ||
+        !memory(vm, first, SKSE_WIN_CRITICAL_SECTION_BYTES, SKSE_PE_READ | SKSE_PE_WRITE))) {
+        fail(vm, SKSE_X86_MEMORY_FAULT);
+        return 0;
+    }
+    const uint32_t result = skse_win_thread_call(vm->services.thread, operation, first, second);
+    if (critical && !result && operation != SKSE_WIN_CRITICAL_SPIN_INIT)
+        fail(vm, SKSE_X86_BAD_ARGUMENT);
+    return result;
+}
+
 static void branch(Vm *vm, uint32_t address, bool tail) {
     if (vm->result.status != SKSE_X86_OK) return;
     for (size_t i = 0; i < vm->services.count; ++i) {
@@ -607,6 +629,9 @@ static void branch(Vm *vm, uint32_t address, bool tail) {
             case SKSE_X86_HEAP_REALLOC:
             case SKSE_X86_HEAP_FREE:
                 vm->registers[EAX] = win_heap_service(vm, service->kind);
+                break;
+            case SKSE_X86_WIN_THREAD:
+                vm->registers[EAX] = win_thread_service(vm, (SkseWinThreadOperation)service->value);
                 break;
             }
             ++vm->result.service_calls[i];
@@ -1049,8 +1074,10 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
-        if ((unsigned)kind > SKSE_X86_HEAP_FREE || !address ||
-            (kind >= SKSE_X86_MALLOC && !services.heap) ||
+        if ((unsigned)kind > SKSE_X86_WIN_THREAD || !address ||
+            (kind >= SKSE_X86_MALLOC && kind <= SKSE_X86_HEAP_FREE && !services.heap) ||
+            (kind == SKSE_X86_WIN_THREAD &&
+             (!services.thread || services.entries[i].value >= SKSE_WIN_THREAD_OPERATION_COUNT)) ||
             ((kind == SKSE_X86_QUERY_CLASSIC || kind == SKSE_X86_REGISTER_CORE_LISTENER) &&
              (!services.core_messaging ||
               !in_range(scratch.base, scratch_end, services.core_messaging->interface_address, 16))) ||

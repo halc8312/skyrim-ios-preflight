@@ -8,7 +8,7 @@ pushd "$here" >/dev/null
 
 CC=clang python3 -B -m unittest -v test_probe_local_file test_probe_directory test_skse_plugin_vm test_pe_image
 device_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
-sources=(pe_image.c x86_call.c x86_heap.c plugin_trial.c probe_local_file.c probe_directory.c)
+sources=(pe_image.c x86_call.c x86_heap.c x86_winthread.c dependency_plan.c plugin_trial.c probe_local_file.c probe_directory.c)
 for source in "${sources[@]}"; do
     xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" \
         -std=c11 -O2 -Wall -Wextra -Werror -c "$source" -o "$work/${source%.c}.o"

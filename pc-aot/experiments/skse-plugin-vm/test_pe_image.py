@@ -23,6 +23,7 @@ SECTIONS = OPT + 224
 RD = 0x400
 DATA = 0x600
 BASE = 0x10000000
+MAX_IMPORT_SYMBOLS = 256
 R, W, X = 1, 2, 4
 
 
@@ -54,7 +55,7 @@ class Report(c.Structure):
     _fields_ = [("directory_mask", c.c_uint32), ("entry_rva", c.c_uint32),
                 ("has_writable_code", c.c_uint), ("library_count", c.c_uint16),
                 ("symbol_count", c.c_uint16), ("libraries", (c.c_char * 128) * 32),
-                ("symbols", Symbol * 128), ("preferred_base", c.c_uint32), ("image_size", c.c_uint32)]
+                ("symbols", Symbol * MAX_IMPORT_SYMBOLS), ("preferred_base", c.c_uint32), ("image_size", c.c_uint32)]
 
 
 def put(data, offset, fmt, *fields):
@@ -375,20 +376,24 @@ class PeReaderTest(unittest.TestCase):
         for many_libraries in (True, False):
             with self.subTest(many_libraries=many_libraries):
                 d = make_image()
-                d[DATA:] = bytes(0x800)
-                put(d, SECTIONS + 80 + 8, "I", 0x800)
-                put(d, SECTIONS + 80 + 16, "I", 0x800)
+                d[DATA:] = bytes(0xa00)
+                put(d, SECTIONS + 80 + 8, "I", 0xa00)
+                put(d, SECTIONS + 80 + 16, "I", 0xa00)
                 count = 33 if many_libraries else 1
                 directory(d, 1, 0x3000, (count + 1) * 20)
                 for i in range(count):
                     put(d, DATA + i * 20, "IIIII", 0x3400, 0, 0, 0x3300, 0x3400)
                 zero_string(d, DATA + 0x300, b"OwnedDependency.dll")
                 if not many_libraries:
-                    for i in range(129):
+                    for i in range(MAX_IMPORT_SYMBOLS + 1):
                         put(d, DATA + 0x400 + i * 4, "I", 0x80000003)
                 info = self.expect(d, "parser limit exceeded")
                 self.assertEqual(32 if many_libraries else 1, info.library_count)
-                self.assertEqual(0 if many_libraries else 128, info.symbol_count)
+                self.assertEqual(0 if many_libraries else MAX_IMPORT_SYMBOLS, info.symbol_count)
+                if not many_libraries:
+                    put(d, DATA + 0x400 + MAX_IMPORT_SYMBOLS * 4, "I", 0)
+                    complete = self.expect(d, "imports unsupported")
+                    self.assertEqual(MAX_IMPORT_SYMBOLS, complete.symbol_count)
 
     def test_preferred_only_relocations(self):
         d = make_image()

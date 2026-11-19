@@ -226,6 +226,38 @@ static void setup_arithmetic(void) {
 }
 #endif
 
+#if FIXTURE_VARIANT == 14
+__declspec(dllimport) unsigned long __stdcall TlsAlloc(void);
+__declspec(dllimport) int __stdcall TlsFree(unsigned long);
+__declspec(dllimport) void *__stdcall TlsGetValue(unsigned long);
+__declspec(dllimport) int __stdcall TlsSetValue(unsigned long, void *);
+__declspec(dllimport) unsigned long __stdcall GetLastError(void);
+__declspec(dllimport) void __stdcall SetLastError(unsigned long);
+__declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
+typedef struct { unsigned words[6]; } FixtureCriticalSection;
+__declspec(dllimport) void __stdcall InitializeCriticalSection(FixtureCriticalSection *);
+__declspec(dllimport) int __stdcall InitializeCriticalSectionAndSpinCount(FixtureCriticalSection *, unsigned long);
+__declspec(dllimport) void __stdcall EnterCriticalSection(FixtureCriticalSection *);
+__declspec(dllimport) int __stdcall TryEnterCriticalSection(FixtureCriticalSection *);
+__declspec(dllimport) void __stdcall LeaveCriticalSection(FixtureCriticalSection *);
+__declspec(dllimport) void __stdcall DeleteCriticalSection(FixtureCriticalSection *);
+static unsigned long index, original_thread;
+static FixtureCriticalSection section;
+
+static _Bool setup_thread_values(void) {
+    SetLastError(0x1234);
+    index = TlsAlloc();
+    if (index == 0xffffffffu || GetLastError() != 0x1234) return 0;
+    if (TlsGetValue(index) != NULL || GetLastError() != 0) return 0;
+    SetLastError(0x5678);
+    if (!TlsSetValue(index, (void *)0x12345678u) || GetLastError() != 0x5678) return 0;
+    original_thread = GetCurrentThreadId();
+    if (!original_thread || !InitializeCriticalSectionAndSpinCount(&section, 42)) return 0;
+    EnterCriticalSection(&section);
+    return TryEnterCriticalSection(&section) != 0;
+}
+#endif
+
 _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (!api || !info) return 0;
     info->info_version = 1;
@@ -256,6 +288,9 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
 #endif
 #if FIXTURE_VARIANT == 13
     setup_arithmetic();
+#endif
+#if FIXTURE_VARIANT == 14
+    if (supported && !setup_thread_values()) return 0;
 #endif
     return supported;
 }
@@ -317,6 +352,19 @@ _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
         arithmetic_output[2] != 0xf123 || arithmetic_output[3] != 0x4567 || arithmetic_output[4] != 0x23456780 ||
         arithmetic_output[5] != 1 || (arithmetic_output[6] & 0xffff) != 0x00fb ||
         arithmetic_output[7] != 0xffedcba9 || arithmetic_output[8] != (0x558811bbu >> 1) - 1) return 0;
+#endif
+#if FIXTURE_VARIANT == 14
+    if (GetCurrentThreadId() != original_thread || TlsGetValue(index) != (void *)0x12345678u || GetLastError()) return 0;
+    LeaveCriticalSection(&section);
+    LeaveCriticalSection(&section);
+    DeleteCriticalSection(&section);
+    InitializeCriticalSection(&section);
+    EnterCriticalSection(&section);
+    LeaveCriticalSection(&section);
+    DeleteCriticalSection(&section);
+    SetLastError(17);
+    if (!TlsFree(index) || GetLastError() != 17) return 0;
+    if (TlsGetValue(0xffffffffu) != NULL || GetLastError() != 87) return 0;
 #endif
     return 1;
 }

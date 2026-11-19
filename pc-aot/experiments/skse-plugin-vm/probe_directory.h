@@ -24,13 +24,14 @@ typedef enum {
     SKSE_PROBE_DLL_STANDALONE, SKSE_PROBE_DLL_PAIRED,
     SKSE_PROBE_DLL_DEPENDENCY_MISSING, SKSE_PROBE_DLL_DEPENDENCY_AMBIGUOUS,
     SKSE_PROBE_DLL_DEPENDENCY_MULTIPLE, SKSE_PROBE_DLL_DEPENDENCY_UNREADABLE,
-    SKSE_PROBE_DLL_DEPENDENCY_SELF, SKSE_PROBE_DLL_DEPENDENCY_INVALID, SKSE_PROBE_DLL_DEPENDENCY_CHAIN
+    SKSE_PROBE_DLL_DEPENDENCY_SELF, SKSE_PROBE_DLL_DEPENDENCY_INVALID, SKSE_PROBE_DLL_DEPENDENCY_CHAIN,
+    SKSE_PROBE_DLL_DEPENDENCY_CYCLE, SKSE_PROBE_DLL_DEPENDENCY_LIMIT
 } SkseProbeDirectoryFileStatus;
 
 typedef struct {
     char relative_path[SKSE_PROBE_DIRECTORY_PATH_BYTES];
     char dependency_name[SKSE_PE_MAX_IMPORT_NAME];
-    char other_dependency_name[SKSE_PE_MAX_IMPORT_NAME]; /* Second distinct import or helper's import. */
+    char other_dependency_name[SKSE_PE_MAX_IMPORT_NAME]; /* A second direct import, or the asking helper after a refusal. */
     SkseProbeDirectoryFileStatus status;
     SksePeStatus export_status; /* Meaningful for DLLs whose bytes were read. */
     unsigned is_plugin, external_library_count, trial_ran;

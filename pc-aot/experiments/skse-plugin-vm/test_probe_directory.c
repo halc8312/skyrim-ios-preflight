@@ -15,7 +15,8 @@ int main(int argc, char **argv) {
     static const char *const directory_status[] = {"checked", "no-plugins", "unavailable", "ambiguous-layout",
         "file-limit", "entry-limit", "size-limit", "incomplete", "no-memory"};
     static const char *const file_status[] = {"not-plugin", "not-regular", "unreadable", "empty", "too-large",
-        "standalone", "paired", "missing", "ambiguous", "multiple", "unreadable-dependency", "self", "invalid", "chain"};
+        "standalone", "paired", "missing", "ambiguous", "multiple", "unreadable-dependency", "self", "invalid", "chain",
+        "cycle", "dependency-limit"};
     if ((size_t)status >= sizeof directory_status / sizeof *directory_status) return 3;
     printf("%s|%u|%u\n", directory_status[status], report.file_count, report.plugin_count);
     for (unsigned i = 0; i < report.file_count; ++i) {

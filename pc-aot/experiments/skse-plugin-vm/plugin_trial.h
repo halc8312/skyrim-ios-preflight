@@ -3,6 +3,7 @@
 #define SKYRIM_EXPERIMENT_SKSE_PLUGIN_TRIAL_H
 
 #include "x86_call.h"
+#include "dependency_plan.h"
 
 typedef enum {
     SKSE_TRIAL_COMPLETED,
@@ -35,12 +36,6 @@ typedef struct {
 } SkseTrialRuntime;
 
 typedef struct {
-    const char *file_name;
-    const uint8_t *bytes;
-    size_t length;
-} SkseTrialDependency;
-
-typedef struct {
     SkseTrialStatus status;
     SksePeStatus image_status;
     SkseX86Result attach, query, load, detach, message;
@@ -48,6 +43,9 @@ typedef struct {
     SkseX86Result dependency_attach, dependency_detach;
     uint32_t info_version, plugin_version, messages_delivered, unavailable_interface;
     char name[128];
+    SkseDependencyTrace dependencies;
+    unsigned helpers_attached, helpers_detached;
+    char failing_helper[SKSE_PE_MAX_IMPORT_NAME];
 } SkseTrialResult;
 
 /* Exercise the two cdecl exports in a private image. The only available
@@ -65,6 +63,8 @@ SkseTrialResult skse_plugin_trial_with_runtime(const uint8_t *file, size_t lengt
 SkseTrialResult skse_plugin_trial_with_dependency(const uint8_t *file, size_t length,
                                                   SkseTrialOptions options, SkseTrialRuntime runtime,
                                                   SkseTrialDependency dependency);
-/* Names reserved for the diagnostic's built-in Windows services. */
-int skse_trial_system_library(const char *name);
+/* Only reachable helpers from this package are considered. Catalog excludes
+ * the primary. Duplicate names, cycles and the fourth helper are diagnosed. */
+SkseTrialResult skse_plugin_trial_with_package(SkseTrialDependency primary, const SkseTrialDependency *catalog,
+                                              size_t count, SkseTrialOptions options, SkseTrialRuntime runtime);
 #endif

@@ -281,16 +281,15 @@ static SkseProbeDirectoryStatus snapshot_all(DirectoryScan *scan) {
     return SKSE_PROBE_DIRECTORY_CHECKED;
 }
 
-static unsigned external_names(const Source *source, char first[SKSE_PE_MAX_IMPORT_NAME], char *second) {
-    SksePeReport imports;
-    SksePeStatus status = skse_pe_inspect(source->bytes, source->length, &imports);
+static unsigned external_names(const Source *source, SksePeReport *imports, char first[SKSE_PE_MAX_IMPORT_NAME], char *second) {
+    SksePeStatus status = skse_pe_inspect(source->bytes, source->length, imports);
     if (status != SKSE_PE_OK && status != SKSE_PE_UNSUPPORTED_IMPORTS) return 0;
     unsigned count = 0;
-    for (uint16_t i = 0; i < imports.library_count; ++i) {
-        const char *name = imports.libraries[i];
+    for (uint16_t i = 0; i < imports->library_count; ++i) {
+        const char *name = imports->libraries[i];
         if (skse_trial_system_library(name)) continue;
         uint16_t j = 0;
-        while (j < i && !skse_pe_library_name_equal(name, imports.libraries[j])) ++j;
+        while (j < i && !skse_pe_library_name_equal(name, imports->libraries[j])) ++j;
         if (j != i) continue;
         if (count == 0) memcpy(first, name, strlen(name) + 1);
         if (count == 1 && second) memcpy(second, name, strlen(name) + 1);
@@ -299,7 +298,8 @@ static unsigned external_names(const Source *source, char first[SKSE_PE_MAX_IMPO
     return count;
 }
 
-static void diagnose(const DirectoryScan *scan, const Source *source, uint32_t uptime_ms, SkseProbeDirectoryFile *file) {
+static void diagnose(const DirectoryScan *scan, const Source *source, uint32_t uptime_ms, SksePeReport *manifest,
+                     SkseProbeDirectoryFile *file) {
     memcpy(file->relative_path, source->relative, strlen(source->relative) + 1);
     file->status = source->status;
     file->export_status = SKSE_PE_BAD_ARGUMENT;
@@ -307,7 +307,7 @@ static void diagnose(const DirectoryScan *scan, const Source *source, uint32_t u
     file->export_status = skse_pe_classic_exports(source->bytes, source->length);
     if (file->export_status != SKSE_PE_OK) return;
     file->is_plugin = 1;
-    file->external_library_count = external_names(source, file->dependency_name, file->other_dependency_name);
+    file->external_library_count = external_names(source, manifest, file->dependency_name, file->other_dependency_name);
     const SkseTrialOptions options = {0x01070030, 0x09200000, 0, 48, 1, 1, 1};
     const SkseTrialRuntime runtime = {.uptime_ms = uptime_ms, .core_messages = 1};
     if (!file->external_library_count) {
@@ -316,35 +316,34 @@ static void diagnose(const DirectoryScan *scan, const Source *source, uint32_t u
         file->trial_ran = 1;
         return;
     }
-    if (file->external_library_count > 1) {
-        file->status = SKSE_PROBE_DLL_DEPENDENCY_MULTIPLE;
-        return;
-    }
-    const char *name = file->dependency_name;
-    if (!dll_name(name) || strpbrk(name, "/\\:")) {
-        file->status = SKSE_PROBE_DLL_DEPENDENCY_INVALID;
-        return;
-    }
-    const Source *found = NULL;
+    SkseTrialDependency catalog[SKSE_PROBE_DIRECTORY_MAX_FILES];
+    size_t count = 0;
     for (unsigned i = 0; i < scan->count; ++i) {
         const Source *item = &scan->files[i];
-        if (!skse_pe_library_name_equal(base_name(item), name)) continue;
-        if (found) {
-            file->status = SKSE_PROBE_DLL_DEPENDENCY_AMBIGUOUS;
-            return;
-        }
-        found = item;
+        if (item != source) catalog[count++] = (SkseTrialDependency){base_name(item), item->bytes, item->length};
     }
-    if (!found) file->status = SKSE_PROBE_DLL_DEPENDENCY_MISSING;
-    else if (found == source) file->status = SKSE_PROBE_DLL_DEPENDENCY_SELF;
-    else if (!found->bytes) file->status = SKSE_PROBE_DLL_DEPENDENCY_UNREADABLE;
-    else if (external_names(found, file->other_dependency_name, NULL)) file->status = SKSE_PROBE_DLL_DEPENDENCY_CHAIN;
-    else {
-        SkseTrialDependency companion = {base_name(found), found->bytes, found->length};
+    SkseTrialDependency primary = {base_name(source), source->bytes, source->length};
+    file->trial = skse_plugin_trial_with_package(primary, catalog, count, options, runtime);
+    const SkseDependencyTrace *trace = &file->trial.dependencies;
+    switch (trace->status) {
+    case SKSE_DEPENDENCY_READY:
+    case SKSE_DEPENDENCY_INVALID_IMAGE:
+    case SKSE_DEPENDENCY_NO_MEMORY:
         file->status = SKSE_PROBE_DLL_PAIRED;
-        file->trial = skse_plugin_trial_with_dependency(source->bytes, source->length, options, runtime, companion);
         file->trial_ran = 1;
+        return;
+    case SKSE_DEPENDENCY_MISSING: file->status = SKSE_PROBE_DLL_DEPENDENCY_MISSING; break;
+    case SKSE_DEPENDENCY_AMBIGUOUS: file->status = SKSE_PROBE_DLL_DEPENDENCY_AMBIGUOUS; break;
+    case SKSE_DEPENDENCY_SELF: file->status = SKSE_PROBE_DLL_DEPENDENCY_SELF; break;
+    case SKSE_DEPENDENCY_CYCLE: file->status = SKSE_PROBE_DLL_DEPENDENCY_CYCLE; break;
+    case SKSE_DEPENDENCY_UNREADABLE: file->status = SKSE_PROBE_DLL_DEPENDENCY_UNREADABLE; break;
+    case SKSE_DEPENDENCY_INVALID_NAME: file->status = SKSE_PROBE_DLL_DEPENDENCY_INVALID; break;
+    case SKSE_DEPENDENCY_LIMIT:
+    case SKSE_DEPENDENCY_SIZE_LIMIT:
+    case SKSE_DEPENDENCY_ADDRESS_SPACE: file->status = SKSE_PROBE_DLL_DEPENDENCY_LIMIT; break;
     }
+    memcpy(file->dependency_name, trace->requested, sizeof file->dependency_name);
+    memcpy(file->other_dependency_name, trace->requester, sizeof file->other_dependency_name);
 }
 
 SkseProbeDirectoryStatus skse_probe_local_directory(const char *path, uint32_t uptime_ms, SkseProbeDirectoryReport *out) {
@@ -359,14 +358,20 @@ SkseProbeDirectoryStatus skse_probe_local_directory(const char *path, uint32_t u
         qsort(scan.files, scan.count, sizeof scan.files[0], compare_sources);
         status = snapshot_all(&scan);
     }
+    SksePeReport *manifest = NULL;
+    if (status == SKSE_PROBE_DIRECTORY_CHECKED && scan.count) {
+        manifest = malloc(sizeof *manifest);
+        if (!manifest) status = SKSE_PROBE_DIRECTORY_NO_MEMORY;
+    }
     if (status == SKSE_PROBE_DIRECTORY_CHECKED) {
         for (unsigned i = 0; i < scan.count; ++i) {
-            diagnose(&scan, &scan.files[i], uptime_ms, &out->files[i]);
+            diagnose(&scan, &scan.files[i], uptime_ms, manifest, &out->files[i]);
             out->plugin_count += out->files[i].is_plugin;
         }
         out->file_count = scan.count;
         if (!out->plugin_count) status = SKSE_PROBE_DIRECTORY_NO_PLUGINS;
     }
+    free(manifest);
     for (unsigned i = 0; i < scan.count; ++i) {
         close_source(&scan.files[i]);
         free(scan.files[i].bytes);

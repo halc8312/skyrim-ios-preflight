@@ -110,6 +110,41 @@ static void check_bounded_heap(void) {
     assert(!heap.bytes && !heap.count);
 }
 
+static void check_virtual_tls(void) {
+    SkseWinThread thread = {.id = 3, .last_error = 0x1234};
+    for (unsigned i = 0; i < SKSE_WIN_TLS_SLOTS; ++i)
+        assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_ALLOC, 0, 0) == i);
+    assert(thread.last_error == 0x1234);
+    assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_ALLOC, 0, 0) == UINT32_MAX && thread.last_error == 8);
+    assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_GET, 109, 0) == 0 && thread.last_error == 0);
+    assert(skse_win_thread_call(&thread, SKSE_WIN_SET_LAST_ERROR, 44, 0) == 0);
+    assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_SET, 109, 0x12345678) && thread.last_error == 44);
+    assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_GET, 109, 0) == 0x12345678 && thread.last_error == 0);
+    assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_FREE, 109, 0));
+    assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_GET, UINT32_MAX, 0) == 0 && thread.last_error == 87);
+    assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_ALLOC, 0, 0) == 109);
+    assert(skse_win_thread_call(&thread, SKSE_WIN_TLS_GET, 109, 0) == 0 && thread.last_error == 0);
+    assert(skse_win_thread_call(&thread, SKSE_WIN_CURRENT_THREAD_ID, 0, 0) == 3);
+}
+
+static void check_virtual_critical_sections(void) {
+    SkseWinThread thread = {.id = 1, .last_error = 42};
+    const uint32_t base = 0x1234, size = SKSE_WIN_CRITICAL_SECTION_BYTES;
+    for (unsigned i = 0; i < SKSE_WIN_CRITICAL_SECTIONS; ++i)
+        assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_SPIN_INIT, base + i * size, 12) == 1);
+    assert(thread.last_error == 42);
+    assert(!skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_SPIN_INIT, base + SKSE_WIN_CRITICAL_SECTIONS * size, 12));
+    assert(thread.last_error == 8);
+    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_ENTER, base, 0));
+    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_TRY, base, 0));
+    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_LEAVE, base, 0));
+    assert(!skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_DELETE, base, 0) && thread.last_error == 87);
+    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_LEAVE, base, 0));
+    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_DELETE, base, 0));
+    assert(!skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_ENTER, base, 0));
+    assert(skse_win_thread_call(&thread, SKSE_WIN_CRITICAL_INIT, base, 0));
+}
+
 int main(void) {
     // CALL forwards to another x86 region and that callee returns into the caller.
     uint8_t nested[] = {0xe8, 1, 0, 0, 0, 0xc3, 0xb8, 42, 0, 0, 0, 0xc3};
@@ -210,5 +245,7 @@ int main(void) {
            SKSE_X86_BAD_ARGUMENT);
     check_arithmetic_flags();
     check_bounded_heap();
+    check_virtual_tls();
+    check_virtual_critical_sections();
     return 0;
 }

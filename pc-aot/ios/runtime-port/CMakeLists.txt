@@ -114,6 +114,8 @@ if(SKYRIM_IOS_SKSE_DLL_PROBE)
         "${dll_probe_source}/pe_image.c"
         "${dll_probe_source}/x86_call.c"
         "${dll_probe_source}/x86_heap.c"
+        "${dll_probe_source}/x86_winthread.c"
+        "${dll_probe_source}/dependency_plan.c"
         "${dll_probe_source}/plugin_trial.c"
         "${dll_probe_source}/probe_directory.c"
         "${dll_probe_source}/probe_local_file.c"

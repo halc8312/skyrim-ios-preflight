@@ -17,7 +17,8 @@ def run(*args, **kwargs):
 
 def compile_interpreter(compiler, output, test_source, flag_list):
     run(compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", *flag_list,
-        HERE / "pe_image.c", HERE / "x86_call.c", HERE / "x86_heap.c", HERE / "plugin_trial.c",
+        HERE / "pe_image.c", HERE / "x86_call.c", HERE / "x86_heap.c", HERE / "x86_winthread.c",
+        HERE / "dependency_plan.c", HERE / "plugin_trial.c",
         HERE / test_source, "-o", output)
 
 
@@ -187,6 +188,25 @@ class PluginInterpreterTests(unittest.TestCase):
                                                                 variant, opt, mode="allocation", imports=(library,))
                         self.assertIn(",1,1,", expected)
                         self.assertEqual(actual, expected)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows runs the TLS service reference")
+    def test_win32_tls_values_and_last_error_follow_the_logical_plugin_thread(self):
+        cc, linker = LLVM / "clang.exe", LLVM / "lld-link.exe"
+        kits = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Windows Kits/10/Lib"
+        kernel32 = sorted(kits.glob("*/um/x86/kernel32.lib"))
+        if not cc.is_file() or not linker.is_file() or not kernel32:
+            self.skipTest("Windows LLVM and x86 Windows SDK required")
+        with tempfile.TemporaryDirectory(prefix="skse-import-tls-") as tmp:
+            root = Path(tmp)
+            emulator = root / "trial.exe"
+            compile_interpreter(cc, emulator, "test_interpreted.c",
+                                ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
+            for opt in ("-O0", "-O2"):
+                with self.subTest(optimization=opt):
+                    expected, actual = compare_with_windows(cc, linker, emulator, root / opt, 14, opt,
+                                                            mode="tls", imports=(kernel32[-1],))
+                    self.assertIn(",1,1,", expected)
+                    self.assertEqual(actual, expected)
 
 if __name__ == "__main__":
     unittest.main()

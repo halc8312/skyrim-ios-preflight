@@ -145,6 +145,10 @@ static NSString *FolderFileResult(BOOL japanese, const SkseProbeDirectoryFile *f
         return Text(japanese, @"This plugin requires multiple other DLLs.", @"複数の補助DLLを必要とするプラグインです。");
     case SKSE_PROBE_DLL_DEPENDENCY_CHAIN:
         return Text(japanese, @"The helper requires another DLL.", @"補助DLLがさらに別のDLLを必要としています。");
+    case SKSE_PROBE_DLL_DEPENDENCY_CYCLE:
+        return Text(japanese, @"The DLLs in this folder depend on each other in a loop.", @"フォルダ内のDLLが循環して依存しています。");
+    case SKSE_PROBE_DLL_DEPENDENCY_LIMIT:
+        return Text(japanese, @"The required DLLs exceed the diagnostic limits.", @"必要な補助DLLが診断の上限を超えています。");
     case SKSE_PROBE_DLL_DEPENDENCY_SELF:
     case SKSE_PROBE_DLL_DEPENDENCY_INVALID:
     case SKSE_PROBE_DLL_DEPENDENCY_UNREADABLE:
@@ -183,13 +187,21 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
         NSString *name = [NSString stringWithUTF8String:file->relative_path] ?: @"DLL";
         NSString *result = FolderFileResult(japanese, file);
         NSMutableString *detail = [NSMutableString stringWithFormat:@"%@\n%@", name, result];
-        if (file->dependency_name[0]) {
+        const SkseDependencyTrace *dependencies = &file->trial.dependencies;
+        if (file->trial_ran && dependencies->status == SKSE_DEPENDENCY_READY && dependencies->helper_count) {
+            NSMutableArray<NSString *> *helpers = [NSMutableArray array];
+            for (unsigned helper = 0; helper < dependencies->helper_count; ++helper) {
+                [helpers addObject:[NSString stringWithUTF8String:dependencies->load_order[helper]] ?: @"DLL"];
+            }
+            [detail appendFormat:Text(japanese, @"\nHelper DLL · %@", @"\n補助DLL　%@"),
+                [helpers componentsJoinedByString:@", "]];
+        } else if (file->dependency_name[0]) {
             NSString *dependency = [NSString stringWithUTF8String:file->dependency_name] ?: @"DLL";
             [detail appendFormat:Text(japanese, @"\nHelper DLL · %@", @"\n補助DLL　%@"), dependency];
-        }
-        if (file->other_dependency_name[0]) {
-            NSString *other = [NSString stringWithUTF8String:file->other_dependency_name] ?: @"DLL";
-            [detail appendFormat:@", %@", other];
+            if (file->other_dependency_name[0]) {
+                NSString *requester = [NSString stringWithUTF8String:file->other_dependency_name] ?: @"DLL";
+                [detail appendFormat:Text(japanese, @" (required by %@)", @"（%@ が使用）"), requester];
+            }
         }
         [lines addObject:detail];
     }
