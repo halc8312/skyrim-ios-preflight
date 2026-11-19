@@ -365,6 +365,7 @@ __declspec(dllimport) void *__stdcall CreateFileW(const wchar_t *, uint32_t, uin
 __declspec(dllimport) int __stdcall ReadFile(void *, void *, uint32_t, uint32_t *, void *);
 __declspec(dllimport) uint32_t __stdcall GetFileSize(void *, uint32_t *);
 __declspec(dllimport) int __stdcall GetFileSizeEx(void *, int64_t *);
+__declspec(dllimport) int __stdcall SetFilePointerEx(void *, int64_t, int64_t *, uint32_t);
 __declspec(dllimport) int __stdcall CloseHandle(void *);
 __declspec(dllimport) unsigned long __stdcall GetLastError(void);
 
@@ -381,8 +382,17 @@ static _Bool check_file_assets(void) {
     unsigned char bytes[8];
     uint32_t transferred = 19;
     if (!ReadFile(file, bytes, 2, &transferred, NULL) || transferred != 2 || bytes[0] != 'A' || bytes[1] != 'B') return 0;
+    if (!SetFilePointerEx(file, 0, &size, 1) || size != 2 || !SetFilePointerEx(file, -1, NULL, 1) ||
+        !ReadFile(file, bytes, 1, &transferred, NULL) || transferred != 1 || bytes[0] != 'B') return 0;
     if (!ReadFile(file, bytes, 8, &transferred, NULL) || transferred != 5 || bytes[0] != 'C' || bytes[4] != 'G') return 0;
-    if (!ReadFile(file, bytes, 8, &transferred, NULL) || transferred != 0 || !CloseHandle(file)) return 0;
+    if (!SetFilePointerEx(file, 0x100000003LL, &size, 0) || size != 0x100000003LL ||
+        !ReadFile(file, bytes, 8, &transferred, NULL) || transferred != 0) return 0;
+    if (SetFilePointerEx(file, -8, &size, 2) || GetLastError() != 131 || size != 0x100000003LL ||
+        SetFilePointerEx(file, 0, &size, 9) || GetLastError() != 87 ||
+        !SetFilePointerEx(file, 0, &size, 1) || size != 0x100000003LL) return 0;
+    if (!SetFilePointerEx(file, -2, &size, 2) || size != 5 ||
+        !ReadFile(file, bytes, 8, &transferred, NULL) || transferred != 2 || bytes[0] != 'F' || bytes[1] != 'G' ||
+        !CloseHandle(file)) return 0;
     second = CreateFileW(L"Data/SKSE/Plugins/\u8a2d\u5b9a.ini", read_access, 1, NULL, 3, 0x08000080, NULL);
     if (second == invalid || !ReadFile(second, bytes, 4, &transferred, NULL) ||
         transferred != 4 || bytes[0] != 'j' || bytes[3] != '\n' || !CloseHandle(second)) return 0;

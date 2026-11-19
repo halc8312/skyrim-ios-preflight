@@ -230,10 +230,10 @@ static void check_service_index(void) {
     // These two validated tokens have the same initial bucket.
     SkseX86Service bindings[] = {
         {0x00400004, 11, SKSE_X86_SCALAR_RETURN},
-        {0x00400094, 22, SKSE_X86_SCALAR_RETURN}
+        {0x004004c8, 22, SKSE_X86_SCALAR_RETURN}
     };
     SkseX86Services services = {.entries = bindings, .count = 2};
-    uint8_t call[] = {0xb8, 0x94, 0, 0x40, 0, 0xff, 0xd0, 0xc3};
+    uint8_t call[] = {0xb8, 0xc8, 0x04, 0x40, 0, 0xff, 0xd0, 0xc3};
     SkseX86Result result = run(call, sizeof call, 20, services);
     assert(result.status == SKSE_X86_OK && result.eax == 22 && result.service_calls[1] == 1);
     bindings[1].address = bindings[0].address;

@@ -75,7 +75,8 @@ static const struct {
     {{"KERNEL32.dll", "WaitForSingleObject", 0xe00010bc}, SKSE_X86_EVENTS, SKSE_WIN_WAIT_ONE},
     {{"KERNEL32.dll", "WaitForSingleObjectEx", 0xe00010c0}, SKSE_X86_EVENTS, SKSE_WIN_WAIT_ONE_EX},
     {{"KERNEL32.dll", "WaitForMultipleObjects", 0xe00010c4}, SKSE_X86_EVENTS, SKSE_WIN_WAIT_MANY},
-    {{"KERNEL32.dll", "WaitForMultipleObjectsEx", 0xe00010c8}, SKSE_X86_EVENTS, SKSE_WIN_WAIT_MANY_EX}
+    {{"KERNEL32.dll", "WaitForMultipleObjectsEx", 0xe00010c8}, SKSE_X86_EVENTS, SKSE_WIN_WAIT_MANY_EX},
+    {{"KERNEL32.dll", "SetFilePointerEx", 0xe00010cc}, SKSE_X86_READ_ONLY_FILES, SKSE_WIN_SEEK_FILE_EX}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 _Static_assert(WINDOWS_SERVICE_COUNT + 5 + SKSE_SERIAL_METHOD_COUNT <= SKSE_X86_MAX_SERVICES, "trial service count");
