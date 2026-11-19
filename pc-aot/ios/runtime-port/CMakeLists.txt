@@ -117,6 +117,7 @@ if(SKYRIM_IOS_SKSE_DLL_PROBE)
         "${dll_probe_source}/x86_winthread.c"
         "${dll_probe_source}/x86_winfile.c"
         "${dll_probe_source}/x86_winevent.c"
+        "${dll_probe_source}/x86_skse_records.c"
         "${dll_probe_source}/probe_asset_file.c"
         "${dll_probe_source}/dependency_plan.c"
         "${dll_probe_source}/plugin_trial.c"

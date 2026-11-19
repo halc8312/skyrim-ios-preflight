@@ -10,6 +10,7 @@ enum {
     MESSAGING_INTERFACE_OFFSET = 128,
     MESSAGE_OFFSET = 160,
     SENDER_OFFSET = 176,
+    SERIALIZATION_INTERFACE_OFFSET = 192,
     TLS_TABLE_OFFSET = 256,
     TLS_SCRATCH_LIMIT = 64 * 1024,
     TLS_MAX_ALIGNMENT = 8192,
@@ -18,6 +19,8 @@ enum {
     QUERY_INTERFACE_OFFSET = HANDLE_CALLBACK_OFFSET + 4,
     REGISTER_CALLBACK_OFFSET = QUERY_INTERFACE_OFFSET + 4,
     UNAVAILABLE_CALLBACK_OFFSET = REGISTER_CALLBACK_OFFSET + 4,
+    SERIALIZATION_CALLBACK_OFFSET = UNAVAILABLE_CALLBACK_OFFSET + 4,
+    CALLBACK_REGION_END = SERIALIZATION_CALLBACK_OFFSET + SKSE_SERIAL_METHOD_COUNT * 4,
     CALL_BUDGET = 100000,
     TRIAL_BUDGET = 1000000
 };
@@ -75,7 +78,8 @@ static const struct {
     {{"KERNEL32.dll", "WaitForMultipleObjectsEx", 0xe00010c8}, SKSE_X86_EVENTS, SKSE_WIN_WAIT_MANY_EX}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
-_Static_assert(WINDOWS_SERVICE_COUNT + 5 <= SKSE_X86_MAX_SERVICES, "trial service count");
+_Static_assert(WINDOWS_SERVICE_COUNT + 5 + SKSE_SERIAL_METHOD_COUNT <= SKSE_X86_MAX_SERVICES, "trial service count");
+_Static_assert(SERIALIZATION_INTERFACE_OFFSET + 52 <= TLS_TABLE_OFFSET, "trial scratch ABI");
 
 typedef struct {
     SksePeImage *images[SKSE_DEPENDENCY_MAX_MODULES];
@@ -190,6 +194,34 @@ static bool run_tls_callbacks(TrialVm *vm, const SkseDependencySpace *space, uns
     return true;
 }
 
+static void exercise_serialization(TrialVm *vm, SkseX86Serialization *serial, SkseTrialResult *result) {
+    if (!serial->uid || !serial->callbacks[SKSE_SERIAL_SAVE - SKSE_SERIAL_REVERT] ||
+        !serial->callbacks[SKSE_SERIAL_LOAD - SKSE_SERIAL_REVERT]) return;
+
+    const SkseSerialMethod schedule[] = {SKSE_SERIAL_SAVE, SKSE_SERIAL_REVERT, SKSE_SERIAL_LOAD};
+    const SkseSerialPhase phases[] = {SKSE_SERIAL_WRITING, SKSE_SERIAL_IDLE, SKSE_SERIAL_READING};
+    const uint32_t parameters[] = {serial->interface_address};
+    for (unsigned i = 0; i < sizeof schedule / sizeof schedule[0]; ++i) {
+        const uint32_t callback = serial->callbacks[schedule[i] - SKSE_SERIAL_REVERT];
+        if (!callback) continue;
+        serial->phase = phases[i];
+        if (serial->phase == SKSE_SERIAL_READING && !skse_x86_records_reset_reading(&serial->records)) {
+            result->serialization_fault.status = SKSE_X86_BAD_ARGUMENT;
+            result->status = SKSE_TRIAL_SERIALIZATION_FAULT;
+            break;
+        }
+        SkseX86Result call = call_trial(vm, callback, parameters, 1, SKSE_X86_CDECL);
+        if (call.status != SKSE_X86_OK) {
+            result->serialization_fault = call;
+            result->status = SKSE_TRIAL_SERIALIZATION_FAULT;
+            break;
+        }
+        ++result->serialization_callbacks;
+    }
+    serial->phase = SKSE_SERIAL_IDLE;
+    result->serialization_records = skse_x86_records_count(&serial->records);
+}
+
 typedef enum { NO_CATALOG, PACKAGE_CATALOG, EXPLICIT_HELPER } CatalogPolicy;
 
 static void identify_unavailable_import(SkseTrialDependency primary, SkseDependencyTrace *trace) {
@@ -273,7 +305,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     static const uint32_t heap_choices[] = {0x18000000, 0x28000000, 0x38000000, 0x48000000, 0x58000000};
     SkseX86Scratch scratch = {
         .base = free_region(&space, scratch_choices, sizeof scratch_choices / sizeof scratch_choices[0],
-                            scratch_size + UNAVAILABLE_CALLBACK_OFFSET + 1),
+                            scratch_size + CALLBACK_REGION_END),
         .bytes = calloc(scratch_size, 1), .length = scratch_size
     };
     if (!scratch.base || !scratch.bytes) {
@@ -289,8 +321,13 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         {callbacks_base + HANDLE_CALLBACK_OFFSET, options.plugin_handle, SKSE_X86_SCALAR_RETURN},
     };
     bool enable_messages = runtime && runtime->core_messages && !options.editor;
+    bool enable_serialization = runtime && runtime->serialization && !options.editor;
     SkseX86CoreMessaging core = {
-        .interface_address = scratch.base + MESSAGING_INTERFACE_OFFSET,
+        .interface_address = enable_messages ? scratch.base + MESSAGING_INTERFACE_OFFSET : 0,
+        .owner_handle = options.plugin_handle
+    };
+    SkseX86Serialization serial = {
+        .interface_address = scratch.base + SERIALIZATION_INTERFACE_OFFSET,
         .owner_handle = options.plugin_handle
     };
     SkseX86Heap heap = {.base = free_region(&space, heap_choices, sizeof heap_choices / sizeof heap_choices[0], SKSE_X86_HEAP_BYTES)};
@@ -325,19 +362,31 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     write_word(scratch.bytes + 12, options.editor);
     if (options.expose_handle) write_word(scratch.bytes + 20, entries[1].address);
     if (options.expose_release) write_word(scratch.bytes + 24, entries[0].address);
-    if (enable_messages) {
+    if (enable_messages || enable_serialization) {
         services.core_messaging = &core;
         uint32_t query_address = callbacks_base + QUERY_INTERFACE_OFFSET;
+        entries[services.count++] = (SkseX86Service){query_address, 0, SKSE_X86_QUERY_CLASSIC};
+        write_word(scratch.bytes + 16, query_address);
+    }
+    if (enable_messages) {
         uint32_t register_address = callbacks_base + REGISTER_CALLBACK_OFFSET;
         uint32_t unavailable_address = callbacks_base + UNAVAILABLE_CALLBACK_OFFSET;
-        entries[services.count++] = (SkseX86Service){query_address, 0, SKSE_X86_QUERY_CLASSIC};
         entries[services.count++] = (SkseX86Service){register_address, 0, SKSE_X86_REGISTER_CORE_LISTENER};
         entries[services.count++] = (SkseX86Service){unavailable_address, 0, SKSE_X86_UNAVAILABLE};
-        write_word(scratch.bytes + 16, query_address);
         write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET, 2);
         write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 4, register_address);
         write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 8, unavailable_address);
         write_word(scratch.bytes + MESSAGING_INTERFACE_OFFSET + 12, unavailable_address);
+    }
+    if (enable_serialization) {
+        services.serialization = &serial;
+        uint8_t *interface = scratch.bytes + SERIALIZATION_INTERFACE_OFFSET;
+        write_word(interface, 4);
+        for (unsigned i = 0; i < SKSE_SERIAL_METHOD_COUNT; ++i) {
+            uint32_t address = callbacks_base + SERIALIZATION_CALLBACK_OFFSET + 4 * i;
+            entries[services.count++] = (SkseX86Service){address, i, SKSE_X86_SERIALIZATION};
+            write_word(interface + 4 * (i + 1), address);
+        }
     }
 
     TrialVm vm = {.count = space.count, .scratch = scratch, .services = services, .remaining_work = TRIAL_BUDGET};
@@ -419,6 +468,11 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
         }
         entries[1].kind = SKSE_X86_SCALAR_RETURN;
     }
+    if (result.status == SKSE_TRIAL_COMPLETED && enable_serialization) {
+        entries[1].kind = SKSE_X86_UNAVAILABLE;
+        exercise_serialization(&vm, &serial, &result);
+        entries[1].kind = SKSE_X86_SCALAR_RETURN;
+    }
 
 detach:
     if (!run_tls_callbacks(&vm, &space, 0, 0, &result)) {
@@ -453,6 +507,7 @@ cleanup:
         }
     }
     result.unavailable_interface = core.unavailable_id;
+    skse_x86_records_close(&serial.records);
     skse_win_files_close(&files);
     free(scratch.bytes);
     skse_x86_heap_close(&heap);

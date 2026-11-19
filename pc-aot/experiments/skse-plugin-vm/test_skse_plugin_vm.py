@@ -18,7 +18,7 @@ def run(*args, **kwargs):
 def compile_interpreter(compiler, output, test_source, flag_list):
     run(compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", *flag_list,
         HERE / "pe_image.c", HERE / "x86_call.c", HERE / "x86_heap.c", HERE / "x86_winthread.c", HERE / "x86_winfile.c",
-        HERE / "x86_winevent.c", HERE / "dependency_plan.c", HERE / "plugin_trial.c",
+        HERE / "x86_winevent.c", HERE / "x86_skse_records.c", HERE / "dependency_plan.c", HERE / "plugin_trial.c",
         HERE / test_source, "-o", output)
 
 
@@ -43,7 +43,7 @@ def compare_with_windows(compiler, linker, emulator, directory, variant, opt,
         f"/out:{dll}", f"/implib:{lib}", obj, entry, *imports)
     reference = directory / "reference.exe"
     run(compiler, "--target=i686-pc-windows-msvc", "-fuse-ld=lld", "-std=c11",
-        HERE / "test_native_windows.c", "-o", reference)
+        HERE / "test_native_windows.c", HERE / "x86_skse_records.c", "-o", reference)
     if mode == "file-assets":
         asset_root = directory / "Data/SKSE/Plugins"
         asset_root.mkdir(parents=True)
@@ -175,6 +175,22 @@ class PluginInterpreterTests(unittest.TestCase):
                     expected, actual = compare_with_windows(cc, linker, emulator, root / opt, 9, opt,
                                                             mode="dependency", with_dependency=True)
                     self.assertIn(",1,1,", expected)
+                    self.assertEqual(actual, expected)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows runs the Classic callback calling-convention reference")
+    def test_serialization_callbacks_write_revert_and_read_without_the_game(self):
+        cc, linker = LLVM / "clang.exe", LLVM / "lld-link.exe"
+        if not cc.is_file() or not linker.is_file():
+            self.skipTest("Windows LLVM clang and lld-link required")
+        with tempfile.TemporaryDirectory(prefix="skse-serialization-") as tmp:
+            root = Path(tmp)
+            emulator = root / "trial.exe"
+            compile_interpreter(cc, emulator, "test_interpreted.c", ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
+            for opt in ("-O0", "-O2"):
+                with self.subTest(optimization=opt):
+                    expected, actual = compare_with_windows(cc, linker, emulator, root / opt, 22, opt,
+                                                            mode="serialization")
+                    self.assertIn("serialization,3,2", expected)
                     self.assertEqual(actual, expected)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows runs the heap service reference")

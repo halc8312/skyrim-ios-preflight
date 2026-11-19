@@ -10,7 +10,11 @@ int main(int argc, char **argv) {
         if (status != SKSE_PROBE_FILE_CHECKED) {
             printf("%u\n", (unsigned)status);
         } else if (report.trial.status == SKSE_TRIAL_COMPLETED) {
-            printf("ready,%u,%s\n", report.trial.plugin_version, report.trial.name);
+            printf("ready,%u,%s", report.trial.plugin_version, report.trial.name);
+            if (report.trial.serialization_callbacks) {
+                printf(",%u,%u", report.trial.serialization_callbacks, report.trial.serialization_records);
+            }
+            putchar('\n');
         } else {
             printf("stopped,%u,%s,%u", (unsigned)report.trial.status,
                    skse_pe_status_text(report.trial.image_status), (unsigned)report.imports.symbol_count);

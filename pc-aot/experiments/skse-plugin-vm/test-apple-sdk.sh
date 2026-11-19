@@ -7,9 +7,9 @@ work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/skse-dll-sdk.XXXXXXXX")"
 pushd "$here" >/dev/null
 
 CC=clang python3 -B -m unittest -v test_probe_local_file test_probe_directory test_skse_plugin_vm test_pe_image \
-    test_dependency_plan test_probe_asset_file
+    test_dependency_plan test_probe_asset_file test_x86_skse_records
 device_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
-sources=(pe_image.c x86_call.c x86_heap.c x86_winthread.c x86_winfile.c x86_winevent.c dependency_plan.c plugin_trial.c
+sources=(pe_image.c x86_call.c x86_heap.c x86_winthread.c x86_winfile.c x86_winevent.c x86_skse_records.c dependency_plan.c plugin_trial.c
     probe_local_file.c probe_directory.c probe_asset_file.c)
 for source in "${sources[@]}"; do
     xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" \
@@ -27,7 +27,7 @@ python3 -B - "$app" <<'PY'
 from pathlib import Path
 import plistlib
 import sys
-from test_probe_local_file import supported_fixture
+from test_probe_local_file import serializing_fixture, supported_fixture
 from test_probe_directory import file_asset_fixture, helper, primary
 from test_pe_image import DATA, add_named_clock, zero_string
 
@@ -45,6 +45,7 @@ package.mkdir(parents=True)
 (package / "OwnedWorker.dll").write_bytes(helper())
 (package / "AssetProbe.dll").write_bytes(file_asset_fixture())
 (package / "Settings.ini").write_bytes(b"Authored settings")
+(package / "Serialization.dll").write_bytes(serializing_fixture())
 (app / "Info.plist").write_bytes(plistlib.dumps({
     "CFBundleIdentifier": "org.skyrimios.tests.dllcompatibility",
     "CFBundleName": "DLL Compatibility Fixture",
@@ -86,6 +87,6 @@ for language in english japanese; do
         sleep 1
     done
     grep -Fxq refused,passed,folder "$evidence"
-    echo "DLL_SIMULATOR: ${language} verified the single-file results, the MOD folder and its read-only asset."
+    echo "DLL_SIMULATOR: ${language} verified standalone DLLs, package dependencies, a read-only asset and additional-save records."
 done
 codesign --verify --strict "$app"
