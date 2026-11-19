@@ -16,14 +16,17 @@ normal build 18 and the newer diagnostic builds are tracked in [STATUS.md](STATU
    one logical worker, the Classic serialization callbacks and the two task
    queues. A test reports the operation that prevented the run. The app can
    exercise the supported part without a per-MOD conversion step on a PC.
-3. Connect enabled plugins to the game through checked handles and the
-   actual game and UI callbacks. Verify their thread ownership, lifetimes
-   and timing on iPhone before running them during play. Keep slow work on
-   an appropriate worker and measure CPU time on the game thread.
-4. Validate an additional save's structure inside the selected profile.
-   Restoring live MOD state also requires evidence that the companion
-   belongs to the completed base save and an owning VM that accepted that
-   load. [Additional-save experiment](../experiments/skse-cosave/README.md)
+3. The resident DLL test owns its images, registry and queues across separate
+   host calls. The Classic trial can record the first returned Papyrus
+   registration and menu hook, with the observed order and whether each ran on
+   the startup thread. These observations help identify game-side call sites.
+   Connect enabled plugins through checked handles and the actual game and UI
+   callbacks once their thread ownership and lifetime are verified on iPhone.
+4. Validate an additional save's structure inside the selected profile. The
+   separate load proof gives an authored loader an immutable base input and
+   releases companion bytes only after the owning game and VM confirm that input
+   and the saved generation agrees. The actual game still needs a verified
+   input-open and load-completion path. [Additional-save experiment](../experiments/skse-cosave/README.md)
 5. Extend the D3D9 bridge where rendering plugins need real device state and
    presentation callbacks. Verify output and GPU time against reference cases.
    The tested color treatment is one small rendering prototype. [D3D9 presentation experiment](../experiments/d3d9-present-grade/README.md)

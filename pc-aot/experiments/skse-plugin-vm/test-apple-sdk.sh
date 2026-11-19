@@ -8,6 +8,7 @@ pushd "$here" >/dev/null
 
 CC=clang python3 -B -m unittest -v test_probe_local_file test_probe_directory test_skse_plugin_vm test_pe_image \
     test_dependency_plan test_probe_asset_file test_x86_skse_records
+CC=clang python3 -B -m unittest discover -s "$root/tests" -p test_classic_skse_binding.py -v
 device_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
 sources=(pe_image.c x86_call.c x86_heap.c x86_winthread.c x86_winfile.c x86_winsync.c x86_skse_records.c dependency_plan.c plugin_trial.c
     probe_local_file.c probe_directory.c probe_asset_file.c)
