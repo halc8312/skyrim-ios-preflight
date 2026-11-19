@@ -30,6 +30,9 @@ class ClassicIniTests(unittest.TestCase):
         self.assertEqual(classic.prepare(self.vendor, self.stage), len(self.files))
         self.assertEqual(classic.prepare(self.vendor, self.stage), 0)
         self.assertEqual([(self.vendor / "runtime" / name).read_bytes() for name in self.files], before)
+        registration = (self.stage / "skse_compat.c").read_text()
+        self.assertLess(registration.index("probe_native(c,object,fn);"), registration.index("++passed;"))
+        self.assertLess(registration.index("++passed;"), registration.index("IOS_CLASSIC_VM registered="))
         staged = (self.stage / "skse_system.c").read_text()
         self.assertIn("skse_classic_ini_dispatch(c, op, args, result);", staged)
         self.assertIn("if (skse_classic_mod_query(c, op, args, result)) return 1;", staged)
@@ -65,7 +68,8 @@ class ClassicIniTests(unittest.TestCase):
                         str(ROOT / "tests/native" / (name + ".c")),
                         str(self.stage / "skse_compat_values.c"), "-lm", "-o", str(executable)],
                        check=True, timeout=60)
-        subprocess.run([str(executable)], check=True, timeout=30)
+        return subprocess.run([str(executable)], check=True, timeout=30, capture_output=True,
+                              text=True).stderr.splitlines()
 
     @unittest.skipUnless(os.name == "posix", "needs a POSIX C compiler")
     def test_real_registration_table_dispatches_typed_results(self):
@@ -73,7 +77,13 @@ class ClassicIniTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "needs a POSIX C compiler")
     def test_game_queries_read_loaded_files_and_master_indices(self):
-        self.run_fixture("test_classic_skse_mod_list")
+        lines = self.run_fixture("test_classic_skse_mod_list")
+        self.assertEqual(len(lines), len(set(lines)))
+        for query in range(7):
+            self.assertIn(f"IOS_CLASSIC_QUERY id={query} handled=1", lines)
+        self.assertIn("IOS_CLASSIC_QUERY id=0 handled=0", lines)
+        for line in lines:
+            self.assertRegex(line, r"^IOS_CLASSIC_QUERY id=[0-6] handled=[01]$")
 
 
 if __name__ == "__main__":

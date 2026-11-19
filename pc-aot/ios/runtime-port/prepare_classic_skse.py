@@ -9,6 +9,7 @@ import tempfile
 from prepare_runtime import replace_once
 
 PINNED = {
+    "skse_compat.c": "ab9e96a3b330942c8f5623dd18af96889be243dcd3ae7fb9bbde711458bc96b4",
     "skse_compat.h": "306883571cc167ee22636905a45ce3af95e779d9f6cefbb414a394c4764c9eaa",
     "skse_compat_values.c": "45ff5d9de3a27cf398a19bd55599031511e7334a58ca312b64767553105383e1",
     "skse_system.c": "61ce22b226c98264382722d0bc54d5835b32ae4821466d1f6a5b91e7af04b07c",
@@ -29,6 +30,8 @@ MOD_QUERIES = (
 def adapt_ini(name, text):
     if hashlib.sha256(text.encode()).hexdigest() != PINNED[name]:
         raise ValueError(f"{name}: different from the reviewed Classic runtime")
+    if name == "skse_compat.c":
+        return text
     if name == "skse_compat.h":
         return replace_once(text, "S_INI_FLOAT,S_INI_INT,S_SET_INI_FLOAT,",
                             "S_INI_FLOAT,S_INI_INT,S_SET_INI_FLOAT,S_INI_BOOL,S_INI_STRING,", name)
@@ -49,6 +52,15 @@ def adapt_ini(name, text):
 
 
 def adapt_mod_queries(name, text):
+    if name == "skse_compat.c":
+        registration = "void skse_register_natives(CPU *c, uint32_t registry) {\n"
+        text = replace_once(text, registration + "    unsigned count=0;",
+                            registration + "    unsigned count=0, passed=0;", name)
+        text = replace_once(text, '            probe_native(c,object,fn);',
+                            '        {\n            probe_native(c,object,fn);\n            ++passed;\n        }', name)
+        return replace_once(text, '    LOG("SKSE compatibility: registered %u',
+                            '    fprintf(stderr, "IOS_CLASSIC_VM registered=%u primitive_passed=%u\\n", count, passed);\n'
+                            '    LOG("SKSE compatibility: registered %u', name)
     if name == "skse_compat.h":
         operations = [row[1] for row in MOD_QUERIES]
         operations[0] += "=1310"  # leave existing system operation numbers unchanged

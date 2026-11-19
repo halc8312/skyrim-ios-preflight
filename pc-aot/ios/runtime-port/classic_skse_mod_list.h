@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #pragma once
+#include <stdatomic.h>
+#include <stdio.h>
 
 /* Public 32-bit TESV 1.9.32 layout described by the Classic 1.7.3 SDK.
  * The loaded count, linked-list position, and a master's assigned load index
@@ -53,7 +55,7 @@ static int skse_classic_file_property(CPU *cpu, unsigned op, uint32_t file,
 
 /* Called on Papyrus queries only, after the dispatcher has initialized the
  * typed result to zero. No per-frame work and no copy of the game registry. */
-static int skse_classic_mod_query(CPU *cpu, unsigned op, const uint32_t *args, uint32_t result) {
+static int skse_classic_read_mod_query(CPU *cpu, unsigned op, const uint32_t *args, uint32_t result) {
     uint32_t handler = M32(CLASSIC_DATA_HANDLER);
     if (!handler || handler > UINT32_MAX - CLASSIC_LOADED_COUNT - 3u) return 0;
     if (op == S_MOD_COUNT) {
@@ -86,4 +88,18 @@ static int skse_classic_mod_query(CPU *cpu, unsigned op, const uint32_t *args, u
         if (node && node == slow) return 0;
     }
     return 1;
+}
+
+/* Called from the registered Papyrus native. A handled empty result is valid.
+ * Emit each outcome once per query type and process, without game data. */
+static int skse_classic_mod_query(CPU *cpu, unsigned op, const uint32_t *args, uint32_t result) {
+    static atomic_uint reported;
+    if (op < S_MOD_COUNT || op > S_MOD_NTH_MASTER) return 0;
+    int handled = skse_classic_read_mod_query(cpu, op, args, result);
+    unsigned query = op - S_MOD_COUNT;
+    unsigned bit = 1u << (query * 2u + (unsigned)handled);
+    if (!(atomic_load_explicit(&reported, memory_order_relaxed) & bit) &&
+        !(atomic_fetch_or_explicit(&reported, bit, memory_order_relaxed) & bit))
+        fprintf(stderr, "IOS_CLASSIC_QUERY id=%u handled=%d\n", query, handled);
+    return handled;
 }
