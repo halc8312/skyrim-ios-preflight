@@ -366,9 +366,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 }
 
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
-- (void)testInstalledModDllDiagnostics {
-    [self.app launch];
-    [self openHub];
+- (void)checkInstalledModDllDiagnostics {
     [[self findRow:@"Add a zip file"] tap];
     [self pick:@"AuthoredDLL.zip" folder:NO];
     [[self findRow:@"AuthoredDLL"] tap];
@@ -381,6 +379,12 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCTAssertTrue([[self.app.staticTexts matchingPredicate:diagnosis].firstMatch waitForExistenceWithTimeout:12],
                   @"Expected the installed package and helper in the diagnostic. %@", self.app.debugDescription);
     [self capture:@"installed-dll-diagnosis"];
+}
+
+- (void)testInstalledModDllDiagnostics {
+    [self.app launch];
+    [self openHub];
+    [self checkInstalledModDllDiagnostics];
 }
 #endif
 
@@ -501,5 +505,16 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [[self findRow:@"Trial Two"] tap];
     [self findRow:@"Trial Two (imported)"];
     [self capture:@"imported-profile"];
+#ifdef SKYRIM_IOS_SKSE_DLL_PROBE
+    [self.app.navigationBars[@"Profiles"].buttons[@"Add"] tap];
+    [self fillName:@"DLL Trial" replacing:@"MOD" inAlert:@"New profile"];
+    [[self findRow:@"DLL Trial"] tap];
+    [self goBackFrom:@"Profiles"];
+    [self checkInstalledModDllDiagnostics];
+    [self goBackFrom:@"DLL Compatibility"];
+    [self goBackFrom:@"AuthoredDLL"];
+    [[self findRow:@"DLL Trial"] tap];
+    [[self findRow:@"Trial Two"] tap];
+#endif
 }
 @end

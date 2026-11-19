@@ -268,12 +268,15 @@ def verify(container, assets, summary):
     view=base/"Views"/active["id"]/"Data/interface/screens"
     assert (view/"shared.txt").read_bytes()==b"authored folder\n"
     assert (view/"choice.txt").read_bytes()==b"red\n"
+    if os.environ.get("SKYRIM_IOS_SKSE_DLL_PROBE") == "1":
+        assert "DLL Trial" in profiles
+        verify_dll_package(base, assets)
     print("Real simulator UI result, original game/profile, conflict winner, FOMOD choice and reimported export verified.")
 
 
-def verify_dll(container, assets, summary):
-    base = verify_original(container, assets, summary)
-    packages = list((base / "Mods").glob("*/package.json"))
+def verify_dll_package(base, assets):
+    packages = [p for p in (base / "Mods").glob("*/package.json")
+                if json.loads(p.read_text())["name"] == "AuthoredDLL"]
     assert len(packages) == 1
     package = packages[0]
     metadata = json.loads(package.read_text())
@@ -283,6 +286,12 @@ def verify_dll(container, assets, summary):
         for name in fixture.namelist():
             assert (package.parent / name).read_bytes() == fixture.read(name)
     print("Installed MOD DLL diagnosis and unchanged original game, profile and imported DLL bytes verified.")
+
+
+def verify_dll(container, assets, summary):
+    base = verify_original(container, assets, summary)
+    assert len(list((base / "Mods").glob("*/package.json"))) == 1
+    verify_dll_package(base, assets)
 
 
 if __name__ == "__main__":
