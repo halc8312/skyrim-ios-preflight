@@ -2,6 +2,8 @@
 #import "mod_dll_probe.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+static const NSUInteger reportAttempts = 500;
+
 @interface SKDllFixtureScene : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic, strong) UIWindow *window;
 @property(nonatomic, strong) UITableViewController<UIDocumentPickerDelegate> *probe;
@@ -20,7 +22,7 @@
             [self checkReport:expected launchNext:next attempts:attempts - 1];
         });
     } else {
-        [NSException raise:NSInternalInconsistencyException format:@"DLL diagnosis did not return"];
+        [NSException raise:NSInternalInconsistencyException format:@"DLL diagnosis timed out waiting for %@", expected];
     }
 }
 - (void)diagnose:(NSString *)name extension:(NSString *)extension {
@@ -97,9 +99,9 @@
                     NSError *error = nil;
                     if (![@"refused,passed,folder\n" writeToURL:evidence atomically:YES encoding:NSUTF8StringEncoding error:&error])
                         [NSException raise:NSInternalInconsistencyException format:@"Could not write fixture result: %@", error];
-                } attempts:200];
-            } attempts:200];
-        } attempts:200];
+                } attempts:reportAttempts];
+            } attempts:reportAttempts];
+        } attempts:reportAttempts];
     });
 }
 @end

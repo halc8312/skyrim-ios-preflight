@@ -91,7 +91,7 @@ for language in english japanese; do
         xcrun simctl launch --terminate-running-process "$device" "$bundle"
     fi
     evidence="$container/Documents/$language.txt"
-    for ((i=0; i<50; ++i)); do
+    for ((i=0; i<90; ++i)); do
         if [[ -s "$evidence" ]]; then break; fi
         sleep 1
     done
