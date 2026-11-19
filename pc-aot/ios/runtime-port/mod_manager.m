@@ -15,6 +15,8 @@
 #import <objc/runtime.h>
 #include <CommonCrypto/CommonDigest.h>
 #include <errno.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include "mod_manager.h"
 #include "mod_archive.h"
 #include "mod_deploy.h"
@@ -26,25 +28,37 @@
 #include "mod_libarchive.h"
 #endif
 
-/* Language is read once per screen visit instead of on every string: a
- * user-defaults lookup per label made long lists slow to scroll. */
-static int languageCache = -1;
+/* Labels and background import notices share the current app language. */
+static atomic_int languageCache;
 static void RefreshLanguage(void) {
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_lock(&lock);
     NSDictionary *s = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
-    languageCache = [s[@"language"] isKindOfClass:NSNumber.class] && [s[@"language"] intValue] == 1;
+    BOOL japanese = [s[@"language"] isKindOfClass:NSNumber.class] && [s[@"language"] intValue] == 1;
+    atomic_store_explicit(&languageCache, japanese, memory_order_relaxed);
+    pthread_mutex_unlock(&lock);
 }
 static NSString *T(NSString *english, NSString *japanese) {
-    if (languageCache < 0) RefreshLanguage();
-    return languageCache ? japanese : english;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        [NSNotificationCenter.defaultCenter addObserverForName:NSUserDefaultsDidChangeNotification
+            object:NSUserDefaults.standardUserDefaults queue:nil usingBlock:^(NSNotification *note) {
+                (void)note;
+                RefreshLanguage();
+            }];
+        RefreshLanguage();
+    });
+    return atomic_load_explicit(&languageCache, memory_order_relaxed) ? japanese : english;
 }
 
 /* ---- paths and state --------------------------------------------------- */
 static NSString *Base(void) {
     static NSString *base;
-    if (!base) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
         NSURL *support = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
         base = [support URLByAppendingPathComponent:@"SkyrimIOS" isDirectory:YES].path;
-    }
+    });
     return base;
 }
 static NSString *ModsDir(void) { return [Base() stringByAppendingPathComponent:@"Mods"]; }
@@ -89,6 +103,7 @@ static NSString *ProfileDir(NSDictionary *p) {
  * kept; publishing or deleting a package clears the cache. Any thread. */
 static NSMutableDictionary *packageCache;
 static NSArray *installedCache;
+static uint64_t packageGeneration;
 static NSObject *PackageLock(void) {
     static NSObject *lock;
     static dispatch_once_t once;
@@ -96,29 +111,50 @@ static NSObject *PackageLock(void) {
     return lock;
 }
 static void InvalidatePackages(void) {
-    @synchronized (PackageLock()) { [packageCache removeAllObjects]; installedCache = nil; }
+    @synchronized (PackageLock()) {
+        ++packageGeneration;
+        [packageCache removeAllObjects];
+        installedCache = nil;
+    }
 }
 static NSMutableDictionary *LoadPackage(NSString *pid) {
     if (!ValidId(pid)) return nil;
-    @synchronized (PackageLock()) {
-        id cached = packageCache[pid];
-        if (cached) return cached == NSNull.null ? nil : cached;
+    for (;;) {
+        uint64_t generation;
+        @synchronized (PackageLock()) {
+            id cached = packageCache[pid];
+            if (cached) return cached == NSNull.null ? nil : cached;
+            generation = packageGeneration;
+        }
+        NSMutableDictionary *p = MutableJSON([NSData dataWithContentsOfFile:[PackageDir(pid) stringByAppendingPathComponent:@"package.json"]]);
+        if (![p isKindOfClass:NSMutableDictionary.class]) p = nil;
+        @synchronized (PackageLock()) {
+            if (generation != packageGeneration) continue;
+            packageCache[pid] = p ?: (id)NSNull.null;
+            return p;
+        }
     }
-    NSMutableDictionary *p = MutableJSON([NSData dataWithContentsOfFile:[PackageDir(pid) stringByAppendingPathComponent:@"package.json"]]);
-    if (![p isKindOfClass:NSMutableDictionary.class]) p = nil;
-    @synchronized (PackageLock()) { packageCache[pid] = p ?: (id)NSNull.null; }
-    return p;
 }
 static NSArray<NSMutableDictionary *> *InstalledPackages(void) {
-    @synchronized (PackageLock()) { if (installedCache) return installedCache; }
-    NSMutableArray *out = [NSMutableArray array];
-    for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:ModsDir() error:NULL]) {
-        if ([name hasPrefix:@"."]) continue;
-        NSMutableDictionary *p = LoadPackage(name);
-        if (p) [out addObject:p];
+    for (;;) {
+        uint64_t generation;
+        @synchronized (PackageLock()) {
+            if (installedCache) return installedCache;
+            generation = packageGeneration;
+        }
+        NSMutableArray *out = [NSMutableArray array];
+        for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:ModsDir() error:NULL]) {
+            if ([name hasPrefix:@"."]) continue;
+            NSMutableDictionary *p = LoadPackage(name);
+            if (p) [out addObject:p];
+        }
+        NSArray *snapshot = [out copy];
+        @synchronized (PackageLock()) {
+            if (generation != packageGeneration) continue;
+            if (!installedCache) installedCache = snapshot;
+            return installedCache;
+        }
     }
-    @synchronized (PackageLock()) { installedCache = [out copy]; }
-    return out;
 }
 
 static void EnsureState(void) {
@@ -1136,6 +1172,7 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     RefreshLanguage();
+    [self updateReorderTitle];
     /* The game keeps drawing on the main thread behind this screen; pause it
      * while any MOD screen is open so scrolling stays smooth. Released when the
      * settings root appears again (see mobile_ui.m). */
@@ -1144,6 +1181,9 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
 }
 - (void)toggleReorder {
     [self setEditing:!self.editing animated:YES];
+    [self updateReorderTitle];
+}
+- (void)updateReorderTitle {
     self.navigationItem.rightBarButtonItem.title = self.editing ? T(@"Done", @"完了") : T(@"Reorder", @"並べ替え");
 }
 - (void)changed:(NSString *)message { SaveState(); skyrim_mobile_show_notice(message ?: T(@"Saved. Save your game, then fully close and reopen the app.", @"保存しました。ゲーム内で保存し、アプリを完全終了して開き直すと反映します。")); }

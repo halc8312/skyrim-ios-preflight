@@ -2,12 +2,18 @@ name: Skyrim PC AOT native probe (branch only)
 
 on:
   workflow_dispatch:
+    inputs:
+      full_title_host:
+        description: Build the unsigned standard iPhone app and run the MOD simulator tests
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   apple-sdk-preflight:
+    if: ${{ !inputs.full_title_host }}
     runs-on: macos-26
     timeout-minutes: 25
     env:
@@ -52,3 +58,69 @@ jobs:
             pc-aot/local/simulator/*/app-logs/*.log
           if-no-files-found: error
           retention-days: 7
+
+  standard-title-host:
+    if: ${{ inputs.full_title_host }}
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      IPHONEOS_DEPLOYMENT_TARGET: '18.0'
+      JOBS: '2'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Check the installer against the iPhoneOS SDK
+        working-directory: pc-aot/ios/runtime-port
+        run: |
+          set -euo pipefail
+          sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos swiftc -sdk "$sdk" -target arm64-apple-ios18.0 -swift-version 6 \
+            -strict-concurrency=complete -warnings-as-errors -parse-as-library -typecheck mod_translate.swift
+          xcrun --sdk iphoneos clang -isysroot "$sdk" -target arm64-apple-ios18.0 -fobjc-arc -fmodules \
+            -fsyntax-only mod_manager.m mod_fomod.m
+      - name: Prepare the public build tools
+        run: |
+          set -euo pipefail
+          brew install bison make cmake
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+      - name: Build the standard iPhone app and exercise the MOD screens
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/title-host.log"
+          if ! bash pc-aot/scripts/build-title-host.sh > "$log" 2>&1; then
+            grep -Em 50 '^(FAILED|ERROR|FAIL:|CMake Error|fatal:)|: error:|FAILED:|failed;|Missing |Unexpected |mismatch' "$log" || true
+            tail -n 60 "$log"
+            exit 1
+          fi
+          tail -n 15 "$log"
+      - name: Save the source-only iPhone host and public ABI headers
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: standard-title-host
+          path: |
+            pc-aot/local/title-host/run-*/artifacts/SkyrimIOS-public-host.zip
+            pc-aot/local/title-host/run-*/artifacts/result.json
+            pc-aot/local/title-host/run-*/artifacts/platform.txt
+            pc-aot/local/title-host/run-*/artifacts/linked-libraries.txt
+            pc-aot/local/title-host/run-*/artifacts/*.h
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Keep compiler and simulator evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: standard-title-host-checks
+          path: |
+            ${{ runner.temp }}/title-host.log
+            pc-aot/local/title-host/run-*/artifacts/mod-simulator*.zip
+            pc-aot/local/title-host/run-*/mod-simulator/evidence/*.log
+          if-no-files-found: warn
+          retention-days: 1

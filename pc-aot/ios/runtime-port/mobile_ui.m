@@ -719,11 +719,14 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:L(@"Done", @"完了") style:UIBarButtonItemStyleDone target:self action:@selector(close)];
 }
 - (void)close { [overlay clearInput]; [self dismissViewControllerAnimated:YES completion:nil]; }
-- (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated]; shaderSettingsPermission(YES); }
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    /* Wait for a completed navigation transition; an interactive pop can be cancelled. */
+    skyrim_mobile_menu_pause(SKYRIM_MENU_PAUSE_MODS, 0);
+    shaderSettingsPermission(YES);
+}
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    /* Back on the settings root: no MOD screen is open any more. */
-    skyrim_mobile_menu_pause(SKYRIM_MENU_PAUSE_MODS, 0);
     [self.tableView reloadData];
 }
 - (void)viewWillDisappear:(BOOL)animated { shaderSettingsPermission(NO); [super viewWillDisappear:animated]; }
@@ -1044,7 +1047,7 @@ void skyrim_mobile_menu_pause(unsigned reason, int on) {
     if (!NSThread.isMainThread) return;
     unsigned before = menuPauseReasons;
     menuPauseReasons = on ? (menuPauseReasons | reason) : (menuPauseReasons & ~reason);
-    if (!before == !menuPauseReasons) return;
+    if ((before == 0) == (menuPauseReasons == 0)) return;
     if (menuPauseReasons) { [overlay clearInput]; skyrim_ios_metrics_active(0); skyrim_lifecycle_request(0); return; }
     if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;   /* becomeActive resumes */
     skyrim_lifecycle_request(1); skyrim_ios_metrics_active(1);

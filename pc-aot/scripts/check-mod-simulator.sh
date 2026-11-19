@@ -117,4 +117,12 @@ if [[ "$mode" == nexus-live ]]; then
 fi
 container="$(xcrun simctl get_app_container "$UDID" org.skyrimios.tests.modscreens data)"
 python3 "$PREP" verify "$container" "$RUN/work/Fixtures" "$EVIDENCE/summary.json"
+python3 - "$container/Documents/mod-menu-requests.txt" <<'PY'
+from pathlib import Path
+import sys
+events = Path(sys.argv[1]).read_text().splitlines()
+if events[:6] != ["metrics 0", "lifecycle 0", "lifecycle 1", "metrics 1", "metrics 0", "lifecycle 0"]:
+    raise SystemExit("Unexpected pause/resume requests while opening the MOD hub, returning to Settings, and reopening it")
+print("MOD_SIMULATOR: the MOD hub requested pause, resume, and pause through the existing lifecycle.")
+PY
 echo "MOD_SIMULATOR: real UIKit settings/screens and authored storage checks passed."

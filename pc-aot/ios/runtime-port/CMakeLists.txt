@@ -127,27 +127,28 @@ if(SKYRIM_IOS_BUILD_APP)
     # to its built-in glossary.
     option(SKYRIM_IOS_TRANSLATION "Build on-device installer translation (Swift)" ON)
     if(SKYRIM_IOS_TRANSLATION)
+        if(NOT CMAKE_OSX_DEPLOYMENT_TARGET OR CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS 18.0)
+            message(FATAL_ERROR "On-device MOD translation requires an iPhoneOS deployment target of 18.0 or newer")
+        endif()
+        execute_process(COMMAND xcrun --sdk iphoneos --show-sdk-path
+            OUTPUT_VARIABLE _swift_sdk OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+        execute_process(COMMAND xcrun --sdk iphoneos --find swiftc
+            OUTPUT_VARIABLE _swiftc OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+        get_filename_component(_swift_bin "${_swiftc}" DIRECTORY)
         set(_translate_src "${CMAKE_CURRENT_SOURCE_DIR}/mod_translate.swift")
         set(_translate_obj "${CMAKE_CURRENT_BINARY_DIR}/mod_translate.o")
-        set(_swift_sdk "iphoneos")
-        set(_swift_triple "arm64-apple-ios${CMAKE_OSX_DEPLOYMENT_TARGET}")
-        if(CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
-            set(_swift_sdk "iphonesimulator")
-            set(_swift_triple "arm64-apple-ios${CMAKE_OSX_DEPLOYMENT_TARGET}-simulator")
-        endif()
         add_custom_command(OUTPUT "${_translate_obj}"
-            COMMAND xcrun --sdk ${_swift_sdk} swiftc -parse-as-library -O -module-name SkyrimTranslate
-                    -target ${_swift_triple} -c "${_translate_src}" -o "${_translate_obj}"
+            COMMAND "${_swiftc}" -sdk "${_swift_sdk}" -target "arm64-apple-ios${CMAKE_OSX_DEPLOYMENT_TARGET}"
+                    -swift-version 6 -strict-concurrency=complete -parse-as-library -O -module-name SkyrimTranslate
+                    -c "${_translate_src}" -o "${_translate_obj}"
             DEPENDS "${_translate_src}" VERBATIM)
         set_source_files_properties("${_translate_obj}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
         target_sources(SkyrimIOS PRIVATE "${_translate_obj}")
-        execute_process(COMMAND xcrun --sdk ${_swift_sdk} --show-sdk-path OUTPUT_VARIABLE _swift_sdk_path OUTPUT_STRIP_TRAILING_WHITESPACE)
-        execute_process(COMMAND xcrun --sdk ${_swift_sdk} --find swiftc OUTPUT_VARIABLE _swiftc OUTPUT_STRIP_TRAILING_WHITESPACE)
-        get_filename_component(_swift_bin "${_swiftc}" DIRECTORY)
-        # The object's autolink entries name the Swift libraries; these are the
-        # places ld64 finds them (the runtime itself ships with iOS 18).
-        target_link_options(SkyrimIOS PRIVATE "-L${_swift_sdk_path}/usr/lib/swift"
-            "-L${_swift_bin}/../lib/swift/${_swift_sdk}" "-Wl,-rpath,/usr/lib/swift")
+        target_link_libraries(SkyrimIOS PRIVATE "-framework SwiftUI" "-framework Translation")
+        # Require the very class that Objective-C looks up dynamically, even with dead stripping.
+        target_link_options(SkyrimIOS PRIVATE "-L${_swift_sdk}/usr/lib/swift"
+            "-L${_swift_bin}/../lib/swift/iphoneos" "-Wl,-rpath,/usr/lib/swift"
+            "LINKER:-u,_OBJC_CLASS_$_SKTranslator")
     endif()
     target_compile_options(SkyrimIOS PRIVATE "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>")
     target_link_libraries(SkyrimIOS PRIVATE SDL2::SDL2main skyrim_ios_runtime skyrim_ios_dependencies)

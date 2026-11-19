@@ -23,13 +23,23 @@ SDL_bool SDLCALL SDL_GetWindowWMInfo(SDL_Window *window, SDL_SysWMinfo *info) {
 const char *SDLCALL SDL_GetError(void) { unexpected(__func__); }
 int platform_text_input(int enabled) { (void)enabled; unexpected(__func__); }
 void skyrim_ios_drawable_size(int *width, int *height) { (void)width; (void)height; unexpected(__func__); }
-void skyrim_ios_metrics_active(int active) { (void)active; unexpected(__func__); }
+/* Record only the real menu's two requests in this guest-free test sandbox. */
+static void recordMenuState(const char *source, int active) {
+    if (active != 0 && active != 1) unexpected(source);
+    NSURL *docs = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    NSString *path = [docs.path stringByAppendingPathComponent:@"mod-menu-requests.txt"];
+    FILE *file = fopen(path.fileSystemRepresentation, "a");
+    if (!file) unexpected(source);
+    int written = fprintf(file, "%s %d\n", source, active);
+    if (fclose(file) != 0 || written <= 0) unexpected(source);
+}
+void skyrim_ios_metrics_active(int active) { recordMenuState("metrics", active); }
 void skyrim_ios_take_frame_metrics(uint64_t *a, uint64_t *b, uint64_t *c, uint64_t *d) {
     (void)a; (void)b; (void)c; (void)d; unexpected(__func__);
 }
 void skyrim_device_platform_refresh(void) { unexpected(__func__); }
 void skyrim_device_platform_log(void) { unexpected(__func__); }
-void skyrim_lifecycle_request(int active) { (void)active; unexpected(__func__); }
+void skyrim_lifecycle_request(int active) { recordMenuState("lifecycle", active); }
 void skyrim_lifecycle_did_background(void) { unexpected(__func__); }
 uint64_t skyrim_pipeline_checkpoint_begin(void) { unexpected(__func__); }
 void skyrim_pipeline_checkpoint_cancel(uint64_t ticket) { (void)ticket; unexpected(__func__); }

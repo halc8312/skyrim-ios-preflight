@@ -133,17 +133,18 @@ def project(work, sdl_prefix, archive_prefix):
         return obj("build:"+str(path), "PBXBuildFile", fileRef=ref)
     def source_phase(name, sources):
         files = []
+        types = {".m": "sourcecode.c.objc", ".c": "sourcecode.c.c", ".swift": "sourcecode.swift"}
         for source in sources:
             if not source.is_file():
                 raise ValueError(f"Missing simulator input: {source}")
-            files.append(buildfile(source, "sourcecode.c.objc" if source.suffix == ".m" else "sourcecode.c.c"))
+            files.append(buildfile(source, types[source.suffix]))
         return obj(name+"Sources", "PBXSourcesBuildPhase", files=files,
                    buildActionMask=2147483647, runOnlyForDeploymentPostprocessing=0)
     app_sources = [
         "mobile_ui.m", "mobile_core.c", "game_language.c", "diagnostic_upload.m",
         "performance_metrics.c", "lock_metrics.c", "mod_manager.m", "mod_fomod.m",
         "mod_browser.m", "mod_plugins.c", "mod_archive.c", "mod_deploy.c",
-        "mod_analyze.c", "mod_optimize.c", "mod_libarchive.c",
+        "mod_analyze.c", "mod_optimize.c", "mod_libarchive.c", "mod_translate.swift",
     ]
     app_source_phase = source_phase(APP, [HERE/"host.m", HERE/"guest_boundary.m", *(PORT/p for p in app_sources)])
     test_source_phase = source_phase(TEST, [HERE/"screens.m"])
@@ -168,9 +169,10 @@ def project(work, sdl_prefix, archive_prefix):
         "SDKROOT":"iphonesimulator", "SUPPORTED_PLATFORMS":"iphonesimulator", "IPHONEOS_DEPLOYMENT_TARGET":"18.0",
         "CLANG_ENABLE_MODULES":"YES", "CLANG_ENABLE_OBJC_ARC":"YES", "TARGETED_DEVICE_FAMILY":"1",
         "GCC_C_LANGUAGE_STANDARD":"gnu11", "ONLY_ACTIVE_ARCH":"YES", "CODE_SIGN_STYLE":"Automatic"})
-    frameworks = ["Foundation","UIKit","QuartzCore","UniformTypeIdentifiers","WebKit"]
+    frameworks = ["Foundation","UIKit","QuartzCore","UniformTypeIdentifiers","WebKit","SwiftUI","Translation"]
     app_configs = configs(APP, {
         "PRODUCT_NAME":APP, "PRODUCT_BUNDLE_IDENTIFIER":APP_ID, "INFOPLIST_FILE":str(work/"HostInfo.plist"),
+        "SWIFT_VERSION":"6.0", "SWIFT_STRICT_CONCURRENCY":"complete",
         "HEADER_SEARCH_PATHS":[str(PORT),str(sdl_prefix/"include"),str(archive_prefix/"include")],
         "SYSTEM_HEADER_SEARCH_PATHS":[str(ROOT/"vendor/bcdec"),str(ROOT/"vendor/stb")],
         "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", "SKYRIM_HAVE_LIBARCHIVE=1"],

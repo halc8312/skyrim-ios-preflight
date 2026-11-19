@@ -11,7 +11,7 @@
 #include "mod_archive.h"
 #include "mod_deploy.h"
 
-static int japanese = -1;      /* read once per installer run */
+static _Atomic int japanese = -1;      /* also read by the background badge scan */
 static void RefreshLanguage(void) {
     NSDictionary *s = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
     japanese = [s[@"language"] isKindOfClass:NSNumber.class] && [s[@"language"] intValue] == 1;
@@ -322,17 +322,25 @@ static NSString *GlossaryText(NSString *text) {
     NSString *exact = Glossary()[trimmed.lowercaseString];
     if (exact) return exact;
     if (trimmed.length > 60) return nil;                       /* sentences: leave to translation */
+    static NSRegularExpression *terms;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSArray *keys = [Glossary().allKeys sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+            return [@(b.length) compare:@(a.length)];
+        }];
+        NSMutableArray *escaped = [NSMutableArray arrayWithCapacity:keys.count];
+        for (NSString *key in keys) [escaped addObject:[NSRegularExpression escapedPatternForString:key]];
+        NSString *pattern = [NSString stringWithFormat:@"(?<![A-Za-z0-9])(?:%@)(?![A-Za-z0-9])", [escaped componentsJoinedByString:@"|"]];
+        terms = [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:NULL];
+    });
+    NSArray *matches = [terms matchesInString:trimmed options:0 range:NSMakeRange(0, trimmed.length)];
+    if (!matches.count) return nil;
     NSMutableString *out = [trimmed mutableCopy];
-    __block BOOL changed = NO;
-    NSArray *keys = [Glossary().allKeys sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
-        return a.length > b.length ? NSOrderedAscending : a.length < b.length ? NSOrderedDescending : NSOrderedSame;
-    }];
-    for (NSString *key in keys) {
-        NSString *pattern = [NSString stringWithFormat:@"(?<![A-Za-z0-9])%@(?![A-Za-z0-9])", [NSRegularExpression escapedPatternForString:key]];
-        NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:NULL];
-        if ([re replaceMatchesInString:out options:0 range:NSMakeRange(0, out.length) withTemplate:[NSRegularExpression escapedTemplateForString:Glossary()[key]]]) changed = YES;
+    for (NSTextCheckingResult *match in matches.reverseObjectEnumerator) {
+        NSString *replacement = Glossary()[[trimmed substringWithRange:match.range].lowercaseString];
+        if (replacement) [out replaceCharactersInRange:match.range withString:replacement];
     }
-    return changed ? out : nil;
+    return out;
 }
 static NSString *TypeLabel(NSString *type) {
     NSDictionary *labels = @{@"Required":T(@"required", @"必須"), @"Recommended":T(@"recommended", @"推奨"),
@@ -459,14 +467,17 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
     if (!texts.count || texts.count > 600) return;
     self.translating = YES; [self updateHeader];
     NSArray *list = texts.array;
+    __weak SKFomodController *weakController = self;
     void (^done)(NSArray *) = ^(NSArray *result) {
-        self.translating = NO;
+        SKFomodController *controller = weakController;
+        if (!controller || controller.finished) return;
+        controller.translating = NO;
         if (result.count == list.count) {
             NSMutableDictionary *map = [NSMutableDictionary dictionary];
             for (NSUInteger i = 0; i < list.count; ++i) if ([result[i] isKindOfClass:NSString.class]) map[list[i]] = result[i];
-            self.translations = map;
+            controller.translations = map;
         }
-        [self refresh];
+        [controller refresh];
     };
     ((void (*)(id, SEL, NSArray *, UIViewController *, void (^)(NSArray *)))objc_msgSend)(translator, sel, list, self, done);
 }
@@ -540,9 +551,11 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
 - (void)finish:(BOOL)ok message:(NSString *)m {
     if (self.finished) return;
     self.finished = YES;
-    skyrim_mobile_menu_pause(SKYRIM_MENU_PAUSE_INSTALLER, 0);
     void (^done)(BOOL, NSString *) = self.completion;
-    [self dismissViewControllerAnimated:YES completion:^{ done(ok, m); }];
+    [self dismissViewControllerAnimated:YES completion:^{
+        skyrim_mobile_menu_pause(SKYRIM_MENU_PAUSE_INSTALLER, 0);
+        done(ok, m);
+    }];
 }
 - (void)back {
     if (!self.position) { [self finish:NO message:T(@"Installation cancelled.", @"インストールを中止しました。")]; return; }
@@ -631,12 +644,19 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
     if (!p) return;
     SKFOption *o = self.step.groups[p.section].options[p.row];
     NSMutableArray *parts = [NSMutableArray array];
-    NSString *name = [self.translations[o.name] ?: GlossaryText(o.name) ?: o.name copy];
+    NSString *name = [self show:o.name];
     [parts addObject:name];
     if (![name isEqualToString:o.name]) [parts addObject:o.name];
     if (o.badges.length) [parts addObject:o.badges];
-    if (self.translations[o.desc].length) [parts addObject:self.translations[o.desc]];
-    if (o.desc.length) [parts addObject:japanese ? [@"――原文――\n" stringByAppendingString:o.desc] : o.desc];
+    if (o.desc.length) {
+        NSString *description = [self show:o.desc];
+        if (![description isEqualToString:o.desc]) {
+            [parts addObject:description];
+            [parts addObject:[@"――原文――\n" stringByAppendingString:o.desc]];
+        } else {
+            [parts addObject:o.desc];
+        }
+    }
     SKTextSheet *sheet = [SKTextSheet new];
     sheet.text = [parts componentsJoinedByString:@"\n\n"];
     sheet.sheetPresentationController.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];

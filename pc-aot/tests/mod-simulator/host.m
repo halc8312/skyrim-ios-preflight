@@ -3,12 +3,28 @@
  * Only synthetic data in this dedicated bundle's sandbox is used. */
 #import <UIKit/UIKit.h>
 #import <WebKit/WebKit.h>
+#import <objc/message.h>
 #import <objc/runtime.h>
 #include "mobile_ui.h"
 #include "mod_manager.h"
 
 static NSURL *directory(NSSearchPathDirectory kind) {
     return [NSFileManager.defaultManager URLsForDirectory:kind inDomains:NSUserDomainMask].firstObject;
+}
+
+// The shipping selector must enter Swift and return a main-thread result. Apple supports
+// downloading models and translating on physical devices, so the simulator returns nil.
+static void checkTranslationBridge(UITableViewController *settings) {
+    Class translator = NSClassFromString(@"SKTranslator");
+    SEL selector = NSSelectorFromString(@"translate:in:completion:");
+    if (![translator respondsToSelector:selector])
+        [NSException raise:NSInternalInconsistencyException format:@"Missing Swift MOD translation bridge"];
+    typedef void (*Translate)(id, SEL, NSArray *, UIViewController *, void (^)(NSArray *));
+    ((Translate)objc_msgSend)(translator, selector, @[@"Choose a colour for this installer."], settings, ^(NSArray *result) {
+        if (!NSThread.isMainThread || result != nil)
+            [NSException raise:NSInternalInconsistencyException format:@"Unexpected simulator translation result"];
+        settings.tableView.accessibilityIdentifier = @"mod-translation-bridge-checked";
+    });
 }
 
 // Supply a reproducible starting directory to the real Files picker. Only this
@@ -133,6 +149,13 @@ static void copyFixture(NSURL *source, NSURL *destination) {
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     self.window.rootViewController = [[UINavigationController alloc] initWithRootViewController:settings];
     [self.window makeKeyAndVisible];
+}
+- (void)sceneDidBecomeActive:(UIScene *)scene {
+    (void)scene;
+    UINavigationController *navigation = (UINavigationController *)self.window.rootViewController;
+    UITableViewController *settings = (UITableViewController *)navigation.viewControllers.firstObject;
+    if (settings.viewIfLoaded.window && ![settings.tableView.accessibilityIdentifier isEqual:@"mod-translation-bridge-checked"])
+        checkTranslationBridge(settings);
 }
 @end
 

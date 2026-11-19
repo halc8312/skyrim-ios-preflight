@@ -1,78 +1,82 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// On-device translation of MOD installer text into Japanese with Apple's
-// Translation framework (iOS 18+). Text never leaves the device; the first
-// use may ask the user to download the language data. Objective-C looks this
-// class up by name (NSClassFromString("SKTranslator")), so no generated Swift
-// header is needed; if the class is absent the installer uses its glossary.
 import SwiftUI
 import Translation
+import UIKit
 
+/// Objective-C calls this bridge from the installer's viewDidAppear.
+@MainActor
 @objc(SKTranslator)
 public final class SKTranslator: NSObject {
-    /// Translates `texts` (source language detected automatically) into
-    /// Japanese. `completion` runs on the main thread with results in the same
-    /// order, or nil when translation is unavailable or was declined.
     @objc(translate:in:completion:)
     public static func translate(_ texts: [String], in parent: UIViewController,
-                                 completion: @escaping @MainActor ([String]?) -> Void) {
-        guard #available(iOS 18.0, *), !texts.isEmpty else {
-            Task { @MainActor in completion(nil) }
+                                 completion: @escaping ([String]?) -> Void) {
+        guard !texts.isEmpty, parent.viewIfLoaded?.window != nil else {
+            completion(nil)
             return
         }
-        Task { @MainActor in
-            var host: UIHostingController<TranslatorView>?
-            let view = TranslatorView(texts: texts) { result in
-                host?.willMove(toParent: nil)
-                host?.view.removeFromSuperview()
-                host?.removeFromParent()
-                host = nil
-                completion(result)
-            }
-            let hosting = UIHostingController(rootView: view)
-            host = hosting
-            // A nearly invisible 1-pt view: the framework needs a view in a
-            // window to show its own download prompt.
-            hosting.view.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
-            hosting.view.alpha = 0.01
-            hosting.view.isUserInteractionEnabled = false
-            parent.addChild(hosting)
-            parent.view.addSubview(hosting.view)
-            hosting.didMove(toParent: parent)
-        }
+        #if targetEnvironment(simulator)
+        // Apple supplies the Translation API on the simulator but does not translate text there.
+        completion(nil)
+        #else
+        let request = InstallerTranslation(completion)
+        let view = InstallerTranslationView(texts: texts, request: request)
+        let host = UIHostingController(rootView: view)
+        request.host = host
+        parent.addChild(host)
+        host.view.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+        host.view.backgroundColor = .clear
+        parent.view.insertSubview(host.view, at: 0)
+        host.didMove(toParent: parent)
+        #endif
     }
 }
 
-@available(iOS 18.0, *)
-struct TranslatorView: View {
+@MainActor
+private final class InstallerTranslation {
+    weak var host: UIViewController?
+    private var completion: (([String]?) -> Void)?
+
+    init(_ completion: @escaping ([String]?) -> Void) {
+        self.completion = completion
+    }
+
+    func finish(_ translated: [String]?) {
+        guard let done = completion else { return }
+        completion = nil
+        if let host, host.parent != nil {
+            host.willMove(toParent: nil)
+            host.view.removeFromSuperview()
+            host.removeFromParent()
+        }
+        done(translated)
+    }
+}
+
+private struct InstallerTranslationView: View {
     let texts: [String]
-    let done: @MainActor ([String]?) -> Void
-    @State private var configuration: TranslationSession.Configuration?
+    let request: InstallerTranslation
 
     var body: some View {
-        let texts = self.texts
-        let done = self.done
-        Color.clear
-            .onAppear {
-                configuration = TranslationSession.Configuration(source: nil,
-                                                                 target: Locale.Language(identifier: "ja"))
+        Color.clear.translationTask(
+            source: nil, target: Locale.Language(identifier: "ja"),
+            action: Self.translate(texts, request: request))
+    }
+
+    // Keep the session on the task that owns it. Only its Sendable string results cross
+    // to the main actor. Apple's batch API returns responses in the order of the requests.
+    nonisolated private static func translate(_ texts: [String], request: InstallerTranslation)
+        -> @Sendable (TranslationSession) async -> Void {
+        { session in
+            let batch = texts.map { TranslationSession.Request(sourceText: $0) }
+            do {
+                let responses = try await session.translations(from: batch)
+                let values = responses.map { $0.targetText }
+                let complete = values.count == texts.count && !values.contains("")
+                await request.finish(complete ? values : nil)
+            } catch {
+                // This includes declining the system prompt to download language data.
+                await request.finish(nil)
             }
-            .translationTask(configuration) { session in
-                let requests = texts.enumerated().map {
-                    TranslationSession.Request(sourceText: $0.element, clientIdentifier: String($0.offset))
-                }
-                do {
-                    let responses = try await session.translations(from: requests)
-                    var out = texts
-                    for response in responses {
-                        if let id = response.clientIdentifier, let index = Int(id), index < out.count {
-                            out[index] = response.targetText
-                        }
-                    }
-                    let result = out
-                    await MainActor.run { done(result) }
-                } catch {
-                    await MainActor.run { done(nil) }
-                }
-            }
+        }
     }
 }

@@ -361,7 +361,17 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 
 - (void)testActualSettingsModScreens {
     [self.app launch];
+    XCTAssertTrue([self.app.tables[@"mod-translation-bridge-checked"] waitForExistenceWithTimeout:10]);
     [self capture:@"settings"];
+    [[self findRow:@"App language"] tap];
+    [self.app.buttons[@"日本語"] tap];
+    [[self findRow:@"MODの管理"] tap];
+    XCTAssertTrue([self.app.staticTexts[@"MODはまだありません"] waitForExistenceWithTimeout:8]);
+    [self findRow:@"セーブの確認"];
+    [self capture:@"mod-hub-japanese"];
+    [self goBackFrom:@"MOD"];
+    [[self findRow:@"アプリの言語"] tap];
+    [self.app.buttons[@"English"] tap];
     [self openHub];
     XCTAssertTrue(self.app.staticTexts[@"No MODs yet"].exists);
     [self capture:@"empty-hub"];
