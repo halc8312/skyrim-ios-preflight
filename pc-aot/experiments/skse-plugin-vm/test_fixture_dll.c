@@ -390,6 +390,33 @@ static _Bool check_file_assets(void) {
 }
 #endif
 
+#if FIXTURE_VARIANT == 21
+__declspec(dllimport) void *__stdcall CreateEventA(void *, int, int, const char *);
+__declspec(dllimport) void *__stdcall CreateEventW(void *, int, int, const wchar_t *);
+__declspec(dllimport) int __stdcall SetEvent(void *);
+__declspec(dllimport) int __stdcall ResetEvent(void *);
+__declspec(dllimport) uint32_t __stdcall WaitForSingleObject(void *, uint32_t);
+__declspec(dllimport) uint32_t __stdcall WaitForSingleObjectEx(void *, uint32_t, int);
+__declspec(dllimport) uint32_t __stdcall WaitForMultipleObjects(uint32_t, void *const *, int, uint32_t);
+__declspec(dllimport) uint32_t __stdcall WaitForMultipleObjectsEx(uint32_t, void *const *, int, uint32_t, int);
+__declspec(dllimport) int __stdcall CloseHandle(void *);
+
+static _Bool check_events(void) {
+    const uint32_t timeout = 0x102, infinite = UINT32_MAX;
+    void *manual = CreateEventA(NULL, 1, 0, NULL);
+    void *automatic = CreateEventW(NULL, 0, 1, NULL);
+    if (!manual || !automatic || WaitForSingleObject(manual, 0) != timeout) return 0;
+    void *items[] = {manual, automatic};
+    if (WaitForMultipleObjectsEx(2, items, 0, 0, 0) != 1 ||
+        WaitForSingleObject(automatic, 0) != timeout) return 0;
+    if (!SetEvent(manual) || !SetEvent(automatic) ||
+        WaitForMultipleObjects(2, items, 1, infinite) != 0 ||
+        WaitForSingleObjectEx(manual, infinite, 0) != 0 || WaitForSingleObject(automatic, 0) != timeout) return 0;
+    return ResetEvent(manual) && WaitForSingleObject(manual, 0) == timeout &&
+           CloseHandle(automatic) && CloseHandle(manual);
+}
+#endif
+
 _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (!api || !info) return 0;
     info->info_version = 1;
@@ -438,6 +465,9 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
 #endif
 #if FIXTURE_VARIANT == 20
     if (supported && !check_file_assets()) return 0;
+#endif
+#if FIXTURE_VARIANT == 21
+    if (supported && !check_events()) return 0;
 #endif
     return supported;
 }
