@@ -693,6 +693,98 @@ static uint32_t win_module_lookup(Vm *vm, SkseX86ModuleLookup operation) {
     return 0;
 }
 
+static uint32_t open_asset(Vm *vm, const uint32_t args[], bool wide) {
+    const uint32_t GENERIC_READ = UINT32_C(0x80000000);
+    const uint32_t read_hints = UINT32_C(0x18000080); // Normal, sequential or random access.
+    if (args[1] != GENERIC_READ || (args[2] & ~UINT32_C(7)) || args[3] || args[4] != 3 ||
+        (args[5] & ~read_hints) || args[6]) {
+        vm->services.thread->last_error = 5;
+        return UINT32_MAX;
+    }
+    uint16_t units[SKSE_WIN_PATH_UNITS];
+    size_t length = 0;
+    unsigned width = wide ? 2 : 1;
+    if (!args[0]) {
+        vm->services.thread->last_error = 123;
+        return UINT32_MAX;
+    }
+    for (; length < SKSE_WIN_PATH_UNITS; ++length) {
+        size_t offset = length * width;
+        if (args[0] > UINT32_MAX - offset) {
+            fail(vm, SKSE_X86_MEMORY_FAULT);
+            return UINT32_MAX;
+        }
+        uint32_t unit = read_memory(vm, args[0] + (uint32_t)offset, width);
+        if (vm->status != SKSE_X86_OK) return UINT32_MAX;
+        if (!unit) break;
+        units[length] = (uint16_t)unit;
+    }
+    char path[SKSE_WIN_PATH_BYTES];
+    if (!skse_win_asset_path(units, length, wide, path)) {
+        vm->services.thread->last_error = 123; // ERROR_INVALID_NAME.
+        return UINT32_MAX;
+    }
+    return skse_win_file_open(vm->services.files, path, (args[2] & 1) != 0, &vm->services.thread->last_error);
+}
+
+static uint32_t win_read_asset(Vm *vm, const uint32_t args[]) {
+    if (!args[3] || args[4]) {
+        vm->services.thread->last_error = 87; // A synchronous transfer needs its byte count.
+        return 0;
+    }
+    write_memory(vm, args[3], 4, 0);
+    if (vm->status != SKSE_X86_OK) return 0;
+    SkseWinFile *file = skse_win_file_lookup(vm->services.files, args[0]);
+    if (!file) {
+        vm->services.thread->last_error = 6;
+        return 0;
+    }
+    size_t count = file->length - file->offset;
+    if (count > args[2]) count = args[2];
+    if (count) {
+        if (!reserve_bulk(vm, (count + 63) / 64)) return 0;
+        uint8_t *buffer = memory(vm, args[1], count, SKSE_PE_WRITE);
+        if (!buffer) return 0;
+        memcpy(buffer, file->bytes + file->offset, count);
+        file->offset += count;
+    }
+    write_memory(vm, args[3], 4, (uint32_t)count);
+    return 1;
+}
+
+static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
+    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1};
+    _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_FILE_OPERATION_COUNT, "file ABI");
+    unsigned count = argument_counts[operation];
+    const uint8_t *parameters = service_parameters(vm, count * 4);
+    if (!parameters) return 0;
+    uint32_t args[7];
+    for (unsigned i = 0; i < count; ++i) args[i] = little_endian(parameters + 4 * i, 4);
+    vm->registers[ESP] += count * 4;
+
+    if (operation == SKSE_WIN_OPEN_FILE_A || operation == SKSE_WIN_OPEN_FILE_W)
+        return open_asset(vm, args, operation == SKSE_WIN_OPEN_FILE_W);
+    if (operation == SKSE_WIN_READ_FILE) return win_read_asset(vm, args);
+    SkseWinFile *file = skse_win_file_lookup(vm->services.files, args[0]);
+    if (!file) {
+        vm->services.thread->last_error = 6; // ERROR_INVALID_HANDLE.
+        return operation == SKSE_WIN_FILE_SIZE ? UINT32_MAX : 0;
+    }
+    if (operation == SKSE_WIN_CLOSE_FILE) {
+        skse_win_file_close(file);
+        return 1;
+    }
+    if (operation == SKSE_WIN_FILE_SIZE) {
+        if (args[1]) write_memory(vm, args[1], 4, 0);
+        return (uint32_t)file->length;
+    }
+    uint8_t *result = memory(vm, args[1], 8, SKSE_PE_WRITE);
+    if (!result) return 0;
+    for (unsigned i = 0; i < 4; ++i) result[i] = (uint8_t)(file->length >> (i * 8));
+    memset(result + 4, 0, 4);
+    return 1;
+}
+
 static void branch(Vm *vm, uint32_t address, bool tail) {
     if (vm->status != SKSE_X86_OK) return;
     // Validated service tokens never lie inside an image's executable range.
@@ -741,6 +833,9 @@ static void branch(Vm *vm, uint32_t address, bool tail) {
                 break;
             case SKSE_X86_MODULE_LOOKUP:
                 vm->registers[EAX] = win_module_lookup(vm, (SkseX86ModuleLookup)service->value);
+                break;
+            case SKSE_X86_READ_ONLY_FILES:
+                vm->registers[EAX] = win_file_service(vm, (SkseWinFileOperation)service->value);
                 break;
             }
             ++vm->result.service_calls[i];
@@ -891,6 +986,85 @@ static bool vector_instruction(Vm *vm, uint32_t opcode, unsigned prefix) {
     return true;
 }
 
+static void exchange_operands(Vm *vm, Operand first, Operand second, unsigned width) {
+    uint32_t a = read_operand(vm, first, width);
+    uint32_t b = read_operand(vm, second, width);
+    write_operand(vm, first, width, b);
+    write_operand(vm, second, width, a);
+}
+
+static bool read_modify_write(Vm *vm, uint32_t opcode, unsigned word, bool locked) {
+    if (opcode != 0xb0 && opcode != 0xb1 && opcode != 0xc0 && opcode != 0xc1) return false;
+    const uint32_t modrm = fetch(vm, 1);
+    const Operand destination = decode_rm(vm, modrm);
+    if (locked && destination.is_register) {
+        fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+        return true;
+    }
+    const unsigned width = opcode & 1 ? word : 1;
+    const Operand source = reg((modrm >> 3) & 7);
+    const uint32_t old = read_operand(vm, destination, width);
+    const uint32_t incoming = read_operand(vm, source, width);
+    if (opcode >= 0xc0) {
+        const uint32_t value = alu(vm, ADD, width, old, incoming);
+        write_operand(vm, source, width, old);
+        write_operand(vm, destination, width, value);
+    } else {
+        const Operand accumulator = reg(EAX);
+        const uint32_t expected = read_operand(vm, accumulator, width);
+        alu(vm, CMP, width, expected, old);
+        if (expected == old) {
+            write_operand(vm, destination, width, incoming);
+        } else {
+            // CMPXCHG still requires a writable memory destination on failure.
+            if (!destination.is_register) write_operand(vm, destination, width, old);
+            write_operand(vm, accumulator, width, old);
+        }
+    }
+    return true;
+}
+
+static void locked_instruction(Vm *vm, unsigned word) {
+    // This interpreter has a single logical CPU and exclusive ownership of
+    // its virtual memory. No host atomics or host pointers are needed.
+    uint32_t opcode = fetch(vm, 1);
+    if (opcode == 0x66 && word == 4) {
+        word = 2;
+        opcode = fetch(vm, 1);
+    }
+    if (opcode == 0x0f) {
+        if (!read_modify_write(vm, fetch(vm, 1), word, true)) fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+        return;
+    }
+    const bool register_source = opcode < 0x38 && (opcode & 7) <= 1;
+    const bool immediate_source = opcode == 0x80 || opcode == 0x81 || opcode == 0x83;
+    if (!(register_source || immediate_source || opcode == 0x86 || opcode == 0x87 ||
+          opcode == 0xfe || opcode == 0xff)) {
+        fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+        return;
+    }
+    const uint32_t modrm = fetch(vm, 1);
+    const unsigned group = (modrm >> 3) & 7;
+    const Operand dest = decode_rm(vm, modrm);
+    if (dest.is_register) {
+        fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+        return;
+    }
+    const unsigned width = opcode & 1 ? word : 1;
+    if (register_source) {
+        update_operand(vm, opcode >> 3, dest, width, read_operand(vm, reg(group), width));
+    } else if (immediate_source && group != CMP) {
+        uint32_t value = opcode == 0x83 ? sign_extend(fetch(vm, 1), 1) : fetch(vm, width);
+        update_operand(vm, group, dest, width, value);
+    } else if (opcode == 0x86 || opcode == 0x87) {
+        exchange_operands(vm, dest, reg(group), width);
+    } else if ((opcode == 0xfe || opcode == 0xff) && group <= 1) {
+        increment(vm, dest, width, group == 1);
+    } else {
+        fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
+    }
+}
+
 static void two_byte_instruction(Vm *vm, unsigned width, bool repeat) {
     uint32_t opcode = fetch(vm, 1);
     unsigned prefix = repeat ? 0xf3 : width == 2 ? 0x66 : 0;
@@ -899,6 +1073,7 @@ static void two_byte_instruction(Vm *vm, unsigned width, bool repeat) {
         fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
         return;
     }
+    if (read_modify_write(vm, opcode, width, false)) return;
     if (opcode >= 0x80 && opcode <= 0x8f) {
         if (width != 4) { fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION); return; }
         uint32_t displacement = fetch(vm, 4);
@@ -975,6 +1150,10 @@ static void step(Vm *vm) {
         opcode = fetch(vm, 1);
         if (!repeat && opcode == 0xf3) { repeat = true; opcode = fetch(vm, 1); }
     }
+    if (!repeat && opcode == 0xf0) {
+        locked_instruction(vm, word);
+        return;
+    }
     if (opcode == 0xa4 || opcode == 0xa5 || opcode == 0xaa || opcode == 0xab) {
         string_memory(vm, opcode < 0xaa, repeat, opcode & 1 ? word : 1);
         return;
@@ -1021,6 +1200,10 @@ static void step(Vm *vm) {
         write_operand(vm, reg(form), width, fetch(vm, width));
         return;
     }
+    if (opcode >= 0x91 && opcode <= 0x97) {
+        exchange_operands(vm, reg(EAX), reg(form), word);
+        return;
+    }
     switch (opcode) {
     case 0x68:
     case 0x6a:
@@ -1053,6 +1236,13 @@ static void step(Vm *vm) {
         unsigned width = opcode == 0x84 ? 1 : word;
         uint32_t left = read_operand(vm, rm, width);
         alu(vm, AND, width, left, read_operand(vm, reg((modrm >> 3) & 7), width));
+        return;
+    }
+    case 0x86:
+    case 0x87: {
+        uint32_t modrm = fetch(vm, 1);
+        Operand destination = decode_rm(vm, modrm);
+        exchange_operands(vm, destination, reg((modrm >> 3) & 7), opcode & 1 ? word : 1);
         return;
     }
     case 0x88:
@@ -1221,7 +1411,7 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
-        if ((unsigned)kind > SKSE_X86_MODULE_LOOKUP || !address ||
+        if ((unsigned)kind > SKSE_X86_READ_ONLY_FILES || !address ||
             (kind >= SKSE_X86_MALLOC && kind <= SKSE_X86_HEAP_FREE && !services.heap) ||
             (kind == SKSE_X86_WIN_THREAD &&
              (!services.thread || services.entries[i].value >= SKSE_WIN_THREAD_OPERATION_COUNT)) ||
@@ -1229,6 +1419,8 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
             (kind == SKSE_X86_MODULE_LOOKUP &&
              (!services.thread || !services.system_exports || !services.system_export_count ||
               services.system_export_count > SKSE_X86_MAX_SERVICES || services.entries[i].value >= SKSE_X86_MODULE_LOOKUP_COUNT)) ||
+            (kind == SKSE_X86_READ_ONLY_FILES &&
+             (!services.thread || !services.files || services.entries[i].value >= SKSE_WIN_FILE_OPERATION_COUNT)) ||
             ((kind == SKSE_X86_QUERY_CLASSIC || kind == SKSE_X86_REGISTER_CORE_LISTENER) &&
              (!services.core_messaging ||
               !in_range(scratch.base, scratch_end, services.core_messaging->interface_address, 16))) ||

@@ -326,6 +326,70 @@ static _Bool check_named_module(void) {
 }
 #endif
 
+#if FIXTURE_VARIANT == 19
+static volatile uint32_t shared_word;
+static _Bool check_locked_instructions(void) {
+    volatile uint32_t *address = &shared_word;
+    uint32_t before_add, before_miss, before_exchange;
+    unsigned char hit, miss, add_carry;
+    shared_word = 0xfffffffeu;
+    __asm {
+        mov edx, address
+        mov ecx, 3
+        lock xadd dword ptr [edx], ecx
+        setc add_carry
+        mov before_add, ecx
+        mov eax, 1
+        mov ecx, 9
+        lock cmpxchg dword ptr [edx], ecx
+        setz hit
+        mov eax, 69
+        lock cmpxchg dword ptr [edx], ecx
+        setz miss
+        mov before_miss, eax
+        mov ecx, 77
+        xchg dword ptr [edx], ecx
+        mov before_exchange, ecx
+        lock sub dword ptr [edx], 13
+        lock inc word ptr [edx]
+        lock dec byte ptr [edx]
+    }
+    return before_add == 0xfffffffeu && add_carry && hit && !miss &&
+           before_miss == 9 && before_exchange == 9 && shared_word == 64;
+}
+#endif
+
+#if FIXTURE_VARIANT == 20
+__declspec(dllimport) void *__stdcall CreateFileA(const char *, uint32_t, uint32_t, void *, uint32_t, uint32_t, void *);
+__declspec(dllimport) void *__stdcall CreateFileW(const wchar_t *, uint32_t, uint32_t, void *, uint32_t, uint32_t, void *);
+__declspec(dllimport) int __stdcall ReadFile(void *, void *, uint32_t, uint32_t *, void *);
+__declspec(dllimport) uint32_t __stdcall GetFileSize(void *, uint32_t *);
+__declspec(dllimport) int __stdcall GetFileSizeEx(void *, int64_t *);
+__declspec(dllimport) int __stdcall CloseHandle(void *);
+__declspec(dllimport) unsigned long __stdcall GetLastError(void);
+
+static _Bool check_file_assets(void) {
+    const uint32_t read_access = 0x80000000u;
+    void *const invalid = (void *)(uintptr_t)UINT32_MAX;
+    void *file = CreateFileA("Data\\SKSE\\Plugins\\Settings.ini", read_access, 0, NULL, 3, 0x80, NULL);
+    if (file == invalid) return 0;
+    void *second = CreateFileW(L"Data/SKSE/Plugins/Settings.ini", read_access, 1, NULL, 3, 0x80, NULL);
+    if (second != invalid || GetLastError() != 32) return 0;
+    uint32_t high = 12;
+    int64_t size = -1;
+    if (GetFileSize(file, &high) != 7 || high || !GetFileSizeEx(file, &size) || size != 7) return 0;
+    unsigned char bytes[8];
+    uint32_t transferred = 19;
+    if (!ReadFile(file, bytes, 2, &transferred, NULL) || transferred != 2 || bytes[0] != 'A' || bytes[1] != 'B') return 0;
+    if (!ReadFile(file, bytes, 8, &transferred, NULL) || transferred != 5 || bytes[0] != 'C' || bytes[4] != 'G') return 0;
+    if (!ReadFile(file, bytes, 8, &transferred, NULL) || transferred != 0 || !CloseHandle(file)) return 0;
+    second = CreateFileW(L"Data/SKSE/Plugins/\u8a2d\u5b9a.ini", read_access, 1, NULL, 3, 0x08000080, NULL);
+    if (second == invalid || !ReadFile(second, bytes, 4, &transferred, NULL) ||
+        transferred != 4 || bytes[0] != 'j' || bytes[3] != '\n' || !CloseHandle(second)) return 0;
+    return CreateFileA("OwnedAbsent.ini", read_access, 1, NULL, 3, 0x80, NULL) == invalid && GetLastError() == 2;
+}
+#endif
+
 _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (!api || !info) return 0;
     info->info_version = 1;
@@ -368,6 +432,12 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
 #endif
 #if FIXTURE_VARIANT == 18
     if (supported && !check_named_module()) return 0;
+#endif
+#if FIXTURE_VARIANT == 19
+    if (supported && !check_locked_instructions()) return 0;
+#endif
+#if FIXTURE_VARIANT == 20
+    if (supported && !check_file_assets()) return 0;
 #endif
     return supported;
 }

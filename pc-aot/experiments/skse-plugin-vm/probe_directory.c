@@ -7,6 +7,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "probe_directory.h"
+#include "probe_asset_file.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -299,7 +300,7 @@ static unsigned external_names(const Source *source, SksePeReport *imports, char
 }
 
 static void diagnose(const DirectoryScan *scan, const Source *source, uint32_t uptime_ms, SksePeReport *manifest,
-                     SkseProbeDirectoryFile *file) {
+                     SkseWinAssets assets, SkseProbeDirectoryFile *file) {
     memcpy(file->relative_path, source->relative, strlen(source->relative) + 1);
     file->status = source->status;
     file->export_status = SKSE_PE_BAD_ARGUMENT;
@@ -309,7 +310,7 @@ static void diagnose(const DirectoryScan *scan, const Source *source, uint32_t u
     file->is_plugin = 1;
     file->external_library_count = external_names(source, manifest, file->dependency_name, file->other_dependency_name);
     const SkseTrialOptions options = {0x01070030, 0x09200000, 0, 48, 1, 1, 1};
-    const SkseTrialRuntime runtime = {.uptime_ms = uptime_ms, .core_messages = 1, .static_tls = 1};
+    const SkseTrialRuntime runtime = {.uptime_ms = uptime_ms, .core_messages = 1, .static_tls = 1, .assets = assets};
     if (!file->external_library_count) {
         file->status = SKSE_PROBE_DLL_STANDALONE;
         file->trial = skse_plugin_trial_with_runtime(source->bytes, source->length, options, runtime);
@@ -352,8 +353,13 @@ SkseProbeDirectoryStatus skse_probe_local_directory(const char *path, uint32_t u
     if (!path || !*path) return SKSE_PROBE_DIRECTORY_UNAVAILABLE;
     int root = open_selected(path);
     if (root < 0) return SKSE_PROBE_DIRECTORY_UNAVAILABLE;
+    int listing = openat(root, ".", O_DIRECTORY | O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (listing < 0) {
+        close(root);
+        return SKSE_PROBE_DIRECTORY_INCOMPLETE;
+    }
     DirectoryScan scan = {0};
-    SkseProbeDirectoryStatus status = scan_folder(&scan, root, ROOT, "");
+    SkseProbeDirectoryStatus status = scan_folder(&scan, listing, ROOT, "");
     if (status == SKSE_PROBE_DIRECTORY_CHECKED) {
         qsort(scan.files, scan.count, sizeof scan.files[0], compare_sources);
         status = snapshot_all(&scan);
@@ -364,8 +370,9 @@ SkseProbeDirectoryStatus skse_probe_local_directory(const char *path, uint32_t u
         if (!manifest) status = SKSE_PROBE_DIRECTORY_NO_MEMORY;
     }
     if (status == SKSE_PROBE_DIRECTORY_CHECKED) {
+        SkseWinAssets assets = {.read = skse_probe_asset_read, .context = &root};
         for (unsigned i = 0; i < scan.count; ++i) {
-            diagnose(&scan, &scan.files[i], uptime_ms, manifest, &out->files[i]);
+            diagnose(&scan, &scan.files[i], uptime_ms, manifest, assets, &out->files[i]);
             out->plugin_count += out->files[i].is_plugin;
         }
         out->file_count = scan.count;
@@ -376,5 +383,6 @@ SkseProbeDirectoryStatus skse_probe_local_directory(const char *path, uint32_t u
         close_source(&scan.files[i]);
         free(scan.files[i].bytes);
     }
+    close(root);
     return status;
 }

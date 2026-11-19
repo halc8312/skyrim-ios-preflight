@@ -6,9 +6,11 @@ root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/skse-dll-sdk.XXXXXXXX")"
 pushd "$here" >/dev/null
 
-CC=clang python3 -B -m unittest -v test_probe_local_file test_probe_directory test_skse_plugin_vm test_pe_image test_dependency_plan
+CC=clang python3 -B -m unittest -v test_probe_local_file test_probe_directory test_skse_plugin_vm test_pe_image \
+    test_dependency_plan test_probe_asset_file
 device_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
-sources=(pe_image.c x86_call.c x86_heap.c x86_winthread.c dependency_plan.c plugin_trial.c probe_local_file.c probe_directory.c)
+sources=(pe_image.c x86_call.c x86_heap.c x86_winthread.c x86_winfile.c dependency_plan.c plugin_trial.c probe_local_file.c
+    probe_directory.c probe_asset_file.c)
 for source in "${sources[@]}"; do
     xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" \
         -std=c11 -O2 -Wall -Wextra -Werror -c "$source" -o "$work/${source%.c}.o"
@@ -26,7 +28,7 @@ from pathlib import Path
 import plistlib
 import sys
 from test_probe_local_file import supported_fixture
-from test_probe_directory import helper, primary
+from test_probe_directory import file_asset_fixture, helper, primary
 from test_pe_image import DATA, add_named_clock, zero_string
 
 app = Path(sys.argv[1])
@@ -41,6 +43,8 @@ package.mkdir(parents=True)
 (package / "Unsupported.dll").write_bytes(fixture)
 (package / "Paired.dll").write_bytes(primary())
 (package / "OwnedWorker.dll").write_bytes(helper())
+(package / "AssetProbe.dll").write_bytes(file_asset_fixture())
+(package / "Settings.ini").write_bytes(b"Authored settings")
 (app / "Info.plist").write_bytes(plistlib.dumps({
     "CFBundleIdentifier": "org.skyrimios.tests.dllcompatibility",
     "CFBundleName": "DLL Compatibility Fixture",
@@ -82,6 +86,6 @@ for language in english japanese; do
         sleep 1
     done
     grep -Fxq refused,passed,folder "$evidence"
-    echo "DLL_SIMULATOR: ${language} verified the single-file results and the MOD folder."
+    echo "DLL_SIMULATOR: ${language} verified the single-file results, the MOD folder and its read-only asset."
 done
 codesign --verify --strict "$app"
