@@ -242,7 +242,7 @@ def verify(container, assets, summary):
     assert exported["format"]=="skyrimios-modlist" and exported["name"] == "Trial Two" and len(exported["packages"]) == 3
     view=base/"Views"/active["id"]/"Data/interface/screens"
     assert (view/"shared.txt").read_bytes()==b"authored folder\n"
-    assert (view/"choice.txt").read_bytes()==b"blue\n"
+    assert (view/"choice.txt").read_bytes()==b"red\n"
     print("Real simulator UI result, original game/profile, conflict winner, FOMOD choice and reimported export verified.")
 
 

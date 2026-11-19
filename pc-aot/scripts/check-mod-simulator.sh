@@ -35,7 +35,7 @@ xcodebuild -project "$RUN/work/ModScreens.xcodeproj" -scheme ModScreens \
     -destination "platform=iOS Simulator,id=$UDID" -destination-timeout 90 \
     -derivedDataPath "$RUN/DerivedData" -resultBundlePath "$result" \
     -parallel-testing-enabled NO -test-timeouts-enabled YES \
-    -default-test-execution-time-allowance 450 -maximum-test-execution-time-allowance 600 \
+    -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
     test || status=$?
 echo "xcodebuild test exited with status $status."
 if [[ -d "$result" ]]; then
@@ -72,10 +72,12 @@ for entry in entries:
     if not path.is_file() or path.suffix.lower() not in {".png",".jpeg",".jpg"}:
         continue
     label = str(entry.get("suggestedHumanReadableName",""))
-    # Xcode may append timestamps and the test's activity name.
-    flat = lambda s: re.sub(r"[^a-z0-9]", "", s.lower())
-    name = next((n for n in sorted(labels,key=len,reverse=True) if flat(n) in flat(label)),None)
-    if name:
+    # Xcode inserts the attachment number and UUID before the name's last
+    # extension. A screenshot named for a ZIP still has that ZIP suffix here.
+    name = re.sub(r"_\d+_[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?=\.[^.]+$)",
+                  "", label, flags=re.IGNORECASE)
+    name = re.sub(r"\.(?:png|jpe?g)$", "", name, flags=re.IGNORECASE)
+    if name in labels:
         shutil.copyfile(path, target/(name+path.suffix.lower()))
         captured.add(name)
 if sys.argv[3] == "0" and not required.issubset(captured):

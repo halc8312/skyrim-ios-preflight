@@ -29,18 +29,30 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 }
 
 - (XCUIElement *)findRow:(NSString *)label {
-    XCUIElement *table = self.app.tables.firstMatch;
-    XCTAssertTrue([table waitForExistenceWithTimeout:12], @"No active table for %@", label);
+    // A presented navigation controller leaves the hub's table in the
+    // accessibility tree. First match the row's actual table, then z-order.
+    XCUIElementQuery *tables = [self.app.tables containingType:XCUIElementTypeStaticText identifier:label];
+    XCUIElement *table = nil, *row = nil;
+    NSDate *until = [NSDate dateWithTimeIntervalSinceNow:15];
+    do {
+        for (XCUIElement *candidate in tables.allElementsBoundByIndex.reverseObjectEnumerator) {
+            XCUIElement *cell = [candidate.cells containingType:XCUIElementTypeStaticText identifier:label].firstMatch;
+            if (cell.hittable || candidate.hittable) { table = candidate; row = cell; break; }
+        }
+        if (table) break;
+        [NSThread sleepForTimeInterval:.15];
+    } while (until.timeIntervalSinceNow > 0);
+    XCTAssertNotNil(table, @"Missing foreground table with row %@. %@", label, self.app.debugDescription);
     // UIKit reports real offscreen cell frames even when all their child labels
     // have the same placeholder Y. Use the cell for scrolling and the final tap.
-    XCUIElement *row = [table.cells containingType:XCUIElementTypeStaticText identifier:label].firstMatch;
-    XCTAssertTrue([row waitForExistenceWithTimeout:15], @"Missing row %@. %@", label, table.debugDescription);
-    XCUIElement *nav = self.app.navigationBars.firstMatch;
+    XCUIElement *nav = nil;
+    for (XCUIElement *candidate in self.app.navigationBars.allElementsBoundByIndex.reverseObjectEnumerator)
+        if (candidate.hittable) { nav = candidate; break; }
     CGFloat previousY = CGFLOAT_MAX;
     for (NSUInteger i = 0; i < 40; ++i) {
         CGRect bounds = table.frame;
         CGFloat top = CGRectGetMinY(bounds) + 10;
-        if (nav.exists) top = MAX(top, CGRectGetMaxY(nav.frame) + 8);
+        if (nav) top = MAX(top, CGRectGetMaxY(nav.frame) + 8);
         CGFloat bottom = CGRectGetMaxY(bounds) - 22;
         CGFloat y = CGRectGetMidY(row.frame);
         if (y >= top && y <= bottom && row.hittable) return row;
@@ -58,9 +70,17 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCTFail(@"Could not bring the row %@ onscreen. %@", label, table.debugDescription);
     return row;
 }
-- (void)goBack {
-    XCUIElement *bar = self.app.navigationBars.firstMatch;
-    [bar.buttons.firstMatch tap];
+- (void)goBackFrom:(NSString *)title {
+    XCUIElement *bar = self.app.navigationBars[title];
+    XCTAssertTrue([bar waitForExistenceWithTimeout:8], @"Missing navigation bar %@", title);
+    XCUIElement *back = nil;
+    CGFloat leading = CGRectGetMidX(bar.frame);
+    for (XCUIElement *button in bar.buttons.allElementsBoundByIndex) {
+        CGFloat x = CGRectGetMidX(button.frame);
+        if (button.hittable && x < leading) { back = button; leading = x; }
+    }
+    XCTAssertNotNil(back, @"Missing leading back button on %@. %@", title, bar.debugDescription);
+    [back tap];
 }
 - (void)openHub {
     XCUIElement *settings = self.app.navigationBars[@"SkyrimIOS Settings"];
@@ -68,15 +88,16 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [[self findRow:@"Manage MODs"] tap];
     XCTAssertTrue([self.app.navigationBars[@"MOD"] waitForExistenceWithTimeout:8]);
 }
-- (void)fillName:(NSString *)name replacing:(NSString *)initial {
-    XCUIElement *field = self.app.alerts.textFields.firstMatch;
+- (void)fillName:(NSString *)name replacing:(NSString *)initial inAlert:(NSString *)title {
+    XCUIElement *alert = self.app.alerts[title];
+    XCUIElement *field = alert.textFields.firstMatch;
     XCTAssertTrue([field waitForExistenceWithTimeout:6]);
     [field tap];
     NSMutableString *keys = [NSMutableString string];
     for (NSUInteger i=0; i<initial.length+1; ++i) [keys appendString:XCUIKeyboardKeyDelete];
     [field typeText:keys]; [field typeText:name];
     XCTAssertEqualObjects(field.value,name);
-    [self.app.alerts.buttons[@"OK"] tap];
+    [alert.buttons[@"OK"] tap];
 }
 
 // The "File View" collection contains document cells; Files has separate
@@ -195,7 +216,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self findRow:@"Authored Save"];
     NSPredicate *missingPlugin = [NSPredicate predicateWithFormat:@"label CONTAINS %@", @"UnavailableFixture.esp"];
     XCTAssertTrue([self.app.staticTexts matchingPredicate:missingPlugin].count > 0);
-    [self capture:@"save-check"]; [self goBack];
+    [self capture:@"save-check"]; [self goBackFrom:@"Save check"];
 
     [[self findRow:@"Add a zip file"] tap];
     [self pick:@"AuthoredZip.zip" folder:NO];
@@ -208,14 +229,14 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [[self findRow:@"Add a zip file"] tap];
     [self pick:@"AuthoredInstaller.zip" folder:NO];
     XCTAssertTrue([self.app.navigationBars[@"Choose a colour"] waitForExistenceWithTimeout:15]);
-    [[self findRow:@"Blue"] tap];
+    [[self findRow:@"Red"] tap];
     [self capture:@"fomod-options"];
-    [self.app.buttons[@"Install"] tap];
+    [self.app.navigationBars[@"Choose a colour"].buttons[@"Install"] tap];
     [self findRow:@"AuthoredInstaller"];
 
     [[self findRow:@"Default"] tap];
-    [self.app.navigationBars.buttons[@"Add"] tap];
-    [self fillName:@"Trial" replacing:@"MOD"];
+    [self.app.navigationBars[@"Profiles"].buttons[@"Add"] tap];
+    [self fillName:@"Trial" replacing:@"MOD" inAlert:@"New profile"];
     XCUIElement *trial = [self findRow:@"Trial"];
     [trial swipeLeft];
     if (![self.app.alerts[@"Rename"] waitForExistenceWithTimeout:1.5]) {
@@ -223,13 +244,13 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
         XCTAssertTrue([rename waitForExistenceWithTimeout:6]);
         [rename tap];
     }
-    [self fillName:@"Trial Two" replacing:@"Trial"];
+    [self fillName:@"Trial Two" replacing:@"Trial" inAlert:@"Rename"];
     [[self findRow:@"Trial Two"] tap]; [self capture:@"profile-renamed-selected"];
-    [self goBack];
+    [self goBackFrom:@"Profiles"];
     [[self findRow:@"Find on Nexus Mods"] tap];
     XCTAssertTrue([self.app.navigationBars[@"Nexus Mods"] waitForExistenceWithTimeout:10]);
     XCTAssertTrue([self.app.webViews.firstMatch waitForExistenceWithTimeout:12]);
-    [self capture:@"nexus-browser"]; [self goBack];
+    [self capture:@"nexus-browser"]; [self goBackFrom:@"Nexus Mods"];
 
     [[self findRow:@"Share this MOD list"] tap];
     // The activity sheet is genuine. The simulator host later copies this
@@ -252,10 +273,11 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCUIElement *conflictRow = [self findRow:conflict.label];
     [self capture:@"conflict-summary"]; [conflictRow tap];
     XCUIElement *file=[self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"label ENDSWITH[c] %@",@"shared.txt"]].firstMatch;
-    XCTAssertTrue(file.exists); [self findRow:file.label]; [self capture:@"conflict-files"]; [self goBack]; [self goBack];
+    XCTAssertTrue(file.exists); [self findRow:file.label]; [self capture:@"conflict-files"];
+    [self goBackFrom:@"Files"]; [self goBackFrom:@"Conflicts"];
     [[self findRow:@"Save check"] tap];
     [self findRow:@"No saves in this profile"];
-    [self capture:@"separate-profile-saves"]; [self goBack];
+    [self capture:@"separate-profile-saves"]; [self goBackFrom:@"Save check"];
     [[self findRow:@"Load a MOD list"] tap];
     [self pick:@"Trial Two.skyrimios-modlist.json" folder:NO];
     [[self findRow:@"Trial Two"] tap];
