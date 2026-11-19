@@ -55,7 +55,10 @@ static const struct {
     {{"KERNEL32.dll", "InterlockedDecrement", 0xe0001078}, SKSE_X86_INTERLOCKED, SKSE_X86_ATOMIC_DEC},
     {{"KERNEL32.dll", "InterlockedExchange", 0xe000107c}, SKSE_X86_INTERLOCKED, SKSE_X86_ATOMIC_EXCHANGE},
     {{"KERNEL32.dll", "InterlockedExchangeAdd", 0xe0001080}, SKSE_X86_INTERLOCKED, SKSE_X86_ATOMIC_ADD},
-    {{"KERNEL32.dll", "InterlockedCompareExchange", 0xe0001084}, SKSE_X86_INTERLOCKED, SKSE_X86_ATOMIC_COMPARE_EXCHANGE}
+    {{"KERNEL32.dll", "InterlockedCompareExchange", 0xe0001084}, SKSE_X86_INTERLOCKED, SKSE_X86_ATOMIC_COMPARE_EXCHANGE},
+    {{"KERNEL32.dll", "GetModuleHandleA", 0xe0001088}, SKSE_X86_MODULE_LOOKUP, SKSE_X86_MODULE_ANSI},
+    {{"KERNEL32.dll", "GetModuleHandleW", 0xe000108c}, SKSE_X86_MODULE_LOOKUP, SKSE_X86_MODULE_WIDE},
+    {{"KERNEL32.dll", "GetProcAddress", 0xe0001090}, SKSE_X86_MODULE_LOOKUP, SKSE_X86_PROCEDURE}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 _Static_assert(WINDOWS_SERVICE_COUNT + 5 <= SKSE_X86_MAX_SERVICES, "trial service count");
@@ -202,8 +205,8 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     SkseTrialResult result = {.status = SKSE_TRIAL_IMAGE_REFUSED};
     SkseDependencySpace space = {0};
     SksePeImage *image = &space.images[0];
+    SksePeImportBinding imports[WINDOWS_SERVICE_COUNT];
     if (runtime) {
-        SksePeImportBinding imports[WINDOWS_SERVICE_COUNT];
         for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i) imports[i] = windows_services[i].binding;
         if (policy != NO_CATALOG) {
             if (policy == EXPLICIT_HELPER) {
@@ -287,6 +290,8 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     if (runtime) {
         services.heap = &heap;
         services.thread = &thread;
+        services.system_exports = imports;
+        services.system_export_count = WINDOWS_SERVICE_COUNT;
         for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i) {
             entries[services.count++] = (SkseX86Service){
                 windows_services[i].binding.service_token, windows_services[i].value, windows_services[i].kind

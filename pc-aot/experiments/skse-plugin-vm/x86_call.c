@@ -636,6 +636,63 @@ static uint32_t win_interlocked(Vm *vm, SkseX86Interlocked operation) {
     return operation <= SKSE_X86_ATOMIC_DEC ? value : old;
 }
 
+static bool copy_guest_ascii(Vm *vm, uint32_t address, unsigned width, char text[SKSE_PE_MAX_IMPORT_NAME]) {
+    if (!address) return false;
+    for (unsigned i = 0; i < SKSE_PE_MAX_IMPORT_NAME; ++i) {
+        if (address > UINT32_MAX - i * width) return false;
+        uint32_t unit = read_memory(vm, address + i * width, width);
+        if (vm->status != SKSE_X86_OK) return false;
+        if (!unit) {
+            text[i] = '\0';
+            return i != 0;
+        }
+        if (unit < 0x20 || unit > 0x7e) return false;
+        text[i] = (char)unit;
+    }
+    return false;
+}
+
+// These module handles are private values. No host library is inspected.
+#define VIRTUAL_KERNEL32 UINT32_C(0xe2000001)
+#define VIRTUAL_MSVCRT UINT32_C(0xe2000002)
+
+static uint32_t win_module_lookup(Vm *vm, SkseX86ModuleLookup operation) {
+    const unsigned count = operation == SKSE_X86_PROCEDURE ? 2 : 1;
+    const uint8_t *args = service_parameters(vm, count * 4);
+    if (!args) return 0;
+    vm->registers[ESP] += count * 4;
+    const uint32_t first = little_endian(args, 4);
+    char name[SKSE_PE_MAX_IMPORT_NAME];
+    if (operation != SKSE_X86_PROCEDURE) {
+        unsigned width = operation == SKSE_X86_MODULE_WIDE ? 2 : 1;
+        if (copy_guest_ascii(vm, first, width, name)) {
+            if (skse_pe_library_name_equal(name, "kernel32.dll") || skse_pe_library_name_equal(name, "kernel32"))
+                return VIRTUAL_KERNEL32;
+            if (skse_pe_library_name_equal(name, "msvcrt.dll") || skse_pe_library_name_equal(name, "msvcrt"))
+                return VIRTUAL_MSVCRT;
+        }
+        vm->services.thread->last_error = 126; // ERROR_MOD_NOT_FOUND.
+        return 0;
+    }
+
+    const char *library = first == VIRTUAL_KERNEL32 ? "kernel32.dll" : first == VIRTUAL_MSVCRT ? "msvcrt.dll" : NULL;
+    const uint32_t symbol = little_endian(args + 4, 4);
+    if (library && symbol > UINT16_MAX && copy_guest_ascii(vm, symbol, 1, name)) {
+        for (size_t i = 0; i < vm->services.system_export_count; ++i) {
+            const SksePeImportBinding *export = &vm->services.system_exports[i];
+            if (skse_pe_library_name_equal(library, export->library) && !strcmp(name, export->symbol)) {
+                for (size_t j = 0; j < vm->services.count; ++j) {
+                    if (vm->services.entries[j].address == export->service_token) return export->service_token;
+                }
+                fail(vm, SKSE_X86_BAD_ARGUMENT);
+                break;
+            }
+        }
+    }
+    vm->services.thread->last_error = library ? 127 : 126; // ERROR_PROC_NOT_FOUND / ERROR_MOD_NOT_FOUND.
+    return 0;
+}
+
 static void branch(Vm *vm, uint32_t address, bool tail) {
     if (vm->status != SKSE_X86_OK) return;
     // Validated service tokens never lie inside an image's executable range.
@@ -681,6 +738,9 @@ static void branch(Vm *vm, uint32_t address, bool tail) {
                 break;
             case SKSE_X86_INTERLOCKED:
                 vm->registers[EAX] = win_interlocked(vm, (SkseX86Interlocked)service->value);
+                break;
+            case SKSE_X86_MODULE_LOOKUP:
+                vm->registers[EAX] = win_module_lookup(vm, (SkseX86ModuleLookup)service->value);
                 break;
             }
             ++vm->result.service_calls[i];
@@ -1161,11 +1221,14 @@ SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_co
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
-        if ((unsigned)kind > SKSE_X86_INTERLOCKED || !address ||
+        if ((unsigned)kind > SKSE_X86_MODULE_LOOKUP || !address ||
             (kind >= SKSE_X86_MALLOC && kind <= SKSE_X86_HEAP_FREE && !services.heap) ||
             (kind == SKSE_X86_WIN_THREAD &&
              (!services.thread || services.entries[i].value >= SKSE_WIN_THREAD_OPERATION_COUNT)) ||
             (kind == SKSE_X86_INTERLOCKED && services.entries[i].value >= SKSE_X86_ATOMIC_COUNT) ||
+            (kind == SKSE_X86_MODULE_LOOKUP &&
+             (!services.thread || !services.system_exports || !services.system_export_count ||
+              services.system_export_count > SKSE_X86_MAX_SERVICES || services.entries[i].value >= SKSE_X86_MODULE_LOOKUP_COUNT)) ||
             ((kind == SKSE_X86_QUERY_CLASSIC || kind == SKSE_X86_REGISTER_CORE_LISTENER) &&
              (!services.core_messaging ||
               !in_range(scratch.base, scratch_end, services.core_messaging->interface_address, 16))) ||

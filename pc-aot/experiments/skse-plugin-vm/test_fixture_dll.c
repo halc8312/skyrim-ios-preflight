@@ -305,6 +305,27 @@ static _Bool check_interlocked(void) {
 }
 #endif
 
+#if FIXTURE_VARIANT == 18
+typedef unsigned long (__stdcall *FixtureLastError)(void);
+__declspec(dllimport) void *__stdcall GetModuleHandleA(const char *);
+__declspec(dllimport) void *__stdcall GetModuleHandleW(const wchar_t *);
+__declspec(dllimport) FixtureLastError __stdcall GetProcAddress(void *, const char *);
+__declspec(dllimport) unsigned long __stdcall GetLastError(void);
+__declspec(dllimport) void __stdcall SetLastError(unsigned long);
+
+static _Bool check_named_module(void) {
+    void *kernel = GetModuleHandleA("kErNeL32");
+    if (!kernel || kernel != GetModuleHandleW(L"KerNel32.DlL")) return 0;
+    FixtureLastError last_error = GetProcAddress(kernel, "GetLastError");
+    if (!last_error) return 0;
+    SetLastError(917);
+    if (last_error() != 917) return 0;
+    if (GetProcAddress(kernel, "getlasterror") || GetLastError() != 127) return 0;
+    if (GetModuleHandleA("OwnedFixtureNotLoaded") || GetLastError() != 126) return 0;
+    return 1;
+}
+#endif
+
 _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (!api || !info) return 0;
     info->info_version = 1;
@@ -344,6 +365,9 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
 #endif
 #if FIXTURE_VARIANT == 17
     if (supported && !check_interlocked()) return 0;
+#endif
+#if FIXTURE_VARIANT == 18
+    if (supported && !check_named_module()) return 0;
 #endif
     return supported;
 }

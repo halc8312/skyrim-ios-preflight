@@ -195,7 +195,7 @@ class PluginInterpreterTests(unittest.TestCase):
                         self.assertEqual(actual, expected)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows runs the TLS service reference")
-    def test_win32_tls_values_and_last_error_follow_the_logical_plugin_thread(self):
+    def test_win32_tls_synchronization_and_named_services_match_native_calls(self):
         cc, linker = LLVM / "clang.exe", LLVM / "lld-link.exe"
         kits = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Windows Kits/10/Lib"
         kernel32 = sorted(kits.glob("*/um/x86/kernel32.lib"))
@@ -206,7 +206,8 @@ class PluginInterpreterTests(unittest.TestCase):
             emulator = root / "trial.exe"
             compile_interpreter(cc, emulator, "test_interpreted.c",
                                 ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
-            for variant, mode in ((14, "tls"), (15, "static-tls"), (16, "static-tls-pair"), (17, "interlocked")):
+            for variant, mode in ((14, "tls"), (15, "static-tls"), (16, "static-tls-pair"), (17, "interlocked"),
+                                  (18, "module-lookup")):
                 for opt in ("-O0", "-O2"):
                     with self.subTest(variant=variant, optimization=opt):
                         expected, actual = compare_with_windows(cc, linker, emulator, root / f"{variant}-{opt}",

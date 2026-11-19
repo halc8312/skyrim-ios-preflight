@@ -33,13 +33,17 @@ typedef enum {
     SKSE_X86_QUERY_CLASSIC, SKSE_X86_REGISTER_CORE_LISTENER, SKSE_X86_UNAVAILABLE,
     SKSE_X86_MALLOC, SKSE_X86_CALLOC, SKSE_X86_REALLOC, SKSE_X86_FREE,
     SKSE_X86_HEAP_ALLOC, SKSE_X86_HEAP_REALLOC, SKSE_X86_HEAP_FREE, SKSE_X86_WIN_THREAD,
-    SKSE_X86_INTERLOCKED
+    SKSE_X86_INTERLOCKED, SKSE_X86_MODULE_LOOKUP
 } SkseX86ServiceKind;
 
 typedef enum {
     SKSE_X86_ATOMIC_INC, SKSE_X86_ATOMIC_DEC, SKSE_X86_ATOMIC_EXCHANGE,
     SKSE_X86_ATOMIC_ADD, SKSE_X86_ATOMIC_COMPARE_EXCHANGE, SKSE_X86_ATOMIC_COUNT
 } SkseX86Interlocked;
+
+typedef enum {
+    SKSE_X86_MODULE_ANSI, SKSE_X86_MODULE_WIDE, SKSE_X86_PROCEDURE, SKSE_X86_MODULE_LOOKUP_COUNT
+} SkseX86ModuleLookup;
 
 /* A service address is a guest token outside the image and scratch. The
  * recognized operations use scalar results or checked guest ranges. */
@@ -59,6 +63,10 @@ typedef struct {
     SkseX86CoreMessaging *core_messaging;
     SkseX86Heap *heap;
     SkseWinThread *thread;
+    /* Optional export names for resolving symbols in the emulated system DLLs.
+     * The result must also be present in entries as a service token. */
+    const SksePeImportBinding *system_exports;
+    size_t system_export_count;
     /* Both zero for calls without static TLS. The table and its blocks occupy
      * the lower part of scratch, below the first address the stack may use. */
     uint32_t static_tls_table, stack_floor;
