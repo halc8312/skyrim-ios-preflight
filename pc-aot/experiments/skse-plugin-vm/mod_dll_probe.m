@@ -226,14 +226,36 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
     case SKSE_PROBE_DIRECTORY_NO_PLUGINS:
         break;
     }
-    NSString *summary = report->plugin_count
-        ? [NSString stringWithFormat:Text(japanese, @"Found %u SKSE DLLs in this folder.", @"SKSE用DLLを%u個見つけました。"), report->plugin_count]
-        : Text(japanese, @"No Skyrim LE SKSE plugins were found.", @"Skyrim LE用のSKSEプラグインが見つかりませんでした。");
+    NSString *summary;
+    if (report->plugin_count == 0) {
+        summary = Text(japanese, @"No Skyrim LE SKSE plugins were found.", @"Skyrim LE用のSKSEプラグインが見つかりませんでした。");
+    } else if (report->plugin_count == 1) {
+        summary = Text(japanese, @"Found one Skyrim LE SKSE plugin.", @"Skyrim LE用のSKSEプラグインを1個見つけました。");
+    } else {
+        summary = [NSString stringWithFormat:Text(japanese, @"Found %u Skyrim LE SKSE plugins.",
+            @"Skyrim LE用のSKSEプラグインを%u個見つけました。"), report->plugin_count];
+    }
+
+    NSMutableSet<NSString *> *knownHelpers = [NSMutableSet set];
+    for (unsigned i = 0; i < report->file_count; ++i) {
+        const SkseProbeDirectoryFile *file = &report->files[i];
+        const SkseDependencyTrace *dependencies = &file->trial.dependencies;
+        if (!file->trial_ran || dependencies->status != SKSE_DEPENDENCY_READY) continue;
+        for (unsigned helper = 0; helper < dependencies->helper_count; ++helper) {
+            NSString *name = [NSString stringWithUTF8String:dependencies->load_order[helper]];
+            if (name) [knownHelpers addObject:name];
+        }
+    }
+
     NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObject:summary];
     for (unsigned i = 0; i < report->file_count; ++i) {
         const SkseProbeDirectoryFile *file = &report->files[i];
         NSString *name = [NSString stringWithUTF8String:file->relative_path] ?: @"DLL";
-        NSString *result = FolderFileResult(japanese, file);
+        BOOL isKnownHelper = file->status == SKSE_PROBE_DLL_NOT_PLUGIN &&
+            file->export_status == SKSE_PE_MISSING_EXPORTS && [knownHelpers containsObject:name.lastPathComponent];
+        NSString *result = isKnownHelper
+            ? Text(japanese, @"Helper DLL required by a detected SKSE plugin.", @"検出したSKSEプラグインが使う補助DLLです。")
+            : FolderFileResult(japanese, file);
         NSMutableString *detail = [NSMutableString stringWithFormat:@"%@\n%@", name, result];
         const SkseDependencyTrace *dependencies = &file->trial.dependencies;
         if (file->trial_ran && dependencies->status == SKSE_DEPENDENCY_READY && dependencies->helper_count) {
