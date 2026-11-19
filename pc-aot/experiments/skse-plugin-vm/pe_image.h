@@ -25,7 +25,8 @@ typedef enum {
     SKSE_PE_MISSING_EXPORTS, SKSE_PE_NO_MEMORY, SKSE_PE_UNAPPROVED_IMPORT,
     SKSE_PE_ORDINAL_IMPORT, SKSE_PE_BOUND_IMPORT, SKSE_PE_RELOCATIONS_REQUIRED,
     SKSE_PE_UNSUPPORTED_RELOCATION, SKSE_PE_BAD_RELOCATION,
-    SKSE_PE_OVERLAPPING_RELOCATION, SKSE_PE_RELOCATION_IAT_CONFLICT
+    SKSE_PE_OVERLAPPING_RELOCATION, SKSE_PE_RELOCATION_IAT_CONFLICT,
+    SKSE_PE_MISSING_DEPENDENCY_EXPORT, SKSE_PE_FORWARDED_DEPENDENCY_EXPORT
 } SksePeStatus;
 
 typedef struct {
@@ -54,12 +55,18 @@ typedef struct {
     uint16_t library_count, symbol_count;
     char libraries[SKSE_PE_MAX_IMPORT_LIBRARIES][SKSE_PE_MAX_IMPORT_NAME];
     SksePeImportSymbol symbols[SKSE_PE_MAX_IMPORT_SYMBOLS];
+    uint32_t preferred_base, image_size;
 } SksePeReport;
 
 typedef struct {
     const char *library, *symbol;
-    uint32_t service_token; /* An address in the interpreter's virtual address space. */
+    uint32_t service_token; /* A service token or approved export address in the interpreter. */
 } SksePeImportBinding;
+
+typedef struct {
+    const char *name;
+    uint32_t address;
+} SksePeRequiredExport;
 
 enum { SKSE_PE_ALLOW_ENTRY = 1u };
 
@@ -67,6 +74,9 @@ enum { SKSE_PE_ALLOW_ENTRY = 1u };
  * imports, including when the result is SKSE_PE_UNSUPPORTED_IMPORTS. Partial
  * reports on malformed input are for diagnostics only. */
 SksePeStatus skse_pe_inspect(const uint8_t *file, size_t length, SksePeReport *report);
+/* Identify the two Classic plugin entry points without mapping or resolving
+ * imports. Success only describes the exports and their executable ranges. */
+SksePeStatus skse_pe_classic_exports(const uint8_t *file, size_t length);
 /* Map a preferred-base, import-free i386 PE32 DLL with two cdecl exports and
  * no loader entry point. Only initialized RX/X bytes may supply instructions.
  * Does not resolve imports, apply relocations, run code or change host memory
@@ -86,10 +96,18 @@ SksePeStatus skse_pe_map_with_imports(const uint8_t *file, size_t length,
 SksePeStatus skse_pe_map_at_base(const uint8_t *file, size_t length, uint32_t guest_base,
                                  const SksePeImportBinding *bindings, size_t binding_count,
                                  unsigned flags, SksePeImage *out);
+/* Dependency DLLs expose only the requested, exact named functions. The
+ * caller owns the source and decides which import names may refer to it.
+ * Failure clears the output image and every requested address. */
+SksePeStatus skse_pe_map_library(const uint8_t *file, size_t length, uint32_t guest_base,
+                                 const SksePeImportBinding *bindings, size_t binding_count, unsigned flags,
+                                 SksePeRequiredExport *required, size_t required_count, SksePeImage *out);
 void skse_pe_free(SksePeImage *image);
 /* Nonempty range must fit fully inside one region with every requested bit. */
 int skse_pe_allows(const SksePeImage *image, uint32_t va, size_t length, unsigned required);
 const char *skse_pe_status_text(SksePeStatus status);
+/* PE library names use ASCII case-insensitive comparison. */
+int skse_pe_library_name_equal(const char *a, const char *b);
 
 #ifdef __cplusplus
 }

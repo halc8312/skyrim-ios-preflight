@@ -22,7 +22,7 @@ typedef struct {
     size_t length;
 } SkseX86Scratch;
 
-enum { SKSE_X86_MAX_SERVICES = 10, SKSE_CLASSIC_MESSAGING_ID = 5 };
+enum { SKSE_X86_MAX_SERVICES = 10, SKSE_X86_MAX_IMAGES = 4, SKSE_CLASSIC_MESSAGING_ID = 5 };
 
 typedef enum {
     SKSE_X86_SCALAR_RETURN, SKSE_X86_MEMCPY, SKSE_X86_MEMMOVE, SKSE_X86_MEMSET,
@@ -61,6 +61,12 @@ SkseX86Result skse_x86_call(SksePeImage *image, uint32_t entry,
                             SkseX86Scratch scratch, const uint32_t *args,
                             size_t arg_count, uint32_t instruction_limit,
                             SkseX86Services services, SkseX86Convention convention);
+/* The images share guest addresses for one invocation. Each image has
+ * independent storage and unchanged permissions. All ranges must be disjoint. */
+SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_count, uint32_t entry,
+                                     SkseX86Scratch scratch, const uint32_t *args,
+                                     size_t arg_count, uint32_t instruction_limit,
+                                     SkseX86Services services, SkseX86Convention convention);
 
 const char *skse_x86_status_text(SkseX86Status status);
 #endif

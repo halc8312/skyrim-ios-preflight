@@ -5,19 +5,28 @@
 #include <string.h>
 #include "test_trial_cases.h"
 
+static size_t read_owned_dll(const char *path, uint8_t *bytes, size_t capacity) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return 0;
+    size_t length = fread(bytes, 1, capacity, file);
+    int unusable = ferror(file) || !feof(file);
+    fclose(file);
+    return unusable ? 0 : length;
+}
+
 int main(int argc, char *argv[]) {
     int clock = argc >= 3 && strcmp(argv[2], "clock") == 0;
     int memory = argc >= 3 && strcmp(argv[2], "memory") == 0;
     int messages = argc >= 3 && strcmp(argv[2], "messages") == 0;
-    int moved = argc == 4 && strcmp(argv[3], "move") == 0;
-    assert(argc == 2 || ((clock || memory || messages) && (argc == 3 || moved)));
-    FILE *file = fopen(argv[1], "rb");
-    if (!file) return 2;
+    int dependency = argc == 4 && strcmp(argv[2], "dependency") == 0;
+    int moved = !dependency && argc == 4 && strcmp(argv[3], "move") == 0;
+    assert(argc == 2 || dependency || ((clock || memory || messages) && (argc == 3 || moved)));
     uint8_t bytes[64 * 1024];
-    size_t length = fread(bytes, 1, sizeof bytes, file);
-    int unusable = ferror(file) || !feof(file);
-    fclose(file);
-    if (unusable) return 2;
+    size_t length = read_owned_dll(argv[1], bytes, sizeof bytes);
+    if (!length) return 2;
+    uint8_t helper[64 * 1024];
+    size_t helper_length = dependency ? read_owned_dll(argv[3], helper, sizeof helper) : 0;
+    if (dependency && !helper_length) return 2;
     for (size_t i = 0; i < sizeof trial_cases / sizeof trial_cases[0]; ++i) {
         SkseTrialRuntime runtime = {
             .uptime_ms = UINT32_C(0x9100abcd),
@@ -27,6 +36,18 @@ int main(int argc, char *argv[]) {
         SkseTrialResult result = argc >= 3
             ? skse_plugin_trial_with_runtime(bytes, length, trial_cases[i], runtime)
             : skse_plugin_trial(bytes, length, trial_cases[i]);
+        if (dependency) {
+            assert(result.status == SKSE_TRIAL_IMAGE_REFUSED && result.image_status == SKSE_PE_UNAPPROVED_IMPORT);
+            SkseTrialDependency supplied = {"oWNEDwORKER.DlL", helper, helper_length};
+            result = skse_plugin_trial_with_dependency(bytes, length, trial_cases[i], runtime, supplied);
+            assert(result.dependency_status == SKSE_PE_OK);
+            assert(result.dependency_attach.status == SKSE_X86_OK && result.dependency_attach.instructions);
+            assert(result.dependency_detach.status == SKSE_X86_OK && result.dependency_detach.instructions);
+            supplied.file_name = "Unrelated.dll";
+            SkseTrialResult unrelated = skse_plugin_trial_with_dependency(bytes, length, trial_cases[i], runtime, supplied);
+            assert(unrelated.status == SKSE_TRIAL_DEPENDENCY_REFUSED &&
+                   unrelated.dependency_status == SKSE_PE_MISSING_DEPENDENCY_EXPORT);
+        }
         if (result.status != SKSE_TRIAL_COMPLETED && result.status != SKSE_TRIAL_QUERY_DECLINED &&
             result.status != SKSE_TRIAL_LOAD_DECLINED && result.status != SKSE_TRIAL_MESSAGE_FAULT) {
             fprintf(stderr, "case=%zu phase=%u PE=%u x86-query=%u at=0x%08x x86-load=%u at=0x%08x\n",

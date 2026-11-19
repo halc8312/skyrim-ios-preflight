@@ -22,11 +22,19 @@ def compile_interpreter(compiler, output, test_source, flag_list):
 
 
 def compare_with_windows(compiler, linker, emulator, directory, variant, opt,
-                         *, imports=(), attach=False, mode=None):
+                         *, imports=(), attach=False, mode=None, with_dependency=False):
     directory.mkdir()
     obj, dll, lib = (directory / f"fixture.{ext}" for ext in ("obj", "dll", "lib"))
     run(compiler, "--target=i686-pc-windows-msvc", "-ffreestanding", "-fno-stack-protector",
         opt, f"-DFIXTURE_VARIANT={variant}", "-c", HERE / "test_fixture_dll.c", "-o", obj)
+    companion = directory / "OwnedWorker.dll"
+    if with_dependency:
+        dependency_obj, dependency_lib = directory / "worker.obj", directory / "worker.lib"
+        run(compiler, "--target=i686-pc-windows-msvc", "-ffreestanding", "-fno-stack-protector", opt,
+            "-c", HERE / "test_dependency_dll.c", "-o", dependency_obj)
+        run(linker, "/dll", "/nodefaultlib", "/machine:x86", "/base:0x10000000",
+            "/entry:OwnedDependencyEntry@12", f"/out:{companion}", f"/implib:{dependency_lib}", dependency_obj)
+        imports = (*imports, dependency_lib)
     entry = "/entry:TestModuleEntry@12" if attach else "/noentry"
     run(linker, "/dll", "/nodefaultlib", "/machine:x86", "/base:0x10000000",
         f"/out:{dll}", f"/implib:{lib}", obj, entry, *imports)
@@ -34,8 +42,11 @@ def compare_with_windows(compiler, linker, emulator, directory, variant, opt,
     run(compiler, "--target=i686-pc-windows-msvc", "-fuse-ld=lld", "-std=c11",
         HERE / "test_native_windows.c", "-o", reference)
     expected = run(reference, *([mode] if mode else []), capture_output=True, text=True).stdout
-    actual = run(emulator, dll, *([mode] if mode else []), capture_output=True, text=True).stdout
-    if mode:
+    command = [emulator, dll]
+    if mode: command.append(mode)
+    if with_dependency: command.append(companion)
+    actual = run(*command, capture_output=True, text=True).stdout
+    if mode and not with_dependency:
         moved = run(emulator, dll, mode, "move", capture_output=True, text=True).stdout
         if moved != actual:
             raise AssertionError(f"Moving the DLL changed the interpreted output:\n{moved}\n{actual}")
@@ -133,6 +144,23 @@ class PluginInterpreterTests(unittest.TestCase):
                                                                 variant, opt, mode="messages")
                         self.assertEqual(actual, expected)
                         self.assertIn(witness, actual)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows runs the native dependency reference")
+    def test_named_dependency_is_bound_and_relocated_without_host_code_loading(self):
+        cc, linker = LLVM / "clang.exe", LLVM / "lld-link.exe"
+        if not cc.is_file() or not linker.is_file():
+            self.skipTest("Windows LLVM clang and lld-link required")
+        with tempfile.TemporaryDirectory(prefix="skse-import-dependency-") as tmp:
+            root = Path(tmp)
+            emulator = root / "trial.exe"
+            compile_interpreter(cc, emulator, "test_interpreted.c",
+                                ["-fuse-ld=lld", "-D_CRT_SECURE_NO_WARNINGS"])
+            for opt in ("-O0", "-O2"):
+                with self.subTest(optimization=opt):
+                    expected, actual = compare_with_windows(cc, linker, emulator, root / opt, 9, opt,
+                                                            mode="dependency", with_dependency=True)
+                    self.assertIn(",1,1,", expected)
+                    self.assertEqual(actual, expected)
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,13 +9,16 @@ enum { ADD, OR, ADC, SBB, AND, SUB, XOR, CMP };
 enum { MAX_SCRATCH = 256 * 1024, MAX_ARGUMENTS = 16, MAX_STEPS = 1000000 };
 
 typedef struct {
-    SksePeImage *image;
+    SksePeImage *const *images;
+    size_t image_count;
+    SksePeImage *recent_image;
     SkseX86Scratch scratch;
     SkseX86Services services;
     SkseX86Result result;
     uint32_t registers[8], ip, flags, return_slot;
     uint32_t return_cleanup, limit, bulk_work;
     uint64_t code_start, code_end;
+    const uint8_t *code_bytes;
     bool finished;
 } Vm;
 
@@ -53,6 +56,22 @@ static bool in_range(uint64_t start, uint64_t end, uint32_t address, size_t coun
     return address >= start && address < end && count <= end - address;
 }
 
+static bool in_image(const SksePeImage *image, uint32_t address) {
+    return address >= image->base && address - image->base < image->size;
+}
+
+static SksePeImage *image_at(Vm *vm, uint32_t address) {
+    if (in_image(vm->recent_image, address)) return vm->recent_image;
+    for (size_t i = 0; i < vm->image_count; ++i) {
+        SksePeImage *image = vm->images[i];
+        if (in_image(image, address)) {
+            vm->recent_image = image;
+            return image;
+        }
+    }
+    return NULL;
+}
+
 static void fail(Vm *vm, SkseX86Status status) {
     if (vm->result.status == SKSE_X86_OK) vm->result.status = status;
 }
@@ -60,24 +79,26 @@ static void fail(Vm *vm, SkseX86Status status) {
 static uint32_t fetch(Vm *vm, unsigned width) {
     if (vm->result.status != SKSE_X86_OK) return 0;
     if (!in_range(vm->code_start, vm->code_end, vm->ip, width)) {
-        if (!skse_pe_allows(vm->image, vm->ip, width, SKSE_PE_EXEC)) {
+        const SksePeImage *image = image_at(vm, vm->ip);
+        if (!skse_pe_allows(image, vm->ip, width, SKSE_PE_EXEC)) {
             fail(vm, SKSE_X86_MEMORY_FAULT);
             return 0;
         }
         // Cache the current immutable code section so subsequent bytes skip
         // section lookup. The loader rejects sections that are writable code.
-        uint32_t rva = vm->ip - vm->image->base;
-        for (uint16_t i = 0; i < vm->image->section_count; ++i) {
-            const SksePeSection *section = &vm->image->sections[i];
+        uint32_t rva = vm->ip - image->base;
+        for (uint16_t i = 0; i < image->section_count; ++i) {
+            const SksePeSection *section = &image->sections[i];
             if ((section->permissions & SKSE_PE_EXEC) && rva >= section->rva &&
                 rva - section->rva < section->length) {
-                vm->code_start = (uint64_t)vm->image->base + section->rva;
+                vm->code_start = (uint64_t)image->base + section->rva;
                 vm->code_end = vm->code_start + section->length;
+                vm->code_bytes = image->bytes + section->rva;
                 break;
             }
         }
     }
-    uint32_t value = little_endian(vm->image->bytes + (vm->ip - vm->image->base), width);
+    uint32_t value = little_endian(vm->code_bytes + (vm->ip - vm->code_start), width);
     vm->ip += width;
     return value;
 }
@@ -86,8 +107,9 @@ static uint8_t *memory(Vm *vm, uint32_t address, size_t width, unsigned permissi
     if (vm->result.status != SKSE_X86_OK) return NULL;
     if (in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, address, width))
         return vm->scratch.bytes + (address - vm->scratch.base);
-    if (skse_pe_allows(vm->image, address, width, permissions))
-        return vm->image->bytes + (address - vm->image->base);
+    SksePeImage *image = image_at(vm, address);
+    if (skse_pe_allows(image, address, width, permissions))
+        return image->bytes + (address - image->base);
     fail(vm, SKSE_X86_MEMORY_FAULT);
     return NULL;
 }
@@ -388,7 +410,7 @@ static uint32_t classic_service(Vm *vm, SkseX86ServiceKind kind) {
     }
     if (!is_core_sender(vm, sender)) return 0;
     if (core->listener) return 1;
-    if (!skse_pe_allows(vm->image, callback, 1, SKSE_PE_EXEC)) {
+    if (!skse_pe_allows(image_at(vm, callback), callback, 1, SKSE_PE_EXEC)) {
         fail(vm, SKSE_X86_MEMORY_FAULT);
         return 0;
     }
@@ -641,14 +663,30 @@ static void step(Vm *vm) {
     fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
 }
 
-SkseX86Result skse_x86_call(SksePeImage *image, uint32_t entry,
-                            SkseX86Scratch scratch, const uint32_t *args,
-                            size_t arg_count, uint32_t instruction_limit,
-                            SkseX86Services services, SkseX86Convention convention) {
+static bool valid_space(SksePeImage *const *images, size_t count, SkseX86Scratch scratch) {
+    if (!images || !count || count > SKSE_X86_MAX_IMAGES) return false;
     uint64_t scratch_end = (uint64_t)scratch.base + scratch.length;
-    if (!image || !image->bytes || !scratch.bytes || !scratch.base ||
-        scratch.length < 128 || scratch.length > MAX_SCRATCH || scratch_end > UINT32_MAX ||
-        (scratch_end > image->base && scratch.base < (uint64_t)image->base + image->size) ||
+    for (size_t i = 0; i < count; ++i) {
+        const SksePeImage *image = images[i];
+        if (!image || !image->bytes || !image->size || !image->base ||
+            image->section_count > SKSE_PE_MAX_SECTIONS || image->headers_size > image->size) return false;
+        const uint64_t end = (uint64_t)image->base + image->size;
+        if (end > UINT64_C(0x100000000) || (scratch_end > image->base && scratch.base < end)) return false;
+        for (size_t j = 0; j < i; ++j) {
+            const SksePeImage *other = images[j];
+            if (end > other->base && image->base < (uint64_t)other->base + other->size) return false;
+        }
+    }
+    return true;
+}
+
+SkseX86Result skse_x86_call_in_space(SksePeImage *const *images, size_t image_count, uint32_t entry,
+                                     SkseX86Scratch scratch, const uint32_t *args,
+                                     size_t arg_count, uint32_t instruction_limit,
+                                     SkseX86Services services, SkseX86Convention convention) {
+    uint64_t scratch_end = (uint64_t)scratch.base + scratch.length;
+    if (!scratch.bytes || !scratch.base || scratch.length < 128 ||
+        scratch.length > MAX_SCRATCH || scratch_end > UINT32_MAX || !valid_space(images, image_count, scratch) ||
         arg_count > MAX_ARGUMENTS || (arg_count && !args) || !instruction_limit ||
         instruction_limit > MAX_STEPS || services.count > SKSE_X86_MAX_SERVICES ||
         (services.count && !services.entries) ||
@@ -661,16 +699,18 @@ SkseX86Result skse_x86_call(SksePeImage *image, uint32_t entry,
             ((kind == SKSE_X86_QUERY_CLASSIC || kind == SKSE_X86_REGISTER_CORE_LISTENER) &&
              (!services.core_messaging ||
               !in_range(scratch.base, scratch_end, services.core_messaging->interface_address, 16))) ||
-            in_range(image->base, (uint64_t)image->base + image->size, address, 1) ||
             in_range(scratch.base, scratch_end, address, 1))
             return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
+        for (size_t j = 0; j < image_count; ++j)
+            if (in_image(images[j], address)) return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
         for (size_t j = 0; j < i; ++j)
             if (address == services.entries[j].address)
                 return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
     }
 
     static const uint32_t canaries[] = {0x13749894, 0x2269d748, 0x5ee56321, 0xf61fd490};
-    Vm vm = {.image = image, .scratch = scratch, .services = services, .ip = entry,
+    Vm vm = {.images = images, .image_count = image_count, .recent_image = images[0], .scratch = scratch,
+             .services = services, .ip = entry,
              .limit = instruction_limit};
     if (convention == SKSE_X86_STDCALL) vm.return_cleanup = (unsigned)arg_count * 4;
     vm.registers[EBX] = canaries[0];
@@ -693,6 +733,13 @@ SkseX86Result skse_x86_call(SksePeImage *image, uint32_t entry,
         fail(&vm, SKSE_X86_BAD_CALL_RETURN);
     if (vm.result.status == SKSE_X86_OK) vm.result.eax = vm.registers[EAX];
     return vm.result;
+}
+
+SkseX86Result skse_x86_call(SksePeImage *image, uint32_t entry,
+                            SkseX86Scratch scratch, const uint32_t *args,
+                            size_t arg_count, uint32_t instruction_limit,
+                            SkseX86Services services, SkseX86Convention convention) {
+    return skse_x86_call_in_space(&image, 1, entry, scratch, args, arg_count, instruction_limit, services, convention);
 }
 
 const char *skse_x86_status_text(SkseX86Status status) {

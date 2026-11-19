@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
     wchar_t *filename = wcsrchr(path, L'\\');
     if (!filename || wcscpy_s(filename + 1, MAX_PATH - (size_t)(filename + 1 - path), L"fixture.dll"))
         return 2;
-    HMODULE dll = LoadLibraryW(path);
+    HMODULE dll = LoadLibraryExW(path, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!dll) return 3;
     typedef _Bool (__cdecl *Query)(const FixtureInterface *, FixtureInfo *);
     typedef _Bool (__cdecl *Load)(const FixtureInterface *);

@@ -16,7 +16,11 @@ typedef enum {
     SKSE_TRIAL_LOAD_FAULT,
     SKSE_TRIAL_LOAD_DECLINED,
     SKSE_TRIAL_DETACH_FAULT,
-    SKSE_TRIAL_MESSAGE_FAULT
+    SKSE_TRIAL_MESSAGE_FAULT,
+    SKSE_TRIAL_DEPENDENCY_REFUSED,
+    SKSE_TRIAL_DEPENDENCY_ATTACH_FAULT,
+    SKSE_TRIAL_DEPENDENCY_ATTACH_DECLINED,
+    SKSE_TRIAL_DEPENDENCY_DETACH_FAULT
 } SkseTrialStatus;
 
 typedef struct {
@@ -31,9 +35,17 @@ typedef struct {
 } SkseTrialRuntime;
 
 typedef struct {
+    const char *file_name;
+    const uint8_t *bytes;
+    size_t length;
+} SkseTrialDependency;
+
+typedef struct {
     SkseTrialStatus status;
     SksePeStatus image_status;
     SkseX86Result attach, query, load, detach, message;
+    SksePeStatus dependency_status;
+    SkseX86Result dependency_attach, dependency_detach;
     uint32_t info_version, plugin_version, messages_delivered, unavailable_interface;
     char name[128];
 } SkseTrialResult;
@@ -48,4 +60,9 @@ SkseTrialResult skse_plugin_trial(const uint8_t *file, size_t length, SkseTrialO
  * core messages are the two data-free Classic startup notifications. */
 SkseTrialResult skse_plugin_trial_with_runtime(const uint8_t *file, size_t length,
                                                SkseTrialOptions options, SkseTrialRuntime runtime);
+/* The caller supplies a chosen dependency from the same package. Bind only
+ * imports that are present by exact export name in this DLL. */
+SkseTrialResult skse_plugin_trial_with_dependency(const uint8_t *file, size_t length,
+                                                  SkseTrialOptions options, SkseTrialRuntime runtime,
+                                                  SkseTrialDependency dependency);
 #endif

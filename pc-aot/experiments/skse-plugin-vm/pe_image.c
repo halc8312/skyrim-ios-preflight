@@ -41,6 +41,11 @@ typedef struct {
     unsigned count;
 } RelocationWords;
 
+typedef struct {
+    SksePeRequiredExport *required;
+    size_t count;
+} ExportPlan;
+
 static uint16_t u16(const uint8_t *p) {
     return (uint16_t)((uint16_t)p[0] | (uint16_t)p[1] << 8);
 }
@@ -230,7 +235,7 @@ static unsigned lower_ascii(unsigned ch) {
     return (ch >= 'A' && ch <= 'Z') ? ch + ('a' - 'A') : ch;
 }
 
-static int same_library(const char *a, const char *b) {
+int skse_pe_library_name_equal(const char *a, const char *b) {
     while (*a && lower_ascii((uint8_t)*a) == lower_ascii((uint8_t)*b)) {
         a++;
         b++;
@@ -259,7 +264,7 @@ static SksePeStatus validate_bindings(const PeFile *pe, const ImportPlan *plan) 
             return SKSE_PE_BAD_ARGUMENT;
         for (size_t j = 0; j < i; j++) {
             const SksePeImportBinding *previous = &plan->bindings[j];
-            if (same_library(b->library, previous->library) && !strcmp(b->symbol, previous->symbol))
+            if (skse_pe_library_name_equal(b->library, previous->library) && !strcmp(b->symbol, previous->symbol))
                 return SKSE_PE_BAD_ARGUMENT;
         }
     }
@@ -273,7 +278,7 @@ static void refuse_import(ImportPlan *plan, SksePeStatus reason) {
 static uint32_t service_token(const ImportPlan *plan, const char *library, const char *name) {
     for (size_t i = 0; i < plan->binding_count; i++) {
         const SksePeImportBinding *b = &plan->bindings[i];
-        if (same_library(library, b->library) && !strcmp(name, b->symbol)) return b->service_token;
+        if (skse_pe_library_name_equal(library, b->library) && !strcmp(name, b->symbol)) return b->service_token;
     }
     return 0;
 }
@@ -465,14 +470,15 @@ static SksePeStatus check_relocations(const PeFile *pe, RelocationWords *move) {
     return SKSE_PE_OK;
 }
 
-static SksePeStatus read_exports(PeFile *pe) {
+static SksePeStatus read_exports(PeFile *pe, ExportPlan *requested) {
     PeSpan dir = pe->dir[EXPORTS];
-    if (!dir.address) return SKSE_PE_MISSING_EXPORTS;
+    SksePeStatus missing = requested ? SKSE_PE_MISSING_DEPENDENCY_EXPORT : SKSE_PE_MISSING_EXPORTS;
+    if (!dir.address) return missing;
     if (dir.length < 40) return SKSE_PE_BAD_FORMAT;
     const uint8_t *d = file_at_rva(pe, dir.address, 40, NULL);
     uint32_t nf = u32(d + 20), nn = u32(d + 24);
     if (nf > MAX_EXPORTS || nn > MAX_EXPORTS) return SKSE_PE_SIZE_LIMIT;
-    if (!nf || !nn) return SKSE_PE_MISSING_EXPORTS;
+    if (!nf || !nn) return missing;
     if (!u32(d + 28) || !u32(d + 32) || !u32(d + 36)) return SKSE_PE_BAD_FORMAT;
     const uint8_t *funcs = file_at_rva(pe, u32(d + 28), nf * 4, NULL);
     const uint8_t *names = file_at_rva(pe, u32(d + 32), nn * 4, NULL);
@@ -484,27 +490,39 @@ static SksePeStatus read_exports(PeFile *pe) {
         const char *name = NULL;
         SksePeStatus status = name_at(pe, u32(names + i * 4), &name);
         if (status != SKSE_PE_OK) return status;
-        if (*name == '_') name++; /* Optional x86 cdecl symbol underscore. */
         uint32_t *target = NULL;
-        if (!strcmp(name, "SKSEPlugin_Query")) target = &pe->image.query_va;
-        else if (!strcmp(name, "SKSEPlugin_Load")) target = &pe->image.load_va;
-        else if (!strncmp(name, "SKSEPlugin_Query@", sizeof("SKSEPlugin_Query@") - 1)
-                 || !strncmp(name, "SKSEPlugin_Load@", sizeof("SKSEPlugin_Load@") - 1))
-            return SKSE_PE_UNSUPPORTED_CALLING_CONVENTION;
+        if (requested) {
+            for (size_t j = 0; j < requested->count; ++j) {
+                if (!strcmp(name, requested->required[j].name)) {
+                    target = &requested->required[j].address;
+                    break;
+                }
+            }
+        } else {
+            if (*name == '_') name++; /* Optional x86 cdecl symbol underscore. */
+            if (!strcmp(name, "SKSEPlugin_Query")) target = &pe->image.query_va;
+            else if (!strcmp(name, "SKSEPlugin_Load")) target = &pe->image.load_va;
+            else if (!strncmp(name, "SKSEPlugin_Query@", sizeof("SKSEPlugin_Query@") - 1)
+                     || !strncmp(name, "SKSEPlugin_Load@", sizeof("SKSEPlugin_Load@") - 1))
+                return SKSE_PE_UNSUPPORTED_CALLING_CONVENTION;
+        }
         if (!target) continue;
         uint32_t rva = u32(funcs + ordinal * 4);
         if (*target || !rva) return SKSE_PE_BAD_FORMAT;
         if (rva >= dir.address && rva - dir.address < dir.length)
-            return SKSE_PE_FORWARDED_EXPORT;
+            return requested ? SKSE_PE_FORWARDED_DEPENDENCY_EXPORT : SKSE_PE_FORWARDED_EXPORT;
         const SksePeSection *section = section_at(&pe->image, rva, 1);
         if (!section || !(section->permissions & SKSE_PE_EXEC) || !file_at_rva(pe, rva, 1, NULL))
             return SKSE_PE_BAD_FORMAT;
         *target = pe->image.base + rva;
     }
-    return pe->image.query_va && pe->image.load_va ? SKSE_PE_OK : SKSE_PE_MISSING_EXPORTS;
+    if (!requested) return pe->image.query_va && pe->image.load_va ? SKSE_PE_OK : missing;
+    for (size_t i = 0; i < requested->count; ++i)
+        if (!requested->required[i].address) return missing;
+    return SKSE_PE_OK;
 }
 
-static SksePeStatus parse(PeFile *pe, SksePeReport *report, ImportPlan *plan,
+static SksePeStatus parse(PeFile *pe, SksePeReport *report, ImportPlan *plan, ExportPlan *requested,
                           uint32_t guest_base, RelocationWords *move) {
     SksePeStatus status = read_headers(pe);
     if (status != SKSE_PE_OK) return status;
@@ -522,6 +540,8 @@ static SksePeStatus parse(PeFile *pe, SksePeReport *report, ImportPlan *plan,
         report->directory_mask = pe->directory_mask;
         report->entry_rva = pe->entry_rva;
         report->has_writable_code = pe->has_writable_code;
+        report->preferred_base = pe->preferred_base;
+        report->image_size = pe->image.size;
     }
     status = read_imports(pe, report, plan);
     if (status != SKSE_PE_OK) return status;
@@ -543,14 +563,21 @@ static SksePeStatus parse(PeFile *pe, SksePeReport *report, ImportPlan *plan,
     if (pe->entry_rva && (!plan || !(plan->flags & SKSE_PE_ALLOW_ENTRY)))
         return SKSE_PE_UNSUPPORTED_ENTRY;
     status = check_relocations(pe, pe->image.base == pe->preferred_base ? NULL : move);
-    return status == SKSE_PE_OK ? read_exports(pe) : status;
+    return status == SKSE_PE_OK ? read_exports(pe, requested) : status;
 }
 
 SksePeStatus skse_pe_inspect(const uint8_t *file, size_t length, SksePeReport *report) {
     if (report) memset(report, 0, sizeof(*report));
     if (!file || !report) return SKSE_PE_BAD_ARGUMENT;
     PeFile pe = {.file = file, .file_length = length};
-    return parse(&pe, report, NULL, 0, NULL);
+    return parse(&pe, report, NULL, NULL, 0, NULL);
+}
+
+SksePeStatus skse_pe_classic_exports(const uint8_t *file, size_t length) {
+    if (!file) return SKSE_PE_BAD_ARGUMENT;
+    PeFile pe = {.file = file, .file_length = length};
+    SksePeStatus status = read_headers(&pe);
+    return status == SKSE_PE_OK ? read_exports(&pe, NULL) : status;
 }
 
 static SksePeStatus copy_image(PeFile *pe, const ImportPlan *plan, const RelocationWords *move, SksePeImage *out) {
@@ -578,27 +605,27 @@ static SksePeStatus copy_image(PeFile *pe, const ImportPlan *plan, const Relocat
 }
 
 static SksePeStatus map_image(const uint8_t *file, size_t length, uint32_t guest_base,
-                              ImportPlan *plan, SksePeImage *out) {
+                              ImportPlan *plan, ExportPlan *requested, SksePeImage *out) {
     if (!out) return SKSE_PE_BAD_ARGUMENT;
     memset(out, 0, sizeof(*out));
     if (!file) return SKSE_PE_BAD_ARGUMENT;
     PeFile pe = {.file = file, .file_length = length};
     RelocationWords move = {0};
-    SksePeStatus status = parse(&pe, NULL, plan, guest_base, &move);
+    SksePeStatus status = parse(&pe, NULL, plan, requested, guest_base, &move);
     if (status == SKSE_PE_OK) status = copy_image(&pe, plan, &move, out);
     free(move.rvas);
     return status;
 }
 
 SksePeStatus skse_pe_map(const uint8_t *file, size_t length, SksePeImage *out) {
-    return map_image(file, length, 0, NULL, out);
+    return map_image(file, length, 0, NULL, NULL, out);
 }
 
 SksePeStatus skse_pe_map_with_imports(const uint8_t *file, size_t length,
                                       const SksePeImportBinding *bindings, size_t binding_count,
                                       unsigned flags, SksePeImage *out) {
     ImportPlan plan = {.bindings = bindings, .binding_count = binding_count, .flags = flags};
-    return map_image(file, length, 0, &plan, out);
+    return map_image(file, length, 0, &plan, NULL, out);
 }
 
 SksePeStatus skse_pe_map_at_base(const uint8_t *file, size_t length, uint32_t guest_base,
@@ -609,7 +636,26 @@ SksePeStatus skse_pe_map_at_base(const uint8_t *file, size_t length, uint32_t gu
         return SKSE_PE_BAD_ARGUMENT;
     }
     ImportPlan plan = {.bindings = bindings, .binding_count = binding_count, .flags = flags};
-    return map_image(file, length, guest_base, &plan, out);
+    return map_image(file, length, guest_base, &plan, NULL, out);
+}
+
+SksePeStatus skse_pe_map_library(const uint8_t *file, size_t length, uint32_t guest_base,
+                                 const SksePeImportBinding *bindings, size_t binding_count, unsigned flags,
+                                 SksePeRequiredExport *required, size_t required_count, SksePeImage *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!required || !required_count || required_count > SKSE_PE_MAX_IMPORT_SYMBOLS) return SKSE_PE_BAD_ARGUMENT;
+    for (size_t i = 0; i < required_count; ++i) required[i].address = 0;
+    for (size_t i = 0; i < required_count; ++i) {
+        if (!binding_name_valid(required[i].name)) return SKSE_PE_BAD_ARGUMENT;
+        for (size_t j = 0; j < i; ++j)
+            if (!strcmp(required[i].name, required[j].name)) return SKSE_PE_BAD_ARGUMENT;
+    }
+    ImportPlan plan = {.bindings = bindings, .binding_count = binding_count, .flags = flags};
+    ExportPlan requested = {.required = required, .count = required_count};
+    SksePeStatus status = map_image(file, length, guest_base, &plan, &requested, out);
+    if (status != SKSE_PE_OK)
+        for (size_t i = 0; i < required_count; ++i) required[i].address = 0;
+    return status;
 }
 
 void skse_pe_free(SksePeImage *image) {
@@ -628,7 +674,8 @@ const char *skse_pe_status_text(SksePeStatus status) {
         "unsupported SKSE calling convention", "missing SKSE exports", "insufficient memory",
         "import absent from the service list", "ordinal imports unsupported", "bound imports unsupported",
         "relocations required at alternate base", "unsupported relocation type", "invalid image relocation",
-        "overlapping relocation words", "relocation overlaps import address table"
+        "overlapping relocation words", "relocation overlaps import address table",
+        "missing dependency export", "forwarded dependency export"
     };
     unsigned index = (unsigned)status;
     return index < sizeof(names) / sizeof(names[0]) ? names[index] : "unknown PE status";

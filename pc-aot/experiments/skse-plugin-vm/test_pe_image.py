@@ -44,6 +44,8 @@ class Symbol(c.Structure):
 class Binding(c.Structure):
     _fields_ = [("library", c.c_char_p), ("symbol", c.c_char_p), ("service_token", c.c_uint32)]
 
+class RequiredExport(c.Structure):
+    _fields_ = [("name", c.c_char_p), ("address", c.c_uint32)]
 
 CLOCK_BINDING = (b"KERNEL32.dll", b"GetTickCount", 0x60000110)
 
@@ -52,7 +54,7 @@ class Report(c.Structure):
     _fields_ = [("directory_mask", c.c_uint32), ("entry_rva", c.c_uint32),
                 ("has_writable_code", c.c_uint), ("library_count", c.c_uint16),
                 ("symbol_count", c.c_uint16), ("libraries", (c.c_char * 128) * 32),
-                ("symbols", Symbol * 128)]
+                ("symbols", Symbol * 128), ("preferred_base", c.c_uint32), ("image_size", c.c_uint32)]
 
 
 def put(data, offset, fmt, *fields):
@@ -151,7 +153,7 @@ class PeReaderTest(unittest.TestCase):
         if sys.platform == "win32":
             path = cls.work / "owned_reader.dll"
             definitions = cls.work / "reader.def"
-            symbols = ("skse_pe_map", "skse_pe_map_with_imports", "skse_pe_map_at_base", "skse_pe_inspect",
+            symbols = ("skse_pe_map", "skse_pe_map_with_imports", "skse_pe_map_at_base", "skse_pe_map_library", "skse_pe_inspect",
                        "skse_pe_allows", "skse_pe_free", "skse_pe_status_text")
             definitions.write_text("EXPORTS\n" + "\n".join(symbols) + "\n", encoding="ascii")
             options.extend(["-shared", "-Xlinker", "/def:" + str(definitions)])
@@ -168,6 +170,9 @@ class PeReaderTest(unittest.TestCase):
             c.c_void_p, c.c_size_t, c.POINTER(Binding), c.c_size_t, c.c_uint, c.POINTER(Image)]
         cls.lib.skse_pe_map_at_base.argtypes = [
             c.c_void_p, c.c_size_t, c.c_uint32, c.POINTER(Binding), c.c_size_t, c.c_uint, c.POINTER(Image)]
+        cls.lib.skse_pe_map_library.argtypes = [
+            c.c_void_p, c.c_size_t, c.c_uint32, c.POINTER(Binding), c.c_size_t, c.c_uint,
+            c.POINTER(RequiredExport), c.c_size_t, c.POINTER(Image)]
         cls.lib.skse_pe_inspect.argtypes = [c.c_void_p, c.c_size_t, c.POINTER(Report)]
         cls.lib.skse_pe_allows.argtypes = [c.POINTER(Image), c.c_uint32, c.c_size_t, c.c_uint]
         cls.lib.skse_pe_status_text.argtypes = [c.c_int]
@@ -323,6 +328,30 @@ class PeReaderTest(unittest.TestCase):
                 a, b = info.symbols[0], info.symbols[1]
                 self.assertEqual((0, 0, b"Example"), (a.library_index, a.by_ordinal, a.name))
                 self.assertEqual((0, 1, 7), (b.library_index, b.by_ordinal, b.ordinal))
+
+    def test_dependency_exports_are_exact_and_published_together(self):
+        data = make_image()
+        zero_string(data, RD + 0x80, b"OwnedWorkerFunction")
+        zero_string(data, RD + 0xa0, b"SecondOwnedFunction")
+        self.expect(data, "missing SKSE exports")
+        file = c.create_string_buffer(bytes(data))
+        image = Image()
+        self.addCleanup(self.lib.skse_pe_free, c.byref(image))
+        exports = (RequiredExport * 2)(RequiredExport(b"OwnedWorkerFunction"), RequiredExport(b"SecondOwnedFunction"))
+        status = self.lib.skse_pe_map_library(file, len(data), 0, None, 0, 0, exports, 2, c.byref(image))
+        self.assertEqual(0, status)
+        self.assertEqual([BASE + 0x1010, BASE + 0x1000], [e.address for e in exports])
+        self.lib.skse_pe_free(c.byref(image))
+        exports[1].name = b"secondOwnedFunction"
+        status = self.lib.skse_pe_map_library(file, len(data), 0, None, 0, 0, exports, 2, c.byref(image))
+        self.assertEqual(b"missing dependency export", self.lib.skse_pe_status_text(status))
+        self.assertEqual([0, 0], [e.address for e in exports])
+        self.assertFalse(image.bytes)
+        put(data, RD + 0x64, "I", 0x2050)
+        file = c.create_string_buffer(bytes(data))
+        status = self.lib.skse_pe_map_library(file, len(data), 0, None, 0, 0, exports, 2, c.byref(image))
+        self.assertEqual(b"forwarded dependency export", self.lib.skse_pe_status_text(status))
+        self.assertFalse(image.bytes)
 
     def test_import_bounds_count_and_terminators(self):
         for at, value in [(DATA, 0xfffffff0), (DATA + 16, 0x3210),
