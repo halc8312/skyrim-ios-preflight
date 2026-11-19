@@ -1,0 +1,266 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#else
+#define _POSIX_C_SOURCE 200809L
+#endif
+#include "event_bridge.h"
+#include "immutable_ess.h"
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+struct SkseEventBridge { SkseGameScope running; SksePairStore *store; int directory; };
+struct SksePendingSave {
+    SkseEventBridge *bridge;
+    SksePairStage *stage;
+    SkseGameEvent requested;
+    int held_fd, edited, rejected;
+    SksePairResult edit_result;
+};
+struct SkseDeferredSave {
+    SkseGameEvent event;
+    SksePairStage *stage;
+    SkseImmutableEss *snapshot;
+    int directory;
+};
+
+static int has_id(const uint8_t id[16]) {
+    static const uint8_t zero[16] = {0};
+    return memcmp(id, zero, sizeof zero) != 0;
+}
+
+static int same_scope(const SkseGameScope *a, const SkseGameScope *b) {
+    return !memcmp(a->launch, b->launch, sizeof a->launch) && !memcmp(a->profile, b->profile, sizeof a->profile)
+        && a->text == b->text && a->voices == b->voices;
+}
+
+static SkseBridgeResult from_pair(SksePairResult result, SksePairResult *detail) {
+    if (detail) *detail = result;
+    return result == SKSE_PAIR_OK || result == SKSE_PAIR_ALREADY ? SKSE_BRIDGE_OK : SKSE_BRIDGE_PAIR;
+}
+
+static SkseBridgeResult request_matches(SkseEventBridge *bridge, const SkseGameEvent *requested) {
+    if (!bridge || !requested || !requested->ticket || requested->ticket > SkyrimLifecycleCapacity ||
+        !has_id(requested->saved.slot) || !has_id(requested->saved.event)) return SKSE_BRIDGE_ARGUMENT;
+    if (!same_scope(&requested->scope, &bridge->running) ||
+        memcmp(requested->saved.profile, bridge->running.profile, sizeof requested->saved.profile))
+        return SKSE_BRIDGE_SCOPE;
+    return SKSE_BRIDGE_OK;
+}
+
+SkseBridgeResult skse_bridge_open(const char *root, const SkseGameScope *running,
+                                 SkseEventBridge **out, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!out) return SKSE_BRIDGE_ARGUMENT;
+    *out = NULL;
+    if (!root || !*root || !running || !has_id(running->launch) || !has_id(running->profile) ||
+        running->text > 1 || running->voices > 1) return SKSE_BRIDGE_ARGUMENT;
+    struct stat st;
+    if (lstat(root, &st) || !S_ISDIR(st.st_mode)) return SKSE_BRIDGE_IO;
+    char path[PATH_MAX];
+    int length = snprintf(path, sizeof path, "%s/text-%s-voice-%s", root,
+                          running->text ? "ja" : "en", running->voices ? "ja" : "en");
+    if (length < 0 || (size_t)length >= sizeof path || (mkdir(path, 0700) && errno != EEXIST)) return SKSE_BRIDGE_IO;
+    SkseEventBridge *bridge = calloc(1, sizeof *bridge);
+    if (!bridge) return SKSE_BRIDGE_IO;
+    bridge->directory = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (bridge->directory < 0) { free(bridge); return SKSE_BRIDGE_IO; }
+    SkseBridgeResult status = from_pair(skse_pair_open(path, &bridge->store), detail);
+    if (status == SKSE_BRIDGE_OK) { bridge->running = *running; *out = bridge; }
+    else skse_bridge_close(bridge);
+    return status;
+}
+
+void skse_bridge_close(SkseEventBridge *bridge) {
+    if (bridge) { skse_pair_close(bridge->store); close(bridge->directory); free(bridge); }
+}
+
+SkseBridgeResult skse_bridge_begin_save(SkseEventBridge *bridge, const SkseGameEvent *requested,
+                                       const SksePairGeneration *verified_base,
+                                       SksePendingSave **out, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!out) return SKSE_BRIDGE_ARGUMENT;
+    *out = NULL;
+    SkseBridgeResult result = request_matches(bridge, requested);
+    if (result != SKSE_BRIDGE_OK) return result;
+    SksePendingSave *save = calloc(1, sizeof *save);
+    if (!save) return SKSE_BRIDGE_IO;
+    save->held_fd = -1;
+    save->bridge = bridge;
+    save->requested = *requested;
+    result = from_pair(skse_pair_begin(bridge->store, &requested->saved, verified_base, &save->stage), detail);
+    if (result == SKSE_BRIDGE_OK) *out = save;
+    else free(save);
+    return result;
+}
+
+SksePairResult skse_bridge_write_owner(SksePendingSave *save, uint32_t uid,
+                                      const SksePairRecord *records, size_t count) {
+    if (!save) return SKSE_PAIR_ARGUMENT;
+    if (!save->stage || save->rejected || save->held_fd >= 0) return SKSE_PAIR_SEALED;
+    save->edit_result = skse_pair_replace(save->stage, uid, records, count);
+    if (save->edit_result == SKSE_PAIR_OK) save->edited = 1;
+    return save->edit_result;
+}
+
+SksePairResult skse_bridge_write_plugins(SksePendingSave *save, SksePluginRegistry *plugins,
+                                        size_t *participants) {
+    if (participants) *participants = 0;
+    if (!save || !plugins) return SKSE_PAIR_ARGUMENT;
+    if (!save->stage || save->rejected || save->held_fd >= 0) return SKSE_PAIR_SEALED;
+    size_t completed = 0;
+    SksePairResult result = skse_plugins_stage(plugins, save->stage, &completed);
+    if (result == SKSE_PAIR_BUSY) return result;
+    save->edit_result = result;
+    if (result == SKSE_PAIR_OK && completed) save->edited = 1;
+    if (participants) *participants = completed;
+    return result;
+}
+
+static SkseBridgeResult verify(const SkseGameEvent *requested, uint32_t site, const SkseEventTrace *trace,
+                               const SkseBaseEvidence *base) {
+    if (base) {
+        if (!same_scope(&requested->scope, &base->event.scope)) return SKSE_BRIDGE_SCOPE;
+        if (requested->ticket != base->event.ticket || memcmp(&requested->saved, &base->event.saved, sizeof requested->saved))
+            return SKSE_BRIDGE_EVENT;
+        if (base->outcome == SKSE_BASE_FAILED) return SKSE_BRIDGE_REJECTED;
+    }
+    SkseBridgeResult status = skse_bridge_check_call(requested, site, trace);
+    if (status != SKSE_BRIDGE_OK) return status;
+    SkseBaseOutcome required = site == SkyrimSaveSlot ? SKSE_BASE_SAVED : SKSE_BASE_LOADED;
+    return base && base->outcome == required && base->ess_fd >= 0 ? SKSE_BRIDGE_OK : SKSE_BRIDGE_NEEDS_BASE;
+}
+
+static SkseBridgeResult capture_ready(SksePendingSave *save, const SkseEventTrace *trace,
+                                     const SkseBaseEvidence *base, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!save) return SKSE_BRIDGE_ARGUMENT;
+    if (!save->stage || save->rejected || save->held_fd >= 0) return SKSE_BRIDGE_STATE;
+    SkseBridgeResult status = verify(&save->requested, SkyrimSaveSlot, trace, base);
+    if (status == SKSE_BRIDGE_REJECTED) save->rejected = 1;
+    if (status != SKSE_BRIDGE_OK) return status;
+    if (save->edit_result != SKSE_PAIR_OK) return from_pair(save->edit_result, detail);
+    return save->edited ? SKSE_BRIDGE_OK : SKSE_BRIDGE_NO_EDITS;
+}
+
+SkseBridgeResult skse_bridge_capture_save(SksePendingSave *save, const SkseEventTrace *trace,
+                                         const SkseBaseEvidence *base, SksePairResult *detail) {
+    SkseBridgeResult status = capture_ready(save, trace, base, detail);
+    if (status != SKSE_BRIDGE_OK) return status;
+    int fd = fcntl(base->ess_fd, F_DUPFD_CLOEXEC, 0);
+    if (fd < 0) return SKSE_BRIDGE_IO;
+    SksePairGeneration generation = {save->requested.saved, fd};
+    status = from_pair(skse_pair_pin(save->stage, &generation), detail);
+    if (status == SKSE_BRIDGE_OK) save->held_fd = fd;
+    else close(fd);
+    return status;
+}
+
+SkseBridgeResult skse_bridge_defer_save(SksePendingSave *save, const SkseEventTrace *trace,
+                                       const SkseBaseEvidence *base, int scratch,
+                                       SkseDeferredSave **out, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!out) return SKSE_BRIDGE_ARGUMENT;
+    *out = NULL;
+    SkseBridgeResult status = capture_ready(save, trace, base, detail);
+    if (status != SKSE_BRIDGE_OK) return status;
+    SkseDeferredSave *job = calloc(1, sizeof *job);
+    if (!job) return SKSE_BRIDGE_IO;
+    job->directory = fcntl(save->bridge->directory, F_DUPFD_CLOEXEC, 0);
+    if (job->directory < 0) { free(job); return SKSE_BRIDGE_IO; }
+    status = from_pair(skse_ess_capture_immutable(base->ess_fd, scratch, &job->snapshot), detail);
+    if (status != SKSE_BRIDGE_OK) { skse_bridge_drop_deferred(job); return status; }
+    job->event = save->requested;
+    job->stage = save->stage;
+    save->stage = NULL;
+    *out = job;
+    return SKSE_BRIDGE_OK;
+}
+SkseBridgeResult skse_bridge_publish_deferred(SkseEventBridge *worker, SkseDeferredSave *job,
+                                             SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!worker || !job) return SKSE_BRIDGE_ARGUMENT;
+    if (!same_scope(&worker->running, &job->event.scope)) return SKSE_BRIDGE_SCOPE;
+    struct stat here, origin;
+    if (fstat(worker->directory, &here) || fstat(job->directory, &origin)) return SKSE_BRIDGE_IO;
+    if (here.st_dev != origin.st_dev || here.st_ino != origin.st_ino) return SKSE_BRIDGE_SCOPE;
+    return from_pair(skse_pair_commit_immutable(worker->store, job->stage, &job->event.saved, job->snapshot), detail);
+}
+void skse_bridge_drop_deferred(SkseDeferredSave *job) {
+    if (job) {
+        skse_pair_discard(job->stage);
+        skse_ess_release_immutable(job->snapshot);
+        close(job->directory);
+        free(job);
+    }
+}
+
+SkseBridgeResult skse_bridge_publish(SksePendingSave *save, const SkseGameScope *running, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!save || !running) return SKSE_BRIDGE_ARGUMENT;
+    if (!same_scope(&save->requested.scope, running)) return SKSE_BRIDGE_SCOPE;
+    if (save->held_fd < 0 || save->rejected) return SKSE_BRIDGE_STATE;
+    SksePairGeneration generation = {save->requested.saved, save->held_fd};
+    return from_pair(skse_pair_commit(save->bridge->store, save->stage, &generation), detail);
+}
+
+void skse_bridge_drop(SksePendingSave *save) {
+    if (save) {
+        if (save->held_fd >= 0) close(save->held_fd);
+        skse_pair_discard(save->stage);
+        free(save);
+    }
+}
+
+SkseBridgeResult skse_bridge_load(SkseEventBridge *bridge, const SkseGameEvent *requested,
+                                 const SkseEventTrace *trace, const SkseBaseEvidence *base,
+                                 uint32_t uid, SksePairRevert reset, SksePairVisitor visit,
+                                 void *scratch, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!uid || !reset || !visit) return SKSE_BRIDGE_ARGUMENT;
+    SkseBridgeResult status = request_matches(bridge, requested);
+    if (status == SKSE_BRIDGE_OK) status = verify(requested, SkyrimLoadSlot, trace, base);
+    if (status != SKSE_BRIDGE_OK) { reset(scratch); return status; }
+    SksePairGeneration generation = {requested->saved, base->ess_fd};
+    return from_pair(skse_pair_restore(bridge->store, &generation, uid, reset, visit, scratch), detail);
+}
+
+SkseBridgeResult skse_bridge_open_loaded_core(SkseEventBridge *bridge, const SkseGameEvent *requested,
+    const SkseEventTrace *trace, const SkseBaseEvidence *base, const SkseLoadedMod *current, size_t count,
+    SkseCoreSnapshot **out, SkseModMapResult *map_status, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (map_status) *map_status = SKSE_MAP_SOURCE_ERROR;
+    if (!out) return SKSE_BRIDGE_ARGUMENT;
+    *out = NULL;
+    if (!current && count) return SKSE_BRIDGE_ARGUMENT;
+    SkseBridgeResult result = request_matches(bridge, requested);
+    if (result == SKSE_BRIDGE_OK) result = verify(requested, SkyrimLoadSlot, trace, base);
+    if (result != SKSE_BRIDGE_OK) return result;
+    SksePairGeneration loaded = {requested->saved, base->ess_fd};
+    SkseCoreSnapshotResult core = skse_core_snapshot_open(bridge->store, &loaded, current, count, out, detail, map_status);
+    if (core == SKSE_CORE_SOURCE_ERROR) return SKSE_BRIDGE_PAIR;
+    return core == SKSE_CORE_OK ? SKSE_BRIDGE_OK : SKSE_BRIDGE_CORE;
+}
+
+SkseBridgeResult skse_bridge_load_plugins(SkseEventBridge *bridge, const SkseGameEvent *requested,
+                                         const SkseEventTrace *trace, const SkseBaseEvidence *base,
+                                         SksePluginRegistry *plugins, const SkseLoadedMod *current, size_t count,
+                                         SkseModMapResult *map_status, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (map_status) *map_status = SKSE_MAP_SOURCE_ERROR;
+    if (!plugins) return SKSE_BRIDGE_ARGUMENT;
+    SkseBridgeResult status = request_matches(bridge, requested);
+    if (status == SKSE_BRIDGE_OK) status = verify(requested, SkyrimLoadSlot, trace, base);
+    if (status != SKSE_BRIDGE_OK) {
+        SksePairResult reset = skse_plugins_reset_scratch(plugins);
+        return reset == SKSE_PAIR_OK ? status : from_pair(reset, detail);
+    }
+    SksePairGeneration generation = {requested->saved, base->ess_fd};
+    return from_pair(skse_plugins_load(plugins, bridge->store, &generation, current, count, map_status), detail);
+}

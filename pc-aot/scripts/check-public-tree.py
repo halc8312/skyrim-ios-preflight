@@ -17,6 +17,10 @@ SOURCE_SUFFIXES = {".md", ".txt", ".json", ".yaml", ".yml", ".py", ".sh", ".ps1"
                    ".plist", ".pbxproj", ".xcscheme", ".xcworkspacedata", ".xcconfig",
                    ".cmake", ".in", ".example", ".toml", ".csv", ".tsv", ".patch"}
 ROOT_NAMES = {".gitignore", ".gitattributes", "LICENSE", "NOTICE", "CMakeLists.txt"}
+AUTHORED_SHADER_SOURCES = {
+    "experiments/d3d9-postprocess/two_tone.hlsl",
+    "experiments/d3d9-present-grade/warm_grade.glsl",
+}
 FORBIDDEN_SUFFIXES = {".exe", ".dll", ".bsa", ".ba2", ".esm", ".esp", ".esl",
                       ".ess", ".skse", ".nif", ".dds", ".hkx", ".pex", ".fuz",
                       ".wav", ".mp3", ".xwm", ".p12", ".p8", ".pem", ".key",
@@ -63,7 +67,8 @@ def check_file(relative: str, path: Path) -> list[str]:
         return errors + ["not a regular file (including submodule)"]
     if rel.suffix.lower() in FORBIDDEN_SUFFIXES:
         errors.append("binary, game data, signing material, or archive extension")
-    if rel.name not in ROOT_NAMES and rel.suffix.lower() not in SOURCE_SUFFIXES:
+    if (rel.name not in ROOT_NAMES and rel.suffix.lower() not in SOURCE_SUFFIXES
+            and relative not in AUTHORED_SHADER_SOURCES):
         errors.append("not an approved source-text type")
     if rel.name.startswith(".env") and rel.name != ".env.example":
         errors.append("environment secrets")

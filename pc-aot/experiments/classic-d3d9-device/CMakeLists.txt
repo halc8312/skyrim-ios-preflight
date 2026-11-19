@@ -1,0 +1,41 @@
+cmake_minimum_required(VERSION 3.20)
+project(ClassicD3D9DeviceCheck LANGUAGES C CXX)
+enable_testing()
+
+add_executable(classic_device_bounds device_bridge.c test_bridge.c)
+target_compile_features(classic_device_bounds PRIVATE c_std_11)
+if(MSVC)
+    target_compile_options(classic_device_bounds PRIVATE /UNDEBUG)
+else()
+    target_compile_options(classic_device_bounds PRIVATE -UNDEBUG)
+endif()
+add_test(NAME classic_device_bounds COMMAND classic_device_bounds)
+
+set(CLASSIC_AOT_ROOT "" CACHE PATH "Working directory from compare.py aot")
+if(CLASSIC_AOT_ROOT)
+    set(SKYDREAM_SOURCE "" CACHE PATH "Skydream checkout at ecf814f5")
+    set(CLASSIC_DXVK_LIBRARY "" CACHE FILEPATH "Native DXVK D3D9 library from the pinned tree")
+    set(CLASSIC_SDL_INCLUDE "" CACHE PATH "SDL2 headers directory containing SDL.h")
+    set(CLASSIC_SDL_LIBRARY "" CACHE FILEPATH "Native SDL2 library")
+    if(NOT EXISTS "${SKYDREAM_SOURCE}/third_party/dxvk/include/native/directx/d3d9.h" OR
+       NOT EXISTS "${CLASSIC_DXVK_LIBRARY}" OR NOT EXISTS "${CLASSIC_SDL_INCLUDE}/SDL.h" OR
+       NOT EXISTS "${CLASSIC_SDL_LIBRARY}")
+        message(FATAL_ERROR "Supply the pinned DXVK source, its built native library, and SDL2 headers and library")
+    endif()
+    foreach(base IN ITEMS 100000 200000)
+        set(generated "${CLASSIC_AOT_ROOT}/at-${base}/generated")
+        set(target "classic_device_at_${base}")
+        add_executable(${target} "${generated}/owneddepth_00.c" device_bridge.c translated_fixture.c
+                       d3d9_backend.cpp live_dxvk.cpp)
+        target_compile_features(${target} PRIVATE c_std_11 cxx_std_17)
+        target_compile_options(${target} PRIVATE -fno-strict-aliasing -fwrapv)
+        target_compile_definitions(${target} PRIVATE CLASSIC_D3D9_LIVE LB_STRICT_ORDER DXVK_NATIVE
+                                   SDL_MAIN_HANDLED NOMINMAX _WIN32_WINNT=0x0a00)
+        set(dxvk_headers "${SKYDREAM_SOURCE}/third_party/dxvk/include/native")
+        target_include_directories(${target} SYSTEM PRIVATE "${dxvk_headers}/directx" "${dxvk_headers}/windows"
+                                   "${dxvk_headers}" "${CLASSIC_SDL_INCLUDE}")
+        target_include_directories(${target} PRIVATE "${CLASSIC_AOT_ROOT}/source/runtime" "${generated}")
+        target_link_libraries(${target} PRIVATE "${CLASSIC_DXVK_LIBRARY}" "${CLASSIC_SDL_LIBRARY}")
+        add_test(NAME ${target} COMMAND ${target})
+    endforeach()
+endif()
