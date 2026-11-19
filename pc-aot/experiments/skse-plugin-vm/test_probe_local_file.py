@@ -110,14 +110,16 @@ def task_fixture(bad_vtable=False):
     put(dll, RD + 0x60, "I", 0x1080)
     put(dll, RD + 0x140, "2I", BASE + 0x1100, BASE + 0x1180)
     put(dll, RD + 0x150, "2I", BASE + 0x1100, BASE + 0x1140)
-    for i in range(3):
+    for i, expected in enumerate((0, 2, 6, 4)):
         table = 0xfffffffe if bad_vtable and i == 1 else BASE + 0x2140
-        put(dll, DATA + 0x140 + i * 8, "2I", table, i * 2)
+        put(dll, DATA + 0x140 + i * 8, "2I", table, expected)
 
     # Keep the checked Classic interface in EBX, then enqueue two game tasks
     # and one UI task whose delegates share methods but carry distinct state.
     code = bytearray.fromhex("53 8b 44 24 08 6a 04 ff 50 10 83 c4 04 85 c0 75 02 0f 0b")
     code.extend(bytes.fromhex("83 38 02 74 02 0f 0b 89 c3"))
+    interface = struct.pack("<I", BASE + 0x31f4)
+    code.extend(b"\xa3" + interface)
     for i in range(3):
         code.extend(b"\x68" + struct.pack("<I", BASE + 0x3140 + i * 8))
         code.extend(bytes((0xff, 0x53, 8 if i == 2 else 4, 0x83, 0xc4, 4)))
@@ -125,11 +127,17 @@ def task_fixture(bad_vtable=False):
     dll[0x280:0x280 + len(code)] = code
 
     stage = struct.pack("<I", BASE + 0x31f0)
-    check_and_advance = bytes.fromhex("39 05") + stage + bytes.fromhex("74 02 0f 0b ff 05") + stage + b"\xc3"
+    check_and_advance = bytes.fromhex("39 05") + stage + bytes.fromhex("74 02 0f 0b ff 05") + stage
+    nested = b"\x68" + struct.pack("<I", BASE + 0x3158)
+    nested += b"\x8b\x15" + interface + bytes.fromhex("ff 52 04 83 c4 04")
     for i in range(2):
         # Run changes the vptr. Dispose must read the new slot, as Classic does.
         action = b"\x40" if i else b"\xc7\x01" + struct.pack("<I", BASE + 0x2150)
         method = bytes.fromhex("8b 41 04") + action + check_and_advance
+        if not i:
+            # The first Run appends a game task behind the existing second task.
+            method += bytes((0x85, 0xc0, 0x75, len(nested))) + nested
+        method += b"\xc3"
         at = 0x300 + 0x40 * i
         dll[at:at + len(method)] = method
     dll[0x380:0x382] = b"\x0f\x0b"
@@ -185,7 +193,7 @@ class LocalFileProbeTest(unittest.TestCase):
                                       "ready,7,Owned test plugin,workers=1",
                                       "ready,7,Owned test plugin,workers=1",
                                       "stopped,8,ok,0,load=4",
-                                      "ready,7,Owned test plugin,tasks=2/1",
+                                      "ready,7,Owned test plugin,tasks=3/1",
                                       "stopped,20,ok,0,task=2",
                                       "stopped,1,truncated headers,0", "2", "3", "1", "2", "1", "2"])
             self.assertEqual(good.read_bytes(), fixture)

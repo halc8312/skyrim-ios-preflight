@@ -80,7 +80,7 @@
                             verifiedWorker = YES;
                         }
                         if ([text hasPrefix:@"Data/SKSE/Plugins/TaskProbe.dll\n"] && ready &&
-                            [text containsString:japanese ? @"タスクの試験　ゲーム 2 件、UI 1 件" : @"Queued task test · Game 2 · UI 1"]) {
+                            [text containsString:japanese ? @"タスクの試験　ゲーム 3 件、UI 1 件" : @"Queued task test · Game 3 · UI 1"]) {
                             verifiedTasks = YES;
                         }
                     }
