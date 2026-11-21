@@ -688,7 +688,8 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCTAssertTrue(file.exists); [self findRow:file.label]; [self capture:@"conflict-files"];
     [self goBackFrom:@"Files"]; [self goBackFrom:@"Conflicts"];
     [[self findRow:@"Save check"] tap];
-    [self findRow:@"No saves in this profile"];
+    // Trial Two is now running and should list the save copied into it earlier.
+    [self findRow:@"Authored Save"];
     [self capture:@"separate-profile-saves"]; [self goBackFrom:@"Save check"];
     [[self findRow:@"Load a MOD list"] tap];
     [self pick:@"Trial Two.skyrimios-modlist.json" folder:NO];

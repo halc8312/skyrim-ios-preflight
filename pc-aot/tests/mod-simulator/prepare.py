@@ -341,7 +341,8 @@ def verify(container, assets, summary):
     state = json.loads((base/"mods-state.json").read_text())
     profiles = {p["name"]:p for p in state["profiles"]}
     active = profiles["Trial Two"]
-    assert active["id"] == state["next"] and active["id"] != profiles["Trial Two (imported)"]["id"]
+    imported = profiles["Trial Two (imported)"]
+    assert active["id"] == state["next"] and active["id"] != imported["id"]
     saves = base / "Profiles" / active["id"] / "Documents/My Games/Skyrim/Saves"
     expected_saves = {"Authored Save.ess"}
     if (assets / "Authored Save.skse").is_file():
@@ -349,7 +350,9 @@ def verify(container, assets, summary):
     assert {item.name for item in saves.iterdir()} == expected_saves
     for name in expected_saves:
         assert (saves / name).read_bytes() == (assets / name).read_bytes()
-    assert profiles["Trial Two (imported)"]["packages"] == active["packages"]
+    imported_saves = base / "Profiles" / imported["id"] / "Documents/My Games/Skyrim/Saves"
+    assert not imported_saves.exists() or not any(imported_saves.iterdir())
+    assert imported["packages"] == active["packages"]
     assert len(active["packages"]) == 4 and all(p["on"] for p in active["packages"])
     default_enabled = {p["id"] for p in profiles["Default"]["packages"] if p["on"]}
     assert len(default_enabled) == 3
