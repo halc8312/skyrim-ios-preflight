@@ -135,8 +135,10 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_SKSE=1 SKYDREAM_SKSE=1)
     if(SKYRIM_IOS_MOD_HOOKS)
         target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/classic_vm_epoch.c"
-            "${SKYRIM_IOS_ROOT}/experiments/classic-mod-events/mod_event.c")
-        target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_ROOT}/experiments/classic-mod-events")
+            "${SKYRIM_IOS_ROOT}/experiments/classic-mod-events/mod_event.c"
+            "${SKYRIM_IOS_ROOT}/experiments/classic-control-events/control_bridge.c")
+        target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_ROOT}/experiments/classic-mod-events"
+            "${SKYRIM_IOS_ROOT}/experiments/classic-control-events")
         target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_MOD_HOOK_SEAMS}")
         target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_MOD_HOOKS=1)
     endif()

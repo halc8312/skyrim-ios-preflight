@@ -56,7 +56,7 @@ class RegistrationStageTests(unittest.TestCase):
         vendor = Path(os.environ.get("SKYRIM_SKYDREAM_SOURCE", ROOT / "vendor/skydream"))
         with tempfile.TemporaryDirectory() as tmp:
             stage = Path(tmp)
-            for name in (*classic.PINNED, "skse_translation.c", classic.PRESENT_FILE):
+            for name in (*classic.PINNED, "skse_translation.c", classic.PRESENT_FILE, classic.INPUT_FILE):
                 shutil.copyfile(vendor / "runtime" / name, stage / name)
             classic.prepare(vendor, stage)
             text = (stage / "skse_compat.c").read_text(encoding="utf-8")

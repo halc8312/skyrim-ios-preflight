@@ -48,6 +48,7 @@ __attribute__((visibility("default"))) unsigned exercise_mod_hooks(unsigned expe
     if (skyrim_fuz_host_world_general(1, 2)) seen |= 1u << 5;
     skyrim_vm_host_before_revert(1);
     skyrim_vm_host_after_load(1);
+    skyrim_vm_host_form_deleted(NULL, 0x900, 0x1234567890ull);
     if (skyrim_chargen_probe_skip_open_warm()) seen |= 1u << 6;
     assert(seen == expected);
     return seen;
@@ -106,6 +107,9 @@ static void release_title(uint32_t t) { assert(t == 6); ++calls[8]; }
 static bool general(uint32_t a, uint32_t r) { assert(a == 1 && r == 2); ++calls[9]; return true; }
 static void before_revert(unsigned site) { assert(site == 1); ++calls[10]; }
 static void after_load(int ok) { assert(ok == 1); ++calls[11]; }
+static void form_deleted(struct CPU *c, uint32_t vm, uint64_t handle) {
+    assert(!c && vm == 0x900 && handle == 0x1234567890ull); ++calls[13];
+}
 static bool skip_warm(void) { ++calls[12]; return true; }
 
 static PcGuestModHooks full_table(uint32_t groups) {
@@ -113,7 +117,7 @@ static PcGuestModHooks full_table(uint32_t groups) {
         PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooks), groups, 0,
         {forget, choose, note, capture, force},
         {capture_world, admit, after_copy, release_title, general},
-        {before_revert, after_load}, {skip_warm}};
+        {before_revert, after_load, form_deleted}, {skip_warm}};
 }
 
 static unsigned expected_seen(uint32_t groups) {
@@ -131,7 +135,7 @@ static void check_calls(uint32_t groups, unsigned rounds) {
     const unsigned chargen = groups & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE ? rounds : 0;
     for (int n = 0; n < 5; ++n) assert(calls[n] == menu);
     for (int n = 5; n < 10; ++n) assert(calls[n] == world);
-    assert(calls[10] == vm && calls[11] == vm && calls[12] == chargen);
+    assert(calls[10] == vm && calls[11] == vm && calls[13] == vm && calls[12] == chargen);
 }
 
 /* argv: hooked-guest compiled-groups select-groups no-hooks-guest bad-reply-guest */
@@ -207,7 +211,7 @@ int main(int argc, char **argv) {
         assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
         wrong = table;
         if (choice & PC_GUEST_MOD_HOOK_FUZ_MENU) wrong.fuz_menu.force_menu = NULL;
-        else if (choice & PC_GUEST_MOD_HOOK_VM_LIFECYCLE) wrong.vm_lifecycle.after_load = NULL;
+        else if (choice & PC_GUEST_MOD_HOOK_VM_LIFECYCLE) wrong.vm_lifecycle.form_deleted = NULL;
         else wrong.chargen_precache.skip_open_warm = NULL;
         assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
     } else {

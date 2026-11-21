@@ -221,6 +221,44 @@ def adapt_mod_event(name, text):
         "    if(op==1300)"), name)
 
 
+CONTROL_CLASSES = ("Form", "Alias", "ActiveMagicEffect")
+INPUT_FILE = "skse_input.c"
+INPUT_SHA256 = "e7545db20bf742f2981b3c73299ee8567cd3c2ddfe4e9f4c11ed55916094591d"
+INPUT_GFX_CALL = '        skse_gfx_input_event(c,key,control?control:"",down);\n'
+# experiments/classic-control-events: the mapped action and hold time of the same event.
+INPUT_CONTROL_EDGE = ("#ifdef SKYRIM_IOS_MOD_HOOKS\n"
+                      "        { extern void skyrim_classic_control_edge(CPU *, uint32_t, int, float);\n"
+                      "          skyrim_classic_control_edge(c,M32(event+0x10),down,MF32(event+0x1c)); }\n"
+                      "#endif\n")
+
+
+def adapt_controls(name, text):
+    # Plan P3-4: Classic control registration and events (MOD hook builds only).
+    if name == "skse_compat.h":
+        return replace_once(text, " S_METHOD=0x8000",
+                            " S_REG_CONTROL=1340,S_UNREG_CONTROL,S_UNREG_CONTROLS,\n S_METHOD=0x8000", name)
+    if name == "skse_compat_values.c":
+        rows = []
+        for cls in CONTROL_CLASSES:
+            rows += [f'    F("{cls}","RegisterForControl",0,1,2,0,0,0,S_METHOD|S_REG_CONTROL),',
+                     f'    F("{cls}","UnregisterForControl",0,1,2,0,0,0,S_METHOD|S_UNREG_CONTROL),',
+                     f'    F("{cls}","UnregisterForAllControls",0,0,0,0,0,0,S_METHOD|S_UNREG_CONTROLS),']
+        return replace_once(text, "\n#endif\n};\n#undef F", "\n" + "\n".join(rows) + "\n#endif\n};\n#undef F", name)
+    if name != "skse_system.c":
+        return text
+    text = replace_once(text, '#include "classic_skse_mod_event.h"',
+                        '#include "classic_skse_mod_event.h"\n#include "classic_skse_control.h"', name)
+    return replace_once(text, "    if (op >= S_MODEVENT_CREATE && op <= S_MODEVENT_RELEASE)",
+                        "    if (op >= S_REG_CONTROL && op <= S_UNREG_CONTROLS) return skse_classic_control(c, op, args, registry, base);\n"
+                        "    if (op >= S_MODEVENT_CREATE && op <= S_MODEVENT_RELEASE)", name)
+
+
+def adapt_input(text):
+    if hashlib.sha256(text.encode()).hexdigest() != INPUT_SHA256:
+        raise ValueError(f"{INPUT_FILE}: different from the reviewed Classic runtime")
+    return replace_once(text, INPUT_GFX_CALL, INPUT_CONTROL_EDGE + INPUT_GFX_CALL, INPUT_FILE)
+
+
 def prepare(source, runtime):
     from classic_skse_extra import adapt as adapt_extra
     from classic_skse_translation import adapt as adapt_translation, adapt_profile_list
@@ -240,14 +278,15 @@ def prepare(source, runtime):
         int0 = adapt_int0_probe(release_logged) if name == "skse_compat.c" else release_logged
         values = adapt_values_probe(int0) if name == "skse_compat.c" else int0
         epoch = adapt_vm_epoch(values) if name == "skse_compat.c" else values
-        new = adapt_mod_event(name, epoch)
+        events = adapt_mod_event(name, epoch)
+        new = adapt_controls(name, events)
         target = runtime / name
         if target.is_symlink() or target.samefile(source / name):
             raise ValueError(f"{name}: expected an independent staged copy")
         old = target.read_text(encoding="utf-8")
         if old != new:
             stages = [original, previous, adapted, before_input_queries, input_queries, release_logged, int0, values,
-                      epoch]
+                      epoch, events]
             if name == "skse_compat.c":
                 # Earlier stages that already carry the VM generation call.
                 for stage in stages[2:7]:
@@ -258,6 +297,17 @@ def prepare(source, runtime):
             if old not in stages:
                 raise ValueError(f"{name}: unrecognized contents in staged runtime")
             changes.append((target, new))
+    # The input observer: pinned vendor source, one added edge report.
+    original = (source / INPUT_FILE).read_text(encoding="utf-8")
+    observed = adapt_input(original)
+    target = runtime / INPUT_FILE
+    if target.is_symlink() or target.samefile(source / INPUT_FILE):
+        raise ValueError(f"{INPUT_FILE}: expected an independent staged copy")
+    old = target.read_text(encoding="utf-8")
+    if old != observed:
+        if old != original:
+            raise ValueError(f"{INPUT_FILE}: unrecognized contents in staged runtime")
+        changes.append((target, observed))
     # The ordinary runtime adapter already transforms the SDL implementation.
     # Touch only its pinned Present anchor and leave the other edits intact.
     target = runtime / PRESENT_FILE

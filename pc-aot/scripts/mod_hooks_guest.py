@@ -58,7 +58,19 @@ def header_hashes() -> dict[str, str]:
 # SHA-256, containing function, the exact lifted call line, and the line added
 # before (b) or after (a) it.
 VM_HOOK_DECLARATIONS = (b"void skyrim_vm_host_before_revert(unsigned site);\n"
-                        b"void skyrim_vm_host_after_load(int succeeded);\n")
+                        b"void skyrim_vm_host_after_load(int succeeded);\n"
+                        b"struct CPU;\n"
+                        b"void skyrim_vm_host_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle);\n")
+# The sleep-unregister call in the VM's form deletion (experiments/classic-control-events).
+FORM_DELETE_CALL = b"    esp -= 4; M32(esp) = 0x8D657Fu; SPILL(); f_8D4C40(c); RELOAD();\n"
+FORM_DELETE_STAGED = (b"    esp -= 4; M32(esp) = 0x8D657Fu; SPILL();\n"
+                      b"    {\n"
+                      b"    const uint32_t skyrim_deleted_vm = c->r[1];\n"
+                      b"    const uint64_t skyrim_deleted_handle = M64(c->r[4] + 4);\n"
+                      b"    f_8D4C40(c);\n"
+                      b"    skyrim_vm_host_form_deleted(c, skyrim_deleted_vm, skyrim_deleted_handle);\n"
+                      b"    }\n"
+                      b"    RELOAD();\n")
 VM_UNIT_SHA256 = "f550390f7023b2375da3746cfd6b99be32bfd4fecabff2ce5396b73e2e18bf3c"
 VM_SITES = [
     ("exe_199.c", VM_UNIT_SHA256, "f_8D6990",  # 0x8D69A7 load revert
@@ -67,6 +79,8 @@ VM_SITES = [
     ("exe_199.c", VM_UNIT_SHA256, "f_8D69C0",  # 0x8D6B79 VM load
      b"    esp -= 4; M32(esp) = 0x8D6B7Eu; SPILL(); f_8D3DB0(c); RELOAD();\n",
      "a", b"    skyrim_vm_host_after_load((uint8_t)c->r[0] != 0);\n"),
+    ("exe_199.c", VM_UNIT_SHA256, "f_8D6550",  # 0x8D657A sleep-unregister on form deletion
+     FORM_DELETE_CALL, "r", FORM_DELETE_STAGED),
 ]
 # The script-reload revert at 0x8D6E16 (return 0x8D6E1B, callee f_8D5DF0) has
 # no reviewed unit, function or hash in this tree. Without it a reload would
@@ -177,7 +191,8 @@ def stage_vm_lifecycle(root: Path) -> dict[str, bytes]:
         start, end = function_span(data, function)
         if not start <= data.index(anchor) < end:
             raise ValueError(f"{unit}: the reviewed VM call is not in {function}")
-        staged[unit] = data.replace(anchor, line + anchor if where == "b" else anchor + line, 1)
+        replacement = {"b": line + anchor, "a": anchor + line, "r": line}[where]
+        staged[unit] = data.replace(anchor, replacement, 1)
     return staged
 
 

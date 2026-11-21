@@ -20,7 +20,7 @@ class ClassicControlTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.stage = Path(tmp.name) / "runtime"
         self.stage.mkdir()
-        for name in (*classic.PINNED, classic.PRESENT_FILE, "skse_translation.c"):
+        for name in (*classic.PINNED, classic.PRESENT_FILE, "skse_translation.c", classic.INPUT_FILE):
             shutil.copyfile(self.vendor / "runtime" / name, self.stage / name)
         classic.prepare(self.vendor, self.stage)
 
@@ -63,7 +63,7 @@ class ClassicModEventTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.stage = Path(tmp.name) / "runtime"
         self.stage.mkdir()
-        for name in (*classic.PINNED, classic.PRESENT_FILE, "skse_translation.c"):
+        for name in (*classic.PINNED, classic.PRESENT_FILE, "skse_translation.c", classic.INPUT_FILE):
             shutil.copyfile(self.vendor / "runtime" / name, self.stage / name)
         classic.prepare(self.vendor, self.stage)
 
@@ -90,6 +90,48 @@ class ClassicModEventTests(unittest.TestCase):
         subprocess.run([compiler, "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-pthread", *sanitizers,
                         "-DSKYRIM_IOS_MOD_HOOKS=1", "-I", str(PORT), "-I", str(events),
                         str(ROOT / "tests/native/test_classic_skse_mod_event.c"), str(events / "mod_event.c"),
+                        str(PORT / "classic_vm_epoch.c"), "-o", str(binary)], check=True, timeout=60)
+        subprocess.run([str(binary)], check=True, timeout=30)
+
+
+class ClassicControlEventTests(unittest.TestCase):
+    def setUp(self):
+        self.vendor = Path(os.environ.get("SKYRIM_SKYDREAM_SOURCE", ROOT / "vendor/skydream"))
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.stage = Path(tmp.name) / "runtime"
+        self.stage.mkdir()
+        for name in (*classic.PINNED, classic.PRESENT_FILE, "skse_translation.c", classic.INPUT_FILE):
+            shutil.copyfile(self.vendor / "runtime" / name, self.stage / name)
+        classic.prepare(self.vendor, self.stage)
+
+    def test_methods_dispatch_and_input_edge_are_staged(self):
+        table = (self.stage / "skse_compat_values.c").read_text()
+        block = table[table.index("#ifdef SKYRIM_IOS_MOD_HOOKS\n"):table.index("\n};\n#undef F")]
+        for cls in classic.CONTROL_CLASSES:
+            for row in (f'F("{cls}","RegisterForControl",0,1,2,0,0,0,S_METHOD|S_REG_CONTROL)',
+                        f'F("{cls}","UnregisterForControl",0,1,2,0,0,0,S_METHOD|S_UNREG_CONTROL)',
+                        f'F("{cls}","UnregisterForAllControls",0,0,0,0,0,0,S_METHOD|S_UNREG_CONTROLS)'):
+                self.assertIn(row, block)
+        self.assertEqual(block.count("Control\",") + block.count("Controls\","), 9)
+        system = (self.stage / "skse_system.c").read_text()
+        self.assertIn('#include "classic_skse_control.h"', system)
+        self.assertIn("return skse_classic_control(c, op, args, registry, base);", system)
+        observer = (self.stage / classic.INPUT_FILE).read_text()
+        self.assertIn(classic.INPUT_CONTROL_EDGE + classic.INPUT_GFX_CALL, observer)
+        self.assertEqual(observer.count("skyrim_classic_control_edge("), 2)  # declaration and call
+        self.assertEqual(classic.prepare(self.vendor, self.stage), 0)
+
+    @unittest.skipUnless(os.name == "posix", "uses a POSIX C compiler")
+    def test_native_registration_edges_deletion_and_generations(self):
+        compiler = os.environ.get("CC", "cc")
+        binary = self.stage.parent / "controls"
+        sanitizers = (["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
+                      if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1" else [])
+        controls = ROOT / "experiments/classic-control-events"
+        subprocess.run([compiler, "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-pthread", *sanitizers,
+                        "-DSKYRIM_IOS_MOD_HOOKS=1", "-I", str(PORT), "-I", str(controls),
+                        str(ROOT / "tests/native/test_classic_skse_control.c"), str(controls / "control_bridge.c"),
                         str(PORT / "classic_vm_epoch.c"), "-o", str(binary)], check=True, timeout=60)
         subprocess.run([str(binary)], check=True, timeout=30)
 

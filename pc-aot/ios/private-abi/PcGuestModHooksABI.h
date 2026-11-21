@@ -56,10 +56,13 @@ typedef struct {
 } PcGuestModFuzWorldHooks;
 
 /* MOD_FIRST_WAVE_PLAN.md section 4.4: before the original revert, after the
- * original VM load. */
+ * original VM load. form_deleted runs after the original sleep-unregister
+ * call in f_8D6550 (0x8D657A) returns, with the VM and the deleted handle
+ * read before that call (plan P3-4). */
 typedef struct {
     void (*before_revert)(unsigned site);
     void (*after_load)(int succeeded);
+    void (*form_deleted)(struct CPU *cpu, uint32_t vm, uint64_t handle);
 } PcGuestModVmHooks;
 
 typedef struct {
@@ -103,7 +106,8 @@ static inline int pc_guest_mod_hooks_table_valid(const PcGuestModHooks *t) {
             || !t->fuz_world.world_after_copy || !t->fuz_world.release_chatter_title
             || !t->fuz_world.world_general))
         return 0;
-    if ((g & PC_GUEST_MOD_HOOK_VM_LIFECYCLE) && (!t->vm_lifecycle.before_revert || !t->vm_lifecycle.after_load))
+    if ((g & PC_GUEST_MOD_HOOK_VM_LIFECYCLE) && (!t->vm_lifecycle.before_revert || !t->vm_lifecycle.after_load
+            || !t->vm_lifecycle.form_deleted))
         return 0;
     if ((g & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE) && !t->chargen_precache.skip_open_warm) return 0;
     return 1;
@@ -113,6 +117,7 @@ static inline int pc_guest_mod_hooks_table_valid(const PcGuestModHooks *t) {
  * addition to the skyrim_fuz_host_* imports of the Fuz seam headers. */
 void skyrim_vm_host_before_revert(unsigned site);
 void skyrim_vm_host_after_load(int succeeded);
+void skyrim_vm_host_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle);
 bool skyrim_chargen_probe_skip_open_warm(void);
 
 /* Host side (pc_guest_mod_hooks_host.c). */

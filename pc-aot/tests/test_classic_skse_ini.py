@@ -20,7 +20,7 @@ class ClassicIniTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.stage = Path(tmp.name) / "runtime"
         self.stage.mkdir()
-        self.files = (*classic.PINNED, "skse_translation.c", classic.PRESENT_FILE)
+        self.files = (*classic.PINNED, "skse_translation.c", classic.PRESENT_FILE, classic.INPUT_FILE)
         for name in self.files:
             shutil.copyfile(self.vendor / "runtime" / name, self.stage / name)
 
@@ -41,13 +41,14 @@ class ClassicIniTests(unittest.TestCase):
     def test_existing_classic_overlay_is_upgraded_without_replacing_local_edits(self):
         from classic_skse_translation import adapt
         for name in self.files:
-            if name == classic.PRESENT_FILE:
+            if name in (classic.PRESENT_FILE, classic.INPUT_FILE):
                 continue
             target = self.stage / name
             original = target.read_text()
             previous = adapt(original) if name == "skse_translation.c" else classic.adapt_ini(name, original)
             target.write_text(previous)
-        self.assertEqual(classic.prepare(self.vendor, self.stage), len(classic.PINNED) + 1)
+        # The PINNED files, skse_translation.c and the input observer.
+        self.assertEqual(classic.prepare(self.vendor, self.stage), len(classic.PINNED) + 2)
         self.assertEqual(classic.prepare(self.vendor, self.stage), 0)
         target = self.stage / "skse_compat.c"
         original = (self.vendor / "runtime" / target.name).read_text()

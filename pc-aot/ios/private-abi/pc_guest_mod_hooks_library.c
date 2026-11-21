@@ -93,6 +93,9 @@ void skyrim_vm_host_before_revert(unsigned site) {
 void skyrim_vm_host_after_load(int succeeded) {
     if (selected & PC_GUEST_MOD_HOOK_VM_LIFECYCLE) vm_lifecycle.after_load(succeeded);
 }
+void skyrim_vm_host_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle) {
+    if (selected & PC_GUEST_MOD_HOOK_VM_LIFECYCLE) vm_lifecycle.form_deleted(cpu, vm, handle);
+}
 
 /* CHARGEN_PRECACHE: false runs the original first-open warm call. */
 bool skyrim_chargen_probe_skip_open_warm(void) {

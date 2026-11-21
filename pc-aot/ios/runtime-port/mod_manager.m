@@ -34,6 +34,8 @@
 #include "mod_fuz.h"
 #include "mod_fuz_host.h"
 #include "mod_hook_selection.h"
+/* classic_skse_control.h, in the staged skse_system.c */
+void skyrim_classic_control_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle);
 #endif
 #endif
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
@@ -326,7 +328,8 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
     skyrim_mod_hook_plan(requested, pc_guest_mod_hooks_compiled(), host, plan);
     PcGuestModHooks table = {PC_GUEST_MOD_HOOKS_ABI, sizeof table, plan->groups, 0, {0}, {0}, {0}, {0}};
     if (plan->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
-        table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load};
+        table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load,
+                                                 skyrim_classic_control_form_deleted};
     BOOL ready = YES;
     if (plan->groups & PC_GUEST_MOD_HOOK_FUZ_MENU) {
         NSArray<NSString *> *roots = DataRootsFor(launchPackageIds);

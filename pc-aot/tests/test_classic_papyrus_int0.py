@@ -57,7 +57,7 @@ class ClassicInt0StagingTests(unittest.TestCase):
         self.addCleanup(scratch.cleanup)
         self.stage = Path(scratch.name) / "runtime"
         self.stage.mkdir()
-        self.files = (*classic.PINNED, "skse_translation.c", classic.PRESENT_FILE)
+        self.files = (*classic.PINNED, "skse_translation.c", classic.PRESENT_FILE, classic.INPUT_FILE)
         for name in self.files:
             shutil.copyfile(self.vendor / "runtime" / name, self.stage / name)
         (self.stage / "rt.h").write_text(RT, encoding="utf-8")
