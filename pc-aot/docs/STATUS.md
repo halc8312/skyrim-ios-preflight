@@ -2,15 +2,15 @@
 
 **2026-11-22　MOD第一弾の配布前確認**
 
-固定版LEの生成物、所有者のECE入力、固定版libarchiveとliblzmaを使ったMOD関連のPC試験は92件すべて合格した。元のゲーム、MOD、セーブは読み取り専用で扱った。Tailscaleの既存HTTPS配布サービスが非公開で稼働していることを確認した。
+固定版LEの生成物、所有者のECE入力、固定版libarchiveとliblzmaを使ったMOD関連のPC試験は102件すべて合格した。元のゲーム、MOD、セーブは読み取り専用で扱った。Tailscaleの既存HTTPS配布サービスが非公開で稼働していることを確認した。先行版のApple SDKビルドとMOD画面のシミュレーター試験は合格した。 [先行版の検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44932615027)
 
 | 対象 | 現在までの確認 | 配布前の確認 |
 | --- | --- | --- |
 | SKSE / SkyUI | 通常版22でインベントリとMCMを実機確認済み。固定版の登録・再読み込みをPCで確認。横長画面の表示試験を設定に追加 | 更新版でError Code 1、MCM、表示とタッチ位置を確認 |
 | Fuz Ro D-oh | 固定版の会話経路を接続。実物の代替音声10本のPCMと長さをPCで照合 | 通常音声、無音声の台詞、字幕と口の動きを比較 |
 | PapyrusUtil / Wearable Lanterns | 実物StorageUtilのホスト試験と、入力・メーター・設定の試験が合格 | 点灯、長押し、設定と再起動後の復元 |
-| 追加セーブ | 固定版の読み書きとVM通知でPC往復試験8条件。準備した登録は処理番号が一致する場合だけ受理 | Appleでの複製、実行中VMへの接続、iPhoneでの復元 |
-| RaceMenu / ECE / NiOverride | RaceMenuの標準の鼻の高さを接続。ECEの値と形状を調査。NiOverrideの提供元と版を表示 | ECEで同じキャラクターの鼻の高さだけを変えた実物の書き出しを照合。拡張モーフは未接続 |
+| 追加セーブ | 固定版の読み書きとVM通知でPC往復試験8条件。通常版の試験構成に、固定したプロファイルから新規セーブの完了を観測する処理を接続 | Appleでの複製、ライブのStorageUtilとVMへの接続、iPhoneでの復元 |
+| RaceMenu / ECE / NiOverride | RaceMenuの標準の鼻の高さを接続。プロファイルの優先順位に従って実物のECEの顔TRIが読まれることをPCで確認。NiOverrideの提供元と版を表示 | ECEで鼻の高さだけを変えた同一キャラクターの書き出しと、ゲーム内の顔データの選択を照合 |
 | XPMSE / XPMS / Realistic Ragdolls and Force | プロファイルごとの骨格の選択と前提ファイルを検査 | 実物の骨格とアニメーションを別プロファイルで確認 |
 | CBBE / UNP / BodySlide / FNIS | 体型の優先順と生成時の構成を試験 | 実物の体型、対象プロファイルで生成した出力の表示 |
 | USLEEP / DLC | 必須マスターと並びをPCで検証 | 3つのDLCとUSLEEPの変更レコードを確認 |

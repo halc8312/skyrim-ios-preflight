@@ -31,7 +31,7 @@ enum {
     PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE = 8u,
     PC_GUEST_MOD_HOOK_CAMERA_OBSERVE = 16u,
     PC_GUEST_MOD_HOOK_CHARGEN_SLIDER = 32u,
-    /* Reserved: no reviewed stage or call contract exists. */
+    /* Witnesses fresh writes and publication from the save owner thread. */
     PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE = 64u,
     PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE = 128u,
     /* Selection enables the pinned guest-side mode change. */
@@ -43,7 +43,8 @@ enum {
     PC_GUEST_MOD_HOOK_CAMERA_OBSERVE)
 #define PC_GUEST_MOD_HOOKS_OBSERVED (PC_GUEST_MOD_HOOKS_ORIGINAL | PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE | \
     PC_GUEST_MOD_HOOK_INVENTORY_FIT)
-#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOKS_OBSERVED | PC_GUEST_MOD_HOOK_SAFETY_LOAD)
+#define PC_GUEST_MOD_HOOKS_SAFETY (PC_GUEST_MOD_HOOKS_OBSERVED | PC_GUEST_MOD_HOOK_SAFETY_LOAD)
+#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOKS_SAFETY | PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE)
 
 /* Function types come from the reviewed experiment headers. */
 typedef struct {
@@ -99,6 +100,12 @@ typedef struct {
     bool (*bypass_reclamation)(void);
 } PcGuestModSafetyLoadHooks;
 
+typedef struct {
+    uint64_t (*begin)(const struct CPU *, uint32_t stack, uint32_t temporary_path);
+    uint64_t (*current)(const struct CPU *, unsigned phase);
+    void (*event)(const struct CPU *, uint64_t attempt, unsigned site, int succeeded);
+} PcGuestModSaveHooks;
+
 /* Host implementations. groups names the selection; only the tables of the
  * selected groups are read, and each of their entries must be set. */
 typedef struct {
@@ -112,11 +119,13 @@ typedef struct {
     PcGuestModCameraHooks camera;
     PcGuestModLoadingMenuHooks loading_menu;
     PcGuestModSafetyLoadHooks safety_load;
+    PcGuestModSaveHooks save;
 } PcGuestModHooks;
 
 /* Hosts and guests built with the original v1 table still use this prefix. */
 #define PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES offsetof(PcGuestModHooks, loading_menu)
 #define PC_GUEST_MOD_HOOKS_OBSERVED_BYTES offsetof(PcGuestModHooks, safety_load)
+#define PC_GUEST_MOD_HOOKS_SAFETY_BYTES offsetof(PcGuestModHooks, save)
 
 /* Guest reply. select copies the selected tables and succeeds at most once. */
 typedef struct {
@@ -136,6 +145,7 @@ static inline int pc_guest_mod_hooks_groups_valid(uint32_t groups) {
 
 static inline uint32_t pc_guest_mod_hooks_groups_for_bytes(uint32_t bytes) {
     if (bytes == sizeof(PcGuestModHooks)) return PC_GUEST_MOD_HOOKS_DEFINED;
+    if (bytes == PC_GUEST_MOD_HOOKS_SAFETY_BYTES) return PC_GUEST_MOD_HOOKS_SAFETY;
     if (bytes == PC_GUEST_MOD_HOOKS_OBSERVED_BYTES) return PC_GUEST_MOD_HOOKS_OBSERVED;
     if (bytes == PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES) return PC_GUEST_MOD_HOOKS_ORIGINAL;
     return 0;
@@ -163,6 +173,7 @@ static inline int pc_guest_mod_hooks_table_valid(const PcGuestModHooks *t) {
     if ((g & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) && !t->camera.observe_return) return 0;
     if ((g & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) && !t->loading_menu.observe) return 0;
     if ((g & PC_GUEST_MOD_HOOK_SAFETY_LOAD) && !t->safety_load.bypass_reclamation) return 0;
+    if ((g & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) && (!t->save.begin || !t->save.current || !t->save.event)) return 0;
     return 1;
 }
 
@@ -180,6 +191,9 @@ void skyrim_camera_observe_return(uint32_t receiver);
 void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t event);
 bool skyrim_inventory_fit_enabled(void);
 bool skyrim_safety_load_bypass_reclamation(void);
+uint64_t skyrim_save_notify_begin(const struct CPU *cpu, uint32_t stack, uint32_t temporary_path);
+uint64_t skyrim_save_notify_current(const struct CPU *cpu, unsigned phase);
+void skyrim_save_notify_event(const struct CPU *cpu, uint64_t attempt, unsigned site, int succeeded);
 
 /* Host side (pc_guest_mod_hooks_host.c). */
 int pc_guest_bind_mod_hooks(void *library);  /* from pc_guest_open; a missing symbol is not an error */

@@ -41,6 +41,7 @@
 #include "mod_hook_selection.h"
 #include "mod_loading_menu_host.h"
 #include "mod_racemenu_preset.h"
+#include "mod_save_host.h"
 /* classic_skse_control.h, in the staged skse_system.c */
 void skyrim_classic_control_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle);
 #endif
@@ -503,7 +504,7 @@ static void RaceMenuDidApply(void) {
 #ifdef SKYRIM_IOS_MOD_HOOKS
 /* Select the guest hook groups for the features allowed so far, before the
  * guest starts. Returns the features whose groups were selected. */
-static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, SkyrimHookPlan *plan) {
+static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *saveProfile, SkyrimHookPlan *plan) {
     const uint32_t fuzGroups = PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD;
     const BOOL menuObserver = skyrim_loading_menu_app_ready();
     const uint32_t host = fuzGroups | PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER |
@@ -529,6 +530,9 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, SkyrimHook
         (compiled & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE;
     if (inventoryFit && (compiled & PC_GUEST_MOD_HOOK_INVENTORY_FIT))
         plan->groups |= PC_GUEST_MOD_HOOK_INVENTORY_FIT;
+    if (saveProfile && (compiled & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) &&
+        skyrim_save_app_configure(saveProfile.fileSystemRepresentation))
+        plan->groups |= PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE;
     PcGuestModHooks table = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof table, .groups = plan->groups};
     if (plan->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
         table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load,
@@ -541,6 +545,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, SkyrimHook
     if (plan->groups & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) table.camera.observe_return = skyrim_camera_app_observe;
     if (plan->groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) table.loading_menu.observe = skyrim_loading_menu_app_observe;
     if (plan->groups & PC_GUEST_MOD_HOOK_SAFETY_LOAD) table.safety_load.bypass_reclamation = skyrim_safety_load_app_bypass;
+    if (plan->groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) skyrim_save_app_fill(&table);
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
     /* Keep the original paths: select nothing. */
     if (pc_guest_select_mod_hooks(0, NULL) != 0) fputs("IOS_MOD_HOOKS selection failed\n", stderr);
@@ -576,8 +581,13 @@ static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady) {
     SkyrimHookPlan plan;
     if (PrepareRaceMenuPreset(profile)) hooked |= 1u << SKYRIM_FEATURE_RACEMENU;
     const BOOL inventoryFit = [profile[@"inventoryFit"] isEqual:@YES];
+    NSString *saveProfile = nil;
+    if (!launchWithoutMods && !launchPluginListFailed && skyrim_mobile_verbose() &&
+        [activeProfile isEqual:profile[@"id"]] && ![activeProfile isEqual:@"default"] &&
+        FeatureSelected(profile, SKYRIM_FEATURE_PAPYRUSUTIL) && !reasons[SKYRIM_FEATURE_PAPYRUSUTIL])
+        saveProfile = ProfileDir(profile);
     const uint32_t selected = SelectModHooks(hooked,
-        inventoryFit && skyuiAssetsReady && [launchSetup[@"skyuiTrial"] isEqual:@YES], &plan);
+        inventoryFit && skyuiAssetsReady && [launchSetup[@"skyuiTrial"] isEqual:@YES], saveProfile, &plan);
     if (inventoryFit) {
         const BOOL armed = (plan.groups & PC_GUEST_MOD_HOOK_INVENTORY_FIT) != 0;
         if (armed) launchSetup[@"inventoryFit"] = @YES;
@@ -2207,7 +2217,7 @@ static NSArray<NSString *> *ReportLines(NSDictionary *package) {
 static NSString *FeatureName(unsigned feature) {
     switch (feature) {
     case SKYRIM_FEATURE_FUZ: return T(@"Fuz Ro D-oh 6.1 (subtitles and lip sync for unvoiced lines)", @"Fuz Ro D-oh 6.1（無音声の台詞に字幕と口の動き）");
-    case SKYRIM_FEATURE_PAPYRUSUTIL: return T(@"PapyrusUtil (settings and saved values)", @"PapyrusUtil（設定と保存値）");
+    case SKYRIM_FEATURE_PAPYRUSUTIL: return T(@"PapyrusUtil (JsonUtil settings)", @"PapyrusUtil（JsonUtilの設定）");
     case SKYRIM_FEATURE_PRECACHE_KILLER: return @"ShowRaceMenu Precache Killer 1.3";
     case SKYRIM_FEATURE_RACEMENU: return @"RaceMenu";
     case SKYRIM_FEATURE_NIOVERRIDE: return @"NetImmerse Override";

@@ -235,7 +235,8 @@ def main(argv=None):
         options = [*flags, "-DSKYRIM_IOS_CLASSIC_SKSE=1"] if a.classic_skse and source.parent == ABI else flags
         if hook_groups and (source.name in staged_units or source.name == "pc_guest_mod_hooks_library.c"):
             # Only the staged units and the hook library see the reviewed seam headers.
-            options = [*options, "-I", str(mod_hooks_guest.SEAMS), f"-DPC_GUEST_MOD_HOOKS_COMPILED={hook_groups}u"]
+            options = [*options, "-I", str(mod_hooks_guest.SEAMS), "-I", str(mod_hooks_guest.SAVE_SEAMS),
+                       f"-DPC_GUEST_MOD_HOOKS_COMPILED={hook_groups}u"]
         command([tool["clang"],*options,"-c",source,"-o",obj],logs/(source.stem+".log"))
         evidence = {"source_sha256":source_hash, "object_sha256":digest(obj),
                     "seconds":round(time.monotonic()-started,2)}

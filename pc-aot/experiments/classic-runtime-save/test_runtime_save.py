@@ -142,6 +142,7 @@ def main() -> None:
         if args.sanitizers:
             flags += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer"]
         variants = [("runtime-save", [], [HERE / "test_runtime_save.c", HERE / "save_attempt.c",
+                                         IOS_RUNTIME / "mod_save_host.c",
                                          COSAVE / "event_trace.c", COSAVE / "observer" / "lifecycle.c"]),
                     ("selected-load-path", [], [FRESH_LOAD / "test_selected_path.c"] +
                      ([] if args.load_witness else [FRESH_LOAD / "selected_path.c"]))]
@@ -163,7 +164,8 @@ def main() -> None:
             variants.append(("lifted-save", ["-DSKYRIM_EXPERIMENT_CLASSIC_LIFECYCLE=1", "-DSKYRIM_TEST_FILE_RUNTIME=1"],
                              [lifted, SAVE_PUBLISH / "test_save_publish.c", HERE / "lifted_backend.c",
                               COSAVE / "observer" / "lifecycle.c"]))
-        includes = ["-isystem", header_runtime, "-I", HERE, "-I", SAVE_PUBLISH, "-I", COSAVE, "-I", IOS_RUNTIME]
+        includes = ["-isystem", header_runtime, "-I", HERE, "-I", SAVE_PUBLISH, "-I", COSAVE, "-I", IOS_RUNTIME,
+                    "-I", ROOT / "ios" / "private-abi", "-I", HERE.parent / "fuz-voice"]
         if args.load_witness:
             includes += ["-I", FRESH_LOAD]
             variants.append(("selected-load-witness", [], [HERE / "test_runtime_load.c"]))
@@ -184,7 +186,13 @@ def main() -> None:
                             *common, *sources, *extra_sources, "-Wl,--gc-sections", "-o", binary],
                            check=True, timeout=60)
             with tempfile.TemporaryDirectory(prefix="classic-runtime-save-data-") as data:
-                subprocess.run([binary, data], check=True, timeout=20)
+                result = subprocess.run([binary, data], timeout=20, capture_output=True, text=True)
+                if result.returncode:
+                    print(result.stderr, file=sys.stderr, end="")
+                    result.check_returncode()
+                if name == "runtime-save" and result.stderr.splitlines().count("IOS_CLASSIC_FRESH_SAVE published=1") != 1:
+                    raise AssertionError(f"Unexpected fresh-save observation: {result.stderr}")
+                print(result.stdout, end="")
         if args.load_clone:
             cloned_kernel = out / "kernel32-clone.c"
             cloned_kernel.write_text(feature_prefix + transform(source_text, load_witness=True, load_clone=True),

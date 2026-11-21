@@ -33,6 +33,7 @@ if(SKYRIM_IOS_MOD_HOOKS AND NOT SKYRIM_IOS_CLASSIC_SKSE)
     message(FATAL_ERROR "The guest MOD hook interface requires Classic SKSE")
 endif()
 set(SKYRIM_IOS_MOD_HOOK_SEAMS "${SKYRIM_IOS_ROOT}/experiments/fuz-voice")
+set(SKYRIM_IOS_SAVE_WITNESS "${SKYRIM_IOS_ROOT}/experiments/classic-runtime-save")
 option(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL "Publish PapyrusUtil JsonUtil natives during play (MOD_FIRST_WAVE_PLAN P3-2)" OFF)
 if(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL AND NOT (SKYRIM_IOS_CLASSIC_SKSE AND SKYRIM_IOS_SKSE_DLL_PROBE AND SKYRIM_IOS_MOD_HOOKS))
     message(FATAL_ERROR "PapyrusUtil during play requires Classic SKSE, the DLL probe and the MOD hook interface")
@@ -86,8 +87,15 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
         "${CMAKE_CURRENT_SOURCE_DIR}/classic_skse_extra.py")
     execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../private-abi/prepare_private_abi.py"
         "${classic_overlay}" COMMAND_ERROR_IS_FATAL ANY)
+    set(classic_adapter_options)
+    if(SKYRIM_IOS_MOD_HOOKS)
+        list(APPEND classic_adapter_options --save-observe)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${SKYRIM_IOS_SAVE_WITNESS}/stage_runtime.py" "${CMAKE_CURRENT_SOURCE_DIR}/prepare_runtime.py")
+    endif()
     execute_process(COMMAND "${Python3_EXECUTABLE}" "${classic_adapter}"
-        --source "${SKYDREAM_SOURCE_DIR}" --runtime "${SKYRIM_IOS_RUNTIME_OVERLAY_DIR}" COMMAND_ERROR_IS_FATAL ANY)
+        --source "${SKYDREAM_SOURCE_DIR}" --runtime "${SKYRIM_IOS_RUNTIME_OVERLAY_DIR}"
+        ${classic_adapter_options} COMMAND_ERROR_IS_FATAL ANY)
 endif()
 
 file(GLOB runtime_sources CONFIGURE_DEPENDS
@@ -136,13 +144,18 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
     if(SKYRIM_IOS_MOD_HOOKS)
         set(camera_sources "${SKYRIM_IOS_ROOT}/experiments/classic-camera")
         set(loading_menu_sources "${SKYRIM_IOS_ROOT}/experiments/classic-loading-menu")
+        set(save_publication "${SKYRIM_IOS_ROOT}/experiments/classic-save-publish")
         target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/classic_vm_epoch.c"
             "${SKYRIM_IOS_ROOT}/experiments/classic-mod-events/mod_event.c"
             "${SKYRIM_IOS_ROOT}/experiments/classic-control-events/control_bridge.c"
             "${camera_sources}/camera_state.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_camera_host.c"
-            "${loading_menu_sources}/loading_menu.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_loading_menu_host.c")
+            "${loading_menu_sources}/loading_menu.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_loading_menu_host.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/mod_save_host.c"
+            "${SKYRIM_IOS_SAVE_WITNESS}/save_attempt.c" "${SKYRIM_IOS_SAVE_WITNESS}/runtime_save.c"
+            "${save_publication}/save_publish.c" "${cosave_source}/observer/lifecycle.c")
         target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_ROOT}/experiments/classic-mod-events"
-            "${SKYRIM_IOS_ROOT}/experiments/classic-control-events" "${camera_sources}" "${loading_menu_sources}")
+            "${SKYRIM_IOS_ROOT}/experiments/classic-control-events" "${camera_sources}" "${loading_menu_sources}"
+            "${SKYRIM_IOS_SAVE_WITNESS}" "${save_publication}")
         target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_MOD_HOOK_SEAMS}")
         target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_MOD_HOOKS=1)
     endif()

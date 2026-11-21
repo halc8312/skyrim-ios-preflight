@@ -28,15 +28,15 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle"), 7)
         self.assertEqual(hooks.parse_groups(" chargen_precache , fuz_menu "), 9)
         self.assertEqual(hooks.parse_groups("camera_observe"), 16)
+        self.assertEqual(hooks.parse_groups("save_lifecycle"), 64)
         self.assertEqual(hooks.parse_groups("loading_menu_observe"), 128)
         self.assertEqual(hooks.parse_groups("inventory_fit"), 256)
         self.assertEqual(hooks.parse_groups("loading_menu_observe,safety_load"), 640)
         self.assertEqual(hooks.group_names(11), ["fuz_menu", "fuz_world", "chargen_precache"])
 
-    def test_rejects_unknown_unstaged_duplicate_and_incomplete_lists(self):
+    def test_rejects_unknown_duplicate_and_incomplete_lists(self):
         for text, message in (("", "comma-separated"), ("fuz_menu,", "comma-separated"),
                               ("fuz_menu,fuz_menu", "twice"), ("fuz", "Unknown"),
-                              ("save_lifecycle", "P3-5"),
                               ("fuz_world", "list both"), ("safety_load", "list both")):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
                 hooks.parse_groups(text)
@@ -49,7 +49,7 @@ class GroupTests(unittest.TestCase):
                          assembly.MOD_HOOK_HEADERS)
         staged = sum(bit for name, bit in hooks.GROUPS.items() if name in hooks.STAGES)
         self.assertEqual(staged & ~assembly.MOD_HOOK_GROUPS_DEFINED, 0)
-        self.assertEqual(set(hooks.STAGES) | set(hooks.UNSTAGED), set(hooks.GROUPS))
+        self.assertEqual(set(hooks.STAGES), set(hooks.GROUPS))
 
 
 class ComposeTests(unittest.TestCase):

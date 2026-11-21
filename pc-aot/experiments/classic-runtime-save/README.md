@@ -1,6 +1,6 @@
 # Runtime observation of fresh save publication
 
-This hosted experiment stages a private copy of `vendor/skydream/runtime/kernel32.c` at the pinned Skydream revision. The optional prepared mode uses the existing iOS kernel preparation before applying the observer. Its file calls execute the real runtime path mapper, handle table, and POSIX operations against authored data in a temporary directory. The normal app build has no reference to this experiment.
+This hosted experiment stages a private copy of `vendor/skydream/runtime/kernel32.c` at the pinned Skydream revision. The optional prepared mode uses the existing iOS kernel preparation before applying the observer. Its file calls execute the real runtime path mapper, handle table, and POSIX operations against authored data in a temporary directory.
 
 | Observed boundary | Evidence used |
 | --- | --- |
@@ -65,5 +65,7 @@ python3 -B -m unittest discover -s tests -p test_stage_save_notifications.py -v
 ```
 
 The observer tracks one owned fresh save at a time. A tagged operation from another thread invalidates that observation without dereferencing the owner's state. A late operation from an old token leaves the newer observation alone. The inherited handle table still requires normal guest handle ownership. The observer cannot repair a race between file lookup and close. The active save/profile must supply the authorized directory and per-attempt lifetime explicitly, including cleanup on nonlocal exits and before shutdown. Concurrent writers using independent handles require separate coverage and serialization evidence.
+
+The optional app hook `save_lifecycle` currently observes fresh save completion. With detailed diagnostics and PapyrusUtil enabled in a named launch profile, the host opens that profile read-only before guest entry. It resolves the saves path from the held descriptor for each attempt and forwards only the authenticated factory, VM and file notifications. The per-attempt descriptor is closed at ordinary return, guest thread exit or a guest nonlocal return. `IOS_CLASSIC_FRESH_SAVE published=1` reports a witnessed base save, without its path or contents. Restore and companion publication from the live VM are pending.
 
 The staged hot paths snapshot primitive values before blocking operations. They take no new locks around the syscalls and call the observer on writes only for a tagged file. The reader and file identity checks are limited to the owned save. Before dispatch to a background worker, the caller still needs an immutable snapshot and an authenticated event handoff. The experiment leaves actual iOS scheduling, APFS capture, cached streams and physical durability for separate verification.

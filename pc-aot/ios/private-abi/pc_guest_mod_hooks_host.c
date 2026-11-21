@@ -21,7 +21,7 @@ int pc_guest_bind_mod_hooks(void *library) {
         bind_attempted = 1;
         return 0;
     }
-    const uint32_t sizes[] = {sizeof(PcGuestModHooks), PC_GUEST_MOD_HOOKS_OBSERVED_BYTES,
+    const uint32_t sizes[] = {sizeof(PcGuestModHooks), PC_GUEST_MOD_HOOKS_SAFETY_BYTES, PC_GUEST_MOD_HOOKS_OBSERVED_BYTES,
                              PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES};
     const PcGuestModHooksGuest *reply = NULL;
     uint32_t table_bytes = 0;

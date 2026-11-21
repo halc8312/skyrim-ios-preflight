@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import os
 from pathlib import Path
+import sys
 import tempfile
 
 from prepare_runtime import replace_once
@@ -259,7 +260,7 @@ def adapt_input(text):
     return replace_once(text, INPUT_GFX_CALL, INPUT_CONTROL_EDGE + INPUT_GFX_CALL, INPUT_FILE)
 
 
-def prepare(source, runtime):
+def prepare(source, runtime, save_observe=False):
     from classic_skse_extra import adapt as adapt_extra
     from classic_skse_translation import adapt as adapt_translation, adapt_profile_list
 
@@ -317,6 +318,41 @@ def prepare(source, runtime):
     gated = adapt_present(old)
     if old != gated:
         changes.append((target, gated))
+    if save_observe:
+        from prepare_runtime import patch_kernel
+        save_directory = Path(__file__).resolve().parents[2] / "experiments" / "classic-runtime-save"
+        sys.path.insert(0, str(save_directory))
+        try:
+            from stage_runtime import transform, verified_source
+        finally:
+            sys.path.pop(0)
+        original = source / "kernel32.c"
+        target = runtime / original.name
+        if target.is_symlink() or target.samefile(original):
+            raise ValueError("Save observation requires an independent staged runtime")
+        base = patch_kernel(verified_source(original.read_bytes()))
+        observed = transform(base, app=True)
+        old = target.read_text(encoding="utf-8")
+        if old != observed:
+            if old != base:
+                raise ValueError("Save observation requires the reviewed iOS kernel preparation")
+            changes.append((target, observed))
+        # A guest longjmp can skip all of the save routine's ordinary returns.
+        target = runtime / "setjmp.c"
+        original = source / target.name
+        if target.is_symlink() or target.samefile(original):
+            raise ValueError("Save observation requires an independent staged runtime")
+        base = original.read_text(encoding="utf-8")
+        if hashlib.sha256(base.encode()).hexdigest() != "5f4ce702daa0d85e936d389cf9eb39faf8513527803415bd16e8adee69e7d46c":
+            raise ValueError("Guest nonlocal return differs from the reviewed runtime")
+        observed = replace_once(base, "    longjmp(*slot, 1);",
+                                "    skyrim_save_app_retire(c);\n    longjmp(*slot, 1);", target.name)
+        observed = '#include "mod_save_host.h"\n' + observed
+        old = target.read_text(encoding="utf-8")
+        if old != observed:
+            if old != base:
+                raise ValueError("Save observation requires the pinned guest nonlocal return")
+            changes.append((target, observed))
     # Validate every input before publishing and preserve intact files on a failed write.
     # Each individual replacement is atomic and a subsequent run can finish the rest.
     for target, new in changes:
@@ -335,8 +371,9 @@ if __name__ == "__main__":
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--source", type=Path,
                         default=Path(__file__).resolve().parents[2] / "vendor/skydream")
+    parser.add_argument("--save-observe", action="store_true")
     args = parser.parse_args()
     try:
-        print(f"Classic runtime validated; updated {prepare(args.source, args.runtime)} staged files.")
+        print(f"Classic runtime validated; updated {prepare(args.source, args.runtime, args.save_observe)} staged files.")
     except (OSError, ValueError) as error:
         parser.exit(1, f"Classic runtime preparation failed: {error}\n")

@@ -21,16 +21,13 @@ from classic_skse_guest import DEFINITION as CLASSIC_DEFINITION
 ROOT = Path(__file__).resolve().parents[1]
 EXPERIMENTS = ROOT / "experiments"
 SEAMS = EXPERIMENTS / "fuz-voice"
+SAVE_SEAMS = EXPERIMENTS / "classic-runtime-save"
 
 # PcGuestModHooksABI.h bits.
 GROUPS = {
     "fuz_menu": 1, "fuz_world": 2, "vm_lifecycle": 4, "chargen_precache": 8,
     "camera_observe": 16, "chargen_slider": 32, "save_lifecycle": 64,
     "loading_menu_observe": 128, "inventory_fit": 256, "safety_load": 512,
-}
-# Groups without a production binding, with the reason shown to the caller.
-UNSTAGED = {
-    "save_lifecycle": "the experimental save and load notices (plan P3-5) are not bound to the app",
 }
 # The interface header and the reviewed seam headers its tables use; the IPA
 # assembly checks the same five (scripts/assemble_title_ipa.py).
@@ -101,9 +98,6 @@ def parse_groups(text: str) -> int:
     for name in names:
         if name not in GROUPS:
             raise ValueError(f"Unknown MOD hook group {name!r}; known groups: {', '.join(GROUPS)}")
-        reason = UNSTAGED.get(name)
-        if reason:
-            raise ValueError(f"MOD hook group {name} cannot be built: {reason}")
         mask |= GROUPS[name]
     if mask & GROUPS["fuz_world"] and not mask & GROUPS["fuz_menu"]:
         raise ValueError("fuz_world reuses the fuz_menu response stage; list both")
@@ -190,6 +184,11 @@ def stage_safety_load(root: Path) -> dict[str, bytes]:
     return {safety.UNIT: safety.stage_allocator((root / "gen" / safety.UNIT).read_bytes())}
 
 
+def stage_save_lifecycle(root: Path) -> dict[str, bytes]:
+    save = load(SAVE_SEAMS, "stage_save_notifications")
+    return save.stage_save_notifications(root)
+
+
 def function_span(unit: bytes, function: str) -> tuple[int, int]:
     marker = f"\nvoid {function}(CPU *c) {{\n".encode("ascii")
     if unit.count(marker) != 1:
@@ -229,6 +228,7 @@ STAGES = {
     "loading_menu_observe": stage_loading_menu_observe,
     "inventory_fit": stage_inventory_fit,
     "safety_load": stage_safety_load,
+    "save_lifecycle": stage_save_lifecycle,
 }
 
 

@@ -106,9 +106,11 @@ def verified_source(raw: bytes) -> str:
     return source.decode("utf-8")
 
 
-def transform(source: str, load_witness: bool = False, load_clone: bool = False) -> str:
+def transform(source: str, load_witness: bool = False, load_clone: bool = False, *, app: bool = False) -> str:
     if load_clone and not load_witness:
         raise ValueError("Cloned load staging requires the read-only witness")
+    if app and (load_witness or load_clone):
+        raise ValueError("The app stage observes fresh saves")
     load_header = '#include "runtime_load.h"\n' if load_witness else ""
     load_field = " uint64_t classic_load_generation;" if load_witness else ""
     observed_open = OPEN_OBSERVED
@@ -141,11 +143,17 @@ def transform(source: str, load_witness: bool = False, load_clone: bool = False)
     )
     if load_clone:
         patches += ((FILE_INFO, FILE_INFO + "    if (f->classic_load_source_fd >= 0) st = f->classic_load_source;\n"),)
+    if app:
+        thread_exit = "static void thread_exit_slot(CPU *c) {\n"
+        patches += (('#include "rt.h"\n', '#include "rt.h"\n#include "mod_save_host.h"\n'),
+                    (thread_exit, thread_exit + "    skyrim_save_app_retire(c);\n"))
     for before, after in patches:
         if source.count(before) != 1:
             raise ValueError("Expected one reviewed runtime file observation site")
         source = source.replace(before, after, 1)
 
+    if app:
+        return source
     cases = "".join(f"    case {kind}: shim_{name}(c); return;\n" for kind, name in SHIMS)
     return (source + (LOAD_FILE_FIXTURE if load_clone else "") + "\nvoid classic_runtime_file_call(CPU *c, enum ClassicFileCall operation) {\n"
             "    switch (operation) {\n" + cases + "    }\n    abort();\n}\n")

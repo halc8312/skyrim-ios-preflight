@@ -4,6 +4,7 @@
 #include "rt.h"
 #include "runtime_save.h"
 #include "save_attempt.h"
+#include "mod_save_host.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -341,9 +342,78 @@ static void run_guest_authorization(int root, const char *root_path) {
     CHECK(!close(dir));
 }
 
+static void run_app_observer(int root, const char *root_path) {
+    const int profile = case_directory(root, root_path, "running-mod-profile");
+    char directory[CLASSIC_RUNTIME_PATH_BYTES];
+    const char suffix[] = "/Documents/My Games/Skyrim/Saves";
+    const size_t size = strlen(g_save_dir);
+    CHECK(size + sizeof suffix <= sizeof directory);
+    memcpy(directory, g_save_dir, size);
+    memcpy(directory + size, suffix, sizeof suffix);
+    CHECK(!mkdirat(profile, "Documents", 0700));
+    CHECK(!mkdirat(profile, "Documents/My Games", 0700));
+    CHECK(!mkdirat(profile, "Documents/My Games/Skyrim", 0700));
+    CHECK(!symlinkat(root_path, profile, "Documents/My Games/Skyrim/Saves"));
+    CHECK(skyrim_save_app_configure(g_save_dir));
+    CHECK(!skyrim_save_app_configure(root_path));
+
+    PcGuestModHooks table = {0};
+    skyrim_save_app_fill(&table);
+    CPU cpu = {0};
+    classic_runtime_fixture_attach(&cpu);
+    const uint32_t stack = cpu.r[4] - 512;
+    const uint32_t name = stack + 0x28;
+    cpu.r[4] = stack;
+    M32(stack) = 0x681658;
+    M32(stack + 4) = name;
+    M32(stack + 8) = 1;
+    M32(stack + 12) = 0x10000;
+    const char temporary[] = "C:\\Users\\Player\\Documents\\My Games\\Skyrim\\Saves\\Fixture.ess.tmp";
+    strcpy(GSTR(name), temporary);
+    errno = ERANGE;
+    CHECK(!table.save.begin(&cpu, stack, name) && errno == ERANGE);
+    CHECK(!unlinkat(profile, "Documents/My Games/Skyrim/Saves", 0));
+    CHECK(!mkdir(directory, 0700));
+    errno = ERANGE;
+    CHECK(!table.save.begin(&cpu, stack, name + 1) && errno == ERANGE);
+    const uint64_t retired = table.save.begin(&cpu, stack, name);
+    CHECK(retired && errno == ERANGE);
+    skyrim_save_app_retire(&cpu);
+    CHECK(errno == ERANGE);
+    const uint64_t ticket = table.save.begin(&cpu, stack, name);
+    CHECK(ticket && ticket != retired && errno == ERANGE);
+    table.save.event(&cpu, retired, SkyrimSaveAttemptLeft, 0);
+    strcpy(GSTR(NAME_TEMP), temporary);
+    strcpy(GSTR(NAME_FINAL), "C:\\Users\\Player\\Documents\\My Games\\Skyrim\\Saves\\Fixture.ess");
+    const uint32_t handle = open_temp(&cpu, 0x40000000u, 2);
+    CHECK(handle != UINT32_MAX);
+    table.save.event(&cpu, ticket, SkyrimSaveOpenFinished, 0);
+    table.save.event(&cpu, ticket, SkyrimSaveSlotEntered, 0);
+    CHECK(table.save.current(&cpu, SkyrimSaveInSlot) == ticket);
+    CHECK(write_file(&cpu, handle, false) == 1);
+    table.save.event(&cpu, ticket, SkyrimSaveVmReturned, 1);
+    table.save.event(&cpu, ticket, SkyrimSaveSlotLeft, 0);
+    table.save.event(&cpu, ticket, SkyrimSaveCloseEntered, 0);
+    table.save.event(&cpu, ticket, SkyrimSaveFlushReturned, 1);
+    CHECK(invoke(&cpu, ClassicCloseHandle, CLOSE_RETURN, 1, &handle) == 1);
+    table.save.event(&cpu, ticket, SkyrimSaveCrtCloseReturned, 1);
+    table.save.event(&cpu, ticket, SkyrimSaveMoveEntered, 0);
+    CHECK(move_file(&cpu, NAME_TEMP, NAME_FINAL) == 1);
+    table.save.event(&cpu, ticket, SkyrimSaveCrtMoveReturned, 1);
+    table.save.event(&cpu, ticket, SkyrimSaveCloseLeft, 0);
+    table.save.event(&cpu, ticket, SkyrimSaveAttemptLeft, 0);
+    table.save.event(&cpu, ticket, SkyrimSaveAttemptLeft, 0);
+    CHECK(!table.save.current(&cpu, SkyrimSaveInClose));
+
+    const int save = openat(profile, "Documents/My Games/Skyrim/Saves/Fixture.ess", O_RDONLY | O_NOFOLLOW);
+    char bytes[sizeof sample] = {0};
+    CHECK(save >= 0 && read(save, bytes, sizeof bytes) == sizeof sample - 1);
+    CHECK(!memcmp(bytes, sample, sizeof sample) && !close(save) && !close(profile));
+}
+
 int main(int argc, char **argv) {
     CHECK(argc == 2 && signal(SIGXFSZ, SIG_IGN) != SIG_ERR);
-    const size_t mapped = GUEST_TEB_BASE + 0x2000;
+    const size_t mapped = GUEST_TEB_BASE + 2 * 0x2000;
     MEM = mmap(NULL, mapped, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     CHECK(MEM != MAP_FAILED);
     strcpy(GSTR(NAME_TEMP), "C:\\Users\\Player\\Fixture.ess.tmp");
@@ -362,6 +432,7 @@ int main(int argc, char **argv) {
     run_notification_case(root, argv[1], SWAPPED_TEMP, true);
     run_notification_case(root, argv[1], REPEATED_VM_NOTICE, true);
     run_guest_authorization(root, argv[1]);
+    run_app_observer(root, argv[1]);
     CHECK(!close(root));
     CHECK(!munmap(MEM, mapped));
     puts("PASS real Skydream file shims, unchanged guest status, and scoped save evidence");

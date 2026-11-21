@@ -78,6 +78,11 @@ __attribute__((visibility("default"))) unsigned exercise_mod_hooks(unsigned expe
     skyrim_loading_menu_observe(0xA5D9CF, 0x57000, 0x58000);
     if (skyrim_inventory_fit_enabled()) seen |= 1u << 8;
     if (skyrim_safety_load_bypass_reclamation()) seen |= 1u << 9;
+    const uint64_t attempt = skyrim_save_notify_begin(NULL, 0x1000, 0x1028);
+    assert(skyrim_save_notify_current(NULL, 1) == attempt);
+    if (attempt) seen |= 1u << 10;
+    skyrim_save_notify_event(NULL, 0, 1, 1);
+    skyrim_save_notify_event(NULL, attempt, 1, 1);
     assert(seen == expected);
     return seen;
 }
@@ -106,7 +111,7 @@ void f_A60200(CPU *c) { (void)c; }
 void f_842140(CPU *c) { (void)c; }
 void f_873D70(CPU *c) { (void)c; }
 
-static unsigned calls[20];
+static unsigned calls[23];
 static void forget(uint32_t r) { assert(r == 7); ++calls[0]; }
 static void choose(const struct CPU *c, uint32_t slot, uint32_t r, SkyrimFuzLiftChoice *out) {
     assert(!c && slot == 0x1000 && r == 7);
@@ -154,6 +159,20 @@ static void loading_observed(uint32_t site, uint32_t dispatcher, uint32_t event)
     ++calls[18];
 }
 static bool safety_bypass(void) { ++calls[19]; return true; }
+static uint64_t save_begin(const struct CPU *c, uint32_t stack, uint32_t path) {
+    assert(!c && stack == 0x1000 && path == 0x1028);
+    ++calls[20];
+    return 42;
+}
+static uint64_t save_current(const struct CPU *c, unsigned phase) {
+    assert(!c && phase == 1);
+    ++calls[21];
+    return 42;
+}
+static void save_event(const struct CPU *c, uint64_t attempt, unsigned site, int succeeded) {
+    assert(!c && attempt == 42 && site == 1 && succeeded);
+    ++calls[22];
+}
 
 static PcGuestModHooks full_table(uint32_t groups) {
     return (PcGuestModHooks){
@@ -161,7 +180,7 @@ static PcGuestModHooks full_table(uint32_t groups) {
         {forget, choose, note, capture, force},
         {capture_world, admit, after_copy, release_title, general},
         {before_revert, after_load, form_deleted}, {skip_warm}, {slider_pending, slider_nose, slider_applied},
-        {camera_observed}, {loading_observed}, {safety_bypass}};
+        {camera_observed}, {loading_observed}, {safety_bypass}, {save_begin, save_current, save_event}};
 }
 
 static unsigned expected_seen(uint32_t groups) {
@@ -172,6 +191,7 @@ static unsigned expected_seen(uint32_t groups) {
     if (groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) seen |= 1u << 7;
     if (groups & PC_GUEST_MOD_HOOK_INVENTORY_FIT) seen |= 1u << 8;
     if (groups & PC_GUEST_MOD_HOOK_SAFETY_LOAD) seen |= 1u << 9;
+    if (groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) seen |= 1u << 10;
     return seen;
 }
 
@@ -188,6 +208,7 @@ static void check_calls(uint32_t groups, unsigned rounds) {
     assert(calls[17] == (groups & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE ? rounds : 0));
     assert(calls[18] == (groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE ? rounds : 0));
     assert(calls[19] == (groups & PC_GUEST_MOD_HOOK_SAFETY_LOAD ? rounds : 0));
+    for (int n = 20; n < 23; ++n) assert(calls[n] == (groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE ? rounds : 0));
 }
 
 /* argv: hooked-guest compiled-groups select-groups no-hooks-guest bad-reply-guest */
@@ -229,9 +250,9 @@ int main(int argc, char **argv) {
     assert(!bind(PC_GUEST_MOD_HOOKS_ABI + 1, sizeof(PcGuestModHooks)));
     assert(!bind(PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooks) - 1));
 
-    if (!strcmp(argv[3], "original-host") || !strcmp(argv[3], "observer-host")) {
+    if (!strcmp(argv[3], "original-host") || !strcmp(argv[3], "observer-host") || !strcmp(argv[3], "safety-host")) {
         const uint32_t bytes = !strcmp(argv[3], "original-host") ? PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES
-                                                                 : PC_GUEST_MOD_HOOKS_OBSERVED_BYTES;
+            : !strcmp(argv[3], "observer-host") ? PC_GUEST_MOD_HOOKS_OBSERVED_BYTES : PC_GUEST_MOD_HOOKS_SAFETY_BYTES;
         const uint32_t supported = pc_guest_mod_hooks_groups_for_bytes(bytes);
         const PcGuestModHooksGuest *reply = bind(PC_GUEST_MOD_HOOKS_ABI, bytes);
         assert(reply && reply->table_bytes == bytes);
@@ -239,7 +260,7 @@ int main(int argc, char **argv) {
         PcGuestModHooks table = full_table(PC_GUEST_MOD_HOOK_CAMERA_OBSERVE);
         assert(reply->select(&table) != 0); /* The agreed size is mandatory. */
         table.bytes = bytes;
-        table.groups |= PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE | PC_GUEST_MOD_HOOK_SAFETY_LOAD;
+        table.groups |= PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE;
         assert(reply->select(&table) != 0);
         table.groups = PC_GUEST_MOD_HOOK_CAMERA_OBSERVE;
         assert(reply->select(&table) == 0);
@@ -298,6 +319,7 @@ int main(int argc, char **argv) {
         else if (choice & PC_GUEST_MOD_HOOK_SAFETY_LOAD) wrong.safety_load.bypass_reclamation = NULL;
         else if (choice & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) wrong.loading_menu.observe = NULL;
         else if (choice & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) wrong.chargen_slider.did_apply = NULL;
+        else if (choice & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) wrong.save.event = NULL;
         /* Inventory fit is a guest-only capability with no host callback. */
         if (choice != PC_GUEST_MOD_HOOK_INVENTORY_FIT)
             assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
@@ -316,6 +338,7 @@ int main(int argc, char **argv) {
     table.camera.observe_return = NULL;
     table.loading_menu.observe = NULL;
     table.safety_load.bypass_reclamation = NULL;
+    table.save.begin = NULL;
     assert(exercise(expected_seen(choice)) == expected_seen(choice));
     check_calls(choice, 1);
 

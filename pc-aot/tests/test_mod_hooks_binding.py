@@ -69,7 +69,7 @@ class NativeBinding(unittest.TestCase):
             guest = [*flags, "-fPIC", "-fvisibility=hidden", "-dynamiclib" if mac else "-shared",
                      "-DMOD_FIXTURE_GUEST", FIXTURE, ABI / "pc_guest_library.c", ABI / "pc_guest_skse_library.c"]
             guests = {}
-            for groups in (15, 3, 8, 4, 16, 32, 128, 256, 640, 959):
+            for groups in (15, 3, 8, 4, 16, 32, 64, 128, 256, 640, 1023):
                 guests[groups] = stage / f"guest-{groups}"
                 subprocess.run([*guest, ABI / "pc_guest_mod_hooks_library.c",
                                 f"-DPC_GUEST_MOD_HOOKS_COMPILED={groups}u", "-o", guests[groups]], check=True)
@@ -79,8 +79,8 @@ class NativeBinding(unittest.TestCase):
             subprocess.run([*guest, "-DMOD_FIXTURE_NO_HOOKS", "-DMOD_FIXTURE_BAD_REPLY", "-o", bad], check=True)
             original = stage / "guest-original-table"
             subprocess.run([*guest, "-DMOD_FIXTURE_NO_HOOKS", "-DMOD_FIXTURE_ORIGINAL_TABLE", "-o", original], check=True)
-            # Reserved groups and a world stage without the menu stage cannot compile.
-            for groups in (64, 512, 1024, 2):
+            # Unknown groups and dependencies that aren't built are rejected.
+            for groups in (512, 1024, 2):
                 with self.subTest(compiled=groups):
                     rejected = subprocess.run([*guest, ABI / "pc_guest_mod_hooks_library.c",
                                                f"-DPC_GUEST_MOD_HOOKS_COMPILED={groups}u",
@@ -93,7 +93,7 @@ class NativeBinding(unittest.TestCase):
                             *([] if mac else ["-ldl"]), "-o", host], check=True)
             for compiled, choice in ((15, 0), (15, 15), (15, 1), (15, 4), (3, 3), (3, 1), (8, 8), (4, 4),
                                      (16, 0), (16, 16), (32, 0), (32, 32), (128, 0), (128, 128),
-                                     (256, 0), (256, 256), (640, 128), (640, 640), (959, 959)):
+                                     (64, 0), (64, 64), (256, 0), (256, 256), (640, 128), (640, 640), (1023, 1023)):
                 with self.subTest(compiled=compiled, choice=choice):
                     run = subprocess.run([host, guests[compiled], str(compiled), str(choice), plain, bad],
                                          capture_output=True, text=True)
@@ -103,8 +103,8 @@ class NativeBinding(unittest.TestCase):
             run = subprocess.run([host, guests[15], "15", "no-hooks", plain, bad], capture_output=True, text=True)
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertNotIn("MOD hook groups", run.stderr)
-            for binary, groups, mode in ((original, 16, "original-guest"), (guests[959], 959, "original-host"),
-                                         (guests[959], 959, "observer-host")):
+            for binary, groups, mode in ((original, 16, "original-guest"), (guests[1023], 1023, "original-host"),
+                                         (guests[1023], 1023, "observer-host"), (guests[1023], 1023, "safety-host")):
                 with self.subTest(mode=mode):
                     run = subprocess.run([host, binary, str(groups), mode, plain, bad], capture_output=True, text=True)
                     self.assertEqual(run.returncode, 0, run.stderr)

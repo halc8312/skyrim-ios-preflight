@@ -40,6 +40,9 @@ class SaveNotificationStageTests(unittest.TestCase):
         live = mod_hooks_guest.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,camera_observe,chargen_slider,"
                                           "loading_menu_observe,inventory_fit,safety_load")
         self.assertFalse(staged.keys() & mod_hooks_guest.compose(original, live).keys())
+        selected = mod_hooks_guest.parse_groups("save_lifecycle")
+        all_stages = mod_hooks_guest.compose(original, live | selected)
+        self.assertEqual({name: all_stages[name] for name in staged}, staged)
         combined = stage_save_and_load_notifications(original)
         self.assertEqual(staged.keys(), combined.keys())
         load_name = "f_6821C0"
