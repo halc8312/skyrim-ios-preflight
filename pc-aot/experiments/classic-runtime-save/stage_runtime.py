@@ -73,14 +73,27 @@ def verified_source(raw: bytes) -> str:
     return source.decode("utf-8")
 
 
-def transform(source: str) -> str:
+def transform(source: str, load_witness: bool = False) -> str:
+    load_header = '#include "runtime_load.h"\n' if load_witness else ""
+    load_field = " uint64_t classic_load_generation;" if load_witness else ""
+    observed_open = OPEN_OBSERVED
+    observed_close = CLOSE_OBSERVED
+    if load_witness:
+        observed_open = observed_open.replace("    errno = original_errno;\n", """    const uint64_t load = classic_runtime_loaded_opened(c, f->path, f->fd, f->shared != 0, access, ARG(2), disp);
+    f->classic_load_generation = load;
+    errno = original_errno;
+""", 1).replace("    RET(handle, 7);\n", """    if (load) classic_runtime_loaded_bound(c, load, handle);
+    RET(handle, 7);
+""", 1)
+        observed_close = ("        if (f->classic_load_generation) classic_runtime_loaded_closed(f->classic_load_generation);\n"
+                          + observed_close)
     patches = (
-        ('#include "rt.h"\n', '#include "rt.h"\n#include "runtime_save.h"\n'),
-        (GFILE, GFILE + " uint64_t classic_save_token;"),
-        (OPEN_RETURN, OPEN_OBSERVED),
+        ('#include "rt.h"\n', '#include "rt.h"\n#include "runtime_save.h"\n' + load_header),
+        (GFILE, GFILE + " uint64_t classic_save_token;" + load_field),
+        (OPEN_RETURN, observed_open),
         (WRITE_CALL, WRITE_OBSERVED),
         (WRITE_EX_CALL, WRITE_EX_OBSERVED),
-        (CLOSE_CALL, CLOSE_OBSERVED),
+        (CLOSE_CALL, observed_close),
         ("SHIM(FlushFileBuffers) { RET(1, 1); }\n",
          "SHIM(FlushFileBuffers) { classic_runtime_saved_flush_stub(c); RET(1, 1); }\n"),
         (MOVE_CALL, MOVE_OBSERVED),

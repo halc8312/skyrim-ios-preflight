@@ -26,6 +26,7 @@ def main() -> None:
     parser.add_argument("--sanitizers", action="store_true")
     parser.add_argument("--prepared", action="store_true", help="Also apply the existing iOS runtime preparation")
     parser.add_argument("--generation", type=Path, help="Also compose the independent pinned lifted save fixture")
+    parser.add_argument("--load-witness", action="store_true", help="Also stage the read-only selected-file witness")
     args = parser.parse_args()
     if not sys.platform.startswith("linux"):
         parser.error("This hosted fixture uses Linux file limits and section collection")
@@ -42,7 +43,7 @@ def main() -> None:
         # The Darwin preparation prepends headers before the Linux feature macro.
         feature_prefix = "#define _GNU_SOURCE\n"
         extra_sources.append(IOS_RUNTIME / "performance_metrics.c")
-    transformed = feature_prefix + transform(source_text)
+    transformed = feature_prefix + transform(source_text, load_witness=args.load_witness)
     private = (ROOT / "private").resolve()
     if private != ROOT / "private":
         raise ValueError("Staged runtime source must stay in private/")
@@ -56,8 +57,8 @@ def main() -> None:
             flags += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer"]
         variants = [("runtime-save", [], [HERE / "test_runtime_save.c", HERE / "save_attempt.c",
                                          COSAVE / "event_trace.c", COSAVE / "observer" / "lifecycle.c"]),
-                    ("selected-load-path", [], [FRESH_LOAD / "test_selected_path.c",
-                                                 FRESH_LOAD / "selected_path.c"])]
+                    ("selected-load-path", [], [FRESH_LOAD / "test_selected_path.c"] +
+                     ([] if args.load_witness else [FRESH_LOAD / "selected_path.c"]))]
         header_runtime = runtime
         if args.generation is not None:
             sys.path.insert(0, str(SAVE_PUBLISH))
@@ -77,9 +78,14 @@ def main() -> None:
                              [lifted, SAVE_PUBLISH / "test_save_publish.c", HERE / "lifted_backend.c",
                               COSAVE / "observer" / "lifecycle.c"]))
         includes = ["-isystem", header_runtime, "-I", HERE, "-I", SAVE_PUBLISH, "-I", COSAVE, "-I", IOS_RUNTIME]
+        if args.load_witness:
+            includes += ["-I", FRESH_LOAD]
+            variants.append(("selected-load-witness", [], [HERE / "test_runtime_load.c"]))
         kernel_object = out / "kernel32.o"
         subprocess.run([args.cc, *flags, *includes, "-c", kernel, "-o", kernel_object], check=True, timeout=60)
         common = [kernel_object, HERE / "runtime_save.c", HERE / "host_traps.c", SAVE_PUBLISH / "save_publish.c"]
+        if args.load_witness:
+            common += [HERE / "runtime_load.c", FRESH_LOAD / "selected_path.c"]
         for name, definitions, sources in variants:
             binary = out / name
             subprocess.run([args.cc, *flags, *definitions, "-Wall", "-Wextra", "-Werror", *includes,

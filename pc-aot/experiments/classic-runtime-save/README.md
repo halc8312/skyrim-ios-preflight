@@ -25,6 +25,14 @@ python3 -B experiments/classic-runtime-save/test_runtime_save.py --sanitizers --
 
 The direct test covers real short `write` and `pwrite` results with file limits, a failing `pwrite`, separate stream-flush and stub results, actual close failure, an unscoped call, a failed or replaced rename, a cross-thread tagged write, and a late event from the previous observation. The composed test reuses the verified lifted save tail, BSFile destructor, save VM caller and CRT move wrapper. Its authored engine services route the file operations through the same staged runtime and compare the retained reader with the independently checked publication witness. Every compiled unit uses the same pinned CPU headers when lifted code is present.
 
+## Selected file witness
+
+The optional load-witness stage tags the real GFile published by the pinned 0xF6BF24 CreateFileA return. It requires GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, the selected stream's reviewed outer frame, and the exact mapped .ess from the caller-authorized profile directory. The read-only descriptor and named entry must match the version captured before the guest open and still agree at handle publication. The existing save token remains independent.
+
+A known stream and native guest handle can then prove the same live generation. CloseHandle invalidates the generation before releasing the original descriptor. A recycled handle cannot prove an earlier generation, and a changed directory entry or replaced descriptor fails the check. The witness never reads the file bytes. It supplies no link from FILE* to GFile, immutable snapshot, companion restore or app binding. The original handle table's caller-ownership requirement still applies.
+
+Pass --load-witness to the prepared runtime fixture to exercise this stage. The fixture uses disposable authored .ess files and checks that ordinary and save wrapper results stay intact.
+
 ## Integration conditions
 
 The optional fresh-save notification stager preserves each reviewed engine call and forwards the original argument at the factory boundary, after the original return address has been placed on the guest stack. It brackets the save slot and final close, reports the true VM save, flush and CRT returns, and ends the attempt on all ordinary returns from the fresh-save routine. Nested calls capture the already-authorized attempt before calling the engine and report their result with that same token. These notices carry no descriptor by themselves. The app still needs to bind the factory's path to the selected profile's saves directory, and observe the exact native handle at the real file wrapper before any bytes are written or read.
