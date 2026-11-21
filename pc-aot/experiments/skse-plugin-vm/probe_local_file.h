@@ -25,6 +25,7 @@ typedef struct {
     bool capture_papyrus_startup;
     const uint32_t *hook_probe_sites;
     size_t hook_probe_count;
+    SkseX86CodeAudit *code_audit;
     SkseTrialRecordProbe *record_probe; // Optional locally authored co-save evidence.
 } SkseLocalProbeSetup;
 

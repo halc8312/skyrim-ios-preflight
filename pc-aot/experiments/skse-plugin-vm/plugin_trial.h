@@ -50,6 +50,7 @@ typedef struct {
     size_t read_view_count;
     const uint32_t *hook_probe_sites; // One-shot host observation in Load only.
     size_t hook_probe_count;
+    SkseX86CodeAudit *code_audit; // One-shot diagnostic observation in Load only.
 } SkseTrialRuntime;
 
 typedef struct {

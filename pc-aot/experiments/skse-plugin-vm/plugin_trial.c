@@ -348,6 +348,7 @@ static SkseX86Result run_worker(void *opaque, uint32_t id, uint32_t entry, uint3
     TrialVm child = *context->parent;
     child.services.hook_probe_sites = NULL;
     child.services.hook_probe_count = 0;
+    child.services.code_audit = NULL;
     SkseWinThread thread = {.process = child.services.thread->process, .id = id};
     SkseX86Scratch worker_area = {
         .base = child.scratch.base + context->stack_offset,
@@ -851,13 +852,20 @@ static void initialize_session(SksePluginSession *session, SkseTrialDependency p
         if (runtime && !session->resident) {
             vm->services.hook_probe_sites = runtime->hook_probe_sites;
             vm->services.hook_probe_count = runtime->hook_probe_count;
+            vm->services.code_audit = runtime->code_audit;
         }
         result->load = call_trial(vm, image->load_va, args, 1, SKSE_X86_CDECL);
         vm->services.hook_probe_sites = NULL;
         vm->services.hook_probe_count = 0;
+        vm->services.code_audit = NULL;
         if (result->load.status != SKSE_X86_OK) result->status = SKSE_TRIAL_LOAD_FAULT;
         else if (!(result->load.eax & 0xff)) result->status = SKSE_TRIAL_LOAD_DECLINED;
-        else result->status = result->load.hook_count ? SKSE_TRIAL_ENGINE_HOOKS_OBSERVED : SKSE_TRIAL_COMPLETED;
+        else {
+            const bool audit_writes = runtime && !session->resident && runtime->code_audit &&
+                                      runtime->code_audit->count != 0;
+            result->status = (result->load.hook_count || audit_writes)
+                ? SKSE_TRIAL_ENGINE_HOOKS_OBSERVED : SKSE_TRIAL_COMPLETED;
+        }
     }
 }
 
@@ -989,6 +997,12 @@ static void probe_serialization(SksePluginSession *session, SkseTrialRecordProbe
 static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions options, const SkseTrialRuntime *runtime,
     const SkseTrialDependency *catalog, size_t count, CatalogPolicy policy, SkseTrialRecordProbe *record_probe) {
     if (record_probe) record_probe->status = SKSE_SESSION_OUT_OF_ORDER;
+    if (runtime && runtime->code_audit) {
+        runtime->code_audit->count = 0;
+        runtime->code_audit->truncated = false;
+        if (record_probe) return (SkseTrialResult){.status = SKSE_TRIAL_LOAD_FAULT,
+                                                  .load = {.status = SKSE_X86_BAD_ARGUMENT}};
+    }
     SksePluginSession session = {0};
     initialize_session(&session, primary, options, runtime, catalog, count, policy);
     if (runtime && runtime->trace_known_windows_imports && is_traceable_import(&session.result)) {

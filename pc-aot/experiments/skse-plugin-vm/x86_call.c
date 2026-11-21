@@ -51,6 +51,8 @@ typedef struct {
     unsigned x87_depth;
     uint16_t x87_status;
     HookProbeState *hook_probes;
+    const SksePeImage *audit_owner;
+    uint32_t audit_address, audit_length;
 } Vm;
 
 typedef struct {
@@ -265,12 +267,28 @@ static HookProbeState *hook_probe_at(Vm *vm, uint32_t address, size_t length, ui
     return NULL;
 }
 
+static bool observe_code_write(Vm *vm, uint32_t address, unsigned width, uint32_t value) {
+    SkseX86CodeAudit *audit = vm->services.code_audit;
+    if (!audit || vm->status != SKSE_X86_OK || !vm->audit_length ||
+        !in_range(vm->audit_address, (uint64_t)vm->audit_address + vm->audit_length, address, width) ||
+        image_at(vm, vm->instruction_va) != vm->audit_owner)
+        return false;
+    if (audit->count == SKSE_X86_CODE_WRITE_LIMIT) {
+        audit->truncated = true;
+        fail(vm, SKSE_X86_UNSUPPORTED_API);
+    } else {
+        audit->writes[audit->count++] = (SkseX86CodeWrite){address, value & width_mask(width), width};
+    }
+    return true;
+}
+
 static void write_memory(Vm *vm, uint32_t address, unsigned width, uint32_t value) {
     uint8_t *bytes = resolve_memory(vm, address, width, SKSE_PE_WRITE);
     if (bytes) {
         for (unsigned i = 0; i < width; ++i) bytes[i] = (uint8_t)(value >> (8 * i));
         return;
     }
+    if (observe_code_write(vm, address, width, value)) return;
     // Probe sites are validated outside mapped storage. Normal writes never
     // need to search the observation table.
     uint32_t site;
@@ -582,6 +600,27 @@ static uint32_t protect_hook_probe(Vm *vm, HookProbeState *probe, uint32_t site,
     return 1;
 }
 
+static uint32_t protect_code_audit(Vm *vm, uint32_t address, uint32_t length,
+                                   uint32_t protection, uint32_t previous_at) {
+    const SksePeImage *owner = image_at(vm, vm->instruction_va);
+    const bool opening = protection == WIN_PAGE_EXECUTE_READWRITE;
+    const bool opened = vm->audit_length != 0;
+    if (!owner || (opening ? opened : protection != WIN_PAGE_EXECUTE_READ || !opened ||
+                   owner != vm->audit_owner || address != vm->audit_address || length != vm->audit_length))
+        return refuse_protection(vm, address, length, protection);
+    uint8_t *previous = resolve_memory(vm, previous_at, 4, SKSE_PE_WRITE);
+    if (!previous) {
+        vm->services.thread->last_error = 998;
+        return 0;
+    }
+    const uint32_t prior = opened ? WIN_PAGE_EXECUTE_READWRITE : WIN_PAGE_EXECUTE_READ;
+    for (unsigned i = 0; i < 4; ++i) previous[i] = (uint8_t)(prior >> (i * 8));
+    vm->audit_owner = opening ? owner : NULL;
+    vm->audit_address = opening ? address : 0;
+    vm->audit_length = opening ? length : 0;
+    return 1;
+}
+
 static uint32_t protect_image_data(Vm *vm) {
     const uint8_t *parameters = service_parameters(vm, 16);
     if (!parameters) return 0;
@@ -592,6 +631,11 @@ static uint32_t protect_image_data(Vm *vm) {
     uint32_t site;
     HookProbeState *probe = hook_probe_at(vm, address, length, &site);
     if (probe) return protect_hook_probe(vm, probe, site, address, length, protection, previous_at);
+    if (vm->services.code_audit && length) {
+        const SkseX86ReadView *view = &vm->services.read_views[vm->services.code_audit->read_view_index];
+        if (in_range(view->base, (uint64_t)view->base + view->length, address, length))
+            return protect_code_audit(vm, address, length, protection, previous_at);
+    }
     if (!protection) {
         *error = 87;
         return 0;
@@ -2892,6 +2936,10 @@ static SkseX86Result call_in_space(SksePeImage *const *images, size_t image_coun
                                   SkseX86Scratch scratch, const uint32_t *args, size_t arg_count,
                                   uint32_t instruction_limit, SkseX86Services services,
                                   SkseX86Convention convention, uint32_t object, unsigned slot) {
+    if (services.code_audit) {
+        services.code_audit->count = 0;
+        services.code_audit->truncated = false;
+    }
     uint64_t scratch_end = (uint64_t)scratch.base + scratch.length;
     const SkseClassicFrame *frame = services.classic_frame;
     const uint32_t max_work = frame && frame->preparing ? SKSE_CLASSIC_PREPARE_MAX_WORK : MAX_STEPS;
@@ -2902,6 +2950,8 @@ static SkseX86Result call_in_space(SksePeImage *const *images, size_t image_coun
         (services.count && !services.entries) ||
         (services.read_view_count && !valid_read_views(images, image_count, scratch, services)) ||
         (services.hook_probe_count && !valid_hook_probe(images, image_count, scratch, services)) ||
+        (services.code_audit && (services.hook_probe_count || !services.thread ||
+                                 services.code_audit->read_view_index >= services.read_view_count)) ||
         (convention != SKSE_X86_CDECL && convention != SKSE_X86_STDCALL))
         return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
     const uint32_t stack_floor = services.stack_floor ? services.stack_floor : scratch.base;
@@ -3013,6 +3063,8 @@ static SkseX86Result call_in_space(SksePeImage *const *images, size_t image_coun
              vm.registers[ESI] != canaries[2] || vm.registers[EDI] != canaries[3] || vm.exception_head != UINT32_MAX)
         fail(&vm, SKSE_X86_BAD_CALL_RETURN);
     if (vm.hook_probes) finish_hook_probe(&vm);
+    if (vm.audit_length && vm.status == SKSE_X86_OK)
+        refuse_protection(&vm, vm.audit_address, vm.audit_length, WIN_PAGE_EXECUTE_READWRITE);
     if (vm.status == SKSE_X86_OK) result.eax = vm.registers[EAX];
     result.status = vm.status;
     result.instructions = vm.instructions;

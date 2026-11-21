@@ -42,6 +42,10 @@ static SkseProbeFileStatus read_source(int fd, uint8_t **out, size_t *length) {
 SkseProbeFileStatus skse_probe_local_dll_with_setup(const char *path, uint32_t uptime_ms,
                                                     const SkseLocalProbeSetup *setup, SkseLocalDllReport *out) {
     if (setup && setup->record_probe) setup->record_probe->status = SKSE_SESSION_OUT_OF_ORDER;
+    if (setup && setup->code_audit) {
+        setup->code_audit->count = 0;
+        setup->code_audit->truncated = false;
+    }
     if (!out) return SKSE_PROBE_FILE_UNAVAILABLE;
     memset(out, 0, sizeof *out);
     if (!path || !*path) return SKSE_PROBE_FILE_UNAVAILABLE;
@@ -63,7 +67,8 @@ SkseProbeFileStatus skse_probe_local_dll_with_setup(const char *path, uint32_t u
             .read_view_count = setup ? setup->read_view_count : 0,
             .capture_papyrus_startup = setup && setup->capture_papyrus_startup,
             .hook_probe_sites = setup ? setup->hook_probe_sites : NULL,
-            .hook_probe_count = setup ? setup->hook_probe_count : 0
+            .hook_probe_count = setup ? setup->hook_probe_count : 0,
+            .code_audit = setup ? setup->code_audit : NULL
         };
         if (setup && setup->record_probe)
             out->trial = skse_plugin_trial_with_record_probe(bytes, length, options, runtime, setup->record_probe);

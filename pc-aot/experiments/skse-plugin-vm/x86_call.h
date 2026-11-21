@@ -40,6 +40,21 @@ typedef struct {
     size_t length;
 } SkseX86ReadView;
 
+enum { SKSE_X86_CODE_WRITE_LIMIT = 64 };
+typedef struct {
+    uint32_t address, value;
+    unsigned width;
+} SkseX86CodeWrite;
+
+/* A diagnostic caller identifies one verified immutable code view. The
+ * interpreter records scalar stores within its open protection window.
+ * Reads still see the original bytes, and execution in the view is refused. */
+typedef struct {
+    size_t read_view_index, count;
+    bool truncated;
+    SkseX86CodeWrite writes[SKSE_X86_CODE_WRITE_LIMIT];
+} SkseX86CodeAudit;
+
 enum {
     SKSE_X86_MAX_SERVICES = 160, SKSE_X86_MAX_IMAGES = 4, SKSE_X86_MAX_HOOK_SITES = 8,
     SKSE_CLASSIC_SERIALIZATION_ID = 3, SKSE_CLASSIC_TASK_ID = 4, SKSE_CLASSIC_MESSAGING_ID = 5
@@ -190,6 +205,7 @@ typedef struct {
      * virtual numeric identifiers, with no mapped memory behind them. */
     const uint32_t *hook_probe_sites;
     size_t hook_probe_count;
+    SkseX86CodeAudit *code_audit; /* Optional, one call; never used by the resident VM. */
     /* The static TLS table, when present, is below the stack. A zero stack
      * bound uses the corresponding end of the full scratch allocation. */
     uint32_t static_tls_table, stack_floor, stack_top;

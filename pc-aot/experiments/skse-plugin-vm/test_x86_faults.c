@@ -699,6 +699,61 @@ static void check_hook_observations(void) {
     assert(run(code, used, 100, services).status == SKSE_X86_BAD_ARGUMENT);
 }
 
+static void check_code_write_audit(void) {
+    uint8_t bytes[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    const uint8_t original[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    const SkseX86ReadView view = {.base = 0x00600000, .bytes = bytes, .length = sizeof bytes};
+    const SkseX86Service protect = {0x00400000, 0, SKSE_X86_PROTECT_IMAGE_DATA};
+    SkseWinThread thread = {.id = 1};
+    SkseX86CodeAudit audit = {0};
+    SkseX86Services services = {.entries = &protect, .count = 1, .thread = &thread,
+                                .read_views = &view, .read_view_count = 1, .code_audit = &audit};
+    uint8_t code[1024];
+    size_t used = 0;
+    hook_protect_request(code, &used, view.base + 1, 0x40);
+    const size_t store = used;
+    code[used++] = 0xc7;
+    code[used++] = 5;
+    const size_t operand = used;
+    append_word(code, &used, view.base + 1);
+    append_word(code, &used, 0x11223344);
+    const size_t after_store = used;
+    hook_protect_request(code, &used, view.base + 1, 0x20);
+    // A read after the trial write still sees the original bytes.
+    code[used++] = 0xa1;
+    append_word(code, &used, view.base + 1);
+    code[used++] = 0xc3;
+    SkseX86Result result = run(code, used, 100, services);
+    assert(result.status == SKSE_X86_OK && result.eax == 0x05040302 && audit.count == 1 && !audit.truncated);
+    assert(audit.writes[0].address == view.base + 1 &&
+           audit.writes[0].value == 0x11223344 && audit.writes[0].width == 4);
+    assert(!memcmp(bytes, original, sizeof bytes));
+
+    size_t changed = operand;
+    append_word(code, &changed, view.base + 2);
+    result = run(code, used, 100, services);
+    assert(result.status == SKSE_X86_MEMORY_FAULT && audit.count == 0);
+    changed = operand;
+    append_word(code, &changed, view.base + 1);
+
+    code[after_store] = 0xc3;
+    result = run(code, after_store + 1, 100, services);
+    assert(result.status == SKSE_X86_UNSUPPORTED_API && audit.count == 1 && !audit.truncated);
+    used = after_store;
+    for (int i = 0; i < SKSE_X86_CODE_WRITE_LIMIT; ++i) {
+        const size_t count = after_store - store;
+        memcpy(code + used, code + store, count);
+        used += count;
+    }
+    code[used++] = 0xc3;
+    result = run(code, used, 300, services);
+    assert(result.status == SKSE_X86_UNSUPPORTED_API && audit.count == SKSE_X86_CODE_WRITE_LIMIT && audit.truncated);
+    assert(!memcmp(bytes, original, sizeof bytes));
+
+    audit.read_view_index = 1;
+    assert(run(code, used, 300, services).status == SKSE_X86_BAD_ARGUMENT);
+}
+
 static void check_read_only_views(void) {
     uint8_t bytes[] = {0x78, 0x56, 0x34, 0x12, 0xc3, 0, 0, 0};
     const uint8_t original[] = {0x78, 0x56, 0x34, 0x12, 0xc3, 0, 0, 0};
@@ -930,6 +985,7 @@ int main(void) {
     check_heap_metadata_growth();
     check_read_only_views();
     check_hook_observations();
+    check_code_write_audit();
     check_environment_block_ownership();
     check_virtual_file_limits();
     check_default_file_security_attributes();
