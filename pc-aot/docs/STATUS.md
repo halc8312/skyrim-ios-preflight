@@ -1,5 +1,16 @@
 # 開発状況
 
+**2026-11-21　第一弾MOD残件の確認（Linux Web環境）**
+
+作業ブランチ `claude/skyrim-ios-first-wave-mods-rfhjq7`（`3bf2aaf` から分岐）。固定版生成物、所有者のMOD、Apple SDK、実機のないLinux環境で、現行コードを計画書と照合し、Webで検証できる範囲だけを進めた。実装した範囲は小さく、項目2〜6の新しい動作は追加していない。
+
+- 項目1（SKSE / SkyUI）：`tests/test_classic_skyui_regression.py` を追加し、再登録が同じハンドルと名前で1件に置き換わること、登録時のメニュー状態、リバートで登録を消さないこと（追加セーブの復元ができるまで変えない）、コールバック中の再登録を安全に扱うためのコピー配信を固定した。バージョン値、INIの探索、`IOS_CLASSIC_RELEASE` の1回出力は既存の `test_classic_skse_ini.py` が固定している。画面上端の見切れは、メニュー表示中に操作部品を隠す判定 `skyrim_mobile_overlay_menu_mode` を純Cで追加して試験した。UIKitへは未接続で、実機の `IOS_OVERLAY_LAYOUT` で重なり（H1）を確かめてから接続する。MCMの再読み込みとError Code 1の実機確認は残る。
+- 項目2〜6：既存の試験を再実行して現状を確認した。入力、実行コマンド、期待結果、実機の手順は [引き継ぎ](MOD_FIRST_WAVE_HANDOFF.md) に記録した。固定版生成物を使う試験（Fuz、先読み、追加セーブ、HighHeels、ホスト統合）は、この環境では入力がなくスキップされる。
+
+通った試験：`tests/test_mod_*.py` 73件（4件スキップ）がClang 18とGCC 13のASan/UBSanで合格。`tests/test_classic_*.py` 43件がClangで合格（7件スキップ）、GCCのASan/UBSanで合格（6件スキップ）。`tests/test_mobile_core.py` はClang、GCC、GCCのASan/UBSanで合格。`experiments/fuz-voice` は8件中4件、`classic-highheels` は3件中2件、`classic-control-events` は3件中1件が合格し、残りは固定版生成物が必要なためスキップ。`scripts/check-public-tree.py` も合格。TSanは実行していない。
+
+`scripts/fetch-mod-codecs.sh` は、リポジトリ範囲外の別リポジトリを取得するため、この環境の権限で拒否された。Skydreamの固定版は取得して使った。iPhone、Apple SDK、署名済みIPA、Tailscaleは未実施で、担当外。
+
 **2026-11-22　追加セーブのロード時に実際の処理番号を使用**
 
 対象の `.ess` の読み取り専用コピーを最初の読み込み前に作り、ゲームがロードスロットを開いたときにだけ、その処理番号と結び付ける。ホストの統合試験では、コピー取得後に別の処理が番号を使っても、実際のロードに対応する追加セーブを復元できた。別スレッドのスコープと二重の結び付けを拒否し、既にメモリに読み込まれた別経路では追加セーブを復元しない。GCCのASan/UBSan付きで8組の保存・復元と先読み済みロードの除外、Clangで既存の追加セーブ試験99件が合格した。 [ホスト統合試験](../experiments/classic-save-roundtrip/README.md)
