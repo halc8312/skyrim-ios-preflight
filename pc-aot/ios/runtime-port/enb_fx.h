@@ -59,6 +59,37 @@ typedef struct {
 
 /* 0 on success (issues may still list unsupported things), EINVAL, EFBIG. */
 int enb_fx_scan(const char *text, size_t length, EnbFx *out);
+/* Lowering: plain HLSL for vkd3d-shader plus the effect-framework facts the
+ * HLSL compiler does not take (techniques, pass shader entries, sampler states,
+ * texture declarations). Annotations are removed from the HLSL text; includes
+ * are left as #include for the caller to resolve first. */
+enum { ENB_LOWER_MAX_SAMPLERS = 32, ENB_LOWER_MAX_TEXTURES = 32, ENB_LOWER_MAX_STATES = 16 };
+typedef struct {
+    char name[ENB_FX_NAME];
+    char vs_entry[ENB_FX_NAME], vs_profile[16], ps_entry[ENB_FX_NAME], ps_profile[16];
+    char render_target[ENB_FX_NAME]; /* the pass's RenderTarget state (a named intermediate image), or empty */
+} EnbPassProgram;
+typedef struct { char name[ENB_FX_NAME]; unsigned pass_count; EnbPassProgram passes[ENB_FX_MAX_PASSES]; } EnbTechniqueProgram;
+typedef struct {
+    char name[ENB_FX_NAME], texture[ENB_FX_NAME];
+    char min_filter[16], mag_filter[16], mip_filter[16], address_u[16], address_v[16];
+} EnbSamplerBinding;
+typedef struct {
+    char *hlsl;
+    size_t hlsl_length;
+    EnbTechniqueProgram techniques[ENB_FX_MAX_TECHNIQUES];
+    unsigned technique_count;
+    EnbSamplerBinding samplers[ENB_LOWER_MAX_SAMPLERS];
+    unsigned sampler_count;
+    char textures[ENB_LOWER_MAX_TEXTURES][ENB_FX_NAME], texture_resources[ENB_LOWER_MAX_TEXTURES][ENB_FX_NAME];
+    unsigned texture_count;
+    char ignored_states[ENB_LOWER_MAX_STATES][ENB_FX_NAME]; /* pass render states this layer does not apply */
+    unsigned ignored_state_count;
+} EnbLowered;
+/* 0, EINVAL, EFBIG or ENOMEM. Free with enb_lowered_free. */
+int enb_fx_lower(const char *text, size_t length, EnbLowered *out);
+void enb_lowered_free(EnbLowered *);
+
 /* How the compatibility layer treats an engine-provided name: 1 supplied by the
  * layer, 2 supplied only with the game's state (time, weather), 0 not supplied,
  * -1 not an ENB engine name. kind: 0 variable, 1 image. */

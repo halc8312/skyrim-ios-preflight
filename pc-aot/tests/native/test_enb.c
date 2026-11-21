@@ -85,6 +85,46 @@ static void check_fx(void) {
     free(scan);
 }
 
+static void check_lowering(void) {
+    const char fx[] =
+        "#include \"x.fxh\"\nfloat4 Tint <string UIName=\"T\"; float UIMin=0;> = {1,1,1,1};\n"
+        "texture2D TextureColor <string ResourceName=\"a.png\";>;\n"
+        "sampler2D S = sampler_state { Texture = <TextureColor>; MinFilter = Linear; MagFilter = Point; AddressU = Wrap; };\n"
+        "sampler2D Plain;\nstruct V { float4 p : POSITION; float2 t : TEXCOORD0; };\n"
+        "V VS(float3 p : POSITION, float2 t : TEXCOORD0) { V v; v.p = float4(p, 1); v.t = t; return v; }\n"
+        "float4 PS(V i) : COLOR { return tex2D(S, i.t) * Tint; }\n"
+        "technique T <string UIName=\"m\";> { pass P0 { VertexShader = compile vs_3_0 VS(); PixelShader = compile ps_3_0 PS();\n"
+        "  RenderTarget = RenderTarget64; AlphaBlendEnable = false; ZEnable = false; AlphaBlendEnable = false; }\n"
+        "  pass P1 { PixelShader = compile ps_2_0 PS(); } }\n";
+    EnbLowered *low = calloc(1, sizeof *low);
+    assert(!enb_fx_lower(fx, sizeof fx - 1, low));
+    assert(low->technique_count == 1 && low->techniques[0].pass_count == 2);
+    const EnbPassProgram *p0 = &low->techniques[0].passes[0], *p1 = &low->techniques[0].passes[1];
+    assert(!strcmp(p0->vs_entry, "VS") && !strcmp(p0->vs_profile, "vs_3_0") && !strcmp(p0->ps_entry, "PS"));
+    assert(!strcmp(p0->render_target, "RenderTarget64") && !p1->vs_entry[0] && !strcmp(p1->ps_profile, "ps_2_0") && !p1->render_target[0]);
+    assert(low->ignored_state_count == 2 && !strcmp(low->ignored_states[0], "AlphaBlendEnable") && !strcmp(low->ignored_states[1], "ZEnable"));
+    assert(low->sampler_count == 2 && !strcmp(low->samplers[0].texture, "TextureColor") && !strcmp(low->samplers[0].min_filter, "Linear"));
+    assert(!strcmp(low->samplers[0].mag_filter, "Point") && !strcmp(low->samplers[0].address_u, "Wrap") && !low->samplers[1].texture[0]);
+    assert(low->texture_count == 1 && !strcmp(low->textures[0], "TextureColor") && !strcmp(low->texture_resources[0], "a.png"));
+    /* The HLSL keeps functions, structs and includes; techniques, annotations, texture declarations and sampler states are gone. */
+    assert(strstr(low->hlsl, "#include \"x.fxh\"") && strstr(low->hlsl, "float4 Tint  = {1,1,1,1};") && strstr(low->hlsl, "sampler2D S;"));
+    assert(strstr(low->hlsl, "float4 PS(V i)") && strstr(low->hlsl, "struct V") && strstr(low->hlsl, "sampler2D Plain;"));
+    assert(!strstr(low->hlsl, "technique") && !strstr(low->hlsl, "UIName") && !strstr(low->hlsl, "texture2D") && !strstr(low->hlsl, "sampler_state"));
+    enb_lowered_free(low);
+    /* Hostile and empty inputs lower without crashing. */
+    assert(!enb_fx_lower("", 0, low) && low->hlsl_length == 0);
+    enb_lowered_free(low);
+    const char broken[] = "technique { pass { VertexShader = compile";
+    assert(!enb_fx_lower(broken, sizeof broken - 1, low));
+    enb_lowered_free(low);
+    unsigned char noise[600];
+    for (unsigned i = 0; i < sizeof noise; ++i) noise[i] = (unsigned char)(i * 53 + 7);
+    assert(!enb_fx_lower((const char *)noise, sizeof noise, low));
+    enb_lowered_free(low);
+    assert(enb_fx_lower(NULL, 1, low) == EINVAL);
+    free(low);
+}
+
 static void check_preset(const char *root) {
     EnbPreset p;
     const char *roots[] = {root, "/nonexistent/other"};
@@ -175,6 +215,7 @@ int main(int argc, char **argv) {
     check_ini();
     check_values();
     check_fx();
+    check_lowering();
     check_preset(argv[1]);
     check_governor();
     check_vars();
