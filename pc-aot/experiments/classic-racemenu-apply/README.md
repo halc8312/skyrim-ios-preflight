@@ -144,6 +144,20 @@ The test exercises the exact staged code and the prepared file wrappers
 against authored guest objects. A first real-device observation and an
 ECE-to-stock morph comparison still need to be made.
 
+### Native Nose Height save round trip
+
+With `SKYRIM_TEST_OWNED_CLASSIC_LIFT` set, `test_racemenu_apply` runs the
+reviewed stock setter and the FaceMorphs slices of the stock NPC writer
+and reader. The fixture skips the preceding head fields and subsequent
+skin fields. Byte transfer callbacks connect the original presence,
+counts and value loops to a test stream. After erasing the source
+morphs, it checks the exact Nose Height bits in a different NPC, together
+with nearby defaults and presets. It also checks the change bit on both
+sides and the absent record for a null or default FaceMorphs pointer.
+
+This test covers the FaceMorphs subrecord. Save completion and visible
+appearance after reloading still require the full game.
+
 ### Female Nord nose diagnostics
 
 The optional hosted witness stages only the same reviewed original-body lift
