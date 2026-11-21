@@ -1,5 +1,6 @@
 {
   "allowed": [
+    "IOS_OVERLAY_LAYOUT schema=1 view_pt=956x440 safe=0,62,21,62 top_controls_max_y=77 scale=300",
     "IOS_CLASSIC_SKYUI requested=1 enabled=1",
     "IOS_CLASSIC_SKYUI requested=1 enabled=0",
     "IOS_CLASSIC_SKYUI requested=0 enabled=0",
@@ -56,6 +57,8 @@
     "IOS_SHADER_LEAD_DROPS schema=1 seq=5 busy=1 full=2"
   ],
   "excluded": [
+    "IOS_OVERLAY_LAYOUT schema=1 view_pt=956x440 safe=0,62,21,62 top_controls_max_y=-1 scale=300",
+    "IOS_OVERLAY_LAYOUT schema=1 view_pt=956x440 safe=0,62,21,62 top_controls_max_y=77 scale=300 name=Personal",
     "IOS_CLASSIC_SKYUI requested=0 enabled=1",
     "IOS_CLASSIC_SKYUI requested=1 enabled=1 profile=Personal",
     "IOS_CLASSIC_SKYUI_INPUTS skyui=2 skse_pex=0 support=3",

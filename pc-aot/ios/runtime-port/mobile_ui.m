@@ -607,6 +607,7 @@ static unsigned menuPauseReasons;
 - (void)beginLayout;
 - (void)endLayout;
 - (void)refreshLanguage;
+- (void)logLayout;
 @end
 
 @implementation SKPadControl
@@ -1011,6 +1012,22 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     self.settingsButton.frame=CGRectMake(CGRectGetMaxX(area)-50,y,44,44);
     self.hud.frame=CGRectMake(area.origin.x+6,y+50,230,22);
     self.notice.frame=CGRectMake(area.origin.x+area.size.width*.22,CGRectGetMaxY(area)-64,area.size.width*.56,52);
+    [self logLayout];
+}
+/* Numbers only, once per distinct layout: where the top-edge controls end, to tell
+ * the overlay apart from the game's own menu scaling when a menu looks clipped. */
+- (void)logLayout {
+    UIEdgeInsets safe=self.safeAreaInsets;
+    CGFloat topMax=CGRectGetMaxY(self.hud.frame);
+    for (SKPadControl *c in self.controls) if (c.code==4 || c.code==5) topMax=MAX(topMax,CGRectGetMaxY(c.frame));
+    topMax=MAX(topMax,MAX(CGRectGetMaxY(self.saveButton.frame),MAX(CGRectGetMaxY(self.keyboardButton.frame),CGRectGetMaxY(self.settingsButton.frame))));
+    NSString *line=[NSString stringWithFormat:@"IOS_OVERLAY_LAYOUT schema=1 view_pt=%ldx%ld safe=%ld,%ld,%ld,%ld top_controls_max_y=%ld scale=%ld",
+        lround(self.bounds.size.width),lround(self.bounds.size.height),lround(safe.top),lround(safe.left),lround(safe.bottom),lround(safe.right),
+        lround(topMax),lround(self.window.screen.scale*100)];
+    static NSString *last;
+    if ([line isEqualToString:last]) return;
+    last=line;
+    fprintf(stderr,"%s\n",line.UTF8String);
 }
 - (void)message:(NSString *)text {self.notice.text=text;self.noticeUntil=mobileTime()+7;self.notice.hidden=NO;}
 - (void)resignActive:(NSNotification *)note { skyrim_lifecycle_request(0); [self clearInput]; skyrim_pipeline_checkpoint_foreground_permission(0); skyrim_ios_metrics_active(0); preparePipelineCacheCheckpoint(); }
