@@ -142,9 +142,10 @@ class ArtifactBindingTests(unittest.TestCase):
             source.write_bytes(b"authored " + name.encode() + b"\n")
             (self.host / name).write_bytes(source.read_bytes().replace(b"\n", b"\r\n"))
             hashes[name] = assembly.sha(source)
-        contract.update(mod_hook_groups=3, mod_hooks_header_sha256=hashes)
+        groups = 3 | 128  # Fuz menu and world, plus the loading-menu observer.
+        contract.update(mod_hook_groups=groups, mod_hooks_header_sha256=hashes)
         path.write_text(json.dumps(contract))
-        guest = {"candidate_sha256": self.input_hash, "classic_skse_experiment": True, "mod_hook_groups": 3}
+        guest = {"candidate_sha256": self.input_hash, "classic_skse_experiment": True, "mod_hook_groups": groups}
         self.result.write_text(json.dumps(guest))
         self.host_result["classic_skse_experiment"] = True
         self.write_host_result()
@@ -160,7 +161,7 @@ class ArtifactBindingTests(unittest.TestCase):
         del contract["mod_hook_groups"]
         path.write_text(json.dumps(contract))
         self.check()
-        contract["mod_hook_groups"] = 3
+        contract["mod_hook_groups"] = groups
         path.write_text(json.dumps(contract))
         self.result.write_text(json.dumps(guest))
         for name in assembly.MOD_HOOK_HEADERS:
@@ -178,7 +179,7 @@ class ArtifactBindingTests(unittest.TestCase):
             self.check()
         contract["mod_hooks_header_sha256"] = hashes
         path.write_text(json.dumps(contract))
-        for invalid in (True, "3", 128, 2, -1):
+        for invalid in (True, "3", 64, 256, 2, -1):
             self.result.write_text(json.dumps(dict(guest, mod_hook_groups=invalid)))
             with self.subTest(groups=invalid), self.assertRaisesRegex(ValueError, "Invalid MOD hook groups"):
                 self.check()
