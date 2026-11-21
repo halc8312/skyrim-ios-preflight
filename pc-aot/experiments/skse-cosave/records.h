@@ -23,5 +23,7 @@ SksePairResult skse_records_validate(const void *data, size_t size);
 SksePairResult skse_records_empty(SksePairImage *out);
 SksePairResult skse_records_replace(SksePairImage *image, uint32_t uid,
                                     const SksePairRecord *records, size_t count);
+/* For trusted Classic runtime records. The ordinary plugin writer rejects UID 0. */
+SksePairResult skse_records_replace_core(SksePairImage *image, const SksePairRecord *records, size_t count);
 SksePairResult skse_records_visit(const SksePairImage *image, uint32_t uid,
                                   SksePairVisitor visitor, void *context);

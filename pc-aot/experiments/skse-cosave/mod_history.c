@@ -3,8 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The Classic multicharacter constant 'MODS' is a uint32_t on the wire. */
-#define CLASSIC_MODS UINT32_C(0x4d4f4453)
 typedef struct { const uint8_t *bytes; size_t size; } ModName;
 typedef struct { ModName name; uint8_t index, compatible; } Candidate;
 typedef struct {
@@ -36,6 +34,84 @@ static int valid_name(ModName name) {
     return name.bytes && name.size && name.size <= SKSE_CLASSIC_MOD_NAME_LIMIT &&
            !memchr(name.bytes, 0, name.size);
 }
+SksePairResult skse_mod_history_encode(const SkseLoadedMod *loaded, size_t count, void **payload, size_t *length) {
+    if (payload) *payload = NULL;
+    if (length) *length = 0;
+    if (!payload || !length || (count && !loaded)) return SKSE_PAIR_ARGUMENT;
+    if (count > SKSE_CLASSIC_MOD_LIMIT) return SKSE_PAIR_LIMIT;
+
+    ModName ordered[SKSE_CLASSIC_MOD_LIMIT] = {{0}};
+    ModName names[SKSE_CLASSIC_MOD_LIMIT];
+    size_t bytes = 1;
+    for (size_t i = 0; i < count; ++i) {
+        const SkseLoadedMod *entry = &loaded[i];
+        const ModName name = {entry->name, entry->length};
+        if (entry->kind != SKSE_LOADED_CLASSIC || !valid_name(name) ||
+            entry->index >= count || ordered[entry->index].bytes)
+            return SKSE_PAIR_INVALID_DATA;
+        ordered[entry->index] = names[i] = name;
+        bytes += 2 + name.size;
+    }
+    qsort(names, count, sizeof names[0], order_name);
+    for (size_t i = 1; i < count; ++i)
+        if (!compare_names(names[i - 1], names[i])) return SKSE_PAIR_INVALID_DATA;
+
+    uint8_t *wire = malloc(bytes);
+    if (!wire) return SKSE_PAIR_STORAGE;
+    wire[0] = (uint8_t)count;
+    size_t cursor = 1;
+    for (size_t i = 0; i < count; ++i) {
+        const ModName name = ordered[i];
+        wire[cursor++] = (uint8_t)name.size;
+        wire[cursor++] = (uint8_t)(name.size >> 8);
+        memcpy(wire + cursor, name.bytes, name.size);
+        cursor += name.size;
+    }
+    *payload = wire;
+    *length = bytes;
+    return SKSE_PAIR_OK;
+}
+
+typedef struct { const SkseLoadedMod *loaded; size_t count; } ModHistoryEdit;
+typedef struct { SksePairRecord *rows; size_t count; int seen; } CoreRows;
+
+static int keep_core_row(void *context, const SksePairRecord *row) {
+    CoreRows *core = context;
+    if (row->type != SKSE_CLASSIC_MODS_RECORD) core->rows[core->count++] = *row;
+    else if (row->version || core->seen++) return 0;
+    return 1;
+}
+
+static SksePairResult write_mod_history(SksePairImage *image, void *context) {
+    const ModHistoryEdit *edit = context;
+    SkseOwnerView owner;
+    SksePairResult result = skse_records_owner(image, 0, &owner);
+    if (result != SKSE_PAIR_OK && result != SKSE_PAIR_OWNER_MISSING) return result;
+    /* At the limit, replacing an existing record may still fit. */
+    SksePairRecord *rows = malloc((owner.count + 1u) * sizeof *rows);
+    if (!rows) return SKSE_PAIR_STORAGE;
+    /* Write the current catalog before rows that use its indices. */
+    CoreRows core = {.rows = rows, .count = 1};
+    if (skse_records_each(&owner, keep_core_row, &core) != SKSE_PAIR_OK) result = SKSE_PAIR_INVALID_DATA;
+    else {
+        void *payload;
+        size_t length;
+        result = skse_mod_history_encode(edit->loaded, edit->count, &payload, &length);
+        if (result == SKSE_PAIR_OK) {
+            rows[0] = (SksePairRecord){SKSE_CLASSIC_MODS_RECORD, 0, (uint32_t)length, payload};
+            result = skse_records_replace_core(image, rows, core.count);
+            free(payload);
+        }
+    }
+    free(rows);
+    return result;
+}
+
+SksePairResult skse_pair_write_mod_history(SksePairStage *stage, const SkseLoadedMod *loaded, size_t count) {
+    ModHistoryEdit edit = {loaded, count};
+    return skse_pair_edit_image(stage, write_mod_history, &edit);
+}
+
 static SkseModMapResult prepare_current(History *history, const SkseLoadedMod *current, size_t count) {
     if (count > SKSE_CLASSIC_MOD_LIMIT || (count && !current)) return SKSE_MAP_INVALID_CURRENT;
     uint8_t used[SKSE_CLASSIC_MOD_LIMIT] = {0};
@@ -104,7 +180,7 @@ static void reset_history(void *context) {
 }
 static int visit_core(void *context, const SksePairRecord *record) {
     History *history = context;
-    if (record->type == CLASSIC_MODS) {
+    if (record->type == SKSE_CLASSIC_MODS_RECORD) {
         history->result = history->seen ? SKSE_MAP_DUPLICATE_HISTORY : parse_history(history, record);
         history->seen = 1;
     }

@@ -34,12 +34,10 @@ static SkseEventTrace trace_for(const SkseGameScope *scope, SkyrimLifecycleRow *
 }
 
 static SksePairGeneration seed_core(const char *root, int source) {
-    static const uint8_t companion[] = {
-        'S','K','S','E', 1,0,0,0, 0x30,0,7,1, 0,0,0x20,9, 1,0,0,0,
-        0,0,0,0, 1,0,0,0, 51,0,0,0, 'S','D','O','M', 0,0,0,0, 39,0,0,0,
-        3, 10,0,'S','k','y','r','i','m','.','e','s','m',
-        11,0,'F','i','x','t','u','r','e','.','e','s','p',
-        11,0,'R','e','m','o','v','e','d','.','e','s','p'
+    static const SkseLoadedMod loaded[] = {
+        {(const uint8_t *)"Fixture.esp", sizeof "Fixture.esp" - 1, 1, SKSE_LOADED_CLASSIC},
+        {(const uint8_t *)"Removed.esp", sizeof "Removed.esp" - 1, 2, SKSE_LOADED_CLASSIC},
+        {(const uint8_t *)"Skyrim.esm", sizeof "Skyrim.esm" - 1, 0, SKSE_LOADED_CLASSIC}
     };
     char location[PATH_MAX];
     int length = snprintf(location, sizeof location, "%s/text-en-voice-en", root);
@@ -48,7 +46,8 @@ static SksePairGeneration seed_core(const char *root, int source) {
     assert(skse_pair_open(location, &store) == SKSE_PAIR_OK);
     SksePairStage *stage = NULL;
     SksePairGeneration base = {key(39), source};
-    assert(skse_pair_import(&base.key, companion, sizeof companion, &stage) == SKSE_PAIR_OK);
+    assert(skse_pair_begin(store, &base.key, NULL, &stage) == SKSE_PAIR_OK);
+    assert(skse_pair_write_mod_history(stage, loaded, sizeof loaded / sizeof loaded[0]) == SKSE_PAIR_OK);
     assert(skse_pair_pin(stage, &base) == SKSE_PAIR_OK);
     assert(skse_pair_commit(store, stage, &base) == SKSE_PAIR_OK);
     skse_pair_discard(stage);

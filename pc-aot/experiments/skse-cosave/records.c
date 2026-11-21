@@ -157,9 +157,8 @@ SksePairResult skse_records_visit(const SksePairImage *image, uint32_t uid,
     return result == SKSE_PAIR_OK ? skse_records_each(&owner, visitor, context) : result;
 }
 
-SksePairResult skse_records_replace(SksePairImage *image, uint32_t uid,
-                                    const SksePairRecord *records, size_t count) {
-    if (!uid || (count && !records)) return SKSE_PAIR_ARGUMENT;
+static SksePairResult replace(SksePairImage *image, uint32_t uid, const SksePairRecord *records, size_t count) {
+    if (count && !records) return SKSE_PAIR_ARGUMENT;
     if (count > SKSE_PAIR_MAX_HEADERS - 1) return SKSE_PAIR_LIMIT;
     size_t section_size = count ? BLOCK : 0;
     for (size_t i = 0; i < count; ++i) {
@@ -192,4 +191,12 @@ SksePairResult skse_records_replace(SksePairImage *image, uint32_t uid,
     free(image->data);
     *image = (SksePairImage){bytes, size};
     return SKSE_PAIR_OK;
+}
+
+SksePairResult skse_records_replace(SksePairImage *image, uint32_t uid, const SksePairRecord *records, size_t count) {
+    return uid ? replace(image, uid, records, count) : SKSE_PAIR_ARGUMENT;
+}
+
+SksePairResult skse_records_replace_core(SksePairImage *image, const SksePairRecord *records, size_t count) {
+    return replace(image, 0, records, count);
 }

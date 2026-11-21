@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 enum { SKSE_CLASSIC_MOD_LIMIT = 255, SKSE_CLASSIC_MOD_NAME_LIMIT = 259 };
+#define SKSE_CLASSIC_MODS_RECORD UINT32_C(0x4d4f4453)
 typedef enum { SKSE_LOADED_CLASSIC, SKSE_LOADED_INCOMPATIBLE } SkseLoadedModKind;
 typedef struct {
     const uint8_t *name;
@@ -28,6 +29,13 @@ typedef struct {
     uint8_t saved_count, ready;
     uint8_t current_index[SKSE_CLASSIC_MOD_LIMIT], state[SKSE_CLASSIC_MOD_LIMIT];
 } SkseModMap;
+
+/* Build the UID 0 MODS v0 payload from actual loaded Classic entries. Indices
+ * must cover the complete 0..count-1 range, irrespective of input row order.
+ * The resulting payload belongs to the caller and is released with free(). */
+SksePairResult skse_mod_history_encode(const SkseLoadedMod *, size_t count, void **payload, size_t *length);
+/* Update only MODS in the Classic owner. Other core and plugin records survive. */
+SksePairResult skse_pair_write_mod_history(SksePairStage *, const SkseLoadedMod *, size_t count);
 
 void skse_mod_map_clear(SkseModMap *map);
 /* Build from UID 0 of a verified generation. The map is cleared on every failure.

@@ -39,6 +39,12 @@ class HistoryBinding:
         self.handle = self.lib.skse_mod_resolve_handle
         self.handle.argtypes = [C.POINTER(ModMap), C.c_uint64, C.POINTER(C.c_uint64)]
         self.handle.restype = C.c_int
+        self.encode = self.lib.skse_mod_history_encode
+        self.encode.argtypes = [C.POINTER(Loaded), C.c_size_t, C.POINTER(gen.PTR), C.POINTER(C.c_size_t)]
+        self.encode.restype = C.c_int
+        self.write = self.lib.skse_pair_write_mod_history
+        self.write.argtypes = [gen.PTR, C.POINTER(Loaded), C.c_size_t]
+        self.write.restype = C.c_int
 
     def build(self, store, g, entries, out):
         candidates = (Loaded * len(entries))(*(Loaded(name, len(name), index, kind) for name, index, kind in entries))
@@ -71,6 +77,59 @@ class HistoryTests(gen.GenerationHarness):
             self.assertEqual((out32.value, out64.value), (0x90807060, 0x1122334455667788))
         else:
             self.assertEqual((out32.value, out64.value), (mapped, tag | mapped))
+
+    def encoded(self, rows):
+        loaded = (Loaded * len(rows))(*(Loaded(name, len(name), index, kind) for name, index, kind in rows))
+        out, length = gen.PTR(1), C.c_size_t(99)
+        result = self.h.encode(loaded, len(loaded), C.byref(out), C.byref(length))
+        if result != gen.OK:
+            self.assertFalse(out)
+            self.assertEqual(length.value, 0)
+            return result, None
+        self.addCleanup(self.native.free, out)
+        return result, C.string_at(out, length.value)
+
+    def test_encode_round_trip_uses_current_indices_and_raw_names(self):
+        count = 255
+        names = [f"fixture-{i}.esp".encode("ascii") for i in range(count)]
+        names[0], names[-2], names[-1] = b"Skyrim.esm", b"\x82\xa0.esp", b"X" * 255 + b".esp"
+        rows = [(name, index, 0) for index, name in reversed(list(enumerate(names)))]
+        result, saved = self.encoded(rows)
+        self.assertEqual((result, saved), (gen.OK, history(*names)))
+        g = self.publish_core(4, [(MODS, 0, saved)])
+        reordered = [(name, count - 1 - index, kind) for name, index, kind in rows]
+        self.assertEqual(self.h.build(self.store, g, reordered, self.table), (MAP_OK, gen.OK))
+        self.resolve(0xfeabcdef, RESOLVED, 0x00abcdef)
+        self.resolve(0xfdabcdef, RESOLVED, 0x01abcdef)
+
+    def test_encode_rejects_incomplete_or_ambiguous_catalogs(self):
+        cases = [
+            [(b"gap.esp", 1, 0)],
+            [(b"first.esp", 0, 0), (b"duplicate-index.esp", 0, 0)],
+            [(b"same.esp", 0, 0), (b"SAME.ESP", 1, 0)],
+            [(b"incompatible.esp", 0, 1)],
+            [(b"broken\0.esp", 0, 0)],
+            [(b"x" * 260, 0, 0)],
+        ]
+        for rows in cases:
+            with self.subTest(rows=rows):
+                self.assertEqual(self.encoded(rows), (gen.INVALID, None))
+
+    def test_update_only_mods_in_existing_core_and_keep_plugin_sections(self):
+        foreign = gen.section(gen.UID, [(MODS, 0, history(b"foreign"))])
+        extra = (333, 9, b"opaque Core data")
+        base = self.publish_core(1, [extra, (MODS, 0, history(b"old.esp"))])
+        changed = self.g(2)
+        rc, stage = self.native.create(self.store, changed.key, base)
+        self.assertEqual(rc, gen.OK)
+        self.addCleanup(self.native.discard, stage)
+        loaded = (Loaded * 2)(Loaded(b"New.esp", 7, 1, 0), Loaded(b"Skyrim.esm", 10, 0, 0))
+        self.assertEqual(self.h.write(stage, loaded, len(loaded)), gen.OK)
+        self.assertEqual(self.native.commit(self.store, stage, C.byref(changed)), gen.OK)
+        expected = gen.image(gen.section(0, [(MODS, 0, history(b"Skyrim.esm", b"New.esp")), extra]), foreign)
+        self.assertEqual(self.native.data(self.store, changed), (gen.OK, expected))
+        self.assertEqual(self.native.data(self.store, base), (gen.OK,
+            gen.image(gen.section(0, [extra, (MODS, 0, history(b"old.esp"))]), foreign)))
 
     def test_reordered_missing_renamed_ambiguous_and_incompatible(self):
         names = [b"Skyrim.esm", b"Spark.esp", b"old-name.esp", b"OtherEdition.esp", b"Fold.esp", b"\x82\xa0.ESP"]
