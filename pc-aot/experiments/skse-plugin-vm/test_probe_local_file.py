@@ -442,7 +442,10 @@ class LocalFileProbeTest(unittest.TestCase):
         if not cc:
             self.skipTest("C compiler required")
         with tempfile.TemporaryDirectory(prefix="dll-local-file-") as temporary:
-            root = Path(temporary)
+            # Darwin's system temporary directory may begin with /var, which
+            # is a symlink. Resolve the test directory before creating the
+            # separate symlink case that the actual reader must reject.
+            root = Path(temporary).resolve()
             binary = root / "probe"
             compile_local_probe(cc, binary)
             good, unknown, serialized = root / "検査.dll", root / "unknown.dll", root / "serialized.dll"
