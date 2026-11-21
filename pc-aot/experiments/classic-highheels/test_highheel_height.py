@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 
+import stage_effect_magnitude
 import stage_item_delivery
 import stage_task_queue
 
@@ -46,10 +47,11 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             self.assertEqual(result.strip(), "6 Classic HighHeels host scenarios passed")
 
     def test_unreviewed_lift_is_refused(self):
-        for stage in (stage_task_queue, stage_item_delivery):
+        for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude):
             with self.subTest(unit=stage.UNIT):
                 with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
-                    stage.private_fixture(b"authored stand-in")
+                    unit_count = 1 + len(getattr(stage, "DEPENDENCIES", ()))
+                    stage.private_fixture(*([b"authored stand-in"] * unit_count))
 
     def test_reviewed_task_queue_owner_and_original_state(self):
         self.run_reviewed_fixture(
@@ -90,6 +92,53 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.assertIn(b"matches the typed declarations and update call arities", result)
         self.assertEqual(pex.read_bytes(), contents)
 
+
+    def test_reviewed_active_effect_lookup_captures_magnitude_at_match(self):
+        self.run_reviewed_fixture(
+            stage_effect_magnitude, "test_effect_magnitude_lift.c",
+            "Classic typed effect lookup captures magnitude only in the matching visitor",
+        )
+
+    def test_owned_effect_native_argument_boundaries(self):
+        supplied = os.environ.get("SKYRIM_TEST_OWNED_HDT_EFFECT_DLL")
+        objdump = shutil.which("objdump")
+        if not (supplied and objdump and sys.platform.startswith("linux")):
+            self.skipTest("Set SKYRIM_TEST_OWNED_HDT_EFFECT_DLL and use GNU objdump")
+        library = Path(supplied)
+        with library.open("rb") as stream:
+            contents = stream.read(1 << 20)
+        self.assertEqual(sha256(contents).hexdigest(),
+                         "f966cf895c9a66bcc53ce381047ef1f67e148087c01435593ec013448e3a25eb")
+
+        def instruction_at(start, end):
+            text = subprocess.check_output([
+                objdump, "-d", "-M", "intel", f"--start-address={start:#x}",
+                f"--stop-address={end:#x}", library,
+            ], text=True, timeout=10, env=dict(os.environ, LC_ALL="C"))
+            instructions = {}
+            for line in text.splitlines():
+                fields = line.strip().split("\t")
+                if len(fields) == 3 and fields[0].endswith(":"):
+                    instructions[int(fields[0][:-1], 16)] = " ".join(fields[-1].lower().split())
+            return instructions
+
+        instance = instruction_at(0x1000B0D0, 0x1000B12A)
+        getter = instruction_at(0x1000A770, 0x1000A77B)
+        self.assertEqual(instance[0x1000B0E6], "mov edx,0x8b")
+        self.assertEqual(instance[0x1000B0FC], "mov eax,dword ptr [esi+0x2c]")
+        self.assertEqual(getter[0x1000A776], "fld dword ptr [eax+0x50]")
+        keep = instruction_at(0x1000B220, 0x1000B2C0)
+        self.assertEqual(keep[0x1000B244], "mov edx,0x3d")
+        self.assertEqual(keep[0x1000B27C], "movss xmm0,dword ptr [eax+0x4]")
+        self.assertEqual(keep[0x1000B294], "push dword ptr [ebp+0x18]")
+        self.assertEqual(keep[0x1000B297], "push 0x0")
+        stop = instruction_at(0x1000B3B0, 0x1000B409)
+        self.assertEqual(stop[0x1000B3D1], "mov edx,0x3d")
+        self.assertEqual(stop[0x1000B3DD], "push eax")
+        self.assertEqual(stop[0x1000B3E1], "push 0x0")
+        self.assertEqual(library.read_bytes(), contents)
+
+
     def run_reviewed_fixture(self, stage, test, expected_output):
         supplied_generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
         cc = shutil.which(os.environ.get("CC", "cc"))
@@ -104,8 +153,8 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         runtime = generation / "source/runtime"
         for name, digest in RUNTIME_HEADERS.items():
             self.assertEqual(sha256((runtime / name).read_bytes()).hexdigest(), digest, name)
-        source = generation / "gen" / stage.UNIT
-        original = source.read_bytes()
+        sources = [generation / "gen" / name for name in (stage.UNIT, *getattr(stage, "DEPENDENCIES", ()))]
+        originals = [source.read_bytes() for source in sources]
         flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O2", "-pthread"]
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
             flags += ["-fsanitize=address,undefined", "-g", "-fno-omit-frame-pointer"]
@@ -119,7 +168,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="classic-highheel-queue-", dir=private) as directory:
             scratch = Path(directory)
             staged = scratch / "lifted.c"
-            staged.write_bytes(stage.private_fixture(original))
+            staged.write_bytes(stage.private_fixture(*originals))
             binary = scratch / "classic_fixture"
             subprocess.run(
                 [cc, *flags, "-isystem", generation / "gen", "-isystem", runtime, "-I", native,
@@ -128,7 +177,8 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             )
             result = subprocess.check_output([binary], text=True, timeout=10)
             self.assertEqual(result.strip(), expected_output)
-        self.assertEqual(source.read_bytes(), original)
+        for source, original in zip(sources, originals):
+            self.assertEqual(source.read_bytes(), original)
 
 
 if __name__ == "__main__":

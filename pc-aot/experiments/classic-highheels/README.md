@@ -26,3 +26,22 @@ SKYRIM_TEST_SANITIZERS=1 python3 -B -m unittest -v test_highheel_height
 
 Set SKYRIM_TEST_OWNED_CLASSIC_LIFT to the reviewed private LE generation to include the task-queue and item-delivery ABI tests on a POSIX host.
 Set SKYRIM_TEST_OWNED_HDT_EFFECT_PEX to the owner's unchanged data/scripts/hdtHighHeelEffect.pex from beta 0.5 to verify the effect declarations.
+
+The owned DLL's GetMagnitude binding resolves an ActiveMagicEffect handle as
+type 0x8B and reads its Float at offset 0x50. KeepUpdate passes a resolved
+ObjectReference and Float. StopUpdate passes only the ObjectReference.
+Neither static call receives the active-effect object.
+
+The private hosted test runs the original LE effect handle construction,
+type check, resolver, MagicTarget list traversal and matching effect visitor.
+It samples the magnitude during the match and keeps only its Float bits.
+The authored engine state covers a different active effect, a removed effect,
+an unavailable actor, a non-actor and a wrong native type. The observer
+preserves the original guest state. Connecting the script's live VM frame
+to its effect lifetime, and observing its actual KeepUpdate and StopUpdate
+dispatch, still need an authenticated runtime trace. This fixture installs
+no native binding or scene change.
+
+Set SKYRIM_TEST_OWNED_HDT_EFFECT_DLL to the exact owned beta 0.5 DLL and
+provide GNU objdump to verify the three native boundaries without loading
+the DLL.
