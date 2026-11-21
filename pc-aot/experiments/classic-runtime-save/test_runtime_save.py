@@ -169,7 +169,7 @@ def main() -> None:
             subprocess.run([args.cc, *flags, definition, "-DSKSE_TEST_NAMED_CLONE", "-Wall", "-Wextra", "-Werror",
                             *includes, clone_object, *common[1:], HERE / "test_runtime_load_clone.c",
                             *bridge_sources, *extra_sources, "-Wl,--gc-sections", "-lsqlite3", "-lcrypto", "-o", binary],
-                           check=True, timeout=60)
+                           check=True, timeout=120)
             with tempfile.TemporaryDirectory(prefix="classic-runtime-clone-data-") as data:
                 subprocess.run([binary, data], check=True, timeout=20)
     if source.read_bytes() != original:
