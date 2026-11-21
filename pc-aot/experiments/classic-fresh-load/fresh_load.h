@@ -55,6 +55,12 @@ void classic_fresh_open_enter(uint64_t, const struct CPU *, uint32_t stream, uin
 void classic_fresh_open_leave(uint64_t, const struct CPU *, bool success);
 void classic_fresh_slot_enter(uint64_t, const struct CPU *, uint32_t stream);
 void classic_fresh_slot_leave(uint64_t, const struct CPU *, bool success);
+
+/* Hosted notification at the verified f_67B720 read return. The caller
+ * admits only a positive logical count up to the original 100-byte request.
+ * An adapter still needs to establish the live file identity. */
+enum { CLASSIC_FRESH_SLOT_READ_BYTES = 100 };
+void classic_fresh_slot_read_observed(const struct CPU *, uint32_t stream, uint32_t bytes);
 void classic_fresh_leave(uint64_t, const struct CPU *, bool success);
 
 #endif

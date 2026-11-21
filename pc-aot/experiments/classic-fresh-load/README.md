@@ -23,6 +23,19 @@ The read-only resolver checks the current runtime CPU and its TEB stack bounds b
 
 The prepared classic-runtime-save fixture runs the resolver with the real mapper and thread setup against authored files in a temporary profile. It checks missing paths, foreign or malformed frames, traversal, a sibling directory, a nested file, a directory and a symlink. The original selected-load lift fixture remains independent. The normal app has no resolver binding.
 
+## Logical read notification
+
+The hosted stage adds a notification immediately after the original 100-byte stream read at 0x67B870 returns. It preserves the call, reload and errno, and reports the receiver captured before the call with EAX only when EAX is 1 through 100. The test runs the pinned caller's argument setup and the original lifted f_677990 with a memory-backed callback that never opens or reads a host file. It compares the original and staged return values, registers, flags, stack, copied bytes and stream position.
+
+Run here with the completed original-body generation:
+
+```sh
+SKYRIM_TEST_OWNED_CLASSIC_LIFT=/path/to/private-generation \
+  python3 -B -m unittest -v test_slot_read
+```
+
+Set SKYRIM_TEST_SANITIZERS=1 for ASan and UBSan. Live file ownership still needs an authenticated handle generation and an immutable handoff. The app has no notification binding.
+
 ## Preloaded stream
 
 The pinned Classic PC executable identifies the reviewed producer as `CopySaveGamesFromHost`. Its two direct calls are in the `ForceSave` command handler `f_51D390`. It enumerates `Saves/` and opens each candidate `.ess` via `0x6808F3 → f_A58870` and the `CreateFileA` call at `0xA58514`. The path comes from that enumeration. The consumer at `0x6821EC` adopts the current `manager + 0x30` stream before it can run the selected-name open. The dedicated `SysUtilLoadCompleteCallback` wrapper `f_682390` passes the stream itself as the name at `0x6823AA`, then destroys the stream and clears the field at `0x6823E4`. The callback installed by the producer, `f_67FEA0`, can also destroy the stream and clears the field at `0x67FF00`.
