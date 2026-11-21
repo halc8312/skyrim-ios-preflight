@@ -29,6 +29,7 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups(" chargen_precache , fuz_menu "), 9)
         self.assertEqual(hooks.parse_groups("camera_observe"), 16)
         self.assertEqual(hooks.parse_groups("loading_menu_observe"), 128)
+        self.assertEqual(hooks.parse_groups("inventory_fit"), 256)
         self.assertEqual(hooks.group_names(11), ["fuz_menu", "fuz_world", "chargen_precache"])
 
     def test_rejects_unknown_unstaged_duplicate_and_incomplete_lists(self):
@@ -212,7 +213,7 @@ class OwnedLiftTests(unittest.TestCase):
         state = json.loads((root / "generation.json").read_text(encoding="utf-8"))
         classic.validate_generation(state)
         groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe,"
-                                    "loading_menu_observe")
+                                    "loading_menu_observe,inventory_fit")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
@@ -221,6 +222,10 @@ class OwnedLiftTests(unittest.TestCase):
             result, staged = hooks.prepare_sources(sources, work / "mod-hook-sources", groups, state, root)
             self.assertTrue({"exe_95.c", "exe_100.c", "exe_101.c", "exe_189.c", "exe_35.c", "exe_188.c",
                              "exe_106.c", "exe_185.c", "exe_186.c", "exe_199.c", "exe_262.c"} <= set(staged))
+            menu = (work / "mod-hook-sources" / "exe_262.c").read_bytes()
+            self.assertEqual(menu.count(b"skyrim_inventory_fit_enabled()"), 1)
+            self.assertEqual(menu.count(b"skyrim_loading_menu_observe(0x"), 2)
+            self.assertEqual(menu.count(b"void f_A60200_guest(CPU *c)"), 1)
             runtime = root / "source/runtime"
             for path in (p for p in result if p.name in staged):
                 with self.subTest(unit=path.name):

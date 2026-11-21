@@ -82,7 +82,9 @@ class LoadingMenuTests(unittest.TestCase):
                            check=True, timeout=60)
             run = subprocess.run([binary], check=True, timeout=30, text=True, capture_output=True)
             self.assertEqual(run.stderr.splitlines(), ["IOS_LOADING_MENU opening=1 ts_ns=1234567",
-                                                       "IOS_LOADING_MENU opening=0 ts_ns=1234567"])
+                                                       "IOS_LOADING_MENU opening=0 ts_ns=1234567",
+                                                       "IOS_CHARGEN_MENU opening=1 ts_ns=1234567",
+                                                       "IOS_CHARGEN_MENU opening=0 ts_ns=1234567"])
         self.assertEqual(source.read_bytes(), original)
 
 

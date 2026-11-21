@@ -10,10 +10,11 @@ enum {
 };
 
 typedef enum {
-    CLASSIC_LOADING_MENU_NONE, CLASSIC_LOADING_MENU_OPEN, CLASSIC_LOADING_MENU_CLOSE
-} ClassicLoadingMenuEvent;
+    CLASSIC_MENU_NONE, CLASSIC_LOADING_MENU_OPEN, CLASSIC_LOADING_MENU_CLOSE,
+    CLASSIC_CHARGEN_MENU_OPEN, CLASSIC_CHARGEN_MENU_CLOSE
+} ClassicMenuTransition;
 
 typedef bool (*ClassicLoadingMenuReadWord)(void *guest, uint32_t address, uint32_t *value);
 
-ClassicLoadingMenuEvent classic_loading_menu_event(uint32_t site, uint32_t dispatcher, uint32_t event,
-                                                    ClassicLoadingMenuReadWord read_word, void *guest);
+ClassicMenuTransition classic_observed_menu_transition(uint32_t site, uint32_t dispatcher, uint32_t event,
+                                                       ClassicLoadingMenuReadWord read_word, void *guest);

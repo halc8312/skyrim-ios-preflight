@@ -9,7 +9,8 @@
 
 enum {
     MANAGER_SLOT = 0x012E3548, HOLDER_SLOT = 0x012E35E0,
-    MANAGER = 0x12100, HOLDER = 0x12200, EVENT = 0x12300, STACK = 0x12FC0, LOADING_NAME = 0x12400
+    MANAGER = 0x12100, HOLDER = 0x12200, EVENT = 0x12300, STACK = 0x12FC0,
+    LOADING_NAME = 0x12400, CHARGEN_NAME = 0x12440
 };
 
 uint8_t *MEM;
@@ -18,7 +19,7 @@ uint64_t skyrim_perf_now_ns(void) { return 1234567; }
 static gm_space guest;
 static uint32_t expected_event, expected_dispatcher, expected_return;
 static unsigned dispatch_count, observations;
-static ClassicLoadingMenuEvent observed;
+static ClassicMenuTransition observed;
 
 void baseline_open(CPU *cpu);
 void observed_open(CPU *cpu);
@@ -35,7 +36,7 @@ static bool read_word(void *space, uint32_t address, uint32_t *value) {
 
 void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t event) {
     assert(dispatcher == expected_dispatcher && event == expected_event);
-    observed = classic_loading_menu_event(site, dispatcher, event, read_word, &guest);
+    observed = classic_observed_menu_transition(site, dispatcher, event, read_word, &guest);
     ++observations;
 }
 
@@ -47,7 +48,7 @@ void f_6EBC10(CPU *cpu) {
     ++dispatch_count;
 }
 
-static void run_case(bool opening, uint32_t dispatcher, uint32_t event, ClassicLoadingMenuEvent wanted) {
+static void run_case(bool opening, uint32_t dispatcher, uint32_t event, ClassicMenuTransition wanted) {
     CPU baseline = {0}, staged = {0};
     for (unsigned i = 0; i < 8; ++i) baseline.r[i] = 0x20 + i;
     baseline.r[1] = dispatcher;
@@ -75,6 +76,7 @@ int main(void) {
     M32(MANAGER_SLOT) = MANAGER;
     M32(HOLDER_SLOT) = HOLDER;
     M32(HOLDER + 0x74) = LOADING_NAME;
+    M32(HOLDER + 0xB0) = CHARGEN_NAME;
     M32(EVENT) = LOADING_NAME;
     M32(EVENT + 4) = 0xababab01;
     run_case(true, MANAGER + 4, EVENT, CLASSIC_LOADING_MENU_OPEN);
@@ -85,23 +87,30 @@ int main(void) {
     assert(skyrim_loading_menu_app_ready());
     skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, EVENT);
     skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, 0x500);
-    run_case(false, MANAGER + 4, EVENT, CLASSIC_LOADING_MENU_NONE);
+    run_case(false, MANAGER + 4, EVENT, CLASSIC_MENU_NONE);
     M32(EVENT + 4) = 0xababab00;
     run_case(false, MANAGER + 4, EVENT, CLASSIC_LOADING_MENU_CLOSE);
     skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_CLOSE_SITE, MANAGER + 4, EVENT);
     skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_CLOSE_SITE, MANAGER + 0x34, EVENT);
-    run_case(false, MANAGER + 0x34, EVENT, CLASSIC_LOADING_MENU_NONE);
-    run_case(false, MANAGER + 4, 0, CLASSIC_LOADING_MENU_NONE);
-    run_case(false, MANAGER + 4, UINT32_MAX - 2, CLASSIC_LOADING_MENU_NONE);
-    run_case(false, MANAGER + 4, 0x50000, CLASSIC_LOADING_MENU_NONE);
+    run_case(false, MANAGER + 0x34, EVENT, CLASSIC_MENU_NONE);
+    run_case(false, MANAGER + 4, 0, CLASSIC_MENU_NONE);
+    run_case(false, MANAGER + 4, UINT32_MAX - 2, CLASSIC_MENU_NONE);
+    run_case(false, MANAGER + 4, 0x50000, CLASSIC_MENU_NONE);
+    M32(EVENT) = CHARGEN_NAME;
+    M32(EVENT + 4) = 0xababab01;
+    run_case(true, MANAGER + 4, EVENT, CLASSIC_CHARGEN_MENU_OPEN);
+    skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, EVENT);
+    M32(EVENT + 4) = 0xababab00;
+    run_case(false, MANAGER + 4, EVENT, CLASSIC_CHARGEN_MENU_CLOSE);
+    skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_CLOSE_SITE, MANAGER + 4, EVENT);
     M32(EVENT) = LOADING_NAME + 4;
-    run_case(false, MANAGER + 4, EVENT, CLASSIC_LOADING_MENU_NONE);
+    run_case(false, MANAGER + 4, EVENT, CLASSIC_MENU_NONE);
     M32(EVENT) = LOADING_NAME;
     M32(HOLDER_SLOT) = 0;
-    run_case(false, MANAGER + 4, EVENT, CLASSIC_LOADING_MENU_NONE);
+    run_case(false, MANAGER + 4, EVENT, CLASSIC_MENU_NONE);
     M32(HOLDER_SLOT) = HOLDER;
     M32(MANAGER_SLOT) = 0;
-    run_case(false, MANAGER + 4, EVENT, CLASSIC_LOADING_MENU_NONE);
-    assert(classic_loading_menu_event(0, MANAGER + 4, EVENT, read_word, &guest) == CLASSIC_LOADING_MENU_NONE);
+    run_case(false, MANAGER + 4, EVENT, CLASSIC_MENU_NONE);
+    assert(classic_observed_menu_transition(0, MANAGER + 4, EVENT, read_word, &guest) == CLASSIC_MENU_NONE);
     return gm_release(&guest, NULL) ? 0 : EXIT_FAILURE;
 }

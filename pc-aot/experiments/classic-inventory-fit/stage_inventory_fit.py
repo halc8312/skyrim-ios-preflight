@@ -47,3 +47,13 @@ def stage_inventory_fit(unit: bytes, inventory: bytes) -> bytes:
     if sha256(region).hexdigest() != MODE_CALL_HASH or unit.count(region) != 1 or region.count(ANCHOR) != 1:
         raise ValueError("Menu mode call differs from the reviewed Classic lift")
     return DECLARATION + unit.replace(region, region.replace(ANCHOR, FIT + ANCHOR, 1), 1)
+
+
+def combine_with_observation(observed: bytes, fitted: bytes) -> bytes:
+    # Each stage has already checked the original unit independently. The
+    # observer's edits are in f_A5D370; this only replaces f_A60C80's call.
+    before, after = mode_call(observed), mode_call(fitted)
+    if (sha256(before).hexdigest() != MODE_CALL_HASH or observed.count(before) != 1
+            or after.count(FIT) != 1 or after.replace(FIT, b"", 1) != before):
+        raise ValueError("Inventory mode call overlaps the menu observation")
+    return DECLARATION + observed.replace(before, after, 1)

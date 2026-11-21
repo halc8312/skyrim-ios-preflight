@@ -18,7 +18,7 @@ MOD_HOOK_HEADERS = {
     "lift_voice_seam.h": "experiments/fuz-voice",
     "voice_fallback.h": "experiments/fuz-voice",
 }
-MOD_HOOK_GROUPS_DEFINED = 63 | 128  # PC_GUEST_MOD_HOOKS_DEFINED in version 1
+MOD_HOOK_GROUPS_DEFINED = 63 | 128 | 256  # PC_GUEST_MOD_HOOKS_DEFINED in version 1
 
 
 def load_diagnostics_pairing(path):

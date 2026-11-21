@@ -26,7 +26,7 @@ SEAMS = EXPERIMENTS / "fuz-voice"
 GROUPS = {
     "fuz_menu": 1, "fuz_world": 2, "vm_lifecycle": 4, "chargen_precache": 8,
     "camera_observe": 16, "chargen_slider": 32, "save_lifecycle": 64,
-    "loading_menu_observe": 128,
+    "loading_menu_observe": 128, "inventory_fit": 256,
 }
 # Groups without a production binding, with the reason shown to the caller.
 UNSTAGED = {
@@ -177,6 +177,12 @@ def stage_loading_menu_observe(root: Path) -> dict[str, bytes]:
     return {LOADING_MENU_UNIT: loading_menu.stage_loading_menu((root / "gen" / LOADING_MENU_UNIT).read_bytes())}
 
 
+def stage_inventory_fit(root: Path) -> dict[str, bytes]:
+    inventory = load(EXPERIMENTS / "classic-inventory-fit", "stage_inventory_fit")
+    return {inventory.UNIT: inventory.stage_inventory_fit((root / "gen" / inventory.UNIT).read_bytes(),
+                                                         (root / "gen" / inventory.INVENTORY_UNIT).read_bytes())}
+
+
 def function_span(unit: bytes, function: str) -> tuple[int, int]:
     marker = f"\nvoid {function}(CPU *c) {{\n".encode("ascii")
     if unit.count(marker) != 1:
@@ -214,11 +220,12 @@ STAGES = {
     "chargen_slider": stage_chargen_slider,
     "camera_observe": stage_camera_observe,
     "loading_menu_observe": stage_loading_menu_observe,
+    "inventory_fit": stage_inventory_fit,
 }
 
 
 def compose(root: Path, mask: int) -> dict[str, bytes]:
-    """Run each selected stage; a unit staged by two groups must come out identical."""
+    """Compose reviewed edits. Other shared units must produce identical output."""
     staged: dict[str, bytes] = {}
     owner: dict[str, str] = {}
     for name in group_names(mask):
@@ -226,6 +233,10 @@ def compose(root: Path, mask: int) -> dict[str, bytes]:
             raise ValueError(f"MOD hook group {name} has no reviewed stage")
         for unit, data in STAGES[name](root).items():
             if unit in staged and staged[unit] != data:
+                if unit == LOADING_MENU_UNIT and owner[unit] == "loading_menu_observe" and name == "inventory_fit":
+                    inventory = load(EXPERIMENTS / "classic-inventory-fit", "stage_inventory_fit")
+                    staged[unit] = inventory.combine_with_observation(staged[unit], data)
+                    continue
                 raise ValueError(f"{unit}: the {owner[unit]} and {name} stages produce different results")
             staged.setdefault(unit, data)
             owner.setdefault(unit, name)
@@ -254,7 +265,7 @@ def prepare_sources(sources: list[Path], destination: Path, groups: int, state: 
         source = by_name.get(unit)
         if source is None:
             raise ValueError(f"{unit}: staged by a MOD hook group but missing from the guest sources")
-        if unit == LOADING_MENU_UNIT and groups & GROUPS["loading_menu_observe"]:
+        if unit == LOADING_MENU_UNIT and groups & (GROUPS["loading_menu_observe"] | GROUPS["inventory_fit"]):
             entry = b"void f_A60200(CPU *c) {"
             renamed = b"void f_A60200_guest(CPU *c) {"
             original = (generated / unit).read_bytes()

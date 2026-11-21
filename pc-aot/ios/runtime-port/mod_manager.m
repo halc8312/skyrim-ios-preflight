@@ -495,7 +495,7 @@ static void RaceMenuDidApply(void) {
 #ifdef SKYRIM_IOS_MOD_HOOKS
 /* Select the guest hook groups for the features allowed so far, before the
  * guest starts. Returns the features whose groups were selected. */
-static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
+static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, SkyrimHookPlan *plan) {
     const uint32_t fuzGroups = PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD;
     const uint32_t host = fuzGroups | PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER |
                           PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE;
@@ -517,6 +517,8 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
         (compiled & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_CAMERA_OBSERVE;
     if (!launchWithoutMods && !launchPluginListFailed && skyrim_loading_menu_app_ready() &&
         (compiled & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE;
+    if (inventoryFit && (compiled & PC_GUEST_MOD_HOOK_INVENTORY_FIT))
+        plan->groups |= PC_GUEST_MOD_HOOK_INVENTORY_FIT;
     PcGuestModHooks table = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof table, .groups = plan->groups};
     if (plan->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
         table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load,
@@ -540,7 +542,7 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
 
 /* Reasons: 0 enabled, 1 host implementation unavailable, 2 MOD not in the active packages, 3 safe mode or plugin list
  * failure, 4 the guest lacks the needed hook groups (rebuild it), 5 the MOD version could not be verified. */
-static void FreezeFeatures(NSDictionary *profile) {
+static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady) {
     NSMutableDictionary *enabledKeys = [NSMutableDictionary dictionary];
     SkyrimFeatureScan scan = FeatureScanRoots(DataRootsFor(launchWithoutMods ? @[] : launchPackageIds, nil));
     uint32_t mask = 0;
@@ -558,11 +560,20 @@ static void FreezeFeatures(NSDictionary *profile) {
 #ifdef SKYRIM_IOS_MOD_HOOKS
     SkyrimHookPlan plan;
     if (PrepareRaceMenuPreset(profile)) hooked |= 1u << SKYRIM_FEATURE_RACEMENU;
-    const uint32_t selected = SelectModHooks(hooked, &plan);
+    const BOOL inventoryFit = [profile[@"inventoryFit"] isEqual:@YES];
+    const uint32_t selected = SelectModHooks(hooked,
+        inventoryFit && skyuiAssetsReady && [launchSetup[@"skyuiTrial"] isEqual:@YES], &plan);
+    if (inventoryFit) {
+        const BOOL armed = (plan.groups & PC_GUEST_MOD_HOOK_INVENTORY_FIT) != 0;
+        if (armed) launchSetup[@"inventoryFit"] = @YES;
+        fprintf(stderr, "IOS_INVENTORY_FIT armed=%d\n", armed);
+    }
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
         if ((hooked >> f & 1u) && !(selected >> f & 1u))
             reasons[f] = plan.reason[f] == SKYRIM_HOOK_PLAN_GUEST_HOOKS_MISSING ? 4 : 1;
     }
+#else
+    (void)skyuiAssetsReady;
 #endif
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
         if (!FeatureSelected(profile, f)) continue;
@@ -586,11 +597,14 @@ static BOOL SkyUITrialSelected(NSDictionary *profile) {
 }
 
 BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed) {
-    BOOL requested = SkyUITrialSelected(RunningProfile());
+    NSDictionary *profile = RunningProfile();
+    BOOL requested = SkyUITrialSelected(profile);
     BOOL enabled = requested && !launchWithoutMods && !launchPluginListFailed && skyui_listed;
     if (pc_guest_select_classic_skse(enabled) != 0) return NO;
     if (enabled) launchSetup[@"skyuiTrial"] = @YES;
-    FreezeFeatures(RunningProfile());
+    const SkyrimSkyUIRequirements needs = requested ? SkyUIRequirementsFor(launchWithoutMods ? @[] : launchPackageIds)
+        : (SkyrimSkyUIRequirements){.status = SKYRIM_SKYUI_REQ_SKYUI_ABSENT};
+    FreezeFeatures(profile, needs.status == SKYRIM_SKYUI_REQ_OK);
     if (requested && !enabled && !launchNotice) {
         launchNotice = launchPluginListFailed
             ? T(@"SkyUI is off for this launch because the active plugin list could not be verified.",
@@ -600,7 +614,6 @@ BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed) {
     }
     fprintf(stderr, "IOS_CLASSIC_SKYUI requested=%d enabled=%d\n", (int)requested, (int)enabled);
     if (requested) {
-        SkyrimSkyUIRequirements needs = SkyUIRequirementsFor(launchWithoutMods ? @[] : launchPackageIds);
         fprintf(stderr, "IOS_CLASSIC_SKYUI_INPUTS skyui=%d skse_pex=%d support=%u\n",
                 needs.status != SKYRIM_SKYUI_REQ_SKYUI_ABSENT && needs.status != SKYRIM_SKYUI_REQ_UNREADABLE,
                 needs.status == SKYRIM_SKYUI_REQ_OK, needs.support_present);
@@ -618,6 +631,9 @@ static void RestoreLastGoodSetup(NSMutableDictionary *profile) {
     profile[@"plugins"] = [lastGood[@"plugins"] mutableCopy];
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     profile[@"skyuiTrial"] = SkyUITrialSelected(lastGood) ? @YES : nil;
+#ifdef SKYRIM_IOS_MOD_HOOKS
+    profile[@"inventoryFit"] = [lastGood[@"inventoryFit"] isEqual:@YES] ? @YES : nil;
+#endif
     profile[@"features"] = [lastGood[@"features"] isKindOfClass:NSDictionary.class] ? [lastGood[@"features"] mutableCopy] : nil;
 #endif
 }
@@ -2302,6 +2318,9 @@ enum {
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     HubSkyUITrialRow, HubFeaturesRow,
 #endif
+#ifdef SKYRIM_IOS_MOD_HOOKS
+    HubInventoryFitRow,
+#endif
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
     HubDllProbeRow,
 #endif
@@ -2441,6 +2460,25 @@ enum {
             break;
         }
 #endif
+#ifdef SKYRIM_IOS_MOD_HOOKS
+        if (p.row == HubInventoryFitRow) {
+            NSDictionary *profile = SelectedProfile();
+            c.textLabel.text = T(@"Fit SkyUI inventory (trial)", @"SkyUIの持ち物画面を収める（試験）");
+            const BOOL supported = (pc_guest_mod_hooks_compiled() & PC_GUEST_MOD_HOOK_INVENTORY_FIT) != 0;
+            c.detailTextLabel.text = supported
+                ? T(@"Applies to wide displays with SkyUI trial enabled after restarting.",
+                    @"SkyUI試験をオンにして再起動すると、横長画面の持ち物表示に反映します。")
+                : T(@"Requires a compatible guest build.", @"対応するゲーム実行部分が必要です。");
+            UISwitch *toggle = [UISwitch new];
+            toggle.enabled = supported && SkyUITrialSelected(profile);
+            toggle.on = [profile[@"inventoryFit"] isEqual:@YES];
+            toggle.accessibilityLabel = c.textLabel.text;
+            toggle.accessibilityIdentifier = @"mod-skyui-inventory-fit";
+            [toggle addTarget:self action:@selector(inventoryFitToggled:) forControlEvents:UIControlEventValueChanged];
+            c.accessoryView = toggle; c.selectionStyle = UITableViewCellSelectionStyleNone;
+            break;
+        }
+#endif
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
         if (p.row == HubFeaturesRow) {
             c.textLabel.text = T(@"MOD features", @"MODの機能");
@@ -2520,18 +2558,31 @@ enum {
 }
 - (void)safeToggled:(UISwitch *)toggle { state[@"safeNext"] = @(toggle.on); [self changed:nil]; }
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
-- (void)skyuiTrialToggled:(UISwitch *)toggle {
+static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
     NSMutableDictionary *profile = SelectedProfile();
-    BOOL previous = SkyUITrialSelected(profile);
-    profile[@"skyuiTrial"] = toggle.on ? @YES : nil;
-    if (!SaveState()) {
-        profile[@"skyuiTrial"] = previous ? @YES : nil;
-        toggle.on = previous;
+    const BOOL previous = [profile[key] isEqual:@YES];
+    profile[key] = toggle.on ? @YES : nil;
+    if (SaveState()) return YES;
+    profile[key] = previous ? @YES : nil;
+    toggle.on = previous;
+    return NO;
+}
+- (void)skyuiTrialToggled:(UISwitch *)toggle {
+    if (!SaveProfileToggle(toggle, @"skyuiTrial")) {
         skyrim_mobile_show_notice(T(@"Could not save the SkyUI trial setting.", @"SkyUI試験の設定を保存できませんでした。"));
         return;
     }
+    [self.tableView reloadData];
     skyrim_mobile_show_notice(T(@"SkyUI trial setting saved for the next launch.", @"SkyUI試験の設定を保存しました。次回起動から反映します。"));
 }
+#ifdef SKYRIM_IOS_MOD_HOOKS
+- (void)inventoryFitToggled:(UISwitch *)toggle {
+    if (SaveProfileToggle(toggle, @"inventoryFit"))
+        skyrim_mobile_show_notice(T(@"Inventory fit setting saved for the next launch.", @"持ち物画面の設定を保存しました。次回起動から反映します。"));
+    else
+        skyrim_mobile_show_notice(T(@"Could not save the inventory fit setting.", @"持ち物画面の設定を保存できませんでした。"));
+}
+#endif
 #endif
 - (BOOL)tableView:(UITableView *)t canEditRowAtIndexPath:(NSIndexPath *)p { (void)t; return p.section == HubMods && self.rows.count; }
 - (BOOL)tableView:(UITableView *)t canMoveRowAtIndexPath:(NSIndexPath *)p { (void)t; return p.section == HubMods && self.rows.count > 1; }
@@ -2663,6 +2714,9 @@ enum {
             [self.navigationController pushViewController:skyrim_mod_dll_probe_controller(japanese, nil) animated:YES];
             break;
         }
+#endif
+#ifdef SKYRIM_IOS_MOD_HOOKS
+        if (p.row == HubInventoryFitRow) break;
 #endif
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
         if (p.row == HubSkyUITrialRow) break;

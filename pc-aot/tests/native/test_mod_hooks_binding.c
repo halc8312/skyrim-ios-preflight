@@ -76,6 +76,7 @@ __attribute__((visibility("default"))) unsigned exercise_mod_hooks(unsigned expe
     skyrim_racemenu_probe_did_apply();
     skyrim_camera_observe_return(0x123456);
     skyrim_loading_menu_observe(0xA5D9CF, 0x57000, 0x58000);
+    if (skyrim_inventory_fit_enabled()) seen |= 1u << 8;
     assert(seen == expected);
     return seen;
 }
@@ -167,6 +168,7 @@ static unsigned expected_seen(uint32_t groups) {
     if (groups & PC_GUEST_MOD_HOOK_FUZ_WORLD) seen |= 7u << 3;
     if (groups & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE) seen |= 1u << 6;
     if (groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) seen |= 1u << 7;
+    if (groups & PC_GUEST_MOD_HOOK_INVENTORY_FIT) seen |= 1u << 8;
     return seen;
 }
 
@@ -260,7 +262,7 @@ int main(int argc, char **argv) {
         PcGuestModHooks other = full_table(absent);
         assert(pc_guest_select_mod_hooks(absent, &other) != 0);
     }
-    const uint32_t unknown_group = 256u;
+    const uint32_t unknown_group = 512u;
     PcGuestModHooks unknown = full_table(unknown_group);
     assert(pc_guest_select_mod_hooks(unknown_group, &unknown) != 0);
     PcGuestModHooks world_only = full_table(PC_GUEST_MOD_HOOK_FUZ_WORLD);
@@ -285,8 +287,10 @@ int main(int argc, char **argv) {
         else if (choice & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE) wrong.chargen_precache.skip_open_warm = NULL;
         else if (choice & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) wrong.camera.observe_return = NULL;
         else if (choice & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) wrong.loading_menu.observe = NULL;
-        else wrong.chargen_slider.did_apply = NULL;
-        assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
+        else if (choice & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) wrong.chargen_slider.did_apply = NULL;
+        /* Inventory fit is a guest-only capability with no host callback. */
+        if (choice != PC_GUEST_MOD_HOOK_INVENTORY_FIT)
+            assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
     } else {
         PcGuestModHooks nonempty = full_table(PC_GUEST_MOD_HOOK_FUZ_MENU);
         assert(pc_guest_select_mod_hooks(0, &nonempty) != 0);

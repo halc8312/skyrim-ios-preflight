@@ -86,6 +86,8 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_CAMERA_STATE", "^IOS_CAMERA_STATE slot=(?:[0-9]|1[0-2])$") \
     X("IOS_CAMERA_BODY", "^IOS_CAMERA_BODY schema=1 slot=[089] arms=[0-5] body=[0-5]$") \
     X("IOS_LOADING_MENU", "^IOS_LOADING_MENU opening=[01] ts_ns=[0-9]{1,20}$") \
+    X("IOS_CHARGEN_MENU", "^IOS_CHARGEN_MENU opening=[01] ts_ns=[0-9]{1,20}$") \
+    X("IOS_INVENTORY_FIT", "^IOS_INVENTORY_FIT armed=[01]$") \
     X("IOS_CLASSIC_SKYUI_INPUTS", "^IOS_CLASSIC_SKYUI_INPUTS skyui=[01] skse_pex=[01] support=[0-4]$") \
     X("IOS_CLASSIC_VM", "^IOS_CLASSIC_VM registered=[0-9]{1,10} primitive_passed=[0-9]{1,10}$") \
     X("IOS_CLASSIC_RELEASE", "^IOS_CLASSIC_RELEASE value=[0-9]{1,10}$") \

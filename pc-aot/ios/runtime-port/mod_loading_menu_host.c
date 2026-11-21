@@ -26,8 +26,10 @@ static bool read_menu_word(void *memory, uint32_t address, uint32_t *value) {
 
 void skyrim_loading_menu_app_observe(uint32_t site, uint32_t dispatcher, uint32_t event) {
     if (!ready || !MEM) return;
-    const ClassicLoadingMenuEvent direction = classic_loading_menu_event(site, dispatcher, event, read_menu_word, MEM);
-    if (direction != CLASSIC_LOADING_MENU_NONE)
-        fprintf(stderr, "IOS_LOADING_MENU opening=%d ts_ns=%llu\n", direction == CLASSIC_LOADING_MENU_OPEN,
-                (unsigned long long)skyrim_perf_now_ns());
+    const ClassicMenuTransition direction = classic_observed_menu_transition(site, dispatcher, event, read_menu_word, MEM);
+    if (direction == CLASSIC_MENU_NONE) return;
+    const bool chargen = direction == CLASSIC_CHARGEN_MENU_OPEN || direction == CLASSIC_CHARGEN_MENU_CLOSE;
+    const bool opening = direction == CLASSIC_LOADING_MENU_OPEN || direction == CLASSIC_CHARGEN_MENU_OPEN;
+    fprintf(stderr, "%s opening=%d ts_ns=%llu\n", chargen ? "IOS_CHARGEN_MENU" : "IOS_LOADING_MENU",
+            opening, (unsigned long long)skyrim_perf_now_ns());
 }

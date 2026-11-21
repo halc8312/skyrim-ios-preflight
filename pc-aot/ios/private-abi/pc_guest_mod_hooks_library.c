@@ -135,3 +135,5 @@ void skyrim_camera_observe_return(uint32_t receiver) {
 void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t event) {
     if (selected & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) loading_menu.observe(site, dispatcher, event);
 }
+
+bool skyrim_inventory_fit_enabled(void) { return (selected & PC_GUEST_MOD_HOOK_INVENTORY_FIT) != 0; }
