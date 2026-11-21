@@ -98,7 +98,7 @@ int main(void) {
         classic.prepare(self.vendor, self.stage)
         executable = self.stage.parent / name
         sanitizers = []
-        if os.environ.get("SKYRIM_TEST_SANITIZERS"):
+        if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
             sanitizers = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-Wall", "-Wextra", "-Werror",
                         *sanitizers, "-I", str(self.stage), "-I", str(PORT),
@@ -121,10 +121,14 @@ int main(void) {
         dispatch = source.index("static void run_native(", start)
         probe = source.index("static void probe_native(", dispatch)
         self.assertIn("value = skyui_version_value(fn, value);", source[dispatch:probe])
+        self.assertIn("note_skyui_release(fn, value);", source[dispatch:probe])
         self.assertIn("expected = skyui_version_value(fn, expected);", source[probe:])
+        self.assertIn("++skse_probe_depth;\n    uint32_t dispatched = skse_virtual", source[probe:])
+        self.assertIn("--skse_probe_depth;\n    if(!dispatched", source[probe:])
+        recorder = source[source.index("static _Thread_local unsigned skse_probe_depth;"):start]
         fixture = self.stage.parent / "skyui-version.c"
-        fixture.write_text('#include <assert.h>\n#include <stdlib.h>\n#include <string.h>\n'
-                           '#include "skse_compat.h"\n' + mode + source[start:dispatch] + r"""
+        fixture.write_text('#include <assert.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n'
+                           '#include "skse_compat.h"\n' + mode + recorder + source[start:dispatch] + r"""
 int main(void) {
     const uint32_t expected[2][5] = {{0, 1, 0, 0, UINT32_MAX}, {1, 7, 3, 48, UINT32_MAX}};
     const char *names[] = {"GetVersion", "GetVersionMinor", "GetVersionBeta",
@@ -143,7 +147,12 @@ int main(void) {
             uint32_t value = 0;
             char *text = NULL;
             assert(fn && skse_native_eval(fn, args, strings, &value, &text) && !text);
-            assert(skyui_version_value(fn, value) == expected[on][i]);
+            value = skyui_version_value(fn, value);
+            assert(value == expected[on][i]);
+            skse_probe_depth = !on;
+            note_skyui_release(fn, value);
+            skse_probe_depth = 0;
+            if (on) note_skyui_release(fn, 0); // Duplicate real call stays silent.
         }
     }
     return 0;
@@ -153,7 +162,8 @@ int main(void) {
         subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-Wall", "-Wextra", "-Werror",
                         "-I", str(self.stage), str(fixture), str(self.stage / "skse_compat_values.c"),
                         "-lm", "-o", str(executable)], check=True, timeout=60)
-        subprocess.run([str(executable)], check=True, timeout=30)
+        result = subprocess.run([str(executable)], check=True, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.stderr.splitlines(), ["IOS_CLASSIC_RELEASE value=48"])
 
     @unittest.skipUnless(os.name == "posix", "needs a POSIX C compiler")
     def test_game_queries_read_loaded_files_and_master_indices(self):

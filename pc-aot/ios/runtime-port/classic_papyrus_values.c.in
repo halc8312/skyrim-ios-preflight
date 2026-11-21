@@ -1,0 +1,315 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Staged host proof for one Classic VM and one set of interpreted statics. */
+
+enum { CLASSIC_VALUES_FUNCTIONS = 16, CLASSIC_VALUES_ARGS = 4, CLASSIC_VALUES_STRING_BYTES = 512 };
+enum { CLASSIC_VALUES_STRING = 2, CLASSIC_VALUES_INT = 3, CLASSIC_VALUES_FLOAT = 4, CLASSIC_VALUES_BOOL = 5 };
+/* Non-latent NativeFunctionBase::Invoke in the pinned 1.9.32 image. */
+enum { CLASSIC_VALUES_RUN_RETURN = 0xc46e61, CLASSIC_VALUES_RESULT_OFFSET = 0x2c,
+       CLASSIC_VALUES_BASE_OFFSET = 0x38 };
+enum { CLASSIC_VALUES_STRING_DATA_OFFSET = 0x0c };
+
+typedef struct {
+    const char *class_name, *name;
+    uint32_t id;
+    uint8_t result, count, arguments[CLASSIC_VALUES_ARGS];
+} ClassicValueFunction;
+
+typedef struct {
+    uint32_t type, bits;
+    const char *string;
+} ClassicValue;
+
+typedef struct {
+    uint32_t object, sp, base, registry, stack_id, result, state, argument_list;
+} ClassicValueFrame;
+
+typedef struct {
+    uint64_t epoch;
+    const ClassicValueFunction *functions;
+    size_t count;
+    bool (*read_guest)(void *, CPU *, uint32_t address, void *, size_t);
+    bool (*copy_string)(void *, CPU *, uint32_t address, char *, size_t);
+    /* Attest the exact frame and its VM-owned storage. The provider keeps
+     * this scope alive and exclusively owned until Run returns. */
+    bool (*owns_frame)(void *, CPU *, uint64_t epoch, const ClassicValueFrame *);
+    bool (*invoke)(void *, uint64_t epoch, uint32_t function, const ClassicValue *, size_t, ClassicValue *,
+                   char *result_text, size_t result_capacity);
+    /* A false acknowledgement leaves host effects unpublished. A commit
+     * must return with the attested frame still owned and cannot reenter Run. */
+    bool (*commit)(void *, uint64_t epoch, uint32_t function);
+    void (*discard)(void *, uint64_t epoch); /* Invoked after an attempted call whose result cannot be published. */
+    void *context;
+} ClassicValueRequest;
+
+typedef struct {
+    ClassicValueFunction function;
+    char class_name[CLASSIC_INT0_NAME_BYTES], name[CLASSIC_INT0_NAME_BYTES];
+    uint32_t object;
+} ClassicValueBinding;
+
+static struct {
+    ClassicValueRequest request;
+    ClassicValueBinding rows[CLASSIC_VALUES_FUNCTIONS];
+    uint32_t registry, vtable;
+} values_publication;
+
+static bool value_name_matches(const char *group, const char *name, const char *other_group, const char *other_name) {
+    return !strcasecmp(group, other_group) && !strcasecmp(name, other_name);
+}
+
+static bool classic_values_reserved(const char *class_name, const char *name) {
+    for (size_t i = 0; i < values_publication.request.count; ++i) {
+        const ClassicValueFunction *fn = &values_publication.rows[i].function;
+        if (value_name_matches(class_name, name, fn->class_name, fn->name)) return true;
+    }
+    return false;
+}
+
+static bool value_request_conflicts(const ClassicValueFunction *fn, size_t index) {
+    const ClassicInt0Request *one = &int0_publication.request;
+    if (one->epoch && value_name_matches(fn->class_name, fn->name, one->class_name, one->function_name)) return true;
+    unsigned count;
+    const SkseNative *builtin = skse_native_table(&count);
+    for (unsigned i = 0; i < count; ++i)
+        if (value_name_matches(fn->class_name, fn->name, builtin[i].class_name, builtin[i].name)) return true;
+    for (size_t i = 0; i < index; ++i) {
+        const ClassicValueFunction *other = &values_publication.rows[i].function;
+        if (fn->id == other->id || value_name_matches(fn->class_name, fn->name, other->class_name, other->name))
+            return true;
+    }
+    return false;
+}
+
+/* Configure before the pinned registration hook. The provider must retain the
+ * callback context and the bound VM scope until retirement succeeds. */
+bool skse_classic_values_request(const ClassicValueRequest *request) {
+    if (!request || !request->epoch || !request->functions || !request->count ||
+        request->count > CLASSIC_VALUES_FUNCTIONS || !request->read_guest || !request->owns_frame ||
+        !request->invoke || !int0_enter()) return false;
+    if (values_publication.request.epoch) {
+        int0_leave();
+        return false;
+    }
+    bool accepted = true;
+    for (size_t i = 0; i < request->count; ++i) {
+        const ClassicValueFunction *fn = &request->functions[i];
+        ClassicValueBinding *row = &values_publication.rows[i];
+        if (!fn->id || fn->result < CLASSIC_VALUES_STRING || fn->result > CLASSIC_VALUES_BOOL ||
+            fn->count > CLASSIC_VALUES_ARGS || !int0_copy_name(row->class_name, fn->class_name) ||
+            !int0_copy_name(row->name, fn->name) || value_request_conflicts(fn, i)) {
+            accepted = false;
+            break;
+        }
+        for (size_t j = 0; j < fn->count; ++j) {
+            const uint8_t type = fn->arguments[j];
+            if (type < CLASSIC_VALUES_STRING || type > CLASSIC_VALUES_BOOL ||
+                (type == CLASSIC_VALUES_STRING && !request->copy_string)) accepted = false;
+        }
+        if (!accepted) break;
+        row->function = *fn;
+        row->function.class_name = row->class_name;
+        row->function.name = row->name;
+    }
+    if (accepted) {
+        values_publication.request = *request;
+        values_publication.request.functions = NULL; // Names and signatures above are now owned copies.
+    } else {
+        memset(values_publication.rows, 0, sizeof values_publication.rows);
+    }
+    int0_leave();
+    return accepted;
+}
+
+bool skse_classic_values_retire(uint64_t epoch) {
+    if (!epoch || !int0_enter()) return false;
+    ClassicValueRequest *request = &values_publication.request;
+    const bool retired = request->epoch == epoch && request->invoke;
+    if (retired) *request = (ClassicValueRequest){.epoch = epoch, .count = request->count};
+    int0_leave();
+    return retired;
+}
+
+static bool value_read_frame(CPU *c, const ClassicValueFunction *fn, ClassicValueFrame *frame) {
+    const ClassicValueRequest *request = &values_publication.request;
+    const uint32_t sp = c->r[4];
+    uint32_t words[6], base[2];
+    if (!sp || sp % 4 || sp > UINT32_MAX - CLASSIC_VALUES_BASE_OFFSET - 7 ||
+        !request->read_guest(request->context, c, sp, words, sizeof words) ||
+        words[0] != CLASSIC_VALUES_RUN_RETURN || words[1] != sp + CLASSIC_VALUES_BASE_OFFSET ||
+        words[2] != values_publication.registry || words[4] != sp + CLASSIC_VALUES_RESULT_OFFSET ||
+        !words[5] || words[5] % 4 || words[5] > UINT32_MAX - 3 ||
+        !request->read_guest(request->context, c, words[1], base, sizeof base) || base[0]) return false;
+
+    *frame = (ClassicValueFrame){.object = c->r[1], .sp = sp, .base = words[1], .registry = words[2],
+                                 .stack_id = words[3], .result = words[4], .state = words[5]};
+    if (fn->count &&
+        (!request->read_guest(request->context, c, frame->state, &frame->argument_list, sizeof frame->argument_list) ||
+         !frame->argument_list || frame->argument_list % 4 || frame->argument_list > UINT32_MAX - 0x2b)) return false;
+    return request->owns_frame(request->context, c, request->epoch, frame);
+}
+
+static bool value_read_arguments(CPU *c, const ClassicValueFunction *fn, const ClassicValueFrame *frame,
+                                 ClassicValue arguments[CLASSIC_VALUES_ARGS],
+                                 char strings[CLASSIC_VALUES_ARGS][CLASSIC_VALUES_STRING_BYTES]) {
+    if (!fn->count) return true;
+    const ClassicValueRequest *request = &values_publication.request;
+    const uint32_t state = frame->state, list = frame->argument_list;
+    const uint32_t offset = skse_member(c, VM_ARG_OFFSET, list, 1, &state);
+    for (uint32_t i = 0; i < fn->count; ++i) {
+        const uint32_t get[] = {state, i, offset};
+        const uint32_t address = skse_member(c, VM_ARG_GET, list, 3, get);
+        uint32_t value[2] = {0};
+        if (!address || address % 4 || address > UINT32_MAX - 7 ||
+            !request->read_guest(request->context, c, address, value, sizeof value) ||
+            value[0] != fn->arguments[i]) return false;
+        arguments[i].type = value[0];
+        if (value[0] == CLASSIC_VALUES_STRING) {
+            memset(strings[i], 0xff, sizeof strings[i]);
+            if (!value[1] || !request->copy_string(request->context, c, value[1], strings[i], sizeof strings[i]) ||
+                !memchr(strings[i], 0, sizeof strings[i])) return false;
+            arguments[i].string = strings[i];
+        } else if (value[0] == CLASSIC_VALUES_BOOL) {
+            /* Classic VMValue::SetBool writes data.b, a one-byte union member. */
+            const uint8_t bit = (uint8_t)value[1];
+            if (bit > 1) return false;
+            arguments[i].bits = bit;
+        } else {
+            arguments[i].bits = value[1];
+        }
+    }
+    return true;
+}
+
+static bool value_invoke_owned(CPU *c, const ClassicValueFunction *fn, const ClassicValueFrame *frame) {
+    const ClassicValueRequest *request = &values_publication.request;
+    ClassicValue args[CLASSIC_VALUES_ARGS] = {0}, output = {0};
+    char strings[CLASSIC_VALUES_ARGS][CLASSIC_VALUES_STRING_BYTES];
+    char result_text[CLASSIC_VALUES_STRING_BYTES];
+    const bool text = fn->result == CLASSIC_VALUES_STRING;
+    if (!value_read_arguments(c, fn, frame, args, strings)) return false;
+    const uint32_t scratch = text ? gmalloc(8 + sizeof result_text) : 0;
+    if (text && !scratch) return false;
+
+    if (text) memset(result_text, 0xff, sizeof result_text);
+    const bool completed = request->invoke(request->context, request->epoch, fn->id, args, fn->count, &output,
+                                           text ? result_text : NULL, text ? sizeof result_text : 0);
+    const char *end = text ? memchr(result_text, 0, sizeof result_text) : NULL;
+    bool accepted = completed && output.type == fn->result && !output.string &&
+                    (output.type != CLASSIC_VALUES_BOOL || output.bits <= 1) &&
+                    (!text || (end && !output.bits)) &&
+                    request->owns_frame(request->context, c, request->epoch, frame);
+    uint32_t interned = 0;
+    if (accepted && text) {
+        const uint32_t text_address = scratch + 8;
+        memcpy(GPTR(text_address), result_text, (size_t)(end - result_text + 1));
+        M32(scratch) = CLASSIC_VALUES_STRING;
+        M32(scratch + 4) = 0;
+        skse_member(c, STRING_SET, scratch + 4, 1, &text_address);
+        interned = M32(scratch + 4);
+        accepted = interned > CLASSIC_VALUES_STRING_DATA_OFFSET &&
+                   request->owns_frame(request->context, c, request->epoch, frame);
+    }
+    if (accepted && request->commit)
+        accepted = request->commit(request->context, request->epoch, fn->id);
+    if (accepted) {
+        skse_member(c, VM_DESTROY, frame->result, 0, NULL);
+        M32(frame->result) = output.type;
+        /* Move the string-cache reference out of raw scratch into the VMValue. */
+        M32(frame->result + 4) = text ? interned : output.bits;
+    } else {
+        if (interned > CLASSIC_VALUES_STRING_DATA_OFFSET) skse_member(c, VM_DESTROY, scratch, 0, NULL);
+        if (request->discard) request->discard(request->context, request->epoch);
+    }
+    if (scratch) gfree(scratch);
+    return accepted;
+}
+
+static void classic_values_run(CPU *c) {
+    if (rt_current_cpu() != c || !int0_enter()) RET(0,5);
+    const ClassicValueRequest *request = &values_publication.request;
+    const uint32_t self = c->r[1];
+    bool accepted = false;
+    if (request->invoke && self && values_publication.registry) {
+        for (size_t i = 0; i < request->count; ++i) {
+            const ClassicValueBinding *row = &values_publication.rows[i];
+            if (row->object != self) continue;
+            const ClassicValueFunction *fn = &row->function;
+            ClassicValueFrame frame;
+            if (value_read_frame(c, fn, &frame) && M32(self) == values_publication.vtable &&
+                M32(self + 0x2c) == fn->id) accepted = value_invoke_owned(c, fn, &frame);
+            break;
+        }
+    }
+    int0_leave();
+    RET(accepted,5);
+}
+
+static uint32_t make_value_native(CPU *c, const ClassicValueFunction *fn, uint32_t vtable_copy, bool copy_vtable) {
+    const uint32_t class_bytes = (uint32_t)strlen(fn->class_name) + 1, name_bytes = (uint32_t)strlen(fn->name) + 1;
+    const uint32_t names = gmalloc(class_bytes + name_bytes);
+    if (!names) return 0;
+    const uint32_t allocate[] = {CLASSIC_INT0_OBJECT_BYTES, 0, 0};
+    uint32_t object = skse_member(c, HEAP_ALLOC, FORM_HEAP, 3, allocate);
+    if (object) {
+        memcpy(GPTR(names), fn->class_name, class_bytes);
+        memcpy(GPTR(names + class_bytes), fn->name, name_bytes);
+        memset(GPTR(object), 0, CLASSIC_INT0_OBJECT_BYTES);
+        const uint32_t ctor[] = {names + class_bytes, names, 1, fn->count};
+        skse_member(c, VM_NATIVE_CTOR, object, 4, ctor);
+        const uint32_t types = M32(object + 0x18);
+        if (fn->count && (!types || types > UINT32_MAX - fn->count * 8)) {
+            const uint32_t deleting = 1;
+            skse_virtual(c, object, 0, 1, &deleting);
+            object = 0;
+        } else {
+            if (copy_vtable) memcpy(GPTR(vtable_copy), GPTR(M32(object) - 4), (RUN_SLOT + 2) * 4);
+            M32(object + 0x14) = fn->result;
+            M32(object + 0x2c) = fn->id;
+            for (uint32_t i = 0; i < fn->count; ++i) M32(types + i * 8 + 4) = fn->arguments[i];
+        }
+    }
+    gfree(names);
+    return object;
+}
+
+static void classic_values_publish(CPU *c, uint32_t registry, uint32_t has_thunk) {
+    if (!registry || rt_current_cpu() != c || !int0_enter()) return;
+    const ClassicValueRequest *request = &values_publication.request;
+    if (!request->invoke || values_publication.registry) {
+        int0_leave();
+        return;
+    }
+    const uint32_t table_copy = gmalloc((RUN_SLOT + 2) * 4);
+    if (!table_copy) {
+        int0_leave();
+        return;
+    }
+    size_t made = 0;
+    for (; made < request->count; ++made) {
+        ClassicValueBinding *row = &values_publication.rows[made];
+        row->object = make_value_native(c, &row->function, table_copy, !made);
+        if (!row->object) break;
+    }
+    if (made != request->count) {
+        const uint32_t deleting = 1;
+        while (made) {
+            ClassicValueBinding *row = &values_publication.rows[--made];
+            skse_virtual(c, row->object, 0, 1, &deleting);
+            row->object = 0;
+        }
+        gfree(table_copy);
+        int0_leave();
+        return;
+    }
+    const uint32_t vtable = table_copy + 4;
+    M32(vtable + HAS_CALLBACK_SLOT * 4) = has_thunk;
+    M32(vtable + RUN_SLOT * 4) = rt_thunk(classic_values_run, "Classic.ValueProbe.Run");
+    for (size_t i = 0; i < made; ++i) {
+        ClassicValueBinding *row = &values_publication.rows[i];
+        M32(row->object) = vtable;
+        skse_virtual(c, registry, REGISTER_SLOT, 1, &row->object);
+    }
+    values_publication.vtable = vtable;
+    values_publication.registry = registry;
+    int0_leave();
+}

@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 CLASSIC_SKSE="${SKYRIM_IOS_CLASSIC_SKSE-0}"
 DLL_PROBE="${SKYRIM_IOS_SKSE_DLL_PROBE-0}"
+SETTINGS_PROBE="${SKYRIM_IOS_CLASSIC_SETTINGS_PROBE-0}"
 case "$CLASSIC_SKSE" in
   0|1) ;;
   *) echo 'SKYRIM_IOS_CLASSIC_SKSE must be 0 or 1' >&2; exit 2 ;;
@@ -14,6 +15,10 @@ esac
 case "$DLL_PROBE" in
   0|1) ;;
   *) echo 'SKYRIM_IOS_SKSE_DLL_PROBE must be 0 or 1' >&2; exit 2 ;;
+esac
+case "$SETTINGS_PROBE" in
+  0|1) ;;
+  *) echo 'SKYRIM_IOS_CLASSIC_SETTINGS_PROBE must be 0 or 1' >&2; exit 2 ;;
 esac
 python3 scripts/check-public-tree.py
 mkdir -p local/title-host
@@ -74,6 +79,11 @@ PY
     run_validation env SKYRIM_SKYDREAM_SOURCE="$ROOT/vendor/skydream" SKYDREAM_SOURCE_DIR="$ROOT/vendor/skydream" \
       python3 -m unittest discover -s tests -p 'test_classic_*.py' -v
   fi
+  if [[ "$DLL_PROBE" == 1 ]]; then
+    run_validation env CC=clang PYTHONPATH="$ROOT/experiments/skse-plugin-vm" python3 -B -m unittest -v \
+      test_classic_pex test_x86_sse_conversion \
+      test_skse_plugin_vm.PluginInterpreterTests.test_memory_permissions_abi_and_budget
+  fi
   run_validation python3 -m unittest discover -s tests -p 'test_title_signing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_owned_data.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_ordered_stores.py' -v
@@ -89,6 +99,7 @@ PY
     test_d3d9_lock_timing.D3D9LockNativeTests.test_actual_lock_recursion_contention_and_hot_clock_budget \
     test_runtime_lock_timing -v
   run_validation python3 -m unittest discover -s tests -p 'test_save_write_probe.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_skse_copy_pair.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_game_language.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_plugins.py' -v
@@ -186,6 +197,7 @@ cmake -S ios/runtime-port -B "$RUN/build" -G 'Unix Makefiles' \
   -DSKYRIM_IOS_BUILD_APP=ON -DSKYRIM_IOS_BUNDLE_IDENTIFIER=org.skyrimios.pc2011 \
   "-DSKYRIM_IOS_CLASSIC_SKSE=$CLASSIC_SKSE" \
   "-DSKYRIM_IOS_SKSE_DLL_PROBE=$DLL_PROBE" \
+  "-DSKYRIM_IOS_CLASSIC_SETTINGS_PROBE=$SETTINGS_PROBE" \
   "-DSKYDREAM_SOURCE_DIR=$RUN/source" \
   "-DSKYRIM_IOS_RUNTIME_OVERLAY_DIR=$RUN/overlay/runtime" \
   "-DSKYRIM_IOS_BINDING_SOURCES=$ROOT/ios/private-abi/pc_guest_host.c" \

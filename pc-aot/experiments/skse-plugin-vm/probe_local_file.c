@@ -39,7 +39,9 @@ static SkseProbeFileStatus read_source(int fd, uint8_t **out, size_t *length) {
     return read_piece(fd, &extra, 1) == 0 ? SKSE_PROBE_FILE_CHECKED : SKSE_PROBE_FILE_INCOMPLETE;
 }
 
-SkseProbeFileStatus skse_probe_local_dll(const char *path, uint32_t uptime_ms, SkseLocalDllReport *out) {
+SkseProbeFileStatus skse_probe_local_dll_with_setup(const char *path, uint32_t uptime_ms,
+                                                    const SkseLocalProbeSetup *setup, SkseLocalDllReport *out) {
+    if (setup && setup->record_probe) setup->record_probe->status = SKSE_SESSION_OUT_OF_ORDER;
     if (!out) return SKSE_PROBE_FILE_UNAVAILABLE;
     memset(out, 0, sizeof *out);
     if (!path || !*path) return SKSE_PROBE_FILE_UNAVAILABLE;
@@ -51,15 +53,28 @@ SkseProbeFileStatus skse_probe_local_dll(const char *path, uint32_t uptime_ms, S
     close(fd);
     if (status == SKSE_PROBE_FILE_CHECKED) {
         // Classic 1.7.3 API as presented to one isolated, temporary plugin.
+        const char *slash = strrchr(path, '/');
         const SkseTrialOptions options = {0x01070030, 0x09200000, 0, 48, 1, 1, 1};
         const SkseTrialRuntime runtime = {
             .uptime_ms = uptime_ms, .core_messages = 1, .static_tls = 1, .serialization = 1, .worker_thread = 1,
-            .task_interface = 1
+            .task_interface = 1, .trace_known_windows_imports = true, .module_file_name = slash ? slash + 1 : path,
+            .guest_base = setup ? setup->guest_base : 0,
+            .read_views = setup ? setup->read_views : NULL,
+            .read_view_count = setup ? setup->read_view_count : 0,
+            .capture_papyrus_startup = setup && setup->capture_papyrus_startup,
+            .hook_probe_sites = setup ? setup->hook_probe_sites : NULL,
+            .hook_probe_count = setup ? setup->hook_probe_count : 0
         };
-        out->trial = skse_plugin_trial_with_runtime(bytes, length, options, runtime);
+        if (setup && setup->record_probe)
+            out->trial = skse_plugin_trial_with_record_probe(bytes, length, options, runtime, setup->record_probe);
+        else out->trial = skse_plugin_trial_with_runtime(bytes, length, options, runtime);
         if (out->trial.status == SKSE_TRIAL_IMAGE_REFUSED)
             skse_pe_inspect(bytes, length, &out->imports);
     }
     free(bytes);
     return status;
+}
+
+SkseProbeFileStatus skse_probe_local_dll(const char *path, uint32_t uptime_ms, SkseLocalDllReport *out) {
+    return skse_probe_local_dll_with_setup(path, uptime_ms, NULL, out);
 }

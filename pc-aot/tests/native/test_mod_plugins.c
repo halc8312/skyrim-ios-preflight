@@ -236,6 +236,13 @@ static void paths(const char *root) {
         assert(skyrim_plugin_child_path(dir, "plugins.txt", out, sizeof out) == -1);
     assert(skyrim_plugin_child_path("/nonexistent-dir-for-test", "Data", out, sizeof out) == 0);
     assert(skyrim_plugin_child_path(dir, "plugins.txt", out, 4) == -1);
+    touch(dir, "DAWNGUARD.ESM");
+    assert(skyrim_plugin_file_present(dir, "Dawnguard.esm"));
+    assert(!skyrim_plugin_file_present(dir, "HearthFires.esm"));
+    snprintf(p1, sizeof p1, "%s/Folder.esp", dir);
+    assert(!mkdir(p1, 0700) && !skyrim_plugin_file_present(dir, "Folder.esp"));
+    snprintf(p2, sizeof p2, "%s/Alias.esp", dir);
+    assert(!symlink("DAWNGUARD.ESM", p2) && !skyrim_plugin_file_present(dir, "Alias.esp"));
     puts("case-insensitive paths PASS");
 }
 
@@ -288,8 +295,68 @@ static void profile_list(const char *root) {
     puts("profile restore PASS");
 }
 
+static void profile_dlc_inheritance(const char *root) {
+    assert(strlen(root) < 400);
+    char profile[512], docs[640], folder[768], list[896], other[512];
+    snprintf(profile, sizeof profile, "%s/profile-dlc", root);
+    snprintf(docs, sizeof docs, "%s/documents", profile);
+    snprintf(folder, sizeof folder, "%s/SKYRIM", docs);
+    snprintf(list, sizeof list, "%s/Plugins.TXT", folder);
+    snprintf(other, sizeof other, "%s/profile-other", root);
+    assert(!mkdir(profile, 0700) && !mkdir(other, 0700));
+
+    unsigned bits = ~0u;
+    assert(!skyrim_plugin_read_profile_dlc(profile, &bits) && !bits);
+    assert(access(docs, F_OK) != 0);
+    assert(!mkdir(docs, 0700) && !mkdir(folder, 0700));
+    const char original[] = "# Owner's DLC settings\r\ndawnguard.ESM\r\n"
+                            " HearthFires.esm\t\r\nDragonborn.esm";
+    save_bytes(list, original, sizeof original - 1);
+    struct stat before, after;
+    assert(!stat(list, &before));
+    assert(!skyrim_plugin_apply_list(profile, NULL, 0));
+    assert(!stat(list, &after) && before.st_ino == after.st_ino && before.st_mtime == after.st_mtime);
+    assert_bytes(list, original, sizeof original - 1);
+
+    unsigned dawnguard = skyrim_plugin_dlc_bit("Dawnguard.esm");
+    unsigned hearthfires = skyrim_plugin_dlc_bit("HearthFires.esm");
+    unsigned dragonborn = skyrim_plugin_dlc_bit("Dragonborn.esm");
+    unsigned all_dlc = dawnguard | hearthfires | dragonborn;
+    assert(dawnguard && hearthfires && dragonborn && !skyrim_plugin_dlc_bit("HighResTexturePack01.esp"));
+    assert(!skyrim_plugin_read_profile_dlc(profile, &bits) && bits == all_dlc);
+    const char *base[] = {"Skyrim.esm", "Update.esm", NULL};
+    const char *all_masters[] = {"Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm", NULL};
+    reset();
+    add("Authored DLC Patch.esp", 1, 0, all_masters);
+    add("Dawnguard.esm", (bits & dawnguard) != 0, 1, base);
+    add("HearthFires.esm", (bits & hearthfires) != 0, 1, base);
+    size_t loaded = run();  /* A DLC mentioned in the list is not a file. */
+    EXPECT_ORDER(loaded, "Dawnguard.esm,HearthFires.esm");
+    assert(state[0] == SKYRIM_PLUGIN_MISSING_MASTER && problem[0] == 4);
+    add("Dragonborn.esm", (bits & dragonborn) != 0, 1, base);
+    loaded = run();
+    EXPECT_ORDER(loaded, "Dawnguard.esm,HearthFires.esm,Dragonborn.esm,Authored DLC Patch.esp");
+
+    entries[2].enabled = 0;  /* This profile explicitly disabled HearthFires. */
+    loaded = run();
+    EXPECT_ORDER(loaded, "Dawnguard.esm,Dragonborn.esm");
+    assert(state[0] == SKYRIM_PLUGIN_MISSING_MASTER && problem[0] == 3 && state[2] == SKYRIM_PLUGIN_OFF);
+    size_t length = 0;
+    char *managed = skyrim_plugin_list_text(entries, order, loaded, &length);
+    assert(managed && !skyrim_plugin_apply_list(profile, managed, length));
+    assert_bytes(list, managed, length);
+    assert(!skyrim_plugin_read_profile_dlc(other, &bits) && !bits);
+    assert(!skyrim_plugin_read_profile_dlc(profile, &bits) && bits == all_dlc);
+    assert(!skyrim_plugin_apply_list(profile, NULL, 0));
+    assert_bytes(list, original, sizeof original - 1);
+    free(managed);
+    reset();
+    puts("profile DLC inheritance PASS");
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2);
     parsing(); names(); ordering(); list_text(); paths(argv[1]); profile_list(argv[1]);
+    profile_dlc_inheritance(argv[1]);
     return 0;
 }

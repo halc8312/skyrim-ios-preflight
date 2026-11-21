@@ -70,6 +70,23 @@ class ModLibarchiveTests(unittest.TestCase):
         self.assertIn("extract ok files 2", self.drive("extract", archive, dest))
         self.assertEqual((dest / "textures/a.dds").read_bytes(), big)
 
+    def test_7z_extracts_all_case_aliases_of_selected_data_root(self):
+        archive = self.seven_zip("alias.7z", {
+            "Bundle/Data/meshes/body.nif": b"body",
+            "bundle/data/meshes/behavior.hkx": b"behavior",
+            "Bundle/CalienteTools/BodySlide/Preset.osp": b"preset",
+            "Bundle/CalienteTools/BodySlide/Shape.osd": b"shape",
+            "Bundle/CalienteTools/BodySlide/BodySlide.exe": b"tool",
+        })
+        dest = self.dir / "alias"
+        dest.mkdir()
+        output = self.drive("extract", archive, dest).lower()
+        self.assertIn("root 1 [bundle/data/] installer 0", output)
+        self.assertIn("extract ok files 2", output)
+        self.assertEqual(set(dest.iterdir()), {dest / "meshes"})
+        self.assertEqual((dest / "meshes/body.nif").read_bytes(), b"body")
+        self.assertEqual((dest / "meshes/behavior.hkx").read_bytes(), b"behavior")
+
     def test_installer_and_duplicates(self):
         archive = self.seven_zip("f.7z", {"fomod/ModuleConfig.xml": b"<config/>", "00 Core/meshes/a.nif": b"x"})
         self.assertIn("installer 1", self.drive("list", archive))

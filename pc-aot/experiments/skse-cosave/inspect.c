@@ -3,7 +3,7 @@
 #define _DARWIN_C_SOURCE
 #include "inspect.h"
 #include "records.h"
-#include <dirent.h>
+#include "save_paths.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -12,34 +12,12 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-enum { DIRECTORY_ENTRIES = 100000, READ_AHEAD = 4096 };
-typedef struct {
-    char base[NAME_MAX + 1], side[NAME_MAX + 1];
-} Names;
+enum { READ_AHEAD = 4096 };
 typedef struct {
     int fd;
     size_t size, offset, filled;
     uint8_t buffer[READ_AHEAD];
 } Reader;
-
-static unsigned fold(unsigned c) {
-    return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
-}
-static int ascii_equal(const char *a, const char *b, size_t length) {
-    for (size_t i = 0; i < length; ++i)
-        if (fold((unsigned char)a[i]) != fold((unsigned char)b[i])) return 0;
-    return 1;
-}
-static size_t save_stem(const char *name) {
-    if (!name || name[0] == '.') return 0;
-    size_t n = strnlen(name, NAME_MAX + 1);
-    if (n <= 4 || n > NAME_MAX || !ascii_equal(name + n - 4, ".ess", 4)) return 0;
-    for (size_t i = 0; i < n; ++i) {
-        unsigned char c = (unsigned char)name[i];
-        if (c < ' ' || c == 127 || c == '/' || c == '\\') return 0;
-    }
-    return n - 4;
-}
 
 static int valid_directory(const char *path) {
     if (!path || path[0] != '/' || !path[1] || strnlen(path, PATH_MAX) >= PATH_MAX) return 0;
@@ -89,57 +67,13 @@ static int open_directory(const char *path) {
 #endif
 }
 
-static SkseInspectStatus find_names(int dir, const char *base, size_t stem, Names *names) {
-    int scan = dup(dir);
-    if (scan < 0) return SKSE_INSPECT_IO;
-    DIR *list = fdopendir(scan);
-    if (!list) {
-        close(scan);
-        return SKSE_INSPECT_IO;
-    }
-    SkseInspectStatus result = SKSE_INSPECT_OK;
-    unsigned seen = 0;
-    for (;;) {
-        errno = 0;
-        struct dirent *e = readdir(list);
-        if (!e) {
-            if (errno) result = SKSE_INSPECT_IO;
-            break;
-        }
-        if (++seen > DIRECTORY_ENTRIES) {
-            result = SKSE_INSPECT_LIMIT;
-            break;
-        }
-        const char *name = e->d_name;
-        size_t n = strlen(name);
-        if (name[0] == '.' || n > NAME_MAX || (n != stem + 4 && n != stem + 5) ||
-            !ascii_equal(name, base, stem))
-            continue;
-        char *target = NULL;
-        if (n == stem + 4 && ascii_equal(name + stem, ".ess", 4)) target = names->base;
-        if (n == stem + 5 && ascii_equal(name + stem, ".skse", 5)) target = names->side;
-        if (!target) continue;
-        if (*target) {
-            result = SKSE_INSPECT_AMBIGUOUS;
-            break;
-        }
-        memcpy(target, name, n + 1);
-    }
-    closedir(list);
-    if (result != SKSE_INSPECT_OK) return result;
+static SkseInspectStatus find_names(int dir, const char *base, size_t stem, SkseSaveNames *names) {
+    int error = skse_save_find_names(dir, base, stem, names);
+    if (error == EEXIST) return SKSE_INSPECT_AMBIGUOUS;
+    if (error == E2BIG) return SKSE_INSPECT_LIMIT;
+    if (error) return SKSE_INSPECT_IO;
     if (!names->base[0]) return SKSE_INSPECT_BASE_MISSING;
     return names->side[0] ? SKSE_INSPECT_OK : SKSE_INSPECT_MISSING;
-}
-static int same_version(const struct stat *a, const struct stat *b) {
-#if defined(__APPLE__)
-    const struct timespec m1 = a->st_mtimespec, m2 = b->st_mtimespec, c1 = a->st_ctimespec,
-                          c2 = b->st_ctimespec;
-#else
-    const struct timespec m1 = a->st_mtim, m2 = b->st_mtim, c1 = a->st_ctim, c2 = b->st_ctim;
-#endif
-    return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_mode == b->st_mode &&
-           a->st_size == b->st_size && a->st_nlink == b->st_nlink && m1.tv_sec == m2.tv_sec &&
-           m1.tv_nsec == m2.tv_nsec && c1.tv_sec == c2.tv_sec && c1.tv_nsec == c2.tv_nsec;
 }
 static SkseInspectStatus open_named(int dir, const char *name, int *fd, struct stat *initial) {
     struct stat named;
@@ -149,12 +83,12 @@ static SkseInspectStatus open_named(int dir, const char *name, int *fd, struct s
     *fd = openat(dir, name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
     if (*fd < 0) return errno == ENOENT || errno == ELOOP ? SKSE_INSPECT_UNSTABLE : SKSE_INSPECT_IO;
     if (fstat(*fd, initial)) return SKSE_INSPECT_IO;
-    return same_version(&named, initial) ? SKSE_INSPECT_OK : SKSE_INSPECT_UNSTABLE;
+    return skse_save_same_version(&named, initial) ? SKSE_INSPECT_OK : SKSE_INSPECT_UNSTABLE;
 }
 static int stable_name(int dir, const char *name, int fd, const struct stat *initial) {
     struct stat named, opened;
     return !fstatat(dir, name, &named, AT_SYMLINK_NOFOLLOW) && !fstat(fd, &opened) &&
-           same_version(initial, &named) && same_version(initial, &opened);
+           skse_save_same_version(initial, &named) && skse_save_same_version(initial, &opened);
 }
 static int buffered_read(void *context, size_t offset, void *out, size_t length) {
     Reader *r = context;
@@ -192,13 +126,13 @@ static SkseInspectStatus inspect_fd(int fd, const struct stat *st, SkseInspectIn
 SkseInspectStatus skse_inspect_companion(const char *directory, const char *base, SkseInspectInfo *out) {
     if (!out) return SKSE_INSPECT_ARGUMENT;
     *out = (SkseInspectInfo){0};
-    size_t stem = save_stem(base);
+    size_t stem = skse_save_stem(base);
     if (!stem || !directory || !*directory) return SKSE_INSPECT_ARGUMENT;
     int dir = open_directory(directory);
     if (dir < 0) return errno == EINVAL ? SKSE_INSPECT_ARGUMENT : SKSE_INSPECT_IO;
     SkseInspectStatus status = SKSE_INSPECT_IO;
     struct stat dir_before, dir_after, base_before, side_before;
-    Names names = {0};
+    SkseSaveNames names;
     int base_fd = -1, side_fd = -1;
     SkseInspectInfo info = {0};
     if (!fstat(dir, &dir_before)) {
@@ -217,7 +151,7 @@ SkseInspectStatus skse_inspect_companion(const char *directory, const char *base
             }
         }
         int path_fd = open_directory(directory);
-        if (path_fd < 0 || fstat(path_fd, &dir_after) || !same_version(&dir_before, &dir_after))
+        if (path_fd < 0 || fstat(path_fd, &dir_after) || !skse_save_same_version(&dir_before, &dir_after))
             status = SKSE_INSPECT_UNSTABLE;
         if (path_fd >= 0) close(path_fd);
     }

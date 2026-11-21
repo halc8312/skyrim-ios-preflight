@@ -181,7 +181,18 @@ static unsigned char *read_head(const char *path, size_t want, size_t *got) {
     fclose(f);
     return b;
 }
-static void inspect(const char *path, const char *name, size_t size, int top_level, SkyrimModReport *r) {
+/* Packfile version 8 and the Skyrim Havok 2010.2 layout are shared by LE
+ * and SE. Only recognize the documented little-endian 64-bit layout. */
+static int skyrim_64bit_hkx(const unsigned char *head, size_t length) {
+    static const unsigned char layout[] = {8, 1, 0, 1}; // pointer size, endian, padding, base class
+    static const char version[] = "hk_2010.2.0-r1";
+    return length >= 64 && le32(head) == 0x57e0e057u && le32(head + 4) == 0x10c0c010u &&
+           le32(head + 12) == 8 && !memcmp(head + 16, layout, sizeof layout) &&
+           le32(head + 20) == 3 && le32(head + 24) == 2 && le32(head + 32) == 0 &&
+           !memcmp(head + 40, version, sizeof version);
+}
+static void inspect(const char *path, const char *name, size_t size, int top_level, int in_skse,
+                    SkyrimModReport *r) {
     const char *dot = strrchr(name, '.');
     if (!dot) return;
     size_t got = 0;
@@ -209,6 +220,10 @@ static void inspect(const char *path, const char *name, size_t size, int top_lev
         ++r->meshes;
         if (v == 100) ++r->se_meshes; else if (v != 83 && v >= 0) ++r->foreign_meshes;
         free(b);
+    } else if (!strcasecmp(dot, ".hkx") && size >= 64) {
+        unsigned char *b = read_head(path, 64, &got);
+        if (b && skyrim_64bit_hkx(b, got)) ++r->hkx_64bit;
+        free(b);
     } else if (!strcasecmp(dot, ".bsa") && top_level) {
         unsigned char *b = read_head(path, 8, &got);
         long v = b ? skyrim_bsa_version(b, got) : -1;
@@ -230,11 +245,14 @@ static void inspect(const char *path, const char *name, size_t size, int top_lev
         ++r->scripts;
         if (b) scan_pex(b, got, r);
         free(b);
-    } else if (!strcasecmp(dot, ".dll") && strcasestr(path, "/skse/")) {
+    } else if (!strcasecmp(dot, ".dll") && in_skse) {
         ++r->skse_dlls;
     }
 }
-static int walk(const char *dir, int depth, SkyrimModReport *r) {
+static int skse_destination(const char *relative) {
+    return !strncasecmp(relative, "skse", 4) && (relative[4] == 0 || relative[4] == '/');
+}
+static int walk(const char *dir, int depth, int in_skse, SkyrimModReport *r) {
     if (depth > 32) return 0;
     DIR *d = opendir(dir);
     if (!d) return -1;
@@ -244,8 +262,9 @@ static int walk(const char *dir, int depth, SkyrimModReport *r) {
         char path[4096]; struct stat st;
         if ((size_t)snprintf(path, sizeof path, "%s/%s", dir, e->d_name) >= sizeof path) continue;
         if (lstat(path, &st)) continue;
-        if (S_ISDIR(st.st_mode)) walk(path, depth + 1, r);
-        else if (S_ISREG(st.st_mode)) inspect(path, e->d_name, (size_t)st.st_size, depth == 0, r);
+        if (S_ISDIR(st.st_mode))
+            walk(path, depth + 1, in_skse || (depth == 0 && skse_destination(e->d_name)), r);
+        else if (S_ISREG(st.st_mode)) inspect(path, e->d_name, (size_t)st.st_size, depth == 0, in_skse, r);
     }
     closedir(d);
     return 0;
@@ -254,14 +273,15 @@ void skyrim_mod_analyze_add_file(const char *path, const char *destination, Skyr
     struct stat st;
     if (stat(path, &st) || !S_ISREG(st.st_mode)) return;
     const char *slash = strrchr(destination, '/');
-    inspect(path, slash ? slash + 1 : destination, (size_t)st.st_size, slash == NULL, report);
+    inspect(path, slash ? slash + 1 : destination, (size_t)st.st_size, slash == NULL,
+            skse_destination(destination), report);
 }
-void skyrim_mod_analyze_add_dir(const char *dir, int top_level, SkyrimModReport *report) {
-    walk(dir, top_level ? 0 : 1, report);
+void skyrim_mod_analyze_add_dir(const char *dir, const char *destination, SkyrimModReport *report) {
+    walk(dir, destination[0] ? 1 : 0, skse_destination(destination), report);
 }
 int skyrim_mod_analyze(const char *data_dir, SkyrimModReport *report) {
     memset(report, 0, sizeof *report);
-    return walk(data_dir, 0, report);
+    return walk(data_dir, 0, 0, report);
 }
 
 /* ---- classic save header ----------------------------------------------- */

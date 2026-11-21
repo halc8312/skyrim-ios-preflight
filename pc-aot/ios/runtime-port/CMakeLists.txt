@@ -24,6 +24,10 @@ set(SKYRIM_IOS_BINDING_SOURCES "" CACHE STRING "Public dynamic guest-binding sou
 option(SKYRIM_IOS_BUILD_APP "Link the public iOS application shell" OFF)
 option(SKYRIM_IOS_CLASSIC_SKSE "Include the opt-in Classic Papyrus and SkyUI support" OFF)
 option(SKYRIM_IOS_SKSE_DLL_PROBE "Include the isolated LE DLL compatibility check" OFF)
+option(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE "Exercise Classic profile settings in an isolated launch probe" OFF)
+if(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE AND NOT (SKYRIM_IOS_CLASSIC_SKSE AND SKYRIM_IOS_SKSE_DLL_PROBE))
+    message(FATAL_ERROR "The Classic settings probe requires Classic SKSE and the DLL probe")
+endif()
 set(SKYRIM_IOS_BUNDLE_IDENTIFIER "local.skyrim.ios.diagnostic" CACHE STRING "Local application identifier")
 
 if(NOT TARGET skyrim_ios_dependencies)
@@ -105,11 +109,12 @@ target_include_directories(skyrim_ios_runtime PUBLIC
 target_compile_definitions(skyrim_ios_runtime PRIVATE GAME_SKYRIM DXVK_NATIVE
     SKYRIM_IOS=1 SKYDREAM_MOBILE=1 SKYRIM_IOS_GUEST_DIAGNOSTIC=1
     SDL_MAIN_HANDLED _FILE_OFFSET_BITS=64)
+set(cosave_source "${SKYRIM_IOS_ROOT}/experiments/skse-cosave")
+target_sources(skyrim_ios_runtime PRIVATE "${cosave_source}/copy_pair.c")
+target_include_directories(skyrim_ios_runtime PRIVATE "${cosave_source}")
 if(SKYRIM_IOS_CLASSIC_SKSE)
-    set(cosave_source "${SKYRIM_IOS_ROOT}/experiments/skse-cosave")
     target_sources(skyrim_ios_runtime PRIVATE
         "${cosave_source}/inspect.c" "${cosave_source}/records.c")
-    target_include_directories(skyrim_ios_runtime PRIVATE "${cosave_source}")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_SKSE=1 SKYDREAM_SKSE=1)
 endif()
 if(SKYRIM_IOS_SKSE_DLL_PROBE)
@@ -119,6 +124,9 @@ if(SKYRIM_IOS_SKSE_DLL_PROBE)
         "${dll_probe_source}/x86_call.c"
         "${dll_probe_source}/x86_heap.c"
         "${dll_probe_source}/x86_winthread.c"
+        "${dll_probe_source}/x86_wintext.c"
+        "${dll_probe_source}/x86_winenv.c"
+        "${dll_probe_source}/papyrus_trial.c"
         "${dll_probe_source}/x86_winfile.c"
         "${dll_probe_source}/x86_winsync.c"
         "${dll_probe_source}/x86_skse_records.c"
@@ -130,6 +138,16 @@ if(SKYRIM_IOS_SKSE_DLL_PROBE)
         "${dll_probe_source}/mod_dll_probe.m")
     target_include_directories(skyrim_ios_runtime PRIVATE "${dll_probe_source}")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_SKSE_DLL_PROBE=1)
+    if(SKYRIM_IOS_CLASSIC_SKSE)
+        target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/mod_papyrus_inputs.c")
+    endif()
+endif()
+if(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE)
+    set(profile_json_source "${SKYRIM_IOS_ROOT}/experiments/skse-profile-json")
+    target_sources(skyrim_ios_runtime PRIVATE
+        "${dll_probe_source}/classic_pex.c" "${dll_probe_source}/classic_scalar.c"
+        "${profile_json_source}/profile_json.c" "${profile_json_source}/profile_overlay.c")
+    target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_CLASSIC_SETTINGS_BACKEND=1)
 endif()
 target_compile_options(skyrim_ios_runtime PRIVATE -O2 -fno-strict-aliasing -fwrapv -fsigned-char
     "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>"
@@ -171,6 +189,10 @@ if(SKYRIM_IOS_BUILD_APP)
     endif()
     add_executable(SkyrimIOS MACOSX_BUNDLE "${CMAKE_CURRENT_SOURCE_DIR}/ios_entry.m"
         ${SKYRIM_IOS_BINDING_SOURCES})
+    if(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE)
+        target_compile_definitions(SkyrimIOS PRIVATE SKYRIM_IOS_CLASSIC_SETTINGS_PROBE=1 SKYRIM_IOS_SKSE_DLL_PROBE=1)
+        target_include_directories(SkyrimIOS PRIVATE "${dll_probe_source}")
+    endif()
     set(host_plist "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")
     if(SKYRIM_IOS_CLASSIC_SKSE)
         target_compile_definitions(SkyrimIOS PRIVATE SKYRIM_IOS_CLASSIC_SKSE=1)

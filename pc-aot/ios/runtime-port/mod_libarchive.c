@@ -96,7 +96,6 @@ int skyrim_archive_extract(const char *path, const char *prefix, int skip_fomod,
     *files_out = 0; *bytes_out = 0;
     struct archive *a = open_reader(path);
     if (!a) return SKYRIM_ZIP_NOT_ZIP;
-    size_t plen = prefix ? strlen(prefix) : 0;
     struct archive_entry *e;
     int status = SKYRIM_ZIP_OK, r;
     char name[1024], out[4096];
@@ -107,9 +106,9 @@ int skyrim_archive_extract(const char *path, const char *prefix, int skip_fomod,
         if (archive_entry_is_encrypted(e)) { status = SKYRIM_ZIP_ENCRYPTED; break; }
         int norm = entry_path(e, name, sizeof name);
         if (norm < 0) { status = SKYRIM_ZIP_UNSAFE_PATH; break; }
-        if (!norm || strncmp(name, prefix ? prefix : "", plen)) continue;
-        const char *rel = name + plen;
-        if (!*rel || (skip_fomod && !strncasecmp(rel, "fomod/", 6))) continue;
+        if (!norm) continue;
+        const char *rel = skyrim_archive_relative_path(name, prefix);
+        if (!rel || (skip_fomod && !strncasecmp(rel, "fomod/", 6))) continue;
         if (skyrim_make_parents(dest_root, rel)) { status = SKYRIM_ZIP_WRITE; break; }
         if ((size_t)snprintf(out, sizeof out, "%s/%s", dest_root, rel) >= sizeof out) { status = SKYRIM_ZIP_WRITE; break; }
         int fd = open(out, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);

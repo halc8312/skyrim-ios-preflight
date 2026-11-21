@@ -17,6 +17,10 @@ extern "C" {
  * or 223 too large. This function never changes the directory fd's offset. */
 uint32_t skse_probe_asset_read(void *context, const char *path, size_t max_size,
                                uint8_t **bytes, size_t *length);
+/* Same snapshot contract, requiring one case-fold match per path component
+ * even when the requested spelling also exists exactly. */
+uint32_t skse_probe_asset_read_unique(void *context, const char *path, size_t max_size,
+                                      uint8_t **bytes, size_t *length);
 /* Get the selected file or directory's type without reading its contents. */
 uint32_t skse_probe_asset_attributes(void *context, const char *path, uint32_t *attributes);
 

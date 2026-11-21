@@ -43,6 +43,12 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     if (self.testRun.totalFailureCount) [self capture:@"failure-screen"];
     [super tearDown];
 }
+- (void)cancelInstaller:(XCUIElement *)installer {
+    [installer.buttons[@"Cancel"] tap];
+    NSPredicate *dismissed = [NSPredicate predicateWithFormat:@"exists == NO"];
+    XCTNSPredicateExpectation *closed = [[XCTNSPredicateExpectation alloc] initWithPredicate:dismissed object:installer];
+    XCTAssertEqual([XCTWaiter waitForExpectations:@[closed] timeout:10], XCTWaiterResultCompleted);
+}
 
 - (XCUIElement *)findRow:(NSString *)label {
     // A presented navigation controller leaves the hub's table in the
@@ -369,7 +375,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 - (void)testInstalledModDllDiagnostics {
     [self.app launch];
     [self openHub];
-    [[self findRow:@"Add a zip file"] tap];
+    [[self findRow:@"Add an archive or character preset"] tap];
     [self pick:@"AuthoredDLL.zip" folder:NO];
     [[self findRow:@"AuthoredDLL"] tap];
     XCUIElement *check = self.app.navigationBars[@"AuthoredDLL"].buttons[@"Check DLLs"];
@@ -428,8 +434,11 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 #endif
     [[self findRow:@"Save check"] tap];
     [self findRow:@"Authored Save"];
-    NSPredicate *missingPlugin = [NSPredicate predicateWithFormat:@"label CONTAINS %@", @"UnavailableFixture.esp"];
-    XCTAssertTrue([self.app.staticTexts matchingPredicate:missingPlugin].count > 0);
+    NSPredicate *missingPlugins = [NSPredicate predicateWithFormat:@"label CONTAINS %@ AND label CONTAINS %@",
+        @"UnavailableFixture.esp", @"HearthFires.esm"];
+    XCUIElement *warning = [self.app.staticTexts matchingPredicate:missingPlugins].firstMatch;
+    XCTAssertTrue([warning waitForExistenceWithTimeout:5]);
+    XCTAssertFalse([warning.label containsString:@"Dawnguard.esm"]);
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     [[self findRow:@"Authored Save"] tap];
     XCUIElement *englishCompanion = self.app.alerts[@"SKSE additional save"];
@@ -440,18 +449,118 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 #endif
     [self capture:@"save-check"]; [self goBackFrom:@"Save check"];
 
-    [[self findRow:@"Add a zip file"] tap];
+    XCUIElement *installer = self.app.navigationBars[@"Step 1/1"];
+    [[self findRow:@"Add an archive or character preset"] tap];
+    [self pick:@"AuthoredDlcConditions.zip" folder:NO];
+    XCTAssertTrue([installer waitForExistenceWithTimeout:15]);
+    [self findRow:@"Installed and enabled DLC only"];
+    [self cancelInstaller:installer];
+
+    // Create both profiles before the archive is installed.
+    [[self findRow:@"Default"] tap];
+    [self.app.navigationBars[@"Profiles"].buttons[@"Add"] tap];
+    [self fillName:@"Archive Reuse" replacing:@"MOD" inAlert:@"New profile"];
+    [self goBackFrom:@"Profiles"];
+
+    [[self findRow:@"Add an archive or character preset"] tap];
     [self pick:@"AuthoredZip.zip" folder:NO];
     [self findRow:@"AuthoredZip"];
     [self capture:@"zip-imported"];
+    [[self findRow:@"AuthoredZip"] tap];
+    [self findRow:@"⚠️ Incompatible 64-bit HKX detected (1). Use Skyrim LE files."];
+    [self goBackFrom:@"AuthoredZip"];
+    [self goBackFrom:@"MOD"];
+    [[self findRow:@"App language"] tap];
+    [self.app.buttons[@"日本語"] tap];
+    [[self findRow:@"MODの管理"] tap];
+    [[self findRow:@"AuthoredZip"] tap];
+    [self findRow:@"⚠️ LE非対応の64ビットHKXが1件あります。LE用のファイルを使ってください。"];
+    [self goBackFrom:@"AuthoredZip"];
+    [self goBackFrom:@"MOD"];
+    [[self findRow:@"アプリの言語"] tap];
+    [self.app.buttons[@"English"] tap];
+    [self openHub];
+
+    [[self findRow:@"Default"] tap];
+    [[self findRow:@"Archive Reuse"] tap];
+    [self goBackFrom:@"Profiles"];
+    XCUIElement *reused = [self findRow:@"AuthoredZip"].switches.firstMatch;
+    XCTAssertEqualObjects(reused.value, @"0");
+    [[self findRow:@"Add an archive or character preset"] tap];
+    [self pick:@"AuthoredZip.zip" folder:NO];
+    NSPredicate *packageEnabled = [NSPredicate predicateWithFormat:@"value == %@", @"1"];
+    XCTNSPredicateExpectation *assigned = [[XCTNSPredicateExpectation alloc] initWithPredicate:packageEnabled object:reused];
+    XCTAssertEqual([XCTWaiter waitForExpectations:@[assigned] timeout:10], XCTWaiterResultCompleted);
+    [reused tap];
+    XCTAssertEqualObjects(reused.value, @"0");
+    [[self findRow:@"Add an archive or character preset"] tap];
+    [self pick:@"AuthoredZip.zip" folder:NO];
+
+    [[self findRow:@"Archive Reuse"] tap];
+    [[self findRow:@"Default"] tap];
+    [self goBackFrom:@"Profiles"];
+    XCTAssertEqualObjects([self findRow:@"AuthoredZip"].switches.firstMatch.value, @"1");
     [[self findRow:@"Add a folder"] tap];
     [self pick:@"AuthoredFolder" folder:YES];
     [self findRow:@"AuthoredFolder"];
     [self capture:@"folder-imported"];
-    [[self findRow:@"Add a zip file"] tap];
+
+    [[self findRow:@"Default"] tap];
+    [self.app.navigationBars[@"Profiles"].buttons[@"Add"] tap];
+    [self fillName:@"Trial" replacing:@"MOD" inAlert:@"New profile"];
+    XCUIElement *profile = [self findRow:@"Trial"];
+    [profile swipeLeft];
+    if (![self.app.alerts[@"Rename"] waitForExistenceWithTimeout:1.5]) {
+        XCUIElement *rename = self.app.buttons[@"Rename"];
+        XCTAssertTrue([rename waitForExistenceWithTimeout:6]);
+        [rename tap];
+    }
+    [self fillName:@"Trial Two" replacing:@"Trial" inAlert:@"Rename"];
+    [[self findRow:@"Trial Two"] tap]; [self capture:@"profile-renamed-selected"];
+    [self goBackFrom:@"Profiles"];
+
+    // The game still runs Default even though Trial Two is selected for next launch.
+    [[self findRow:@"Save check"] tap];
+    [[self findRow:@"Authored Save"] swipeLeft];
+    XCUIElement *copyAction = self.app.buttons[@"Copy to profile"];
+    XCTAssertTrue([copyAction waitForExistenceWithTimeout:8]);
+    [copyAction tap];
+    XCTAssertTrue([self.app.navigationBars[@"Copy save to profile"] waitForExistenceWithTimeout:8]);
+    XCTAssertFalse(self.app.staticTexts[@"Default"].exists);
+    [[self findRow:@"Trial Two"] tap];
+    XCUIElement *copied = self.app.alerts[@"Save copied"];
+    XCTAssertTrue([copied waitForExistenceWithTimeout:10]);
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    XCTAssertTrue(copied.staticTexts[@"Copied both .ess and .skse files to Trial Two."].exists);
+#else
+    XCTAssertTrue(copied.staticTexts[@"Copied the .ess file to Trial Two."].exists);
+#endif
+    [copied.buttons[@"OK"] tap];
+    [[self findRow:@"Trial Two"] tap];
+    XCUIElement *collision = self.app.alerts[@"Could not copy save"];
+    XCTAssertTrue([collision waitForExistenceWithTimeout:10]);
+    XCTAssertTrue(collision.staticTexts[@"A save or companion with this name already exists."].exists);
+    [collision.buttons[@"OK"] tap];
+    [self goBackFrom:@"Copy save to profile"];
+    [self goBackFrom:@"Save check"];
+
+    // The disabled package's plugin row stays on in the selected profile.
+    // The installer must use its effective state, with Default still running.
+    XCUIElement *prerequisite = [self findRow:@"AuthoredZip"].switches.firstMatch;
+    XCTAssertTrue(prerequisite.exists);
+    XCTAssertEqualObjects(prerequisite.value, @"1");
+    [prerequisite tap];
+    XCTAssertEqualObjects(prerequisite.value, @"0");
+
+    [[self findRow:@"Add an archive or character preset"] tap];
+    [self pick:@"AuthoredDlcConditions.zip" folder:NO];
+    XCTAssertTrue([installer waitForExistenceWithTimeout:15]);
+    [self findRow:@"No DLC inherited from Default"];
+    [self cancelInstaller:installer];
+
+    [[self findRow:@"Add an archive or character preset"] tap];
     [self pick:@"AuthoredInstaller.zip" folder:NO];
     // The package is named in the compact header or the regular navigation prompt.
-    XCUIElement *installer = self.app.navigationBars[@"Step 1/1"];
     XCTAssertTrue([installer waitForExistenceWithTimeout:15]);
     XCUIElement *description = self.app.staticTexts[@"mod-installer-description"];
     XCTAssertTrue([description waitForExistenceWithTimeout:8]);
@@ -473,19 +582,50 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [installer.buttons[@"Install"] tap];
     [self findRow:@"AuthoredInstaller"];
 
-    [[self findRow:@"Default"] tap];
-    [self.app.navigationBars[@"Profiles"].buttons[@"Add"] tap];
-    [self fillName:@"Trial" replacing:@"MOD" inAlert:@"New profile"];
-    XCUIElement *profile = [self findRow:@"Trial"];
-    [profile swipeLeft];
-    if (![self.app.alerts[@"Rename"] waitForExistenceWithTimeout:1.5]) {
-        XCUIElement *rename = self.app.buttons[@"Rename"];
-        XCTAssertTrue([rename waitForExistenceWithTimeout:6]);
-        [rename tap];
+    [[self findRow:@"Add a folder"] tap];
+    [self pick:@"AuthoredCancelledInstaller" folder:YES];
+    XCTAssertTrue([installer waitForExistenceWithTimeout:15]);
+    [self cancelInstaller:installer];
+    XCTAssertFalse(self.app.staticTexts[@"AuthoredCancelledInstaller"].exists);
+
+    [[self findRow:@"Add a folder"] tap];
+    [self pick:@"AuthoredBrokenInstaller" folder:YES];
+    XCTAssertFalse([installer waitForExistenceWithTimeout:3]);
+    XCTAssertFalse(self.app.staticTexts[@"AuthoredBrokenInstaller"].exists);
+
+    [[self findRow:@"Add a folder"] tap];
+    [self pick:@"AuthoredFolderInstaller" folder:YES];
+    XCTAssertTrue([installer waitForExistenceWithTimeout:15]);
+    XCTAssertTrue([description waitForExistenceWithTimeout:8]);
+    XCTAssertTrue([description.label containsString:@"Choose an expanded-folder sample"]);
+    [[self findRow:@"Blue"] tap];
+    [installer.buttons[@"Install"] tap];
+    [self findRow:@"AuthoredFolderInstaller"];
+
+    NSArray<NSArray<NSString *> *> *missingFiles = @[
+        @[@"AuthoredMissingChoiceInstaller", @"samples/not-in-package.txt"],
+        @[@"AuthoredMissingRequired.zip", @"samples/required.txt"],
+    ];
+    for (NSArray<NSString *> *fixture in missingFiles) {
+        NSString *name = fixture[0];
+        BOOL folder = !name.pathExtension.length;
+        [[self findRow:(folder ? @"Add a folder" : @"Add an archive or character preset")] tap];
+        [self pick:name folder:folder];
+        XCTAssertTrue([installer waitForExistenceWithTimeout:15]);
+        if (folder) [[self findRow:@"Unavailable sample"] tap];
+        [installer.buttons[@"Install"] tap];
+        XCUIElement *error = self.app.alerts[@"Could not install MOD"];
+        XCTAssertTrue([error waitForExistenceWithTimeout:8]);
+        NSPredicate *source = [NSPredicate predicateWithFormat:@"label CONTAINS %@", fixture[1]];
+        XCTAssertTrue([error.staticTexts matchingPredicate:source].firstMatch.exists);
+        [error.buttons[@"OK"] tap];
+        XCTAssertFalse(self.app.staticTexts[name.stringByDeletingPathExtension].exists);
     }
-    [self fillName:@"Trial Two" replacing:@"Trial" inAlert:@"Rename"];
-    [[self findRow:@"Trial Two"] tap]; [self capture:@"profile-renamed-selected"];
-    [self goBackFrom:@"Profiles"];
+
+    prerequisite = [self findRow:@"AuthoredZip"].switches.firstMatch;
+    XCTAssertEqualObjects(prerequisite.value, @"0");
+    [prerequisite tap];
+    XCTAssertEqualObjects(prerequisite.value, @"1");
     [[self findRow:@"Find on Nexus Mods"] tap];
     XCTAssertTrue([self.app.navigationBars[@"Nexus Mods"] waitForExistenceWithTimeout:10]);
     XCTAssertTrue([self.app.webViews.firstMatch waitForExistenceWithTimeout:12]);
@@ -507,7 +647,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self.app launch]; [self openHub];
     [self findRow:@"Trial Two"];
     [[self findRow:@"Conflicts"] tap];
-    XCUIElement *conflict=[self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"label CONTAINS %@ AND label CONTAINS %@",@"AuthoredFolder",@"AuthoredZip"]].firstMatch;
+    XCUIElement *conflict = self.app.staticTexts[@"AuthoredFolder replaces AuthoredZip"];
     XCTAssertTrue([conflict waitForExistenceWithTimeout:6]);
     XCUIElement *conflictRow = [self findRow:conflict.label];
     [self capture:@"conflict-summary"]; [conflictRow tap];

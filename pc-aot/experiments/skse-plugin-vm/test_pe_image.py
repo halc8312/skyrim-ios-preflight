@@ -34,7 +34,8 @@ class Section(c.Structure):
 class Image(c.Structure):
     _fields_ = [(n, c.c_uint32) for n in ("base", "size", "query_va", "load_va", "entry_va")] + [
         ("bytes", c.c_void_p), ("headers_size", c.c_uint32),
-        ("section_count", c.c_uint16), ("sections", Section * 96)]
+        ("section_count", c.c_uint16), ("sections", Section * 96),
+        ("data_page_protection", c.c_void_p)]
 
 
 class Symbol(c.Structure):
@@ -142,6 +143,16 @@ def add_tls(d):
     directory(d, 5, 0x3180, 24)
     put(d, DATA + 0x180, "II8H", 0x2000, 24,
         0x30c0, 0x30c4, 0x30c8, 0x30cc, 0x30e0, 0x30e4, 0x30e8, 0)
+
+
+def add_legacy_load_config(d):
+    directory(d, 10, 0x20c0, 64)
+    put(d, RD + 0xc0, "I", 72)
+    put(d, RD + 0xfc, "III", BASE + 0x3130, BASE + 0x2190, 2)
+    put(d, RD + 0x190, "II", 0x1000, 0x1010)
+    put(d, DATA + 0x130, "I", 0x13579bdf)
+    directory(d, 5, 0x3180, 12)
+    put(d, DATA + 0x180, "IIHH", 0x2000, 12, 0x30fc, 0x3100)
 
 
 def find_tool(*names):
@@ -576,6 +587,48 @@ class PeReaderTest(unittest.TestCase):
         put(d, DATA + 0x104, "I", 12)
         put(d, DATA + 0x108, "H", 0x3050)
         self.expect(d, "malformed PE")
+
+    def test_legacy_load_config_at_default_and_alternate_bases(self):
+        d = make_image()
+        add_legacy_load_config(d)
+        status, image = self.map(d)
+        self.assertEqual("ok", status)
+        self.assertEqual(bytes(d[RD + 0xc0:RD + 0x108]), c.string_at(image.bytes + 0x20c0, 72))
+        base = BASE + 0x200000
+        status, image = self.bind(d, base=base)
+        self.assertEqual("ok", status)
+        self.assertEqual((base + 0x3130, base + 0x2190, 2),
+                         struct.unpack("<III", c.string_at(image.bytes + 0x20fc, 12)))
+        self.assertEqual((0x1000, 0x1010), struct.unpack("<II", c.string_at(image.bytes + 0x2190, 8)))
+        self.assertEqual(b"\xdf\x9b\x57\x13", c.string_at(image.bytes + 0x3130, 4))
+
+    def test_legacy_load_config_refuses_unknown_or_invalid_metadata(self):
+        d = make_image()
+        add_legacy_load_config(d)
+        for offset, value, reason in (
+                (RD + 0xc0, 96, "unsupported data directory"),
+                (RD + 0xcc, 1, "unsupported data directory"),
+                (RD + 0xfc, BASE + 0x1000, "malformed PE"),
+                (RD + 0x100, BASE + 0x3190, "malformed PE"),
+                (RD + 0x104, 4097, "parser limit exceeded"),
+                (RD + 0x194, 0x1000, "malformed PE"),
+                (RD + 0x194, 0x2000, "malformed PE")):
+            with self.subTest(offset=offset, value=value):
+                bad = bytearray(d)
+                put(bad, offset, "I", value)
+                self.expect(bad, reason)
+        for flag, reason in ((0x4000, "unsupported data directory"), (0x0400, "malformed PE")):
+            bad = bytearray(d)
+            put(bad, OPT + 70, "H", flag)
+            self.expect(bad, reason)
+        bad = bytearray(d)
+        directory(bad, 10, 0x21c0, 64)
+        put(bad, RD + 0x1c0, "I", 72)
+        self.expect(bad, "malformed PE")
+        for displacement in (0x188, 0x18a):
+            bad = bytearray(d)
+            put(bad, DATA + displacement, "H", 0)
+            self.assertEqual("invalid image relocation", self.bind(bad, base=BASE + 0x200000)[0])
 
     def test_only_named_approved_iat_words_change(self):
         for lookup in (0x3080, 0):  # Unbound IAT is a lookup source when OriginalFirstThunk is absent.

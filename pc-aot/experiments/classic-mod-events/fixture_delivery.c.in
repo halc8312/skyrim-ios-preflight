@@ -1,0 +1,65 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+enum { FIXTURE_AUDIENCE = 16 };
+static Registration fixture_registrations[FIXTURE_AUDIENCE];
+static uint64_t fixture_epochs[FIXTURE_AUDIENCE];
+
+/* Feed the same pinned registration list to both test send paths. These
+ * records represent one synthetic VM and one stale VM for exclusion. */
+void classic_fixture_subscribe(const FixtureSubscription *subscriptions, size_t count) {
+    CHECK(count <= FIXTURE_AUDIENCE);
+    memset(fixture_registrations, 0, sizeof(fixture_registrations));
+    memset(fixture_epochs, 0, sizeof(fixture_epochs));
+    registrations = count ? fixture_registrations : NULL;
+    for (size_t i = 0; i < count; ++i) {
+        const FixtureSubscription *row = &subscriptions[i];
+        CHECK(row->epoch);
+        fixture_epochs[i] = row->epoch;
+        fixture_registrations[i] = (Registration){
+            .next = i + 1 < count ? &fixture_registrations[i + 1] : NULL,
+            .handle = row->handle, .registry = row->registry, .kind = 2,
+            .name = (char *)row->event, .callback = (char *)row->callback,
+        };
+    }
+}
+
+typedef struct {
+    Registration recipient;
+    char callback[CLASSIC_MOD_EVENT_NAME_MAX + 1];
+} CopiedTarget;
+
+static int compare_handles(const void *a, const void *b) {
+    const CopiedTarget *left = a, *right = b;
+    return (left->recipient.handle > right->recipient.handle) -
+           (left->recipient.handle < right->recipient.handle);
+}
+
+void classic_fixture_send_typed(CPU *c, uint32_t registry, uint64_t epoch, const ClassicModEventPacket *packet) {
+    CHECK(registry && epoch && packet->argc <= CLASSIC_MOD_EVENT_BOOL_MAX);
+    CopiedTarget targets[FIXTURE_AUDIENCE];
+    size_t count = 0;
+    pthread_mutex_lock(&event_lock);
+    for (Registration *row = registrations; row; row = row->next) {
+        if (fixture_epochs[row - fixture_registrations] != epoch) continue;
+        if (row->registry != registry || row->kind != 2 || strcmp(row->name, packet->name)) continue;
+        CHECK(count < FIXTURE_AUDIENCE);
+        CopiedTarget *target = &targets[count++];
+        target->recipient = (Registration){.handle = row->handle, .registry = row->registry};
+        CHECK(strlen(row->callback) <= CLASSIC_MOD_EVENT_NAME_MAX);
+        strcpy(target->callback, row->callback);
+        handle_ref(c, row->handle, 1);
+    }
+    pthread_mutex_unlock(&event_lock);
+    if (!count) return;
+    qsort(targets, count, sizeof(*targets), compare_handles);
+
+    uint32_t values = packet->argc ? gmalloc(packet->argc * 8u) : 0;
+    for (unsigned i = 0; i < packet->argc; ++i) {
+        M32(values + 8 * i) = 5;
+        M32(values + 8 * i + 4) = packet->args[i];
+    }
+    for (size_t i = 0; i < count; ++i) {
+        send_event(c, &targets[i].recipient, targets[i].callback, packet->argc, values);
+        handle_ref(c, targets[i].recipient.handle, 0);
+    }
+    if (values) gfree(values);
+}

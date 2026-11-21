@@ -13,6 +13,7 @@ MAX_ESS = 512 * 1024 * 1024
 MAX_SKSE = 64 * 1024 * 1024
 BLOCK = 256 * 1024
 CLASSIC_RUNTIME = 0x09200000
+ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
 class PairCheckError(ValueError):
@@ -65,9 +66,20 @@ def pair_paths(selected):
     if path.suffix.lower() != ".ess":
         raise PairCheckError("select_ess")
     check_local_path(path)
-    wanted = path.with_suffix(".skse").name.casefold()
+    # Match the in-app inspector: only ASCII letters are case-insensitive.
+    base_name = path.name.translate(ASCII_LOWER)
+    companion_name = path.with_suffix(".skse").name.translate(ASCII_LOWER)
+    bases = 0
+    matches = []
     with os.scandir(path.parent) as siblings:
-        matches = [Path(item.path) for item in siblings if item.name.casefold() == wanted]
+        for item in siblings:
+            name = item.name.translate(ASCII_LOWER)
+            if name == base_name:
+                bases += 1
+            elif name == companion_name:
+                matches.append(Path(item.path))
+    if bases != 1:
+        raise PairCheckError("missing_or_ambiguous_base")
     if len(matches) != 1:
         raise PairCheckError("missing_or_ambiguous_companion")
     check_local_path(matches[0])

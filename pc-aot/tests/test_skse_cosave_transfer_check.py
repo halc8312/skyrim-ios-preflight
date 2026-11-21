@@ -105,6 +105,31 @@ class TransferTests(unittest.TestCase):
         with self.assertRaisesRegex(checker.PairCheckError, "select_ess"):
             checker.compare(self.sa, self.b)
 
+    def test_ascii_aliases_do_not_merge_distinct_unicode_stems(self):
+        self.b = self.b.rename(self.b.with_name("Straße.ess"))
+        self.sb = self.sb.rename(self.b.with_suffix(".SKSE"))
+        unrelated = self.b.with_name("STRASSE.skse")
+        if unrelated.exists():
+            self.skipTest("volume aliases these two Unicode stems")
+        shutil.copyfile(self.sa, unrelated)
+        paths = [self.a, self.sa, self.b, self.sb, unrelated]
+        before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths]
+        result = self.command()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ess_match=1 skse_match=1", result.stdout)
+        self.assertEqual(before, [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths])
+        self.sb.unlink()
+        with self.assertRaisesRegex(checker.PairCheckError, "missing_or_ambiguous_companion"):
+            checker.compare(self.a, self.b)
+
+    def test_case_duplicate_base_is_ambiguous_even_if_companion_is_unique(self):
+        alias = self.b.with_name(self.b.name.upper())
+        if alias.exists():
+            self.skipTest("case-insensitive volume")
+        shutil.copyfile(self.b, alias)
+        with self.assertRaisesRegex(checker.PairCheckError, "missing_or_ambiguous_base"):
+            checker.compare(self.a, self.b)
+
     def test_symlinks_are_rejected_when_available_and_help_does_not_open_inputs(self):
         path = self.b.parent / "link.ess"
         try:

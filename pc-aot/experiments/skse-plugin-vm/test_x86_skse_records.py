@@ -61,6 +61,8 @@ class ClassicRecordStreamTests(unittest.TestCase):
     def test_two_callers_can_write_read_and_close_independently(self):
         self.run_case("owners")
 
+    def test_owned_copy_rewinds_without_moving_source_and_can_outlive_it(self):
+        self.run_case("copy")
 
 if __name__ == "__main__":
     unittest.main()

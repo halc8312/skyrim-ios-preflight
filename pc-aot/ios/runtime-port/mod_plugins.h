@@ -51,6 +51,13 @@ void skyrim_plugin_header_free(SkyrimPluginHeader *header);
 int skyrim_plugin_name_valid(const char *name);
 /* 1 for Skyrim.esm / Update.esm (case-insensitive): always loaded first. */
 int skyrim_plugin_is_base(const char *name);
+/* A bit for an official DLC master, or 0 for other names. */
+unsigned skyrim_plugin_dlc_bit(const char *name);
+/* Read the profile's previous choices for the three official DLC masters
+ * from its unmanaged list, or from the snapshot of that list when the
+ * current file is managed. An absent list yields zero bits. Returns 0 or
+ * an errno-style error. Does not modify the profile. */
+int skyrim_plugin_read_profile_dlc(const char *profile, unsigned *enabled);
 /* Sort rank for newly found plugins: official DLC in their usual order,
  * then other masters, then plugins. Lower first. */
 int skyrim_plugin_default_rank(const char *name, int is_master);
@@ -101,6 +108,8 @@ int skyrim_plugin_apply_list(const char *profile, const char *list, size_t lengt
  * -1: ambiguous aliases, unreadable directory or capacity too small. */
 int skyrim_plugin_child_path(const char *directory, const char *name,
                              char *out, size_t capacity);
+/* An unambiguous, regular .esp or .esm file in the running game's Data folder. */
+int skyrim_plugin_file_present(const char *data, const char *name);
 #ifdef __cplusplus
 }
 #endif

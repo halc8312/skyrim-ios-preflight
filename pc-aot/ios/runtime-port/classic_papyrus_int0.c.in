@@ -1,0 +1,157 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#include <stdatomic.h>
+
+enum { CLASSIC_INT0_NAME_BYTES = 64, CLASSIC_INT0_OBJECT_BYTES = 0x30, CLASSIC_INT0_INT = 3 };
+
+typedef struct {
+    const char *class_name, *function_name;
+    uint64_t epoch;
+    uint32_t function_id;
+    bool (*invoke)(void *context, uint64_t epoch, uint32_t function_id, uint32_t *int_bits);
+    void *context;
+} ClassicInt0Request;
+
+typedef struct {
+    ClassicInt0Request request;
+    char class_name[CLASSIC_INT0_NAME_BYTES], function_name[CLASSIC_INT0_NAME_BYTES];
+    uint32_t registry, object, vtable;
+} ClassicInt0Publication;
+
+static ClassicInt0Publication int0_publication;
+static atomic_flag int0_busy = ATOMIC_FLAG_INIT;
+
+static bool int0_enter(void) {
+    return !atomic_flag_test_and_set_explicit(&int0_busy, memory_order_acquire);
+}
+
+static void int0_leave(void) {
+    atomic_flag_clear_explicit(&int0_busy, memory_order_release);
+}
+
+static bool int0_copy_name(char destination[CLASSIC_INT0_NAME_BYTES], const char *source) {
+    if (!source) return false;
+    for (size_t i = 0; i < CLASSIC_INT0_NAME_BYTES; ++i) {
+        const char ch = source[i];
+        if (!ch) {
+            destination[i] = 0;
+            return i != 0;
+        }
+        const bool letter = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
+        if (!letter && ch != '_' && !(i && ch >= '0' && ch <= '9')) return false;
+        destination[i] = ch;
+    }
+    return false;
+}
+
+static bool classic_values_reserved(const char *class_name, const char *name);
+
+/* Call once before the registration hook. Names are copied. The compiled
+ * test provider retains context until a matching retirement has succeeded. */
+bool skse_classic_int0_request(const ClassicInt0Request *request) {
+    if (!request || !request->epoch || !request->function_id || !request->invoke || !int0_enter()) return false;
+    bool accepted = false;
+    ClassicInt0Publication *publication = &int0_publication;
+    if (!publication->request.epoch &&
+        int0_copy_name(publication->class_name, request->class_name) &&
+        int0_copy_name(publication->function_name, request->function_name) &&
+        !classic_values_reserved(publication->class_name, publication->function_name)) {
+        unsigned count;
+        const SkseNative *table = skse_native_table(&count);
+        accepted = true;
+        for (unsigned i = 0; i < count; ++i) {
+            if (!strcasecmp(table[i].class_name, publication->class_name) &&
+                !strcasecmp(table[i].name, publication->function_name)) {
+                accepted = false;
+                break;
+            }
+        }
+        if (accepted) {
+            publication->request = *request;
+            publication->request.class_name = publication->class_name;
+            publication->request.function_name = publication->function_name;
+        }
+    }
+    int0_leave();
+    return accepted;
+}
+
+/* Keep the game-owned object and vtable alive. A busy retirement can be
+ * retried while its context remains owned by the provider. */
+bool skse_classic_int0_retire(uint64_t epoch) {
+    if (!epoch || !int0_enter()) return false;
+    ClassicInt0Request *request = &int0_publication.request;
+    const bool retired = epoch == request->epoch && request->invoke;
+    if (retired) {
+        request->invoke = NULL;
+        request->context = NULL;
+    }
+    int0_leave();
+    return retired;
+}
+
+static void int0_run(CPU *c) {
+    if (rt_current_cpu() != c || !int0_enter()) RET(0,5);
+    const ClassicInt0Publication *publication = &int0_publication;
+    const ClassicInt0Request *request = &publication->request;
+    const uint32_t self = c->r[1], result = ARG(3), state = ARG(4);
+    bool returned = false;
+    if (request->invoke && publication->object && self == publication->object &&
+        ARG(1) == publication->registry && !ARG(0) &&
+        state && !(state & 3) && result && !(result & 3) && result <= UINT32_MAX - 7 &&
+        M32(self) == publication->vtable && M32(self + 0x2c) == request->function_id) {
+        uint32_t bits = 0;
+        returned = request->invoke(request->context, request->epoch, request->function_id, &bits);
+        if (returned) {
+            skse_member(c, VM_DESTROY, result, 0, NULL);
+            M32(result) = CLASSIC_INT0_INT;
+            M32(result + 4) = bits;
+        }
+    }
+    int0_leave();
+    RET(returned,5);
+}
+
+static void int0_publish(CPU *c, uint32_t registry, uint32_t has_thunk) {
+    if (!registry || rt_current_cpu() != c || !int0_enter()) return;
+    ClassicInt0Publication *publication = &int0_publication;
+    const ClassicInt0Request *request = &publication->request;
+    if (!request->invoke || publication->object) {
+        int0_leave();
+        return;
+    }
+
+    const uint32_t class_bytes = (uint32_t)strlen(request->class_name) + 1;
+    const uint32_t name_bytes = (uint32_t)strlen(request->function_name) + 1;
+    const uint32_t names = gmalloc(class_bytes + name_bytes);
+    uint32_t vtable_copy = 0;
+    if (names) vtable_copy = gmalloc((RUN_SLOT + 2) * 4);
+    if (vtable_copy) {
+        const uint32_t allocate_args[] = {CLASSIC_INT0_OBJECT_BYTES, 0, 0};
+        const uint32_t object = skse_member(c, HEAP_ALLOC, FORM_HEAP, 3, allocate_args);
+        if (object) {
+            memcpy(GPTR(names), request->class_name, class_bytes);
+            memcpy(GPTR(names + class_bytes), request->function_name, name_bytes);
+            memset(GPTR(object), 0, CLASSIC_INT0_OBJECT_BYTES);
+            const uint32_t ctor_args[] = {names + class_bytes, names, 1, 0};
+            skse_member(c, VM_NATIVE_CTOR, object, 4, ctor_args);
+
+            /* Preserve the engine's deleting destructor and RTTI locator. */
+            memcpy(GPTR(vtable_copy), GPTR(M32(object) - 4), (RUN_SLOT + 2) * 4);
+            const uint32_t vtable = vtable_copy + 4;
+            M32(vtable + HAS_CALLBACK_SLOT * 4) = has_thunk;
+            M32(vtable + RUN_SLOT * 4) = rt_thunk(int0_run, "Classic.Int0Probe.Run");
+            M32(object) = vtable;
+            M32(object + 0x14) = CLASSIC_INT0_INT;
+            M32(object + 0x2c) = request->function_id;
+            skse_virtual(c, registry, REGISTER_SLOT, 1, &object);
+
+            publication->registry = registry;
+            publication->object = object;
+            publication->vtable = vtable;
+            vtable_copy = 0;
+        }
+    }
+    gfree(names);
+    gfree(vtable_copy);
+    int0_leave();
+}

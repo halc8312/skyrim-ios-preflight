@@ -15,6 +15,11 @@
 
 enum { TES4_HEADER_BYTES = 24, TES4_COMPRESSED = 0x00040000u };
 static const char k_managed[] = "# Managed by SkyrimIOS Settings > MOD. Changes here are replaced at launch.\r\n";
+enum { OFFICIAL_DLC_COUNT = 3 };
+static const char *const official_plugins[] = {
+    "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
+    "HighResTexturePack01.esp", "HighResTexturePack02.esp", "HighResTexturePack03.esp"
+};
 
 static uint32_t le32(const unsigned char *p) {
     return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
@@ -114,12 +119,15 @@ int skyrim_plugin_is_base(const char *name) {
     return name && (!strcasecmp(name, "Skyrim.esm") || !strcasecmp(name, "Update.esm"));
 }
 
+unsigned skyrim_plugin_dlc_bit(const char *name) {
+    for (int i = 0; i < OFFICIAL_DLC_COUNT; ++i)
+        if (name && !strcasecmp(name, official_plugins[i])) return 1u << i;
+    return 0;
+}
+
 int skyrim_plugin_default_rank(const char *name, int is_master) {
-    static const char *const official[] = {
-        "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
-        "HighResTexturePack01.esp", "HighResTexturePack02.esp", "HighResTexturePack03.esp"};
-    for (int i = 0; i < (int)(sizeof official / sizeof official[0]); ++i)
-        if (name && !strcasecmp(name, official[i])) return i;
+    for (int i = 0; i < (int)(sizeof official_plugins / sizeof official_plugins[0]); ++i)
+        if (name && !strcasecmp(name, official_plugins[i])) return i;
     return is_master ? 100 : 200;
 }
 
@@ -270,10 +278,26 @@ int skyrim_plugin_child_path(const char *directory, const char *name, char *out,
     return matches ? 1 : 0;
 }
 
+int skyrim_plugin_file_present(const char *data, const char *name) {
+    char path[4096];
+    struct stat st;
+    return skyrim_plugin_name_valid(name) && skyrim_plugin_child_path(data, name, path, sizeof path) == 1 &&
+           !lstat(path, &st) && S_ISREG(st.st_mode);
+}
+
 /* The baseline lives in the application-owned profile, never in the game's
  * Data folder. One leading byte distinguishes an absent file from an empty
  * one. It is durable before we publish a managed list. */
 enum { MOD_LIST_LIMIT = 1024 * 1024 };
+static int baseline_path(const char *profile, char *out, size_t capacity) {
+    int n = snprintf(out, capacity, "%s/.skyrimios-plugin-baseline-v1", profile);
+    return n >= 0 && (size_t)n < capacity;
+}
+
+static int valid_baseline(const char *bytes, size_t length) {
+    return length && (bytes[0] == 1 || (length == 1 && bytes[0] == 0));
+}
+
 static int read_list_file(const char *path, size_t limit, char **bytes, size_t *size) {
     *bytes = NULL;
     *size = 0;
@@ -322,21 +346,71 @@ static int profile_subdir(const char *parent, const char *name, int create, char
     return S_ISDIR(st.st_mode) ? 0 : ENOTDIR;
 }
 
+static int profile_list_path(const char *profile, int create, char *target, size_t capacity) {
+    char docs[4096], folder[4096];
+    int e = profile_subdir(profile, "Documents", create, docs, sizeof docs);
+    if (!e) e = profile_subdir(docs, "Skyrim", create, folder, sizeof folder);
+    if (!e && skyrim_plugin_child_path(folder, "plugins.txt", target, capacity) < 0) e = EINVAL;
+    return e;
+}
+
+static unsigned listed_dlc(const char *bytes, size_t length) {
+    unsigned bits = 0;
+    size_t start = 0;
+    while (start < length) {
+        size_t end = start;
+        while (end < length && bytes[end] != '\r' && bytes[end] != '\n') ++end;
+        size_t next = end + 1;
+        while (start < end && (bytes[start] == ' ' || bytes[start] == '\t')) ++start;
+        while (end > start && (bytes[end - 1] == ' ' || bytes[end - 1] == '\t')) --end;
+        for (int i = 0; i < OFFICIAL_DLC_COUNT; ++i) {
+            const char *name = official_plugins[i];
+            if (strlen(name) == end - start && !strncasecmp(bytes + start, name, end - start))
+                bits |= 1u << i;
+        }
+        start = next;
+    }
+    return bits;
+}
+
+int skyrim_plugin_read_profile_dlc(const char *profile, unsigned *enabled) {
+    if (!profile || !enabled) return EINVAL;
+    *enabled = 0;
+    char path[4096], *bytes = NULL;
+    size_t length = 0;
+    int e = profile_list_path(profile, 0, path, sizeof path);
+    if (!e) e = read_list_file(path, MOD_LIST_LIMIT, &bytes, &length);
+    if (e == ENOENT) return 0;
+    if (e) return e;
+    if (skyrim_plugin_list_is_managed(bytes, length)) {
+        free(bytes);
+        if (!baseline_path(profile, path, sizeof path)) return EINVAL;
+        e = read_list_file(path, MOD_LIST_LIMIT + 1, &bytes, &length);
+        if (e) return e;
+        if (!valid_baseline(bytes, length)) {
+            free(bytes);
+            return EINVAL;
+        }
+        if (bytes[0]) *enabled = listed_dlc(bytes + 1, length - 1);
+    } else {
+        *enabled = listed_dlc(bytes, length);
+    }
+    free(bytes);
+    return 0;
+}
+
 int skyrim_plugin_apply_list(const char *profile, const char *list, size_t length) {
-    char baseline[4096], docs[4096], folder[4096], target[4096];
+    char baseline[4096], target[4096];
     if (!profile || (list && (!skyrim_plugin_list_is_managed(list, length) || length > MOD_LIST_LIMIT)) ||
-        snprintf(baseline, sizeof baseline, "%s/.skyrimios-plugin-baseline-v1", profile) >= (int)sizeof baseline)
+        !baseline_path(profile, baseline, sizeof baseline))
         return EINVAL;
     char *original = NULL, *current = NULL;
     size_t n_original = 0, n_current = 0;
     int e = read_list_file(baseline, MOD_LIST_LIMIT + 1, &original, &n_original);
     if (e == ENOENT && !list) return 0;  /* Fresh/vanilla: no scan, creation, or write. */
     if (e && e != ENOENT) return e;
-    if (original && (!n_original || (original[0] != 0 && original[0] != 1) ||
-                     (!original[0] && n_original != 1))) { free(original); return EINVAL; }
-    e = profile_subdir(profile, "Documents", list != NULL, docs, sizeof docs);
-    if (!e) e = profile_subdir(docs, "Skyrim", list != NULL, folder, sizeof folder);
-    if (!e && skyrim_plugin_child_path(folder, "plugins.txt", target, sizeof target) < 0) e = EINVAL;
+    if (original && !valid_baseline(original, n_original)) { free(original); return EINVAL; }
+    e = profile_list_path(profile, list != NULL, target, sizeof target);
     if (e) goto done;
     e = read_list_file(target, MOD_LIST_LIMIT, &current, &n_current);
     if (e && e != ENOENT) goto done;

@@ -1,0 +1,410 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Optional Classic VM services. This file is included inside the interpreter
+ * so all reads, writes, calls and ownership checks use its existing bounds. */
+
+enum {
+    CLASSIC_NATIVE_MIN_BYTES = 0x30, CLASSIC_NATIVE_MAX_BYTES = 256,
+    CLASSIC_NATIVE_TYPE_BYTES = SKSE_CLASSIC_CATALOG_MAX_ARGS * 8
+};
+
+static bool classic_native_allocation_size(uint32_t bytes, uint32_t type_bytes) {
+    return bytes >= CLASSIC_NATIVE_MIN_BYTES + type_bytes &&
+           bytes <= CLASSIC_NATIVE_MAX_BYTES + type_bytes && bytes % 4 == 0;
+}
+
+static bool classic_name(Vm *vm, uint32_t address, char out[SKSE_CLASSIC_CATALOG_NAME_BYTES]) {
+    if (!address || address > UINT32_MAX - (SKSE_CLASSIC_CATALOG_NAME_BYTES - 1)) return false;
+    for (size_t i = 0; i < SKSE_CLASSIC_CATALOG_NAME_BYTES; ++i) {
+        uint32_t unit = read_memory(vm, address + (uint32_t)i, 1);
+        if (vm->status != SKSE_X86_OK) return false;
+        out[i] = (char)unit;
+        if (!unit) return i != 0;
+        if ((unit < 'A' || unit > 'Z') && (unit < 'a' || unit > 'z') && unit != '_' &&
+            (!i || unit < '0' || unit > '9')) return false;
+    }
+    return false;
+}
+
+static bool classic_type(const SkseClassicCatalog *catalog, uint32_t raw, uint32_t *result) {
+    if (raw <= 5 || (raw >= 11 && raw <= 15)) {
+        *result = raw;
+        return true;
+    }
+    const uint32_t form = raw & ~UINT32_C(1);
+    const uint32_t bytes = SKSE_CLASSIC_CATALOG_FORM_TYPES * SKSE_CLASSIC_CATALOG_FORM_BYTES;
+    if (form < catalog->form_types || form - catalog->form_types >= bytes) return false;
+    const uint32_t offset = form - catalog->form_types;
+    if (offset % SKSE_CLASSIC_CATALOG_FORM_BYTES) return false;
+    *result = SKSE_CLASSIC_CATALOG_FORM | (offset / SKSE_CLASSIC_CATALOG_FORM_BYTES) |
+              (raw & 1 ? SKSE_CLASSIC_CATALOG_FORM_ARRAY : 0);
+    return true;
+}
+
+static SkseClassicDeclaration *find_classic_declaration(SkseClassicCatalog *catalog, const char *class_name,
+                                                       const char *name) {
+    for (size_t i = catalog->count; i; --i) {
+        SkseClassicDeclaration *row = &catalog->rows[i - 1];
+        if (skse_win_asset_name_equal(row->class_name, class_name) && skse_win_asset_name_equal(row->name, name))
+            return row;
+    }
+    return NULL;
+}
+
+static bool capture_classic_declaration(Vm *vm, SkseClassicCatalog *catalog, uint32_t owner, uint32_t object) {
+    SkseClassicDeclaration row = {.owner = owner, .object = object};
+    SkseX86Heap *heap = vm->services.heap;
+    const uint32_t size = skse_x86_heap_size(heap, object);
+    const uint8_t *value = skse_x86_heap_memory(heap, object, CLASSIC_NATIVE_MIN_BYTES, false);
+    if (!value || catalog->count == catalog->limit) return false;
+    const uint32_t argc = little_endian(value + 0x1c, 4);
+    row.name_address = little_endian(value + 8, 4);
+    row.class_address = little_endian(value + 12, 4);
+    if (argc > SKSE_CLASSIC_CATALOG_MAX_ARGS || !classic_native_allocation_size(size, argc * 8) || value[0x20] > 1 ||
+        !classic_name(vm, row.name_address, row.name) ||
+        !classic_name(vm, row.class_address, row.class_name) ||
+        find_classic_declaration(catalog, row.class_name, row.name) ||
+        !classic_type(catalog, little_endian(value + 0x14, 4), &row.result)) return false;
+
+    const SksePeImage *image = vm->images[owner];
+    const uint32_t run_offset = SKSE_CLASSIC_PAPYRUS_RUN_SLOT * 4;
+    row.vtable = little_endian(value, 4);
+    row.entry = little_endian(value + 0x2c, 4);
+    if (!skse_pe_allows(image, row.entry, 1, SKSE_PE_EXEC) || row.vtable % 4 ||
+        !skse_x86_image_readable(image, row.vtable, run_offset + 4)) return false;
+    row.run = little_endian(image->bytes + (row.vtable - image->base) + run_offset, 4);
+    if (!skse_pe_allows(image, row.run, 1, SKSE_PE_EXEC)) return false;
+
+    row.count = (uint8_t)argc;
+    row.is_static = value[0x20];
+    row.parameters = little_endian(value + 0x18, 4);
+    if (row.parameters != (argc ? object + size - argc * 8 : 0)) return false;
+    if (argc) {
+        const uint8_t *params = skse_x86_heap_memory(heap, row.parameters, argc * 8, false);
+        if (!params) return false;
+        for (uint32_t i = 0; i < argc; ++i) {
+            row.live_types[i] = little_endian(params + 8 * i + 4, 4);
+            if (!classic_type(catalog, row.live_types[i], &row.arguments[i])) return false;
+        }
+    }
+    catalog->rows[catalog->count++] = row;
+    return true;
+}
+
+static uint32_t classic_catalog_service(Vm *vm, SkseClassicCatalogOperation operation) {
+    static const unsigned argument_counts[] = {3, 4, 2, 1, 3};
+    _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_CLASSIC_CATALOG_OPERATIONS,
+                   "Classic registration ABI");
+    const unsigned count = argument_counts[operation];
+    const uint8_t *args = service_parameters(vm, count * 4);
+    if (!args) return 0;
+    uint32_t values[4];
+    for (unsigned i = 0; i < count; ++i) values[i] = little_endian(args + i * 4, 4);
+    vm->registers[ESP] += count * 4;
+
+    const uint32_t owner = calling_image(vm);
+    SksePapyrusTrial *trial = vm->services.papyrus;
+    SkseClassicCatalog *catalog = vm->services.classic_catalog;
+    SkseX86Heap *heap = vm->services.heap;
+    const uint32_t self = vm->registers[ECX];
+    if (trial->phase != SKSE_PAPYRUS_REGISTERING || owner == UINT32_MAX || owner != trial->active_owner) goto refuse;
+    if (operation == SKSE_CLASSIC_CATALOG_ALLOCATE) {
+        if (self != 0x01b418b0 || values[0] < CLASSIC_NATIVE_MIN_BYTES || values[0] > CLASSIC_NATIVE_MAX_BYTES ||
+            values[0] % 4 || values[1] || values[2]) goto refuse;
+        // Reserve space for the argument table until the constructor supplies
+        // its count. The emulated registry owns one allocation per function.
+        const uint32_t object = skse_x86_heap_allocate(heap, values[0] + CLASSIC_NATIVE_TYPE_BYTES, true);
+        if (!object) goto refuse;
+        return object;
+    }
+    if (operation == SKSE_CLASSIC_CATALOG_CONSTRUCT) {
+        const uint32_t size = skse_x86_heap_size(heap, self);
+        if (!classic_native_allocation_size(size, CLASSIC_NATIVE_TYPE_BYTES) ||
+            values[2] > 1 || values[3] > SKSE_CLASSIC_CATALOG_MAX_ARGS)
+            goto refuse;
+        char name[SKSE_CLASSIC_CATALOG_NAME_BYTES];
+        if (!classic_name(vm, values[0], name) || !classic_name(vm, values[1], name)) goto refuse;
+        const uint32_t descriptor_bytes = size - CLASSIC_NATIVE_TYPE_BYTES;
+        const uint32_t used_bytes = descriptor_bytes + values[3] * 8;
+        if (skse_x86_heap_resize(heap, self, used_bytes, false, true) != self) goto refuse;
+        const uint32_t types = values[3] ? self + descriptor_bytes : 0;
+        write_memory(vm, self + 8, 4, values[0]);
+        write_memory(vm, self + 12, 4, values[1]);
+        write_memory(vm, self + 0x18, 4, types);
+        write_memory(vm, self + 0x1c, 4, values[3]);
+        write_memory(vm, self + 0x20, 1, values[2]);
+        return self;
+    }
+    if (self != trial->registry) goto refuse;
+    if (operation == SKSE_CLASSIC_CATALOG_FORM_TYPE) {
+        if (values[0] >= SKSE_CLASSIC_CATALOG_FORM_TYPES || !values[1]) goto refuse;
+        const uint32_t entry = catalog->form_types + values[0] * SKSE_CLASSIC_CATALOG_FORM_BYTES;
+        const uint32_t count = read_memory(vm, entry, 4);
+        if (count == UINT32_MAX) goto refuse;
+        write_memory(vm, entry, 4, count ? count + 1 : 2);
+        write_memory(vm, values[1], 4, entry);
+        return 1;
+    }
+    if (operation == SKSE_CLASSIC_CATALOG_REGISTER) {
+        if (!capture_classic_declaration(vm, catalog, owner, values[0])) goto refuse;
+        return 1;
+    }
+    char group[SKSE_CLASSIC_CATALOG_NAME_BYTES], name[SKSE_CLASSIC_CATALOG_NAME_BYTES];
+    if (!classic_name(vm, values[0], group) || !classic_name(vm, values[1], name)) goto refuse;
+    SkseClassicDeclaration *row = find_classic_declaration(catalog, group, name);
+    if (row && row->owner == owner) {
+        row->flags = values[2];
+        return 1;
+    }
+
+refuse:
+    fail(vm, SKSE_X86_UNSUPPORTED_API);
+    return 0;
+}
+
+static uint32_t classic_string_copy(Vm *vm, SkseClassicStringResult *result, uint32_t source) {
+    if (!source || result->count >= SKSE_CLASSIC_FRAME_STRINGS ||
+        in_range(result->address, (uint64_t)result->address + sizeof result->bytes, source, 1)) return 0;
+    for (size_t length = 1; length <= SKSE_CLASSIC_FRAME_STRING_BYTES; ++length) {
+        const uint8_t *bytes = memory(vm, source, length, SKSE_PE_READ);
+        if (!bytes) return 0;
+        if (bytes[length - 1]) continue;
+        if (!reserve_bulk(vm, (uint32_t)length)) return 0;
+        const unsigned slot = result->count++;
+        memcpy(result->bytes + slot * SKSE_CLASSIC_FRAME_STRING_BYTES, bytes, length);
+        result->lengths[slot] = (uint16_t)length;
+        return result->address + slot * SKSE_CLASSIC_FRAME_STRING_BYTES;
+    }
+    return 0;
+}
+
+static bool classic_input_string(const SkseClassicFrame *frame, uint32_t address) {
+    for (uint32_t i = 0; i < frame->function->count; ++i)
+        if (frame->function->arguments[i] == 2 && frame->arguments[i] == address) return true;
+    return false;
+}
+
+static uint32_t classic_value_service(Vm *vm, SkseClassicFrameOperation operation) {
+    static const unsigned argument_counts[] = {1, 3, 0, 1, 1, 0, 3, 2, 3};
+    _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_CLASSIC_FRAME_OPERATIONS,
+                   "Classic native ABI");
+    const unsigned count = argument_counts[operation];
+    const uint8_t *args = count ? service_parameters(vm, count * 4) : NULL;
+    if (count && !args) return 0;
+    const uint32_t value = count ? little_endian(args, 4) : 0;
+    vm->registers[ESP] += count * 4;
+    const SkseClassicFrame *frame = vm->services.classic_frame;
+    const SkseClassicDeclaration *row = frame->function;
+    const uint32_t self = vm->registers[ECX], base = frame->address;
+    const uint32_t state = base + SKSE_CLASSIC_FRAME_STATE, list = base + SKSE_CLASSIC_FRAME_LIST;
+    const uint32_t data = base + SKSE_CLASSIC_FRAME_ARGS;
+
+    if (vm->services.papyrus->phase != SKSE_PAPYRUS_RUNNING || calling_image(vm) != row->owner) goto refuse;
+    if (operation == SKSE_CLASSIC_FRAME_ARG_OFFSET && self == list && value == state) return 0;
+    if (operation == SKSE_CLASSIC_FRAME_ARG_GET && self == list && value == state) {
+        const uint32_t index = little_endian(args + 4, 4);
+        if (index >= row->count || little_endian(args + 8, 4)) goto refuse;
+        return data + index * 8;
+    }
+    if (operation >= SKSE_CLASSIC_FRAME_INVALID_HANDLE && frame->form && self == frame->form->policy) {
+        const SkseClassicFormArgument *form = frame->form;
+        if (operation == SKSE_CLASSIC_FRAME_INVALID_HANDLE) {
+            vm->registers[EDX] = 0;
+            return 0;
+        }
+        const bool takes_class = operation != SKSE_CLASSIC_FRAME_VALID_HANDLE;
+        const uint8_t *handle = args + (takes_class ? 4 : 0);
+        const uint64_t identity = little_endian(handle, 4) | (uint64_t)little_endian(handle + 4, 4) << 32;
+        const uint32_t declared = row->arguments[form->argument];
+        const uint32_t form_class = declared == 1 ? 0 : declared - SKSE_CLASSIC_CATALOG_FORM;
+        if (identity != form->handle || (takes_class && value != form_class)) goto refuse;
+        return operation == SKSE_CLASSIC_FRAME_RESOLVE_HANDLE ? form->view : 1;
+    }
+    if (operation == SKSE_CLASSIC_FRAME_DESTROY && self == base) {
+        const uint8_t *result = memory(vm, base, 8, SKSE_PE_READ);
+        if (!result || little_endian(result, 4) || little_endian(result + 4, 4)) goto refuse;
+        return 0; // The borrowed frame's result still contains None.
+    }
+    const bool temporary = self % 4 == 0 && self != vm->return_slot &&
+                           in_range(vm->stack_floor, vm->stack_top, self, 4);
+    SkseClassicStringResult *string = frame->string_result;
+    if (operation == SKSE_CLASSIC_FRAME_STRING_CONSTRUCT && temporary && string && !string->selected) {
+        // The original leaf can free its JSON text before its Run wrapper
+        // assigns the VM result. The copy lives through that assignment.
+        const uint32_t copy = classic_string_copy(vm, string, value);
+        if (!copy) goto refuse;
+        write_memory(vm, self, 4, copy);
+        return self;
+    }
+    if (operation == SKSE_CLASSIC_FRAME_STRING_SET && self == base + 4 && string && !string->selected) {
+        const uint8_t *result = memory(vm, base, 8, SKSE_PE_READ);
+        if (!result || little_endian(result, 4) != 2 || little_endian(result + 4, 4)) goto refuse;
+        uint32_t copy = value, offset = value - string->address;
+        if (offset % SKSE_CLASSIC_FRAME_STRING_BYTES ||
+            offset / SKSE_CLASSIC_FRAME_STRING_BYTES >= string->count) {
+            if (!classic_input_string(frame, value)) goto refuse;
+            copy = classic_string_copy(vm, string, value);
+            if (!copy) goto refuse;
+            offset = copy - string->address;
+        }
+        write_memory(vm, self, 4, copy);
+        if (vm->status == SKSE_X86_OK) string->selected = (uint8_t)(1 + offset / SKSE_CLASSIC_FRAME_STRING_BYTES);
+        return self;
+    }
+    if (operation == SKSE_CLASSIC_FRAME_STRING_SET && temporary && classic_input_string(frame, value)) {
+        // The guest borrows an input that remains immutable through this call.
+        // Do not grant the plugin access to the game's string cache or refcounts.
+        write_memory(vm, self, 4, value);
+        return self;
+    }
+
+refuse:
+    fail(vm, SKSE_X86_UNSUPPORTED_API);
+    return 0;
+}
+
+static uint32_t classic_lookup_loaded_form(Vm *vm) {
+    const uint8_t *args = service_parameters(vm, 4);
+    if (!args) return 0;
+    const SkseClassicLoadForms *catalog = vm->services.classic_load_forms;
+    if (vm->services.serialization->phase != SKSE_SERIAL_READING || calling_image(vm) != catalog->owner) {
+        fail(vm, SKSE_X86_UNSUPPORTED_API);
+        return 0;
+    }
+    const uint32_t id = little_endian(args, 4);
+    size_t first = 0, last = catalog->count;
+    while (first < last) {
+        const size_t middle = first + (last - first) / 2;
+        if (catalog->forms[middle].form_id < id) first = middle + 1;
+        else last = middle;
+    }
+    if (first < catalog->count && catalog->forms[first].form_id == id) return catalog->forms[first].view;
+    fail(vm, SKSE_X86_UNSUPPORTED_API); // An unknown answer cannot be substituted with "absent".
+    return 0;
+}
+
+static const SkseX86ReadView *classic_const_view(const SkseX86Services *services, uint32_t address, size_t length) {
+    for (size_t i = 0; i < services->read_view_count; ++i) {
+        const SkseX86ReadView *view = &services->read_views[i];
+        if (in_range(view->base, (uint64_t)view->base + view->length, address, length)) return view;
+    }
+    return NULL;
+}
+
+static bool classic_borrowed_string(const SkseX86Services *services, uint32_t address) {
+    const SkseX86ReadView *view = classic_const_view(services, address, 1);
+    if (!view) return false;
+    const size_t offset = address - view->base, left = view->length - offset;
+    return memchr(view->bytes + offset, 0, left < 1024 ? left : 1024) != NULL;
+}
+
+static bool classic_form_view_valid(const SkseX86Services *services, uint32_t address,
+                                     uint32_t id, uint8_t type) {
+    if (!address || address % 4) return false;
+    const SkseX86ReadView *view = classic_const_view(services, address, SKSE_CLASSIC_FORM_VIEW_BYTES);
+    if (!view) return false;
+    const uint8_t *body = view->bytes + (address - view->base);
+    return little_endian(body + 0x0c, 4) == id && body[0x12] == type;
+}
+
+static bool classic_load_forms_valid(const SkseX86Services *services, size_t image_count) {
+    const SkseClassicLoadForms *catalog = services->classic_load_forms;
+    if (!services->serialization || services->classic_frame || services->classic_catalog ||
+        services->serialization->phase != SKSE_SERIAL_READING ||
+        catalog->owner >= image_count || catalog->count > SKSE_CLASSIC_LOAD_FORMS_MAX ||
+        (catalog->count && !catalog->forms)) return false;
+    uint32_t previous = 0;
+    for (size_t i = 0; i < catalog->count; ++i) {
+        const SkseClassicLoadForm *form = &catalog->forms[i];
+        if (form->form_id <= previous ||
+            (form->view && !classic_form_view_valid(services, form->view, form->form_id, form->type))) return false;
+        previous = form->form_id;
+    }
+    return true;
+}
+
+static bool classic_form_argument_valid(const SkseX86Services *services, const SkseClassicFrame *frame) {
+    const SkseClassicFormArgument *form = frame->form;
+    if (!form) return true;
+    if (form->argument >= frame->function->count || !form->form_id || !form->handle ||
+        !form->policy || form->policy % 4 || !form->view || form->view % 4 ||
+        !skse_classic_type_is_form(frame->function->arguments[form->argument]) ||
+        skse_x86_heap_size(services->heap, form->identifier) != SKSE_CLASSIC_IDENTIFIER_BYTES)
+        return false;
+    const uint32_t declared = frame->function->arguments[form->argument];
+    if (declared != 1 && declared != SKSE_CLASSIC_CATALOG_FORM &&
+        declared - SKSE_CLASSIC_CATALOG_FORM != form->form_type) return false;
+    const uint8_t *identifier = skse_x86_heap_memory(services->heap, form->identifier, SKSE_CLASSIC_IDENTIFIER_BYTES, false);
+    const SkseX86ReadView *policy = classic_const_view(services, SKSE_CLASSIC_FORM_POLICY_SLOT, 4);
+    if (!identifier || !classic_form_view_valid(services, form->view, form->form_id, form->form_type) || !policy ||
+        little_endian(policy->bytes + (SKSE_CLASSIC_FORM_POLICY_SLOT - policy->base), 4) != form->policy ||
+        !classic_const_view(services, form->policy, 4)) return false;
+    return little_endian(identifier + 0x10, 4) == (uint32_t)form->handle &&
+           little_endian(identifier + 0x14, 4) == (uint32_t)(form->handle >> 32) &&
+           little_endian(identifier + 0x18, 4) == 1;
+}
+
+static bool classic_string_result_valid(const SkseX86Services *services, const SkseClassicFrame *frame) {
+    const SkseClassicStringResult *result = frame->string_result;
+    if (frame->function->result != 2) return result == NULL;
+    if (!result || !result->address || result->count || result->selected) return false;
+    const SkseX86ReadView *view = classic_const_view(services, result->address, sizeof result->bytes);
+    return view && view->base == result->address && view->length == sizeof result->bytes &&
+           view->bytes == result->bytes;
+}
+
+static bool classic_frame_valid(const SkseX86Services *services, SksePeImage *const *images, size_t image_count,
+                                 uint32_t object, uint32_t entry, const uint32_t *args, size_t count) {
+    const SkseClassicFrame *frame = services->classic_frame;
+    const SkseClassicDeclaration *row = frame->function;
+    const SksePapyrusTrial *trial = services->papyrus;
+    if (!trial || services->classic_catalog || trial->phase != SKSE_PAPYRUS_RUNNING || !row ||
+        row->is_static != 1 || row->owner >= image_count || row->count > SKSE_CLASSIC_CATALOG_MAX_ARGS ||
+        (row->result < 2 || row->result > 5) || row->object != object || row->run != entry || count != 5 ||
+        args[0] || args[1] != trial->registry || args[3] != frame->address ||
+        args[4] != frame->address + SKSE_CLASSIC_FRAME_STATE) return false;
+    if (frame->preparing && (frame->form || !services->files || !services->files->read_only))
+        return false;
+
+    SkseX86Heap *heap = services->heap;
+    if (skse_x86_heap_size(heap, frame->address) != SKSE_CLASSIC_FRAME_BYTES ||
+        !classic_string_result_valid(services, frame) || !classic_form_argument_valid(services, frame)) return false;
+    const uint8_t *values = skse_x86_heap_memory(heap, frame->address, SKSE_CLASSIC_FRAME_BYTES, false);
+    const uint8_t *function = skse_x86_heap_memory(heap, object, CLASSIC_NATIVE_MIN_BYTES, false);
+    const SksePeImage *image = images[row->owner];
+    const uint32_t slot = SKSE_CLASSIC_PAPYRUS_RUN_SLOT * 4;
+    if (!function || !values || object == frame->address || little_endian(function, 4) != row->vtable ||
+        little_endian(function + 8, 4) != row->name_address || little_endian(function + 12, 4) != row->class_address ||
+        little_endian(function + 0x14, 4) != row->result || little_endian(function + 0x18, 4) != row->parameters ||
+        little_endian(function + 0x1c, 4) != row->count || function[0x20] != row->is_static ||
+        little_endian(function + 0x2c, 4) != row->entry ||
+        !skse_x86_image_readable(image, row->vtable, slot + 4) ||
+        little_endian(image->bytes + (row->vtable - image->base) + slot, 4) != row->run ||
+        !skse_pe_allows(image, row->run, 1, SKSE_PE_EXEC) || !skse_pe_allows(image, row->entry, 1, SKSE_PE_EXEC) ||
+        little_endian(values, 4) || little_endian(values + 4, 4) ||
+        little_endian(values + SKSE_CLASSIC_FRAME_STATE, 4) != frame->address + SKSE_CLASSIC_FRAME_LIST)
+        return false;
+    const uint8_t *parameters = row->count ? skse_x86_heap_memory(heap, row->parameters, row->count * 8, false) : NULL;
+    if (row->count && !parameters) return false;
+    for (uint32_t i = 0; i < row->count; ++i) {
+        if (little_endian(parameters + 8 * i + 4, 4) != row->live_types[i]) return false;
+        const uint8_t *argument = values + SKSE_CLASSIC_FRAME_ARGS + i * 8;
+        const uint32_t type = row->arguments[i], bits = frame->arguments[i];
+        const uint32_t live_type = little_endian(argument, 4);
+        if (little_endian(argument + 4, 4) != bits) return false;
+        if (skse_classic_type_is_form(type)) {
+            if (frame->form && frame->form->argument == i) {
+                if (live_type != 1 || bits != frame->form->identifier) return false;
+            } else if (live_type || bits) {
+                return false; // Only an explicit None maps to the global key.
+            }
+            continue;
+        }
+        if (live_type != type) return false;
+        if (type == 2) {
+            if (!classic_borrowed_string(services, bits)) return false;
+        } else if (type < 3 || type > 5 || (type == 5 && bits > 1)) {
+            return false;
+        }
+    }
+    return true;
+}

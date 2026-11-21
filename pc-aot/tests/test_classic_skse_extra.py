@@ -38,7 +38,7 @@ class ClassicControlTests(unittest.TestCase):
         compiler = os.environ.get("CC", "cc")
         binary = self.stage.parent / name
         sanitizers = (["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
-                      if os.environ.get("SKYRIM_TEST_SANITIZERS") else [])
+                      if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1" else [])
         subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
                         *sanitizers,
                         "-I", str(self.stage), "-I", str(PORT),

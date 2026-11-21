@@ -1,12 +1,16 @@
 """Check that selected local DLLs are read, diagnosed and left intact."""
+import hashlib
+import json
 import os
 from pathlib import Path
+import re
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 
 from test_pe_image import BASE, DATA, RD, SECTIONS, add_named_clock, directory, make_image, put, zero_string
 
@@ -144,23 +148,303 @@ def task_fixture(bad_vtable=False):
     return dll
 
 
+def compile_local_probe(cc, binary, *, json_trial=False, settings_backend=False, extra_flags=(), extra_sources=()):
+    flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror"]
+    if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
+        flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        if sys.platform.startswith("linux"):
+            flags += ["-fno-pie", "-no-pie"]
+    sources = ("pe_image.c", "x86_call.c", "x86_heap.c", "x86_winthread.c", "x86_wintext.c", "x86_winfile.c",
+               "x86_winsync.c", "x86_winenv.c", "papyrus_trial.c", "x86_skse_records.c", "dependency_plan.c",
+               "probe_local_file.c", "fixtures/owned_storage.c")
+    libraries = []
+    if json_trial or settings_backend:
+        flags.append("-pthread")
+        sources += ("classic_pex.c", "classic_scalar.c", "../skse-profile-json/profile_json.c",
+                    "../skse-profile-json/profile_overlay.c", "../skse-cosave/records.c")
+        if settings_backend:
+            port = HERE.parents[1] / "ios/runtime-port"
+            flags += ["-D_POSIX_C_SOURCE=200809L", "-DSKYRIM_CLASSIC_SETTINGS_BACKEND=1"]
+            flags += ["-I", str(port)]
+            sources += ("plugin_trial.c", "probe_asset_file.c", "fixtures/settings_session.c", port / "mod_papyrus_inputs.c")
+            if sys.platform != "darwin":
+                libraries.append("-lcrypto")
+        else:
+            sources += ("fixtures/owned_json.c",)
+    else:
+        sources += ("plugin_trial.c", "test_probe_local_file.c")
+    subprocess.run([cc, *flags, *extra_flags, "-I", HERE, *(HERE / source for source in sources),
+                    *extra_sources, *libraries, "-o", binary], check=True, timeout=60)
+
+
+def owner_bootstrap_words(executable):
+    # Verify the same exact supported PE as the ordinary title generator.
+    pin_file = HERE.parents[1] / "scripts/prepare_title_guest.py"
+    pin = next(line for line in pin_file.read_text(encoding="utf-8").splitlines()
+               if line.startswith("CANDIDATE_SHA = ")).partition("=")[2].strip().strip('"')
+    game = executable.read_bytes()
+    if hashlib.sha256(game).hexdigest() != pin:
+        raise ValueError("The executable does not match the pinned Skyrim LE input")
+    nt = struct.unpack_from("<I", game, 0x3c)[0]
+    if game[nt:nt + 4] != b"PE\0\0":
+        raise ValueError("No PE header")
+    machine, section_count = struct.unpack_from("<HH", game, nt + 4)
+    optional_size = struct.unpack_from("<H", game, nt + 20)[0]
+    magic = struct.unpack_from("<H", game, nt + 24)[0]
+    image_base = struct.unpack_from("<I", game, nt + 52)[0]
+    if (machine, magic, image_base) != (0x14c, 0x10b, 0x400000):
+        raise ValueError("Unexpected owner PE address model")
+    addresses = (0x0124166c, 0x012b5b80)
+    result, verified_hooks = {}, set()
+    call_sites = {0x006a9e90: 0x0040e4f0, 0x008cab54: 0x00a51280}
+    animation_site = 0x006f02ff
+    for i in range(section_count):
+        section = nt + 24 + optional_size + i * 40
+        name = game[section:section + 8].rstrip(b"\0")
+        flags = struct.unpack_from("<I", game, section + 36)[0]
+        virtual_size, rva, file_size, raw_offset = struct.unpack_from("<IIII", game, section + 8)
+        if name == b".text" and flags & 0x20000000:
+            for address, target in call_sites.items():
+                offset = address - image_base - rva
+                if 0 <= offset and offset + 5 <= min(virtual_size, file_size):
+                    raw = raw_offset + offset
+                    if game[raw] == 0xe8 and address + 5 + struct.unpack_from("<i", game, raw + 1)[0] == target:
+                        verified_hooks.add(address)
+            offset = animation_site - image_base - rva
+            if 0 <= offset and offset + 6 <= min(virtual_size, file_size):
+                raw = raw_offset + offset
+                test, modrm, field, mask, branch, displacement = game[raw:raw + 6]
+                if (test, modrm, field, mask, branch) == (0xf6, 0x46, 0x2c, 1, 0x74) and displacement == 0x0d:
+                    verified_hooks.add(animation_site)
+        if name != b".data" or flags & 0x20000000 or not flags & 0x40000000:
+            continue
+        for address in addresses:
+            offset = address - image_base - rva
+            if 0 <= offset and offset + 4 <= min(virtual_size, file_size) and raw_offset + offset + 4 <= len(game):
+                result[address] = game[raw_offset + offset:raw_offset + offset + 4]
+    if len(result) != len(addresses):
+        raise ValueError("The approved initializers are missing from the file-backed PE data")
+    if verified_hooks != {*call_sites, animation_site}:
+        raise ValueError("The experimental hook sites do not match the pinned input")
+    return b"".join(result[address] for address in addresses)
+
+
+def owned_register_integer_method(library, callback):
+    nt = struct.unpack_from("<I", library, 0x3c)[0]
+    section_count = struct.unpack_from("<H", library, nt + 6)[0]
+    optional_size = struct.unpack_from("<H", library, nt + 20)[0]
+    base = struct.unpack_from("<I", library, nt + 52)[0]
+
+    def backed(address, length, executable):
+        rva = address - base
+        for i in range(section_count):
+            header = nt + 24 + optional_size + 40 * i
+            virtual_size, start, file_size, offset = struct.unpack_from("<IIII", library, header + 8)
+            flags = struct.unpack_from("<I", library, header + 36)[0]
+            delta = rva - start
+            if bool(flags & 0x20000000) == executable and flags & 0x40000000 and \
+               0 <= delta and delta + length <= min(virtual_size, file_size) and offset + delta + length <= len(library):
+                return library[offset + delta:offset + delta + length]
+        raise ValueError("Owned declaration used an unexpected PE section")
+
+    # First declaration inside the observed Classic RegisterFunctions callback.
+    # Verify the NativeFunction ctor call and the static no-argument int record.
+    constructor = re.compile(
+        rb"\x68(.{4})\xc6\x45\xfc\x01\xb8\x00\x6c\xc4\x00\x68(.{4})"
+        rb"\x8b\xcf\xc7\x07.{4}\xff\xd0\xc7\x07(.{4})\xc7\x47\x2c(.{4})"
+        rb"\xc6\x47\x30\x00\xc7\x47\x14\x03\x00\x00\x00", re.DOTALL)
+    records = constructor.findall(backed(callback, 0xb0, True))
+    if len(records) != 1:
+        raise ValueError("Could not resolve a unique owned integer declaration")
+    class_name, function_name, vtable, entry = (struct.unpack("<I", item)[0] for item in records[0])
+    if backed(class_name, 12, False) != b"PapyrusUtil\0" or backed(function_name, 11, False) != b"GetVersion\0":
+        raise ValueError("Unexpected class or function in the first owned registration")
+    run = struct.unpack("<I", backed(vtable + 22 * 4, 4, False))[0]
+    method = backed(run, 0x50, True)
+    if not method.endswith(b"\xc2\x14\x00") or method.count(b"\xb8\x20\xa6\xc3\x00") != 1 or \
+       method.count(b"\xb8\xe0\x28\xc3\x00") != 1:
+        raise ValueError("Unexpected owned IFunction call shape")
+    return base, (entry - base, backed(entry, 6, True)), (run - base, method)
+
+
+def owned_register_integer_leaf(library, callback):
+    base, (_, code), _ = owned_register_integer_method(library, callback)
+    return base, code
+
+
+def prepare_owned_json_inputs(archive_path, executable_path, root):
+    dll, words = root / "StorageUtil.dll", root / "boot.bin"
+    scripts = root / "scripts"
+    with zipfile.ZipFile(archive_path) as archive:
+        member = archive.getinfo("SKSE/Plugins/StorageUtil.dll")
+        if member.file_size != 978944:
+            raise ValueError("Unexpected owned PapyrusUtil archive size")
+        library = archive.read(member)
+        scripts.mkdir()
+        for name in ("ActorUtil", "JsonUtil", "MiscUtil", "ObjectUtil", "PapyrusUtil", "StorageUtil"):
+            filename = name + ".pex"
+            member = archive.getinfo(f"scripts/{filename}")
+            if not 0 < member.file_size <= 8 << 20:
+                raise ValueError("Unexpected owned PapyrusUtil PEX size")
+            (scripts / filename).write_bytes(archive.read(member))
+    # The controlled fixture verifies the exact owner inputs in both images.
+    if hashlib.sha256(library).hexdigest() != "51e40d27bc635664d747a781179673d9cbda8c22d176f56fa6598fcce4a0b5e9":
+        raise ValueError("The owned PapyrusUtil DLL does not match the reviewed build")
+    dll.write_bytes(library)
+    words.write_bytes(owner_bootstrap_words(Path(executable_path)))
+    return dll, words, scripts
+
+
+def check_owned_pex_contract(test, binary, dll, words, store, scripts):
+    result = subprocess.run([binary, dll, words, store, "contract", scripts], capture_output=True, text=True, timeout=10)
+    test.assertEqual(result.returncode, 0, result.stderr)
+    test.assertEqual(result.stderr, "", result.stdout)
+    test.assertEqual(result.stdout.splitlines(), [
+        "pex mismatch=1 MiscUtil.ScanCellNPCsByFaction",
+        "dll only MiscUtil.TESTScanCellNPCsByFaction",
+        "native signatures matched=394 dll_declarations=395",
+    ])
+
+
+def check_owned_settings_sequence(test, binary, dll, bootstrap, root, scripts, executable):
+    game, store = root / "game", root / "settings"
+    game.mkdir()
+    store.mkdir(mode=0o700)
+    owner_digest = hashlib.sha256(Path(executable).read_bytes()).hexdigest()
+    base_file = game / "Data/SKSE/Plugins/WearableLanternsData/profile1.json"
+    base_bytes = b'{"int":{"brightness":208}}'
+    for phase in ("write", "read", "base"):
+        if phase == "base":
+            test.assertEqual(list(game.iterdir()), [])
+            base_file.parent.mkdir(parents=True)
+            base_file.write_bytes(base_bytes)
+        result = subprocess.run([binary, dll, scripts / "JsonUtil.pex", bootstrap, game, store,
+                                 phase, executable, owner_digest],
+                                capture_output=True, text=True, timeout=30)
+        test.assertEqual(result.returncode, 0, result.stderr)
+    test.assertEqual(base_file.read_bytes(), base_bytes)
+    paths = list(store.rglob("profile1.json"))
+    test.assertEqual(len(paths), 1)
+    test.assertEqual(json.loads(paths[0].read_text(encoding="utf-8")), {
+        "int": {"brightness": 39}, "float": {"duration": 1.625}, "string": {"profile_name": "ランタンの明かり"},
+    })
+    support = root / "selection"
+    view = support / "Views/10000000-0000-4000-8000-000000000000"
+    package = support / "Mods/20000000-0000-4000-8000-000000000000"
+    for directory in (view, package):
+        for src, relative in ((dll, "Data/SKSE/Plugins/StorageUtil.dll"), (scripts / "JsonUtil.pex", "Data/Scripts/JsonUtil.pex")):
+            destination = directory / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, destination)
+    common = view / "Data/SKSE/Plugins/WearableLanternsData/common.json"
+    common.parent.mkdir()
+    common_bytes = b'{"int":{"auto_load":2}}'
+    common.write_bytes(common_bytes)
+    acquired = subprocess.run([binary, dll, scripts / "JsonUtil.pex", bootstrap, support, store,
+                               "view", executable, owner_digest], capture_output=True, text=True, timeout=30)
+    test.assertEqual(acquired.returncode, 0, acquired.stderr)
+    test.assertEqual(common.read_bytes(), common_bytes)
+    test.assertEqual(list((support / "PapyrusSettings").iterdir()), [])
+
+
+def check_owned_json_sequence(test, binary, dll, words, root, scripts):
+    private_store = root / "app-private"
+    private_store.mkdir(mode=0o700)
+    for phase, value in (("write", -731), ("update", -382), ("read", -382), ("isolation", None)):
+        with test.subTest(phase=phase):
+            result = subprocess.run([binary, dll, words, private_store, phase, scripts], capture_output=True, timeout=10)
+            test.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            if value is None:
+                test.assertEqual(result.stdout, b"")
+            else:
+                test.assertEqual(json.loads(result.stdout),
+                                 {"intList": {"skyrimios-probe": [0, 0, 0, 0, value, 0, 0]}})
+    with test.subTest(phase="restore-real-records-in-fresh-session"):
+        companion = root / "AuthoredSlot.skse"
+        arguments = [binary, dll, words, private_store]
+        write = subprocess.run([*arguments, "write-records", scripts, companion], capture_output=True, timeout=10)
+        test.assertEqual(write.returncode, 0, write.stderr.decode(errors="replace"))
+        test.assertEqual(write.stdout, b"")
+        committed = companion.read_bytes()
+        test.assertEqual(committed[:4], b"SKSE")
+        restore = subprocess.run([*arguments, "read-records", scripts, companion], capture_output=True, timeout=10)
+        test.assertEqual(restore.returncode, 0, restore.stderr.decode(errors="replace"))
+        test.assertEqual(restore.stdout, b"")
+        test.assertEqual(companion.read_bytes(), committed)
+        wrong_owner = committed[:20] + struct.pack("<I", 1) + committed[24:]
+        for name, contents in (("truncated", committed[:-1]), ("other-owner", wrong_owner)):
+            altered = root / (name + ".skse")
+            altered.write_bytes(contents)
+            refused = subprocess.run([*arguments, "read-records", scripts, altered], capture_output=True, timeout=10)
+            test.assertEqual(refused.returncode, 2, refused.stderr.decode(errors="replace"))
+            test.assertEqual(refused.stdout, b"")
+            test.assertEqual(altered.read_bytes(), contents)
+        test.assertEqual(companion.read_bytes(), committed)
+    lantern_store = root / "app-lanterns"
+    lantern_store.mkdir(mode=0o700)
+    for phase in ("write-profile", "read-profile"):
+        with test.subTest(phase=phase):
+            result = subprocess.run([binary, dll, words, lantern_store, phase, scripts], capture_output=True, timeout=10)
+            test.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            test.assertEqual(json.loads(result.stdout),
+                             {"int": {"brightness": 3}, "float": {"hold_activate_toggle_duration": 1.625},
+                              "string": {"profile_name": "ランタンの明かり"}})
+    paths = list(lantern_store.rglob("profile1.json"))
+    common_paths = list(lantern_store.rglob("common.json"))
+    test.assertEqual(len(paths), 1)
+    test.assertEqual(len(common_paths), 1)
+    target, common = paths[0], common_paths[0]
+    common_source = common.read_bytes()
+    test.assertEqual(json.loads(common_source), {"int": {"auto_load": 2, "last_profile": 1}})
+    # Authored profile at the size of a real MCM configuration. These
+    # inputs exercise the original DLL's decimal parsing, not only 1.625.
+    contents = json.loads(target.read_bytes())
+    for i in range(22):
+        contents["int"][f"synthetic_integer_{i}"] = i + 1
+    values = (0.01, -0.00004, 19.875, 289.50, 123.88, 40.1001, 2.1, 120, 10.3, 720.15)
+    for i, value in enumerate(values):
+        contents["float"][f"synthetic_float_{i}"] = struct.unpack("<f", struct.pack("<f", value))[0]
+    source = json.dumps(contents, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    target.write_bytes(source)
+    with test.subTest(phase="prepare-readable-profile"):
+        result = subprocess.run([binary, dll, words, lantern_store, "prepare-profile", scripts], capture_output=True, timeout=10)
+        test.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        test.assertEqual(json.loads(result.stdout), contents)
+        test.assertEqual(target.read_bytes(), source)
+        test.assertEqual(common.read_bytes(), common_source)
+    with test.subTest(phase="honor-disabled-profile-autoload"):
+        disabled = b'{"int":{"auto_load":1,"last_profile":1}}'
+        common.write_bytes(disabled)
+        result = subprocess.run([binary, dll, words, lantern_store, "prepare-disabled", scripts],
+                                capture_output=True, timeout=10)
+        test.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        test.assertEqual(result.stdout, disabled)
+        test.assertEqual(common.read_bytes(), disabled)
+        test.assertEqual(target.read_bytes(), source)
+    with test.subTest(phase="reject-wrong-selected-pex"):
+        wrong_scripts = root / "wrong-scripts"
+        wrong_scripts.mkdir()
+        shutil.copyfile(scripts / "StorageUtil.pex", wrong_scripts / "JsonUtil.pex")
+        before = {path: path.read_bytes() for path in lantern_store.rglob("*") if path.is_file()}
+        result = subprocess.run([binary, dll, words, lantern_store, "write-profile", wrong_scripts],
+                                capture_output=True, timeout=10)
+        test.assertEqual(result.returncode, 2, result.stderr.decode(errors="replace"))
+        test.assertEqual(result.stdout, b"")
+        test.assertIn(b"Selected JsonUtil PEX does not match the captured native methods.", result.stderr)
+        after = {path: path.read_bytes() for path in lantern_store.rglob("*") if path.is_file()}
+        test.assertEqual(after, before)
+
+
 @unittest.skipIf(sys.platform == "win32", "the selected-file wrapper uses Darwin/POSIX descriptors")
 class LocalFileProbeTest(unittest.TestCase):
     def test_regular_file_boundaries_symlinks_and_dll_results(self):
         cc = shutil.which(os.environ.get("CC", "cc"))
         if not cc:
             self.skipTest("C compiler required")
-        flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror"]
-        if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
-            flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-        with tempfile.TemporaryDirectory(prefix="dll-local-file-") as directory:
-            root = Path(directory)
+        with tempfile.TemporaryDirectory(prefix="dll-local-file-") as temporary:
+            root = Path(temporary)
             binary = root / "probe"
-            sources = ("pe_image.c", "x86_call.c", "x86_heap.c", "x86_winthread.c", "x86_winfile.c", "x86_winsync.c",
-                       "x86_skse_records.c", "dependency_plan.c",
-                       "plugin_trial.c", "probe_local_file.c",
-                       "test_probe_local_file.c")
-            subprocess.run([cc, *flags, *(HERE / source for source in sources), "-o", binary], check=True, timeout=60)
+            compile_local_probe(cc, binary)
             good, unknown, serialized = root / "検査.dll", root / "unknown.dll", root / "serialized.dll"
             fixture = supported_fixture()
             good.write_bytes(fixture)
@@ -168,6 +452,20 @@ class LocalFileProbeTest(unittest.TestCase):
             add_named_clock(with_import)
             zero_string(with_import, DATA + 0xa2, b"OwnedUnsupported")
             unknown.write_bytes(with_import)
+            uncalled_path, called_path, mixed_path = (root / name for name in ("uncalled.dll", "called.dll", "mixed.dll"))
+            uncalled = with_import.copy()
+            zero_string(uncalled, DATA + 0xa2, b"RtlUnwind")
+            uncalled_path.write_bytes(uncalled)
+            called = uncalled.copy()
+            code = bytes.fromhex("ff 15") + struct.pack("<I", BASE + 0x3060) + bytes.fromhex("b8 01 00 00 00 c3")
+            called[0x200:0x200 + len(code)] = code
+            called_path.write_bytes(called)
+            mixed = uncalled.copy()
+            directory(mixed, 12, 0x3060, 12)
+            for table in (0x60, 0x80):
+                put(mixed, DATA + table, "3I", 0x30a0, 0x30c0, 0)
+            zero_string(mixed, DATA + 0xc2, b"OwnedUnsupported")
+            mixed_path.write_bytes(mixed)
             serialized.write_bytes(serializing_fixture())
             worker, closed, bounded = root / "worker.dll", root / "closed.dll", root / "bounded.dll"
             worker.write_bytes(worker_fixture())
@@ -184,11 +482,15 @@ class LocalFileProbeTest(unittest.TestCase):
             link, fifo = root / "link.dll", root / "fifo.dll"
             link.symlink_to(good)
             os.mkfifo(fifo, mode=0o600)
-            result = subprocess.check_output([binary, good, unknown, serialized, worker, closed, bounded, tasks, bad_task, invalid, empty, big,
+            result = subprocess.check_output([binary, good, unknown, uncalled_path, called_path, mixed_path, serialized,
+                                              worker, closed, bounded, tasks, bad_task, invalid, empty, big,
                                               link, fifo, root / "absent.dll", root],
                                              text=True, timeout=3).splitlines()
             self.assertEqual(result, ["ready,7,Owned test plugin",
                                       "stopped,1,import absent from the service list,1,kernel32.DLL,OwnedUnsupported",
+                                      "ready,7,Owned test plugin,partial",
+                                      "stopped,8,ok,0,load=6,partial,RtlUnwind",
+                                      "stopped,1,import absent from the service list,2,kernel32.DLL,OwnedUnsupported",
                                       "ready,7,Owned test plugin,2,1",
                                       "ready,7,Owned test plugin,workers=1",
                                       "ready,7,Owned test plugin,workers=1",
@@ -202,6 +504,87 @@ class LocalFileProbeTest(unittest.TestCase):
             self.assertEqual(resident.strip(), "resident tasks=3/1 independent-lifetime=ok budget-refusal=ok")
             resident_worker = subprocess.check_output([binary, "--session-worker", closed], text=True, timeout=3)
             self.assertEqual(resident_worker.strip(), "resident worker completed once on the explicit step")
+
+    def test_owned_settings_backend_stages_and_reopens_profile(self):
+        archive = os.environ.get("SKYRIM_TEST_OWNED_PAPYRUS_ZIP")
+        executable = os.environ.get("SKYRIM_TEST_OWNED_LE_EXE")
+        if not archive or not executable:
+            self.skipTest("Optional locally owned LE executable and PapyrusUtil 3.3 ZIP required")
+        cc = shutil.which(os.environ.get("CC", "cc"))
+        if not cc:
+            self.skipTest("C compiler required")
+        with tempfile.TemporaryDirectory(prefix="skse-classic-settings-") as temporary:
+            root = Path(temporary)
+            dll, bootstrap, scripts = prepare_owned_json_inputs(archive, executable, root)
+            binary = root / "settings-fixture"
+            compile_local_probe(cc, binary, settings_backend=True)
+            check_owned_settings_sequence(self, binary, dll, bootstrap, root, scripts, executable)
+
+    def test_owned_papyrus_enters_classic_load_with_pinned_data(self):
+        archive_path = os.environ.get("SKYRIM_TEST_OWNED_PAPYRUS_ZIP")
+        executable_path = os.environ.get("SKYRIM_TEST_OWNED_LE_EXE")
+        if not archive_path or not executable_path:
+            self.skipTest("Optional locally owned LE executable and PapyrusUtil 3.3 ZIP required")
+        cc = shutil.which(os.environ.get("CC", "cc"))
+        if not cc:
+            self.skipTest("C compiler required")
+        with tempfile.TemporaryDirectory(prefix="owned-papyrus-local-probe-") as temporary:
+            root = Path(temporary)
+            dll, words, binary = root / "StorageUtil.dll", root / "boot.bin", root / "probe"
+            words.write_bytes(owner_bootstrap_words(Path(executable_path)))
+            with zipfile.ZipFile(archive_path) as archive:
+                members = [entry for entry in archive.infolist() if entry.filename == "SKSE/Plugins/StorageUtil.dll"]
+                self.assertEqual(len(members), 1)
+                self.assertGreater(members[0].file_size, 0)
+                self.assertLessEqual(members[0].file_size, 64 * 1024 * 1024)
+                owned_library = archive.read(members[0])
+                dll.write_bytes(owned_library)
+            compile_local_probe(cc, binary)
+            for mode, expected_hooks in (("--owned-papyrus", 0), ("--observe-papyrus-hooks", 6)):
+                result = subprocess.run([binary, mode, dll, words], capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                lines = result.stdout.splitlines()
+                self.assertEqual(sum(line.startswith("attach status=0 ") for line in lines), 2)
+                self.assertEqual(sum(line.startswith("observed hook ") for line in lines), expected_hooks)
+                records = [dict(part.split("=") for part in line.split()) for line in lines if line.startswith("snapshot=")]
+                self.assertEqual([int(record["registered"]) for record in records], [1, 1])
+                callback, moved_callback = (int(record["callback"], 16) for record in records)
+                base, routine = owned_register_integer_leaf(owned_library, callback)
+                difference = 0x12000000 - base
+                self.assertEqual(moved_callback - callback, difference)
+                if expected_hooks:
+                    observations = [dict(part.split("=") for part in line.split()[2:])
+                                    for line in lines if line.startswith("observed hook ")]
+                    for preferred, moved in zip(observations[:3], observations[3:], strict=True):
+                        self.assertEqual(preferred["site"], moved["site"])
+                        self.assertEqual(int(moved["target"], 16) - int(preferred["target"], 16), difference)
+                print(result.stdout, end="")
+            leaf = root / "owned-int-leaf.bin"
+            leaf.write_bytes(routine)
+            result = subprocess.check_output([binary, "--owned-int-leaf", leaf], text=True, timeout=10)
+            self.assertEqual(result.splitlines(), ["GetVersion leaf=33", "GetVersion leaf=33"])
+            print(result, end="")
+            result = subprocess.run([binary, "--owned-cosave", dll, words], capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.strip(),
+                             "Owned StorageUtil restored a signed integer and wrote the current authored mod order.")
+            print(result.stdout, end="")
+
+    def test_owned_json_settings_round_trip_in_relocated_session(self):
+        archive_path = os.environ.get("SKYRIM_TEST_OWNED_PAPYRUS_ZIP")
+        executable_path = os.environ.get("SKYRIM_TEST_OWNED_LE_EXE")
+        if not archive_path or not executable_path:
+            self.skipTest("Optional locally owned LE executable and PapyrusUtil 3.3 ZIP required")
+        cc = shutil.which(os.environ.get("CC", "cc"))
+        if not cc:
+            self.skipTest("C compiler required")
+        with tempfile.TemporaryDirectory(prefix="owned-papyrus-json-") as temporary:
+            root = Path(temporary)
+            binary = root / "json-trial"
+            dll, words, scripts = prepare_owned_json_inputs(archive_path, executable_path, root)
+            compile_local_probe(cc, binary, json_trial=True)
+            check_owned_json_sequence(self, binary, dll, words, root, scripts)
+            check_owned_pex_contract(self, binary, dll, words, root / "app-private", scripts)
 
 
 if __name__ == "__main__":

@@ -47,6 +47,18 @@ uint32_t skse_x86_records_count(const SkseX86RecordStream *stream) {
     return stream ? stream->count : 0;
 }
 
+int skse_x86_records_copy(SkseX86RecordStream *destination, const SkseX86RecordStream *source) {
+    if (!source || source->count > SKSE_X86_RECORD_LIMIT || !destination || source == destination ||
+        destination->payload || destination->count || destination->reading) return 0;
+
+    SkseX86RecordStream copy = {0};
+    if (!append_bytes(&copy, source->payload, source->used)) return 0;
+    memcpy(copy.records, source->records, source->count * sizeof(copy.records[0]));
+    copy.count = source->count;
+    *destination = copy;
+    return 1;
+}
+
 int skse_x86_records_reset_reading(SkseX86RecordStream *stream) {
     if (!stream) return 0;
     stream->reading = 1;

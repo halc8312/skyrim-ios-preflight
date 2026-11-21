@@ -77,6 +77,10 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_GRAPHICS_POLICY", "^IOS_GRAPHICS_POLICY schema=1 (?:exact_state=0 wait_scope=0|exact_state=1 wait_scope=1)$") \
     X("IOS_STATE_CACHE", "^IOS_STATE_CACHE entries=[0-9]{1,20} shader_tuples=[0-9]{1,20} wakeup_links=[0-9]{1,20}$") \
     X("IOS_GAME_LANGUAGE", "^IOS_GAME_LANGUAGE requested_text=[01] text=[01] text_reason=[0-3] requested_voices=[01] voices=[01] voices_reason=[0-3]$") \
+    X("IOS_CLASSIC_SKYUI", "^IOS_CLASSIC_SKYUI (?:requested=0 enabled=0|requested=1 enabled=[01])$") \
+    X("IOS_CLASSIC_VM", "^IOS_CLASSIC_VM registered=[0-9]{1,10} primitive_passed=[0-9]{1,10}$") \
+    X("IOS_CLASSIC_RELEASE", "^IOS_CLASSIC_RELEASE value=[0-9]{1,10}$") \
+    X("IOS_CLASSIC_HOOK", "^IOS_CLASSIC_HOOK point=[12] order=[12] startup_thread=[01]$") \
     X("IOS_PROGRESS", "^IOS_PROGRESS present_phase=[0-9]{1,20} present_main=[01] phase_age_ms=[0-9]{1,20} ui_pump_age_ms=[0-9]{1,20}$") \
     X("IOS_PRESENT", "^IOS_PRESENT failure=0x[0-9a-fA-F]{8}$") \
     X("IOS_STAGE", "^IOS_STAGE (?:sdl-application-entry|guest-input-sha256-verified|private-guest-bound|first-successful-present-title-not-verified|runtime-start|guest-memory-bound|guest-entry|vulkan-window-ready) monotonic=[0-9]{1,20}[.][0-9]{9}$") \

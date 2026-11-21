@@ -50,6 +50,9 @@ int skyrim_zip_open(const char *path, SkyrimZip *zip);
 /* Normalize one stored name; 1 ok, 0 skip (empty / non-UTF-8 non-ASCII when
  * utf8_flag is 0), -1 unsafe. out receives at most capacity bytes. */
 int skyrim_zip_normalize(const char *name, size_t length, int utf8_flag, char *out, size_t capacity);
+/* Select a normalized archive or folder path under the case-insensitive
+ * prefix returned by skyrim_mod_data_root. NULL or "" selects any path. */
+const char *skyrim_archive_relative_path(const char *path, const char *prefix);
 /* Extract entry index to dest_root/relative (relative must already be a
  * normalized path from this archive, optionally with a prefix removed).
  * Parent directories are created; existing files are never replaced. */

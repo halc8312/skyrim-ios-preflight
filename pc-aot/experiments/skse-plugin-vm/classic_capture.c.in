@@ -1,0 +1,49 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Included in plugin_trial.c for the isolated Classic catalog. */
+enum { CLASSIC_REGISTRY_SLOTS = 0x1a };
+static const SkseX86Service classic_registration_services[] = {
+    {0x00a48d60, SKSE_CLASSIC_CATALOG_ALLOCATE, SKSE_X86_CLASSIC_CATALOG},
+    {0x00c46c00, SKSE_CLASSIC_CATALOG_CONSTRUCT, SKSE_X86_CLASSIC_CATALOG},
+    {0xe0010640, SKSE_CLASSIC_CATALOG_FORM_TYPE, SKSE_X86_CLASSIC_CATALOG},
+    {0xe0010644, SKSE_CLASSIC_CATALOG_REGISTER, SKSE_X86_CLASSIC_CATALOG},
+    {0xe0010648, SKSE_CLASSIC_CATALOG_FLAGS, SKSE_X86_CLASSIC_CATALOG}
+};
+
+static bool capture_classic_registry(SksePluginSession *session, SkseClassicCatalog *catalog,
+                                     SkseX86Result *trace) {
+    SkseX86Services *services = &session->vm.services;
+    const size_t count = services->count;
+    const size_t initial_blocks = session->heap.count;
+    const SkseX86Scratch scratch = session->vm.scratch;
+    if (!catalog->rows || !catalog->limit || catalog->count || session->papyrus.count != 1 ||
+        count > SKSE_X86_MAX_SERVICES - SKSE_CLASSIC_CATALOG_OPERATIONS ||
+        !scratch.bytes || scratch.length < PAPYRUS_PROBE_REGISTRY_OFFSET + 4) return false;
+
+    catalog->form_types = skse_x86_heap_allocate(&session->heap,
+        SKSE_CLASSIC_CATALOG_FORM_TYPES * SKSE_CLASSIC_CATALOG_FORM_BYTES, true);
+    const uint32_t table = skse_x86_heap_allocate(&session->heap, CLASSIC_REGISTRY_SLOTS * 4, true);
+    uint8_t *slots = skse_x86_heap_memory(&session->heap, table, CLASSIC_REGISTRY_SLOTS * 4, true);
+    if (!catalog->form_types || !slots) return false;
+    write_word(slots + 0x0a * 4, classic_registration_services[SKSE_CLASSIC_CATALOG_FORM_TYPE].address);
+    write_word(slots + SKSE_CLASSIC_PAPYRUS_REGISTER_SLOT * 4,
+               classic_registration_services[SKSE_CLASSIC_CATALOG_REGISTER].address);
+    write_word(slots + 0x19 * 4, classic_registration_services[SKSE_CLASSIC_CATALOG_FLAGS].address);
+    write_word(scratch.bytes + PAPYRUS_PROBE_REGISTRY_OFFSET, table);
+
+    SkseX86Result callback = {0};
+    memcpy(session->entries + count, classic_registration_services, sizeof classic_registration_services);
+    services->count += SKSE_CLASSIC_CATALOG_OPERATIONS;
+    services->classic_catalog = catalog;
+    session->papyrus_callback_result = &callback;
+    const SksePapyrusTrialReport report = skse_papyrus_trial_dispatch(&session->papyrus, session->papyrus.epoch,
+        scratch.base + PAPYRUS_PROBE_REGISTRY_OFFSET);
+    session->papyrus_callback_result = NULL;
+    services->classic_catalog = NULL;
+    services->count = count;
+    if (trace) *trace = callback;
+    if (report.status != SKSE_PAPYRUS_TRIAL_OK || report.attempted != 1 || !catalog->count ||
+        session->heap.count > initial_blocks + catalog->count + 8) return false;
+    catalog->trial = &session->papyrus;
+    catalog->epoch = session->papyrus.epoch;
+    return true;
+}

@@ -50,6 +50,7 @@ static NSString *CallResult(BOOL japanese, SkseX86Status status) {
     case SKSE_X86_BAD_CALL_RETURN: return @"DLLの呼び出しから正常に復帰できませんでした。";
     case SKSE_X86_UNSUPPORTED_API: return @"診断で提供していないWindowsまたはSKSE関数が呼ばれました。";
     case SKSE_X86_DIVIDE_FAULT: return @"DLLの除算で0除算または結果のあふれが発生しました。";
+    case SKSE_X86_RECORD_WRITE_FAILED: return @"DLLが追加セーブのデータをすべて書き込めませんでした。";
     default: return @"DLLの処理を実行できませんでした。";
     }
 }
@@ -57,17 +58,35 @@ static NSString *CallResult(BOOL japanese, SkseX86Status status) {
 static NSArray<NSString *> *CallFailure(BOOL japanese, NSString *summary, const SkseX86Result *result) {
     NSString *reason = CallResult(japanese, result->status);
     const char *function = skse_trial_windows_service_name(result->failed_service);
-    if (function) return @[summary, reason, [NSString stringWithUTF8String:function]];
+    if (function) {
+        NSString *name = [NSString stringWithUTF8String:function];
+        if (result->protection_length) {
+            NSString *region = [NSString stringWithFormat:
+                Text(japanese, @"Requested region 0x%08x · %u bytes", @"変更を要求した領域 0x%08x · %uバイト"),
+                (unsigned)result->protection_address, (unsigned)result->protection_length];
+            return @[summary, reason, name, region];
+        }
+        return @[summary, reason, name];
+    }
+    if (result->status == SKSE_X86_MEMORY_FAULT && result->fault_access) {
+        NSString *address = [NSString stringWithFormat:
+            Text(japanese, @"Windows virtual address 0x%08x", @"Windows仮想アドレス 0x%08x"),
+            (unsigned)result->fault_address];
+        return @[summary, reason, address];
+    }
     return @[summary, reason];
 }
 
 static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *trial, const SksePeReport *imports) {
     switch (trial->status) {
     case SKSE_TRIAL_COMPLETED: {
+        NSString *summary = trial->partial_windows_imports
+            ? Text(japanese, @"The tested initialization returned. Some Windows functions remain unsupported.",
+                             @"初期化の試験は完了しました。一部のWindows関数は未対応です。")
+            : Text(japanese, @"SKSE initialization passed in the test environment.",
+                             @"診断環境でSKSEの初期化が完了しました。");
         NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObjects:
-            Text(japanese, @"SKSE initialization passed in the test environment.",
-                           @"診断環境でSKSEの初期化が完了しました。"),
-            [NSString stringWithFormat:@"%s", trial->name], nil];
+            summary, [NSString stringWithFormat:@"%s", trial->name], nil];
         if (trial->unavailable_interface) {
             [lines addObject:[NSString stringWithFormat:Text(japanese, @"Also requested unavailable SKSE interface %u",
                                                             @"未対応のSKSEインターフェイス %u も要求されました。"),
@@ -120,6 +139,9 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
     case SKSE_TRIAL_DEPENDENCY_ATTACH_DECLINED:
         return @[Text(japanese, @"The DLL declined initialization in this environment.",
                                 @"このDLLは診断環境での初期化を拒否しました。")];
+    case SKSE_TRIAL_ENGINE_HOOKS_OBSERVED:
+        return @[Text(japanese, @"The test recorded engine hook requests. Game execution requires a compatible hook.",
+                                @"ゲームへのフック要求を確認しました。ゲーム内で使うには対応する処理が必要です。")];
     case SKSE_TRIAL_INVALID_INFO:
         return @[Text(japanese, @"The DLL returned invalid SKSE plugin information.",
                                 @"DLLが返したSKSEプラグイン情報を確認できませんでした。")];

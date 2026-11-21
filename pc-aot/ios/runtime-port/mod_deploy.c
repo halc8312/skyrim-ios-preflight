@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <ftw.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,64 +25,108 @@
 /* ---- data root -------------------------------------------------------- */
 static const char *const k_data_dirs[] = {"textures", "meshes", "scripts", "sound", "music",
     "interface", "strings", "seq", "shadersfx", "video", "lodsettings", "grass", "skse",
-    "dialogueviews", "facegen", "materials", "calientetools", "source", NULL};
-static int data_marker(const char *rest) {
+    "dialogueviews", "facegen", "materials", NULL};
+typedef enum { NO_MARKER, GAME_DATA, TOOL_DATA } DataMarker;
+static DataMarker data_marker(const char *rest) {
     const char *slash = strchr(rest, '/');
     if (slash) {
         size_t n = (size_t)(slash - rest);
         for (int i = 0; k_data_dirs[i]; ++i)
-            if (strlen(k_data_dirs[i]) == n && !strncasecmp(rest, k_data_dirs[i], n)) return 1;
-        return 0;
+            if (strlen(k_data_dirs[i]) == n && !strncasecmp(rest, k_data_dirs[i], n)) return GAME_DATA;
+        if ((n == 13 && !strncasecmp(rest, "calientetools", n)) ||
+            (n == 6 && !strncasecmp(rest, "source", n))) return TOOL_DATA;
+        return NO_MARKER;
     }
     const char *dot = strrchr(rest, '.');
-    return dot && (!strcasecmp(dot, ".esp") || !strcasecmp(dot, ".esm") || !strcasecmp(dot, ".bsa"));
+    return dot && (!strcasecmp(dot, ".esp") || !strcasecmp(dot, ".esm") || !strcasecmp(dot, ".bsa"))
+        ? GAME_DATA : NO_MARKER;
 }
-typedef struct { char *prefix; size_t len; } Candidate;
+typedef struct { const char *path; size_t len; DataMarker marker; } Candidate;
+static int compare_prefix(const Candidate *x, const Candidate *y) {
+    size_t common = x->len < y->len ? x->len : y->len;
+    int c = strncasecmp(x->path, y->path, common);
+    return c ? c : (x->len > y->len) - (x->len < y->len);
+}
 static int candidate_cmp(const void *a, const void *b) {
     const Candidate *x = a, *y = b;
-    int c = strcmp(x->prefix, y->prefix);
-    return c ? c : (x->len > y->len) - (x->len < y->len);
+    int c = compare_prefix(x, y);
+    return c ? c : strncmp(x->path, y->path, x->len);
+}
+static int is_fomod_config(const char *path) {
+    static const char config[] = "fomod/ModuleConfig.xml";
+    size_t length = strlen(path), suffix = sizeof config - 1;
+    if (length < suffix) return 0;
+    const char *component = path + length - suffix;
+    return (component == path || component[-1] == '/') && !strcasecmp(component, config);
 }
 int skyrim_mod_data_root(const char *const *paths, size_t count, char *prefix, size_t capacity, int *installer) {
     if (installer) *installer = 0;
     if (!prefix || !capacity) return 0;
     prefix[0] = 0;
-    Candidate *c = malloc((count ? count : 1) * 5 * sizeof *c);
+    if (!paths || !count || count > SIZE_MAX / sizeof(Candidate)) return 0;
+    Candidate *c = malloc(count * sizeof *c);
     if (!c) return 0;
     size_t n = 0;
     for (size_t i = 0; i < count; ++i) {
         const char *p = paths[i];
-        const char *fomod = strcasestr(p, "fomod/moduleconfig.xml");
-        if (installer && fomod && (fomod == p || fomod[-1] == '/')) *installer = 1;
+        if (!p) continue;
+        if (installer && !*installer && is_fomod_config(p)) *installer = 1;
         const char *rest = p;
         for (int depth = 0; depth < 5 && rest; ++depth) {
-            if (data_marker(rest)) { c[n].prefix = (char *)p; c[n].len = (size_t)(rest - p); ++n; break; }
+            DataMarker marker = data_marker(rest);
+            if (marker) {
+                c[n++] = (Candidate){p, (size_t)(rest - p), marker};
+                break;
+            }
             const char *slash = strchr(rest, '/');
             rest = slash ? slash + 1 : NULL;
         }
     }
-    /* Count each distinct prefix (case-sensitive, as stored in the archive). */
-    char **keys = malloc((n ? n : 1) * sizeof *keys);
-    if (!keys) { free(c); return 0; }
-    for (size_t i = 0; i < n; ++i) {
-        keys[i] = malloc(c[i].len + 1);
-        if (!keys[i]) { for (size_t k = 0; k < i; ++k) free(keys[k]); free(keys); free(c); return 0; }
-        memcpy(keys[i], c[i].prefix, c[i].len); keys[i][c[i].len] = 0;
-        c[i].prefix = keys[i];
-    }
+    /* Windows packages can spell the same wrapper folder with different case. */
     qsort(c, n, sizeof *c, candidate_cmp);
-    size_t best = 0, best_len = 0; const char *best_prefix = NULL;
+    const Candidate *best = NULL;
+    size_t best_score = 0;
+    int best_has_game_data = 0;
     for (size_t i = 0; i < n;) {
         size_t j = i;
-        while (j < n && !strcmp(c[j].prefix, c[i].prefix)) ++j;
+        int has_game_data = 0;
+        while (j < n && !compare_prefix(&c[j], &c[i])) {
+            has_game_data |= c[j].marker == GAME_DATA;
+            ++j;
+        }
         size_t score = j - i;
-        if (score > best || (score == best && c[i].len < best_len)) { best = score; best_len = c[i].len; best_prefix = c[i].prefix; }
+        if (score > best_score || (score == best_score && c[i].len < best->len)) {
+            best = &c[i];
+            best_score = score;
+            best_has_game_data = has_game_data;
+        }
         i = j;
     }
-    int ok = 0;
-    if (best_prefix && best_len < capacity) { memcpy(prefix, best_prefix, best_len + 1); ok = 1; }
-    for (size_t i = 0; i < n; ++i) free(keys[i]);
-    free(keys); free(c);
+    /* Packages can ship a source project beside Data. Its files can outnumber
+     * the runtime files and have similar names, such as src/skse/. When a
+     * wrapper only scores for tool files, also check for explicit child Data. */
+    if (best) {
+        size_t length = best->len;
+        int source_root = length >= 4 && (length == 4 || best->path[length - 5] == '/') &&
+            !strncasecmp(best->path + length - 4, "src/", 4);
+        if (source_root || !best_has_game_data) {
+            size_t parent_len = source_root ? length - 4 : length;
+            for (size_t i = 0; i < n; ++i) {
+                if ((source_root || c[i].marker == GAME_DATA) && c[i].len == parent_len + 5 &&
+                    !strncasecmp(c[i].path, best->path, parent_len) &&
+                    !strncasecmp(c[i].path + parent_len, "data/", 5)) {
+                    best = &c[i];
+                    break;
+                }
+            }
+        }
+    }
+    int ok = best && best->len < capacity;
+    if (ok) {
+        memcpy(prefix, best->path, best->len);
+        prefix[best->len] = 0;
+    }
+    free(c);
     return ok;
 }
 
@@ -129,6 +174,101 @@ static int clone_regular(const char *source, const char *destination, int game_i
 int skyrim_clone_file(const char *source, const char *destination) {
     return clone_regular(source, destination, 0);
 }
+int skyrim_mod_stage_racemenu_preset(const char *source, const char *name, const char *data_dir) {
+    if (!source || !name || !data_dir) return EINVAL;
+    size_t length = strnlen(name, NAME_MAX + 1);
+    if (!length || length > NAME_MAX || strchr(name, '/') || strchr(name, '\\')) return EINVAL;
+    const char *dot = strrchr(name, '.');
+    if (!dot || dot == name || strcasecmp(dot, ".jslot")) return EINVAL;
+    char safe[NAME_MAX + 2];
+    if (skyrim_zip_normalize(name, length, 1, safe, sizeof safe) != 1) return EINVAL;
+    static const char folder[] = "SKSE/Plugins/CharGen/Presets/";
+    char relative[sizeof folder + sizeof safe - 1];
+    snprintf(relative, sizeof relative, "%s%s", folder, safe);
+    char target[4096];
+    if ((size_t)snprintf(target, sizeof target, "%s/%s", data_dir, relative) >= sizeof target) return ENAMETOOLONG;
+    int error = skyrim_make_parents(data_dir, relative);
+    return error ? error : skyrim_clone_file(source, target);
+}
+static unsigned ece_slot_number(const char *name) {
+    if (!name || name[0] != '_' || name[1] < '1' || name[1] > '9') return 0;
+    unsigned number = (unsigned)(name[1] - '0');
+    const char *suffix = name + 2;
+    if (*suffix >= '0' && *suffix <= '9') number = number * 10 + (unsigned)(*suffix++ - '0');
+    return number <= 40 && !strcasecmp(suffix, "_commonTriRaces.slot") ? number : 0;
+}
+
+static int ece_find_name(int dir, const char *name, char found[NAME_MAX + 1]) {
+    found[0] = 0;
+    int fd = openat(dir, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) return errno;
+    DIR *scan = fdopendir(fd);
+    if (!scan) {
+        int error = errno;
+        close(fd);
+        return error;
+    }
+    int error = 0;
+    for (;;) {
+        errno = 0;
+        struct dirent *entry = readdir(scan);
+        if (!entry) { error = errno; break; }
+        if (strcasecmp(entry->d_name, name)) continue;
+        if (found[0]) { error = EEXIST; break; }
+        memcpy(found, entry->d_name, strlen(name) + 1);
+    }
+    if (closedir(scan) && !error) error = errno;
+    return error;
+}
+
+static int ece_open_slot_directory(int profile) {
+    const int flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
+    static const char *const folders[] = {"Documents", "My Games", "Skyrim", "CME_save"};
+    int current = openat(profile, ".", flags);
+    if (current < 0) return -1;
+    for (size_t i = 0; i < sizeof folders / sizeof folders[0]; ++i) {
+        const char *name = folders[i];
+        char found[NAME_MAX + 1];
+        int error = ece_find_name(current, name, found);
+        int next = -1;
+        if (error == EEXIST) error = EINVAL; /* Ambiguous folder, not an occupied slot. */
+        if (!error) {
+            if (found[0]) name = found;
+            else if (mkdirat(current, name, 0700) && errno != EEXIST) error = errno;
+        }
+        if (!error) {
+            next = openat(current, name, flags);
+            if (next < 0) error = errno;
+        }
+        close(current);
+        if (error) { errno = error; return -1; }
+        current = next;
+    }
+    return current;
+}
+
+int skyrim_mod_publish_ece_slot(int profile, const char *staged, const char *name, unsigned *slot) {
+    if (!slot) return EINVAL;
+    const unsigned number = ece_slot_number(name);
+    *slot = number;
+    if (!number || profile < 0 || !staged || !*staged) return EINVAL;
+
+    struct stat source;
+    if (lstat(staged, &source)) return errno;
+    if (!S_ISREG(source.st_mode) || source.st_nlink != 1 || source.st_size <= 0) return EINVAL;
+    char filename[sizeof "_40_commonTriRaces.slot"];
+    snprintf(filename, sizeof filename, "_%u_commonTriRaces.slot", number);
+    int dir = ece_open_slot_directory(profile);
+    if (dir < 0) return errno;
+    char found[NAME_MAX + 1];
+    int error = ece_find_name(dir, filename, found);
+    if (!error && found[0]) error = EEXIST;
+    // The app-owned Inbox file is complete, on the same volume, and removed by the caller.
+    if (!error && linkat(AT_FDCWD, staged, dir, filename, 0)) error = errno;
+    close(dir);
+    return error;
+}
+
 static int remove_entry(const char *path, const struct stat *st, int flag, struct FTW *ftw) {
     (void)st; (void)flag; (void)ftw;
     return remove(path) && errno != ENOENT ? -1 : 0;
@@ -314,16 +454,33 @@ static int find_child(const char *dir, const char *name, char *out, size_t cap) 
     return skyrim_plugin_child_path(dir, name, out, cap);
 }
 
-int skyrim_deploy_matches(const char *view_dir, const char *key) {
-    char path[4096], line[1024];
-    snprintf(path, sizeof path, "%s/.skyrimios-deploy", view_dir);
+#define CONFLICT_KEY_PREFIX "# SkyrimIOS deployment "
+
+int skyrim_deploy_matches(const char *view_dir, const char *conflicts_path, const char *key) {
+    char path[4096], marker[1024];
+    int n = snprintf(path, sizeof path, "%s/.skyrimios-deploy", view_dir);
+    if (n < 0 || (size_t)n >= sizeof path) return 0;
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
-    size_t n = fread(line, 1, sizeof line - 1, f);
+    int complete = fgets(marker, sizeof marker, f) && strchr(marker, '\n') &&
+                   fgetc(f) == EOF && !ferror(f);
     fclose(f);
-    line[n] = 0;
-    size_t k = strlen(key);
-    return n == k + 1 && !memcmp(line, key, k) && line[k] == '\n';
+    if (!complete) return 0;
+    if (key) {
+        size_t k = strlen(key);
+        if (strlen(marker) != k + 1 || memcmp(marker, key, k)) return 0;
+    }
+    if (!conflicts_path) return 1;
+
+    f = fopen(conflicts_path, "rb");
+    if (!f) return 0;
+    char header[sizeof CONFLICT_KEY_PREFIX - 1 + sizeof marker];
+    size_t prefix_length = sizeof CONFLICT_KEY_PREFIX - 1;
+    complete = fgets(header, sizeof header, f) &&
+               !strncmp(header, CONFLICT_KEY_PREFIX, prefix_length) &&
+               !strcmp(header + prefix_length, marker);
+    fclose(f);
+    return complete;
 }
 
 int skyrim_deploy_build(const char *game_dir, const char *const *package_roots, size_t count,
@@ -337,8 +494,16 @@ int skyrim_deploy_build(const char *game_dir, const char *const *package_roots, 
     int e = skyrim_remove_tree(building);
     struct stat previous;
     if (!e && !lstat(old, &previous)) {
-        if (!lstat(view_dir, &previous)) e = skyrim_remove_tree(old);
-        else if (errno != ENOENT || rename(old, view_dir)) e = errno;
+        if (lstat(view_dir, &previous)) {
+            if (errno != ENOENT || rename(old, view_dir)) e = errno;
+        } else if (!conflicts_path || skyrim_deploy_matches(view_dir, conflicts_path, NULL)) {
+            e = skyrim_remove_tree(old);
+        } else {
+            /* The new view became visible before its report. Keep the old
+             * generation even when this invocation cannot build a replacement. */
+            if (rename(view_dir, building) || rename(old, view_dir)) e = errno;
+            else e = skyrim_remove_tree(building);
+        }
     }
     if (e) { snprintf(err, err_cap, "cannot clear previous build (%d)", e); return e; }
     if (mkdir(building, 0755)) { e = errno; snprintf(err, err_cap, "cannot create view (%d)", e); return e; }
@@ -357,6 +522,7 @@ int skyrim_deploy_build(const char *game_dir, const char *const *package_roots, 
         int fd = mkstemp(pending_conflicts);
         if (fd < 0) e = errno;
         else if (!(d.conflicts = fdopen(fd, "w"))) { e = errno; close(fd); }
+        else if (fprintf(d.conflicts, CONFLICT_KEY_PREFIX "%s\n", key ? key : "") < 0) e = EIO;
     }
     char rel[4096] = "";
     if (!e) e = walk(data, rel, 0, sizeof rel, 0, index_fn, &d);

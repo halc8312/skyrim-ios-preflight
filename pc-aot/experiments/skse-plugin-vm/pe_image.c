@@ -7,11 +7,13 @@
 /* Microsoft PE/COFF specification: https://learn.microsoft.com/windows/win32/debug/pe-format
  * Read little-endian fields from checked byte ranges, including on unaligned input. */
 enum {
-    MAX_IMAGE_BYTES = 32 * 1024 * 1024, MAX_EXPORTS = 4096,
-    MAX_RELOCATIONS = 65536, MAX_RELOC_BLOCKS = MAX_IMAGE_BYTES / 4096,
+    MAX_EXPORTS = 4096, MAX_SAFE_SEH_HANDLERS = 4096,
+    MAX_RELOCATIONS = 65536, MAX_RELOC_BLOCKS = SKSE_PE_MAX_IMAGE_BYTES / 4096,
     EXPORTS = 0, IMPORTS = 1, RESOURCES = 2, SECURITY = 4, RELOCS = 5,
-    DEBUG_INFO = 6, TLS = 9, BOUND_IMPORTS = 11, IAT = 12, DELAY_IMPORTS = 13,
-    CLR = 14, DIRECTORY_COUNT = 16
+    DEBUG_INFO = 6, TLS = 9, LOAD_CONFIG = 10, BOUND_IMPORTS = 11, IAT = 12, DELAY_IMPORTS = 13,
+    CLR = 14, DIRECTORY_COUNT = 16,
+    LEGACY_CONFIG_BYTES = 64, SAFE_SEH_CONFIG_BYTES = 72, COOKIE_VA_OFFSET = 60, HANDLERS_VA_OFFSET = 64,
+    DLL_NO_SEH = 0x0400, DLL_GUARD_CF = 0x4000
 };
 
 typedef struct {
@@ -24,6 +26,7 @@ typedef struct {
     SksePeImage image;
     PeSpan raw[SKSE_PE_MAX_SECTIONS], dir[DIRECTORY_COUNT];
     uint32_t directory_mask, entry_rva, preferred_base;
+    uint16_t dll_characteristics;
     unsigned has_writable_code, relocs_stripped;
 } PeFile;
 
@@ -50,6 +53,10 @@ typedef struct {
     SksePeTlsInfo info;
     PeSpan callbacks; /* Includes the initialized null terminator, if present. */
 } TlsPlan;
+
+typedef struct {
+    PeSpan structure, cookie, seh_handlers;
+} LegacyLoadConfig;
 
 static uint16_t u16(const uint8_t *p) {
     return (uint16_t)((uint16_t)p[0] | (uint16_t)p[1] << 8);
@@ -205,12 +212,13 @@ static SksePeStatus read_headers(PeFile *pe) {
     pe->image.size = u32(opt + 56);
     pe->image.headers_size = u32(opt + 60);
     pe->entry_rva = u32(opt + 16);
+    pe->dll_characteristics = u16(opt + 70);
     uint32_t section_align = u32(opt + 32), file_align = u32(opt + 36);
     if (!pe->image.base || (pe->image.base & 0xffff) || section_align < 4096
         || file_align < 512 || file_align > 65536 || section_align < file_align
         || !power_of_two(section_align) || !power_of_two(file_align))
         return SKSE_PE_UNSUPPORTED_LAYOUT;
-    if (!pe->image.size || pe->image.size > MAX_IMAGE_BYTES) return SKSE_PE_SIZE_LIMIT;
+    if (!pe->image.size || pe->image.size > SKSE_PE_MAX_IMAGE_BYTES) return SKSE_PE_SIZE_LIMIT;
     if ((uint64_t)pe->image.base + pe->image.size > (UINT64_C(1) << 32)
         || pe->image.size % section_align || pe->image.headers_size % file_align
         || pe->image.headers_size > pe->image.size)
@@ -430,8 +438,8 @@ static int compare_rva(const void *left, const void *right) {
     return (a > b) - (a < b);
 }
 
-static int tls_region(const PeFile *pe, uint32_t rva, uint32_t length, unsigned permissions,
-                      int initialized) {
+static int section_has(const PeFile *pe, uint32_t rva, uint32_t length, unsigned permissions,
+                       int initialized) {
     const SksePeSection *s = section_at(&pe->image, rva, length);
     return s && (s->permissions & permissions) == permissions
         && (!initialized || file_at_rva(pe, rva, length, NULL));
@@ -439,7 +447,7 @@ static int tls_region(const PeFile *pe, uint32_t rva, uint32_t length, unsigned 
 
 static SksePeStatus read_tls(const PeFile *pe, TlsPlan *tls) {
     PeSpan dir = pe->dir[TLS];
-    if (dir.length != 24 || !tls_region(pe, dir.address, dir.length, SKSE_PE_READ, 1))
+    if (dir.length != 24 || !section_has(pe, dir.address, dir.length, SKSE_PE_READ, 1))
         return SKSE_PE_BAD_TLS;
     const uint8_t *d = file_at_rva(pe, dir.address, 24, NULL);
     uint32_t start = u32(d), end = u32(d + 4), index = u32(d + 8), table = u32(d + 12);
@@ -453,16 +461,16 @@ static SksePeStatus read_tls(const PeFile *pe, TlsPlan *tls) {
     info->alignment = exponent ? 1u << (exponent - 1) : 0;
     info->template_rva = start ? start - pe->preferred_base : 0;
     info->template_bytes = end - start;
-    if ((uint64_t)info->template_bytes + info->zero_fill > MAX_IMAGE_BYTES) return SKSE_PE_SIZE_LIMIT;
-    if (start && !tls_region(pe, info->template_rva, info->template_bytes,
+    if ((uint64_t)info->template_bytes + info->zero_fill > SKSE_PE_MAX_IMAGE_BYTES) return SKSE_PE_SIZE_LIMIT;
+    if (start && !section_has(pe, info->template_rva, info->template_bytes,
                              SKSE_PE_READ, info->template_bytes != 0))
         return SKSE_PE_BAD_TLS;
     info->index_rva = index - pe->preferred_base; /* _tls_index may be zero-initialized BSS. */
-    if (!tls_region(pe, info->index_rva, 4, SKSE_PE_READ | SKSE_PE_WRITE, 0)) return SKSE_PE_BAD_TLS;
+    if (!section_has(pe, info->index_rva, 4, SKSE_PE_READ | SKSE_PE_WRITE, 0)) return SKSE_PE_BAD_TLS;
     if (table) {
         if (table < pe->preferred_base || (table & 3)) return SKSE_PE_BAD_TLS;
         uint32_t rva = table - pe->preferred_base;
-        if (!tls_region(pe, rva, 4, SKSE_PE_READ, 1)) return SKSE_PE_BAD_TLS;
+        if (!section_has(pe, rva, 4, SKSE_PE_READ, 1)) return SKSE_PE_BAD_TLS;
         size_t available;
         const uint8_t *words = file_at_rva(pe, rva, 4, &available);
         for (unsigned i = 0; ; i++) {
@@ -474,7 +482,7 @@ static SksePeStatus read_tls(const PeFile *pe, TlsPlan *tls) {
             }
             if (i == SKSE_PE_MAX_TLS_CALLBACKS) return SKSE_PE_SIZE_LIMIT;
             if (target < pe->preferred_base ||
-                !tls_region(pe, target - pe->preferred_base, 1, SKSE_PE_EXEC, 1))
+                !section_has(pe, target - pe->preferred_base, 1, SKSE_PE_EXEC, 1))
                 return SKSE_PE_BAD_TLS;
             info->callback_rvas[info->callback_count++] = target - pe->preferred_base;
         }
@@ -490,6 +498,60 @@ static SksePeStatus read_tls(const PeFile *pe, TlsPlan *tls) {
     for (unsigned i = 0; i < DIRECTORY_COUNT; ++i)
         if (i != SECURITY && overlaps(index_cell, pe->dir[i])) return SKSE_PE_BAD_TLS;
     info->present = 1;
+    return SKSE_PE_OK;
+}
+
+static SksePeStatus read_legacy_load_config(const PeFile *pe, LegacyLoadConfig *out) {
+    PeSpan dir = pe->dir[LOAD_CONFIG];
+    if ((dir.length != LEGACY_CONFIG_BYTES && dir.length != SAFE_SEH_CONFIG_BYTES) ||
+        (pe->dll_characteristics & DLL_GUARD_CF)) return SKSE_PE_UNSUPPORTED_DIRECTORY;
+    const uint8_t *d = file_at_rva(pe, dir.address, dir.length, NULL);
+    uint32_t size = u32(d);
+    if (size != LEGACY_CONFIG_BYTES && size != SAFE_SEH_CONFIG_BYTES) return SKSE_PE_UNSUPPORTED_DIRECTORY;
+    // Older linkers use the 64-byte directory length with the 72-byte SafeSEH structure.
+    const SksePeSection *section = section_at(&pe->image, dir.address, size);
+    if ((dir.address & 3) || size < dir.length || !file_at_rva(pe, dir.address, size, NULL) ||
+        !section || section->permissions != SKSE_PE_READ) return SKSE_PE_BAD_FORMAT;
+    out->structure = (PeSpan){dir.address, size};
+    for (unsigned offset = 12; offset < COOKIE_VA_OFFSET; offset += 4)
+        if (u32(d + offset)) return SKSE_PE_UNSUPPORTED_DIRECTORY;
+
+    // The DLL's CRT still initializes and checks its own cookie. The VM
+    // validates this metadata and has no guest exception dispatch.
+    uint32_t cookie_va = u32(d + COOKIE_VA_OFFSET);
+    if (cookie_va) {
+        if ((cookie_va & 3) || cookie_va < pe->preferred_base) return SKSE_PE_BAD_FORMAT;
+        uint32_t rva = cookie_va - pe->preferred_base;
+        if (!section_has(pe, rva, 4, SKSE_PE_READ | SKSE_PE_WRITE, 0)) return SKSE_PE_BAD_FORMAT;
+        out->cookie = (PeSpan){rva, 4};
+    }
+    if (size == SAFE_SEH_CONFIG_BYTES) {
+        uint32_t handler_va = u32(d + HANDLERS_VA_OFFSET), count = u32(d + HANDLERS_VA_OFFSET + 4);
+        if (count > MAX_SAFE_SEH_HANDLERS) return SKSE_PE_SIZE_LIMIT;
+        if (!!handler_va != !!count) return SKSE_PE_BAD_FORMAT;
+        if (count) {
+            if ((handler_va & 3) || handler_va < pe->preferred_base ||
+                (pe->dll_characteristics & DLL_NO_SEH)) return SKSE_PE_BAD_FORMAT;
+            out->seh_handlers = (PeSpan){handler_va - pe->preferred_base, count * 4};
+            const PeSpan table = out->seh_handlers;
+            const SksePeSection *owner = section_at(&pe->image, table.address, table.length);
+            const uint8_t *handlers = file_at_rva(pe, table.address, table.length, NULL);
+            if (!owner || owner->permissions != SKSE_PE_READ || !handlers) return SKSE_PE_BAD_FORMAT;
+            uint32_t previous = 0;
+            for (uint32_t i = 0; i < count; ++i) {
+                uint32_t rva = u32(handlers + 4 * i);
+                if (rva <= previous || !section_has(pe, rva, 1, SKSE_PE_EXEC, 1)) return SKSE_PE_BAD_FORMAT;
+                previous = rva;
+            }
+        }
+    }
+    PeSpan ranges[] = {out->structure, out->cookie, out->seh_handlers};
+    for (unsigned i = 0; i < sizeof ranges / sizeof ranges[0]; ++i) {
+        for (unsigned j = 0; j < i; ++j)
+            if (overlaps(ranges[i], ranges[j])) return SKSE_PE_BAD_FORMAT;
+        for (unsigned j = 0; j < DIRECTORY_COUNT; ++j)
+            if (j != LOAD_CONFIG && j != SECURITY && overlaps(ranges[i], pe->dir[j])) return SKSE_PE_BAD_FORMAT;
+    }
     return SKSE_PE_OK;
 }
 
@@ -588,6 +650,22 @@ static SksePeStatus check_tls_relocations(const PeFile *pe, const TlsPlan *tls, 
     return SKSE_PE_OK;
 }
 
+static SksePeStatus check_load_config_relocations(const LegacyLoadConfig *config, const RelocationWords *move) {
+    const uint32_t base = config->structure.address;
+    const uint32_t cookie = config->cookie.length ? base + COOKIE_VA_OFFSET : 0;
+    const uint32_t handlers = config->seh_handlers.length ? base + HANDLERS_VA_OFFSET : 0;
+    if ((cookie && !bsearch(&cookie, move->rvas, move->count, sizeof cookie, compare_rva)) ||
+        (handlers && !bsearch(&handlers, move->rvas, move->count, sizeof handlers, compare_rva)))
+        return SKSE_PE_BAD_RELOCATION;
+    for (unsigned i = 0; i < move->count; ++i) {
+        PeSpan word = {move->rvas[i], 4};
+        if (word.address == cookie || word.address == handlers) continue;
+        if (overlaps(word, config->structure) || overlaps(word, config->cookie) ||
+            overlaps(word, config->seh_handlers)) return SKSE_PE_BAD_RELOCATION;
+    }
+    return SKSE_PE_OK;
+}
+
 static SksePeStatus read_exports(PeFile *pe, ExportPlan *requested) {
     PeSpan dir = pe->dir[EXPORTS];
     SksePeStatus missing = requested ? SKSE_PE_MISSING_DEPENDENCY_EXPORT : SKSE_PE_MISSING_EXPORTS;
@@ -671,7 +749,7 @@ static SksePeStatus parse(PeFile *pe, SksePeReport *report, ImportPlan *plan, Ex
     }
     if (pe->dir[DELAY_IMPORTS].address) return SKSE_PE_UNSUPPORTED_DELAY_IMPORTS;
     if (pe->dir[CLR].address) return SKSE_PE_UNSUPPORTED_CLR;
-    uint32_t supported = (1u << EXPORTS) | (1u << RELOCS) | (1u << RESOURCES) | (1u << DEBUG_INFO);
+    uint32_t supported = (1u << EXPORTS) | (1u << RELOCS) | (1u << RESOURCES) | (1u << DEBUG_INFO) | (1u << LOAD_CONFIG);
     if (tls) supported |= 1u << TLS;
     if (!plan) {
         if (pe->dir[IMPORTS].address || pe->dir[BOUND_IMPORTS].address || pe->dir[IAT].address)
@@ -685,10 +763,17 @@ static SksePeStatus parse(PeFile *pe, SksePeReport *report, ImportPlan *plan, Ex
     if (pe->directory_mask & ~supported) return SKSE_PE_UNSUPPORTED_DIRECTORY;
     if (pe->entry_rva && (!plan || !(plan->flags & SKSE_PE_ALLOW_ENTRY)))
         return SKSE_PE_UNSUPPORTED_ENTRY;
+    LegacyLoadConfig config = {0};
+    if (pe->dir[LOAD_CONFIG].address) {
+        status = read_legacy_load_config(pe, &config);
+        if (status != SKSE_PE_OK) return status;
+    }
     int moved = pe->image.base != pe->preferred_base;
     status = check_relocations(pe, moved ? move : NULL);
     if (status == SKSE_PE_OK && moved && tls && tls->info.present)
         status = check_tls_relocations(pe, tls, move);
+    if (status == SKSE_PE_OK && moved && config.structure.address)
+        status = check_load_config_relocations(&config, move);
     return status == SKSE_PE_OK ? read_exports(pe, requested) : status;
 }
 
@@ -813,6 +898,7 @@ SksePeStatus skse_pe_map_tls(const uint8_t *file, size_t length, uint32_t guest_
 
 void skse_pe_free(SksePeImage *image) {
     if (image) {
+        free(image->data_page_protection);
         free(image->bytes);
         memset(image, 0, sizeof(*image));
     }

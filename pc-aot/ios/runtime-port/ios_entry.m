@@ -19,6 +19,50 @@
 #include "device_policy.h"
 #include "diagnostic_upload.h"
 #include "PcGuestABI.h"
+#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
+#include "classic_settings.h"
+#include <time.h>
+
+static uint8_t classic_bootstrap[8];
+static bool classic_input_verified;
+
+static void probe_classic_settings(void) {
+    if (!classic_input_verified) return;
+    SkyrimPapyrusInputs selected;
+    const int acquired = skyrim_mods_acquire_papyrus_inputs(&selected);
+    if (acquired) {
+        if (acquired != ENOENT) fprintf(stderr, "IOS_CLASSIC_SETTINGS_PROBE acquisition=%d\n", acquired);
+        return;
+    }
+
+    struct timespec now = {0};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    SkseSettingsInputs inputs = {
+        .dll = selected.dll, .pex = selected.pex, .dll_size = selected.dll_size, .pex_size = selected.pex_size,
+        .game_fd = selected.game_fd, .settings_fd = selected.settings_fd, .epoch = 1,
+        .uptime_ms = (uint32_t)((uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000)
+    };
+    memcpy(inputs.profile, selected.profile, sizeof inputs.profile);
+    memcpy(inputs.bootstrap, classic_bootstrap, sizeof inputs.bootstrap);
+    SkseClassicSettings *settings = NULL;
+    SkseSettingsStatus status = skse_classic_settings_open(&inputs, &settings);
+    skyrim_mods_release_papyrus_inputs(&selected);
+    fprintf(stderr, "IOS_CLASSIC_SETTINGS_PROBE open_status=%u\n", (unsigned)status);
+    if (status == SKSE_SETTINGS_OK) {
+        static const char filename[] = "../WearableLanternsData/common", key[] = "auto_load";
+        const SkseClassicScalar arguments[] = {
+            {.type = 2, .text = filename, .text_size = sizeof filename},
+            {.type = 2, .text = key, .text_size = sizeof key},
+            {.type = 3}
+        };
+        SkseClassicScalarResult value;
+        SkseX86Result trace = {0};
+        status = skse_classic_settings_prepare(settings, inputs.epoch, arguments, inputs.uptime_ms, &value, &trace);
+        fprintf(stderr, "IOS_CLASSIC_SETTINGS_PROBE prepare_status=%u work=%u\n", (unsigned)status, trace.work);
+    }
+    skse_classic_settings_close(settings);
+}
+#endif
 
 __attribute__((noreturn)) static void startup_failure(NSString *message) {
     NSLog(@"SkyrimIOS startup failed: %@", message);
@@ -112,6 +156,10 @@ static void verify_guest_input(NSURL *game) {
         startup_failure(@"Cannot initialize guest-input SHA256 verification");
     }
     unsigned char buffer[64 * 1024];
+#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
+    SkseSettingsBootstrap settings_bootstrap = {0};
+    uint64_t input_offset = 0;
+#endif
     for (;;) {
         ssize_t count = read(fd, buffer, sizeof buffer);
         if (count < 0 && errno == EINTR) continue;
@@ -121,6 +169,10 @@ static void verify_guest_input(NSURL *game) {
             startup_failure([NSString stringWithFormat:@"Cannot read TESV_unpacked.exe for verification: %s", strerror(error)]);
         }
         if (count == 0) break;
+#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
+        skse_classic_settings_scan_bootstrap(&settings_bootstrap, input_offset, buffer, (size_t)count);
+        input_offset += (size_t)count;
+#endif
         if (CC_SHA256_Update(&context, buffer, (CC_LONG)count) != 1) {
             close(fd);
             startup_failure(@"Guest-input SHA256 verification failed while reading");
@@ -134,6 +186,9 @@ static void verify_guest_input(NSURL *game) {
     for (size_t i = 0; i < sizeof actual; ++i) mismatch |= actual[i] ^ expected[i];
     if (mismatch)
         startup_failure(@"TESV_unpacked.exe SHA256 does not match this locally assembled app; guest was not loaded");
+#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
+    classic_input_verified = skse_classic_settings_copy_bootstrap(&settings_bootstrap, actual, classic_bootstrap);
+#endif
     skyrim_ios_stage("guest-input-sha256-verified");
 }
 
@@ -181,6 +236,9 @@ int SDL_main(int argc, char **argv) {
         NSURL *runtimeGame = [NSURL fileURLWithPath:skyrim_mods_prepare_game(game.path) isDirectory:YES];
         if (!skyrim_mobile_prepare_mods(runtimeGame.fileSystemRepresentation))
             startup_failure(@"Cannot restore the profile plugin list; the guest was not started");
+#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
+        probe_classic_settings();
+#endif
         set_default("LB_LOG", skyrim_mobile_verbose() ? "1" : "0");
         set_default("DXVK_LOG_PATH", cache.fileSystemRepresentation);
         set_default("DXVK_STATE_CACHE_PATH", cache.fileSystemRepresentation);

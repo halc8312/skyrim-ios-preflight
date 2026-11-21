@@ -13,7 +13,8 @@ static unsigned __cdecl get_handle(void) { ++handle_calls; return handle_value; 
 
 static FixtureMessageHandler core_listener;
 static unsigned callback_failed, unavailable;
-static int serialization_selected;
+static int serialization_selected, papyrus_selected;
+static FixturePapyrusCallback papyrus_registration;
 static uint32_t serialization_uid;
 static FixtureSaveCallback saver, loader, reverter;
 static SkseX86RecordStream stream;
@@ -66,17 +67,56 @@ static void *__cdecl get_dispatcher(unsigned id) {
     callback_failed = 1;
     return NULL;
 }
+static _Bool __cdecl register_papyrus_callback(FixturePapyrusCallback callback) {
+    if (!callback || (papyrus_registration && papyrus_registration != callback)) return 0;
+    papyrus_registration = callback;
+    return 1;
+}
+
 static void *__cdecl query_interface(unsigned id) {
     static FixtureMessaging messaging = {2, register_listener, NULL, get_dispatcher};
+    static FixturePapyrus papyrus = {1, register_papyrus_callback};
     if (id == 5) return &messaging;
     if (id == 3 && serialization_selected) return &serial;
+    if (id == 2 && papyrus_selected) return &papyrus;
     if (id && !unavailable) unavailable = id;
     return NULL;
+}
+
+typedef void (__thiscall *NativeRegistration)(const void *, const void *);
+typedef _Bool (__thiscall *NativeRun)(const void *, const void *, const void *, uint32_t, uint32_t *, const uint32_t *);
+
+static const void *native_fixture;
+static void __thiscall capture_native(const void *registry, const void *function) {
+    if (!registry || native_fixture) callback_failed = 1;
+    else native_fixture = function;
+}
+
+static int run_native_fixture(void) {
+    const struct { uint32_t reserved[23]; NativeRegistration register_function; } table = {
+        .register_function = capture_native
+    };
+    const void *registry = &table;
+    if (!papyrus_registration || !papyrus_registration(&registry) || callback_failed || !native_fixture)
+        return 6;
+    const uint8_t *vtable;
+    memcpy(&vtable, native_fixture, sizeof vtable);
+    NativeRun run;
+    memcpy(&run, vtable + 22 * 4, sizeof run);
+    uint32_t vm_result[2] = {0, 0};
+    const uint32_t state = UINT32_C(0x5a711e01);
+    const unsigned returned = run(native_fixture, NULL, &registry, UINT32_C(0x0edab123), vm_result, &state);
+    const unsigned integer_returned = returned && vm_result[0] == 3;
+    printf("papyrus-int,%u,%08x\n", integer_returned,
+           integer_returned ? vm_result[1] : UINT32_C(0x55aa33cc));
+    return 0;
 }
 
 int main(int argc, char **argv) {
     int do_messages = argc == 2 && strcmp(argv[1], "messages") == 0;
     serialization_selected = argc == 2 && strcmp(argv[1], "serialization") == 0;
+    int papyrus_native = argc == 2 && (!strcmp(argv[1], "papyrus-int") || !strcmp(argv[1], "papyrus-int-bad"));
+    papyrus_selected = papyrus_native || (argc == 2 && strcmp(argv[1], "papyrus-registration") == 0);
     // Match the interpreter's dynamic-load entry contract. This loader is
     // used only for the fixture built next to this test executable.
     wchar_t path[MAX_PATH];
@@ -99,7 +139,7 @@ int main(int argc, char **argv) {
         const SkseTrialOptions *options = &trial_cases[i];
         const FixtureInterface api = {
             options->skse_version, options->runtime_version, 0, options->editor,
-            do_messages || serialization_selected ? query_interface : NULL,
+            do_messages || serialization_selected || papyrus_selected ? query_interface : NULL,
             options->expose_handle ? get_handle : NULL,
             options->expose_release ? get_release : NULL
         };
@@ -108,9 +148,14 @@ int main(int argc, char **argv) {
         handle_value = options->plugin_handle;
         release_calls = handle_calls = 0;
         core_listener = NULL;
+        papyrus_registration = NULL;
         callback_failed = unavailable = 0;
         unsigned query = query_export(&api, &info);
         unsigned load = query && load_export(&api);
+        if (papyrus_native) {
+            int result = load ? run_native_fixture() : 7;
+            return FreeLibrary(dll) ? result : 5;
+        }
         print_trial(i, query, load, query ? info.plugin_version : 0, query ? info.name : "",
                     release_calls, handle_calls);
         if (do_messages) {
@@ -142,6 +187,11 @@ int main(int argc, char **argv) {
             skse_x86_records_close(&stream);
             saver = loader = reverter = NULL;
             serialization_uid = 0;
+        }
+        if (papyrus_selected) {
+            uint32_t shadow_registry = 0;
+            const unsigned attempted = load && papyrus_registration;
+            printf("papyrus,%u,%u\n", attempted, attempted && papyrus_registration(&shadow_registry));
         }
     }
     if (!FreeLibrary(dll)) return 5;

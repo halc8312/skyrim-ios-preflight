@@ -19,17 +19,108 @@ normal build 18 and the newer diagnostic builds are tracked in [STATUS.md](STATU
 3. The resident DLL test owns its images, registry and queues across separate
    host calls. The Classic trial can record the first returned Papyrus
    registration and menu hook, with the observed order and whether each ran on
-   the startup thread. These observations help identify game-side call sites.
-   Connect enabled plugins through checked handles and the actual game and UI
-   callbacks once their thread ownership and lifetime are verified on iPhone.
+   the startup thread. For PapyrusUtil 3.3 the hosted trial also captures typed
+   declarations and matches compiled script calls to verified DLL wrappers.
+   Connect those wrappers through the owning registry epoch and verify its VM
+   and game-object lifetimes on iPhone. [Typed trials](../experiments/skse-plugin-vm/README.md)
+   The optional launch probe now checks the selected PapyrusUtil 3.3 DLL and
+   PEX, resolves the seven tested JsonUtil signatures and prepares a read of
+   Wearable Lanterns' common settings. The hosted backend stages each save
+   until the caller acknowledges its result. On the pinned LE build, an
+   ordinary load can continue after the VM freeze times out. Registry reset
+   can pop frames even with a retained script stack. Gameplay admission
+   requires a valid frame before argument access and through the engine's
+   own result copy.
+   [Settings backend](../experiments/skse-plugin-vm/classic_settings.h)
 4. Validate an additional save's structure inside the selected profile. The
-   separate load proof gives an authored loader an immutable base input and
-   releases companion bytes only after the owning game and VM confirm that input
-   and the saved generation agrees. The actual game still needs a verified
-   input-open and load-completion path. [Additional-save experiment](../experiments/skse-cosave/README.md)
+   hosted round trip runs the pinned fresh-save and fresh-load calls through
+   the prepared file wrappers. The companion is eligible after the base file
+   is sealed and the VM confirms the matching loaded generation. Cached
+   preload and live app integration remain open. [Save round trip](../experiments/classic-save-roundtrip/README.md)
 5. Extend the D3D9 bridge where rendering plugins need real device state and
    presentation callbacks. Verify output and GPU time against reference cases.
    The tested color treatment is one small rendering prototype. [D3D9 presentation experiment](../experiments/d3d9-present-grade/README.md)
+
+## First-wave gameplay checks
+
+Use the original LE distributions selected through the owner's Files app.
+Record the installed versions, observable result and any failure for each
+profile. Use copied saves for changes that persist across a relaunch. These
+are the main-file versions listed by the [Nexus file API](https://graphql.nexusmods.com/#query-modFiles)
+on 2026-11-20.
+
+| Test | LE packages | Observable result |
+| --- | --- | --- |
+| SKSE and menus | SKSE Classic 1.7.3 scripts, SkyUI 5.1 | Open inventory and MCM using touch input. Change an MCM setting, quit and reload. |
+| Papyrus and saves | PapyrusUtil 3.3, Wearable Lanterns 4.0.2 | Call a real StorageUtil function, use the lantern and restore a value from the same copied save after a relaunch. |
+| Character editing | RaceMenu 3.4.5, ECE 1.59, NetImmerse Override 3.4.4 | In separate configurations, edit an appearance and verify a preset and appearance survive a reload. RaceMenu already includes NiOverride. |
+| Hair and character menu | ShowRaceMenu Precache Killer 1.3, KS Hairdos 1.10, Apachii Sky Hair 1.6 Full | Select new hair and observe the menu's pre-cache behavior with the intended DLL loaded. |
+| Dynamic meshes | HDT Physics Extensions 14.28, HDT HighHeels beta 0.5, XPMSE 5.06 | See movement on an HDT-enabled asset and check that the height offset applies and clears on equipment changes. |
+| Legacy skeleton | XPMS 1.96, the matching Realistic Ragdolls and Force 1.9 files | In a separate profile, verify the skeleton is selected and transitions animate correctly. |
+| Generated assets | CBBE 3.4f, UNP base 1.2, BodySlide 6.1.0, FNIS Behavior 7.6 | Verify base bodies in separate profiles, then import owner-generated meshes and behavior for the matching profile and observe the result. |
+| Game data | USLEEP 3.0.16 with the three official DLC | Resolve the masters, load a copied save and verify an affected record or quest. |
+| Camera and loading | Enhanced Camera 1.4, Safety Load 1.2 | Verify first-person body and camera behavior and exercise the affected loading path. |
+| Unvoiced dialogue | Fuz Ro D-oh 6.1 | Open an unvoiced conversation with the original package. Verify subtitle duration and lip motion in the menu and world chatter, then check an ordinary voiced line. |
+
+Compare startup, frame times and save behavior to the same build with the
+test profile disabled. Match the signed app to its guest ABI and verify
+owner-only delivery after the gameplay paths are available.
+
+Current host checks cover the PapyrusUtil registration, scalar settings and
+integer and text records restored by the original DLL in a new process. They
+also cover the Wearable Lanterns input and meter notification routes, separate
+RaceMenu and ECE preset imports, deployment recovery, selected DLC and generated
+asset placement, and both Fuz subtitle routes. The pinned actor-reference
+experiment proves a retained reference at the crosshair call site. The original
+DLL record test uses authored forms and a separate Classic companion. Most
+native MODs still need their game callbacks and the iPhone checks in this table.
+[Progress](STATUS.md)
+
+## RaceMenu LE appearance editing
+
+The first target is RaceMenu 3.4.5 on Skyrim 2011 LE 1.9.32. The preset
+staging entry point is
+[`skyrim_mod_stage_racemenu_preset`](../ios/runtime-port/mod_deploy.c).
+It copies a selected `.jslot` into
+`Data/SKSE/Plugins/CharGen/Presets/` in the staged MOD package. The launch
+view receives that package when its profile enables it. The ordinary app's picker calls the same entry point and attaches the
+staged package to the profile selected at import.
+
+The current test uses authored bytes to verify placement, safe filenames,
+preservation of an existing preset and separation of the two launch
+views. The test treats the preset contents as an opaque import fixture.
+
+```sh
+cd pc-aot
+python3 -B -m unittest discover -s tests -p test_mod_archive.py -v
+```
+
+The author source identifies Classic 3.4.5.0 as `chargen.dll`. Its serializer
+stores the ordinary float options in `morphs.default.morphs`, in the order of
+`TESNPC::FaceMorphs::option[]`. Custom slider records use `morphs.custom`.
+The Scaleform load route applies the preset to the current player through
+the CharGen morph handler. [LE version resource](https://github.com/expired6978/SKSEPlugins/blob/ea858fd0716a60c45fd572b558edd67da97fd132/skse/chargen/Resource.rc#L53-L71)
+· [LE JSON writer](https://github.com/expired6978/SKSEPlugins/blob/ea858fd0716a60c45fd572b558edd67da97fd132/skse/chargen/MorphHandler.cpp#L2091-L2107)
+· [LE load route](https://github.com/expired6978/SKSEPlugins/blob/ea858fd0716a60c45fd572b558edd67da97fd132/skse/chargen/ScaleformFunctions.cpp#L95-L132)
+
+Nose Height is the first candidate. CharGen associates `sRSMNoseHeight`
+with `FaceMorphList::kMorph_NoseDownUp`. The Classic SKSE 1.7.3 SDK's
+`GameData.h` puts it at index 1, and `GameObjects.h` defines 19 float options.
+Use `morphs.default.morphs[1]` in an authored parser fixture. A pair saved
+from the same LE 3.4.5 character with just Nose Height changed can validate
+the actual preset files. [LE slider labels](https://github.com/expired6978/SKSEPlugins/blob/ea858fd0716a60c45fd572b558edd67da97fd132/skse/chargen/ScaleformFunctions.cpp#L239-L242)
+· [Classic SKSE 1.7.3 SDK](https://skse.silverlock.org/)
+
+The pinned LE lift shows the stock continuous-slider callback obtaining
+the player's current actor base and reading and applying the option through
+the engine's slider path. The first hosted adapter can use this existing
+callback behind a test double. It should require the same selected profile,
+open menu generation and current preview actor/base at application, plus a
+finite value inside the live slider descriptor's range. Menu lookup yields
+a borrowed object. Run the real call on the menu's owner thread after its
+lifetime is verified. Keep owner presets, generated game code and raw game
+traces private. The iPhone checks cover the head refresh and appearance
+reload in a copied profile.
 
 ## What already exists upstream
 

@@ -19,12 +19,24 @@ static volatile unsigned session;
 
 #if FIXTURE_VARIANT == 3
 __declspec(dllimport) unsigned long __stdcall GetTickCount(void);
+__declspec(dllimport) unsigned long __stdcall GetCurrentProcessId(void);
+__declspec(dllimport) void __stdcall GetSystemTimeAsFileTime(uint64_t *);
+__declspec(dllimport) int __stdcall QueryPerformanceCounter(int64_t *);
+__declspec(dllimport) int __stdcall QueryPerformanceFrequency(int64_t *);
 static volatile uint32_t attached_at;
+static uint32_t attached_process;
 static volatile int attached;
 
 int __stdcall TestModuleEntry(void *image, unsigned reason, void *reserved) {
     if (!image || reserved) return 0;
     if (reason == 1) {
+        uint64_t utc = 0;
+        int64_t first, second, frequency;
+        GetSystemTimeAsFileTime(&utc);
+        attached_process = GetCurrentProcessId();
+        if (utc < UINT64_C(116444736000000000) || !attached_process ||
+            !QueryPerformanceFrequency(&frequency) || frequency <= 0 ||
+            !QueryPerformanceCounter(&first) || !QueryPerformanceCounter(&second) || second < first) return 0;
         attached_at = GetTickCount();
         attached = 1;
     } else if (reason == 0) {
@@ -133,17 +145,21 @@ __declspec(dllimport) void *__stdcall GetProcessHeap(void);
 __declspec(dllimport) void *__stdcall HeapAlloc(void *, unsigned long, size_t);
 __declspec(dllimport) void *__stdcall HeapReAlloc(void *, unsigned long, void *, size_t);
 __declspec(dllimport) int __stdcall HeapFree(void *, unsigned long, void *);
+__declspec(dllimport) size_t __stdcall HeapSize(void *, unsigned long, const void *);
 static unsigned char *session_buffer;
 
 static _Bool setup_allocation(void) {
     void *heap = GetProcessHeap();
     if (!heap) return 0;
+    void *empty = HeapAlloc(heap, 0, 0);
+    if (!empty || HeapSize(heap, 0, empty) != 0 || !HeapFree(heap, 0, empty)) return 0;
     unsigned char *buffer = HeapAlloc(heap, 8, 32);
-    if (!buffer || buffer[0] || buffer[31]) return 0;
+    if (!buffer || HeapSize(heap, 0, buffer) != 32 || buffer[0] || buffer[31]) return 0;
     buffer[0] = 27;
     buffer[31] = 59;
     unsigned char *larger = HeapReAlloc(heap, 8, buffer, 144);
-    if (!larger || larger[0] != 27 || larger[31] != 59 || larger[32] || larger[143]) return 0;
+    if (!larger || HeapSize(heap, 0, larger) != 144 ||
+        larger[0] != 27 || larger[31] != 59 || larger[32] || larger[143]) return 0;
     larger[143] = 17;
     session_buffer = larger;
     return 1;
@@ -154,7 +170,7 @@ static _Bool setup_allocation(void) {
 static __declspec(align(16)) const unsigned char vector_input[16] = {
     0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0, 0x1a, 0x2b
 };
-static __declspec(align(16)) unsigned char vector_output[96];
+static __declspec(align(16)) unsigned char vector_output[128];
 
 static void setup_vectors(void) {
     const unsigned char *src = vector_input;
@@ -180,6 +196,10 @@ static void setup_vectors(void) {
         andps xmm4, xmm0
         movd eax, xmm4
         mov dword ptr [edi + 88], eax
+        shufps xmm0, xmm0, 1bh
+        movaps xmmword ptr [edi + 96], xmm0
+        shufpd xmm0, xmmword ptr [esi], 3
+        movaps xmmword ptr [edi + 112], xmm0
     }
 }
 #endif
@@ -319,9 +339,51 @@ static _Bool check_interlocked(void) {
 typedef unsigned long (__stdcall *FixtureLastError)(void);
 __declspec(dllimport) void *__stdcall GetModuleHandleA(const char *);
 __declspec(dllimport) void *__stdcall GetModuleHandleW(const wchar_t *);
+__declspec(dllimport) char *__stdcall GetCommandLineA(void);
+__declspec(dllimport) unsigned long __stdcall GetModuleFileNameA(void *, char *, unsigned long);
+__declspec(dllimport) unsigned long __stdcall GetModuleFileNameW(void *, wchar_t *, unsigned long);
 __declspec(dllimport) FixtureLastError __stdcall GetProcAddress(void *, const char *);
 __declspec(dllimport) unsigned long __stdcall GetLastError(void);
 __declspec(dllimport) void __stdcall SetLastError(unsigned long);
+
+static void *fixture_module;
+
+int __stdcall TestModuleEntry(void *module, unsigned reason, void *reserved) {
+    (void)reserved;
+    if (reason == 1) fixture_module = module;
+    return 1;
+}
+
+static _Bool check_module_paths(void *kernel) {
+    static char path[1024];
+    static wchar_t wide_path[1024];
+    unsigned long length = GetModuleFileNameA(0, path, 1024);
+    if (length < 4 || length >= 1024 || path[1] != ':' || path[2] != '\\' || path[length]) return 0;
+    const char *command = GetCommandLineA();
+    if (!command || !*command || command != GetCommandLineA()) return 0;
+    char tiny[2] = {'x', 'x'};
+    if (GetModuleFileNameA(0, tiny, 2) != 2 || GetLastError() != 122 || tiny[0] != path[0] || tiny[1]) return 0;
+    if (GetModuleFileNameA(0, tiny, 0) || tiny[0] != path[0] || tiny[1]) return 0;
+
+    length = GetModuleFileNameA(kernel, path, 1024);
+    if (length < 4 || length >= 1024 || path[1] != ':' || path[2] != '\\' || path[length]) return 0;
+    if (GetModuleFileNameW(kernel, wide_path, 1024) != length) return 0;
+    for (unsigned long i = 0; i <= length; ++i) {
+        if ((unsigned char)path[i] != wide_path[i]) return 0;
+    }
+    wchar_t wide_tiny[2] = {L'x', L'x'};
+    if (GetModuleFileNameW(kernel, wide_tiny, 2) != 2 || GetLastError() != 122 ||
+        wide_tiny[0] != wide_path[0] || wide_tiny[1]) return 0;
+
+    const char basename[] = "\\fixture.dll";
+    if (!fixture_module) return 0;
+    length = GetModuleFileNameA(fixture_module, path, 1024);
+    if (length <= sizeof basename || length >= 1024 || path[length]) return 0;
+    for (unsigned i = 0; i < sizeof basename; ++i) {
+        if (path[length + 1 - sizeof basename + i] != basename[i]) return 0;
+    }
+    return 1;
+}
 
 static _Bool check_named_module(void) {
     void *kernel = GetModuleHandleA("kErNeL32");
@@ -332,11 +394,39 @@ static _Bool check_named_module(void) {
     if (last_error() != 917) return 0;
     if (GetProcAddress(kernel, "getlasterror") || GetLastError() != 127) return 0;
     if (GetModuleHandleA("OwnedFixtureNotLoaded") || GetLastError() != 126) return 0;
-    return 1;
+    return check_module_paths(kernel);
 }
 #endif
 
 #if FIXTURE_VARIANT == 19
+static _Bool check_bit_tests(void) {
+    volatile uint32_t field[3];
+    field[0] = 0x80000001;
+    field[1] = 0;
+    field[2] = 2;
+    volatile uint32_t *middle = &field[1];
+    unsigned char negative, positive, immediate, register_bit, low_word, prior_zero;
+    __asm {
+        mov ecx, middle
+        mov edx, -1
+        xor eax, eax
+        bt dword ptr [ecx], edx
+        setc negative
+        setz prior_zero
+        mov edx, 33
+        bt dword ptr [ecx], edx
+        setc positive
+        bt dword ptr [ecx], 1
+        setc immediate
+        mov eax, 2
+        bt eax, 33
+        setc register_bit
+        bt word ptr [ecx-2], 15
+        setc low_word
+    }
+    return negative && prior_zero && positive && !immediate && register_bit && low_word;
+}
+
 static volatile uint32_t shared_word;
 static _Bool check_locked_instructions(void) {
     volatile uint32_t *address = &shared_word;
@@ -370,9 +460,12 @@ static _Bool check_locked_instructions(void) {
 #endif
 
 #if FIXTURE_VARIANT == 20
+__declspec(dllimport) int __stdcall AreFileApisANSI(void);
 __declspec(dllimport) void *__stdcall CreateFileA(const char *, uint32_t, uint32_t, void *, uint32_t, uint32_t, void *);
 __declspec(dllimport) void *__stdcall CreateFileW(const wchar_t *, uint32_t, uint32_t, void *, uint32_t, uint32_t, void *);
 __declspec(dllimport) int __stdcall ReadFile(void *, void *, uint32_t, uint32_t *, void *);
+__declspec(dllimport) int __stdcall WriteFile(void *, const void *, uint32_t, uint32_t *, void *);
+__declspec(dllimport) int __stdcall SetEndOfFile(void *);
 __declspec(dllimport) uint32_t __stdcall GetFileSize(void *, uint32_t *);
 __declspec(dllimport) int __stdcall GetFileSizeEx(void *, int64_t *);
 __declspec(dllimport) uint32_t __stdcall GetFileType(void *);
@@ -403,6 +496,41 @@ static _Bool check_legacy_seek(void *file) {
     high = -1;
     return SetFilePointer(file, -4, &high, 1) == UINT32_MAX && GetLastError() == 0 && !high &&
            SetFilePointer(file, 0, NULL, 0) == 0;
+}
+
+static _Bool check_temporary_output(void) {
+    void *const invalid = (void *)(uintptr_t)UINT32_MAX;
+    const uint32_t read_access = 0x80000000u;
+    const uint32_t read_write = 0xc0000000u;
+    const wchar_t *wide_name = L"OwnedProbe.log";
+    const char *name = "ownedprobe.LOG";
+    if (!AreFileApisANSI()) return 0;
+    const _Bool existed = GetFileAttributesW(wide_name) != UINT32_MAX;
+    void *file = CreateFileW(wide_name, read_write, 3, NULL, 2, 0x80, NULL);
+    if (file == invalid || GetLastError() != (existed ? 183u : 0u) || GetFileSize(file, NULL)) return 0;
+    void *reader = CreateFileA(name, read_access, 3, NULL, 3, 0x80, NULL);
+    if (reader == invalid || GetFileAttributesA(name) == UINT32_MAX) return 0;
+    if (CreateFileA(name, read_access, 1, NULL, 3, 0x80, NULL) != invalid || GetLastError() != 32) return 0;
+    if (CreateFileA(name, read_write, 3, NULL, 1, 0x80, NULL) != invalid || GetLastError() != 80) return 0;
+
+    uint32_t count = 99;
+    if (!WriteFile(file, "ABCD", 4, &count, NULL) || count != 4) return 0;
+    if (SetFilePointer(file, 1, NULL, 0) != 1 || !WriteFile(file, "!", 1, &count, NULL) || count != 1 ||
+        SetFilePointer(file, 0, NULL, 1) != 2 || GetFileSize(reader, NULL) != 4) return 0;
+    if (SetFilePointer(file, 8, NULL, 0) != 8 || !WriteFile(file, "", 0, &count, NULL) || count ||
+        SetFilePointer(file, 0, NULL, 1) != 8 || GetFileSize(file, NULL) != 4) return 0;
+    if (WriteFile(reader, "x", 1, &count, NULL) || GetLastError() != 5 || count ||
+        SetEndOfFile(reader) || GetLastError() != 5) return 0;
+    if (SetFilePointer(file, 3, NULL, 0) != 3 || !SetEndOfFile(file) || GetFileSize(reader, NULL) != 3 ||
+        SetFilePointer(file, 7, NULL, 0) != 7 || !SetEndOfFile(file) || GetFileSize(reader, NULL) != 7) return 0;
+    char bytes[8];
+    if (!ReadFile(reader, bytes, 8, &count, NULL) || count != 7 ||
+        bytes[0] != 'A' || bytes[1] != '!' || bytes[2] != 'C') return 0;
+    if (!CloseHandle(reader) || !CloseHandle(file)) return 0;
+    if (WriteFile(file, "x", 1, &count, NULL) || GetLastError() != 6 || count) return 0;
+    file = CreateFileA(name, read_write, 0, NULL, 4, 0x80, NULL);
+    if (file == invalid || GetLastError() != 183 || GetFileSize(file, NULL) != 7) return 0;
+    return CloseHandle(file) != 0;
 }
 
 static _Bool check_file_assets(void) {
@@ -600,37 +728,287 @@ static _Bool check_child_thread(void) {
 
 #if FIXTURE_VARIANT == 22
 static const FixtureSerialization *save_api;
-static unsigned save_stage;
+static unsigned save_stage, save_owner;
+static unsigned char saved_value;
+
+#if defined(FIXTURE_RECORD_EXPORT)
+#include "test_tls_directory.h"
+__declspec(dllimport) int __stdcall VirtualProtect(void *, size_t, uint32_t, uint32_t *);
+
+#pragma pack(push, 1)
+typedef struct {
+    uint8_t opcode;
+    uint32_t displacement;
+} FixtureHookProposal;
+#pragma pack(pop)
+
+// This address is only a numeric observation in the hosted interpreter.
+static int observe_record_fixture_hook(FixtureSaveCallback callback) {
+    const uintptr_t site = 0x00600000u;
+    volatile FixtureHookProposal *proposal = (volatile FixtureHookProposal *)site;
+    uint32_t previous = 0, ignored;
+    if (!VirtualProtect((void *)site, sizeof *proposal, 0x40, &previous) || previous != 0x20) return 0;
+    proposal->opcode = 0xe9;
+    proposal->displacement = (uint32_t)((uintptr_t)callback - site - sizeof *proposal);
+    return VirtualProtect((void *)site, sizeof *proposal, previous, &ignored);
+}
+
+static void __stdcall record_fixture_tls(void *image, unsigned reason, void *reserved) {
+    (void)image; (void)reserved;
+    if (reason == 0 && save_owner == 66 && save_stage == 9) __builtin_trap();
+}
+static const FixtureTlsCallback record_fixture_tls_callbacks[] = {record_fixture_tls, NULL};
+FIXTURE_TLS_DIRECTORY(record_fixture_tls_callbacks);
+
+int __stdcall TestModuleEntry(void *image, unsigned reason, void *reserved) {
+    (void)image; (void)reserved;
+    if (reason == 0 && save_owner == 65 && save_stage == 9) __builtin_trap();
+    return 1;
+}
+#endif
 
 static void __cdecl make_test_records(const FixtureSerialization *api) {
-    unsigned char payload[] = {'m', 'o', 'd', '!'};
-    if (api != save_api || save_stage != 5 || !api->write(0x54534554, 4, payload, 4) ||
+    unsigned char payload[] = {saved_value, 'o', 'd', '!'};
+    if (api != save_api || !save_stage ||
+        (saved_value != 'm' && saved_value != 'n') || !api->write(0x54534554, 4, payload, 4) ||
         !api->open(0x48544f4d, 7) || !api->append(payload + 1, 1)) __builtin_trap();
     payload[0] = 'X';
     if (!api->append(payload, 1)) __builtin_trap();
+    if (saved_value == 'n' && !api->open(0x5458454e, 2)) __builtin_trap();
+#if defined(FIXTURE_RECORD_EXPORT)
+    // A normal return cannot publish the prefix after a reported write failure.
+    if (save_owner == 63) {
+        for (unsigned i = 2; i < 16; ++i) {
+            if (!api->open(i, 1)) __builtin_trap();
+        }
+        if (api->open(16, 1)) __builtin_trap();
+    } else if (save_owner == 64) {
+        static const unsigned char block[32768] = {'X'};
+        if (!api->append(block, sizeof block) || api->append(block, sizeof block)) __builtin_trap();
+    }
+#endif
+    /* Exercise rejection of a new owner after producing records. */
+    if (save_owner == 62) api->set_uid(save_owner, 0x1ced1592);
     save_stage = 9;
+    saved_value = 'n';
 }
 
 static void __cdecl revert_test_records(const FixtureSerialization *api) {
-    if (api != save_api || save_stage != 9) __builtin_trap();
+    if (api != save_api) __builtin_trap();
     save_stage = 0;
+    saved_value = 0;
 }
 
 static void __cdecl read_test_records(const FixtureSerialization *api) {
+#if defined(FIXTURE_RESOLVE_LOAD_IDS)
+    uint32_t form = 0xfeedbeef;
+    uint64_t handle = 0x1234567890abcdefULL;
+    if (!api->resolve_form(0x01001234, &form) || form != 0x04001234 ||
+        api->resolve_form(0x02001234, &form) || form != 0x04001234 ||
+        !api->resolve_form(0xff005678, &form) || form != 0xff005678 ||
+        !api->resolve_handle(0xabcdef120100ff00ULL, &handle) || handle != 0xabcdef120400ff00ULL ||
+        api->resolve_handle(0xabcdef120200ff00ULL, &handle) || handle != 0xabcdef120400ff00ULL)
+        __builtin_trap();
+#endif
     uint32_t type, version, length;
     unsigned char part[4];
-    if (api != save_api || save_stage || !api->next(&type, &version, &length) ||
+    if (api != save_api || save_stage || saved_value || !api->next(&type, &version, &length) ||
         type != 0x54534554 || version != 4 || length != 4 || api->read(part, 2) != 2 ||
-        part[0] != 'm' || part[1] != 'o') __builtin_trap();
+        (part[0] != 'm' && part[0] != 'n') || part[1] != 'o') __builtin_trap();
+    unsigned char value = part[0];
     if (!api->next(&type, &version, &length) || type != 0x48544f4d || version != 7 ||
         length != 2 || api->read(part, 4) != 2 || part[0] != 'o' || part[1] != 'X' ||
-        api->read(part, 1) || api->next(&type, &version, &length)) __builtin_trap();
+        api->read(part, 1)) __builtin_trap();
+    if (value == 'n' && (!api->next(&type, &version, &length) || type != 0x5458454e ||
+        version != 2 || length)) __builtin_trap();
+    if (api->next(&type, &version, &length)) __builtin_trap();
     save_stage = 11;
+    saved_value = value;
 }
 
 static void __cdecl reject_synthetic_form_delete(uint64_t handle) {
     (void)handle;
     __builtin_trap();
+}
+#endif
+
+#if FIXTURE_VARIANT == 24
+__declspec(dllimport) int __stdcall VirtualProtect(void *, size_t, uint32_t, uint32_t *);
+__declspec(dllimport) uint32_t __stdcall GetLastError(void);
+__declspec(dllimport) void __stdcall SetLastError(uint32_t);
+#pragma section(".vpdata", read)
+__declspec(allocate(".vpdata")) static volatile uint8_t protected_data[8192] = {3};
+
+static int check_protection(void) {
+    uint32_t previous = 0;
+    void *start = (void *)protected_data;
+    SetLastError(123);
+    if (!VirtualProtect((void *)(protected_data + 4095), 2, 4, &previous) ||
+        previous != 2 || GetLastError() != 123) return 0;
+    protected_data[0] = 11;
+    protected_data[8191] = 23;
+    if (!VirtualProtect((void *)(protected_data + 4096), 1, 2, &previous) || previous != 4 ||
+        VirtualProtect(start, 0, 2, &previous) || GetLastError() != 87 ||
+        VirtualProtect(start, 0, 2, NULL) || GetLastError() != 998 ||
+        VirtualProtect(start, 1, 2, NULL) || GetLastError() != 998 ||
+        !VirtualProtect(start, 1, 1, &previous) || previous != 4) return 0;
+    return 1;
+}
+
+static int check_restored_data(void) {
+    uint32_t previous;
+    return VirtualProtect((void *)protected_data, sizeof protected_data, 2, &previous) &&
+           previous == 1 && protected_data[0] == 11 && protected_data[8191] == 23;
+}
+#endif
+
+#if FIXTURE_VARIANT == 25
+__declspec(dllimport) void *__stdcall EncodePointer(void *);
+__declspec(dllimport) void *__stdcall DecodePointer(void *);
+
+static uint32_t __cdecl authored_handler(void) { return 1; }
+
+static _Bool check_exception_frames(void) {
+    uint32_t (*handler)(void) = authored_handler;
+    unsigned matched;
+    __asm {
+        mov edx, handler
+        push edx
+        push dword ptr fs:[0]
+        mov eax, esp
+        mov dword ptr fs:[0], eax
+        push edx
+        push dword ptr fs:[0]
+        xor ecx, ecx
+        mov dword ptr fs:[ecx], esp
+        pop dword ptr fs:[0]
+        add esp, 4
+        mov ecx, dword ptr fs:[0]
+        cmp ecx, eax
+        sete cl
+        movzx ecx, cl
+        pop dword ptr fs:[0]
+        add esp, 4
+        mov matched, ecx
+    }
+    return matched == 1;
+}
+
+static _Bool check_encoded_pointers(void) {
+    void *value = (void *)(uintptr_t)0x4a650cd9u;
+    void *encoded = EncodePointer(value);
+    return EncodePointer(value) == encoded && DecodePointer(encoded) == value &&
+           DecodePointer(EncodePointer(NULL)) == NULL;
+}
+#endif
+
+#if FIXTURE_VARIANT == 26
+typedef struct { unsigned max_bytes; unsigned char replacement[2], lead_bytes[12]; } FixtureCodePageInfo;
+__declspec(dllimport) unsigned __stdcall GetACP(void);
+__declspec(dllimport) int __stdcall IsValidCodePage(unsigned);
+__declspec(dllimport) int __stdcall GetCPInfo(unsigned, FixtureCodePageInfo *);
+__declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned, unsigned, const wchar_t *, int, char *, int,
+                                                      const char *, int *);
+__declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned, unsigned, const char *, int, wchar_t *, int);
+__declspec(dllimport) int __stdcall GetStringTypeW(unsigned, const wchar_t *, int, uint16_t *);
+__declspec(dllimport) int __stdcall GetLocaleInfoW(unsigned, unsigned, wchar_t *, int);
+__declspec(dllimport) int __stdcall IsValidLocale(unsigned, unsigned);
+__declspec(dllimport) unsigned __stdcall GetUserDefaultLCID(void);
+__declspec(dllimport) int __stdcall LCMapStringW(unsigned, unsigned, const wchar_t *, int, wchar_t *, int);
+__declspec(dllimport) int __stdcall CompareStringW(unsigned, unsigned, const wchar_t *, int, const wchar_t *, int);
+__declspec(dllimport) unsigned long __stdcall GetLastError(void);
+
+static _Bool check_text_conversion(void) {
+    FixtureCodePageInfo info;
+    if (!IsValidCodePage(GetACP()) || !GetCPInfo(0, &info) || !info.max_bytes ||
+        !GetCPInfo(1252, &info) || info.max_bytes != 1 || info.replacement[0] != '?' ||
+        !GetCPInfo(65001, &info) || info.max_bytes != 4 || info.lead_bytes[0] ||
+        GetCPInfo(0xffffffffu, &info) || GetLastError() != 87) return 0;
+    static const wchar_t input[] = {L'A', 0, 0x65e5, 0xd83d, 0xde00};
+    char encoded[10];
+    wchar_t decoded[6];
+    if (WideCharToMultiByte(65001, 0x80, input, 5, NULL, 0, NULL, NULL) != 9 ||
+        WideCharToMultiByte(65001, 0x80, input, 5, encoded, 9, NULL, NULL) != 9 ||
+        encoded[0] != 'A' || encoded[1] || (unsigned char)encoded[2] != 0xe6 ||
+        (unsigned char)encoded[5] != 0xf0 || (unsigned char)encoded[8] != 0x80 ||
+        MultiByteToWideChar(65001, 8, encoded, 9, decoded, 5) != 5) return 0;
+    for (unsigned i = 0; i < 5; ++i) if (input[i] != decoded[i]) return 0;
+    if (MultiByteToWideChar(65001, 8, "A", -1, decoded, 2) != 2 ||
+        decoded[0] != L'A' || decoded[1] ||
+        MultiByteToWideChar(65001, 8, "\xff", 1, decoded, 5) || GetLastError() != 1113 ||
+        WideCharToMultiByte(65001, 0, decoded, 1, (char *)decoded, 6, NULL, NULL) ||
+        GetLastError() != 87) return 0;
+    static const wchar_t western[] = {0x20ac, 0x65e5, 0};
+    int used_default = 0;
+    if (WideCharToMultiByte(1252, 0x400, western, -1, encoded, 3, "*", &used_default) != 3 ||
+        !used_default || (unsigned char)encoded[0] != 0x80 || encoded[1] != '*' || encoded[2]) return 0;
+    uint16_t types[4];
+    static const wchar_t sample[] = {L'A', L'9', 0};
+    if (!GetStringTypeW(1, sample, -1, types) || !(types[0] & 1) || !(types[1] & 4) ||
+        !(types[2] & 32) || GetStringTypeW(3, sample, 1, types) || GetLastError() != 1004) return 0;
+    wchar_t locale_name[7];
+    locale_name[0] = L'?';
+    locale_name[6] = L'!';
+    const unsigned default_lcid = GetUserDefaultLCID();
+    if (!(IsValidLocale(default_lcid, 1) && !IsValidLocale(default_lcid, 3) && GetLastError() == 1004 &&
+           IsValidLocale(0x409, 1) && !IsValidLocale(0xffffffffu, 0) &&
+           GetLocaleInfoW(0x409, 0x8000005c, NULL, 0) == 6 &&
+           GetLocaleInfoW(0x409, 0x8000005c, locale_name, 5) == 0 && GetLastError() == 122 && locale_name[0] == L'?' &&
+           GetLocaleInfoW(0x409, 0x8000005c, locale_name, 7) == 6 &&
+           locale_name[0] == L'e' && locale_name[2] == L'-' && !locale_name[5] && locale_name[6] == L'!')) return 0;
+    static const wchar_t casing[] = {L'a', L'Z', 0x0153, 0};
+    wchar_t mapped[4];
+    return LCMapStringW(0x409, 0x200, casing, -1, NULL, 0) == 4 &&
+           LCMapStringW(0x409, 0x200, casing, -1, mapped, 4) == 4 &&
+           mapped[0] == L'A' && mapped[1] == L'Z' && mapped[2] == 0x0152 && !mapped[3] &&
+           LCMapStringW(0x409, 0x100, mapped, 4, mapped, 4) == 4 &&
+           mapped[0] == L'a' && mapped[1] == L'z' && mapped[2] == 0x0153 && !mapped[3] &&
+           CompareStringW(0x7f, 1, L"abc", -1, L"ABC", -1) == 2 &&
+           CompareStringW(0x409, 0, L"a", -1, L"b", 1) == 1 &&
+           CompareStringW(0x409, 0, L"", 0, L"", -1) == 2;
+}
+#endif
+
+#if FIXTURE_VARIANT == 27
+static unsigned papyrus_calls;
+static _Bool __cdecl authored_papyrus_registration(void *registry) {
+    return registry && *(const uint32_t *)registry == 0 && papyrus_calls++ == 0;
+}
+static _Bool __cdecl other_papyrus_registration(void *registry) {
+    (void)registry;
+    return 0;
+}
+#endif
+
+#if FIXTURE_VARIANT == 28
+__declspec(dllimport) wchar_t *__stdcall GetEnvironmentStringsW(void);
+__declspec(dllimport) int __stdcall FreeEnvironmentStringsW(wchar_t *);
+__declspec(dllimport) int __stdcall SetEnvironmentVariableA(const char *, const char *);
+
+static _Bool environment_has(const wchar_t *block, const wchar_t *entry) {
+    for (const wchar_t *line = block; *line; ++line) {
+        unsigned i = 0;
+        while (entry[i] && entry[i] == line[i]) ++i;
+        if (!entry[i] && !line[i]) return 1;
+        while (*line) ++line;
+    }
+    return 0;
+}
+
+static _Bool check_environment_snapshots(void) {
+    static const char key[] = "SkyrimOwnedFixtureE28";
+    if (!SetEnvironmentVariableA(key, "old")) return 0;
+    wchar_t *first = GetEnvironmentStringsW();
+    if (!first || !SetEnvironmentVariableA("skyrimownedfixturee28", "new")) return 0;
+    wchar_t *second = GetEnvironmentStringsW();
+    if (!second || first == second || !environment_has(first, L"SkyrimOwnedFixtureE28=old") ||
+        !environment_has(second, L"SkyrimOwnedFixtureE28=new") || !FreeEnvironmentStringsW(first)) return 0;
+    if (!SetEnvironmentVariableA(key, NULL) || !environment_has(second, L"SkyrimOwnedFixtureE28=new") ||
+        !FreeEnvironmentStringsW(second)) return 0;
+    wchar_t *third = GetEnvironmentStringsW();
+    if (!third) return 0;
+    const _Bool removed = !environment_has(third, L"SkyrimOwnedFixtureE28=new");
+    return FreeEnvironmentStringsW(third) && removed;
 }
 #endif
 
@@ -678,7 +1056,7 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
     if (supported && !check_named_module()) return 0;
 #endif
 #if FIXTURE_VARIANT == 19
-    if (supported && !check_locked_instructions()) return 0;
+    if (supported && (!check_locked_instructions() || !check_bit_tests())) return 0;
 #endif
 #if FIXTURE_VARIANT == 20
     if (supported && !check_file_assets()) return 0;
@@ -689,16 +1067,28 @@ _Bool __cdecl SKSEPlugin_Query(const FixtureInterface *api, FixtureInfo *info) {
 #if FIXTURE_VARIANT == 23
     if (supported && !check_child_thread()) return 0;
 #endif
+#if FIXTURE_VARIANT == 24
+    if (supported && !check_protection()) return 0;
+#endif
+#if FIXTURE_VARIANT == 25
+    if (supported && (!check_exception_frames() || !check_encoded_pointers())) return 0;
+#endif
+#if FIXTURE_VARIANT == 26
+    if (supported && !check_text_conversion()) return 0;
+#endif
     return supported;
 }
 
 _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
+#if FIXTURE_VARIANT == 24
+    if (!check_restored_data()) return 0;
+#endif
     if (!api || !api->get_release_index || !api->get_plugin_handle) return 0;
 #if FIXTURE_VARIANT == 2 || FIXTURE_VARIANT == 3
     if (session != (api->runtime_version ^ FIXTURE_VERSION)) return 0;
 #endif
 #if FIXTURE_VARIANT == 3
-    if (!attached || GetTickCount() - attached_at > 10000) return 0;
+    if (!attached || GetTickCount() - attached_at > 10000 || GetCurrentProcessId() != attached_process) return 0;
 #endif
 #if FIXTURE_VARIANT == 4
     if (buffer[0] != 'r' || buffer[1] != 'r' || buffer[2] != 'e' ||
@@ -742,7 +1132,11 @@ _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
         vector_output[50] != 0x78 || vector_output[53] != 0x12 || vector_output[54] ||
         vector_output[64] != 0x78 || vector_output[67] != 0x12 || vector_output[68] ||
         vector_output[72] != 0x11 || vector_output[79] != 0x88 ||
-        vector_output[88] != 0x11 || vector_output[91] != 0x44) return 0;
+        vector_output[88] != 0x11 || vector_output[91] != 0x44 ||
+        vector_output[96] != 0xe0 || vector_output[100] != 0xa0 ||
+        vector_output[104] != 0x55 || vector_output[108] != 0x11 ||
+        vector_output[112] != 0x55 || vector_output[116] != 0x11 ||
+        vector_output[120] != 0xa0 || vector_output[127] != 0x2b) return 0;
 #endif
 #if FIXTURE_VARIANT == 13
     if (arithmetic_output[0] != (uint32_t)-13333333 || arithmetic_output[1] != (uint32_t)-26 ||
@@ -769,16 +1163,37 @@ _Bool __cdecl SKSEPlugin_Load(const FixtureInterface *api) {
 #if FIXTURE_VARIANT == 17
     if (interlocked_value != 31) return 0;
 #endif
+#if FIXTURE_VARIANT == 20
+    if (!check_temporary_output()) return 0;
+#endif
+#if FIXTURE_VARIANT == 27
+    if (!api->query_interface) return 0;
+    FixturePapyrus *papyrus = api->query_interface(2);
+    if (!papyrus || papyrus->version != 1 || !papyrus->register_callback) return 0;
+    papyrus_calls = 0;
+    if (!papyrus->register_callback(authored_papyrus_registration) ||
+        !papyrus->register_callback(authored_papyrus_registration) ||
+        papyrus->register_callback(other_papyrus_registration) ||
+        papyrus->register_callback(NULL)) return 0;
+#endif
+#if FIXTURE_VARIANT == 28
+    if (!check_environment_snapshots()) return 0;
+#endif
 #if FIXTURE_VARIANT == 22
     if (!api->query_interface) return 0;
     save_api = api->query_interface(3);
     if (!save_api || save_api->version != 4) return 0;
-    save_api->set_uid(handle, 0x1ced1591);
+    save_owner = handle;
+    save_api->set_uid(handle, handle == 61 ? 0x1ced1592 : 0x1ced1591);
     save_api->set_revert(handle, revert_test_records);
     save_api->set_save(handle, make_test_records);
     save_api->set_load(handle, read_test_records);
     save_api->set_deleted(handle, reject_synthetic_form_delete);
     save_stage = 5;
+    saved_value = 'm';
+#if defined(FIXTURE_RECORD_EXPORT)
+    if (handle >= 65 && handle <= 67 && !observe_record_fixture_hook(make_test_records)) return 0;
+#endif
 #endif
     return 1;
 }

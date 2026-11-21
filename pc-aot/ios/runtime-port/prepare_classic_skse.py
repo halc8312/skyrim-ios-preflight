@@ -131,6 +131,52 @@ def adapt_present(text):
     return replace_once(text, PRESENT_HOOK, TRIAL_PRESENT_HOOK, PRESENT_FILE)
 
 
+def adapt_skyui_release_log(text):
+    name = "skse_compat.c"
+    anchor = "static uint32_t skyui_version_value("
+    text = replace_once(text, anchor, r"""static _Thread_local unsigned skse_probe_depth;
+static unsigned skse_release_reported;
+
+static void note_skyui_release(const SkseNative *fn, uint32_t value) {
+    if (skse_probe_depth || strcmp(fn->class_name, "SKSE") ||
+        strcmp(fn->name, "GetVersionRelease") ||
+        __atomic_exchange_n(&skse_release_reported, 1, __ATOMIC_RELAXED)) return;
+    fprintf(stderr, "IOS_CLASSIC_RELEASE value=%u\n", (unsigned)value);
+}
+
+""" + anchor, name)
+    text = replace_once(text, "    } else M32(result+4)=value;\n    RET(1,5);",
+                        "    } else M32(result+4)=value;\n"
+                        "    note_skyui_release(fn, value);\n    RET(1,5);", name)
+    return replace_once(text,
+        "    if(!skse_virtual(c,object,RUN_SLOT,5,runargs) || M32(result)!=fn->result)",
+        "    ++skse_probe_depth;\n"
+        "    uint32_t dispatched = skse_virtual(c,object,RUN_SLOT,5,runargs);\n"
+        "    --skse_probe_depth;\n"
+        "    if(!dispatched || M32(result)!=fn->result)", name)
+
+
+def adapt_int0_probe(text):
+    name = "skse_compat.c"
+    registration = "void skse_register_natives(CPU *c, uint32_t registry) {\n"
+    text = replace_once(text, registration,
+                        '#ifdef SKYRIM_IOS_CLASSIC_INT0_PROBE\n#include "classic_papyrus_int0.c.in"\n#endif\n\n'
+                        + registration, name)
+    log = '    fprintf(stderr, "IOS_CLASSIC_VM registered='
+    return replace_once(text, log,
+                        "#ifdef SKYRIM_IOS_CLASSIC_INT0_PROBE\n"
+                        "    int0_publish(c, registry, has);\n"
+                        "#endif\n" + log, name)
+
+
+def adapt_values_probe(text):
+    name = "skse_compat.c"
+    include = '#include "classic_papyrus_int0.c.in"\n'
+    text = replace_once(text, include, include + '#include "classic_papyrus_values.c.in"\n', name)
+    publish = "    int0_publish(c, registry, has);\n"
+    return replace_once(text, publish, publish + "    classic_values_publish(c, registry, has);\n", name)
+
+
 def prepare(source, runtime):
     from classic_skse_extra import adapt as adapt_extra
     from classic_skse_translation import adapt as adapt_translation, adapt_profile_list
@@ -145,13 +191,16 @@ def prepare(source, runtime):
         previous = adapt_profile_list(original) if name == "skse_translation.c" else adapt_ini(name, original)
         adapted = adapt_translation(original) if name == "skse_translation.c" else adapt_mod_queries(name, previous)
         before_input_queries = adapt_skyui_selftest(adapted) if name == "skse_compat.c" else adapted
-        new = adapt_extra(name, before_input_queries)
+        input_queries = adapt_extra(name, before_input_queries)
+        release_logged = adapt_skyui_release_log(input_queries) if name == "skse_compat.c" else input_queries
+        int0 = adapt_int0_probe(release_logged) if name == "skse_compat.c" else release_logged
+        new = adapt_values_probe(int0) if name == "skse_compat.c" else int0
         target = runtime / name
         if target.is_symlink() or target.samefile(source / name):
             raise ValueError(f"{name}: expected an independent staged copy")
         old = target.read_text(encoding="utf-8")
         if old != new:
-            if old not in (original, previous, adapted, before_input_queries):
+            if old not in (original, previous, adapted, before_input_queries, input_queries, release_logged, int0):
                 raise ValueError(f"{name}: unrecognized contents in staged runtime")
             changes.append((target, new))
     # The ordinary runtime adapter already transforms the SDL implementation.

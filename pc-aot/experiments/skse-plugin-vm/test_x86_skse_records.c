@@ -166,6 +166,31 @@ static void separate_owners(void) {
     skse_x86_records_close(&b);
 }
 
+static void copy_records(void) {
+    SkseX86RecordStream source = {0}, copy = {0};
+    uint32_t type, version, length;
+    uint8_t out[3];
+    assert(skse_x86_records_write(&source, 7, 11, "abc", 3));
+    assert(skse_x86_records_open(&source, 19, 4));
+    assert(skse_x86_records_reset_reading(&source));
+    assert(skse_x86_records_next(&source, &type, &version, &length));
+    assert(skse_x86_records_read(&source, out, 1) == 1 && out[0] == 'a');
+    fail_realloc = 1;
+    assert(!skse_x86_records_copy(&copy, &source));
+    assert(!copy.payload && !copy.count);
+    fail_realloc = 0;
+    assert(skse_x86_records_copy(&copy, &source));
+    assert(!skse_x86_records_copy(&copy, &source));
+    assert(skse_x86_records_read(&source, out, 1) == 1 && out[0] == 'b');
+    skse_x86_records_close(&source);
+    assert(skse_x86_records_reset_reading(&copy));
+    assert(skse_x86_records_next(&copy, &type, &version, &length) && type == 7 && version == 11 && length == 3);
+    assert(skse_x86_records_read(&copy, out, 3) == 3 && memcmp(out, "abc", 3) == 0);
+    assert(skse_x86_records_next(&copy, &type, &version, &length) && type == 19 && version == 4 && !length);
+    assert(!skse_x86_records_next(&copy, &type, &version, &length));
+    skse_x86_records_close(&copy);
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) return 2;
     if (!strcmp(argv[1], "trace")) trace();
@@ -174,6 +199,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[1], "byte-limit")) byte_limit();
     else if (!strcmp(argv[1], "oom")) alloc_failure();
     else if (!strcmp(argv[1], "owners")) separate_owners();
+    else if (!strcmp(argv[1], "copy")) copy_records();
     else return 2;
     return 0;
 }

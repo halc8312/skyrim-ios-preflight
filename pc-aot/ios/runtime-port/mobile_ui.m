@@ -395,6 +395,15 @@ static int scanModPlugins(BOOL publish, BOOL *skyuiListed) {
         }
         return !publish || skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, NULL, 0) == 0;
     }
+    unsigned inheritedDlc = 0;
+    int dlcError = skyrim_plugin_read_profile_dlc(profilePath.fileSystemRepresentation, &inheritedDlc);
+    if (publish && dlcError) {
+        skyrim_mods_plugin_list_failed();
+        modNotice = L(@"Could not read the previous DLC choices. The current plugin list is in use.",
+                      @"以前のDLC設定を確認できなかったため、現在のプラグイン一覧を使用します。");
+        fprintf(stderr, "IOS_MODS dlc_choices_read=%d\n", dlcError);
+        return 1;
+    }
     NSMutableArray<NSString *> *names = [NSMutableArray array];
     for (NSString *name in files) {
         NSString *ext = name.pathExtension.lowercaseString;
@@ -436,7 +445,10 @@ static int scanModPlugins(BOOL publish, BOOL *skyuiListed) {
         int rb = skyrim_plugin_default_rank(b.UTF8String, status[ib] == SKYRIM_PLUGIN_HEADER_OK && (headers[ib].flags & 1));
         return ra != rb ? (ra < rb ? NSOrderedAscending : NSOrderedDescending) : [a caseInsensitiveCompare:b];
     }];
-    for (NSString *name in added) [rows addObject:@{@"name":name, @"on":@NO}];
+    for (NSString *name in added) {
+        BOOL inherited = (skyrim_plugin_dlc_bit(name.UTF8String) & inheritedDlc) != 0;
+        [rows addObject:@{@"name":name, @"on":@(inherited)}];
+    }
 
     SkyrimPluginEntry *entries = calloc(rows.count ? rows.count : 1, sizeof *entries);
     size_t *order = calloc(rows.count ? rows.count : 1, sizeof *order);
@@ -1093,18 +1105,21 @@ void skyrim_mobile_show_notice(NSString *text) { if (text.length) [overlay messa
 NSArray<NSString *> *skyrim_mobile_loaded_plugins(void) {
     NSMutableArray *out = [NSMutableArray arrayWithObjects:@"Skyrim.esm", @"Update.esm", nil];
     /* The guest reads this profile's list. It may predate the MOD manager
-     * or have been restored after a failed deployment. */
-    char docs[PATH_MAX], folder[PATH_MAX], path[PATH_MAX];
+     * or have been restored after a failed deployment. A stale entry is
+     * only available when the running Data view contains the named file. */
+    char docs[PATH_MAX], folder[PATH_MAX], path[PATH_MAX], data[PATH_MAX];
     if (!profilePath || skyrim_plugin_child_path(profilePath.fileSystemRepresentation, "Documents", docs, sizeof docs) != 1 ||
         skyrim_plugin_child_path(docs, "Skyrim", folder, sizeof folder) != 1 ||
-        skyrim_plugin_child_path(folder, "plugins.txt", path, sizeof path) != 1) return out;
+        skyrim_plugin_child_path(folder, "plugins.txt", path, sizeof path) != 1 ||
+        skyrim_plugin_child_path(modGamePath.fileSystemRepresentation, "Data", data, sizeof data) != 1) return out;
     NSString *file = [NSString stringWithUTF8String:path];
     NSDictionary *attrs = [NSFileManager.defaultManager attributesOfItemAtPath:file error:NULL];
     if (![attrs[NSFileType] isEqual:NSFileTypeRegular] || [attrs[NSFileSize] unsignedLongLongValue] > 1024 * 1024) return out;
     NSString *text = [NSString stringWithContentsOfFile:file encoding:NSWindowsCP1252StringEncoding error:NULL];
     for (NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
         NSString *name = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
-        if (skyrim_plugin_name_valid(name.UTF8String) && !skyrim_plugin_is_base(name.UTF8String)) [out addObject:name];
+        const char *plugin = name.UTF8String;
+        if (!skyrim_plugin_is_base(plugin) && skyrim_plugin_file_present(data, plugin)) [out addObject:name];
     }
     return out;
 }

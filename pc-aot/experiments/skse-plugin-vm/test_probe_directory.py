@@ -114,7 +114,8 @@ class DirectoryProbeTests(unittest.TestCase):
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
             flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         sources = ["test_probe_directory.c", "probe_directory.c", "plugin_trial.c", "dependency_plan.c", "pe_image.c",
-                   "x86_call.c", "x86_heap.c", "x86_winthread.c", "x86_winfile.c", "x86_winsync.c",
+                   "x86_call.c", "x86_heap.c", "x86_winthread.c", "x86_wintext.c", "x86_winfile.c", "x86_winsync.c",
+                   "x86_winenv.c", "papyrus_trial.c",
                    "x86_skse_records.c", "probe_asset_file.c"]
         subprocess.run([compiler, *flags, *(HERE / s for s in sources), "-o", cls.binary], check=True, timeout=90)
 

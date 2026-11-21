@@ -1,0 +1,44 @@
+# Fresh selected-save load experiment
+
+The hosted fixture runs the original lifted `f_6821C0` selected-load function around authored file and engine services. The staging script checks the completed private generation, exact source hashes and exact anchors. It writes staged game-derived C and binaries only under the ignored `private/` directory.
+
+## Reviewed call sites
+
+| Original instruction | Role in this experiment |
+| --- | --- |
+| `0x682220` → `f_677540` | First selected-save open. With its original return token pushed, the resolved path is at `esp + 0x14`. The fresh route eventually calls `CreateFileA` via `f_F6BCF3`. |
+| `0x682275` → `f_67B720` | Original slot load. The call's low return byte controls the original success branch. A positive input read inside this call is required for a descriptor report. |
+| `0x8D69A7` → `f_8D5DF0` | Load-specific VM revert. The composed fixture runs the original lifted caller `f_8D6990`. |
+| `0x8D6B79` → `f_8D3DB0` | VM load. The composed fixture runs its original argument setup, call and return branch extracted from `f_8D69C0`. |
+
+The file witness accepts the resolved `.ess` path, stream, read-only descriptor, positive read, and per-open identity from the same attempt. The successful report borrows a retained descriptor during the callback. Cached `manager + 0x30` input, metadata-only reads, changed or substituted descriptors, failed loads and reentrancy cannot yield a ready report. Original engine returns and cleanup still run.
+
+## Preloaded stream
+
+The pinned Classic PC executable identifies the reviewed producer as `CopySaveGamesFromHost`. Its two direct calls are in the `ForceSave` command handler `f_51D390`. It enumerates `Saves/` and opens each candidate `.ess` via `0x6808F3 → f_A58870` and the `CreateFileA` call at `0xA58514`. The path comes from that enumeration. The consumer at `0x6821EC` adopts the current `manager + 0x30` stream before it can run the selected-name open. The dedicated `SysUtilLoadCompleteCallback` wrapper `f_682390` passes the stream itself as the name at `0x6823AA`, then destroys the stream and clears the field at `0x6823E4`. The callback installed by the producer, `f_67FEA0`, can also destroy the stream and clears the field at `0x67FF00`.
+
+The original PE and lift agree on the following blockers to a positive hosted witness.
+
+- The producer queries size with `GetFileSizeEx`. It calls `f_A580A0` at `0x680981`, which passes the low 32 bits of the requested length to `ReadFile` at `0xA580DC`. The producer tests the Win32-derived status before storing the stream at `0x680BA5`. It does not compare the reported completion count to the full file size. The current runtime's `ReadFile` wrapper can return success with zero or short output.
+- At `0x68094E` the producer calls the stock `f_6776C0` stream constructor. In file mode it allocates a `0x15c`-byte backing object through `f_A57EA0`. The other branch leaves the backing pointer null. The producer expects a backing buffer at `+0x160` and writes transfer metadata farther into that object. The separate memory-file constructor `f_A59C70` owns a buffer at that offset, and there is no verified call to it on this Classic PC route.
+- After the store at `0x680BA5`, the PC platform object's virtual slot at `+0x20` resolves to the immediate-return body `f_6C50E0`. The direct producer closes its temporary file through `f_A58800`. These observations leave no verified PC transfer-completion event or retained descriptor to hand to the companion bridge.
+
+If a working producer is observed on the target, the smallest companion witness needs one single-use lease per copied file. At the exact scoped open, bind the authorized selection and profile to a generation and retain the same immutable read-only descriptor before the first read. Track the native handle generation, complete 64-bit size within the reader's range, actual bytes read from offset zero, and the validated backing allocation and interval. Publish that lease only with the original manager store after a complete read into that interval. Carry the lease across any worker handoff. At cached adoption, require the same selection generation, manager, stream and backing lifetime plus an actual bounded read from that interval in the slot call. Invalidate on replacement, original destruction, cancellation, new selection or attempted consumption. Match the original slot and VM results to the same lifecycle ticket before returning any companion bytes. An unrelated fresh load follows its existing route.
+
+The persisted roundtrip fixture checks the negative case with an already-open authored stream. The original slot and VM can succeed while the bridge performs no new capture, hashing or companion restore. A positive fixture that constructs the missing backing object or invents a platform callback would only prove its authored services.
+
+## Run on a host
+
+Run the following from `pc-aot` with a completed original-body generation. The basic mode needs a C compiler and, on Linux, OpenSSL development files. The composition additionally needs Linux `memfd` seals and SQLite development files. Nonstandard library locations can use `--cflag` and `--ldflag`.
+
+```sh
+python3 -B experiments/classic-fresh-load/test_fresh_load.py \
+  --generation /path/to/private-generation --sanitizers
+
+python3 -B experiments/classic-fresh-load/test_fresh_load.py \
+  --generation /path/to/private-generation --sanitizers --compose
+```
+
+The composition uses the existing companion bridge. The authored selected input has kernel write, grow and shrink seals. The file backend uses the returned read-only descriptor from offset zero and verifies that the original descriptor's cursor stays independent. It reads an authored byte during preflight and a second byte inside the original slot scope. The existing lifecycle recorder produces the slot and nested VM rows at the reviewed lifted calls. A result matching all of that evidence returns the companion bytes previously committed for the authored input. A false VM return, missing VM call or revert, shifted slot ticket, different consumed descriptor, false slot return or missing positive slot read returns no companion.
+
+The composition snapshots the next recorder ticket in its single-thread fixture and verifies the actual reservation before acceptance. Runtime integration still needs to bind the same freshly opened input to a load attempt before the loader's first read, coordinate its ticket across threads and capture the matched VM calls on device. Cached/memory-backed inputs and storage immutability on iPhone remain unverified. All nested engine callees and base save bytes in this test are authored, and the experiment has no app entry point.

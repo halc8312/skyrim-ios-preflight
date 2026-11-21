@@ -1,6 +1,6 @@
 # Classic co-saves across quicksave generations
 
-This C experiment pairs one complete SKSE Classic companion with one completed base-game save. It operates on caller-provided file descriptors and a private SQLite database. The normal app and the game save directory have no connection to this experiment.
+The generation-store experiment pairs one complete SKSE Classic companion with one completed base-game save. It operates on caller-provided file descriptors and a private SQLite database. The local transfer check and the app's file-copy helper work independently of that store.
 
 ## Save identity
 
@@ -12,7 +12,7 @@ Official Classic 1.7.3 constructs the companion path from the save name. Its 20-
 
 ### Check two copied pairs on the local computer
 
-[compare_pair.py](compare_pair.py) compares both members against a previously trusted original using full-file SHA-256. Select the original `.ess` and the received `.ess` in their respective local folders. Each must have one same-basename `.skse` sibling. The received pair may have a new basename. The script checks the Classic headers, opens all four files read-only, and verifies their identities again after reading. Windows also denies writers and renames while all four handles are open. The command prints only equality flags and sizes.
+[compare_pair.py](compare_pair.py) compares both members against a previously trusted original using full-file SHA-256. Select the original `.ess` and the received `.ess` in their respective local folders. Each folder must contain a unique `.ess` and `.skse` for the selected basename, with case-insensitive matching for ASCII letters. The received pair may have a new basename. The script checks the Classic headers, opens all four files read-only, and verifies their identities again after reading. Windows also denies writers and renames while all four handles are open. The command prints only equality flags and sizes.
 
 ```sh
 python experiments/skse-cosave/compare_pair.py "Original/Quicksave.ess" "Received/Renamed.ess"
@@ -21,6 +21,12 @@ python experiments/skse-cosave/compare_pair.py "Original/Quicksave.ess" "Receive
 Exit code 0 means both copies match the original bytes. Code 1 identifies a changed member, and 2 indicates an unavailable or invalid input. The checker cannot establish that an arbitrary original `.ess` and `.skse` were saved together. That evidence must come from the source system. The script creates no manifest and performs no import or file writes.
 
 A local Windows → Linux → Windows transfer test used a 3,919-byte authored base header and a 4,353-byte companion written by the original 32-bit SKSE serialization functions. On Linux the existing Classic save inspector read all 255 authored plugin names, and the native companion inspector validated its record structure. After the return copy Windows found both digests equal and reproduced the same eight loaded-registration rows. This exercise covers local file transfer and leaves iPhone Files/provider behavior for device testing.
+
+### Prepare an explicit profile copy
+
+[copy_pair.h](copy_pair.h) provides the file copy used by the MOD Save check screen. Swipe a save left and choose a different profile. The running profile supplies the source, and the copy keeps each file's bytes and spelling. The helper opens the source read-only, stages both files privately, and checks the source again before exclusive renames. The `.ess` appears only after its companion.
+
+If the process exits between the two renames, explicitly selecting the same save and target profile again can finish the copy. The private stage and the published `.skse` must carry matching metadata, and both copies must match the stable source files. An existing `.ess`, missing or unsupported metadata, or a mismatch causes a filename conflict. The hosted tests cover process exit while the filesystem remains online. Power-loss durability and the iPhone simulator and device behavior are unverified.
 
 ## Calling sequence
 
@@ -161,6 +167,16 @@ On Linux, the experiment accepts an already write-sealed anonymous file or a fil
 These are cached WSL host timings from five measured runs after one warmup per size, with a 2 KiB synthetic owner record. The Linux capture column begins with an already sealed descriptor. Creating or filling that file is outside the timed interval. The two columns on the right measure the host handoff and worker separately. The native tests also count full-file hashes, with zero during capture, one on initial publication and zero extra on retry.
 
 The `observer` directory contains the project's unchanged passive recorder from its Classic lifecycle experiment. It retains the first 256 rows in a process. The test accepts completed, unambiguous same-thread call trees. Live events routed across threads, a rewritten call graph or a full trace need a separately verified event channel. The guest, its test binding and the bridge have no build connection to the app.
+
+### Interpreted Windows plugin records
+
+A successful isolated DLL save produces an immutable set of records bearing its registered Classic UID. The bridge writes that set to a pending generation and preserves other owners. A verified load can turn the associated companion into a fresh record set for the same UID. It can also decode the saved mod-index history from UID zero of that same image. The interpreted callbacks receive no file or host pointers. A form or handle resolver is available only in the load call that holds the verified map. An unresolved index leaves the output unchanged.
+
+The authored i386 test uses the same slot across two generations and verifies that values can be restored in either order. It checks case-insensitive mod names, index changes, missing mods, dynamic IDs, preservation of the upper handle bits and refusal of an unbound resolver. Bad generation evidence, an unrelated open file or an owner over the interpreted stream limit does not dispatch the plugin.
+
+The optional owner test runs the original PapyrusUtil 3.3 `StorageUtil.dll`. It publishes a signed integer written by that DLL, closes and reopens the generation store and rejects a different base file. The exact immutable base input restores the number to a fresh relocated instance. That instance writes the same number with the revised authored mod order. A fake DataHandler catalog and synthetic saves provide the test's game state.
+
+Run `python3 -B -m unittest discover -s tests -p 'test_classic_interpreted_cosave.py' -v` from the title workspace. The optional case uses the same `SKYRIM_TEST_OWNED_PAPYRUS_ZIP` and `SKYRIM_TEST_OWNED_LE_EXE` inputs as the standalone DLL check. The fresh load adapter has a separate [lifted call-site fixture](../classic-fresh-load/README.md).
 
 ## Tests
 

@@ -104,6 +104,13 @@ class SelectedAssetTest(unittest.TestCase):
         self.assertEqual(self.run_read("enabled.INI", 5), 0)
         self.run_read("Enabled.ini", 0, b"first")
         self.run_read("ENABLED.ini", 0, b"second")
+        for path in ("enabled.INI", "Enabled.ini", "ENABLED.ini"):
+            self.assertEqual(self.run_read(path, 5, mode="unique"), 0)
+        (self.root / "Nested").mkdir()
+        (self.root / "Nested/test").write_bytes(b"unique snapshot")
+        self.run_read("NESTED/TEST", 0, b"unique snapshot", mode="unique")
+        (self.root / "NESTED").mkdir()
+        self.assertEqual(self.run_read("Nested/test", 5, mode="unique"), 0)
 
     def test_case_fallback_has_a_bound_and_exact_matches_still_work(self):
         for index in range(4096):

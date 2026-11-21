@@ -312,7 +312,7 @@ static void diagnose(const DirectoryScan *scan, const Source *source, uint32_t u
     const SkseTrialOptions options = {0x01070030, 0x09200000, 0, 48, 1, 1, 1};
     const SkseTrialRuntime runtime = {
         .uptime_ms = uptime_ms, .core_messages = 1, .static_tls = 1, .serialization = 1, .worker_thread = 1,
-        .task_interface = 1, .assets = assets
+        .task_interface = 1, .trace_known_windows_imports = true, .assets = assets, .module_file_name = base_name(source)
     };
     if (!file->external_library_count) {
         file->status = SKSE_PROBE_DLL_STANDALONE;

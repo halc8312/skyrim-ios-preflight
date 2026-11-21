@@ -5,6 +5,7 @@
 #import <WebKit/WebKit.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#include <errno.h>
 #include "mobile_ui.h"
 #include "mod_manager.h"
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
@@ -132,6 +133,8 @@ static void copyFixture(NSURL *source, NSURL *destination) {
             [profile URLByAppendingPathComponent:@"Documents/My Games/Skyrim/Saves/Authored Save.skse"]);
 #endif
         copyFixture(baseline, plugins);
+        copyFixture([fixtures URLByAppendingPathComponent:@"initial-mod-state.json"],
+            [profile.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"mods-state.json"]);
     }
     // Capture the real export for a later picker round trip. This copies only a
     // test-created JSON after the original UIActivityViewController presented it.
@@ -147,10 +150,29 @@ static void copyFixture(NSURL *source, NSURL *destination) {
     if (!view || !skyrim_mobile_prepare_mods(view.fileSystemRepresentation)) {
         [NSException raise:NSInternalInconsistencyException format:@"Simulator MOD startup failed"];
     }
+#if defined(SKYRIM_IOS_CLASSIC_SKSE) && defined(SKYRIM_IOS_SKSE_DLL_PROBE)
+    // These authored profiles have not enabled the Classic trial. The
+    // acquisition gate must refuse before preparing a private settings store.
+    SkyrimPapyrusInputs inputs;
+    int acquisition = skyrim_mods_acquire_papyrus_inputs(&inputs);
+    BOOL hasInputs = inputs.settings_fd >= 0 || inputs.game_fd >= 0 || inputs.dll || inputs.pex;
+    skyrim_mods_release_papyrus_inputs(&inputs);
+    if (acquisition != ENOENT || hasInputs)
+        [NSException raise:NSInternalInconsistencyException format:@"An ordinary launch obtained Papyrus settings inputs"];
+#endif
     if ((!reimport && (![view isEqual:game.path] || ![active isEqual:profile.path])) ||
         (reimport && ([view isEqual:game.path] || [active isEqual:profile.path])) ||
         ![[NSData dataWithContentsOfURL:plugins] isEqual:[NSData dataWithContentsOfURL:baseline]]) {
         [NSException raise:NSInternalInconsistencyException format:@"Unexpected game, profile or baseline plugin list"];
+    }
+
+    if (reimport) {
+        // A legacy sidecar can belong to an earlier generation. The UI must
+        // attribute conflicts using the package order captured at launch.
+        NSString *legacy = [view stringByAppendingString:@".packages.json"];
+        NSError *error = nil;
+        if (![@"[]" writeToFile:legacy atomically:YES encoding:NSUTF8StringEncoding error:&error])
+            [NSException raise:NSInternalInconsistencyException format:@"Could not stage legacy conflict owners: %@", error];
     }
 
     // A HUD and a guest render loop are outside this target. Start directly

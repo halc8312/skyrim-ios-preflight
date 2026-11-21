@@ -1,0 +1,17 @@
+# Classic character menu precache
+
+Kapaer's ShowRaceMenu Precache Killer LE 1.3 supports TESV 1.9.32. The author describes removing the eager cache when the character menu opens and moving some loading time to changing hair, brows or eyes. The 1.3 archive is file `1000018824`. The original archive or DLL is still required to compare its exact hooks and behavior. [Author description](https://www.nexusmods.com/skyrim/mods/33526?___=&tab=description) · [LE release](https://www.nexusmods.com/skyrim/mods/33526?tab=files)
+
+The separate LE OneTweak source identifies warm routine `0x008868C0` and clear routine `0x00886B50`. Both routines exist in the reviewed generated LE source. The original executable's `RaceSexMenu` vtable has initial setup `f_886930` at entry 2 and frame update `f_885980` at entry 5. Initial setup calls the warm routine at return address `0x00886AD0`, between its player setup and menu follow-up calls. Other warm callers use `0x00887069` and `0x00887233`, and Papyrus has its own expanded warm and clear paths. [OneTweak's LE implementation](https://github.com/Nucleoprotein/OneTweak/blob/c4dbec9f12446efe8918fc1da31ab4e42d52736a/OneTweak/SkyrimHost.cpp#L34-L40)
+
+## Hosted proof
+
+The test stages an optional bypass at the initial setup call only. Both options preserve its adjacent calls and stack position. The test also executes the pinned original `f_87EAA0` readiness scan and `f_886B50` cleanup routine against authored request lists. Empty lists pass the readiness check, pending entries in any of the three lists delay it, and cleanup calls each list's release helper and zeroes its count. The authored environment supplies the request queues, release helpers and neighboring calls. Rendered geometry, real asset tasks and the first-open wall time require an in-game test.
+
+Run `python3 -B -m unittest -v test_chargen_precache` from this directory. Set `SKYRIM_TEST_OWNED_CLASSIC_LIFT` to the reviewed private LE generation to run the full fixture. `SKYRIM_TEST_SANITIZERS=1` uses ASan and UBSan where available. Staged instructions and compiled tests live in temporary storage.
+
+## Device handoff
+
+Measure first open to interactive separately from the first visible frame after each hair, brow or eye change. Use a copy of the same character, a stock profile and then a profile with a single LE hair pack. Confirm the previous, new and baseline choices display on consecutive selections and after reopening. Race and sex changes, calling `Game.PrecacheCharGen`, and menu cleanup also need verification on an actual game session.
+
+Hair pack setup is a separate check. Confirm the plugin exposes the head part for the current race and sex, and the selected part resolves its mesh and textures from the active profile. A menu that lists the hair while its model stays absent is a rendering or asset lookup symptom. Check the same selection with stock caching before attributing it to deferral. The Apachii author documents the separate plugin, mesh, texture and archive configuration. RaceMenu LE 2.7 and later integrate their own FaceGen cache control. [Apachii Sky Hair installation](https://www.nexusmods.com/skyrim/mods/10168?navtag=http%253&tab=posts) · [RaceMenu LE requirements and cache note](https://www.nexusmods.com/skyrim/mods/29624?file_id=1000152615)

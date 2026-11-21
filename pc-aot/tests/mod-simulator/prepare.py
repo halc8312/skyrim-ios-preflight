@@ -32,17 +32,68 @@ def fixtures(directory):
     folder_file = inputs / "AuthoredFolder" / "Data" / common
     folder_file.parent.mkdir(parents=True)
     folder_file.write_text("authored folder\n", encoding="utf-8")
+    plugin_body = struct.pack("<4sHfII", b"HEDR", 12, 1.7, 0, 0x800)
     with ZipFile(inputs / "AuthoredZip.zip", "w", ZIP_DEFLATED) as archive:
         archive.writestr("Data/" + common, b"authored zip\n")
-    xml = """<config><moduleName>Authored installer</moduleName><installSteps>
+        archive.writestr("Data/AuthoredPrerequisite.esp", struct.pack("<4sIIIIHH", b"TES4", len(plugin_body), 0, 0, 0, 43, 0) + plugin_body)
+        for name, pointers in (("se", 8), ("le", 4)):
+            archive.writestr(f"Data/meshes/authored/{name}.hkx",
+                             struct.pack("<IIII4BIIIII16sII", 0x57E0E057, 0x10C0C010, 0, 8, pointers, 1, 0, 1,
+                                         3, 2, 0, 0, 75, b"hk_2010.2.0-r1" + bytes((0, 0xFF)), 0, 0xFFFFFFFF))
+    dlc_conditions = """<config><moduleName>Authored DLC check</moduleName><installSteps>
+        <installStep name="Default DLC baseline"><visible operator="And">
+            <fileDependency file="Dawnguard.esm" state="Active"/>
+            <fileDependency file="Dragonborn.esm" state="Missing"/>
+            <fileDependency file="HearthFires.esm" state="Missing"/>
+        </visible><optionalFileGroups><group name="DLC" type="SelectAny"><plugins>
+            <plugin name="Installed and enabled DLC only"/>
+        </plugins></group></optionalFileGroups></installStep>
+        <installStep name="Separate profile baseline"><visible operator="And">
+            <fileDependency file="Dawnguard.esm" state="Missing"/>
+            <fileDependency file="Dragonborn.esm" state="Missing"/>
+            <fileDependency file="HearthFires.esm" state="Missing"/>
+        </visible><optionalFileGroups><group name="DLC" type="SelectAny"><plugins>
+            <plugin name="No DLC inherited from Default"/>
+        </plugins></group></optionalFileGroups></installStep></installSteps></config>"""
+    with ZipFile(inputs / "AuthoredDlcConditions.zip", "w", ZIP_DEFLATED) as archive:
+        archive.writestr("fomod/ModuleConfig.xml", dlc_conditions)
+    xml = """<config><moduleName>Authored installer</moduleName>
+        <requiredInstallFiles><folder source="samples/empty" destination=""/></requiredInstallFiles><installSteps>
         <installStep name="Choose a colour"><optionalFileGroups><group name="Colour" type="SelectExactlyOne"><plugins>
         <plugin name="Red"><description>Install the red sample file.</description><files><file source="samples/red.txt" destination="interface/screens/choice.txt"/></files></plugin>
         <plugin name="Blue"><files><file source="samples/blue.txt" destination="interface/screens/choice.txt"/></files></plugin>
-        </plugins></group></optionalFileGroups></installStep></installSteps></config>"""
-    with ZipFile(inputs / "AuthoredInstaller.zip", "w", ZIP_DEFLATED) as archive:
-        archive.writestr("fomod/ModuleConfig.xml", xml)
-        archive.writestr("samples/red.txt", b"red\n")
-        archive.writestr("samples/blue.txt", b"blue\n")
+        </plugins></group><group name="Extras" type="SelectAny"><plugins>
+        <plugin name="Unavailable sample"><files><file source="samples/not-in-package.txt" destination="interface/screens/missing.txt" priority="100"/></files></plugin>
+        </plugins></group></optionalFileGroups></installStep></installSteps>
+        <conditionalFileInstalls><patterns><pattern><dependencies operator="And">
+        <fileDependency file="Skyrim.esm" state="Active"/>
+        <fileDependency file="AuthoredPrerequisite.esp" state="Missing"/>
+        </dependencies><files><file source="samples/profile.txt" destination="interface/screens/profile.txt"/>
+        </files></pattern></patterns></conditionalFileInstalls></config>"""
+    missing_required = xml.replace('</requiredInstallFiles>',
+        '<file source="samples/required.txt" destination="interface/screens/missing.txt" priority="100"/></requiredInstallFiles>')
+    for name, config in (("AuthoredInstaller.zip", xml), ("AuthoredMissingRequired.zip", missing_required)):
+        with ZipFile(inputs / name, "w", ZIP_DEFLATED) as archive:
+            archive.writestr("fomod/ModuleConfig.xml", config)
+            archive.writestr("samples/red.txt", b"red\n")
+            archive.writestr("samples/blue.txt", b"blue\n")
+            archive.writestr("samples/profile.txt", b"authored prerequisite disabled in target profile\n")
+            archive.writestr("samples/empty/", b"")
+    expanded_xml = (xml.replace("Choose a colour", "Choose an expanded-folder sample")
+                    .replace("screens/choice.txt", "screens/folder-choice.txt")
+                    .replace("screens/profile.txt", "screens/folder-profile.txt"))
+    for name in ("AuthoredFolderInstaller", "AuthoredCancelledInstaller", "AuthoredBrokenInstaller", "AuthoredMissingChoiceInstaller"):
+        folder = inputs / name
+        (folder / "fomod").mkdir(parents=True)
+        (folder / "fomod/ModuleConfig.xml").write_text(
+            "<incomplete" if name == "AuthoredBrokenInstaller" else expanded_xml, encoding="utf-8")
+        (folder / "samples/empty").mkdir(parents=True)
+        (folder / "samples/red.txt").write_bytes(b"expanded red\n")
+        (folder / "samples/blue.txt").write_bytes(b"expanded blue\n")
+        (folder / "samples/profile.txt").write_bytes(b"expanded target profile\n")
+        bypass = folder / "Data/interface/screens/unselected-folder-file.txt"
+        bypass.parent.mkdir(parents=True)
+        bypass.write_bytes(b"only the installer may choose package files\n")
     if os.environ.get("SKYRIM_IOS_SKSE_DLL_PROBE") == "1":
         sys.path.insert(0, str(DLL_PROBE))
         from test_probe_directory import helper, primary
@@ -53,13 +104,19 @@ def fixtures(directory):
     original = directory / "Original/Data/interface/screens/owned.txt"
     original.parent.mkdir(parents=True)
     original.write_bytes(b"synthetic base file\n")
-    (directory / "initial-plugins.txt").write_bytes(b"# authored baseline\r\n")
+    for name in ("Dawnguard.esm", "Dragonborn.esm"):
+        (directory / "Original/Data" / name).write_bytes(
+            struct.pack("<4sIIIIHH", b"TES4", len(plugin_body), 1, 0, 0, 43, 0) + plugin_body)
+    (directory / "initial-plugins.txt").write_bytes(b"# authored baseline\r\nDawnguard.esm\r\nDragonborn.esm\r\nHearthFires.esm\r\n")
+    (directory / "initial-mod-state.json").write_text(json.dumps({
+        "version": 1, "next": "default", "profiles": [{"id": "default", "name": "Default", "dir": "Profile",
+            "packages": [], "plugins": [{"name": "Dragonborn.esm", "on": False}]}]}), encoding="utf-8")
     def wstr(value):
         return struct.pack("<H", len(value)) + value
     header = (struct.pack("<II", 9, 1) + wstr(b"Fixture") + struct.pack("<I", 1)
               + wstr(b"Room") + wstr(b"Day 1") + wstr(b"Fixture")
               + struct.pack("<HffQII", 0, 0, 1, 0, 1, 1))
-    plugins = b"\x01" + wstr(b"UnavailableFixture.esp")
+    plugins = b"\x03" + wstr(b"Dawnguard.esm") + wstr(b"HearthFires.esm") + wstr(b"UnavailableFixture.esp")
     save = (b"TESV_SAVEGAME" + struct.pack("<I", len(header)) + header + b"\0"*3
             + bytes([74]) + struct.pack("<I", len(plugins)) + plugins)
     (directory / "Authored Save.ess").write_bytes(save)
@@ -161,12 +218,17 @@ def project(work, sdl_prefix, archive_prefix):
     ]
     dll_enabled = os.environ.get("SKYRIM_IOS_SKSE_DLL_PROBE") == "1"
     dll_sources = [DLL_PROBE / p for p in [
-        "pe_image.c", "x86_call.c", "x86_heap.c", "x86_winthread.c", "x86_winfile.c", "x86_winsync.c",
+        "pe_image.c", "x86_call.c", "x86_heap.c", "x86_winthread.c", "x86_wintext.c", "x86_winfile.c", "x86_winsync.c",
+        "x86_winenv.c", "papyrus_trial.c",
         "x86_skse_records.c", "dependency_plan.c", "plugin_trial.c",
         "probe_local_file.c", "probe_directory.c", "probe_asset_file.c", "mod_dll_probe.m"
     ]] if dll_enabled else []
     classic_enabled = os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1"
-    cosave_sources = [COSAVE / p for p in ("inspect.c", "records.c")] if classic_enabled else []
+    if classic_enabled and dll_enabled:
+        app_sources.append("mod_papyrus_inputs.c")
+    cosave_sources = [COSAVE / "copy_pair.c"]
+    if classic_enabled:
+        cosave_sources.extend(COSAVE / p for p in ("inspect.c", "records.c"))
     app_source_phase = source_phase(APP, [
         HERE/"host.m", HERE/"guest_boundary.m", *(PORT/p for p in app_sources), *dll_sources, *cosave_sources
     ])
@@ -199,7 +261,7 @@ def project(work, sdl_prefix, archive_prefix):
         "PRODUCT_NAME":APP, "PRODUCT_BUNDLE_IDENTIFIER":APP_ID, "INFOPLIST_FILE":str(work/"HostInfo.plist"),
         "SWIFT_VERSION":"6.0", "SWIFT_STRICT_CONCURRENCY":"complete",
         "HEADER_SEARCH_PATHS":[str(PORT),str(ROOT/"ios/private-abi"),str(sdl_prefix/"include"),str(archive_prefix/"include"),
-                               *([str(DLL_PROBE)] if dll_enabled else []), *([str(COSAVE)] if classic_enabled else [])],
+                               str(COSAVE), *([str(DLL_PROBE)] if dll_enabled else [])],
         "SYSTEM_HEADER_SEARCH_PATHS":[str(ROOT/"vendor/bcdec"),str(ROOT/"vendor/stb")],
         "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", "SKYRIM_HAVE_LIBARCHIVE=1", *classic_defines, *dll_defines],
         "OTHER_LDFLAGS":["$(inherited)",*map(str,static_libs),"-lz","-liconv",
@@ -273,14 +335,50 @@ def verify(container, assets, summary):
     profiles = {p["name"]:p for p in state["profiles"]}
     active = profiles["Trial Two"]
     assert active["id"] == state["next"] and active["id"] != profiles["Trial Two (imported)"]["id"]
+    saves = base / "Profiles" / active["id"] / "Documents/My Games/Skyrim/Saves"
+    expected_saves = {"Authored Save.ess"}
+    if (assets / "Authored Save.skse").is_file():
+        expected_saves.add("Authored Save.skse")
+    assert {item.name for item in saves.iterdir()} == expected_saves
+    for name in expected_saves:
+        assert (saves / name).read_bytes() == (assets / name).read_bytes()
     assert profiles["Trial Two (imported)"]["packages"] == active["packages"]
-    assert len(active["packages"]) == 3 and all(p["on"] for p in active["packages"])
+    assert len(active["packages"]) == 4 and all(p["on"] for p in active["packages"])
+    default_enabled = {p["id"] for p in profiles["Default"]["packages"] if p["on"]}
+    assert len(default_enabled) == 2
+    default_plugins = {row["name"]: row["on"] for row in profiles["Default"]["plugins"]}
+    assert default_plugins["Dragonborn.esm"] is False
+    assert "Dawnguard.esm" not in default_plugins and "HearthFires.esm" not in default_plugins
+    assert len({p["id"] for p in active["packages"]} - default_enabled) == 2
     exported = json.loads((container/"Documents/UI Samples/Trial Two.skyrimios-modlist.json").read_text())
-    assert exported["format"]=="skyrimios-modlist" and exported["name"] == "Trial Two" and len(exported["packages"]) == 3
-    view=base/"Views"/active["id"]/"Data/interface/screens"
+    assert exported["format"]=="skyrimios-modlist" and exported["name"] == "Trial Two" and len(exported["packages"]) == 4
+    view_data = base / "Views" / active["id"] / "Data"
+    view = view_data / "interface/screens"
     assert (view/"shared.txt").read_bytes()==b"authored folder\n"
     assert (view/"choice.txt").read_bytes()==b"red\n"
-    print("Real simulator UI result, original game/profile, conflict winner, FOMOD choice and reimported export verified.")
+    assert (view/"profile.txt").read_bytes()==b"authored prerequisite disabled in target profile\n"
+    assert (view/"folder-choice.txt").read_bytes()==b"expanded blue\n"
+    assert (view/"folder-profile.txt").read_bytes()==b"expanded target profile\n"
+    assert not (view/"unselected-folder-file.txt").exists()
+    assert not (view/"missing.txt").exists()
+    packages = [json.loads(path.read_text()) for path in (base/"Mods").glob("*/package.json")]
+    assert {p["name"] for p in packages} == {"AuthoredZip", "AuthoredFolder", "AuthoredInstaller", "AuthoredFolderInstaller"}
+    assert len(packages) == 4 and not list((base/"Mods").glob(".staging-*"))
+    authored_zip = next(p for p in packages if p["name"] == "AuthoredZip")
+    assert authored_zip["report"]["hkx64"] == 1
+    with ZipFile(assets / "Imports/AuthoredZip.zip") as source:
+        for name in ("se", "le"):
+            relative = f"meshes/authored/{name}.hkx"
+            assert (view_data / relative).read_bytes() == source.read("Data/" + relative)
+    shared = authored_zip["id"]
+    assert shared in default_enabled
+    assert profiles["Archive Reuse"]["packages"] == [{"id": shared, "on": False}]
+    assert profiles["Archive Reuse"]["plugins"] == [
+        {"name": "Dragonborn.esm", "on": False},
+        {"name": "AuthoredPrerequisite.esp", "on": True},
+    ]
+    assert next(p for p in packages if p["name"] == "AuthoredFolderInstaller")["installer"] is True
+    print("Real simulator UI result, original game/profile, conflict winner, archive and folder installers, and export verified.")
 
 
 def verify_dll(container, assets, summary):

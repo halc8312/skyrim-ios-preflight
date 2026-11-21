@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "probe_local_file.h"
+#include "fixtures/owned_storage.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,8 +78,109 @@ static void check_worker_session(const char *path) {
     puts("resident worker completed once on the explicit step");
 }
 
+static int trace_owned_papyrus(const char *dll, const char *snapshot, bool observe_hooks) {
+    uint8_t owned_initializers[8];
+    if (!owned_storage_read_initializers(snapshot, owned_initializers)) return 2;
+    const SkseX86ReadView views[] = {
+        {0x0124166c, owned_initializers, 4},
+        {0x012b5b80, owned_initializers + 4, 4},
+    };
+    const uint32_t bases[] = {0, 0x12000000};
+    const uint32_t sites[] = {0x006a9e90, 0x008cab54, 0x006f02ff};
+    for (size_t i = 0; i < sizeof bases / sizeof bases[0]; ++i) {
+        const SkseLocalProbeSetup setup = {
+            .guest_base = bases[i], .read_views = views, .read_view_count = sizeof views / sizeof views[0],
+            .capture_papyrus_startup = true, .hook_probe_sites = sites,
+            .hook_probe_count = observe_hooks ? sizeof sites / sizeof sites[0] : 0
+        };
+        SkseLocalDllReport report;
+        SkseProbeFileStatus status = skse_probe_local_dll_with_setup(dll, 4427, &setup, &report);
+        const SkseTrialResult *trial = &report.trial;
+        printf("snapshot=%u file=%u mapped=%u partial=%u status=%u registered=%u callback=%08x\n", (unsigned)i,
+               (unsigned)status, (unsigned)trial->image_status, (unsigned)trial->partial_windows_imports,
+               (unsigned)trial->status, trial->papyrus_startup_registrations, trial->first_papyrus_callback);
+        const SkseX86Result *phases[] = {&trial->attach, &trial->query, &trial->load};
+        const char *labels[] = {"attach", "query", "load"};
+        for (size_t j = 0; j < sizeof phases / sizeof phases[0]; ++j) {
+            const SkseX86Result *phase = phases[j];
+            const char *symbol = skse_trial_windows_service_name(phase->failed_service);
+            printf("%s status=%u instructions=%u ip=%08x memory=%08x access=%u service=%s\n",
+                   labels[j], (unsigned)phase->status, phase->instructions, phase->instruction_va,
+                   phase->fault_address, phase->fault_access, symbol ? symbol : "-");
+            if (phase->protection_length)
+                printf("protect address=%08x bytes=%u flags=%08x\n", phase->protection_address,
+                       phase->protection_length, phase->protection_flags);
+        }
+        for (unsigned hook = 0; hook < trial->load.hook_count; ++hook) {
+            const SkseX86HookObservation *observation = &trial->load.hooks[hook];
+            printf("observed hook site=%08x target=%08x\n", observation->site, observation->target);
+        }
+        if (observe_hooks && (trial->load.hook_count != sizeof sites / sizeof sites[0] ||
+                              trial->status == SKSE_TRIAL_COMPLETED)) return 4;
+        if (status != SKSE_PROBE_FILE_CHECKED || trial->image_status != SKSE_PE_OK ||
+            trial->attach.status != SKSE_X86_OK || !trial->attach.instructions ||
+            trial->query.status != SKSE_X86_OK || (uint8_t)trial->query.eax != 1 || !trial->load.instructions)
+            return 3;
+    }
+    return 0;
+}
+
+static int check_owned_cosave(const char *dll, const char *snapshot) {
+    uint8_t initializers[8];
+    if (!owned_storage_read_initializers(snapshot, initializers)) return 2;
+    SkseTrialRecordProbe probe = {0};
+    owned_storage_probe(dll, initializers, false, &probe);
+    owned_storage_expect(probe.output, false, false);
+    SksePluginRecordSet *captured = probe.output;
+    SksePluginRecordSet *with_integer = owned_storage_add_integer(captured);
+    probe = (SkseTrialRecordProbe){.input = with_integer, .callback_work_limit = 250000};
+    owned_storage_probe(dll, initializers, true, &probe);
+    owned_storage_expect(probe.output, true, true);
+    owned_storage_expect(captured, false, false);
+    skse_plugin_record_set_close(probe.output);
+    skse_plugin_record_set_close(with_integer);
+    skse_plugin_record_set_close(captured);
+
+    SksePluginRecordSet *different = NULL;
+    assert(skse_plugin_record_set_create(0x424510a3, NULL, 0, &different) == SKSE_SESSION_OK);
+    probe = (SkseTrialRecordProbe){.input = different};
+    owned_storage_probe(dll, initializers, true, &probe);
+    assert(probe.status == SKSE_SESSION_UID_MISMATCH && !probe.output);
+    skse_plugin_record_set_close(different);
+    puts("Owned StorageUtil restored a signed integer and wrote the current authored mod order.");
+    return 0;
+}
+
+static int check_owned_leaf(const char *path) {
+    uint8_t code[6], scratch[128];
+    FILE *source = fopen(path, "rb");
+    if (!source) return 2;
+    size_t size = fread(code, 1, sizeof code, source);
+    const bool exact = size == sizeof code && fgetc(source) == EOF && !ferror(source);
+    fclose(source);
+    // This assay accepts only a stateless scalar MOV/RET leaf. It neither
+    // simulates an engine registry nor makes network or OS calls.
+    if (!exact || code[0] != 0xb8 || code[5] != 0xc3) return 2;
+    const uint32_t argument = 0; // StaticFunctionTag*.
+    for (uint32_t base = 0x10000000; base <= 0x12000000; base += 0x02000000) {
+        SksePeImage leaf = {
+            .base = base, .size = sizeof code, .bytes = code, .section_count = 1,
+            .sections = {{0, sizeof code, SKSE_PE_READ | SKSE_PE_EXEC}}
+        };
+        SkseX86Result result = skse_x86_call(&leaf, base, (SkseX86Scratch){0x20000000, scratch, sizeof scratch},
+                                             &argument, 1, 10, (SkseX86Services){0}, SKSE_X86_CDECL);
+        if (result.status != SKSE_X86_OK || result.instructions != 2) return 3;
+        printf("GetVersion leaf=%u\n", result.eax);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) return 2;
+    if (argc == 3 && !strcmp(argv[1], "--owned-int-leaf")) return check_owned_leaf(argv[2]);
+    if (argc == 4 && !strcmp(argv[1], "--owned-cosave")) return check_owned_cosave(argv[2], argv[3]);
+    if (argc == 4 && !strcmp(argv[1], "--owned-papyrus")) return trace_owned_papyrus(argv[2], argv[3], false);
+    if (argc == 4 && !strcmp(argv[1], "--observe-papyrus-hooks")) return trace_owned_papyrus(argv[2], argv[3], true);
     if (argc == 3 && !strcmp(argv[1], "--session")) {
         check_session(argv[2]);
         return 0;
@@ -94,6 +196,7 @@ int main(int argc, char **argv) {
             printf("%u\n", (unsigned)status);
         } else if (report.trial.status == SKSE_TRIAL_COMPLETED) {
             printf("ready,%u,%s", report.trial.plugin_version, report.trial.name);
+            if (report.trial.partial_windows_imports) printf(",partial");
             if (report.trial.serialization_callbacks) {
                 printf(",%u,%u", report.trial.serialization_callbacks, report.trial.serialization_records);
             }
@@ -108,6 +211,11 @@ int main(int argc, char **argv) {
                 printf(",%s,%s", report.trial.dependencies.requested, report.trial.dependencies.import_symbol);
             }
             if (report.trial.load.status != SKSE_X86_OK) printf(",load=%u", (unsigned)report.trial.load.status);
+            if (report.trial.partial_windows_imports) {
+                const char *function = skse_trial_windows_service_name(report.trial.load.failed_service);
+                printf(",partial");
+                if (function) printf(",%s", function);
+            }
             if (report.trial.task_fault.status != SKSE_X86_OK) printf(",task=%u", (unsigned)report.trial.task_fault.status);
             putchar('\n');
         }

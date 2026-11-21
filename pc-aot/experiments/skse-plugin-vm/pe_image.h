@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 enum { SKSE_PE_READ = 1, SKSE_PE_WRITE = 2, SKSE_PE_EXEC = 4 };
-enum { SKSE_PE_MAX_FILE_BYTES = 64 * 1024 * 1024 };
+enum { SKSE_PE_MAX_FILE_BYTES = 64 * 1024 * 1024, SKSE_PE_MAX_IMAGE_BYTES = 32 * 1024 * 1024 };
 enum { SKSE_PE_MAX_SECTIONS = 96, SKSE_PE_MAX_IMPORT_LIBRARIES = 32,
        SKSE_PE_MAX_IMPORT_SYMBOLS = 256, SKSE_PE_MAX_IMPORT_NAME = 128,
        SKSE_PE_MAX_TLS_CALLBACKS = 64 };
@@ -41,6 +41,7 @@ typedef struct {
     uint32_t headers_size;
     uint16_t section_count;
     SksePeSection sections[SKSE_PE_MAX_SECTIONS];
+    uint8_t *data_page_protection; /* Interpreter-owned overrides. PE sections retain their original layout. */
 } SksePeImage;
 
 typedef struct {

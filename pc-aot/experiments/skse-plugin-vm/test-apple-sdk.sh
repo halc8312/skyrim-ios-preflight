@@ -7,14 +7,19 @@ work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/skse-dll-sdk.XXXXXXXX")"
 pushd "$here" >/dev/null
 
 CC=clang python3 -B -m unittest -v test_probe_local_file test_probe_directory test_skse_plugin_vm test_pe_image \
-    test_dependency_plan test_probe_asset_file test_x86_skse_records
+    test_dependency_plan test_probe_asset_file test_x86_skse_records test_papyrus_trial \
+    test_wintext test_winenv test_winstartup test_winfile_directories test_classic_pex test_x86_sse_conversion
 CC=clang python3 -B -m unittest discover -s "$root/tests" -p test_classic_skse_binding.py -v
 device_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
-sources=(pe_image.c x86_call.c x86_heap.c x86_winthread.c x86_winfile.c x86_winsync.c x86_skse_records.c dependency_plan.c plugin_trial.c
+sources=(pe_image.c x86_call.c x86_heap.c x86_winthread.c x86_wintext.c x86_winenv.c x86_winfile.c x86_winsync.c x86_skse_records.c papyrus_trial.c dependency_plan.c plugin_trial.c
     probe_local_file.c probe_directory.c probe_asset_file.c)
 for source in "${sources[@]}"; do
     xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" \
         -std=c11 -O2 -Wall -Wextra -Werror -c "$source" -o "$work/${source%.c}.o"
+done
+for source in classic_pex classic_scalar; do
+    xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" \
+        -std=c11 -O2 -Wall -Wextra -Werror -c "$source.c" -o "$work/$source.o"
 done
 xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" -fmodules -fobjc-arc \
     -Wall -Wextra -Werror -fsyntax-only mod_dll_probe.m

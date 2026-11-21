@@ -36,6 +36,7 @@ typedef struct {
     unsigned max_texture;
     uint64_t texture_bytes;         /* rough GPU memory, mips included */
     unsigned meshes, se_meshes, foreign_meshes;
+    unsigned hkx_64bit;           /* known 64-bit Skyrim Havok packfile layout */
     unsigned scripts, skse_scripts, mcm_scripts;
     unsigned skse_dlls;
     char skse_missing[512];         /* SKSE functions this port does not provide */
@@ -43,10 +44,10 @@ typedef struct {
 /* Walk a package's Data folder. 0 on success. */
 int skyrim_mod_analyze(const char *data_dir, SkyrimModReport *report);
 
-/* Accumulate into report without clearing it (installer options): one file
- * placed at destination (relative to Data), or a whole folder. */
+/* Accumulate one selected file or folder into the report. Destination is a
+ * normalized relative path within Data, or empty for a folder placed at Data. */
 void skyrim_mod_analyze_add_file(const char *path, const char *destination, SkyrimModReport *report);
-void skyrim_mod_analyze_add_dir(const char *dir, int top_level, SkyrimModReport *report);
+void skyrim_mod_analyze_add_dir(const char *dir, const char *destination, SkyrimModReport *report);
 
 /* Plugins named in a classic .ess save header. *names receives count
  * NUL-terminated names back to back (free with free()). 0 on success. */

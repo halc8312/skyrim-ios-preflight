@@ -14,6 +14,13 @@
  *    the packages laid over Data. Never fatal; falls back to the original. */
 NSString *skyrim_mods_select_profile(NSString *default_profile_directory);
 NSString *skyrim_mods_prepare_game(NSString *game_directory);
+#if defined(SKYRIM_IOS_CLASSIC_SKSE) && defined(SKYRIM_IOS_SKSE_DLL_PROBE)
+#include "mod_papyrus_inputs.h"
+/* On the startup main thread after skyrim_mobile_prepare_mods succeeds.
+ * Eligible only for the opted-in running named profile and its finalized
+ * MOD view. The caller releases the snapshots and descriptors. */
+int skyrim_mods_acquire_papyrus_inputs(SkyrimPapyrusInputs *inputs);
+#endif
 /* Text for the overlay after startup (nil when nothing to say). */
 NSString *skyrim_mods_launch_notice(void);
 /* Plugin on/off and order for the running profile (array of {name, on}). */

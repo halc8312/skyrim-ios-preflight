@@ -29,6 +29,12 @@ typedef struct {
     void *(__cdecl *get_dispatcher)(unsigned);
 } FixtureMessaging;
 
+typedef _Bool (__cdecl *FixturePapyrusCallback)(void *);
+typedef struct {
+    uint32_t version;
+    _Bool (__cdecl *register_callback)(FixturePapyrusCallback);
+} FixturePapyrus;
+
 typedef struct FixtureSerialization FixtureSerialization;
 typedef void (__cdecl *FixtureSaveCallback)(const FixtureSerialization *);
 typedef void (__cdecl *FixtureDeleteCallback)(uint64_t);
@@ -52,6 +58,7 @@ _Static_assert(sizeof(FixtureInterface) == 28, "Classic i386 interface layout");
 _Static_assert(sizeof(FixtureInfo) == 12, "Classic i386 plugin info layout");
 _Static_assert(sizeof(FixtureMessage) == 16, "Classic i386 message layout");
 _Static_assert(sizeof(FixtureMessaging) == 16, "Classic i386 messaging v2 layout");
+_Static_assert(sizeof(FixturePapyrus) == 8, "Classic i386 Papyrus v1 layout");
 _Static_assert(sizeof(FixtureSerialization) == 52, "Classic i386 serialization v4 layout");
 
 #ifdef BUILD_FIXTURE

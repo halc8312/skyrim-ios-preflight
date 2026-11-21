@@ -84,7 +84,9 @@ int main(int argc, char **argv) {
     size_t length = SIZE_MAX;
     int invalid = -1;
     void *context = !strcmp(mode, "no-context") ? NULL : !strcmp(mode, "bad-fd") ? &invalid : &rootfd;
-    uint32_t status = skse_probe_asset_read(context, !strcmp(mode, "no-path") ? NULL : argv[2],
+    uint32_t (*snapshot)(void *, const char *, size_t, uint8_t **, size_t *) =
+        !strcmp(mode, "unique") ? skse_probe_asset_read_unique : skse_probe_asset_read;
+    uint32_t status = snapshot(context, !strcmp(mode, "no-path") ? NULL : argv[2],
                                 (size_t)strtoull(argv[3], NULL, 10),
                                 !strcmp(mode, "no-bytes") ? NULL : &result,
                                 !strcmp(mode, "no-length") ? NULL : &length);

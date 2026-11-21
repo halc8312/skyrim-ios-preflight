@@ -54,6 +54,13 @@ int main(int argc, char **argv) {
         printf("bsa %d files %u\n", r, files);
         return 0;
     }
+    if (argc == 4 && (!strcmp(argv[1], "option-file") || !strcmp(argv[1], "option-dir"))) {
+        SkyrimModReport r = {0};
+        if (!strcmp(argv[1], "option-file")) skyrim_mod_analyze_add_file(argv[2], argv[3], &r);
+        else skyrim_mod_analyze_add_dir(argv[2], argv[3], &r);
+        printf("plugins %u dlls %u\nhkx64 %u\n", r.plugins, r.skse_dlls, r.hkx_64bit);
+        return 0;
+    }
     if (!strcmp(argv[1], "analyze")) {
         SkyrimModReport r;
         skyrim_mod_analyze(argv[2], &r);
@@ -61,6 +68,7 @@ int main(int argc, char **argv) {
                r.plugins, r.se_plugins, r.esl, r.bsas, r.se_bsas, r.textures, r.dx10_textures, r.bc7_textures, r.textures_4k,
                r.textures_no_mips, r.max_texture, r.meshes, r.se_meshes, r.scripts, r.skse_scripts, r.mcm_scripts, r.skse_dlls,
                (unsigned long long)r.texture_bytes, r.skse_missing);
+        printf("hkx64 %u\n", r.hkx_64bit);
         return 0;
     }
     if (!strcmp(argv[1], "save")) {

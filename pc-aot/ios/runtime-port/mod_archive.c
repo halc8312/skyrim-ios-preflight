@@ -73,6 +73,13 @@ int skyrim_zip_normalize(const char *name, size_t length, int utf8_flag, char *o
     return o ? 1 : 0;
 }
 
+const char *skyrim_archive_relative_path(const char *path, const char *prefix) {
+    if (!path) return NULL;
+    size_t length = prefix ? strlen(prefix) : 0;
+    if (length && (prefix[length - 1] != '/' || strncasecmp(path, prefix, length))) return NULL;
+    return path[length] ? path + length : NULL;
+}
+
 static int casecmp_paths(const void *a, const void *b) {
     return strcasecmp(*(char *const *)a, *(char *const *)b);
 }

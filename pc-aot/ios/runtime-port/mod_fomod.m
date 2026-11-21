@@ -269,24 +269,32 @@ static BOOL PlaceFile(NSString *src, NSString *data, NSString *dest) {
     return !skyrim_make_parents(data.fileSystemRepresentation, safe) &&
            !skyrim_clone_file(src.fileSystemRepresentation, target.fileSystemRepresentation);
 }
-static BOOL Execute(SKFomod *f, NSArray<NSDictionary *> *plan, NSString *data) {
+static NSString *Execute(SKFomod *f, NSArray<NSDictionary *> *plan, NSString *data) {
     NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *copyError = T(@"Could not copy the selected files.", @"選んだファイルをコピーできませんでした。");
     for (NSDictionary *op in plan) {
-        NSString *src = ResolveCI(f.moduleRoot, op[@"source"]);
-        if (!src) { fprintf(stderr, "IOS_MODS fomod missing source\n"); continue; }      /* authors' typos: skip */
+        NSString *source = op[@"source"];
+        NSString *src = ResolveCI(f.moduleRoot, source);
+        BOOL folder = [op[@"folder"] boolValue];
+        if (!src) {
+            // The staging paths keep regular files only. An empty folder has no files to copy.
+            if (folder) continue;
+            return [NSString stringWithFormat:T(@"The installer could not find %@ in this MOD.",
+                @"このMODにインストーラーが必要とする「%@」が見つかりませんでした。"), source];
+        }
         NSString *dest = [op[@"destination"] stringByReplacingOccurrencesOfString:@"\\" withString:@"/"];
-        if ([op[@"folder"] boolValue]) {
+        if (folder) {
             NSDirectoryEnumerator *en = [fm enumeratorAtPath:src];
             for (NSString *rel in en) {
                 if (![en.fileAttributes[NSFileType] isEqual:NSFileTypeRegular]) continue;
-                if (!PlaceFile([src stringByAppendingPathComponent:rel], data, dest.length ? [dest stringByAppendingPathComponent:rel] : rel)) return NO;
+                if (!PlaceFile([src stringByAppendingPathComponent:rel], data, dest.length ? [dest stringByAppendingPathComponent:rel] : rel)) return copyError;
             }
         } else {
             if (!dest.length || [dest hasSuffix:@"/"]) dest = [dest stringByAppendingString:src.lastPathComponent];
-            if (!PlaceFile(src, data, dest)) return NO;
+            if (!PlaceFile(src, data, dest)) return copyError;
         }
     }
-    return YES;
+    return nil;
 }
 
 /* ---- help for reading the choices ------------------------------------------ */
@@ -358,11 +366,15 @@ static NSString *OptionBadges(SKFomod *f, SKFOption *o, BOOL optimize) {
         if (!src) continue;
         ++ops;
         NSString *dest = [op[@"destination"] stringByReplacingOccurrencesOfString:@"\\" withString:@"/"];
-        if ([op[@"folder"] boolValue]) skyrim_mod_analyze_add_dir(src.fileSystemRepresentation, dest.length == 0, &r);
-        else {
-            if (!dest.length || [dest hasSuffix:@"/"]) dest = [dest stringByAppendingString:src.lastPathComponent];
-            skyrim_mod_analyze_add_file(src.fileSystemRepresentation, dest.UTF8String, &r);
-        }
+        BOOL folder = [op[@"folder"] boolValue];
+        if (!folder && (!dest.length || [dest hasSuffix:@"/"]))
+            dest = [dest stringByAppendingString:src.lastPathComponent];
+        const char *relative = dest.UTF8String;
+        if (!relative) continue;
+        char safe[1024] = "";
+        int normalized = skyrim_zip_normalize(relative, strlen(relative), 1, safe, sizeof safe);
+        if (folder && normalized >= 0) skyrim_mod_analyze_add_dir(src.fileSystemRepresentation, safe, &r);
+        else if (!folder && normalized == 1) skyrim_mod_analyze_add_file(src.fileSystemRepresentation, safe, &r);
     }
     NSMutableArray *bad = [NSMutableArray array], *info = [NSMutableArray array];
     if (r.skse_dlls) [bad addObject:T(@"⛔ SKSE DLL: won't run on iPhone", @"⛔ SKSEのDLL：iPhoneでは動きません")];
@@ -579,17 +591,24 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
         }
     });
 }
-- (void)finish:(BOOL)ok message:(NSString *)m {
+- (void)finish:(BOOL)ok message:(NSString *)message showError:(BOOL)showError {
     if (self.finished) return;
     self.finished = YES;
     void (^done)(BOOL, NSString *) = self.completion;
+    UIViewController *presenter = showError && message.length ? self.navigationController.presentingViewController : nil;
     [self dismissViewControllerAnimated:YES completion:^{
         skyrim_mobile_menu_pause(SKYRIM_MENU_PAUSE_INSTALLER, 0);
-        done(ok, m);
+        done(ok, presenter ? nil : message);
+        if (presenter) {
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:T(@"Could not install MOD", @"MODを追加できませんでした")
+                message:message preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [presenter presentViewController:alert animated:YES completion:nil];
+        }
     }];
 }
 - (void)back {
-    if (!self.position) { [self finish:NO message:T(@"Installation cancelled.", @"インストールを中止しました。")]; return; }
+    if (!self.position) { [self finish:NO message:T(@"Installation cancelled.", @"インストールを中止しました。") showError:NO]; return; }
     --self.position; [self refresh];
 }
 - (BOOL)stepValid {
@@ -622,11 +641,12 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
     }
     NSArray *plan = self.fomod.plan;
     self.navigationItem.rightBarButtonItem.enabled = NO;
+    self.navigationItem.leftBarButtonItem.enabled = NO;
     SKFomod *f = self.fomod; NSString *data = self.data;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        BOOL ok = Execute(f, plan, data);
+        NSString *error = Execute(f, plan, data);
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self finish:ok message:ok ? nil : T(@"Could not copy the selected files.", @"選んだファイルをコピーできませんでした。")];
+            [self finish:error == nil message:error showError:YES];
         });
     });
 }

@@ -1,4 +1,4 @@
-"""Real MOD analysis/optimizer code on authored DDS, NIF, BSA, PEX, ESP and save files."""
+"""Real MOD analysis/optimizer code on authored DDS, NIF, HKX, BSA, PEX, ESP and save files."""
 import os
 from pathlib import Path
 import shutil
@@ -186,6 +186,51 @@ class ModOptimizeTests(unittest.TestCase):
         self.assertEqual((dest / "textures/se/a.dds").read_bytes(), plain)
         self.assertEqual((dest / "textures/se/b.dds").read_bytes(), b"LOOSE")
         self.assertFalse((self.dir / "evil.nif").exists())
+
+    def test_installer_reports_dlls_under_the_selected_data_destination(self):
+        library = self.write("raw-option/windows/Example.dll", b"authored library")
+        packaged = self.write("raw-option/source/SKSE/Plugins/Example.dll", b"authored library")
+        self.write("raw-option/source/Example.esp", b"TES4")
+        for kind, source, destination, expected in (
+            ("option-file", library, "sKSe/pLugins/Example.DLL", "plugins 0 dlls 1"),
+            ("option-file", packaged, "tools/Example.dll", "plugins 0 dlls 0"),
+            ("option-file", library, "SKSE-extra/Plugins/Example.dll", "plugins 0 dlls 0"),
+            ("option-dir", library.parent, "SKSE/Plugins", "plugins 0 dlls 1"),
+            ("option-dir", packaged.parent, "Meshes", "plugins 0 dlls 0"),
+            ("option-dir", packaged.parents[2], "", "plugins 1 dlls 1"),
+            ("option-dir", packaged.parents[2], "Backup", "plugins 0 dlls 0"),
+        ):
+            with self.subTest(kind=kind, destination=destination):
+                self.assertEqual(self.drive(kind, source, destination).strip(), expected + "\nhkx64 0")
+
+    def test_hkx_warns_only_for_the_known_64bit_skyrim_layout(self):
+        def packfile(pointers=8, endian=1, file_version=8, version=b"hk_2010.2.0-r1" + bytes((0, 0xFF))):
+            return struct.pack("<IIII4BIIIII16sII", 0x57E0E057, 0x10C0C010, 0, file_version,
+                               pointers, endian, 0, 1, 3, 2, 0, 0, 75, version, 0, 0xFFFFFFFF)
+
+        recognized = packfile()
+        assets = {
+            "se.HKX": recognized,
+            "le.hkx": packfile(pointers=4),
+            "big-endian.hkx": packfile(endian=0),
+            "new-packfile.hkx": packfile(file_version=11),
+            "other-sdk.hkx": packfile(version=b"hk_2014.1.0-r1"),
+            "truncated.hkx": recognized[:-1],
+            "other-magic.hkx": b"TAG0" + recognized[4:],
+            "header.txt": recognized,
+        }
+        directory = self.dir / "havok/meshes/actors/character/behaviors"
+        for name, content in assets.items():
+            self.write(str((directory / name).relative_to(self.dir)), content)
+        self.assertEqual(self.drive("analyze", self.dir / "havok").splitlines()[-1], "hkx64 1")
+        self.assertEqual(self.drive("option-dir", directory, "Meshes").splitlines()[-1], "hkx64 1")
+        for name, content in assets.items():
+            with self.subTest(name=name):
+                path = directory / name
+                expected = "hkx64 1" if name == "se.HKX" else "hkx64 0"
+                self.assertEqual(self.drive("option-file", path, name).splitlines()[-1], expected)
+                self.assertEqual(path.read_bytes(), content)
+        self.assertEqual(self.drive("option-file", directory / "header.txt", "copy.hkx").splitlines()[-1], "hkx64 1")
 
     def test_analyze_package_and_save(self):
         d = self.dir / "pkg"
