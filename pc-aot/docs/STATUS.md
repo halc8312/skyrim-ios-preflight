@@ -1,5 +1,11 @@
 # 開発状況
 
+**2026-11-22　持ち物画面の拡大指定とFuzの付属音声を照合**
+
+固定版の持ち物画面はScaleformのモード3を指定する。横長画面で一部が切れる説明と一致し、通常の16:9、別メニュー、試験オフでは元の指定を維持する表示試作を用意した。Clang 18とGCC ASan/UBSanで各2件が合格。iPhoneでSkyUIの見え方とタッチ位置を比較してから採用を判断する。 [持ち物画面の試作](../experiments/classic-inventory-fit/README.md)
+
+Fuz Ro D-oh LE 6.1の実物の代替音声10件を、アプリで使うxWMAデコード処理で読み、PCのFFmpeg 6.1.1と全サンプルが一致した。分割読み込みとデコーダー再利用でも一致し、長さは1〜10秒それぞれに対して0.05秒未満の差だった。iPhoneの音声経路、字幕・口の動きの比較は残る。 [任意の実物音声試験](../tests/test_xwma_voice_profile.py)
+
 **2026-11-22　Safety Loadと追加セーブのPC試験を進行**
 
 Safety Load LE 1.2の実物DLLから、固定版のメモリ確保で再利用処理を飛ばし、既存の通常確保または境界をそろえた確保へ進む箇所を特定した。ロード中・キャラ作成画面の外・通常サイズの要求に限る試作を作り、固定版生成物の分岐と元の動作をClang 18とGCCのASan/UBSanで各2件検査した。実物のアロケータとiPhone上のメモリ圧迫は未確認で、アプリの動作は変更していない。 [Safety Loadの試作](../experiments/classic-safety-load/README.md)

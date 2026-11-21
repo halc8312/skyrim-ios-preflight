@@ -51,6 +51,42 @@ def load_decoder(path):
 
 @unittest.skipUnless(os.name == 'posix' and shutil.which('cc'), 'Existing POSIX C compiler required')
 class XwmaVoiceProfileTests(unittest.TestCase):
+    @unittest.skipUnless(os.getenv('SKYRIM_TEST_OWNED_FUZ_STOCK') and os.getenv('SKYRIM_FFMPEG_TEST_CFLAGS')
+                         and os.getenv('SKYRIM_FFMPEG_TEST_LIBS') and shutil.which('ffmpeg'),
+                         'Optional owned Fuz stock clips and host FFmpeg development files are required')
+    def test_owned_fuz_stock_clips_decode_with_the_app_adapter(self):
+        vendor = Path(os.getenv('SKYRIM_SKYDREAM_SOURCE', ROOT / 'vendor/skydream'))
+        stock = Path(os.environ['SKYRIM_TEST_OWNED_FUZ_STOCK'])
+        upstream = module('owned_fuz_upstream', vendor / 'tools/test_xwma.py')
+        with tempfile.TemporaryDirectory(prefix='fuz-stock-codec-') as tmp:
+            source, library = Path(tmp) / 'xwma.c', Path(tmp) / 'decoder.so'
+            source.write_text(adapter.prepare(vendor)['xwma.c'], encoding='utf-8')
+            subprocess.run([os.getenv('CC', 'cc'), '-O2', '-shared', '-fPIC', '-DLB_HAVE_FFMPEG',
+                            '-I', str(vendor / 'runtime'), *shlex.split(os.environ['SKYRIM_FFMPEG_TEST_CFLAGS']),
+                            str(source), '-o', str(library), *shlex.split(os.environ['SKYRIM_FFMPEG_TEST_LIBS'])],
+                           check=True, timeout=60)
+            decoder = load_decoder(library)
+            for seconds in range(1, 11):
+                with self.subTest(seconds=seconds):
+                    packed = (stock / f'Stock_{seconds}.fuz').read_bytes()
+                    self.assertEqual(packed[:8], b'FUZE\x01\0\0\0')
+                    lip_bytes = struct.unpack_from('<I', packed, 8)[0]
+                    self.assertGreater(lip_bytes, 0)
+                    self.assertLessEqual(12 + lip_bytes + 12, len(packed))
+                    wave = packed[12 + lip_bytes:]
+                    self.assertEqual((wave[:4], wave[8:12]), (b'RIFF', b'XWMA'))
+                    fmt = upstream.wave_chunks(wave)[b'fmt ']
+                    self.assertEqual(struct.unpack_from('<HHI', fmt), (0x161, 1, 44100))
+                    reference = subprocess.run(['ffmpeg', '-v', 'error', '-f', 'xwma', '-i', 'pipe:0',
+                                                '-f', 's16le', 'pipe:1'], input=wave, capture_output=True,
+                                               check=True, timeout=30)
+                    self.assertFalse(reference.stderr)
+                    duration = len(reference.stdout) / (44100 * 2)
+                    self.assertGreaterEqual(duration, seconds)
+                    self.assertLess(duration, seconds + 0.05)
+                    for streaming in (False, True):
+                        self.assertEqual(upstream.decode_wave(decoder, wave, streaming), reference.stdout)
+
     def test_actual_setup_and_reset_limit_the_change_to_the_missing_profile(self):
         source = adapter.prepare(ROOT / 'vendor/skydream')['xwma.c']
         body = source[source.index('struct XWmaDecoder {'):source.index('static int receive_pcm(')]
