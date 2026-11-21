@@ -1,7 +1,8 @@
 """Hash-bound, read-only staging for the private Classic ECE nose witness."""
 import hashlib
 
-from stage_slider import DESCRIPTOR, OPEN, APPLY, PREVIEW, SUBSTITUTE, function_span
+from stage_slider import (DESCRIPTOR, OPEN, APPLY, PREVIEW, SUBSTITUTE, SETTER_ADMIT, SETTER_BEFORE,
+                          SETTER_AFTER, function_span)
 
 # Each entry is an original-body compilation unit from the owner generation.
 DIGESTS = {
@@ -153,9 +154,15 @@ def stage(unit, original, *, app_base=None, racemenu=False):
     for address, transform in TRANSFORMS[unit]:
         start, end = function_span(data, address)
         before, after = function_span(original, address)
-        if data[start:end] != original[before:after] and not (transform is slider and racemenu):
+        prior = data[start:end]
+        reviewed = prior
+        if transform is face and racemenu:
+            for addition in (SETTER_ADMIT, SETTER_BEFORE, SETTER_AFTER):
+                if reviewed.count(addition) != 1:
+                    raise ValueError("The stock slider write witness changed")
+                reviewed = reviewed.replace(addition, b"", 1)
+        if reviewed != original[before:after] and not (transform is slider and racemenu):
             raise ValueError("A prior stage changed an ECE witness function")
-        body = (slider(data[start:end], racemenu=racemenu, app=app) if transform is slider
-                else transform(data[start:end]))
+        body = slider(prior, racemenu=racemenu, app=app) if transform is slider else transform(prior)
         data = data[:start] + body + data[end:]
     return (APP_DECLARATION if app else DECLARATION) + data

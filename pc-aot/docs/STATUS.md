@@ -2,7 +2,7 @@
 
 **2026-11-22　MOD第一弾の配布前確認**
 
-固定版LEの生成物、所有者のECE入力、固定版libarchiveとliblzmaを使ったMOD関連のPC試験はGCCのASan/UBSanで115件合格した。入力不足でスキップしたHighHeelsの1件は、実物をそろえた別の実行で合格した。ゲストは診断を含む16種類のフックを組み込み、Windows上のLLVMでiPhoneOS向けの516ファイルを非署名でリンクした。変更のあるファイルを再コンパイルし、残りはハッシュを照合して再利用した。元のゲーム、MOD、セーブは読み取り専用で扱った。先行版はApple SDKでのiPhoneアプリのリンクと、生成物の取り込みを含むMOD画面のシミュレーター試験が合格した。 [検査結果](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44947542660)
+固定版LEの生成物、所有者のECEとHighHeelsの素材、固定版libarchiveとliblzmaを使ったMOD関連のPC試験はGCCのASan/UBSanで116件すべて合格した。ゲストは診断を含む16種類のフックを組み込み、Windows上のLLVMでiPhoneOS向けの516ファイルを非署名でリンクした。変更のあるファイルを再コンパイルし、残りはハッシュを照合して再利用した。元のゲーム、MOD、セーブは読み取り専用で扱った。先行版はApple SDKでのiPhoneアプリのリンクと、生成物の取り込みを含むMOD画面のシミュレーター試験が合格した。 [検査結果](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44949170154)
 
 | 対象 | 現在までの確認 | 配布前の確認 |
 | --- | --- | --- |
@@ -10,7 +10,7 @@
 | Fuz Ro D-oh | 固定版の会話経路を接続。実物の代替音声10本のPCMと長さをPCで照合 | 通常音声、無音声の台詞、字幕と口の動きを比較 |
 | PapyrusUtil / Wearable Lanterns | 実物PapyrusUtilでMCMの設定と起動時の整数リスト読み書きを確認。NPCごとの持ち方を保存する共通キーワードの整数読み書きを、実物のDLLとPEXで確認。初回のプラグイン順の確定位置を固定版で照合 | 点灯、長押し、新規ゲームでの設定、再起動後の復元 |
 | 追加セーブ | 固定版のPC往復試験9条件。名前付きプロファイルの試験構成に、所有者のStorageUtil 3.3の記録と読み込み時の復元を接続 | Apple SDKで統合を確認し、iPhoneで連続セーブ、ゲーム再起動後の復元、別セーブへの漏れ、読込時間を検証 |
-| RaceMenu / ECE / NiOverride | RaceMenuの標準の鼻の高さを接続。ECEは女性Nordの顔TRIの読込診断を固定版と照合し、実物の鼻の上下のデータを形状の変更前に確認する試験を追加。NiOverrideの提供元と版を表示 | ECEの実機での顔とリソースの照合、スロット反映の接続、再起動後の保持 |
+| RaceMenu / ECE / NiOverride | RaceMenuの標準の鼻の高さを接続し、同じキャラクターへの値の書き込みと標準のセーブ対象登録を確認してから表示する。ECEは女性Nordの顔TRIの読込診断を照合し、実物の鼻の上下のデータを形状の変更前に確認する試験を追加。NiOverrideの提供元と版を表示 | ECEの実機での顔とリソースの照合、スロット反映の接続。RaceMenuとECEの保存後の読み直し |
 | XPMSE / XPMS / Realistic Ragdolls and Force | プロファイルごとの骨格の選択と前提ファイルを検査 | 実物の骨格とアニメーションを別プロファイルで確認 |
 | CBBE / UNP / BodySlide / FNIS | 体型の優先順と生成時の構成を試験 | 実物の体型、対象プロファイルで生成した出力の表示 |
 | USLEEP / DLC | 必須マスターと並びをPCで検証 | 3つのDLCとUSLEEPの変更レコードを確認 |

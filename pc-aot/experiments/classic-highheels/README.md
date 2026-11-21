@@ -280,6 +280,16 @@ Papyrus provider attests a VM frame and epoch, a different lifetime
 from a scene root.
 [Classic SKSE 1.7.3 source archive](https://skse.silverlock.org/)
 
+The fixed player update obtains its third-person root in `f_734F50`
+at return `0x734FCF`. It then passes that root to the original node
+update at `0x734FF1`. Observing the receivers in that traversal can
+establish membership from the child calls in the same update. The
+stock transform reader in `f_ABDEC0` already visits materialized
+flattened bone nodes. The virtual name search in `f_ABE390` can
+create and attach a missing node, so it cannot serve as a passive
+diagnostic. These observations leave exclusion against animation and
+rendering writes unproven.
+
 Played PEX identity, live third-person root ownership and serialization
 with animation or rendering still need verification. The alternate
 world-data dispatch is outside this fixture. The app's task queue,

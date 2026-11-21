@@ -500,8 +500,8 @@ static void RaceMenuDidApply(void) {
         if (![profile[@"pendingPreset"] isEqual:launchRaceMenuSelection]) return;
         [profile removeObjectForKey:@"pendingPreset"];
         if (!SaveState()) profile[@"pendingPreset"] = launchRaceMenuSelection;
-        skyrim_mobile_show_notice(T(@"Applied Nose Height from the selected RaceMenu preset.",
-                                    @"選んだRaceMenuプリセットから鼻の高さを反映しました。"));
+        skyrim_mobile_show_notice(T(@"Nose Height was applied. Save the game to keep it.",
+                                    @"鼻の高さを設定しました。変更を残すにはゲーム内で保存してください。"));
     });
 }
 #endif

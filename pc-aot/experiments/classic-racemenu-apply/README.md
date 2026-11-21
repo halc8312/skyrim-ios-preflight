@@ -43,9 +43,11 @@ RaceMenu preset can be queued for the profile selected in Settings.
 The app validates and hashes the bounded file before saving a request
 and repeats this check against the running profile on launch. Only the
 guest's menu callback may claim the request. The stage verifies the
-current player's actor base again before the stock slider call and
-acknowledges the request after it returns. The app clears only that
-same request on the main thread.
+current player's actor base again before the stock slider call. It
+acknowledges the request after the original setter writes the exact
+value into the same TESNPC and the stock `MarkChanged(0x800)` accepts
+that record. The app clears only that request on the main thread.
+Saving in-game and reloading are separate confirmations.
 
 The iPhone test must show that a stock Nose Height value changes in
 the menu, follows the expected face animation, persists after saving
