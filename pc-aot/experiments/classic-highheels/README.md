@@ -70,12 +70,38 @@ same guest results, frame bytes and stack bytes.
 
 The test supplies its function and class identities from the fixture.
 Connecting this path to played PEX requires proving that the live VM
-function and class belong to the exact winning script, obtaining the typed
-VMIdentifier handle while it is protected, and resolving it through the
-ActiveMagicEffect policy while the synchronous callback is active. A
-borrowed stack, frame or VMIdentifier cannot be stored after Run. The stack
-ID only checks the current invocation. If OnEffectFinish dispatches after
-the active-effect entry is removed, live resolution can fail. Future
-cleanup must retire only the authority of a previously authenticated
-effect instance, within its own world generation and equip lifetime.
-No runtime hook, handle decoder, transform or delayed request is installed.
+function and class belong to the exact winning script. A borrowed stack,
+frame or VMIdentifier cannot be stored after Run. The stack ID only checks
+the current invocation.
+
+### Resolve the borrowed effect and compare the target
+
+The fixed Classic registration for ActiveMagicEffect.GetTargetActor uses
+`f_8DA360` for Run, `f_8D8F10` to unpack its base VMValue, and
+`f_8D8500` to get the actor from the matching effect's MagicTarget.
+`f_8D8650` first checks for a non-array identifier and asks the policy
+whether its handle represents an ActiveMagicEffect. `f_C307C0` acquires
+the identifier's guest lock, copies both handle halves and restores the
+lock word. The stock unpacker takes a second locked snapshot, checks
+whether the handle is valid, and sends the same typed value to the resolver.
+The resolver checks the type again and traverses the target's current
+effect list.
+
+The private test executes those fixed bodies with authored VM and world
+objects. In the matching visitor the test gets the stock target and
+compares it to the supplied actor. Its Keep scenario also compares the
+supplied Float with the effect's current magnitude. It exercises one
+authored lock release, a different actor, a changed magnitude, a missing
+target, a stale effect number, a removed effect, an unloaded or deleted
+actor, an invalid handle, an array and a null identifier. The checks sample
+the effect while the visitor sees it and retain no effect pointer.
+
+The stock lock can sleep and retry without a deadline. The fixture's
+simulated contended owner releases it deterministically. A bounded
+production observer still needs a proven call site where the engine
+already made the snapshot, or a supported way to use the same guest lock
+without waiting. The two stock snapshots do not prove lifetime across
+those reads or callbacks. If OnEffectFinish arrives after the entry is
+removed, live resolution can fail. A future cleanup needs a previously
+authenticated instance and its world generation and equip lifetime.
+No played PEX dispatch, guest hook, scene change or delay is installed.
