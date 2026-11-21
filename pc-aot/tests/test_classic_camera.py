@@ -207,6 +207,51 @@ class CameraStageTests(unittest.TestCase):
             fixture.write_bytes(wrapper)
             self.compile_and_run(directory, compiler, [fixture, CAMERA / "test_camera_update_lift.c"], headers)
 
+    def test_reviewed_producer_and_render_filters(self):
+        generation, headers, compiler = self.owned_lift()
+        units = {
+            15: ("01a21e3d8ff149dc7481645136cb88907eb05e47e094042951041e504743bbe6", "45F5E0"),
+            106: ("d606d487f73c4eee34d00dd37788b5ed8cf4962966d9150436d34322df0c231a",),
+            153: ("b39b659883c0e174b8950100506175a918c0d0dcef7f1a1a1bd05979af2acdce", "7BB370"),
+            259: ("842247dde6c84c461377e75ba002b3b7dc1779bd33524489176820c9477b02f0", "A49B80"),
+            275: ("c980cb667ac15d7f1bbe6df18de61cb550dd8319719eac53e5f74da4cd33a716", "AAE130", "AAF430"),
+            289: ("1898018ff23f7a04e24285c8c8591890c6fd4a20a1696779983ebda053a8d385", "B07C80", "B07E70"),
+            352: ("251b6563cd267b8c4c0cf6ab05b0ec76e0cee50d5bb71b1acdebaeb6a7712eb9", "C8D8D0"),
+            359: ("5ccfc975c4b0aabdb720e3b179e90e2d41dd92d1151fb0ac9466aed6f34343cb", "CB9E20"),
+        }
+
+        source = b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n'
+        for unit, (digest, *functions) in units.items():
+            name = f"exe_{unit}.c"
+            original = (generation / "gen" / name).read_bytes()
+            self.assertEqual(sha256(original).hexdigest(), digest, name)
+            for function in functions:
+                start = original.index(f"\nvoid f_{function}(CPU *c) {{\n".encode())
+                end = original.index(b"\n}\n", start) + len(b"\n}\n")
+                source += original[start:end]
+            if unit == 106:
+                # The first direct world child and its original retain call.
+                start = original.index(b"    edi = (uint32_t)(TL32((uint32_t)(0x1BA7680u)));",
+                                       original.index(b"\nL_694FD0:\n"))
+                end = original.index(b"\nL_695041:\n", start)
+                source += (b"\nvoid classic_camera_collect_first_root(CPU *c) {\n" + LIFT_REGISTERS +
+                           original[start:end] + b"\nL_695041: SPILL(); return;\n}\n")
+
+        private = ROOT / "private"
+        if private.resolve() != private:
+            raise ValueError("Generated sources must stay in private/")
+        private.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="classic-camera-submission-", dir=private) as d:
+            directory = Path(d)
+            fixture = directory / "submission_blocks.c"
+            # Include the lift as a system header to suppress labels and registers
+            # unused in individual original blocks while checking authored C.
+            fixture.write_bytes(source)
+            entry = directory / "submission.c"
+            entry.write_text('#include <submission_blocks.c>\n', encoding="ascii")
+            self.compile_and_run(directory, compiler, [entry, CAMERA / "test_camera_submission_lift.c"],
+                                 [*headers, "-isystem", str(directory)])
+
     def compile_and_run(self, root, compiler, files, headers=()):
         binary = root / "test_camera"
         flags = ["-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(CAMERA)]
