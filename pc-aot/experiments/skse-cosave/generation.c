@@ -179,12 +179,8 @@ done:
     return result;
 }
 
-SksePairResult skse_pair_begin(SksePairStore *store, const SksePairKey *target,
-                               const SksePairGeneration *base, SksePairStage **out) {
-    if (!out) return SKSE_PAIR_ARGUMENT;
-    *out = NULL;
-    if (!store || !valid_key(target)) return SKSE_PAIR_ARGUMENT;
-    if (base && memcmp(base->key.profile, target->profile, sizeof target->profile)) return SKSE_PAIR_WRONG_GENERATION;
+static SksePairResult begin_stage(SksePairStore *store, const SksePairKey *target,
+                                  const SksePairGeneration *base, SksePairStage **out) {
     SksePairStage *stage = calloc(1, sizeof *stage);
     if (!stage) return SKSE_PAIR_STORAGE;
     stage->target = *target;
@@ -192,6 +188,22 @@ SksePairResult skse_pair_begin(SksePairStore *store, const SksePairKey *target,
     if (result == SKSE_PAIR_OK) *out = stage;
     else skse_pair_discard(stage);
     return result;
+}
+
+SksePairResult skse_pair_begin(SksePairStore *store, const SksePairKey *target,
+                               const SksePairGeneration *base, SksePairStage **out) {
+    if (!out) return SKSE_PAIR_ARGUMENT;
+    *out = NULL;
+    if (!store || !valid_key(target)) return SKSE_PAIR_ARGUMENT;
+    if (base && memcmp(base->key.profile, target->profile, sizeof target->profile)) return SKSE_PAIR_WRONG_GENERATION;
+    return begin_stage(store, target, base, out);
+}
+
+SksePairResult skse_pair_begin_empty(const SksePairKey *target, SksePairStage **out) {
+    if (!out) return SKSE_PAIR_ARGUMENT;
+    *out = NULL;
+    if (!valid_key(target)) return SKSE_PAIR_ARGUMENT;
+    return begin_stage(NULL, target, NULL, out);
 }
 SksePairResult skse_pair_import(const SksePairKey *target, const void *data, size_t size, SksePairStage **out) {
     if (!out) return SKSE_PAIR_ARGUMENT;

@@ -90,13 +90,13 @@ void skse_bridge_close(SkseEventBridge *bridge) {
     if (bridge) { skse_pair_close(bridge->store); close(bridge->directory); free(bridge); }
 }
 
-static SkseBridgeResult bind_named_ess(SkseEventBridge *bridge,
+static SkseBridgeResult bind_named_ess(const SkseGameScope *scope,
     int saves, const char *leaf, int source, SkseGameEvent *event, SksePairResult *detail) {
     if (detail) *detail = SKSE_PAIR_OK;
     if (!event) return SKSE_BRIDGE_ARGUMENT;
     *event = (SkseGameEvent){0};
     const size_t stem = skse_save_stem(leaf);
-    if (!bridge || !stem) return SKSE_BRIDGE_ARGUMENT;
+    if (!scope || !stem) return SKSE_BRIDGE_ARGUMENT;
     const int flags = fcntl(source, F_GETFL);
     struct stat directory, original, named, checked;
     if (flags < 0 || (flags & O_ACCMODE) != O_RDONLY || fstat(saves, &directory) ||
@@ -108,7 +108,7 @@ static SkseBridgeResult bind_named_ess(SkseEventBridge *bridge,
     if (named.st_nlink != 1 || !skse_save_same_version(&original, &named) ||
         fstat(source, &checked) || !skse_save_same_version(&original, &checked))
         return from_pair(SKSE_PAIR_ESS_CHANGED, detail);
-    SkseGameEvent bound = {.scope = bridge->running};
+    SkseGameEvent bound = {.scope = *scope};
     if (!skse_pair_named_key(bound.scope.profile, leaf, stem + 4, &original, &bound.saved))
         return from_pair(SKSE_PAIR_STORAGE, detail);
     *event = bound;
@@ -122,15 +122,15 @@ SkseBridgeResult skse_bridge_bind_named_ess(SkseEventBridge *bridge, uint32_t ti
         if (event) *event = (SkseGameEvent){0};
         return SKSE_BRIDGE_ARGUMENT;
     }
-    const SkseBridgeResult status = bind_named_ess(bridge, saves, leaf, source, event, detail);
+    const SkseBridgeResult status = bind_named_ess(bridge ? &bridge->running : NULL, saves, leaf, source, event, detail);
     if (status == SKSE_BRIDGE_OK) event->ticket = ticket;
     return status;
 }
 
-static SkseBridgeResult confirm_named_ess(SkseEventBridge *bridge, const SkseGameEvent *requested,
+static SkseBridgeResult confirm_named_ess(const SkseGameEvent *requested,
     int saves, const char *leaf, int source, SksePairResult *detail) {
     SkseGameEvent actual;
-    SkseBridgeResult result = bind_named_ess(bridge, saves, leaf, source, &actual, detail);
+    SkseBridgeResult result = bind_named_ess(&requested->scope, saves, leaf, source, &actual, detail);
     if (result != SKSE_BRIDGE_OK) return result;
     if (memcmp(&actual.saved, &requested->saved, sizeof actual.saved))
         return from_pair(SKSE_PAIR_ESS_CHANGED, detail);
@@ -247,17 +247,18 @@ SkseBridgeResult skse_bridge_capture_save(SksePendingSave *save, const SkseEvent
     return status;
 }
 
-static SkseBridgeResult defer_ready_save(SksePendingSave *save, int source, int scratch,
+static SkseBridgeResult defer_ready_save(const SkseGameEvent *event, int directory, SksePairStage **stage,
+                                        int source, int scratch,
                                         SkseDeferredSave **out, SksePairResult *detail) {
     SkseDeferredSave *job = calloc(1, sizeof *job);
     if (!job) return SKSE_BRIDGE_IO;
-    job->directory = fcntl(save->bridge->directory, F_DUPFD_CLOEXEC, 0);
+    job->directory = fcntl(directory, F_DUPFD_CLOEXEC, 0);
     if (job->directory < 0) { free(job); return SKSE_BRIDGE_IO; }
     SkseBridgeResult status = from_pair(skse_ess_capture_immutable(source, scratch, &job->snapshot), detail);
     if (status != SKSE_BRIDGE_OK) { skse_bridge_drop_deferred(job); return status; }
-    job->event = save->requested;
-    job->stage = save->stage;
-    save->stage = NULL;
+    job->event = *event;
+    job->stage = *stage;
+    *stage = NULL;
     *out = job;
     return SKSE_BRIDGE_OK;
 }
@@ -269,7 +270,9 @@ SkseBridgeResult skse_bridge_defer_save(SksePendingSave *save, const SkseEventTr
     if (!out) return SKSE_BRIDGE_ARGUMENT;
     *out = NULL;
     SkseBridgeResult status = capture_ready(save, trace, base, detail);
-    return status == SKSE_BRIDGE_OK ? defer_ready_save(save, base->ess_fd, scratch, out, detail) : status;
+    if (status != SKSE_BRIDGE_OK) return status;
+    return defer_ready_save(&save->requested, save->bridge->directory, &save->stage,
+                            base->ess_fd, scratch, out, detail);
 }
 
 SkseBridgeResult skse_bridge_defer_named_save(SksePendingSave *save, const SkseEventTrace *trace,
@@ -280,12 +283,46 @@ SkseBridgeResult skse_bridge_defer_named_save(SksePendingSave *save, const SkseE
     *out = NULL;
     SkseBridgeResult status = capture_ready(save, trace, base, detail);
     if (status != SKSE_BRIDGE_OK) return status;
-    status = confirm_named_ess(save->bridge, &save->requested, saves, leaf, base->ess_fd, detail);
+    status = confirm_named_ess(&save->requested, saves, leaf, base->ess_fd, detail);
     if (status != SKSE_BRIDGE_OK) return status;
     SkseDeferredSave *job = NULL;
-    status = defer_ready_save(save, base->ess_fd, scratch, &job, detail);
+    status = defer_ready_save(&save->requested, save->bridge->directory, &save->stage,
+                              base->ess_fd, scratch, &job, detail);
     if (status != SKSE_BRIDGE_OK) return status;
-    status = confirm_named_ess(save->bridge, &save->requested, saves, leaf, base->ess_fd, detail);
+    status = confirm_named_ess(&save->requested, saves, leaf, base->ess_fd, detail);
+    if (status == SKSE_BRIDGE_OK) *out = job;
+    else skse_bridge_drop_deferred(job);
+    return status;
+}
+
+SkseBridgeResult skse_bridge_defer_published_save(const SkseGameScope *scope, int store,
+    const SkseEventTrace *trace, uint32_t ticket, int saves, const char *leaf, int source,
+    int scratch, const SksePublishedRecords *records, SkseDeferredSave **out, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!out) return SKSE_BRIDGE_ARGUMENT;
+    *out = NULL;
+    if (!scope || !has_id(scope->launch) || !has_id(scope->profile) || scope->text > 1 || scope->voices > 1 ||
+        !ticket || ticket > SkyrimLifecycleCapacity || !records || !records->mods || !records->mod_count ||
+        !records->uid) return SKSE_BRIDGE_ARGUMENT;
+    struct stat directory;
+    if (fstat(store, &directory) || !S_ISDIR(directory.st_mode)) return SKSE_BRIDGE_IO;
+    const SkseGameEvent request = {.scope = *scope, .ticket = ticket};
+    SkseBridgeResult status = skse_bridge_check_call(&request, SkyrimSaveSlot, trace);
+    if (status != SKSE_BRIDGE_OK) return status;
+
+    SkseGameEvent bound;
+    status = bind_named_ess(scope, saves, leaf, source, &bound, detail);
+    if (status != SKSE_BRIDGE_OK) return status;
+    bound.ticket = ticket;
+    SksePairStage *stage = NULL;
+    SksePairResult result = skse_pair_begin_empty(&bound.saved, &stage);
+    if (result == SKSE_PAIR_OK) result = skse_pair_write_mod_history(stage, records->mods, records->mod_count);
+    if (result == SKSE_PAIR_OK) result = skse_pair_replace(stage, records->uid, records->records, records->count);
+    SkseDeferredSave *job = NULL;
+    status = from_pair(result, detail);
+    if (status == SKSE_BRIDGE_OK) status = defer_ready_save(&bound, store, &stage, source, scratch, &job, detail);
+    if (status == SKSE_BRIDGE_OK) status = confirm_named_ess(&bound, saves, leaf, source, detail);
+    skse_pair_discard(stage);
     if (status == SKSE_BRIDGE_OK) *out = job;
     else skse_bridge_drop_deferred(job);
     return status;
@@ -365,7 +402,7 @@ static SkseBridgeResult prepare_named_load(SkseEventBridge *bridge, uint32_t tic
     if (loader_fd) *loader_fd = -1;
     if (!event || !out || !loader_fd) return SKSE_BRIDGE_ARGUMENT;
     SkseGameEvent bound;
-    SkseBridgeResult status = bind_named_ess(bridge, saves, leaf, source, &bound, detail);
+    SkseBridgeResult status = bind_named_ess(bridge ? &bridge->running : NULL, saves, leaf, source, &bound, detail);
     if (status != SKSE_BRIDGE_OK) return status;
     bound.ticket = ticket;
     if (ticket) {
@@ -376,7 +413,7 @@ static SkseBridgeResult prepare_named_load(SkseEventBridge *bridge, uint32_t tic
     int fd = -1;
     status = prepare_load_input(bridge, &bound, source, scratch, &input, &fd, detail);
     if (status != SKSE_BRIDGE_OK) return status;
-    status = confirm_named_ess(bridge, &bound, saves, leaf, source, detail);
+    status = confirm_named_ess(&bound, saves, leaf, source, detail);
     if (status == SKSE_BRIDGE_OK) {
         *event = bound;
         *out = input;

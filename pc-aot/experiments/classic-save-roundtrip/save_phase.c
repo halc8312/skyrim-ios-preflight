@@ -8,11 +8,11 @@
 #include <pthread.h>
 #include <stdio.h>
 
-typedef enum { COMMIT, SKIP_VM, FILE_FAILURE, RECORD_FAILURE, CLONE_FAILURE, INTERRUPT, STALE_INPUT, REPLACE } SaveMode;
+typedef enum { COMMIT, DEFER_BEFORE_STORE, SKIP_VM, FILE_FAILURE, RECORD_FAILURE, CLONE_FAILURE,
+               INTERRUPT, STALE_INPUT, REPLACE } SaveMode;
 static SaveMode mode;
 static char directory[1024];
 static SkseEventBridge *bridge;
-static SksePendingSave *pending;
 static SkseGameEvent event = {
     .scope = {.launch = {1}, .profile = {2}},
 };
@@ -82,6 +82,7 @@ static void verify_scoped_lifecycle(void) {
 
 void save_roundtrip_configure(const char *name) {
     if (!strcmp(name, "committed")) mode = COMMIT;
+    else if (!strcmp(name, "defer-before-store")) mode = DEFER_BEFORE_STORE;
     else if (!strcmp(name, "vm-rejected")) mode = SKIP_VM;
     else if (!strcmp(name, "short-write")) mode = FILE_FAILURE;
     else if (!strcmp(name, "stage-error")) mode = RECORD_FAILURE;
@@ -98,8 +99,11 @@ void save_composition_open(const char *root) {
     memcpy(directory, root, length + 1);
     scratch = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     assert(scratch >= 0);
-    SksePairResult detail;
-    assert(skse_bridge_open(root, &event.scope, &bridge, &detail) == SKSE_BRIDGE_OK);
+    if (mode == DEFER_BEFORE_STORE) assert(!mkdirat(scratch, "text-en-voice-en", 0700));
+    else {
+        SksePairResult detail;
+        assert(skse_bridge_open(root, &event.scope, &bridge, &detail) == SKSE_BRIDGE_OK);
+    }
     verify_scoped_lifecycle();
     assert(skyrim_lifecycle_scope_open(&lifecycle));
 }
@@ -166,24 +170,32 @@ static void *publish_on_worker(void *arg) {
     return NULL;
 }
 
-void save_composition_close(void) {
-    assert(bridge && finish_seen && roundtrip_digest_bytes() == 0);
-    SkyrimLifecycleRow rows[SkyrimLifecycleCapacity];
-    const SkseEventTrace trace = save_trace(rows);
-    assert(skyrim_lifecycle_scope_close(&lifecycle));
-    if (mode == STALE_INPUT) replace_saved_path(ROUNDTRIP_ORIGINAL);
-    bool matched = false;
-    if (held >= 0) {
-        struct stat still_open, published;
-        matched = !fstat(held, &still_open) && !fstatat(scratch, "Fixture.ess", &published, AT_SYMLINK_NOFOLLOW) &&
-                  skse_save_same_version(&at_publication, &still_open) && skse_save_same_version(&still_open, &published);
-    }
-    assert(matched == (mode != FILE_FAILURE && mode != STALE_INPUT));
-    const bool clones = mode == COMMIT || mode == INTERRUPT || mode == REPLACE || mode == CLONE_FAILURE;
+static SkseDeferredSave *capture_without_store(const SkseEventTrace *trace) {
+    const int store = openat(scratch, "text-en-voice-en", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    assert(store >= 0);
+    static const uint8_t name[] = "Skyrim.esm";
+    const SkseLoadedMod mod = {name, sizeof name - 1, 0, SKSE_LOADED_CLASSIC};
+    const SksePairRecord record = {ROUNDTRIP_RECORD, ROUNDTRIP_RECORD_VERSION,
+                                   sizeof ROUNDTRIP_RECORD_DATA, ROUNDTRIP_RECORD_DATA};
+    const SksePublishedRecords records = {&mod, 1, ROUNDTRIP_OWNER, &record, 1};
+    SksePairResult detail;
     SkseDeferredSave *job = NULL;
+    assert(skse_bridge_defer_published_save(&event.scope, store, trace, event.ticket, scratch, "Alternate.ess",
+        held, scratch, &records, &job, &detail) == SKSE_BRIDGE_PAIR && detail == SKSE_PAIR_ESS_CHANGED && !job);
+    roundtrip_expect_clone(held, false);
+    assert(skse_bridge_defer_published_save(&event.scope, store, trace, event.ticket, scratch, "Fixture.ess",
+        held, scratch, &records, &job, &detail) == SKSE_BRIDGE_OK && detail == SKSE_PAIR_OK && job);
+    assert(faccessat(store, "classic-generations.sqlite3", F_OK, 0) == -1 && errno == ENOENT);
+    assert(!close(store));
+    return job;
+}
+
+static SkseDeferredSave *capture_with_store(const SkseEventTrace *trace, bool matched, bool clones) {
+    SkseDeferredSave *job = NULL;
+    SksePendingSave *pending = NULL;
     SksePairResult detail;
     SkseBaseEvidence base;
-    const SkseBridgeResult binding = skse_bridge_begin_published_save(bridge, &trace, event.ticket,
+    const SkseBridgeResult binding = skse_bridge_begin_published_save(bridge, trace, event.ticket,
         scratch, "Fixture.ess", held, &pending, &base, &detail);
     assert((pending != NULL) == (binding == SKSE_BRIDGE_OK));
     if (binding != SKSE_BRIDGE_OK) assert(base.ess_fd == -1 && !base.event.ticket);
@@ -196,7 +208,7 @@ void save_composition_close(void) {
         assert(skse_bridge_write_owner(pending, ROUNDTRIP_OWNER, bad_record ? NULL : &record, 1) ==
                (bad_record ? SKSE_PAIR_ARGUMENT : SKSE_PAIR_OK));
         if (clones) roundtrip_expect_clone(held, mode == CLONE_FAILURE);
-        const SkseBridgeResult result = skse_bridge_defer_named_save(pending, &trace, &base, scratch, "Fixture.ess",
+        const SkseBridgeResult result = skse_bridge_defer_named_save(pending, trace, &base, scratch, "Fixture.ess",
                                                                      scratch, &job, &detail);
         if (mode == RECORD_FAILURE) assert(result == SKSE_BRIDGE_PAIR && detail == SKSE_PAIR_ARGUMENT);
         else if (mode == CLONE_FAILURE) assert(result == SKSE_BRIDGE_PAIR && detail == SKSE_PAIR_UNSUPPORTED);
@@ -209,12 +221,32 @@ void save_composition_close(void) {
     } else {
         assert(binding == SKSE_BRIDGE_ARGUMENT);
     }
+    skse_bridge_drop(pending);
+    return job;
+}
+
+void save_composition_close(void) {
+    assert((bridge != NULL) == (mode != DEFER_BEFORE_STORE) && finish_seen && roundtrip_digest_bytes() == 0);
+    SkyrimLifecycleRow rows[SkyrimLifecycleCapacity];
+    const SkseEventTrace trace = save_trace(rows);
+    assert(skyrim_lifecycle_scope_close(&lifecycle));
+    if (mode == STALE_INPUT) replace_saved_path(ROUNDTRIP_ORIGINAL);
+    bool matched = false;
+    if (held >= 0) {
+        struct stat still_open, published;
+        matched = !fstat(held, &still_open) && !fstatat(scratch, "Fixture.ess", &published, AT_SYMLINK_NOFOLLOW) &&
+                  skse_save_same_version(&at_publication, &still_open) && skse_save_same_version(&still_open, &published);
+    }
+    assert(matched == (mode != FILE_FAILURE && mode != STALE_INPUT));
+    const bool clones = mode == COMMIT || mode == DEFER_BEFORE_STORE || mode == INTERRUPT ||
+                        mode == REPLACE || mode == CLONE_FAILURE;
+    SkseDeferredSave *job = mode == DEFER_BEFORE_STORE ? capture_without_store(&trace) :
+                                                         capture_with_store(&trace, matched, clones);
     roundtrip_finish_clone(clones);
     assert(roundtrip_digest_bytes() == 0);
 
     if (held >= 0) assert(!close(held));
     if (mode == REPLACE) replace_saved_path(ROUNDTRIP_REPLACEMENT);
-    skse_bridge_drop(pending);
     skse_bridge_close(bridge);
     assert(!close(scratch));
     if (mode == INTERRUPT) {

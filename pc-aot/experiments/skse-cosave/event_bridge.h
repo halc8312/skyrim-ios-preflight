@@ -104,6 +104,21 @@ SkseBridgeResult skse_bridge_defer_save(SksePendingSave *pending, const SkseEven
 SkseBridgeResult skse_bridge_defer_named_save(SksePendingSave *pending, const SkseEventTrace *trace,
     const SkseBaseEvidence *base, int saves, const char *leaf, int private_scratch,
     SkseDeferredSave **job, SksePairResult *detail);
+/* Borrow the completed callback records and active names during capture. A
+ * prepared job owns a frozen image and an immutable .ess before returning. */
+typedef struct {
+    const SkseLoadedMod *mods;
+    size_t mod_count;
+    uint32_t uid;
+    const SksePairRecord *records;
+    size_t count;
+} SksePublishedRecords;
+/* Like defer_named_save, but the save thread never opens a database. The
+ * caller borrows the provisioned language-specific directory for this job.
+ * The worker must open the same directory through skse_bridge_open. */
+SkseBridgeResult skse_bridge_defer_published_save(const SkseGameScope *, int store_directory,
+    const SkseEventTrace *, uint32_t ticket, int saves, const char *leaf, int source,
+    int private_scratch, const SksePublishedRecords *, SkseDeferredSave **job, SksePairResult *detail);
 /* A worker opens its own bridge to the same protected store directory and
  * running scope. The first publish hashes the immutable file. Retries share
  * that digest. A job never shares a SQLite connection with the submitting

@@ -28,7 +28,7 @@ from test_form_projection import stage_lift as lifted_projection
 
 
 CASES = (
-    ("committed", "matched"), ("vm-rejected", "missing"), ("short-write", "missing"),
+    ("committed", "matched"), ("defer-before-store", "matched"), ("vm-rejected", "missing"), ("short-write", "missing"),
     ("stage-error", "missing"), ("clone-unavailable", "missing"), ("interrupted", "missing"),
     ("replaced-before-capture", "missing"), ("replaced", "replaced"),
 )
@@ -112,7 +112,7 @@ def main() -> None:
         immutable = compile_object(capture, [])
         digest = compile_object(hashes, [])
         shared_sources = [HERE / "fixture_io.c", *(COSAVE / name for name in (
-            "event_bridge.c", "event_trace.c", "generation.c", "records.c", "observer/lifecycle.c",
+            "event_bridge.c", "event_trace.c", "generation.c", "records.c", "mod_history.c", "observer/lifecycle.c",
         ))]
         common = [immutable, digest, *(compile_object(path, ["-Wall", "-Wextra", "-Werror"]) for path in shared_sources)]
 
@@ -155,7 +155,7 @@ def main() -> None:
                     subprocess.run([loader, profile, "preloaded"], check=True, timeout=20)
     if source.read_bytes() != original:
         raise AssertionError("Original runtime source changed")
-    print("PASS eight persisted save-to-load outcomes and cached preload exclusion")
+    print(f"PASS {len(CASES)} persisted save-to-load outcomes and cached preload exclusion")
 
 
 if __name__ == "__main__":

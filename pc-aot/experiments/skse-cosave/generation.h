@@ -42,6 +42,8 @@ void skse_pair_close(SksePairStore *store);
  * this profile; a missing/mismatched base fails rather than starting empty. */
 SksePairResult skse_pair_begin(SksePairStore *store, const SksePairKey *target,
                                const SksePairGeneration *base, SksePairStage **out);
+/* A fresh in-memory stage needs no storage connection until commit. */
+SksePairResult skse_pair_begin_empty(const SksePairKey *target, SksePairStage **out);
 /* The Classic wire format has no binding to .ess. Callers of import must
  * independently establish that these original bytes belong to this event. */
 SksePairResult skse_pair_import(const SksePairKey *target, const void *data, size_t size,
