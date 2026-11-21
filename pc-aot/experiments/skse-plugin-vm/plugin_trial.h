@@ -50,6 +50,9 @@ typedef struct {
     size_t read_view_count;
     const uint32_t *hook_probe_sites; // One-shot host observation in Load only.
     size_t hook_probe_count;
+    /* Optional, Load only, one-shot trials: record code patch requests against a
+     * read-only view of the game image instead of failing on them (plan X5). */
+    SkseX86PatchInventory *patch_inventory;
 } SkseTrialRuntime;
 
 typedef struct {

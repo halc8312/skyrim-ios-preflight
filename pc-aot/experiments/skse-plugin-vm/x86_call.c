@@ -227,6 +227,42 @@ static uint8_t *resolve_memory_region(Vm *vm, uint32_t address, size_t width, un
     return NULL;
 }
 
+/* A write inside the observed game range lands in a request buffer that
+ * starts with the original bytes; nothing reaches the view. */
+static uint8_t *patch_slot(Vm *vm, uint32_t address, size_t width) {
+    SkseX86PatchInventory *inventory = vm->services.patch_inventory;
+    if (!in_range(inventory->base, (uint64_t)inventory->base + inventory->length, address, width)) return NULL;
+    if (width > SKSE_X86_PATCH_BYTES) {
+        inventory->truncated = true;
+        return NULL;
+    }
+    for (unsigned i = 0; i < inventory->count; ++i) {
+        SkseX86PatchRequest *request = &inventory->requests[i];
+        if (in_range(request->site, (uint64_t)request->site + request->length, address, width))
+            return request->bytes + (address - request->site);
+    }
+    if (inventory->count) {
+        SkseX86PatchRequest *last = &inventory->requests[inventory->count - 1];
+        if (address == last->site + last->length && last->length + width <= SKSE_X86_PATCH_BYTES) {
+            uint8_t *bytes = last->bytes + last->length;
+            last->length += (uint32_t)width;
+            return bytes;
+        }
+    }
+    if (inventory->count == SKSE_X86_MAX_PATCHES) {
+        inventory->truncated = true;
+        return NULL;
+    }
+    SkseX86PatchRequest *request = &inventory->requests[inventory->count++];
+    *request = (SkseX86PatchRequest){.site = address, .length = (uint32_t)width};
+    for (size_t i = 0; i < vm->services.read_view_count; ++i) {
+        const SkseX86ReadView *view = &vm->services.read_views[i];
+        if (in_range(view->base, (uint64_t)view->base + view->length, address, width))
+            memcpy(request->bytes, view->bytes + (address - view->base), width);
+    }
+    return request->bytes;
+}
+
 static uint8_t *resolve_memory(Vm *vm, uint32_t address, size_t width, unsigned permissions) {
     if (vm->status != SKSE_X86_OK) return NULL;
     if (in_range(vm->scratch.base, (uint64_t)vm->scratch.base + vm->scratch.length, address, width))
@@ -234,7 +270,10 @@ static uint8_t *resolve_memory(Vm *vm, uint32_t address, size_t width, unsigned 
     if ((vm->data_permissions & permissions) == permissions &&
         in_range(vm->data_start, vm->data_end, address, width))
         return vm->data_bytes + (address - vm->data_start);
-    return resolve_memory_region(vm, address, width, permissions);
+    uint8_t *bytes = resolve_memory_region(vm, address, width, permissions);
+    if (!bytes && (permissions & SKSE_PE_WRITE) && vm->services.patch_inventory && !image_at(vm, address))
+        bytes = patch_slot(vm, address, width);
+    return bytes;
 }
 
 static uint8_t *memory(Vm *vm, uint32_t address, size_t width, unsigned permissions) {
@@ -592,6 +631,18 @@ static uint32_t protect_image_data(Vm *vm) {
     uint32_t site;
     HookProbeState *probe = hook_probe_at(vm, address, length, &site);
     if (probe) return protect_hook_probe(vm, probe, site, address, length, protection, previous_at);
+    SkseX86PatchInventory *inventory = vm->services.patch_inventory;
+    if (inventory && length && in_range(inventory->base, (uint64_t)inventory->base + inventory->length, address, length)) {
+        /* Observation only: report the original protection and change nothing. */
+        uint8_t *previous = protection ? resolve_memory(vm, previous_at, 4, SKSE_PE_WRITE) : NULL;
+        if (!previous) {
+            *error = protection ? 998 : 87;
+            return 0;
+        }
+        for (unsigned i = 0; i < 4; ++i) previous[i] = (uint8_t)(inventory->original_protection >> (i * 8));
+        ++inventory->protect_requests;
+        return 1;
+    }
     if (!protection) {
         *error = 87;
         return 0;
@@ -2874,6 +2925,19 @@ static bool valid_hook_probe(SksePeImage *const *images, size_t count, SkseX86Sc
     return true;
 }
 
+static bool valid_patch_inventory(SksePeImage *const *images, size_t count, SkseX86Scratch scratch,
+                                  SkseX86Services services) {
+    const SkseX86PatchInventory *inventory = services.patch_inventory;
+    if (!inventory->base || !inventory->length || (uint64_t)inventory->base + inventory->length > UINT32_MAX ||
+        inventory->count || inventory->truncated || inventory->protect_requests ||
+        guest_overlap(inventory->base, inventory->length, scratch.base, scratch.length) ||
+        (services.heap && guest_overlap(inventory->base, inventory->length, services.heap->base, SKSE_X86_HEAP_BYTES)))
+        return false;
+    for (size_t j = 0; j < count; ++j)
+        if (guest_overlap(inventory->base, inventory->length, images[j]->base, images[j]->size)) return false;
+    return true;
+}
+
 static void finish_hook_probe(Vm *vm) {
     for (size_t i = 0; i < vm->services.hook_probe_count; ++i) {
         const HookProbeState *probe = &vm->hook_probes[i];
@@ -2902,6 +2966,7 @@ static SkseX86Result call_in_space(SksePeImage *const *images, size_t image_coun
         (services.count && !services.entries) ||
         (services.read_view_count && !valid_read_views(images, image_count, scratch, services)) ||
         (services.hook_probe_count && !valid_hook_probe(images, image_count, scratch, services)) ||
+        (services.patch_inventory && !valid_patch_inventory(images, image_count, scratch, services)) ||
         (convention != SKSE_X86_CDECL && convention != SKSE_X86_STDCALL))
         return (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
     const uint32_t stack_floor = services.stack_floor ? services.stack_floor : scratch.base;

@@ -699,6 +699,63 @@ static void check_hook_observations(void) {
     assert(run(code, used, 100, services).status == SKSE_X86_BAD_ARGUMENT);
 }
 
+/* Plan X5: code patch requests against the game's read-only view are recorded, never applied. */
+static void check_patch_inventory(void) {
+    uint8_t game[0x100];
+    memset(game, 0x90, sizeof game);
+    uint8_t original[sizeof game];
+    memcpy(original, game, sizeof game);
+    const uint32_t view_base = 0x00600000, site = view_base + 0x10;
+    const SkseX86ReadView view = {view_base, game, sizeof game};
+    const SkseX86Service protect = {0x00400000, 0, SKSE_X86_PROTECT_IMAGE_DATA};
+    SkseWinThread thread = {.id = 1};
+    SkseX86PatchInventory inventory = {.base = view_base, .length = sizeof game, .original_protection = 0x20};
+    SkseX86Services services = {.entries = &protect, .count = 1, .thread = &thread, .read_views = &view,
+                                .read_view_count = 1, .patch_inventory = &inventory};
+    uint8_t code[160];
+    size_t used = 0;
+    hook_protect_request(code, &used, site, 0x40);           /* VirtualProtect(site, 4, RWX, scratch) */
+    code[used++] = 0xc6; code[used++] = 5;                    /* mov byte [site], 0xE9 */
+    append_word(code, &used, site);
+    code[used++] = 0xe9;
+    code[used++] = 0xc7; code[used++] = 5;                    /* mov dword [site+1], rel32 */
+    append_word(code, &used, site + 1);
+    append_word(code, &used, image_base - site - 5);
+    code[used++] = 0xa1;                                      /* mov eax, [site]: still the original */
+    append_word(code, &used, site);
+    code[used++] = 0xc3;
+    SkseX86Result result = run(code, used, 100, services);
+    assert(result.status == SKSE_X86_OK && result.eax == 0x90909090);
+    assert(scratch[0] == 0x20 && inventory.protect_requests == 1 && inventory.count == 1 && !inventory.truncated);
+    const SkseX86PatchRequest *request = &inventory.requests[0];
+    uint32_t relative;
+    memcpy(&relative, request->bytes + 1, 4);
+    assert(request->site == site && request->length == 5 && request->bytes[0] == 0xe9);
+    assert(site + 5 + relative == image_base && !memcmp(game, original, sizeof game));
+
+    /* 65 separate one-byte writes: 64 are recorded, then the call stops. */
+    inventory = (SkseX86PatchInventory){.base = view_base, .length = sizeof game, .original_protection = 0x20};
+    uint8_t many[65 * 7 + 1];
+    used = 0;
+    for (unsigned i = 0; i < 65; ++i) {
+        many[used++] = 0xc6; many[used++] = 5;
+        append_word(many, &used, view_base + 2 * i);
+        many[used++] = 0xcc;
+    }
+    many[used++] = 0xc3;
+    result = run(many, used, 200, services);
+    assert(result.status == SKSE_X86_MEMORY_FAULT && result.fault_address == view_base + 128);
+    assert(inventory.count == SKSE_X86_MAX_PATCHES && inventory.truncated && !memcmp(game, original, sizeof game));
+
+    /* Outside the observed range the original rules apply; an overlapping range is refused. */
+    inventory = (SkseX86PatchInventory){.base = view_base, .length = 0x20, .original_protection = 0x20};
+    uint8_t outside[] = {0xc6, 5, 0x40, 0, 0x60, 0, 1, 0xc3};
+    result = run(outside, sizeof outside, 10, services);
+    assert(result.status == SKSE_X86_MEMORY_FAULT && !inventory.count);
+    inventory = (SkseX86PatchInventory){.base = image_base, .length = 0x10};
+    assert(run(outside, sizeof outside, 10, services).status == SKSE_X86_BAD_ARGUMENT);
+}
+
 static void check_read_only_views(void) {
     uint8_t bytes[] = {0x78, 0x56, 0x34, 0x12, 0xc3, 0, 0, 0};
     const uint8_t original[] = {0x78, 0x56, 0x34, 0x12, 0xc3, 0, 0, 0};
@@ -741,6 +798,7 @@ static void check_read_only_views(void) {
 }
 
 int main(void) {
+    check_patch_inventory();
     // CALL forwards to another x86 region and that callee returns into the caller.
     uint8_t nested[] = {0xe8, 1, 0, 0, 0, 0xc3, 0xb8, 42, 0, 0, 0, 0xc3};
     SkseX86Result result = ARRAY_RUN(nested);

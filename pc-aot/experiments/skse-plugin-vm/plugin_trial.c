@@ -348,6 +348,7 @@ static SkseX86Result run_worker(void *opaque, uint32_t id, uint32_t entry, uint3
     TrialVm child = *context->parent;
     child.services.hook_probe_sites = NULL;
     child.services.hook_probe_count = 0;
+    child.services.patch_inventory = NULL;
     SkseWinThread thread = {.process = child.services.thread->process, .id = id};
     SkseX86Scratch worker_area = {
         .base = child.scratch.base + context->stack_offset,
@@ -851,13 +852,17 @@ static void initialize_session(SksePluginSession *session, SkseTrialDependency p
         if (runtime && !session->resident) {
             vm->services.hook_probe_sites = runtime->hook_probe_sites;
             vm->services.hook_probe_count = runtime->hook_probe_count;
+            vm->services.patch_inventory = runtime->patch_inventory;
         }
         result->load = call_trial(vm, image->load_va, args, 1, SKSE_X86_CDECL);
         vm->services.hook_probe_sites = NULL;
         vm->services.hook_probe_count = 0;
+        vm->services.patch_inventory = NULL;
         if (result->load.status != SKSE_X86_OK) result->status = SKSE_TRIAL_LOAD_FAULT;
         else if (!(result->load.eax & 0xff)) result->status = SKSE_TRIAL_LOAD_DECLINED;
-        else result->status = result->load.hook_count ? SKSE_TRIAL_ENGINE_HOOKS_OBSERVED : SKSE_TRIAL_COMPLETED;
+        else result->status = result->load.hook_count ||
+                 (runtime && !session->resident && runtime->patch_inventory && runtime->patch_inventory->count)
+                 ? SKSE_TRIAL_ENGINE_HOOKS_OBSERVED : SKSE_TRIAL_COMPLETED;
     }
 }
 

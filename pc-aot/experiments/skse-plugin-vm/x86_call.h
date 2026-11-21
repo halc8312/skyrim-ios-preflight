@@ -131,6 +131,23 @@ typedef struct {
     uint32_t site, target;
 } SkseX86HookObservation;
 
+/* Observation mode for code patch requests (MOD_FIRST_WAVE_PLAN X5). The
+ * game image is supplied as a read-only view; inside [base, base + length)
+ * VirtualProtect succeeds and reports original_protection, and writes are
+ * recorded here instead of being applied. Contiguous writes extend one
+ * request up to 16 bytes. Reads still see the original bytes. */
+enum { SKSE_X86_MAX_PATCHES = 64, SKSE_X86_PATCH_BYTES = 16 };
+typedef struct {
+    uint32_t site, length;
+    uint8_t bytes[SKSE_X86_PATCH_BYTES];
+} SkseX86PatchRequest;
+typedef struct {
+    uint32_t base, length, original_protection;
+    unsigned protect_requests, count;
+    bool truncated; /* more than 64 requests or a write wider than 16 bytes */
+    SkseX86PatchRequest requests[SKSE_X86_MAX_PATCHES];
+} SkseX86PatchInventory;
+
 typedef struct {
     SkseX86Status status;
     uint32_t eax, instructions, work, instruction_va, failed_service;
@@ -190,6 +207,8 @@ typedef struct {
      * virtual numeric identifiers, with no mapped memory behind them. */
     const uint32_t *hook_probe_sites;
     size_t hook_probe_count;
+    /* Optional observation of code patch requests against a read-only view. */
+    SkseX86PatchInventory *patch_inventory;
     /* The static TLS table, when present, is below the stack. A zero stack
      * bound uses the corresponding end of the full scratch allocation. */
     uint32_t static_tls_table, stack_floor, stack_top;
