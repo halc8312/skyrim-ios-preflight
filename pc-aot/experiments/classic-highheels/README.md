@@ -8,6 +8,8 @@ The fixture takes a caller-supplied offset, named-node resolver and commit callb
 
 The test uses an authored actor and node. The experiment is unlinked. Connecting equip/effect requests, identifying a serialized guest update point, proving stable node lifetime and write/refresh behavior, computing the offsets from the original effect, and testing in-game equip/removal remain separate steps.
 
+The private task-queue fixture uses one of the two call sites reviewed in Classic SKSE 1.7.3 Hooks_Threads.cpp. It observes the original ProcessTaskQueue return at 0x69110B in the reviewed lift, then executes the original tail. The host test substitutes authored queue operations, compares the resulting guest registers, flags, stack, memory word and call order, and checks that only the opted-in invoking owner receives the notification. This host evidence covers the call boundary. An actual game trace still needs to establish scene ownership, reference lifetime, and the equip/effect request path.
+
 Run locally with a C11 compiler:
 
 ~~~sh
@@ -15,3 +17,5 @@ cd pc-aot/experiments/classic-highheels
 python3 -B -m unittest -v test_highheel_height
 SKYRIM_TEST_SANITIZERS=1 python3 -B -m unittest -v test_highheel_height
 ~~~
+
+Set SKYRIM_TEST_OWNED_CLASSIC_LIFT to the reviewed private LE generation to include the task-queue ABI test on a POSIX host.
