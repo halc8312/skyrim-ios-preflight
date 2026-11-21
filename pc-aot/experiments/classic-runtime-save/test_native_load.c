@@ -19,8 +19,13 @@ enum {
     HANDLE_ENTRY = DESCRIPTOR_PAGE + FILENO * 0x40, FILE_BYTES = 0x200000,
     HEADER_TEXT = GUEST_HEAP_BASE + 0x9000, TLS_ARRAY = GUEST_HEAP_BASE + 0xa000,
     TLS_RECORD = GUEST_HEAP_BASE + 0xb000, READ_FILE_IMPORT = 0xf3000080u,
+    VM_SERVICE = GUEST_HEAP_BASE + 0xc000, VM_VTABLE = GUEST_HEAP_BASE + 0xc100,
+    VM_ADAPTER_VTABLE = GUEST_HEAP_BASE + 0xc200,
+    VM_PREPARE_IMPORT = 0xf30000a0u, VM_ADAPTER_READ_IMPORT = 0xf30000b0u,
+    VM_CLEANUP_IMPORT = 0xf30000c0u,
 };
-typedef enum { ACCEPT, WRONG_DESCRIPTOR, NO_VM, VM_FALSE, CLONE_REFUSED, REENTERED, ABORT_REPORT } Scenario;
+typedef enum { ACCEPT, WRONG_DESCRIPTOR, NO_VM, VM_FALSE, VM_TRAILING_FALSE, WRONG_VM_FRAME,
+               CLONE_REFUSED, REENTERED, ABORT_REPORT } Scenario;
 
 static const char guest_path[] = "C:\\Users\\Player\\Saves\\Fixture.ess";
 static const char header_text[] = "FixtureHead";
@@ -29,13 +34,15 @@ uint8_t *MEM;
 static struct {
     Scenario mode;
     ClassicNativeLoad *attempt;
-    uint32_t handle, vm_frame;
+    uint32_t handle, vm_adapter;
     unsigned clones, physical_reads, header_copies, copies, checks, reverts, vms, cleaned;
+    unsigned vm_epochs, revert_epochs, vm_cleanups;
     bool reading_header, reading_slot, file_locked, descriptor_locked;
 } engine;
 void classic_runtime_fixture_attach(CPU *);
 void classic_runtime_fixture_crt_read(CPU *);
 void classic_runtime_fixture_header_read(CPU *);
+void classic_runtime_fixture_revert(CPU *);
 
 int skse_test_fclonefileat(int source, int dir, const char *name, unsigned flags) {
     assert(!flags && ++engine.clones == 1 && !engine.physical_reads);
@@ -124,6 +131,23 @@ void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache) {
         classic_runtime_load_file_call(cpu, ClassicLoadRead);
         assert(cpu->r[0] == 1 && cpu->r[4] == stack + 24 && M32(count) == FILE_BYTES);
         ++engine.physical_reads;
+    } else if (target == VM_PREPARE_IMPORT) {
+        const uint32_t stack = cpu->r[4];
+        assert(M32(stack) == 0x8d6a21u && cpu->r[1] == VM_SERVICE && M32(stack + 4) == engine.vm_adapter);
+        assert(M8(M32(stack + 12)) == 1 && M8(M32(stack + 16)) == 0);
+        cpu->r[0] = 1;
+        cpu->r[4] += 20;
+    } else if (target == VM_ADAPTER_READ_IMPORT) {
+        const uint32_t stack = cpu->r[4];
+        assert(M32(stack) == 0x8d6a65u && cpu->r[1] == engine.vm_adapter && M32(stack + 4) == 2);
+        M16(M32(stack + 8)) = 5;
+        cpu->r[0] = 0;
+        cpu->r[4] += 12;
+    } else if (target == VM_CLEANUP_IMPORT) {
+        assert(M32(cpu->r[4]) == 0x8d6cefu && cpu->r[1] == VM_SERVICE && !engine.vm_cleanups);
+        ++engine.vm_cleanups;
+        cpu->r[0] = 0x12345600u;
+        cpu->r[4] += 4;
     }
     else { fprintf(stderr, "Unexpected indirect call 0x%x\n", target); abort(); }
 }
@@ -243,7 +267,9 @@ void f_6820C0(CPU *cpu) {
 }
 
 void f_C398A0(CPU *cpu) {
-    assert(cpu->r[1] == VM + 0x150 && M32(cpu->r[4]) == 0x8d69a5u);
+    const uint32_t caller = M32(cpu->r[4]);
+    assert(cpu->r[1] == VM + 0x150 && (caller == 0x8d69a5u || caller == 0x8d69e0u ||
+                                     caller == 0x8d6b1au || caller == 0x8d6cb9u));
     cpu->r[4] += 12;
 }
 void f_8D5DF0(CPU *cpu) {
@@ -262,11 +288,44 @@ void f_8B9AA0(CPU *cpu) {
 void f_8D3DB0(CPU *cpu) {
     const uint32_t stack = cpu->r[4];
     assert(cpu->r[1] == VM && M32(stack) == 0x8d6b7eu && !engine.vms);
-    assert(M32(stack + 4) == engine.vm_frame + 0x14 && M32(stack + 8) == STREAM);
+    assert(M32(stack + 4) == stack + 0x20 && M32(stack + 8) == engine.vm_adapter);
     ++engine.vms;
     cpu->r[0] = engine.mode == VM_FALSE ? 0 : 1;
     cpu->r[4] += 12;
 }
+
+void skyrim_vm_host_before_revert(unsigned site) {
+    assert(site == 1 && !engine.reverts && !engine.revert_epochs);
+    ++engine.revert_epochs;
+}
+void skyrim_vm_host_after_load(int succeeded) {
+    assert(engine.vms == 1 && succeeded == (engine.mode != VM_FALSE) && !engine.vm_epochs);
+    ++engine.vm_epochs;
+}
+
+/* These engine leaf stand-ins preserve the arguments and callee pop. The
+ * two enclosing VM functions, their conditionals and their final AL are lifted. */
+#define VM_LEAF(name, caller, pop, result) \
+    void name(CPU *cpu) { \
+        assert(M32(cpu->r[4]) == caller); \
+        cpu->r[0] = (result); \
+        cpu->r[4] += pop; \
+    }
+VM_LEAF(f_8B9980, 0x8d69eb, 4, 1)
+VM_LEAF(f_8D3900, 0x8d6b3a, 12, 1)
+VM_LEAF(f_8D3C50, 0x8d6b4b, 12, 1)
+VM_LEAF(f_8CDA50, 0x8d6b5c, 12, 1)
+VM_LEAF(f_8CDB20, 0x8d6b6d, 12, 1)
+VM_LEAF(f_8D3EB0, 0x8d6ba4, 12, 1)
+VM_LEAF(f_8D6200, 0x8d6bc9, 12, 1)
+VM_LEAF(f_8F9A50, 0x8d6be0, 4, 1)
+VM_LEAF(f_8AEFB0, 0x8d6c01, 16, 1)
+VM_LEAF(f_8BA2C0, 0x8d6c15, 8, 1)
+VM_LEAF(f_8BE640, 0x8d6c29, 8, engine.mode != VM_TRAILING_FALSE)
+VM_LEAF(f_8BFFE0, 0x8d6c3d, 8, 1)
+VM_LEAF(f_C30630, 0x8d6c65, 4, 1)
+#undef VM_LEAF
+void f_4202A0(CPU *cpu) { (void)cpu; assert(!"Unexpected VM format error"); }
 
 void f_67B720(CPU *cpu) {
     const uint32_t stack = cpu->r[4];
@@ -285,18 +344,29 @@ void f_67B720(CPU *cpu) {
     assert(cpu->r[0] == CLASSIC_FRESH_SLOT_READ_BYTES && cpu->r[4] == stack - 0x348);
     assert(!memcmp(MEM + stack - 0x348 + 0x98, base + sizeof header_text - 1, CLASSIC_FRESH_SLOT_READ_BYTES));
     if (engine.mode == WRONG_DESCRIPTOR) M32(HANDLE_ENTRY) = engine.handle;
-    engine.vm_frame = stack - 0x400;
-    cpu->r[4] = engine.vm_frame;
+    const uint32_t revert_entry = stack - 0x350 - 0x60;
+    cpu->r[4] = revert_entry + 4;
     cpu->r[1] = VM;
+    M32(revert_entry + 4) = 0x67d35cu;
+    M32(revert_entry + 0x34) = 0x67dc29u;
+    M32(revert_entry + 0x60) = 0x67b93bu;
     M32(VM + 0x23c) = 2;
-    f_8D6990(cpu);
-    assert(cpu->r[4] == engine.vm_frame + 4 && M32(VM + 0x23c) == 1);
+    classic_runtime_fixture_revert(cpu);
+    assert(cpu->r[4] == revert_entry + 4 && M32(VM + 0x23c) == 1);
     if (engine.mode != NO_VM) {
-        cpu->r[4] = engine.vm_frame;
-        cpu->r[6] = VM;
-        cpu->r[7] = STREAM;
-        f_8D69C0(cpu);
-        assert(cpu->r[4] == engine.vm_frame && cpu->r[0] == (engine.mode != VM_FALSE));
+        const uint32_t section = stack - 0x358, wrapper = section - 0x4c;
+        engine.vm_adapter = section - 0x2c;
+        M32(section) = engine.mode == WRONG_VM_FRAME ? 0x67b6edu : 0x67b955u;
+        M32(section + 4) = STREAM;
+        M32(wrapper) = 0x67dce8u;
+        M32(wrapper + 4) = engine.vm_adapter;
+        M32(engine.vm_adapter) = VM_ADAPTER_VTABLE;
+        M8(engine.vm_adapter + 8) = 0;
+        cpu->r[4] = wrapper;
+        cpu->r[1] = VM;
+        f_8D6C80(cpu);
+        assert(cpu->r[4] == wrapper + 8 && cpu->r[0] == 0x12345600u);
+        assert(engine.vm_epochs == 1 && engine.vm_cleanups == 1);
     }
     *cpu = saved;
     cpu->r[0] = 1;
@@ -306,7 +376,13 @@ void f_681E00(CPU *cpu) {
     assert(M32(cpu->r[4]) == 0x682289u && engine.copies == 1 && engine.reverts == 1);
     cpu->r[4] += 4;
 }
-void f_87AC60(CPU *cpu) { (void)cpu; assert(!"Unexpected f_87AC60"); }
+void f_87AC60(CPU *cpu) {
+    if (M32(cpu->r[4]) != 0x8d6cdfu) {
+        fprintf(stderr, "Unexpected notification: return=%08x scenario=%d\n", M32(cpu->r[4]), engine.mode);
+        abort();
+    }
+    cpu->r[4] += 4;
+}
 void f_680190(CPU *cpu) {
     assert(M32(cpu->r[4]) == 0x6822edu && M32(cpu->r[4] + 4) == STREAM);
     const uint32_t args[] = {engine.handle};
@@ -336,6 +412,12 @@ static void configure_guest(CPU *cpu, uint32_t stack) {
     memcpy(MEM + NAME, guest_path, sizeof guest_path);
     M32(0x1b2e38c) = MANAGER;
     M32(0x1b2e3a8) = MANAGER;
+    M32(0x12e568c) = VM;
+    M32(VM + 0x104) = VM_SERVICE;
+    M32(VM_SERVICE) = VM_VTABLE;
+    M32(VM_VTABLE + 8) = VM_PREPARE_IMPORT;
+    M32(VM_VTABLE + 0x18) = VM_CLEANUP_IMPORT;
+    M32(VM_ADAPTER_VTABLE + 0x10) = VM_ADAPTER_READ_IMPORT;
     M32(STREAM + 0x104) = BSFILE;
     M32(BSFILE) = 0x110dba8u;
     M32(0x110dba8u + 0x20) = 0xa57700u;
@@ -410,7 +492,8 @@ int main(int argc, char **argv) {
     ClassicNativeLoad load;
     const struct { Scenario scenario; SkseBridgeResult result; } cases[] = {
         {ACCEPT, SKSE_BRIDGE_OK}, {WRONG_DESCRIPTOR, SKSE_BRIDGE_REJECTED}, {NO_VM, SKSE_BRIDGE_TRACE},
-        {VM_FALSE, SKSE_BRIDGE_REJECTED}, {CLONE_REFUSED, SKSE_BRIDGE_NEEDS_BASE},
+        {VM_FALSE, SKSE_BRIDGE_REJECTED}, {VM_TRAILING_FALSE, SKSE_BRIDGE_REJECTED},
+        {WRONG_VM_FRAME, SKSE_BRIDGE_TRACE}, {CLONE_REFUSED, SKSE_BRIDGE_NEEDS_BASE},
         {REENTERED, SKSE_BRIDGE_NEEDS_BASE}, {ABORT_REPORT, SKSE_BRIDGE_STATE}, {ACCEPT, SKSE_BRIDGE_OK},
     };
     for (size_t i = 0; i < sizeof cases / sizeof *cases; ++i) {

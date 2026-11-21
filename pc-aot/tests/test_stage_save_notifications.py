@@ -13,6 +13,10 @@ sys.path.insert(0, str(RUNTIME_SAVE))
 sys.path.insert(0, str(ROOT / "scripts"))
 from stage_save_notifications import (HEADER, PRELUDE, SAVE_SITES, function_span,
                                       stage_save_and_load_notifications, stage_save_notifications)
+from stage_native_load import (HEADER as NATIVE_HEADER, NATIVE_READ, NATIVE_SLOT, SLOT_UNIT, UNIT, VM_LOAD,
+                               VM_REVERT, VM_UNIT, edit_function, stage_native_load, vm_call)
+from test_fresh_load import SLOT_INVOKE
+from test_slot_read import READ_CALL
 import mod_hooks_guest
 
 
@@ -76,6 +80,38 @@ class SaveNotificationStageTests(unittest.TestCase):
                                     "-I", str(original / "source" / "runtime"), "-I", str(original / "gen"),
                                     "-I", str(RUNTIME_SAVE), "-I", str(RUNTIME_SAVE.parent / "classic-fresh-load"),
                                     str(path)], check=True, timeout=60)
+
+    def test_rejects_function_overlap(self):
+        original = PRELUDE + b"\nvoid f_67B720(CPU *c) {\n    return;\n}\n"
+        changed = original.replace(b"    return;", b"    other(c);\n    return;")
+        with self.assertRaisesRegex(ValueError, "already changed f_67B720"):
+            edit_function(changed, original, "f_67B720", lambda body: body)
+
+    def test_native_stage_preserves_full_original_units(self):
+        owned = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
+        if not owned:
+            self.skipTest("Set SKYRIM_TEST_OWNED_CLASSIC_LIFT to the reviewed private generation")
+        root = Path(owned).resolve()
+        native = stage_native_load(root)
+        baseline = stage_save_and_load_notifications(root) | mod_hooks_guest.stage_vm_lifecycle(root)
+        self.assertEqual(native.keys(), baseline.keys())
+        edits = {
+            UNIT: [(NATIVE_SLOT, SLOT_INVOKE)] + [
+                (b"classic_native_load_" + hook + b"(", b"classic_fresh_" + hook + b"(")
+                for hook in (b"enter", b"open_enter", b"open_leave")
+            ],
+            SLOT_UNIT: [(NATIVE_READ, READ_CALL), (vm_call(VM_REVERT), VM_REVERT)],
+            VM_UNIT: [(vm_call(VM_LOAD), VM_LOAD)],
+        }
+        for name, actual in native.items():
+            with self.subTest(unit=name):
+                if name in edits:
+                    self.assertTrue(actual.startswith(NATIVE_HEADER))
+                    actual = actual.removeprefix(NATIVE_HEADER)
+                for added, restored in edits.get(name, []):
+                    self.assertEqual(actual.count(added), 1)
+                    actual = actual.replace(added, restored, 1)
+                self.assertEqual(actual, baseline[name])
 
 
 if __name__ == "__main__":

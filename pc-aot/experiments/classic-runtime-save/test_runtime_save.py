@@ -73,11 +73,9 @@ def crt_fixture(generation: Path, *, native: bool = False) -> bytes:
     }""", 1)
     includes = b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n#include "runtime_load.h"\n'
     if native:
+        from stage_native_load import NATIVE_READ
         includes += b'#include "native_load.h"\n'
-        original = b"classic_runtime_fixture_slot_result(classic_runtime_load_slot_read_end(c, stream, frame, c->r[0]));"
-        if wrapped.count(original) != 1:
-            raise ValueError("Expected the reviewed native slot notification")
-        wrapped = wrapped.replace(original, b"classic_native_load_read_observed(c, stream, frame, c->r[0]);", 1)
+        wrapped = read_block.replace(READ_CALL, NATIVE_READ, 1)
     else:
         includes += b'void classic_runtime_fixture_slot_result(uint64_t);\n'
     sources = [includes]
