@@ -29,6 +29,7 @@ GROUPS = {
     "camera_observe": 16, "chargen_slider": 32, "save_lifecycle": 64,
     "loading_menu_observe": 128, "inventory_fit": 256, "safety_load": 512,
     "camera_render_observe": 1024, "ece_tri_observe": 2048, "fresh_load": 4096,
+    "camera_cull_observe": 8192,
 }
 FRESH_LOAD_DEPS = GROUPS["save_lifecycle"] | GROUPS["vm_lifecycle"]
 # The interface header and the reviewed seam headers its tables use; the IPA
@@ -178,6 +179,15 @@ def stage_camera_render_observe(root: Path) -> dict[str, bytes]:
     return {name: camera.stage_camera_render((root / "gen" / name).read_bytes())}
 
 
+def stage_camera_cull_observe(root: Path, staged: dict[str, bytes]) -> dict[str, bytes]:
+    trial = load(EXPERIMENTS / "classic-camera", "stage_camera_cull_trial")
+    result = {}
+    for name in trial.UNITS:
+        original = (root / "gen" / name).read_bytes()
+        result[name] = trial.stage_camera_cull_trial(name, original, runtime_base=staged.get(name, original))
+    return result
+
+
 def stage_ece_tri_observe(root: Path) -> dict[str, bytes]:
     tri = load(EXPERIMENTS / "classic-racemenu-apply", "stage_ece_tri")
     return {tri.UNIT: tri.stage((root / "gen" / tri.UNIT).read_bytes())}
@@ -246,6 +256,7 @@ STAGES = {
     "chargen_slider": stage_chargen_slider,
     "camera_observe": stage_camera_observe,
     "camera_render_observe": stage_camera_render_observe,
+    "camera_cull_observe": stage_camera_cull_observe,
     "ece_tri_observe": stage_ece_tri_observe,
     "loading_menu_observe": stage_loading_menu_observe,
     "inventory_fit": stage_inventory_fit,
@@ -262,6 +273,10 @@ def compose(root: Path, mask: int) -> dict[str, bytes]:
     for name in group_names(mask):
         if mask & GROUPS["fresh_load"] and name in ("save_lifecycle", "vm_lifecycle"):
             continue  # the verified combined stage includes both original edits
+        if name == "camera_cull_observe":
+            # These reviewed functions have to be unchanged by the earlier stages.
+            staged.update(STAGES[name](root, staged))
+            continue
         if name not in STAGES:
             raise ValueError(f"MOD hook group {name} has no reviewed stage")
         for unit, data in STAGES[name](root).items():

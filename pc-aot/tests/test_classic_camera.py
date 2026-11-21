@@ -17,6 +17,7 @@ import stage_camera as camera
 import stage_camera_render as render
 import stage_camera_cull_trial as cull_trial
 from classic_skse_guest import validate_generation
+from test_mod_hooks_binding import write_fixture_headers
 
 LIFT_HEADERS = {
     "x86.h": "dcc654965668c5cbe3f8aaa74cd1f8fd0bb53312e8de1747e6938ffc6cd03793",
@@ -95,15 +96,21 @@ class CameraStageTests(unittest.TestCase):
             self.skipTest("C compiler unavailable")
         runtime = ROOT / "ios/runtime-port"
         with tempfile.TemporaryDirectory() as d:
-            result = self.compile_and_run(Path(d), compiler,
-                                          [runtime / "mod_camera_host.c", ROOT / "tests/native/test_mod_camera_host.c"],
-                                          ["-I", str(runtime)])
+            directory = Path(d)
+            write_fixture_headers(directory)
+            result = self.compile_and_run(directory, compiler,
+                                          [runtime / "mod_camera_host.c", CAMERA / "camera_cull_trial.c",
+                                           ROOT / "tests/native/test_mod_camera_host.c"],
+                                          ["-I", str(runtime), "-I", str(ROOT / "ios/private-abi"),
+                                           "-I", str(ROOT / "experiments/fuz-voice"), "-I", str(directory),
+                                           "-DSKYRIM_CLASSIC_CAMERA_CULL_TRIAL=1"])
         self.assertEqual(result.stderr.splitlines(), [
             "IOS_CAMERA_STATE slot=0",
             "IOS_CAMERA_BODY schema=1 slot=0 arms=4 body=5",
             "IOS_CAMERA_BODY schema=1 slot=0 arms=4 body=4",
             "IOS_CAMERA_RENDER schema=1 first=1 second=0",
             "IOS_CAMERA_RENDER schema=1 first=0 second=2",
+            "IOS_CAMERA_CULL schema=1 stages=3 producer=2,0,1 first=1,1,0 second=0,0,0",
             "IOS_CAMERA_STATE slot=12",
         ])
 

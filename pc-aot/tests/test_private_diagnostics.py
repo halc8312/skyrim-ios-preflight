@@ -101,6 +101,7 @@ class ReceiverTests(unittest.TestCase):
         for slot, arms, body in ((0, 4, 5), (8, 1, 4), (9, 0, 2)):
             self.schema.line(f'IOS_CAMERA_BODY schema=1 slot={slot} arms={arms} body={body}')
         self.schema.line('IOS_CAMERA_RENDER schema=1 first=0 second=15')
+        self.schema.line('IOS_CAMERA_CULL schema=1 stages=7 producer=129,128,0 first=1,0,1 second=0,0,0')
         self.schema.line('IOS_ECE_TRI schema=1 source=1 parsed=1')
         self.schema.line('IOS_LOADING_MENU opening=1 ts_ns=123456')
         self.schema.line('IOS_LOADING_MENU opening=0 ts_ns=234567')
@@ -216,6 +217,8 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_ECE_TRI schema=1 source=1 parsed=1 path=Data/face.tri',
                      'IOS_CAMERA_RENDER schema=1 first=16 second=0',
                      'IOS_CAMERA_RENDER schema=1 first=0 second=15 root=17352704',
+                     'IOS_CAMERA_CULL schema=1 stages=7 producer=130,0,0 first=0,0,0 second=0,0,0',
+                     'IOS_CAMERA_CULL schema=1 stages=7 producer=129,129,0 first=0,0,0 second=0,0,0',
                      'IOS_CAMERA_BODY schema=1 slot=12 arms=4 body=4',
                      'IOS_CAMERA_BODY schema=1 slot=0 arms=6 body=4',
                      'IOS_CAMERA_BODY schema=1 slot=0 arms=4 body=4 actor=17352704',

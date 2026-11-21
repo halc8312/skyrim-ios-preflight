@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "mod_camera_host.h"
+#include "camera_cull_trial.h"
 #include "camera_state.h"
 
 #include <errno.h>
@@ -59,4 +60,44 @@ void skyrim_camera_app_observe_render(uint32_t frame, uint32_t first, uint32_t s
     const int saved_errno = errno;
     fprintf(stderr, "IOS_CAMERA_RENDER schema=1 first=%u second=%u\n", sample.first, sample.second);
     errno = saved_errno;
+}
+
+static atomic_bool cull_reported;
+static _Thread_local bool cull_active;
+
+static void report_cull(void *context, const ClassicCameraCullTrialReport *sample) {
+    (void)context;
+    if (atomic_exchange_explicit(&cull_reported, true, memory_order_relaxed)) return;
+    const ClassicCameraCullCounts *producer = &sample->gates[CLASSIC_CULL_PRODUCER];
+    const ClassicCameraCullCounts *first = &sample->gates[CLASSIC_CULL_FIRST];
+    const ClassicCameraCullCounts *second = &sample->gates[CLASSIC_CULL_SECOND];
+    const int saved_errno = errno;
+    fprintf(stderr, "IOS_CAMERA_CULL schema=1 stages=%u producer=%u,%u,%u first=%u,%u,%u second=%u,%u,%u\n",
+            sample->stages, producer->checked, producer->clear, producer->culled, first->checked, first->clear,
+            first->culled, second->checked, second->clear, second->culled);
+    errno = saved_errno;
+}
+
+bool skyrim_camera_app_observe_cull(enum SkyrimCameraCullNotice site, uint32_t first, uint32_t second, unsigned third) {
+    if (site == SkyrimCameraCullPrepare) {
+        enum { FRAME_INTERVAL = 120 };
+        static _Thread_local unsigned frame_index;
+        if (cull_active) return skyrim_camera_cull_prepare(first);  /* invalidate a nested frame */
+        if (!MEM || !skyrim_camera_app_ready() || atomic_load_explicit(&cull_reported, memory_order_relaxed) ||
+            frame_index++ % FRAME_INTERVAL ||
+            !classic_camera_cull_arm(image_sha256, read_camera_word, MEM, report_cull, NULL)) return false;
+        cull_active = skyrim_camera_cull_prepare(first);
+        return cull_active;
+    }
+    if (!cull_active) return false;
+    switch (site) {
+    case SkyrimCameraCullPrepared: skyrim_camera_cull_prepared(true); break;
+    case SkyrimCameraCullFinish: cull_active = false; skyrim_camera_cull_finish(true); break;
+    case SkyrimCameraCullProducer: skyrim_camera_cull_producer(first, second, third != 0); break;
+    case SkyrimCameraCullDispatch: return skyrim_camera_cull_dispatch(first, second, third);
+    case SkyrimCameraCullDispatched: skyrim_camera_cull_dispatched(true); break;
+    case SkyrimCameraCullDecision: skyrim_camera_cull_decision(first, second, third != 0); break;
+    case SkyrimCameraCullPrepare: break;
+    }
+    return false;
 }

@@ -29,6 +29,7 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups(" chargen_precache , fuz_menu "), 9)
         self.assertEqual(hooks.parse_groups("camera_observe"), 16)
         self.assertEqual(hooks.parse_groups("camera_render_observe"), 1024)
+        self.assertEqual(hooks.parse_groups("camera_cull_observe"), 8192)
         self.assertEqual(hooks.parse_groups("ece_tri_observe"), 2048)
         self.assertEqual(hooks.parse_groups("save_lifecycle"), 64)
         self.assertEqual(hooks.parse_groups("fresh_load,save_lifecycle,vm_lifecycle"), 4164)
@@ -219,7 +220,7 @@ class OwnedLiftTests(unittest.TestCase):
         classic.validate_generation(state)
         groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe,"
                                     "loading_menu_observe,inventory_fit,safety_load,camera_render_observe,"
-                                    "ece_tri_observe,save_lifecycle,fresh_load")
+                                    "ece_tri_observe,save_lifecycle,fresh_load,camera_cull_observe")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
@@ -228,7 +229,10 @@ class OwnedLiftTests(unittest.TestCase):
             result, staged = hooks.prepare_sources(sources, work / "mod-hook-sources", groups, state, root)
             self.assertTrue({"exe_95.c", "exe_100.c", "exe_101.c", "exe_189.c", "exe_35.c", "exe_188.c",
                              "exe_66.c", "exe_106.c", "exe_107.c", "exe_185.c", "exe_186.c", "exe_199.c", "exe_259.c",
-                             "exe_262.c"} <= set(staged))
+                             "exe_262.c", "exe_275.c", "exe_359.c"} <= set(staged))
+            frame = (work / "mod-hook-sources" / "exe_107.c").read_bytes()
+            self.assertEqual(frame.count(b"skyrim_camera_cull_guest_notify(SkyrimCameraCullPrepare,"), 1)
+            self.assertEqual(frame.count(b"skyrim_camera_observe_render(edi, eax, edx)"), 1)
             tri = hooks.load(ROOT / "experiments/classic-racemenu-apply", "stage_ece_tri")
             tri_stage = (work / "mod-hook-sources" / tri.UNIT).read_bytes()
             for inserted in (tri.DECLARATION, tri.CAPTURE, tri.BEGIN, tri.FINISH):

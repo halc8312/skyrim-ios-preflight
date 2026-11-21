@@ -85,6 +85,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_FUZ", "^IOS_FUZ schema=1 enabled=[01] substituted=[0-9]{1,20} kept=[0-9]{1,20} missing=[0-9]{1,20} errors=[0-9]{1,20}$") \
     X("IOS_CAMERA_STATE", "^IOS_CAMERA_STATE slot=(?:[0-9]|1[0-2])$") \
     X("IOS_CAMERA_RENDER", "^IOS_CAMERA_RENDER schema=1 first=(?:[0-9]|1[0-5]) second=(?:[0-9]|1[0-5])$") \
+    X("IOS_CAMERA_CULL", "^IOS_CAMERA_CULL schema=1 stages=[1357] producer=(?:[0-9]|[1-9][0-9]|1[0-2][0-9])(?:,(?:[0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])){2} first=(?:[0-9]|[1-9][0-9]|1[0-2][0-9])(?:,(?:[0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])){2} second=(?:[0-9]|[1-9][0-9]|1[0-2][0-9])(?:,(?:[0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])){2}$") \
     X("IOS_ECE_TRI", "^IOS_ECE_TRI schema=1 (?:source=0 parsed=0|source=[0-2] parsed=1)$") \
     X("IOS_CAMERA_BODY", "^IOS_CAMERA_BODY schema=1 slot=[089] arms=[0-5] body=[0-5]$") \
     X("IOS_LOADING_MENU", "^IOS_LOADING_MENU opening=[01] ts_ns=[0-9]{1,20}$") \

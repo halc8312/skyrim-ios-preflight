@@ -59,6 +59,22 @@ int main(void) {
     word(ITEMS, ARMS_ROOT);
     word(ARMS_ROOT + 0x18, BODY_ROOT);
     for (unsigned i = 0; i < 120; ++i) skyrim_camera_app_observe_render(FRAME, FIRST, SECOND);
+
+    assert(skyrim_camera_app_observe_cull(SkyrimCameraCullPrepare, FRAME, 0, 0));
+    assert(!skyrim_camera_app_observe_cull(SkyrimCameraCullPrepare, FRAME, 0, 0));
+    skyrim_camera_app_observe_cull(SkyrimCameraCullPrepared, 0, 0, 0);
+    skyrim_camera_app_observe_cull(SkyrimCameraCullFinish, 0, 0, 0);
+    for (unsigned i = 0; i < 119; ++i) assert(!skyrim_camera_app_observe_cull(SkyrimCameraCullPrepare, FRAME, 0, 0));
+    assert(skyrim_camera_app_observe_cull(SkyrimCameraCullPrepare, FRAME, 0, 0));
+    skyrim_camera_app_observe_cull(SkyrimCameraCullProducer, 0x698866, ARMS_ROOT, 1);
+    skyrim_camera_app_observe_cull(SkyrimCameraCullProducer, 0x698866, BODY_ROOT, 0);
+    skyrim_camera_app_observe_cull(SkyrimCameraCullPrepared, 0, 0, 0);
+    assert(skyrim_camera_app_observe_cull(SkyrimCameraCullDispatch, 0x69AB11, FIRST, 1));
+    skyrim_camera_app_observe_cull(SkyrimCameraCullDecision, 0xB07F04, BODY_ROOT, 1);
+    skyrim_camera_app_observe_cull(SkyrimCameraCullDispatched, 0, 0, 0);
+    skyrim_camera_app_observe_cull(SkyrimCameraCullFinish, 0, 0, 0);
+    for (unsigned i = 0; i < 120; ++i) assert(!skyrim_camera_app_observe_cull(SkyrimCameraCullPrepare, FRAME, 0, 0));
+
     word(CURRENT, 0);
     skyrim_camera_app_observe(PLAYER);
     word(CURRENT, 0x30010);

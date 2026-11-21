@@ -39,7 +39,8 @@ enum {
     PC_GUEST_MOD_HOOK_SAFETY_LOAD = 512u,
     PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE = 1024u,
     PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE = 2048u,
-    PC_GUEST_MOD_HOOK_FRESH_LOAD = 4096u
+    PC_GUEST_MOD_HOOK_FRESH_LOAD = 4096u,
+    PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE = 8192u
 };
 #define PC_GUEST_MOD_HOOKS_ORIGINAL (PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD | \
     PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER | \
@@ -50,7 +51,8 @@ enum {
 #define PC_GUEST_MOD_HOOKS_SAVE (PC_GUEST_MOD_HOOKS_SAFETY | PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE)
 #define PC_GUEST_MOD_HOOKS_CAMERA_RENDER (PC_GUEST_MOD_HOOKS_SAVE | PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE)
 #define PC_GUEST_MOD_HOOKS_ECE_TRI (PC_GUEST_MOD_HOOKS_CAMERA_RENDER | PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE)
-#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOKS_ECE_TRI | PC_GUEST_MOD_HOOK_FRESH_LOAD)
+#define PC_GUEST_MOD_HOOKS_FRESH_LOAD (PC_GUEST_MOD_HOOKS_ECE_TRI | PC_GUEST_MOD_HOOK_FRESH_LOAD)
+#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOKS_FRESH_LOAD | PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE)
 #define PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED (PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
 
 /* Function types come from the reviewed experiment headers. */
@@ -135,6 +137,16 @@ typedef struct {
     uint64_t (*notify)(const struct CPU *, unsigned site, uint64_t ticket, uint32_t first, uint32_t second);
 } PcGuestModFreshLoadHooks;
 
+/* The synchronous frame, producer and cull observations never change a game object. */
+enum SkyrimCameraCullNotice {
+    SkyrimCameraCullPrepare, SkyrimCameraCullPrepared, SkyrimCameraCullFinish,
+    SkyrimCameraCullProducer, SkyrimCameraCullDispatch, SkyrimCameraCullDispatched,
+    SkyrimCameraCullDecision
+};
+typedef struct {
+    bool (*notify)(enum SkyrimCameraCullNotice, uint32_t first, uint32_t second, unsigned third);
+} PcGuestModCameraCullHooks;
+
 /* Host implementations. groups names the selection; only the tables of the
  * selected groups are read, and each of their entries must be set. */
 typedef struct {
@@ -152,6 +164,7 @@ typedef struct {
     PcGuestModCameraRenderHooks camera_render;
     PcGuestModEceTriHooks ece_tri;
     PcGuestModFreshLoadHooks fresh_load;
+    PcGuestModCameraCullHooks camera_cull;
 } PcGuestModHooks;
 
 /* Hosts and guests built with the original v1 table still use this prefix. */
@@ -161,6 +174,7 @@ typedef struct {
 #define PC_GUEST_MOD_HOOKS_SAVE_BYTES offsetof(PcGuestModHooks, camera_render)
 #define PC_GUEST_MOD_HOOKS_CAMERA_RENDER_BYTES offsetof(PcGuestModHooks, ece_tri)
 #define PC_GUEST_MOD_HOOKS_ECE_TRI_BYTES offsetof(PcGuestModHooks, fresh_load)
+#define PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES offsetof(PcGuestModHooks, camera_cull)
 
 /* Guest reply. select copies the selected tables and succeeds at most once. */
 typedef struct {
@@ -182,6 +196,7 @@ static inline int pc_guest_mod_hooks_groups_valid(uint32_t groups) {
 
 static inline uint32_t pc_guest_mod_hooks_groups_for_bytes(uint32_t bytes) {
     if (bytes == sizeof(PcGuestModHooks)) return PC_GUEST_MOD_HOOKS_DEFINED;
+    if (bytes == PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES) return PC_GUEST_MOD_HOOKS_FRESH_LOAD;
     if (bytes == PC_GUEST_MOD_HOOKS_ECE_TRI_BYTES) return PC_GUEST_MOD_HOOKS_ECE_TRI;
     if (bytes == PC_GUEST_MOD_HOOKS_CAMERA_RENDER_BYTES) return PC_GUEST_MOD_HOOKS_CAMERA_RENDER;
     if (bytes == PC_GUEST_MOD_HOOKS_SAVE_BYTES) return PC_GUEST_MOD_HOOKS_SAVE;
@@ -217,6 +232,7 @@ static inline int pc_guest_mod_hooks_table_valid(const PcGuestModHooks *t) {
     if ((g & PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE) && !t->camera_render.observe) return 0;
     if ((g & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE) && (!t->ece_tri.begin || !t->ece_tri.finish)) return 0;
     if ((g & PC_GUEST_MOD_HOOK_FRESH_LOAD) && !t->fresh_load.notify) return 0;
+    if ((g & PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE) && !t->camera_cull.notify) return 0;
     return 1;
 }
 
@@ -232,6 +248,9 @@ bool skyrim_racemenu_probe_nose_height(uint32_t menu, uint32_t actor, uint32_t b
 void skyrim_racemenu_probe_did_apply(void);
 void skyrim_camera_observe_return(uint32_t receiver);
 void skyrim_camera_observe_render(uint32_t frame, uint32_t first, uint32_t second);
+bool skyrim_camera_cull_guest_notify(enum SkyrimCameraCullNotice, uint32_t first, uint32_t second, unsigned third);
+extern bool skyrim_camera_cull_guest_selected;
+extern unsigned skyrim_camera_cull_guest_frames;
 uint64_t skyrim_ece_tri_begin(const struct CPU *, uint32_t path, uint32_t stream);
 void skyrim_ece_tri_finish(const struct CPU *, uint64_t ticket, uint8_t parsed);
 void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t event);

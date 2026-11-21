@@ -244,3 +244,11 @@ these gate counts for an idle first-person frame, then exercise a camera
 round trip and a cell reload with a newly sampled identity. The counts
 identify where to look for ownership. They do not establish a retained
 body or the last scene consumer needed for a visibility change.
+The private guest group `camera_cull_observe` attaches this witness to the app's
+detailed diagnostics for the reviewed English executable. It samples at most
+one report in a launch, checking a candidate frame every 120 frames until it
+can observe the same first-person actor and body through the original calls.
+`IOS_CAMERA_CULL` reports the stage mask and the checked, clear and culled
+counts for the producer and two downstream passes. A checked value of 129
+marks a truncated stage. Addresses and object flags are kept inside the
+frame. With detailed diagnostics off, the staged hook does not call the host.

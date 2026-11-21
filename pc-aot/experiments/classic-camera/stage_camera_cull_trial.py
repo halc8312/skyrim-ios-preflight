@@ -57,7 +57,7 @@ def dispatch(function):
     return function
 
 
-def stage_camera_cull_trial(unit, source):
+def stage_camera_cull_trial(unit, source, *, runtime_base=None):
     if unit not in UNITS or sha256(source).hexdigest() != UNITS[unit]:
         raise ValueError("Camera cull trial unit differs from the reviewed Classic lift")
     function, stage, capture_caller = {
@@ -75,4 +75,37 @@ def stage_camera_cull_trial(unit, source):
     changed = stage(original)
     if capture_caller:
         changed = replace_once(changed, entry, entry + CALLER)
+    if runtime_base is not None:
+        return b'#include "PcGuestModHooksABI.h"\n' + replace_once(runtime_base, original, runtime_callbacks(unit, changed))
     return DECLARATION + source[:start] + changed + source[end:]
+
+
+def runtime_callbacks(unit, body):
+    notify = b"skyrim_camera_cull_guest_notify"
+    active = (b"skyrim_camera_cull_guest_selected && "
+              b"__atomic_load_n(&skyrim_camera_cull_guest_frames, __ATOMIC_RELAXED)")
+    if unit == "exe_107.c":
+        body = replace_once(body, b"skyrim_camera_cull_prepare(esi)",
+                            b"(skyrim_camera_cull_guest_selected && " + notify +
+                            b"(SkyrimCameraCullPrepare, esi, 0, 0))")
+        for name, notice in ((b"prepared", b"Prepared"), (b"finish", b"Finish")):
+            body = replace_once(body, b"skyrim_camera_cull_" + name + b"(skyrim_cull_frame);",
+                                b"if (skyrim_cull_frame) " + notify + b"(SkyrimCameraCull" + notice + b", 0, 0, 0);")
+    elif unit == "exe_106.c":
+        capture = b"    const bool skyrim_cull_active = " + active + b";\n"
+        body = replace_once(body, CALLER, CALLER + capture)
+        body, count = re.subn(rb"skyrim_camera_cull_producer\(skyrim_cull_caller, ([a-z]{3}), f.zf\);",
+                              b"if (skyrim_cull_active) " + notify + rb"(SkyrimCameraCullProducer, skyrim_cull_caller, \1, f.zf);",
+                              body)
+        if count != 19:
+            raise ValueError("Expected the reviewed camera producer observations")
+    elif unit == "exe_275.c":
+        body = replace_once(body, DECISION, b"    if (" + active + b") " + notify +
+                            b"(SkyrimCameraCullDecision, M32(esp), ecx, f.zf);\n")
+    elif unit == "exe_359.c":
+        for stage in (1, 2):
+            body = replace_once(body, DISPATCH % (stage, stage), b"    const bool skyrim_cull_list%u = " % stage +
+                                active + b" && " + notify + b"(SkyrimCameraCullDispatch, skyrim_cull_caller, ecx, %u);\n" % stage)
+            body = replace_once(body, DISPATCHED % stage, b"    if (skyrim_cull_list%u) " % stage +
+                                notify + b"(SkyrimCameraCullDispatched, 0, 0, 0);\n")
+    return body
