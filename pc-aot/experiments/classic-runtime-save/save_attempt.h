@@ -19,11 +19,12 @@ typedef struct {
     bool vm_saved, reporting;
 } ClassicSaveAttempt;
 
-/* The caller has already authenticated the owner, spilled frame, and guest
- * path against its selected profile. Keep the state and directory on this
- * owner thread until its ordinary return or explicit cancellation. */
+/* The caller has authenticated the owner and spilled frame and has resolved
+ * the temporary path with the real file mapper. This call authorizes that
+ * path against the selected profile directory. Keep the state and directory
+ * on this owner thread until ordinary return or explicit cancellation. */
 uint64_t classic_save_attempt_begin(ClassicSaveAttempt *, const struct CPU *, int directory,
-                                    const char *mapped_directory, const char *final_leaf,
+                                    const char *mapped_directory, const char *mapped_temporary,
                                     ClassicSaveAttemptReport, void *context);
 uint64_t classic_save_attempt_current(const struct CPU *, unsigned phase);
 void classic_save_attempt_event(const struct CPU *, uint64_t ticket, unsigned site, int succeeded);

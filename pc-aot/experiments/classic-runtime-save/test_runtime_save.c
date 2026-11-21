@@ -23,7 +23,7 @@ enum {
 };
 typedef enum { ACCEPT, SHORT, SHORT_EX, ERROR_EX, NO_STREAM_FLUSH, FLUSH_FALSE,
                CLOSE_ERR, CLOSE_WRONG_SITE, MOVE_ERR, SWAPPED_TEMP, NO_SCOPE_OPEN,
-               NO_SCOPE_MOVE, DIFFERENT_THREAD } Scenario;
+               NO_SCOPE_MOVE, DIFFERENT_THREAD, REPEATED_VM_NOTICE } Scenario;
 
 static const char sample[] = "test";
 static const char temp_leaf[] = "Fixture.ess.tmp", final_leaf[] = "Fixture.ess";
@@ -232,13 +232,19 @@ static void run_notification_case(int root, const char *root_path, Scenario scen
     CPU cpu = {.fs_base = TEB_BASE}, other = {.fs_base = OTHER_TEB};
     ClassicSaveAttempt attempt;
     AttemptReport report = {0, -1};
+    char mapped[CLASSIC_RUNTIME_PATH_BYTES], foreign[CLASSIC_RUNTIME_PATH_BYTES];
+    CHECK(snprintf(mapped, sizeof mapped, "%s/%s", g_save_dir, temp_leaf) > 0);
+    CHECK(snprintf(foreign, sizeof foreign, "%s-extra/%s", g_save_dir, temp_leaf) > 0);
+    CHECK(!classic_save_attempt_begin(&attempt, &cpu, dir, g_save_dir, foreign, report_attempt, &report));
+    CHECK(snprintf(foreign, sizeof foreign, "%s/../%s", g_save_dir, temp_leaf) > 0);
+    CHECK(!classic_save_attempt_begin(&attempt, &cpu, dir, g_save_dir, foreign, report_attempt, &report));
     errno = ERANGE;
-    const uint64_t cancelled = classic_save_attempt_begin(&attempt, &cpu, dir, g_save_dir, final_leaf,
+    const uint64_t cancelled = classic_save_attempt_begin(&attempt, &cpu, dir, g_save_dir, mapped,
                                                           report_attempt, &report);
     CHECK(cancelled && errno == ERANGE);
     classic_save_attempt_cancel(&cpu, cancelled);
     CHECK(errno == ERANGE && !report.count);
-    const uint64_t ticket = classic_save_attempt_begin(&attempt, &cpu, dir, g_save_dir, final_leaf,
+    const uint64_t ticket = classic_save_attempt_begin(&attempt, &cpu, dir, g_save_dir, mapped,
                                                        report_attempt, &report);
     CHECK(ticket && ticket != cancelled);
     classic_save_attempt_event(&cpu, cancelled, SkyrimSaveAttemptLeft, 0);
@@ -252,9 +258,13 @@ static void run_notification_case(int root, const char *root_path, Scenario scen
     CHECK(!classic_save_attempt_current(&other, SkyrimSaveInSlot));
     actual_write(&cpu, handle, scenario, &attempt.runtime);
     classic_save_attempt_event(&cpu, ticket, SkyrimSaveVmReturned, vm_ok);
+    if (scenario == REPEATED_VM_NOTICE) {
+        CHECK(classic_save_attempt_current(&cpu, SkyrimSaveInSlot) == ticket);
+        classic_save_attempt_event(&cpu, ticket, SkyrimSaveVmReturned, vm_ok);
+    }
     classic_save_attempt_event(&cpu, ticket, SkyrimSaveSlotLeft, 0);
     classic_save_attempt_event(&cpu, ticket, SkyrimSaveCloseEntered, 0);
-    CHECK(classic_save_attempt_current(&cpu, SkyrimSaveInClose) == ticket);
+    CHECK(classic_save_attempt_current(&cpu, SkyrimSaveInClose) == (scenario == REPEATED_VM_NOTICE ? 0 : ticket));
     classic_save_attempt_event(&cpu, ticket, SkyrimSaveFlushReturned, 1);
     if (scenario == CLOSE_ERR) CHECK(!close(attempt.runtime.file.writer));
     CHECK(invoke(&cpu, ClassicCloseHandle, CLOSE_RETURN, 1, &handle) == 1);
@@ -293,6 +303,7 @@ int main(int argc, char **argv) {
     run_notification_case(root, argv[1], CLOSE_ERR, true);
     run_notification_case(root, argv[1], MOVE_ERR, true);
     run_notification_case(root, argv[1], SWAPPED_TEMP, true);
+    run_notification_case(root, argv[1], REPEATED_VM_NOTICE, true);
     CHECK(!close(root));
     free(MEM);
     puts("PASS real Skydream file shims, unchanged guest status, and scoped save evidence");

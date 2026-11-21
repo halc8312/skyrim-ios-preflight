@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+#define _POSIX_C_SOURCE 200809L
 #include "save_attempt.h"
 
 #include <errno.h>
+#include <string.h>
 
 static _Thread_local ClassicSaveAttempt *active;
 
@@ -11,9 +13,19 @@ static ClassicSaveAttempt *match(const struct CPU *cpu, uint64_t ticket) {
 }
 
 uint64_t classic_save_attempt_begin(ClassicSaveAttempt *attempt, const struct CPU *cpu, int directory,
-                                    const char *mapped_directory, const char *leaf,
+                                    const char *mapped_directory, const char *mapped_temporary,
                                     ClassicSaveAttemptReport report, void *context) {
-    if (active || !attempt || !report) return 0;
+    if (active || !attempt || !report || !mapped_directory || !mapped_temporary) return 0;
+    const size_t prefix = strnlen(mapped_directory, CLASSIC_RUNTIME_PATH_BYTES);
+    const size_t size = strnlen(mapped_temporary, CLASSIC_RUNTIME_PATH_BYTES);
+    if (!prefix || size >= CLASSIC_RUNTIME_PATH_BYTES || size <= prefix + 5 ||
+        strncmp(mapped_temporary, mapped_directory, prefix) || mapped_temporary[prefix] != '/' ||
+        memcmp(mapped_temporary + size - 4, ".tmp", 4)) return 0;
+    const size_t leaf_size = size - prefix - 5;
+    if (leaf_size > NAME_MAX) return 0;
+    char leaf[NAME_MAX + 1];
+    memcpy(leaf, mapped_temporary + prefix + 1, leaf_size);
+    leaf[leaf_size] = '\0';
     const int original_errno = errno;
     uint64_t ticket = 0;
     if (skyrim_lifecycle_scope_open(&attempt->lifecycle)) {
@@ -37,7 +49,8 @@ uint64_t classic_save_attempt_begin(ClassicSaveAttempt *attempt, const struct CP
 uint64_t classic_save_attempt_current(const struct CPU *cpu, unsigned phase) {
     if (!active || active->reporting || active->runtime.owner != cpu) return 0;
     const enum SkyrimSaveNotice next = active->next;
-    if (phase == SkyrimSaveInSlot && next == SkyrimSaveVmReturned) return active->runtime.token;
+    if (phase == SkyrimSaveInSlot && (next == SkyrimSaveVmReturned || next == SkyrimSaveSlotLeft))
+        return active->runtime.token;
     if (phase == SkyrimSaveInClose && ((next >= SkyrimSaveFlushReturned && next <= SkyrimSaveCrtMoveReturned) ||
                                      next == SkyrimSaveCloseLeft))
         return active->runtime.token;
