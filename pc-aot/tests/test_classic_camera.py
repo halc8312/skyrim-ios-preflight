@@ -63,7 +63,11 @@ class CameraStageTests(unittest.TestCase):
         staged = render.stage_camera_render(original)
         self.assertEqual(staged.removeprefix(render.DECLARATION).replace(render.CAPTURE, b"", 1)
                          .replace(render.OBSERVE, b"", 1), original)
-        with tempfile.TemporaryDirectory(prefix="classic-camera-render-") as d:
+        private = ROOT / "private"
+        if private.resolve() != private:
+            raise ValueError("Generated sources must stay in private/")
+        private.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="classic-camera-render-", dir=private) as d:
             unit = Path(d) / render.RENDER_UNIT
             unit.write_bytes(staged)
             subprocess.run([compiler, "-std=gnu11", "-w", "-fsyntax-only", *headers, unit],
