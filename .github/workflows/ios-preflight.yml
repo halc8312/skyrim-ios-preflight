@@ -19,13 +19,17 @@ on:
         description: Check the isolated LE DLL diagnostic with the device SDK and simulator
         type: boolean
         default: false
+      mod_screens:
+        description: Run the Classic MOD screen simulator without rebuilding the device app
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   apple-sdk-preflight:
-    if: ${{ !inputs.full_title_host && !inputs.classic_trial && !inputs.dll_probe && !inputs.first_wave_trial }}
+    if: ${{ !inputs.full_title_host && !inputs.classic_trial && !inputs.dll_probe && !inputs.first_wave_trial && !inputs.mod_screens }}
     runs-on: macos-26
     timeout-minutes: 25
     env:
@@ -194,3 +198,46 @@ jobs:
           bash pc-aot/experiments/skse-plugin-vm/test-apple-sdk.sh | tee "$RUNNER_TEMP/dll-sdk.log"
           grep -q '^DLL_SIMULATOR: english verified ' "$RUNNER_TEMP/dll-sdk.log"
           grep -q '^DLL_SIMULATOR: japanese verified ' "$RUNNER_TEMP/dll-sdk.log"
+
+  classic-mod-simulator:
+    if: ${{ inputs.mod_screens }}
+    runs-on: macos-26
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      SKYRIM_IOS_CLASSIC_SKSE: '1'
+      SKYRIM_IOS_SKSE_DLL_PROBE: '1'
+      JOBS: '2'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Prepare the pinned simulator dependencies
+        working-directory: pc-aot
+        run: |
+          set -euo pipefail
+          sdl="$RUNNER_TEMP/skyrim-sdl"
+          prefix="$RUNNER_TEMP/skyrim-sdl-headers"
+          commit=5d249570393f7a37e037abf22cd6012a4cc56a71
+          git init -q "$sdl"
+          git -C "$sdl" fetch --depth 1 https://github.com/libsdl-org/SDL.git "$commit"
+          git -C "$sdl" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$sdl" rev-parse HEAD)" = "$commit"
+          mkdir -p "$prefix/include/SDL2"
+          cp "$sdl"/include/*.h "$prefix/include/SDL2/"
+          bash scripts/fetch-mod-codecs.sh
+          SKYRIM_IOS_DEPS_ROOT="$RUNNER_TEMP/skyrim-mod-dependencies" \
+            bash ios/dependencies/build-mod-archive-dependencies.sh iphonesimulator
+      - name: Exercise the Classic MOD screens
+        working-directory: pc-aot
+        run: |
+          bash scripts/check-mod-simulator.sh "$RUNNER_TEMP/mod-simulator" "$RUNNER_TEMP/skyrim-sdl-headers" \
+            "$RUNNER_TEMP/skyrim-mod-dependencies/mod-archive/iphonesimulator/prefix" screens
+      - name: Save simulator evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: classic-mod-simulator-evidence
+          path: ${{ runner.temp }}/mod-simulator/evidence
+          if-no-files-found: warn
+          retention-days: 1

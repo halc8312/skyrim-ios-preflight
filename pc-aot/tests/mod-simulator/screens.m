@@ -163,9 +163,9 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     if ([shortName isEqualToString:name] || displayName.exists) return displayName;
     return [files.cells containingType:XCUIElementTypeStaticText identifier:name].firstMatch;
 }
-- (void)scrollFiles:(XCUIElement *)files towardBottom:(BOOL)down {
+- (CGRect)fileViewport:(XCUIElement *)files {
     CGRect bounds = elementFrame(files);
-    if (CGRectIsNull(bounds)) return;
+    if (CGRectIsNull(bounds)) return CGRectNull;
     CGFloat left = CGRectGetMinX(bounds) + 8, right = CGRectGetMaxX(bounds) - 8;
     CGFloat top = CGRectGetMinY(bounds) + 8, bottom = CGRectGetMaxY(bounds) - 12;
     XCUIElement *sidebar = self.app.collectionViews[@"Browse View"];
@@ -175,15 +175,21 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     if (!CGRectIsNull(sideFrame) && sidebar.hittable) left = MAX(left, CGRectGetMaxX(sideFrame) + 8);
     if (!CGRectIsNull(barFrame)) top = MAX(top, CGRectGetMaxY(barFrame) + 8);
     if (!CGRectIsNull(tabFrame)) bottom = MIN(bottom, CGRectGetMinY(tabFrame) - 8);
-    if (right <= left || bottom - top < 45) return;
-    CGFloat x = ((left + right) / 2 - CGRectGetMinX(bounds)) / CGRectGetWidth(bounds);
-    CGFloat high = (top + .15 * (bottom - top) - CGRectGetMinY(bounds)) / CGRectGetHeight(bounds);
-    CGFloat low = (top + .85 * (bottom - top) - CGRectGetMinY(bounds)) / CGRectGetHeight(bounds);
+    if (right <= left || bottom <= top) return CGRectNull;
+    return CGRectMake(left, top, right - left, bottom - top);
+}
+- (void)scrollFiles:(XCUIElement *)files towardBottom:(BOOL)down {
+    CGRect viewport = [self fileViewport:files];
+    CGRect bounds = elementFrame(files);
+    if (CGRectIsNull(bounds) || CGRectIsNull(viewport) || CGRectGetHeight(viewport) < 45) return;
+    CGFloat x = (CGRectGetMidX(viewport) - CGRectGetMinX(bounds)) / CGRectGetWidth(bounds);
+    CGFloat high = (CGRectGetMinY(viewport) + .15 * CGRectGetHeight(viewport) - CGRectGetMinY(bounds)) / CGRectGetHeight(bounds);
+    CGFloat low = (CGRectGetMinY(viewport) + .85 * CGRectGetHeight(viewport) - CGRectGetMinY(bounds)) / CGRectGetHeight(bounds);
     XCUICoordinate *from = [files coordinateWithNormalizedOffset:CGVectorMake(x, down ? low : high)];
     XCUICoordinate *to = [files coordinateWithNormalizedOffset:CGVectorMake(x, down ? high : low)];
     [from pressForDuration:.08 thenDragToCoordinate:to withVelocity:300 thenHoldForDuration:.2];
 }
-- (XCUIElement *)locateFile:(NSString *)name {
+- (XCUIElement *)locateFile:(NSString *)name fallback:(XCUICoordinate **)fallback {
     XCUIElement *files = self.app.collectionViews[@"File View"];
     XCUIElement *bar = self.app.navigationBars[@"FullDocumentManagerViewControllerNavigationBar"];
     XCUIElement *local = self.app.cells[@"DOC.sidebar.item.On My iPhone"];
@@ -194,7 +200,19 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     NSUInteger scrolls = 0;
     while (deadline.timeIntervalSinceNow > 0) {
         XCUIElement *item = [self fileNamed:name inCollection:files];
-        if (canHit(item) && item.enabled) return item;
+        CGRect frame = elementFrame(item);
+        if (!CGRectIsNull(frame) && item.enabled) {
+            if (item.hittable) return item;
+            // The landscape Files grid can mark a partly obscured cell
+            // unhittable even though the icon is visible above its tab bar.
+            CGRect visible = CGRectIntersection(frame, [self fileViewport:files]);
+            if (!CGRectIsNull(visible) && CGRectGetWidth(visible) >= 30 && CGRectGetHeight(visible) >= 30) {
+                *fallback = [item coordinateWithNormalizedOffset:CGVectorMake(
+                    (CGRectGetMidX(visible) - CGRectGetMinX(frame)) / CGRectGetWidth(frame),
+                    (CGRectGetMidY(visible) - CGRectGetMinY(frame)) / CGRectGetHeight(frame))];
+                return item;
+            }
+        }
         if (stage < SKPickerSamples && bar.staticTexts[@"UI Samples"].exists) {
             stage = SKPickerSamples;
             ready = [NSDate dateWithTimeIntervalSinceNow:3];
@@ -205,7 +223,6 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
                 // This state is terminal: a still-visible Browse button leads
                 // back to the root. Wait for File Provider to populate its list.
                 if (scrolls < 8 && files.exists && files.cells.count) {
-                    CGRect frame = elementFrame(item);
                     BOOL down = CGRectIsNull(frame) ? scrolls < 4 : CGRectGetMidY(frame) >= CGRectGetMidY(files.frame);
                     [self scrollFiles:files towardBottom:down];
                     ++scrolls;
@@ -238,9 +255,10 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     return nil;
 }
 - (void)pick:(NSString *)name folder:(BOOL)folder {
-    XCUIElement *item = [self locateFile:name];
+    XCUICoordinate *fallback = nil;
+    XCUIElement *item = [self locateFile:name fallback:&fallback];
     [self capture:[@"picker-" stringByAppendingString:name]];
-    [item tap];
+    if (fallback) [fallback tap]; else [item tap];
     // Folders must be opened then chosen; multi-select archives may require
     // an explicit Open. A single-select JSON picker dismisses on selection.
     if (folder || [name.pathExtension.lowercaseString isEqualToString:@"zip"]) {

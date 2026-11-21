@@ -51,6 +51,7 @@ if [[ -d "$result" ]]; then
     xcrun xcresulttool export attachments --path "$result" --output-path "$RUN/attachments"
     python3 - "$RUN/attachments" "$EVIDENCE/screenshots" "$status" "$mode" <<'PY'
 import json
+import os
 import re
 import shutil
 import sys
