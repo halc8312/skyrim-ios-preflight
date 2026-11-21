@@ -1,5 +1,13 @@
 # 開発状況
 
+**2026-11-21　MOD第一弾の実装（第2段：ゲスト側のMODフックと段階化のまとめ）**
+
+計画のX2とX3を実装した。Classic v1のゲストABIは変えずに、別のABI `PcGuestModHooksABI.h` を追加した。ゲストは `skyrim_guest_bind_mod_hooks_v1` でコンパイルしたフック群を返し、ホストは `pc_guest_open` で結合し（シンボルがないゲストは群なしとして受け付ける）、ゲスト開始前に一度だけ群と実装を選ぶ。版1の表は、Fuzのメニューと周囲の会話、VMの世代（§4.4の2か所）、キャラクターメニューの初回の先読みの4群。カメラ、スライダー、追加セーブの群は予約だけで、両側とも拒否する。未結合・未選択のフックは元の動作の値を返し、オフ時の負担は1か所あたり静的変数の読み込みと分岐1回。CMakeの `SKYRIM_IOS_MOD_HOOKS`（既定OFF、Classic SKSEが必須）、ホストのビルドとIPA組み立てでのInfo.plist・群・共有ヘッダー5枚の照合を加えた。 [ABI](../ios/private-abi/PcGuestModHooksABI.h)
+
+`scripts/mod_hooks_guest.py` は、Classicの準備の後に既存の段階化スクリプト（Fuzのメニューと周囲の会話、先読みの省略）を選んだ群だけ実行する。対象の生成物の一致、2つの群が同じ単位を違う内容に変えること、Classicの改名との重なり、段階化のない群（VMの世代、カメラ、スライダー、追加セーブ）を拒否する。`build_title_guest.py --classic-skse --mod-hooks <群>` は別のディレクトリでビルドし、段階化した単位とフックの実装だけに試作のヘッダーを見せ、結果と契約に群、ヘッダー、段階化した単位のSHA-256を記録する。
+
+Web環境（Clang 18、GCC 13）で、結合の試験（自作のゲスト）が通常実行とASan/UBSanで合格し、段階化のまとめの試験は自作の単位とハッシュ表で合格した。MOD関連72件（固定版生成物の1件はスキップ）、Classic関連、ゲストのビルドとIPA組み立ての試験も合格。計画からの変更点：`pc_guest_select_mod_hooks` は群とホストの実装の表を受け取る（機能の実装より先に結合部を試験するため）。`--mod-hooks` のビルド部分はX3のコミットに入れた。残り：固定版生成物での全群の組み合わせと構文検査（`SKYRIM_TEST_OWNED_CLASSIC_LIFT`）、Classicの改名と段階化の単位が重ならないことの確認、Apple SDKでのビルドはCodex側。ホストの各群の実装（P2-2、X4）は未着手で、まだどの群も選ばれない。 [実装計画](MOD_FIRST_WAVE_PLAN.md)
+
 **2026-11-21　MOD第一弾の実装（第1段：設定・検出・解析・依存の試験）**
 
 作業ブランチ `claude/skyrim-ios-mod-first-wave-17hieg` で、計画の「Sonnet向け」範囲を実装した。SkyUIの取り込み時と起動時の必要ファイル確認（SkyUI.esp、LE用のSkyUI.bsa、SKSEのコンパイル済み `SKSE.pex` の `GetVersionRelease`）、プロファイル単位で既定オフのMOD機能の検出と選択画面（Fuz、PapyrusUtil、Precache Killer、RaceMenu、NiOverride重複、ECE、Enhanced Camera、Safety Load、HDT）、Fuz Ro D-oh LE 6.1のINI設定の読み取り（作者のソースで確認した `Fuz Ro D'oh.ini` の `WordsPerSecondSilence`、`SkipEmptyResponses`、`Sound/Voice/Fuz Ro Doh/Stock_N.xwm`）、RaceMenuの `.jslot` の標準スライダー（鼻の高さを含む19個）の解析、USLEEPと3つのDLCのマスター順、骨格の勝者のプロファイル別確認、上端見切れの原因判別用の `IOS_OVERLAY_LAYOUT` 診断を追加した。MOD関連の新規・追加試験は通常実行とASan/UBSanで合格した。
