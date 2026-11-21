@@ -3,6 +3,7 @@ import errno
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -215,6 +216,41 @@ class ModArchiveTests(unittest.TestCase):
         self.assertEqual(view_files(first)[path], b"xpms skeleton")
         self.assertEqual(view_files(second), {path: b"other profile skeleton"})
         self.assertEqual(sorted(p.relative_to(game).as_posix() for p in game.rglob("*")), before)
+
+    def test_cbbe_and_unp_body_winners_follow_each_profile(self):
+        # Small authored LE NIF headers. The markers distinguish providers.
+        header = (b"Gamebryo File Format, Version 20.2.0.7\n"
+                  + struct.pack("<IBIII", 0x14020007, 1, 12, 1, 83))
+        meshes = [f"meshes/actors/character/character assets/femalebody_{weight}.nif"
+                  for weight in (0, 1)]
+        game = self.dir / "body-game"
+        providers = {}
+        for name, root in (("original", game / "Data"), ("cbbe", self.dir / "body-cbbe"),
+                           ("unp", self.dir / "body-unp")):
+            providers[name] = root
+            for weight, mesh in enumerate(meshes):
+                target = root / mesh
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(header + f"{name}:{weight}".encode("ascii"))
+
+        for winner, loser in (("cbbe", "unp"), ("unp", "cbbe")):
+            view = self.dir / f"body-view-{winner}"
+            conflicts = self.dir / f"body-{winner}.tsv"
+            result = self.run_driver("deploy", game, view, conflicts, winner,
+                                     providers[loser], providers[winner])
+            self.assertIn("deploy 0", result)
+            for mesh in meshes:
+                self.assertIn(f"{mesh}\t0\t1", conflicts.read_text().splitlines())
+
+        # Check both views after publishing the second one and verify the base files.
+        for weight, mesh in enumerate(meshes):
+            for winner in ("cbbe", "unp"):
+                path = self.dir / f"body-view-{winner}" / "Data" / mesh
+                self.assertEqual(path.read_bytes(), header + f"{winner}:{weight}".encode("ascii"))
+            self.assertEqual((game / "Data" / mesh).read_bytes(),
+                             header + f"original:{weight}".encode("ascii"))
+        self.assertEqual(sorted(p.relative_to(game / "Data").as_posix()
+                                for p in (game / "Data").rglob("*") if p.is_file()), meshes)
 
     def test_game_assets_at_root_stay_with_their_tools(self):
         bundle = self.make_zip("game-assets-and-tools.zip", {
