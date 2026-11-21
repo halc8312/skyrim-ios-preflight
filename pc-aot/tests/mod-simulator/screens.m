@@ -288,6 +288,8 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCUIElement *item = [self locateFile:name fallback:&fallback];
     [self capture:[@"picker-" stringByAppendingString:name]];
     if (fallback) [fallback tap]; else [item tap];
+    XCUIElement *picker = self.app.navigationBars[@"FullDocumentManagerViewControllerNavigationBar"];
+    XCUIElement *files = self.app.collectionViews[@"File View"];
     // Folders must be opened then chosen; multi-select archives may require
     // an explicit Open. A single-select JSON picker dismisses on selection.
     if (folder || [name.pathExtension.lowercaseString isEqualToString:@"zip"]) {
@@ -295,23 +297,23 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
         XCUIElementQuery *choices = [self.app.buttons matchingPredicate:confirmLabels];
         NSDate *until = [NSDate dateWithTimeIntervalSinceNow:6];
         do {
-            for (XCUIElement *confirm in choices.allElementsBoundByIndex)
-                if (canHit(confirm) && confirm.enabled) { [confirm tap]; return; }
-            if (!self.app.collectionViews[@"File View"].exists &&
-                !self.app.navigationBars[@"FullDocumentManagerViewControllerNavigationBar"].exists) return;
+            XCUIElement *ready = nil;
+            for (XCUIElement *confirm in choices.allElementsBoundByIndex) {
+                if (canHit(confirm) && confirm.enabled) { ready = confirm; break; }
+            }
+            if (ready) { [ready tap]; break; }
+            if (!picker.exists && !files.exists) break;
             [NSThread sleepForTimeInterval:.15];
         } while (until.timeIntervalSinceNow > 0);
-    } else {
-        XCUIElement *files = self.app.collectionViews[@"File View"];
-        XCUIElement *picker = self.app.navigationBars[@"FullDocumentManagerViewControllerNavigationBar"];
-        XCUIElement *hub = self.app.navigationBars[@"MOD"];
-        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:18];
-        do {
-            if (!files.exists && !picker.exists && canHit(hub)) return;
-            [NSThread sleepForTimeInterval:.15];
-        } while (until.timeIntervalSinceNow > 0);
-        XCTFail(@"Files did not close and return to MOD after selecting %@.", name);
     }
+    // Returning straight from Open/Choose can resolve MOD's table while
+    // the remote Files accessibility subtree is being dismissed.
+    NSDate *until = [NSDate dateWithTimeIntervalSinceNow:18];
+    do {
+        if (!picker.exists && !files.exists) return;
+        [NSThread sleepForTimeInterval:.15];
+    } while (until.timeIntervalSinceNow > 0);
+    XCTFail(@"Files did not close after selecting %@.", name);
 }
 - (void)recordNexusResult:(NSString *)result detail:(NSString *)detail {
     [self capture:[@"nexus-live-" stringByAppendingString:result]];
