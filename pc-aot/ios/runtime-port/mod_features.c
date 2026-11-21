@@ -256,8 +256,8 @@ static int scan_root(const char *root, unsigned *mask) {
     return uncertain;
 }
 
-int skyrim_features_scan(const char *const *roots, size_t count, SkyrimFeatureScan *out) {
-    if (!out || (count && !roots)) return EINVAL;
+int skyrim_features_scan(const char *const *roots, size_t count, bool first_is_original, SkyrimFeatureScan *out) {
+    if (!out || (count && !roots) || (first_is_original && !count)) return EINVAL;
     memset(out, 0, sizeof *out);
     for (int f = 0; f < SKYRIM_FEATURE_COUNT; ++f) out->features[f].winner = -1;
     for (size_t i = 0; i < count; ++i) {
@@ -265,8 +265,13 @@ int skyrim_features_scan(const char *const *roots, size_t count, SkyrimFeatureSc
         int result = scan_root(roots[i], &mask);
         if (result) ++out->unreadable_roots;
         if (result < 0) continue;
-        for (int f = 0; f < SKYRIM_FEATURE_COUNT; ++f)
-            if (mask & (1u << f)) { ++out->features[f].providers; out->features[f].winner = (int)i; }
+        for (int f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
+            if (!(mask & (1u << f))) continue;
+            SkyrimFeatureState *feature = &out->features[f];
+            ++feature->providers;
+            const bool kept_original = f == SKYRIM_FEATURE_NIOVERRIDE && first_is_original && feature->winner == 0;
+            if (!kept_original) feature->winner = (int)i;
+        }
     }
     return 0;
 }

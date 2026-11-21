@@ -258,12 +258,15 @@ static BOOL AnyOn(NSArray *rows) {
 
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 /* Read-only: the original Data folder, then the profile's enabled packages in order. */
-static NSArray<NSString *> *DataRootsFor(NSArray<NSString *> *packageIds, NSMutableArray<NSString *> *labels) {
+static NSArray<NSString *> *DataRootsFor(NSArray<NSString *> *packageIds, NSMutableArray<NSString *> *labels,
+                                         BOOL *firstIsOriginal) {
     NSMutableArray<NSString *> *roots = [NSMutableArray array];
+    if (firstIsOriginal) *firstIsOriginal = NO;
     if (originalGameDirectory.length) {
         char data[4096];
         if (skyrim_plugin_child_path(originalGameDirectory.fileSystemRepresentation, "Data", data, sizeof data) >= 0) {
             [roots addObject:@(data)];
+            if (firstIsOriginal) *firstIsOriginal = YES;
             [labels addObject:T(@"Original game Data", @"元のゲームのData")];
         }
     }
@@ -280,7 +283,7 @@ static NSArray<NSString *> *DataRootsFor(NSArray<NSString *> *packageIds, NSMuta
 }
 
 static SkyrimSkyUIRequirements SkyUIRequirementsFor(NSArray<NSString *> *packageIds) {
-    NSArray<NSString *> *roots = DataRootsFor(packageIds, nil);
+    NSArray<NSString *> *roots = DataRootsFor(packageIds, nil, NULL);
     const char **paths = calloc(roots.count + 1, sizeof *paths);
     SkyrimSkyUIRequirements result = {.status = SKYRIM_SKYUI_REQ_UNREADABLE};
     if (paths) {
@@ -292,7 +295,7 @@ static SkyrimSkyUIRequirements SkyUIRequirementsFor(NSArray<NSString *> *package
 }
 
 static NSArray<NSString *> *XpmseRequirementLines(NSArray<NSString *> *packageIds) {
-    NSArray<NSString *> *roots = DataRootsFor(packageIds, nil);
+    NSArray<NSString *> *roots = DataRootsFor(packageIds, nil, NULL);
     const char **paths = calloc(roots.count + 1, sizeof *paths);
     if (!paths) return @[];
     for (NSUInteger i = 0; i < roots.count; ++i) paths[i] = roots[i].fileSystemRepresentation;
@@ -319,12 +322,12 @@ static NSArray<NSString *> *XpmseRequirementLines(NSArray<NSString *> *packageId
     return lines;
 }
 
-static SkyrimFeatureScan FeatureScanRoots(NSArray<NSString *> *roots) {
+static SkyrimFeatureScan FeatureScanRoots(NSArray<NSString *> *roots, BOOL firstIsOriginal) {
     const char **paths = calloc(roots.count + 1, sizeof *paths);
     SkyrimFeatureScan scan;
     if (!paths) { memset(&scan, 0, sizeof scan); return scan; }
     for (NSUInteger i = 0; i < roots.count; ++i) paths[i] = roots[i].fileSystemRepresentation;
-    if (skyrim_features_scan(paths, roots.count, &scan)) memset(&scan, 0, sizeof scan);
+    if (skyrim_features_scan(paths, roots.count, firstIsOriginal, &scan)) memset(&scan, 0, sizeof scan);
     free(paths);
     return scan;
 }
@@ -558,7 +561,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     const uint32_t compiled = pc_guest_mod_hooks_compiled();
     skyrim_mod_hook_plan(requested, compiled, host, plan);
     if (plan->groups & fuzGroups) {
-        NSArray<NSString *> *roots = DataRootsFor(launchPackageIds, nil);
+        NSArray<NSString *> *roots = DataRootsFor(launchPackageIds, nil, NULL);
         const char **paths = calloc(roots.count + 1, sizeof *paths);
         SkyrimFuzSettings settings;
         for (NSUInteger i = 0; paths && i < roots.count; ++i) paths[i] = roots[i].fileSystemRepresentation;
@@ -623,7 +626,9 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
  * failure, 4 the guest lacks the needed hook groups (rebuild it), 5 the MOD version could not be verified. */
 static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady) {
     NSMutableDictionary *enabledKeys = [NSMutableDictionary dictionary];
-    SkyrimFeatureScan scan = FeatureScanRoots(DataRootsFor(launchWithoutMods ? @[] : launchPackageIds, nil));
+    BOOL firstIsOriginal;
+    NSArray<NSString *> *roots = DataRootsFor(launchWithoutMods ? @[] : launchPackageIds, nil, &firstIsOriginal);
+    SkyrimFeatureScan scan = FeatureScanRoots(roots, firstIsOriginal);
     uint32_t mask = 0;
     unsigned reasons[SKYRIM_FEATURE_COUNT];
     uint32_t hooked = 0;
@@ -2306,8 +2311,9 @@ static NSString *FeatureName(unsigned feature) {
 - (void)reload {
     EnsureState();
     NSMutableArray<NSString *> *labels = [NSMutableArray array];
-    NSArray<NSString *> *roots = DataRootsFor(EnabledPackageIds(SelectedProfile()), labels);
-    SkyrimFeatureScan scan = FeatureScanRoots(roots);
+    BOOL firstIsOriginal;
+    NSArray<NSString *> *roots = DataRootsFor(EnabledPackageIds(SelectedProfile()), labels, &firstIsOriginal);
+    SkyrimFeatureScan scan = FeatureScanRoots(roots, firstIsOriginal);
     self.scan = scan;
     self.nioverrideDetails = nil;
     SkyrimFeatureState nioverride = scan.features[SKYRIM_FEATURE_NIOVERRIDE];

@@ -70,7 +70,8 @@ class FeatureTests(unittest.TestCase):
             if sys.platform.startswith("linux"):
                 flags += ["-fno-pie", "-no-pie"]
         subprocess.run([cc, *flags, ROOT / "tests/native/test_mod_features.c", PORT / "mod_features.c",
-                        PORT / "mod_plugins.c", "-o", cls.binary], check=True, timeout=60)
+                        PORT / "mod_plugins.c", PORT / "mod_deploy.c", PORT / "mod_archive.c",
+                        "-lz", "-o", cls.binary], check=True, timeout=60)
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -115,8 +116,53 @@ class FeatureTests(unittest.TestCase):
         c = self.root("c", ["SKSE/Plugins/NiOverride.dll"])
         self.assertEqual(self.scan(a, b, c), (0, {"nioverride": (2, 2), "fuz": (1, 1)}))
 
-    def nioverride(self, *roots):
-        return subprocess.check_output([self.binary, "--nioverride", *roots], text=True, timeout=10).split()
+    def nioverride(self, *roots, first_is_original=False):
+        option = "--nioverride-original" if first_is_original else "--nioverride"
+        return subprocess.check_output([self.binary, option, *roots], text=True, timeout=10).split()
+
+    def test_nioverride_protected_original_matches_the_real_overlay(self):
+        original_name = "SKSE/Plugins/NiOverride.dll"
+        mod_name = "skse/plugins/nioverride.dll"
+        game = self.root("game", [f"Data/{original_name}"])
+        original_data = game / "Data"
+        mod_data = self.root("mod", [mod_name])
+        original_dll = original_data / original_name
+        mod_dll = mod_data / mod_name
+        mod_bytes = versioned_pe((3, 4, 5, 2))
+        mod_dll.write_bytes(mod_bytes)
+
+        for i, (base_bytes, version) in enumerate(((versioned_pe((3, 4, 4, 0)), ["3.4.4.0"]),
+                                                   (b"missing version metadata", []))):
+            with self.subTest(version=version):
+                original_dll.write_bytes(base_bytes)
+                self.assertEqual(self.nioverride(original_data, mod_data, first_is_original=True),
+                                 ["2", "0", *version])
+                view = self.top / f"view-{i}"
+                subprocess.run([self.binary, "--deploy", game, view, mod_data], check=True, timeout=10)
+                self.assertEqual((view / "Data" / original_name).read_bytes(), base_bytes)
+                self.assertEqual(original_dll.read_bytes(), base_bytes)
+                self.assertEqual(mod_dll.read_bytes(), mod_bytes)
+
+        original_dll.write_bytes(versioned_pe((3, 4, 4, 0)))
+        original_dll.chmod(0)
+        try:
+            if not os.access(original_dll, os.R_OK):
+                self.assertEqual(self.nioverride(original_data, mod_data, first_is_original=True), ["2", "0"])
+                view = self.top / "view-unreadable"
+                result = subprocess.run([self.binary, "--deploy", game, view, mod_data], capture_output=True,
+                                        timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(view.exists())
+        finally:
+            original_dll.chmod(0o600)
+
+        original_dll.unlink()
+        self.assertEqual(self.nioverride(original_data, mod_data, first_is_original=True), ["1", "1", "3.4.5.2"])
+        view = self.top / "view-unprotected"
+        subprocess.run([self.binary, "--deploy", game, view, mod_data], check=True, timeout=10)
+        deployed = view / "Data" / Path(original_name).parent / Path(mod_name).name
+        self.assertEqual(deployed.read_bytes(), mod_bytes)
+        self.assertFalse(original_dll.exists())
 
     def test_nioverride_uses_the_exact_name_and_the_winning_files_metadata(self):
         a = self.root("racemenu", ["SKSE/Plugins/NIOverride.dll"])

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #pragma once
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
@@ -26,7 +27,7 @@ typedef enum {
 
 typedef struct {
     unsigned providers; /* roots holding a marker for this feature */
-    int winner;         /* index of the last such root, -1 when none */
+    int winner;         /* index of the selected root, -1 when none */
 } SkyrimFeatureState;
 
 typedef struct {
@@ -34,9 +35,12 @@ typedef struct {
     unsigned unreadable_roots; /* skipped: ambiguous SKSE/Plugins names or I/O errors */
 } SkyrimFeatureScan;
 
-/* roots: the original Data folder and enabled packages' Data folders in
- * overwrite order. Links are not followed. Returns 0, or EINVAL. */
-int skyrim_features_scan(const char *const *roots, size_t count, SkyrimFeatureScan *out);
+/* roots are Data folders in overwrite order. Set first_is_original when
+ * roots[0] is the original Data folder. An original NiOverride file is kept
+ * ahead of any copy in a package, matching deployment's DLL protection.
+ * A missing or unreadable version resource leaves its selection unchanged.
+ * Links are not followed. Returns 0, or EINVAL. */
+int skyrim_features_scan(const char *const *roots, size_t count, bool first_is_original, SkyrimFeatureScan *out);
 
 /* On demand, read the selected root's NiOverride DLL fixed file version.
  * Returns 1 when available, 0 for a missing or unusable resource. */
