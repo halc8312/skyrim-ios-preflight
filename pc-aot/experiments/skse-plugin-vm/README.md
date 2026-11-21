@@ -16,6 +16,8 @@ Plugins can also resolve approved names from the virtual `kernel32` and `msvcrt`
 
 `GetCommandLineA` returns the virtual game path stored in guest memory. `EncodePointer` and `DecodePointer` use one randomly initialized key per guest process. The encoding applies to guest values for that process's lifetime.
 
+`GetStartupInfoA/W` use the same verified PE32 layout for the isolated GUI guest. The guest has no shell startup strings or inherited console handles, so these flags and pointers are not copied from the host.
+
 The text services convert UTF-16 to and from UTF-8 and Windows-1252. The guest's ANSI code page is 1252. Conversion uses bounded guest buffers and reports unsupported encodings and flag combinations explicitly. UTF-8 can represent Japanese text. Windows code page 932 is outside the current diagnostic support.
 
 `VirtualProtect` changes read-only, read/write and inaccessible states on 4 KiB pages within one mapped DLL data section. It reports the first page's previous protection. The page state follows the mapping between calls and is freed with it. Executable sections, headers, sub-page images and external addresses are outside this service's supported range. All mapped pages remain ordinary host data.

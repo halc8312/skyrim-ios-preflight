@@ -17,6 +17,10 @@ _Static_assert(offsetof(STARTUPINFOW, lpReserved2) == 52, "PE32 lpReserved2");
 _Static_assert(offsetof(STARTUPINFOW, hStdInput) == 56, "PE32 hStdInput");
 _Static_assert(offsetof(STARTUPINFOW, hStdOutput) == 60, "PE32 hStdOutput");
 _Static_assert(offsetof(STARTUPINFOW, hStdError) == 64, "PE32 hStdError");
+_Static_assert(sizeof(STARTUPINFOA) == sizeof(STARTUPINFOW), "both PE32 startup layouts have the same size");
+_Static_assert(offsetof(STARTUPINFOA, lpTitle) == offsetof(STARTUPINFOW, lpTitle), "PE32 title pointer");
+_Static_assert(offsetof(STARTUPINFOA, dwFlags) == offsetof(STARTUPINFOW, dwFlags), "PE32 flags");
+_Static_assert(offsetof(STARTUPINFOA, hStdInput) == offsetof(STARTUPINFOW, hStdInput), "PE32 handle fields");
 _Static_assert(PF_NX_ENABLED == 12, "Windows NX feature ID");
 
 static int test_detached_console(SkseWinThread *thread) {

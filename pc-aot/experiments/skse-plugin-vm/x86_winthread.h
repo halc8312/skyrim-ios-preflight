@@ -57,7 +57,8 @@ int skse_win_transform_pointer(SkseWinThreadProcess *process, SkseWinThreadOpera
 
 /* The guest starts as a GUI process with no inherited standard handles,
  * console, debugger or shell-supplied startup strings. The caller
- * validates the full PE32 STARTUPINFOW output range. */
+ * validates the full PE32 STARTUPINFOA or STARTUPINFOW output range.
+ * No startup strings means both APIs have the same guest representation. */
 void skse_win_startup_info(uint8_t output[SKSE_WIN_STARTUPINFO_BYTES]);
 uint32_t skse_win_std_handle(SkseWinThread *thread, uint32_t selector);
 uint32_t skse_win_console_cp(SkseWinThread *thread);

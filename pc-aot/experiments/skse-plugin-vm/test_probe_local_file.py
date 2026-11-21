@@ -511,6 +511,27 @@ class LocalFileProbeTest(unittest.TestCase):
             result = subprocess.check_output([binary, shell_path, wrong_library_path], text=True, timeout=3).splitlines()
             self.assertEqual(result, ["stopped,8,ok,0,load=6,partial,SHGetFolderPathA",
                                       "stopped,1,import absent from the service list,1,kernel32.DLL,SHGetFolderPathA"])
+            for name in ("GetStartupInfoA", "GetStartupInfoW"):
+                with self.subTest(startup=name):
+                    startup = with_import.copy()
+                    zero_string(startup, DATA + 0xa2, name.encode("ascii"))
+                    startup[DATA + 0x100:DATA + 0x148] = b"\xa5" * 0x48
+                    output = BASE + 0x3100
+                    code = b"\x68" + struct.pack("<I", output)
+                    code += b"\xff\x15" + struct.pack("<I", BASE + 0x3060)
+                    for address, value in ((output, 68), (output + 52, 0),
+                                           (output + 56, 0xa5a5a5a5), (output + 68, 0xa5a5a5a5)):
+                        # Compare the written size and cleared pointer, then check
+                        # that the unused handles and adjacent storage are intact.
+                        code += b"\x81\x3d" + struct.pack("<II", address, value) + b"\x74\x02\x0f\x0b"
+                    code += b"\xb8\x01\0\0\0\xc3"
+                    put(startup, SECTIONS + 8, "I", 0x200)
+                    put(startup, RD + 0x60, "I", 0x1080)
+                    startup[0x280:0x280 + len(code)] = code
+                    path = root / f"{name}.dll"
+                    path.write_bytes(startup)
+                    self.assertEqual(subprocess.check_output([binary, path], text=True, timeout=3).strip(),
+                                     "ready,7,Owned test plugin")
             resident = subprocess.check_output([binary, "--session", tasks], text=True, timeout=3)
             self.assertEqual(resident.strip(), "resident tasks=3/1 independent-lifetime=ok budget-refusal=ok")
             resident_worker = subprocess.check_output([binary, "--session-worker", closed], text=True, timeout=3)
