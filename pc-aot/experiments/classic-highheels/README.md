@@ -1,0 +1,17 @@
+# Classic HDT HighHeels height experiment
+
+This host fixture models one behavior of the owned HDT HighHeels beta 0.5 LE package. Its footwear script calls the regular Papyrus equip and unequip events. The active magic effect uses the plugin's native KeepUpdate and StopUpdate calls. The LE x86 plugin resolves the NPC node under the actor's current loaded skeleton. It updates the node's local Z by the difference between the desired and previously applied offsets, then refreshes world data. Removal subtracts the owned offset. On a skeleton replacement, the old offset belongs to the old skeleton. Foot and calf world positions enter the original calculation of the desired offset.
+
+The [official Classic SKSE 1.7.3 source archive](https://skse.silverlock.org/) describes the named lookup and scene update in PapyrusNetImmerse.cpp, NiObjects.h, and NiTypes.h. A separate interpreter run with the owned pinned LE executable stops during DLL attachment at the game's BSFixedString constructor before SKSE Query or Load.
+
+The fixture takes a caller-supplied offset, named-node resolver and commit callback. The commit requires the same root, node and observed height and treats the write and accepted refresh as one operation. The supplied generations must change when the root or node is replaced. A missing node, a nonfinite value or a failed commit preserves the previous ownership record for retry. Replacement drops the former offset for the new node. External additive changes to the same node remain in place when the owned offset changes or is removed.
+
+The test uses an authored actor and node. The experiment is unlinked. Connecting equip/effect requests, identifying a serialized guest update point, proving stable node lifetime and write/refresh behavior, computing the offsets from the original effect, and testing in-game equip/removal remain separate steps.
+
+Run locally with a C11 compiler:
+
+~~~sh
+cd pc-aot/experiments/classic-highheels
+python3 -B -m unittest -v test_highheel_height
+SKYRIM_TEST_SANITIZERS=1 python3 -B -m unittest -v test_highheel_height
+~~~
