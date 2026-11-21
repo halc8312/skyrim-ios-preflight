@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * PapyrusUtil 3.3 JsonUtil natives during play (plan P3-2). The declarations
  * cover Wearable Lanterns 4.0.2's configuration and startup compatibility
- * check from ebf678e. List methods take scalar arguments; game Form values
- * belong to a separate part of the Classic bridge.
+ * check from ebf678e, and the selected static Keyword used by StorageUtil.
  *
  * A call's result and its settings file change are published only in the VM
  * generation that started the call (classic_vm_epoch.h). The commit holds the
@@ -58,6 +57,8 @@ typedef struct {
     uint32_t keyword_id;
 } SkyrimPapyrusUtilSettings;
 void skyrim_papyrusutil_settings_backend(SkyrimPapyrusUtilSettings *, SkyrimPapyrusUtilBackend *out);
+bool skyrim_papyrusutil_needs_initial_catalog(void);
+bool skyrim_papyrusutil_initial_catalog(const SkyrimVmScope *, const SkseLoadedMod *, size_t count);
 bool skyrim_papyrusutil_capture_storage(const SkyrimVmScope *, const SkseLoadedMod *, size_t count,
                                         SksePluginRecordSet **out);
 /* After authentication of a completed base load, a NULL input runs only the

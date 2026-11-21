@@ -245,6 +245,23 @@ static void finish_load(const struct CPU *cpu, uint64_t ticket, bool succeeded) 
 }
 
 static uint64_t notify_load(const struct CPU *cpu, unsigned site, uint64_t ticket, uint32_t first, uint32_t second) {
+    if (site == SkyrimFreshPluginsReady) {
+        uint32_t data_handler;
+        SkyrimVmScope initial;
+        if (storage.queue && !ticket && !second && first && cpu && cpu == rt_current_cpu() &&
+            skyrim_papyrusutil_needs_initial_catalog() &&
+            skyrim_vm_scope_current(&initial) && initial.epoch == 1 &&
+            read_catalog(NULL, 0x12e2cb8u, &data_handler, sizeof data_handler) && data_handler == first) {
+            ClassicModCatalog *catalog = NULL;
+            if (classic_mod_catalog_capture(read_catalog, NULL, &catalog) == CLASSIC_MOD_CATALOG_OK) {
+                size_t count;
+                const SkseLoadedMod *mods = classic_mod_catalog_entries(catalog, &count);
+                (void)skyrim_papyrusutil_initial_catalog(&initial, mods, count);
+                classic_mod_catalog_free(catalog);
+            }
+        }
+        return 0;
+    }
     if (site == SkyrimFreshBegin) return begin_load(cpu);
     if (!load_attempt.bridge || cpu != load_attempt.native.cpu || cpu != rt_current_cpu()) return 0;
     switch (site) {

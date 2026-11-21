@@ -305,6 +305,9 @@ def compose(root: Path, mask: int) -> dict[str, bytes]:
                 raise ValueError(f"{unit}: the {owner[unit]} and {name} stages produce different results")
             staged.setdefault(unit, data)
             owner.setdefault(unit, name)
+    if mask & GROUPS["fresh_load"]:
+        startup = load(SAVE_SEAMS, "stage_native_load")
+        staged[startup.STARTUP_UNIT] = startup.stage_startup_plugins(root, staged)
     return staged
 
 

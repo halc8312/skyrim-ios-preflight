@@ -211,22 +211,34 @@ static bool may_override_keyword(int view, const SkseLoadedMod *mod) {
     return possible;
 }
 
-static bool bind_wearable_keyword(SkyrimPapyrusUtilSettings *scope, uint64_t world,
-                                  const SkseLoadedMod *mods, size_t count) {
-    if (!scope->storage_pex || !world || (count && !mods)) return false;
-    if (scope->keyword_world == world) return true;
-    const uint32_t previous = scope->keyword_id;
+static unsigned wearable_keyword_index(int view, const SkseLoadedMod *mods, size_t count) {
+    if (!mods || count > SKSE_CLASSIC_MOD_LIMIT) return 0;
     size_t owner = 0;
     while (owner < count && !is_wearable_owner(mods[owner].name, mods[owner].length)) ++owner;
-    if (owner == count) return false;
+    if (owner == count || mods[owner].kind != SKSE_LOADED_CLASSIC) return 0;
     for (size_t i = owner + 1; i < count; ++i)
-        if (may_override_keyword(scope->game_fd, &mods[i])) return false;
-    const uint32_t full_id = (uint32_t)mods[owner].index << 24 | LANTERN_LOCAL_KEYWORD;
-    if ((previous && previous != full_id) || skse_classic_storage_enable_keyword(scope->settings, scope->epoch,
-            scope->storage_pex, scope->storage_pex_size, &mods[owner]) != SKSE_SETTINGS_OK) return false;
+        if (may_override_keyword(view, &mods[i])) return 0;
+    return mods[owner].index;
+}
+
+static bool enable_wearable_keyword(SkyrimPapyrusUtilSettings *scope, uint64_t world, unsigned index) {
+    if (!index || index >= SKSE_CLASSIC_MOD_LIMIT) return false;
+    const SkseLoadedMod owner = {(const uint8_t *)wearable_owner, sizeof wearable_owner - 1,
+                                (uint8_t)index, SKSE_LOADED_CLASSIC};
+    const uint32_t full_id = (uint32_t)index << 24 | LANTERN_LOCAL_KEYWORD;
+    if ((scope->keyword_id && scope->keyword_id != full_id) ||
+        skse_classic_storage_enable_keyword(scope->settings, scope->epoch, scope->storage_pex,
+                                           scope->storage_pex_size, &owner) != SKSE_SETTINGS_OK) return false;
     scope->keyword_id = full_id;
     scope->keyword_world = world;
     return true;
+}
+
+static bool bind_wearable_keyword(SkyrimPapyrusUtilSettings *scope, uint64_t world,
+                                  const SkseLoadedMod *mods, size_t count) {
+    if (!scope->storage_pex || !world) return false;
+    if (scope->keyword_world == world) return true;
+    return enable_wearable_keyword(scope, world, wearable_keyword_index(scope->game_fd, mods, count));
 }
 
 static bool settings_invoke(void *context, unsigned method, const ClassicValue *args, size_t count,
@@ -292,7 +304,6 @@ static bool settings_read(void *context, CPU *c, uint32_t address, void *bytes, 
 static bool settings_copy_form(void *context, CPU *c, const ClassicValueFrame *frame, uint32_t address,
                                uint32_t *identity) {
     SkyrimPapyrusUtilSettings *scope = context;
-    // A save or load boundary supplies the authenticated plugin order.
     if (scope->keyword_world != call.scope.epoch || !scope->keyword_id || !still_current() ||
         !skse_classic_values_matches_static_form(c, frame, address, scope->keyword_id)) return false;
     *identity = scope->keyword_id;
@@ -325,6 +336,23 @@ static bool current_capture(const StorageCapture *capture) {
     SkyrimVmScope current;
     return skyrim_vm_scope_current(&current) && current.epoch == capture->expected.epoch &&
            current.registry == capture->expected.registry;
+}
+
+bool skyrim_papyrusutil_needs_initial_catalog(void) {
+    return backend.copy_form_id == settings_copy_form;
+}
+
+static bool bind_initial_catalog(void *context) {
+    const StorageCapture *capture = context;
+    if (!current_capture(capture)) return false;
+    return bind_wearable_keyword(backend.context, capture->expected.epoch, capture->mods, capture->count) &&
+           current_capture(capture);
+}
+
+bool skyrim_papyrusutil_initial_catalog(const SkyrimVmScope *scope, const SkseLoadedMod *mods, size_t count) {
+    if (!scope || scope->epoch != 1 || !skyrim_papyrusutil_needs_initial_catalog()) return false;
+    StorageCapture capture = {*scope, mods, count, NULL};
+    return skse_classic_values_with_provider(provider_epoch, scope->registry, bind_initial_catalog, &capture);
 }
 
 static bool storage_uptime(uint32_t *out) {

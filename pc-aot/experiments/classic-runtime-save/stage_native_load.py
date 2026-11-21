@@ -1,5 +1,6 @@
 """Stage authenticated native load observations in the full original Classic units."""
 
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -13,6 +14,9 @@ from mod_hooks_guest import stage_vm_lifecycle
 
 
 HEADER = b'#include "native_load.h"\n'
+STARTUP_UNIT = "exe_107.c"
+STARTUP_SHA = "c0a140d6fe5a3c86e3f0c970e669c8911f787ce14a72ff7da352e1c0c82e85d7"
+STARTUP_ORDER = b"    esp -= 4; M32(esp) = 0x699350u; SPILL(); f_4434A0(c); RELOAD();\n"
 VM_LOAD = b"    esp -= 4; M32(esp) = 0x8D6CA3u; SPILL(); f_8D69C0(c); RELOAD();\n"
 VM_REVERT = b"    esp -= 4; M32(esp) = 0x67D0DBu; SPILL(); f_8D6990(c); RELOAD();\n"
 NATIVE_SLOT = (b"    const SkyrimLifecycleCall slot = ticket ? skyrim_lifecycle_begin(SkyrimLoadSlot)"
@@ -56,6 +60,20 @@ def edit_function(unit: bytes, baseline: bytes, name: str, edit) -> bytes:
     if unit[start:end] != baseline[old_start:old_end]:
         raise ValueError(f"Another stage already changed {name}")
     return unit[:start] + edit(unit[start:end]) + unit[end:]
+
+
+def stage_startup_plugins(root: Path, staged: dict[str, bytes]) -> bytes:
+    original = (root / "gen" / STARTUP_UNIT).read_bytes()
+    if hashlib.sha256(original).hexdigest() != STARTUP_SHA:
+        raise ValueError("Unreviewed Classic startup unit")
+    # InitTES runs after the VM initialization thread exits. The catalogue
+    # writer has completed before DataHandler starts the first script load.
+    notice = (b"    if ((uint8_t)eax) (void)skyrim_load_notify(c, SkyrimFreshPluginsReady, 0, "
+              b"TL32((uint32_t)(0x12E2CB8u)), 0);\n")
+    body = edit_function(staged.get(STARTUP_UNIT, original), original, "f_699100",
+                         lambda current: at_site(current, STARTUP_ORDER, STARTUP_ORDER + notice))
+    header = b'#include "PcGuestModHooksABI.h"\n'
+    return body if header in body else header + body
 
 
 def native_selected(body: bytes, app: bool) -> bytes:

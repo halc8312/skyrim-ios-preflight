@@ -133,7 +133,7 @@ typedef struct {
 enum SkyrimFreshLoadNotice {
     SkyrimFreshBegin = 1, SkyrimFreshCached, SkyrimFreshOpenEnter, SkyrimFreshOpenLeave,
     SkyrimFreshSlotEnter, SkyrimFreshSlotLeave, SkyrimFreshReadBegin, SkyrimFreshReadLeave,
-    SkyrimFreshVmBegin, SkyrimFreshVmLeave, SkyrimFreshFinish
+    SkyrimFreshVmBegin, SkyrimFreshVmLeave, SkyrimFreshFinish, SkyrimFreshPluginsReady
 };
 typedef struct {
     uint64_t (*notify)(const struct CPU *, unsigned site, uint64_t ticket, uint32_t first, uint32_t second);
