@@ -33,6 +33,7 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups("camera_cull_observe"), 8192)
         self.assertEqual(hooks.parse_groups("ece_tri_observe"), 2048)
         self.assertEqual(hooks.parse_groups("ece_tri_observe,ece_nose_observe"), 18432)
+        self.assertEqual(hooks.parse_groups("vm_lifecycle,highheel_pex_observe"), 32772)
         self.assertEqual(hooks.parse_groups("save_lifecycle"), 64)
         self.assertEqual(hooks.parse_groups("fresh_load,save_lifecycle,vm_lifecycle"), 4164)
         self.assertEqual(hooks.parse_groups("loading_menu_observe"), 128)
@@ -44,7 +45,8 @@ class GroupTests(unittest.TestCase):
         for text, message in (("", "comma-separated"), ("fuz_menu,", "comma-separated"),
                               ("fuz_menu,fuz_menu", "twice"), ("fuz", "Unknown"),
                               ("fuz_world", "list both"), ("safety_load", "list both"),
-                              ("fresh_load,save_lifecycle", "needs"), ("ece_nose_observe", "needs")):
+                              ("fresh_load,save_lifecycle", "needs"), ("ece_nose_observe", "needs"),
+                              ("highheel_pex_observe", "needs")):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
                 hooks.parse_groups(text)
 
@@ -222,7 +224,8 @@ class OwnedLiftTests(unittest.TestCase):
         classic.validate_generation(state)
         groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe,"
                                     "loading_menu_observe,inventory_fit,safety_load,camera_render_observe,"
-                                    "ece_tri_observe,save_lifecycle,fresh_load,camera_cull_observe,ece_nose_observe")
+                                    "ece_tri_observe,save_lifecycle,fresh_load,camera_cull_observe,ece_nose_observe,"
+                                    "highheel_pex_observe")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
@@ -267,6 +270,10 @@ class OwnedLiftTests(unittest.TestCase):
             original = (root / "gen/exe_107.c").read_bytes()
             old_start, old_end = hooks.function_span(original, "f_699100")
             self.assertEqual(startup[start:end].replace(notice, b"", 1), original[old_start:old_end])
+            linker = (work / "mod-hook-sources" / "exe_346.c").read_bytes()
+            self.assertEqual(linker.count(b"skyrim_highheel_pex_begin(c, "), 1)
+            self.assertEqual(linker.count(b"skyrim_highheel_pex_linked(c, "), 1)
+            self.assertEqual(linker.count(b"M32(esp) = 0xC690DAu; SPILL(); f_C34F20(c); RELOAD();"), 2)
             vm = (work / "mod-hook-sources" / "exe_199.c").read_bytes()
             self.assertEqual(vm.count(b"skyrim_load_notify(c, SkyrimFreshVmBegin"), 1)
             self.assertEqual(vm.count(b"skyrim_vm_host_after_load((uint8_t)"), 1)

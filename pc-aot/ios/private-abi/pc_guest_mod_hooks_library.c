@@ -23,6 +23,9 @@ _Static_assert(!(PC_GUEST_MOD_HOOKS_COMPILED & PC_GUEST_MOD_HOOK_FRESH_LOAD) ||
 _Static_assert((PC_GUEST_MOD_HOOKS_COMPILED & (PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE | PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE))
                != PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE,
                "ECE nose observation requires the TRI read observation");
+_Static_assert((PC_GUEST_MOD_HOOKS_COMPILED & (PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE))
+               != PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE,
+               "HighHeels PEX observation requires the current VM generation");
 
 static uint32_t selected;
 static uint32_t bound_bytes;
@@ -41,6 +44,8 @@ static PcGuestModEceTriHooks ece_tri;
 static PcGuestModFreshLoadHooks fresh_load;
 static PcGuestModCameraCullHooks camera_cull;
 static PcGuestModEceNoseHooks ece_nose;
+static PcGuestModHighHeelPexHooks highheel_pex;
+bool skyrim_highheel_pex_guest_selected;
 bool skyrim_ece_nose_guest_selected;
 bool skyrim_camera_cull_guest_selected;
 unsigned skyrim_camera_cull_guest_frames;
@@ -67,6 +72,10 @@ static int select_hooks(const PcGuestModHooks *table) {
     if (table->groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) {
         ece_nose = table->ece_nose;
         skyrim_ece_nose_guest_selected = true;
+    }
+    if (table->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE) {
+        highheel_pex = table->highheel_pex;
+        skyrim_highheel_pex_guest_selected = true;
     }
     selected = table->groups;
     selection_final = 1;
@@ -127,6 +136,12 @@ static const PcGuestModHooksGuest camera_cull_reply = {
     .table_bytes = PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES, .select = select_hooks
 };
 
+static const PcGuestModHooksGuest ece_nose_reply = {
+    .version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof(PcGuestModHooksGuest),
+    .compiled_groups = PC_GUEST_MOD_HOOKS_COMPILED & PC_GUEST_MOD_HOOKS_ECE_NOSE,
+    .table_bytes = PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES, .select = select_hooks
+};
+
 __attribute__((visibility("default")))
 const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uint32_t table_bytes) {
     if (bound_bytes || version != PC_GUEST_MOD_HOOKS_ABI || !pc_guest_mod_hooks_groups_for_bytes(table_bytes)) return 0;
@@ -139,7 +154,20 @@ const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uin
     if (table_bytes == PC_GUEST_MOD_HOOKS_ECE_TRI_BYTES) return &ece_reply;
     if (table_bytes == PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES) return &fresh_load_reply;
     if (table_bytes == PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES) return &camera_cull_reply;
+    if (table_bytes == PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES) return &ece_nose_reply;
     return &reply;
+}
+
+bool skyrim_highheel_pex_begin(const struct CPU *cpu, uint32_t name, uint32_t loader) {
+    return skyrim_highheel_pex_guest_selected && highheel_pex.begin(cpu, name, loader);
+}
+
+uint64_t skyrim_highheel_pex_end(const struct CPU *cpu, bool parsed) {
+    return skyrim_highheel_pex_guest_selected ? highheel_pex.end(cpu, parsed) : 0;
+}
+
+void skyrim_highheel_pex_linked(const struct CPU *cpu, uint64_t epoch, bool linked) {
+    if (skyrim_highheel_pex_guest_selected) highheel_pex.linked(cpu, epoch, linked);
 }
 
 /* FUZ_MENU */

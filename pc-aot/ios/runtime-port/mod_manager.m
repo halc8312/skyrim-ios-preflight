@@ -43,6 +43,7 @@
 #include "mod_loading_menu_host.h"
 #include "mod_racemenu_preset.h"
 #include "mod_save_host.h"
+#include "mod_highheel_pex_host.h"
 /* classic_skse_control.h, in the staged skse_system.c */
 void skyrim_classic_control_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle);
 #endif
@@ -550,6 +551,10 @@ static bool PrepareEceTriObserver(void) {
     return ready;
 }
 
+static bool DigestHighHeelPex(const void *bytes, size_t length, uint8_t output[32]) {
+    return CC_SHA256(bytes, (CC_LONG)length, output) != NULL;
+}
+
 /* Select the guest hook groups for the features allowed so far, before the
  * guest starts. Returns the features whose groups were selected. */
 static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *saveProfile, SkyrimHookPlan *plan) {
@@ -601,6 +606,16 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
         }
 #endif
     }
+    const uint32_t heelGroups = PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE;
+    if (!launchWithoutMods && !launchPluginListFailed && skyrim_mobile_verbose() && (compiled & heelGroups) == heelGroups) {
+        for (NSString *name in skyrim_mobile_loaded_plugins()) {
+            if ([name caseInsensitiveCompare:@"hdtHighHeel.esm"] == NSOrderedSame) {
+                skyrim_highheel_pex_configure(DigestHighHeelPex);
+                plan->groups |= heelGroups;
+                break;
+            }
+        }
+    }
     PcGuestModHooks table = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof table, .groups = plan->groups};
     if (plan->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
         table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load,
@@ -618,6 +633,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     if (plan->groups & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE)
         table.ece_tri = (PcGuestModEceTriHooks){skyrim_ece_tri_app_begin, skyrim_ece_tri_app_finish};
     if (plan->groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) table.ece_nose.notify = skyrim_ece_nose_app_observe;
+    if (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE) skyrim_highheel_pex_fill(&table);
     if (plan->groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) skyrim_save_app_fill(&table);
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
     /* Keep the original paths: select nothing. */

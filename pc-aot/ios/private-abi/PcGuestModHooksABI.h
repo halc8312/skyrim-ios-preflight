@@ -41,7 +41,8 @@ enum {
     PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE = 2048u,
     PC_GUEST_MOD_HOOK_FRESH_LOAD = 4096u,
     PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE = 8192u,
-    PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE = 16384u
+    PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE = 16384u,
+    PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE = 32768u
 };
 #define PC_GUEST_MOD_HOOKS_ORIGINAL (PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD | \
     PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER | \
@@ -54,7 +55,8 @@ enum {
 #define PC_GUEST_MOD_HOOKS_ECE_TRI (PC_GUEST_MOD_HOOKS_CAMERA_RENDER | PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE)
 #define PC_GUEST_MOD_HOOKS_FRESH_LOAD (PC_GUEST_MOD_HOOKS_ECE_TRI | PC_GUEST_MOD_HOOK_FRESH_LOAD)
 #define PC_GUEST_MOD_HOOKS_CAMERA_CULL (PC_GUEST_MOD_HOOKS_FRESH_LOAD | PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE)
-#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOKS_CAMERA_CULL | PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE)
+#define PC_GUEST_MOD_HOOKS_ECE_NOSE (PC_GUEST_MOD_HOOKS_CAMERA_CULL | PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE)
+#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOKS_ECE_NOSE | PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE)
 #define PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED (PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
 
 /* Function types come from the reviewed experiment headers. */
@@ -162,6 +164,13 @@ typedef struct {
                        uint32_t third, uint32_t fourth, uint64_t receipt);
 } PcGuestModEceNoseHooks;
 
+/* Runs around the original requested script's parse and link on its owner. */
+typedef struct {
+    bool (*begin)(const struct CPU *, uint32_t name, uint32_t loader);
+    uint64_t (*end)(const struct CPU *, bool parsed);
+    void (*linked)(const struct CPU *, uint64_t epoch, bool linked);
+} PcGuestModHighHeelPexHooks;
+
 /* Host implementations. groups names the selection; only the tables of the
  * selected groups are read, and each of their entries must be set. */
 typedef struct {
@@ -181,6 +190,7 @@ typedef struct {
     PcGuestModFreshLoadHooks fresh_load;
     PcGuestModCameraCullHooks camera_cull;
     PcGuestModEceNoseHooks ece_nose;
+    PcGuestModHighHeelPexHooks highheel_pex;
 } PcGuestModHooks;
 
 /* Hosts and guests built with the original v1 table still use this prefix. */
@@ -192,6 +202,7 @@ typedef struct {
 #define PC_GUEST_MOD_HOOKS_ECE_TRI_BYTES offsetof(PcGuestModHooks, fresh_load)
 #define PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES offsetof(PcGuestModHooks, camera_cull)
 #define PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES offsetof(PcGuestModHooks, ece_nose)
+#define PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES offsetof(PcGuestModHooks, highheel_pex)
 
 /* Guest reply. select copies the selected tables and succeeds at most once. */
 typedef struct {
@@ -209,11 +220,13 @@ static inline int pc_guest_mod_hooks_groups_valid(uint32_t groups) {
         && (!(groups & PC_GUEST_MOD_HOOK_SAFETY_LOAD) || (groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE))
         && (!(groups & PC_GUEST_MOD_HOOK_FRESH_LOAD) ||
             (groups & PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED) == PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED)
-        && (!(groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) || (groups & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE));
+        && (!(groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) || (groups & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE))
+        && (!(groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE) || (groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE));
 }
 
 static inline uint32_t pc_guest_mod_hooks_groups_for_bytes(uint32_t bytes) {
     if (bytes == sizeof(PcGuestModHooks)) return PC_GUEST_MOD_HOOKS_DEFINED;
+    if (bytes == PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES) return PC_GUEST_MOD_HOOKS_ECE_NOSE;
     if (bytes == PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES) return PC_GUEST_MOD_HOOKS_CAMERA_CULL;
     if (bytes == PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES) return PC_GUEST_MOD_HOOKS_FRESH_LOAD;
     if (bytes == PC_GUEST_MOD_HOOKS_ECE_TRI_BYTES) return PC_GUEST_MOD_HOOKS_ECE_TRI;
@@ -253,6 +266,8 @@ static inline int pc_guest_mod_hooks_table_valid(const PcGuestModHooks *t) {
     if ((g & PC_GUEST_MOD_HOOK_FRESH_LOAD) && !t->fresh_load.notify) return 0;
     if ((g & PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE) && !t->camera_cull.notify) return 0;
     if ((g & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) && !t->ece_nose.notify) return 0;
+    if ((g & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE) &&
+        (!t->highheel_pex.begin || !t->highheel_pex.end || !t->highheel_pex.linked)) return 0;
     return 1;
 }
 
@@ -276,6 +291,10 @@ void skyrim_ece_tri_finish(const struct CPU *, uint64_t ticket, uint8_t parsed);
 extern bool skyrim_ece_nose_guest_selected;
 uint64_t skyrim_ece_nose_guest_notify(const struct CPU *, enum SkyrimEceNoseNotice, uint32_t first,
                                      uint32_t second, uint32_t third, uint32_t fourth, uint64_t receipt);
+extern bool skyrim_highheel_pex_guest_selected;
+bool skyrim_highheel_pex_begin(const struct CPU *, uint32_t name, uint32_t loader);
+uint64_t skyrim_highheel_pex_end(const struct CPU *, bool parsed);
+void skyrim_highheel_pex_linked(const struct CPU *, uint64_t epoch, bool linked);
 void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t event);
 bool skyrim_inventory_fit_enabled(void);
 bool skyrim_safety_load_bypass_reclamation(void);

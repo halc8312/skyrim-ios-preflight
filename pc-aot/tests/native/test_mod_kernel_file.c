@@ -7,6 +7,7 @@
 enum { TEB_ADDRESS = 0x1000, STACK = 0x2000, NAME = 0x3000, BYTES_READ = 0x4000,
        BUFFER = 0x5000, CHUNK = 65536, ECE_PATH = 0x18000, ECE_STREAM = 0x19000 };
 #ifdef SKYRIM_IOS_MOD_HOOKS
+#include "classic_vm_epoch.h"
 enum { ECE_PLAYER = 0x1B2E8E4 };
 static uint8_t memory[ECE_PLAYER + 4];
 #else
@@ -33,6 +34,59 @@ static uint32_t invoke(CPU *cpu, ShimFn shim, size_t argc, const uint32_t *argv)
 #ifdef SKYRIM_IOS_MOD_HOOKS
 static bool replay(int fd, size_t length, uint8_t digest[32]) {
     return length >= 32 && read(fd, digest, 32) == 32;
+}
+
+static bool replay_pex(const void *bytes, size_t size, uint8_t digest[32]) {
+    if (size != 5875) return false;
+    memcpy(digest, bytes, 32);
+    return true;
+}
+
+static void check_highheel_read(CPU *cpu) {
+    enum { HEEL_LOADER = 0x19100, HEEL_STORE = 0x19200, HEEL_STREAM = 0x19300, HEEL_NAME = 0x19400 };
+    PcGuestModHooks table = {0};
+    skyrim_highheel_pex_configure(replay_pex);
+    skyrim_highheel_pex_fill(&table);
+    M32(HEEL_LOADER) = 0x1149B98;
+    M32(HEEL_LOADER + 8) = HEEL_STORE;
+    M32(HEEL_STORE) = 0x10EA8C8;
+    M32(HEEL_STREAM) = 0x110CD68;
+    strcpy(GSTR(HEEL_NAME), "hdtHighHeelEffect");
+    t_cpu = cpu;
+    skyrim_vm_epoch_registered(0x50000);
+    assert(!table.highheel_pex.begin(cpu, HEEL_NAME + 1, HEEL_LOADER));
+    M8(HEEL_STORE + 0x20) = 1;
+    assert(!table.highheel_pex.begin(cpu, HEEL_NAME, HEEL_LOADER));
+    M8(HEEL_STORE + 0x20) = 0;
+    uint64_t prior = 0;
+    for (unsigned run = 0; run < 3; ++run) {
+        strcpy(GSTR(NAME), run == 1 ? "Data\\OtherEffect.pex" : "Data\\Effect.pex");
+        const uint32_t open_args[] = {NAME, 0x80000000u, 1, 0, 3, 0, 0};
+        const uint32_t handle = invoke(cpu, shim_CreateFileA, 7, open_args);
+        assert(handle != UINT32_MAX);
+        assert(table.highheel_pex.begin(cpu, HEEL_NAME, HEEL_LOADER) && skyrim_highheel_pex_read_pending);
+        M32(HEEL_STORE + 0x18) = HEEL_STREAM;
+        M8(HEEL_STORE + 0x20) = 1;
+        M32(HEEL_STREAM + 0x1c) = handle;
+        M32(STACK) = run ? 0xA580E2 : 0xA58152;
+        const uint32_t read_args[] = {handle, BUFFER, 32, BYTES_READ, 0};
+        assert(invoke(cpu, shim_ReadFile, 5, read_args) == 1 && M32(BYTES_READ) == 32);
+        assert(skyrim_highheel_pex_read_pending == (run == 0));
+        assert(invoke(cpu, shim_CloseHandle, 1, &handle) == 1);
+        const uint64_t epoch = table.highheel_pex.end(cpu, true);
+        assert((epoch != 0) == (run == 2) && !skyrim_highheel_pex_read_pending);
+        if (epoch) {
+            table.highheel_pex.linked(cpu, epoch, true);
+            prior = epoch;
+        }
+        M8(HEEL_STORE + 0x20) = 0;
+        M32(HEEL_STORE + 0x18) = 0;
+    }
+    skyrim_vm_epoch_before_revert(1);
+    skyrim_vm_epoch_after_load(1);
+    table.highheel_pex.linked(cpu, prior, false);
+    t_cpu = NULL;
+    M32(STACK) = 0;
 }
 
 static void check_ece_nose(CPU *cpu, uint32_t handle, uint32_t other) {
@@ -185,6 +239,7 @@ int main(int argc, char **argv) {
     if (handle == 0xffffffffu) return rt_get_last_error(&cpu) == ERROR_FILE_NOT_FOUND ? 3 : 2;
 #ifdef SKYRIM_IOS_MOD_HOOKS
     check_ece_read(&cpu, handle);
+    check_highheel_read(&cpu);
 #endif
     const uint32_t read_args[] = {handle, BUFFER, CHUNK, BYTES_READ, 0};
     size_t size = 0;

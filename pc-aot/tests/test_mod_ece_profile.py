@@ -125,6 +125,9 @@ class EceProfileTests(unittest.TestCase):
             data = root / "Data"
             shutil.copytree(self.data, data)
             shutil.copyfile(data / FACE, data / "other.tri")
+            digest = bytes.fromhex("01e4816a1ea6c5bcb6a4c3bf62c9cdca6574600ddc441b95341b4942df3bdf03")
+            (data / "Effect.pex").write_bytes(digest + b"\0" * (5875 - len(digest)))
+            (data / "OtherEffect.pex").write_bytes(b"\0" * 5875)
             binary = kernel_file_fixture(root, ece_witness=True)
             entry = r"Data\meshes\Actors\Character\Character Assets\FemaleHeadCharGen.tri"
             completed = subprocess.run([binary, root, entry], capture_output=True, check=True, timeout=30)
@@ -140,6 +143,12 @@ class EceProfileTests(unittest.TestCase):
             self.assertEqual(nose, [
                 "IOS_ECE_NOSE schema=1 female_nord=1 head=1 geometry=1 path=1 fresh=1 record=1",
                 "IOS_ECE_NOSE schema=1 female_nord=1 head=1 geometry=1 path=1 fresh=0 record=1",
+            ])
+            heels = [line for line in completed.stderr.decode().splitlines() if line.startswith("IOS_CLASSIC_HIGHHEEL_PEX")]
+            self.assertEqual(heels, [
+                "IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=0 verified=0",
+                "IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=0 verified=1",
+                "IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=1 verified=1",
             ])
 
     def test_private_owned_default_and_modified_effective_tri(self):

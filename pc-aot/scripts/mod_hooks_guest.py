@@ -30,6 +30,7 @@ GROUPS = {
     "loading_menu_observe": 128, "inventory_fit": 256, "safety_load": 512,
     "camera_render_observe": 1024, "ece_tri_observe": 2048, "fresh_load": 4096,
     "camera_cull_observe": 8192, "ece_nose_observe": 16384,
+    "highheel_pex_observe": 32768,
 }
 FRESH_LOAD_DEPS = GROUPS["save_lifecycle"] | GROUPS["vm_lifecycle"]
 # The interface header and the reviewed seam headers its tables use; the IPA
@@ -110,6 +111,8 @@ def parse_groups(text: str) -> int:
         raise ValueError("fresh_load needs save_lifecycle and vm_lifecycle; list both")
     if mask & GROUPS["ece_nose_observe"] and not mask & GROUPS["ece_tri_observe"]:
         raise ValueError("ece_nose_observe needs ece_tri_observe; list both")
+    if mask & GROUPS["highheel_pex_observe"] and not mask & GROUPS["vm_lifecycle"]:
+        raise ValueError("highheel_pex_observe needs vm_lifecycle; list both")
     return mask
 
 
@@ -244,6 +247,31 @@ def function_span(unit: bytes, function: str) -> tuple[int, int]:
     return start, end
 
 
+def stage_highheel_pex_observe(root: Path) -> dict[str, bytes]:
+    unit = "exe_346.c"
+    source = (root / "gen" / unit).read_bytes()
+    if digest(source) != "5cc10640ab995d0479ef16a120eb3c9b51b45b474afd6340cef0e6ee9d439e15":
+        raise ValueError("Unreviewed Classic script linker unit")
+    start, end = function_span(source, "f_C68D30")
+    body = source[start:end]
+    lines = body.splitlines(keepends=True)
+    # The repeated tail in the same unit is a distinct function. Observe only
+    # the original root that both acquires the type and asks the parser to open.
+    parse, = [i for i, line in enumerate(lines) if b"M32(esp) = 0xC68E78u;" in line]
+    link, = [i for i, line in enumerate(lines) if b"M32(esp) = 0xC690DAu;" in line]
+    entry, = [i for i, line in enumerate(lines) if line == b"L_C68D30:\n"]
+    if not entry < parse < link:
+        raise ValueError("Classic script linker sites moved")
+    lines[link] += (b"    if (skyrim_heel_pex_epoch && skyrim_heel_pex_type == ebx)\n"
+                    b"        skyrim_highheel_pex_linked(c, skyrim_heel_pex_epoch, (TL8(ebx + 0x10u) & 3) == 3);\n")
+    lines[parse] = (b"    if (skyrim_highheel_pex_guest_selected && edx == 0xC45410u && ebx &&\n"
+                    b"        skyrim_highheel_pex_begin(c, edi, ecx)) skyrim_heel_pex_type = ebx;\n"
+                    + lines[parse]
+                    + b"    if (skyrim_heel_pex_type) skyrim_heel_pex_epoch = skyrim_highheel_pex_end(c, (uint8_t)eax != 0);\n")
+    lines[entry] = b"    uint32_t skyrim_heel_pex_type = 0; uint64_t skyrim_heel_pex_epoch = 0;\n" + lines[entry]
+    return {unit: b'#include "PcGuestModHooksABI.h"\n' + source[:start] + b"".join(lines) + source[end:]}
+
+
 def stage_vm_lifecycle(root: Path) -> dict[str, bytes]:
     sites = [*VM_SITES, VM_SCRIPT_RELOAD_SITE]
     staged: dict[str, bytes] = {}
@@ -280,6 +308,7 @@ STAGES = {
     "safety_load": stage_safety_load,
     "save_lifecycle": stage_save_lifecycle,
     "fresh_load": stage_fresh_load,
+    "highheel_pex_observe": stage_highheel_pex_observe,
 }
 
 

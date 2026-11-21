@@ -117,6 +117,7 @@ class ReceiverTests(unittest.TestCase):
         self.schema.line('IOS_CLASSIC_LOAD_RECORDS matched=0 applied=1')
         for phase in range(4):
             self.schema.line(f'IOS_CLASSIC_LANTERN schema=1 phase={phase} accepted=1')
+        self.schema.line('IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=1 verified=1')
 
     def test_same_id_replay_idempotent_and_conflicting_content_never_overwritten(self):
         _, first = self.receive()
@@ -240,6 +241,8 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_CLASSIC_LOAD_RECORDS matched=1 applied=2',
                      'IOS_CLASSIC_LANTERN schema=1 phase=4 accepted=1',
                      'IOS_CLASSIC_LANTERN schema=1 phase=2 accepted=1 npc=17352704',
+                     'IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=2 verified=1',
+                     'IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=1 verified=1 path=Data/Scripts/sample.pex',
                      timing().replace('samples=1', 'samples=2'),
                      self.bundle['sessions'][0]['lines'][-1].replace('result=-1', 'result=2147483648')]
         for line in bad_lines:

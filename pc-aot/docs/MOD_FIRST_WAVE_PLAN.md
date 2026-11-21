@@ -450,7 +450,7 @@ python3 scripts/build_title_guest.py private/<stage> --classic-skse --mod-hooks 
 | USLEEP | DLCのマスターが解決され、選んだレコードが変わっている |
 | Enhanced Camera | 通常の徒歩で一人称と三人称を切り替え、腕と体を画面で確認する。詳細診断の `IOS_CAMERA_CULL` で、一人称の体が描画リストの作成と描画前のどの判定を通ったかを確認する |
 | Safety Load | 同じコピーしたセーブで設定のオンとオフを比較する。ロードにかかった時間、失敗、メモリを記録する |
-| HDT Physics ExtensionsとHighHeels | 物理設定とメッシュを取り込み、静止時の表示を確認する。高さ補正を接続した後は同じ靴を装備・解除し、立つ・歩く・泳ぐ・衣装を変えるときの高さと元の姿勢への復帰を比較する |
+| HDT Physics ExtensionsとHighHeels | 物理設定とメッシュを取り込み、静止時の表示を確認する。HighHeelsを含むプロファイルで詳細診断を有効にし、実物の効果スクリプトを読み込んだ起動の `IOS_CLASSIC_HIGHHEEL_PEX` を確認する。phase 0 はファイルと解析、phase 1 はクラスのリンク成功を表す。高さ補正の接続後は同じ靴を装備・解除し、立つ・歩く・泳ぐ・衣装を変えるときの高さと元の姿勢への復帰を比較する |
 
 ## 9. 必要な入力（Web環境にないもの）
 
