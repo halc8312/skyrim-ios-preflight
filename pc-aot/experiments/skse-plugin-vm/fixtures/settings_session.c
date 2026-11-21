@@ -106,6 +106,32 @@ static void check_storage_records(const SkseSettingsInputs *inputs) {
     skse_classic_settings_close(settings);
 }
 
+static void check_startup_compatibility_list(const SkseSettingsInputs *inputs) {
+    static const uint32_t values[] = {0, 1, 100, 1000, 5555, UINT32_MAX, 123456};
+    const char file[] = "../WearableLanternsData/startup_test_file";
+    SkseClassicScalar list[] = {string(file), string("test_key"), scalar(3, 7), scalar(3, 0)};
+    const SkseClassicScalar save[] = {string(file), scalar(5, 1)};
+    SkseClassicSettings *settings = open_settings(inputs);
+    assert(call(settings, inputs->epoch, SKSE_SETTINGS_INT_LIST_RESIZE, list, 4).type == 3);
+    for (uint32_t i = 0; i < sizeof values / sizeof *values; ++i) {
+        list[2].bits = i;
+        list[3].bits = values[i];
+        assert(call(settings, inputs->epoch, SKSE_SETTINGS_INT_LIST_SET, list, 4).type == 3);
+    }
+    assert(call(settings, inputs->epoch, SKSE_SETTINGS_SAVE, save, 2).bits == 1);
+    skse_classic_settings_close(settings);
+
+    settings = open_settings(inputs);
+    assert(call(settings, inputs->epoch, SKSE_SETTINGS_LOAD, list, 1).bits == 1);
+    for (uint32_t i = 0; i < sizeof values / sizeof *values; ++i) {
+        list[2].bits = i;
+        assert(call(settings, inputs->epoch, SKSE_SETTINGS_INT_LIST_GET, list, 3).bits == values[i]);
+    }
+    assert(call(settings, inputs->epoch, SKSE_SETTINGS_INT_LIST_CLEAR, list, 2).type == 3);
+    assert(call(settings, inputs->epoch, SKSE_SETTINGS_INT_LIST_GET, list, 3).bits == 0);
+    skse_classic_settings_close(settings);
+}
+
 #ifdef SKYRIM_TEST_CLASSIC_VALUES_ENGINE
 typedef struct {
     SkseClassicSettings *writer;
@@ -323,6 +349,8 @@ int main(int argc, char **argv) {
         read_check(inputs);
     } else if (!strcmp(argv[6], "records")) {
         check_storage_records(&inputs);
+    } else if (!strcmp(argv[6], "startup-list")) {
+        check_startup_compatibility_list(&inputs);
     } else if (!strcmp(argv[6], "view")) {
         selected_view_check(inputs);
     } else {

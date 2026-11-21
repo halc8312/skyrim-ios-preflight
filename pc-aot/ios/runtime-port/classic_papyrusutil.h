@@ -1,10 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * PapyrusUtil 3.3 JsonUtil natives during play (plan P3-2). The seven
- * functions are the ones Wearable Lanterns 4.0.2 calls in
- * _WL_SkyUIConfigPanelScript.psc (ebf678e): GetIntValue 3, GetFloatValue 1,
- * GetStringValue 2, SetIntValue 55, SetFloatValue 23, SetStringValue 3 and
- * Save 10 calls; no StorageUtil and no array functions. They match the seven
- * methods of experiments/skse-plugin-vm/classic_settings.
+ * PapyrusUtil 3.3 JsonUtil natives during play (plan P3-2). The declarations
+ * cover Wearable Lanterns 4.0.2's configuration and startup compatibility
+ * check from ebf678e. List methods take scalar arguments; game Form values
+ * belong to a separate part of the Classic bridge.
  *
  * A call's result and its settings file change are published only in the VM
  * generation that started the call (classic_vm_epoch.h). The commit holds the
@@ -18,11 +16,11 @@
 extern "C" {
 #endif
 
-enum { SKYRIM_PAPYRUSUTIL_FUNCTIONS = 7 };
+enum { SKYRIM_PAPYRUSUTIL_FUNCTIONS = 12 };
 
 /* What the provider needs from the settings scope; production binds
  * skse_classic_settings (SKYRIM_CLASSIC_SETTINGS_BACKEND), tests an authored one.
- * method: 1..7 in the order of SkseSettingsMethod. */
+ * method: row number in SkseSettingsMethod. */
 typedef struct {
     bool (*invoke)(void *context, unsigned method, const ClassicValue *args, size_t count, ClassicValue *result,
                    char *text, size_t capacity, uint64_t *ticket);

@@ -313,7 +313,7 @@ def check_owned_settings_sequence(test, binary, dll, bootstrap, root, scripts, e
     owner_digest = hashlib.sha256(Path(executable).read_bytes()).hexdigest()
     base_file = game / "Data/SKSE/Plugins/WearableLanternsData/profile1.json"
     base_bytes = b'{"int":{"brightness":208}}'
-    for phase in ("write", "records", "read", "base"):
+    for phase in ("write", "records", "startup-list", "read", "base"):
         if phase == "base":
             test.assertEqual(list(game.iterdir()), [])
             base_file.parent.mkdir(parents=True)

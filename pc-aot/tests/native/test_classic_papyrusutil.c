@@ -30,7 +30,7 @@ static struct { unsigned invokes, commits, discards; bool refuse_commit, fail_in
 static bool fake_invoke(void *ctx, unsigned method, const ClassicValue *args, size_t count, ClassicValue *result,
                         char *text, size_t capacity, uint64_t *ticket) {
     (void)ctx; (void)text; (void)capacity;
-    assert(method >= 1 && method <= 7 && count == captured.functions[method - 1].count);
+    assert(method >= 1 && method <= SKYRIM_PAPYRUSUTIL_FUNCTIONS && count == captured.functions[method - 1].count);
     for (size_t i = 0; i < count; ++i) assert(args[i].type == captured.functions[method - 1].arguments[i]);
     ++store.invokes;
     if (store.fail_invoke) return false;
@@ -87,7 +87,7 @@ static void *reverter(void *unused) {
 static void expect(uint64_t calls, uint64_t stale, uint64_t commits, uint64_t discards, uint64_t errors) {
     SkyrimPapyrusUtilStats s;
     skyrim_papyrusutil_stats(&s);
-    assert(s.published == 7 && s.calls == calls && s.refused_stale == stale && s.commits == commits
+    assert(s.published == SKYRIM_PAPYRUSUTIL_FUNCTIONS && s.calls == calls && s.refused_stale == stale && s.commits == commits
            && s.discards == discards && s.errors == errors);
 }
 
@@ -100,7 +100,8 @@ int main(void) {
     assert(skyrim_papyrusutil_publish(&backend, 1) != 0);
     refuse_request = false;
     assert(skyrim_papyrusutil_publish(&backend, 1) == 0 && skyrim_papyrusutil_publish(&backend, 1) != 0);
-    assert(captured.count == 7 && captured.finished && !strcmp(captured.functions[6].name, "Save"));
+    assert(captured.count == SKYRIM_PAPYRUSUTIL_FUNCTIONS && captured.finished &&
+           !strcmp(captured.functions[6].name, "Save") && !strcmp(captured.functions[11].name, "IntListSet"));
     assert(skyrim_vm_epoch_subscribe(watch_revert, NULL));
     const unsigned base_errors = 1;  /* the refused request above */
 
@@ -179,7 +180,7 @@ int main(void) {
     close(fd);
     unlink(path);
     regex_t pattern;
-    assert(!regcomp(&pattern, "^IOS_PAPYRUSUTIL schema=1 published=7 calls=6 refused_stale=4 commits=2 "
+    assert(!regcomp(&pattern, "^IOS_PAPYRUSUTIL schema=1 published=12 calls=6 refused_stale=4 commits=2 "
                     "discards=3 errors=3\n$", REG_EXTENDED));
     assert(!regexec(&pattern, line, 0, NULL, 0));
     regfree(&pattern);

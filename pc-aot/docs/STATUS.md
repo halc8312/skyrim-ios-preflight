@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | SKSE / SkyUI | 通常版22でインベントリとMCMを実機確認済み。固定版の登録・再読み込みをPCで確認。横長画面の表示試験を設定に追加 | 更新版でError Code 1、MCM、表示とタッチ位置を確認 |
 | Fuz Ro D-oh | 固定版の会話経路を接続。実物の代替音声10本のPCMと長さをPCで照合 | 通常音声、無音声の台詞、字幕と口の動きを比較 |
-| PapyrusUtil / Wearable Lanterns | 実物StorageUtilのホスト試験と、入力・メーター・設定の試験が合格 | 点灯、長押し、設定と再起動後の復元 |
+| PapyrusUtil / Wearable Lanterns | 実物PapyrusUtilでMCMの設定と起動時の整数リスト読み書きを確認。入力・メーターのホスト試験が合格 | 点灯、長押し、設定と再起動後の復元。NPCの持ち方を保存するForm引数を検証中 |
 | 追加セーブ | 固定版のPC往復試験9条件。名前付きプロファイルの試験構成に、所有者のStorageUtil 3.3の記録と読み込み時の復元を接続 | Apple SDKで統合を確認し、iPhoneで連続セーブ、ゲーム再起動後の復元、別セーブへの漏れ、読込時間を検証 |
 | RaceMenu / ECE / NiOverride | RaceMenuの標準の鼻の高さを接続。ECEの顔TRIをゲームがどこから読んだかを詳細診断で記録。NiOverrideの提供元と版を表示 | ECEで鼻の高さだけを変えた同一キャラクターの書き出しと、実機での顔データの選択を照合 |
 | XPMSE / XPMS / Realistic Ragdolls and Force | プロファイルごとの骨格の選択と前提ファイルを検査 | 実物の骨格とアニメーションを別プロファイルで確認 |
@@ -26,6 +26,10 @@
 固定版のゲームが `.ess` の公開を終えたときだけ、同じ処理のStorageUtil 3.3の記録とプラグイン順を保存候補にする。保存データの照合と書き込みは別スレッドで行う。読み込み側は、選択した `.ess` とゲームが実際に使った読み取り専用コピーの対応を確認し、同じVMの世代でだけ記録を復元する。元のセーブとゲームフォルダは変更しない。この試験は使用する言語を明示した名前付きMODプロファイルに限る。 [セーブとロードの試験](../experiments/classic-runtime-save/README.md)
 
 固定版とSkydreamを使った往復試験9条件がClang 18とGCCのASan/UBSanで合格した。読み取り専用ストアを含む13件、実物のStorageUtilでの保存・復元・リセットもPCで確認した。iPhoneでの実際のMOD動作、保存直後にアプリを切り替えた場合の書き込み完了、ロード時間は未確認。
+
+**2026-11-22　Wearable Lanternsの起動時の設定チェックを追加**
+
+4.0.2の設定画面が呼ぶ7種類に加え、起動時の確認が使う `Load` と4種類の `IntList*` を、固定版のPapyrusUtil 3.3と実際のPEXで照合した。元のゲームビューからの読み取りと、専用プロファイルへの書き込みを使い、7個の整数を保存・再読み込みして一致を確認した。NPCの持ち方に使う `StorageUtil.GetIntValue` と `SetIntValue` は、別途実際のForm引数と対象の寿命を確認する。 [作者の4.0.2の起動時チェック](https://github.com/chesko256/WearableLanterns/blob/ebf678e6a17c5f3ee0723e851e1ff4497e77fe19/Scripts/Source/_WL_Compatibility.psc)
 
 **2026-11-22　持ち物画面の拡大指定とFuzの付属音声を照合**
 

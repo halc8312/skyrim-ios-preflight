@@ -17,6 +17,11 @@ static const ClassicValueFunction functions[SKYRIM_PAPYRUSUTIL_FUNCTIONS] = {
     {"JsonUtil", "SetFloatValue", 5, 4, 3, {2, 2, 4}},
     {"JsonUtil", "SetStringValue", 6, 2, 3, {2, 2, 2}},
     {"JsonUtil", "Save", 7, 5, 2, {2, 5}},
+    {"JsonUtil", "Load", 8, 5, 1, {2}},
+    {"JsonUtil", "IntListClear", 9, 3, 2, {2, 2}},
+    {"JsonUtil", "IntListGet", 10, 3, 3, {2, 2, 3}},
+    {"JsonUtil", "IntListResize", 11, 3, 4, {2, 2, 3, 3}},
+    {"JsonUtil", "IntListSet", 12, 3, 4, {2, 2, 3, 3}},
 };
 
 static SkyrimPapyrusUtilBackend backend;
@@ -163,8 +168,8 @@ void skyrim_papyrusutil_report(void) {
 static bool settings_invoke(void *context, unsigned method, const ClassicValue *args, size_t count,
                             ClassicValue *result, char *text, size_t capacity, uint64_t *ticket) {
     SkyrimPapyrusUtilSettings *scope = context;
-    SkseClassicScalar scalars[3];
-    if (count > 3) return false;
+    SkseClassicScalar scalars[CLASSIC_VALUES_ARGS];
+    if (count > CLASSIC_VALUES_ARGS) return false;
     for (size_t i = 0; i < count; ++i) {
         scalars[i] = (SkseClassicScalar){.type = args[i].type, .bits = args[i].bits};
         if (args[i].type == CLASSIC_VALUES_STRING) {

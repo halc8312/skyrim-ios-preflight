@@ -39,7 +39,7 @@ static const uint8_t settings_pex_hash[32] = {
 static const struct {
     const char *name;
     uint32_t result, count;
-    uint32_t arguments[3];
+    uint32_t arguments[4];
 } settings_signatures[] = {
     [SKSE_SETTINGS_GET_INT] = {"GetIntValue", 3, 3, {2, 2, 3}},
     [SKSE_SETTINGS_GET_FLOAT] = {"GetFloatValue", 4, 3, {2, 2, 4}},
@@ -47,13 +47,18 @@ static const struct {
     [SKSE_SETTINGS_SET_INT] = {"SetIntValue", 3, 3, {2, 2, 3}},
     [SKSE_SETTINGS_SET_FLOAT] = {"SetFloatValue", 4, 3, {2, 2, 4}},
     [SKSE_SETTINGS_SET_STRING] = {"SetStringValue", 2, 3, {2, 2, 2}},
-    [SKSE_SETTINGS_SAVE] = {"Save", 5, 2, {2, 5}}
+    [SKSE_SETTINGS_SAVE] = {"Save", 5, 2, {2, 5}},
+    [SKSE_SETTINGS_LOAD] = {"Load", 5, 1, {2}},
+    [SKSE_SETTINGS_INT_LIST_CLEAR] = {"IntListClear", 3, 2, {2, 2}},
+    [SKSE_SETTINGS_INT_LIST_GET] = {"IntListGet", 3, 3, {2, 2, 3}},
+    [SKSE_SETTINGS_INT_LIST_RESIZE] = {"IntListResize", 3, 4, {2, 2, 3, 3}},
+    [SKSE_SETTINGS_INT_LIST_SET] = {"IntListSet", 3, 4, {2, 2, 3, 3}}
 };
 
 struct SkseClassicSettings {
     SksePluginSession session;
     SkseClassicCatalog catalog;
-    const SkseClassicDeclaration *methods[SKSE_SETTINGS_SAVE + 1];
+    const SkseClassicDeclaration *methods[SKSE_SETTINGS_METHOD_LIMIT];
     SkseProfileJsonStore *store;
     SkseProfileJsonOverlay *overlay;
     SkseProfileJsonBatch batch;
@@ -153,7 +158,7 @@ static SkseSettingsStatus settings_check_signatures(SkseClassicSettings *setting
     SksePexInventory inventory = {.natives = natives, .native_capacity = SKSE_PEX_MAX_ROWS};
     SkseSettingsStatus status = skse_pex_inspect(inputs->pex, inputs->pex_size, &inventory) == SKSE_PEX_OK
         ? SKSE_SETTINGS_OK : SKSE_SETTINGS_SIGNATURE;
-    for (SkseSettingsMethod method = SKSE_SETTINGS_GET_INT; status == SKSE_SETTINGS_OK && method <= SKSE_SETTINGS_SAVE;
+    for (SkseSettingsMethod method = SKSE_SETTINGS_GET_INT; status == SKSE_SETTINGS_OK && method < SKSE_SETTINGS_METHOD_LIMIT;
          ++method) {
         static const uint8_t script[] = "JsonUtil";
         const char *name = settings_signatures[method].name;
@@ -285,7 +290,7 @@ static SkseSettingsStatus settings_call(SkseClassicSettings *settings, uint64_t 
     SkseClassicScalarResult *output, uint64_t *ticket, SkseX86Result *trace) {
     if (trace) *trace = (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
     char target[SKSE_WIN_PATH_UNITS];
-    if (!settings || settings->epoch != epoch || method < SKSE_SETTINGS_GET_INT || method > SKSE_SETTINGS_SAVE ||
+    if (!settings || settings->epoch != epoch || method < SKSE_SETTINGS_GET_INT || method >= SKSE_SETTINGS_METHOD_LIMIT ||
         !arguments || !output || (!preparing && !ticket) || count != settings_signatures[method].count ||
         settings->pending || !settings_target(arguments, target)) return SKSE_SETTINGS_ARGUMENT;
     if (settings->retired) return SKSE_SETTINGS_RETIRED;
