@@ -13,8 +13,7 @@ struct CPU;
  * own resolver frames grow below that, as for an ordinary guest call. */
 enum {
     SKYRIM_FUZ_GUEST_LOOKUP_GAP = 0x20, SKYRIM_FUZ_GUEST_LOOKUP_NAME = 0x110,
-    SKYRIM_FUZ_GUEST_LOOKUP_OBJECT = 0x40, SKYRIM_FUZ_GUEST_LOOKUP_FRAME = 0x10,
-    SKYRIM_FUZ_GUEST_LOOKUP_MIN_STACK = 0x10000
+    SKYRIM_FUZ_GUEST_LOOKUP_OBJECT = 0x40, SKYRIM_FUZ_GUEST_LOOKUP_FRAME = 0x10
 };
 
 typedef struct {
@@ -22,11 +21,15 @@ typedef struct {
 } SkyrimFuzGuestLookupLayout;
 
 typedef struct {
-    const struct CPU *caller;  // Thread whose TLS base the lookup reuses.
-    uint32_t live_stack;       // Lowest live guest stack address (caller esp).
+    const struct CPU *caller;
+    uint32_t live_stack;
+    /* The caller authenticates the current CPU and owns the contiguous
+     * writable interval [stack_limit, stack_base) through both calls.
+     * nested_bytes covers the deepest admitted call beneath the new frame. */
+    uint32_t stack_limit, stack_base, nested_bytes;
 } SkyrimFuzGuestResources;
 
-bool skyrim_fuz_guest_lookup_layout(uint32_t live_stack, SkyrimFuzGuestLookupLayout *);
+bool skyrim_fuz_guest_lookup_layout(const SkyrimFuzGuestResources *, SkyrimFuzGuestLookupLayout *);
 
 /* SkyrimFuzLookup through the reviewed Classic BSIStream constructor
  * f_B08630 and its destructor f_B08970 (flag 0, no heap release). An open
@@ -37,10 +40,10 @@ SkyrimFuzAvailability skyrim_fuz_guest_resource_lookup(void *resources, const ch
 
 /* Run the configured policy with the game's resource lookup on the caller's
  * thread and update the stack path when a stock clip is selected. Existing
- * WAV, FUZ or XWM voices, a missing stock clip or any lookup failure leave
+ * WAV, FUZ or XWM voices, a missing stock clip or a reported lookup error leave
  * the original path unchanged. The caller still performs the original
  * assignment and owns the returned witness. */
 bool skyrim_fuz_choose_with_guest_resources(const SkyrimFuzPolicy *configured, const SkyrimFuzLiftMemory *,
-                                            const struct CPU *caller, uint32_t argument_slot,
-                                            uint32_t response_object, SkyrimFuzLiftChoice *);
+                                            const SkyrimFuzGuestResources *, uint32_t response_object,
+                                            SkyrimFuzLiftChoice *);
 #endif

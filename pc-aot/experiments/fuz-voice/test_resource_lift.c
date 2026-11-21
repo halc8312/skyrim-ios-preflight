@@ -10,9 +10,11 @@
 
 enum {
     STREAM = 0x2140, STREAM_VTABLE = 0x2200, CALLER_OFFSET = 0x2800, RESOLVE_OUTPUT = 0x2804,
-    DEFAULT_ROOT = 0x2900, STACK = 0x2fe0, PATH_CAPACITY = 260,
+    DEFAULT_ROOT = 0x2900, PATH_CAPACITY = 260,
+    STACK_LIMIT = 0x10000, STACK = 0x17000, STACK_BASE = 0x18000,
     // lift_resource_lookup.c places the name and object below the live stack.
-    PATH = 0x2eb0, OBJECT = 0x2e70,
+    PATH = STACK - SKYRIM_FUZ_GUEST_LOOKUP_GAP - SKYRIM_FUZ_GUEST_LOOKUP_NAME,
+    OBJECT = PATH - SKYRIM_FUZ_GUEST_LOOKUP_OBJECT,
     // A response whose stack path frame begins at STACK + 0x14.
     RESPONSE = 0x3200, RESPONSE_TEXT = 0x3240,
     COMPARE_EXCHANGE_SLOT = 0x106b14c, ROOT_VTABLE = 0x110cc68, DEFAULT_ROOT_SLOT = 0x1b41100,
@@ -41,6 +43,10 @@ uint8_t *MEM;
 static Fixture *active;
 static gm_space space;
 static const CPU caller = {0}; // The reviewed routines run with the fixture's zero TLS base.
+static const SkyrimFuzGuestResources resources = {
+    .caller = &caller, .live_stack = STACK,
+    .stack_limit = STACK_LIMIT, .stack_base = STACK_BASE, .nested_bytes = 0x4000
+};
 
 static uint32_t argument(CPU *cpu, unsigned index) {
     return M32(cpu->r[4] + 4 * (index + 1));
@@ -168,8 +174,8 @@ static SkyrimFuzAvailability lookup_lifted(void *context, const char *relative) 
     Fixture *fixture = context;
     assert(active == fixture && !fixture->names);
     const unsigned probes = fixture->probes, streams = fixture->disposals;
-    SkyrimFuzGuestResources resources = {.caller = &caller, .live_stack = STACK};
-    const SkyrimFuzAvailability found = skyrim_fuz_guest_resource_lookup(&resources, relative);
+    SkyrimFuzGuestResources call = resources;
+    const SkyrimFuzAvailability found = skyrim_fuz_guest_resource_lookup(&call, relative);
     assert(!strcmp((const char *)MEM + PATH, relative));
     assert(fixture->probes == probes + 1 && !fixture->names && !fixture->frees);
     assert(M32(CALLER_OFFSET) == FIXTURE_CURSOR);
@@ -244,7 +250,7 @@ static bool choose_in_game(const SkyrimFuzPolicy *policy, SkyrimFuzLiftChoice *c
     M32(RESPONSE) = RESPONSE_TEXT;
     M32(RESPONSE + 4) = (uint32_t)(sizeof response - 1) | ((uint32_t)sizeof response << 16);
     const SkyrimFuzLiftMemory access = {read_guest, replace_guest, &space};
-    const bool changed = skyrim_fuz_choose_with_guest_resources(policy, &access, &caller, STACK, RESPONSE, choice);
+    const bool changed = skyrim_fuz_choose_with_guest_resources(policy, &access, &resources, RESPONSE, choice);
     assert(M32(STACK) == frame && !memcmp(MEM + RESPONSE_TEXT, response, sizeof response));
     const char *expected = changed ? game_stock : game_original;
     assert(!strcmp((const char *)MEM + frame, expected));
@@ -255,14 +261,16 @@ static bool choose_in_game(const SkyrimFuzPolicy *policy, SkyrimFuzLiftChoice *c
 
 int main(void) {
     assert(gm_reserve(&space, NULL));
-    const uint32_t addresses[] = {OBJECT, RESPONSE, COMPARE_EXCHANGE_SLOT, ROOT_VTABLE, DEFAULT_ROOT_SLOT};
+    for (uint64_t page = STACK_LIMIT; page < STACK_BASE; page += space.page_size)
+        assert(gm_commit_page(&space, page, NULL));
+    const uint32_t addresses[] = {STREAM, RESPONSE, COMPARE_EXCHANGE_SLOT, ROOT_VTABLE, DEFAULT_ROOT_SLOT};
     for (size_t i = 0; i < sizeof addresses / sizeof addresses[0]; ++i) {
         const uint64_t page = (addresses[i] / space.page_size) * space.page_size;
         if (!gm_pointer(&space, addresses[i], 1)) assert(gm_commit_page(&space, page, NULL));
     }
     MEM = space.base;
     SkyrimFuzGuestLookupLayout layout;
-    assert(skyrim_fuz_guest_lookup_layout(STACK, &layout) && layout.name == PATH && layout.object == OBJECT);
+    assert(skyrim_fuz_guest_lookup_layout(&resources, &layout) && layout.name == PATH && layout.object == OBJECT);
     M32(COMPARE_EXCHANGE_SLOT) = TEST_COMPARE_EXCHANGE;
     M32(ROOT_VTABLE + 12) = TEST_RESOLVE;
     M32(DEFAULT_ROOT_SLOT) = DEFAULT_ROOT;

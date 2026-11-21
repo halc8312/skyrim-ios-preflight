@@ -12,10 +12,11 @@
 #include <string.h>
 
 enum {
-    GUEST_BYTES = 0x20000, LIVE = 0x1f000, FRAME = LIVE + SKYRIM_FUZ_LIFT_FRAME_FROM_SLOT,
+    GUEST_BYTES = 0x20000, STACK_LIMIT = 0x18000, LIVE = 0x1f000,
+    FRAME = LIVE + SKYRIM_FUZ_LIFT_FRAME_FROM_SLOT,
     TITLE_A = 0x1f400, TITLE_B = 0x1f440, RESPONSE_A = 0x1f500, RESPONSE_B = 0x1f540, RESPONSE_C = 0x1f580,
     VOICE_A = 0x1f600, VOICE_STOCK = 0x1f700, VOICE_C = 0x1f800, TLS_BASE = 0x7ffde000,
-    BSISTREAM_VTABLE = 0x0111eaf8, STREAM = 0x5000
+    BSISTREAM_VTABLE = 0x0111eaf8, STREAM = 0x5000, SAVED_EBX = 0x12345678
 };
 
 static _Alignas(16) uint8_t guest[GUEST_BYTES];
@@ -38,9 +39,14 @@ static struct {
     char probes[8][SKYRIM_FUZ_LIFT_FRAME_BYTES];
     unsigned probe_count, live_destroys;
     uint32_t frame;
+    bool check_reentry, unknown_vtable;
 } catalog;
 
-static const CPU caller = {.fs_base = TLS_BASE};
+static const CPU caller = {.fs_base = TLS_BASE, .r = {[3] = SAVED_EBX}};
+static const SkyrimFuzGuestResources resources = {
+    .caller = &caller, .live_stack = LIVE,
+    .stack_limit = STACK_LIMIT, .stack_base = GUEST_BYTES, .nested_bytes = 0x4000
+};
 
 static uint32_t argument(const CPU *cpu, unsigned index) {
     return M32(cpu->r[4] + 4 * (index + 1));
@@ -49,11 +55,18 @@ static uint32_t argument(const CPU *cpu, unsigned index) {
 /* Model of the reviewed observations: vtable, stream, valid byte, name. */
 void f_B08630(CPU *cpu) {
     const uint32_t object = cpu->r[1], name = argument(cpu, 0);
-    assert(cpu->fs_base == TLS_BASE && !argument(cpu, 1) && cpu->r[4] + 12 <= object && object < name);
+    assert(cpu->fs_base == TLS_BASE && cpu->r[3] == SAVED_EBX &&
+           !argument(cpu, 1) && cpu->r[4] + 12 <= object && object < name);
     assert(name + SKYRIM_FUZ_GUEST_LOOKUP_NAME <= LIVE && catalog.probe_count < 8);
     const char *requested = (const char *)MEM + name;
     strcpy(catalog.probes[catalog.probe_count++], requested);
-    M32(object) = BSISTREAM_VTABLE;
+    if (catalog.check_reentry) {
+        SkyrimFuzGuestResources reentry = resources;
+        const unsigned probes = catalog.probe_count;
+        assert(skyrim_fuz_guest_resource_lookup(&reentry, stock) == SKYRIM_FUZ_LOOKUP_ERROR);
+        assert(catalog.probe_count == probes && argument(cpu, 0) == name);
+    }
+    M32(object) = catalog.unknown_vtable ? 0 : BSISTREAM_VTABLE;
     M32(object + 4) = 0;
     M8(object + 8) = 0;
     M32(object + 12) = name;
@@ -68,7 +81,8 @@ void f_B08630(CPU *cpu) {
 
 void f_B08970(CPU *cpu) {
     const uint32_t object = cpu->r[1];
-    assert(cpu->fs_base == TLS_BASE && argument(cpu, 0) == 0 && M32(object) == BSISTREAM_VTABLE);
+    assert(cpu->fs_base == TLS_BASE && cpu->r[3] == SAVED_EBX &&
+           argument(cpu, 0) == 0 && M32(object) == BSISTREAM_VTABLE);
     memset(MEM + object, 0, 16);
     ++catalog.live_destroys;
     cpu->r[0] = object;
@@ -110,7 +124,7 @@ static bool assign(SkyrimFuzMenuTracker *tracker, const SkyrimFuzPolicy *policy,
     catalog.probe_count = catalog.live_destroys = 0;
 
     SkyrimFuzLiftChoice choice;
-    const bool changed = skyrim_fuz_choose_with_guest_resources(policy, &access, &caller, LIVE, response, &choice);
+    const bool changed = skyrim_fuz_choose_with_guest_resources(policy, &access, &resources, response, &choice);
     assert(catalog.live_destroys == catalog.probe_count);
     if (changed) memcpy(above + SKYRIM_FUZ_LIFT_FRAME_FROM_SLOT, game_stock, sizeof game_stock);
     assert(!memcmp(above, MEM + LIVE, sizeof above)); // Only the accepted path changes.
@@ -186,12 +200,33 @@ int main(void) {
     check_probes(silent_probes, 3);
     assert(!tracker.count);
 
-    // A stack too low for the scratch layout performs no guest call.
-    SkyrimFuzGuestResources low = {.caller = &caller, .live_stack = SKYRIM_FUZ_GUEST_LOOKUP_MIN_STACK};
+    // A numerically high ESP can still have insufficient owner-local room.
+    SkyrimFuzGuestResources low = resources;
+    low.stack_limit = LIVE - 0x100;
     catalog.probe_count = 0;
     assert(skyrim_fuz_guest_resource_lookup(&low, stock) == SKYRIM_FUZ_LOOKUP_ERROR && !catalog.probe_count);
-    SkyrimFuzGuestResources missing = {.live_stack = LIVE};
+    SkyrimFuzGuestResources missing = resources;
+    missing.caller = NULL;
     assert(skyrim_fuz_guest_resource_lookup(&missing, stock) == SKYRIM_FUZ_LOOKUP_ERROR && !catalog.probe_count);
+    SkyrimFuzGuestResources shallow = resources;
+    shallow.nested_bytes = LIVE - STACK_LIMIT;
+    assert(skyrim_fuz_guest_resource_lookup(&shallow, stock) == SKYRIM_FUZ_LOOKUP_ERROR && !catalog.probe_count);
+    SkyrimFuzGuestResources narrow = resources;
+    narrow.stack_base = LIVE + 32;
+    SkyrimFuzLiftChoice denied = {.assigned_path = "previous", .force_subtitle = true};
+    assert(!skyrim_fuz_choose_with_guest_resources(&policy, &access, &narrow, RESPONSE_B, &denied));
+    assert(!catalog.probe_count && !denied.assigned_path[0] && !denied.force_subtitle);
+
+    SkyrimFuzGuestResources valid = resources;
+    catalog.check_reentry = true;
+    assert(skyrim_fuz_guest_resource_lookup(&valid, stock) == SKYRIM_FUZ_PRESENT && catalog.probe_count == 1);
+    catalog.check_reentry = false;
+    catalog.unknown_vtable = true;
+    const unsigned destroyed = catalog.live_destroys;
+    assert(skyrim_fuz_guest_resource_lookup(&valid, stock) == SKYRIM_FUZ_LOOKUP_ERROR);
+    assert(catalog.probe_count == 2 && catalog.live_destroys == destroyed);
+    catalog.unknown_vtable = false;
+    assert(skyrim_fuz_guest_resource_lookup(&valid, stock) == SKYRIM_FUZ_PRESENT);
 
     puts("Hosted game-lookup glue kept original voices and marked only the substituted response.");
     return 0;
