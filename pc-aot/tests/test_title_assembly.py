@@ -124,6 +124,136 @@ class ArtifactBindingTests(unittest.TestCase):
             with self.subTest(marker=invalid), self.assertRaisesRegex(ValueError, "Invalid Classic"):
                 self.check()
 
+    def classic_contract(self):
+        path = self.build / "compile-contract.json"
+        contract = json.loads(path.read_text())
+        extension = self.root / "ios/private-abi/PcGuestSkseABI.h"
+        extension.write_bytes(b"authored classic binding\n")
+        (self.host / extension.name).write_bytes(extension.read_bytes())
+        contract.update(classic_skse_experiment=True, classic_abi_header_sha256=assembly.sha(extension))
+        return path, contract
+
+    def test_mod_hook_guest_needs_host_abi_groups_and_all_five_headers(self):
+        path, contract = self.classic_contract()
+        hashes = {}
+        for name, folder in assembly.MOD_HOOK_HEADERS.items():
+            source = self.root / folder / name
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(b"authored " + name.encode() + b"\n")
+            (self.host / name).write_bytes(source.read_bytes().replace(b"\n", b"\r\n"))
+            hashes[name] = assembly.sha(source)
+        contract.update(mod_hook_groups=3, mod_hooks_header_sha256=hashes)
+        path.write_text(json.dumps(contract))
+        guest = {"candidate_sha256": self.input_hash, "classic_skse_experiment": True, "mod_hook_groups": 3}
+        self.result.write_text(json.dumps(guest))
+        self.host_result["classic_skse_experiment"] = True
+        self.write_host_result()
+        with self.assertRaisesRegex(ValueError, "MOD hook ABI"):
+            self.check()
+        self.host_result["mod_hooks_abi"] = 1
+        self.write_host_result()
+        self.check()
+        # A hook-capable host still accepts a Classic guest without hooks.
+        self.result.write_text(json.dumps(dict(guest, mod_hook_groups=0)))
+        with self.assertRaisesRegex(ValueError, "compile contract"):
+            self.check()
+        del contract["mod_hook_groups"]
+        path.write_text(json.dumps(contract))
+        self.check()
+        contract["mod_hook_groups"] = 3
+        path.write_text(json.dumps(contract))
+        self.result.write_text(json.dumps(guest))
+        for name in assembly.MOD_HOOK_HEADERS:
+            host_copy = self.host / name
+            original = host_copy.read_bytes()
+            host_copy.write_bytes(original + b"changed\n")
+            with self.subTest(header=name), self.assertRaisesRegex(ValueError, "MOD hook header mismatch"):
+                self.check()
+            host_copy.write_bytes(original)
+        recorded = dict(hashes)
+        recorded.pop("voice_fallback.h")
+        contract["mod_hooks_header_sha256"] = recorded
+        path.write_text(json.dumps(contract))
+        with self.assertRaisesRegex(ValueError, "MOD hook header mismatch"):
+            self.check()
+        contract["mod_hooks_header_sha256"] = hashes
+        path.write_text(json.dumps(contract))
+        for invalid in (True, "3", 16, 2, -1):
+            self.result.write_text(json.dumps(dict(guest, mod_hook_groups=invalid)))
+            with self.subTest(groups=invalid), self.assertRaisesRegex(ValueError, "Invalid MOD hook groups"):
+                self.check()
+        self.result.write_text(json.dumps(guest))
+        for invalid in (True, 2, "1"):
+            self.host_result["mod_hooks_abi"] = invalid
+            self.write_host_result()
+            with self.subTest(abi=invalid), self.assertRaisesRegex(ValueError, "Invalid MOD hook ABI"):
+                self.check()
+        self.host_result["mod_hooks_abi"] = 1
+        self.write_host_result()
+        # Hooks without the Classic guest are refused.
+        self.result.write_text(json.dumps(dict(guest, classic_skse_experiment=False)))
+        self.host_result["classic_skse_experiment"] = False
+        self.write_host_result()
+        contract["classic_skse_experiment"] = False
+        path.write_text(json.dumps(contract))
+        with self.assertRaisesRegex(ValueError, "Classic host"):
+            self.check()
+
+    def test_packages_mod_hook_guest_only_with_matching_plists(self):
+        path, contract = self.classic_contract()
+        hashes = {}
+        for name, folder in assembly.MOD_HOOK_HEADERS.items():
+            source = self.root / folder / name
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(b"authored " + name.encode() + b"\n")
+            (self.host / name).write_bytes(source.read_bytes())
+            hashes[name] = assembly.sha(source)
+        contract.update(mod_hook_groups=15, mod_hooks_header_sha256=hashes)
+        path.write_text(json.dumps(contract))
+        framework = self.build / "SkyrimGuest.framework"
+        framework.mkdir()
+        guest = framework / "SkyrimGuest"
+        guest.write_bytes(b"synthetic guest")
+        game = self.stage / "owned-input"
+        game.write_bytes(b"synthetic game input")
+        self.result.write_text(json.dumps({"candidate_sha256": self.input_hash, "sha256": assembly.sha(guest),
+            "strict_link_succeeded": True, "signed": False, "framework": str(framework),
+            "classic_skse_experiment": True, "mod_hook_groups": 15}))
+        self.host_result.update(classic_skse_experiment=True, mod_hooks_abi=1)
+        archive = self.host / "SkyrimIOS-public-host.zip"
+        current = plistlib.loads((ROOT / "ios/runtime-port/Info.plist.in").read_bytes())["CFBundleVersion"]
+        for index, (host_abi, guest_groups, error) in enumerate((
+                (1, 15, None), (None, 15, "lacks the MOD hook ABI"), (1, 3, "framework MOD hook groups"),
+                (1, None, "framework MOD hook groups"), (True, 15, "Invalid MOD hook ABI"))):
+            with self.subTest(host=host_abi, guest=guest_groups):
+                info = dict(CFBundleIdentifier="org.skyrimios.pc2011", CFBundleVersion=current,
+                            CFBundleExecutable="SkyrimIOS", PcGuestClassicSkseExperiment=True)
+                if host_abi is not None:
+                    info["PcGuestModHooksABI"] = host_abi
+                with zipfile.ZipFile(archive, "w") as package:
+                    package.writestr("SkyrimIOS.app/Info.plist", plistlib.dumps(info))
+                    package.writestr("SkyrimIOS.app/SkyrimIOS", b"synthetic host")
+                framework_info = {"PcGuestClassicSkseExperiment": True}
+                if guest_groups is not None:
+                    framework_info["PcGuestModHooks"] = guest_groups
+                (framework / "Info.plist").write_bytes(plistlib.dumps(framework_info))
+                self.host_result["artifact_sha256"] = assembly.sha(archive)
+                self.write_host_result()
+                out = self.root / f"hooks-{index}.ipa"
+                argv = ["assemble_title_ipa.py", "--host-artifacts", str(self.host), "--guest-result",
+                        str(self.result), "--input", str(game), "--input-sha256", self.input_hash,
+                        "--output", str(out)]
+                with patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
+                    if error:
+                        with self.assertRaisesRegex(ValueError, error):
+                            assembly.main()
+                        self.assertFalse(out.exists())
+                    else:
+                        assembly.main()
+                        with zipfile.ZipFile(out) as package:
+                            actual = plistlib.loads(package.read(assembly.APP + "Info.plist"))
+                            self.assertEqual(actual["PcGuestModHooksABI"], 1)
+
     def test_packages_existing_classic_capability_for_only_the_standard_product(self):
         key = "PcGuestClassicSkseExperiment"
         framework = self.build / "SkyrimGuest.framework"

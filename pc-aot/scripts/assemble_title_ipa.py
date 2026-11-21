@@ -10,6 +10,15 @@ import zipfile
 
 APP = "Payload/SkyrimIOS.app/"
 ROOT = Path(__file__).resolve().parents[1]
+# The optional MOD hook interface and the reviewed seam headers its tables use.
+MOD_HOOK_HEADERS = {
+    "PcGuestModHooksABI.h": "ios/private-abi",
+    "lift_menu_seam.h": "experiments/fuz-voice",
+    "lift_world_seam.h": "experiments/fuz-voice",
+    "lift_voice_seam.h": "experiments/fuz-voice",
+    "voice_fallback.h": "experiments/fuz-voice",
+}
+MOD_HOOK_GROUPS_DEFINED = 15  # PC_GUEST_MOD_HOOKS_DEFINED in version 1
 
 
 def load_diagnostics_pairing(path):
@@ -41,6 +50,25 @@ def classic_capable(record, key="classic_skse_experiment"):
     if type(value) is not bool:
         raise ValueError("Invalid Classic capability marker")
     return value
+
+
+def mod_hook_groups(record, key="mod_hook_groups"):
+    value = record.get(key, 0)
+    if (type(value) is not int or value & ~MOD_HOOK_GROUPS_DEFINED or value < 0
+            or (value & 2 and not value & 1)):
+        raise ValueError("Invalid MOD hook groups marker")
+    return value
+
+
+def host_mod_hooks_abi(record, key="mod_hooks_abi"):
+    value = record.get(key, 0)
+    if type(value) is not int or value not in (0, 1):
+        raise ValueError("Invalid MOD hook ABI marker")
+    return value
+
+
+def same_text(first, second):
+    return first.read_bytes().replace(b"\r\n", b"\n") == second.read_bytes().replace(b"\r\n", b"\n")
 
 
 def host_artifacts(directory, guest_result, input_sha256):
@@ -85,6 +113,21 @@ def host_artifacts(directory, guest_result, input_sha256):
                 or (directory / extension.name).read_bytes().replace(b"\r\n", b"\n")
                 != extension.read_bytes().replace(b"\r\n", b"\n")):
             raise ValueError("Host/guest Classic binding header mismatch")
+    groups = mod_hook_groups(guest)
+    if groups != mod_hook_groups(contract):
+        raise ValueError("Guest MOD hook groups differ from its compile contract")
+    if groups:
+        if not classic or host_mod_hooks_abi(result) != 1:
+            raise ValueError("Guest MOD hooks require a Classic host with the MOD hook ABI")
+        recorded = contract.get("mod_hooks_header_sha256")
+        if not isinstance(recorded, dict) or set(recorded) != set(MOD_HOOK_HEADERS):
+            raise ValueError("Host/guest MOD hook header mismatch")
+        for name, folder in MOD_HOOK_HEADERS.items():
+            source = ROOT / folder / name
+            if recorded[name] != sha(source) or not same_text(directory / name, source):
+                raise ValueError("Host/guest MOD hook header mismatch: " + name)
+    else:
+        host_mod_hooks_abi(result)
     return archive, result["artifact_sha256"]
 
 
@@ -121,6 +164,9 @@ def main():
         raise ValueError("Guest framework Classic ABI mismatch")
     if classic and not a.host_artifacts:
         raise ValueError("Classic assembly requires --host-artifacts with all four ABI headers")
+    groups = mod_hook_groups(guest)
+    if groups != mod_hook_groups(plistlib.loads(framework_plist), "PcGuestModHooks"):
+        raise ValueError("Guest framework MOD hook groups mismatch")
     a.output.parent.mkdir(parents=True, exist_ok=True)
     records = {}
     total = 0
@@ -147,6 +193,8 @@ def main():
     info = plistlib.loads(records["Info.plist"][0])
     if classic != classic_capable(info, "PcGuestClassicSkseExperiment"):
         raise ValueError("Host/guest Classic ABI mismatch")
+    if groups and host_mod_hooks_abi(info, "PcGuestModHooksABI") != 1:
+        raise ValueError("Host Info.plist lacks the MOD hook ABI")
     expected_build = plistlib.loads((ROOT / "ios/runtime-port/Info.plist.in").read_bytes())["CFBundleVersion"]
     if (info.get("CFBundleIdentifier") != "org.skyrimios.pc2011"
             or info.get("CFBundleExecutable") != "SkyrimIOS"

@@ -267,6 +267,8 @@ class HostClassicOptionTests(unittest.TestCase):
         # Use the actual configuration blocks with no compilers, linking, SDK, or game.
         cmake = (ROOT/"ios/runtime-port/CMakeLists.txt").read_text(encoding="utf-8")
         option = next(line for line in cmake.splitlines() if line.startswith("option(SKYRIM_IOS_CLASSIC_SKSE "))
+        start = cmake.index("option(SKYRIM_IOS_MOD_HOOKS ")
+        option += "\n" + cmake[start:cmake.index("set(SKYRIM_IOS_BUNDLE_IDENTIFIER", start)]
         start = cmake.index("if(NOT SKYRIM_IOS_RUNTIME_OVERLAY_DIR OR SKYRIM_IOS_CLASSIC_SKSE)")
         preparation = cmake[start:cmake.index("add_library(skyrim_ios_runtime ", start)]
         start = cmake.index('    set(host_plist "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")')
@@ -281,6 +283,10 @@ class HostClassicOptionTests(unittest.TestCase):
             (overlay/"skse_compat.c").write_text("/* synthetic */\n")
             (overlay/"rt_table.h").write_bytes(b"extern const FnModule g_modules[];\n")
             (abi/"PcGuestSkseABI.h").write_bytes(b"/* synthetic ABI declaration */\n")
+            (abi/"PcGuestModHooksABI.h").write_bytes(b"/* synthetic ABI declaration */\n")
+            seams = root/"experiments/fuz-voice"
+            seams.mkdir(parents=True)
+            (seams/"lift_world_seam.h").write_bytes(b"/* synthetic seam */\n")
             shutil.copyfile(ROOT/"ios/private-abi/prepare_private_abi.py", abi/"prepare_private_abi.py")
             shutil.copyfile(ROOT/"ios/runtime-port/Info.plist.in", port/"Info.plist.in")
             (port/"classic_skse_translation.py").write_text("")
@@ -294,9 +300,11 @@ class HostClassicOptionTests(unittest.TestCase):
             # Capture only target metadata. Commands that stage directories and configure
             # the plist below are genuine CMake; the fixture has no executable target.
             (port/"CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.24)\nproject(Capability NONE)\n" +
+                f"set(SKYRIM_IOS_ROOT \"{root.as_posix()}\")\n" +
                 option + "\nfunction(target_compile_definitions target visibility)\n"
-                "  set(app_definitions \"${ARGN}\" PARENT_SCOPE)\nendfunction()\n"
-                "function(target_sources target visibility)\n  set(app_sources \"${ARGN}\" PARENT_SCOPE)\nendfunction()\n" +
+                "  set(app_definitions \"${app_definitions};${ARGN}\" PARENT_SCOPE)\nendfunction()\n"
+                "function(target_include_directories)\nendfunction()\n"
+                "function(target_sources target visibility)\n  set(app_sources \"${app_sources};${ARGN}\" PARENT_SCOPE)\nendfunction()\n" +
                 preparation + plist_block +
                 '\nfile(WRITE "${CMAKE_BINARY_DIR}/state" "${SKYRIM_IOS_RUNTIME_OVERLAY_DIR}\\n${host_plist}\\n'
                 '${runtime_sources}\\n${app_sources}\\n${app_definitions}\\n")\n')
@@ -306,21 +314,31 @@ class HostClassicOptionTests(unittest.TestCase):
             if shutil.which("ninja"):
                 command += ["-G", "Ninja"]
             normal_info = plistlib.loads((port/"Info.plist.in").read_bytes())
-            for feature in (None, True, False):
-                args = [] if feature is None else ["-DSKYRIM_IOS_CLASSIC_SKSE=" + ("1" if feature else "0")]
+            for feature, hooks in ((None, None), (True, False), (False, False), (True, True)):
+                args = [] if feature is None else ["-DSKYRIM_IOS_CLASSIC_SKSE=" + ("1" if feature else "0"),
+                                                   "-DSKYRIM_IOS_MOD_HOOKS=" + ("1" if hooks else "0")]
                 check = subprocess.run(command + args, capture_output=True, text=True, timeout=60)
                 self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
                 runtime, plist, sources, app_sources, defines = (root/"build/state").read_text().splitlines()
                 expected = dict(normal_info)
                 if feature:
                     expected["PcGuestClassicSkseExperiment"] = True
+                if hooks:
+                    expected["PcGuestModHooksABI"] = 1
                 self.assertEqual(plistlib.loads(Path(plist).read_bytes()), expected)
                 self.assertEqual("skse_compat.c" in sources, bool(feature))
                 self.assertEqual("pc_guest_skse_host.c" in app_sources, bool(feature))
                 self.assertEqual("SKYRIM_IOS_CLASSIC_SKSE=1" in defines, bool(feature))
+                self.assertEqual("pc_guest_mod_hooks_host.c" in app_sources, bool(hooks))
+                self.assertEqual("SKYRIM_IOS_MOD_HOOKS=1" in defines, bool(hooks))
                 self.assertEqual((Path(runtime)/"main.c").read_text(), "classic\n" if feature else "ordinary\n")
                 self.assertEqual((overlay/"main.c").read_text(), "ordinary\n")
                 self.assertEqual((overlay/"rt_table.h").read_bytes(), b"extern const FnModule g_modules[];\n")
+            # The interface needs the Classic guest.
+            check = subprocess.run(command + ["-DSKYRIM_IOS_CLASSIC_SKSE=0", "-DSKYRIM_IOS_MOD_HOOKS=1"],
+                                   capture_output=True, text=True, timeout=60)
+            self.assertNotEqual(check.returncode, 0)
+            self.assertIn("requires Classic SKSE", check.stderr)
 
 
 @unittest.skipUnless(sys.platform=="darwin" and shutil.which("xcrun"),

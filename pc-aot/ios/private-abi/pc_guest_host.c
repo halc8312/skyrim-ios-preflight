@@ -1,5 +1,11 @@
 /* Public iOS runtime: bind a locally assembled, signed original-body guest. */
 #include "PcGuestABI.h"
+#ifdef SKYRIM_IOS_MOD_HOOKS
+#ifndef SKYRIM_IOS_CLASSIC_SKSE
+#error "The MOD hook interface requires the Classic guest"
+#endif
+#include "PcGuestModHooksABI.h"
+#endif
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 #include "PcGuestSkseABI.h"
 #define PC_GUEST_BASE_SYMBOL PC_GUEST_SKSE_API_SYMBOL
@@ -48,8 +54,18 @@ int pc_guest_open(const char *path) {
         if (!g->functions[n].fn || !g->functions[n].addr ||
             (n && g->functions[n-1].addr >= g->functions[n].addr)) return reject_guest(-5);
     }
+#ifdef SKYRIM_IOS_MOD_HOOKS
+    /* Optional and independent of the Classic v1 callbacks; bind it first so
+     * a rejected Classic reply leaves no host state behind. */
+    if (pc_guest_bind_mod_hooks(library) != 0) return reject_guest(-7);
+#endif
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
-    if (pc_guest_bind_classic_skse(library) != 0) return reject_guest(-6);
+    if (pc_guest_bind_classic_skse(library) != 0) {
+#ifdef SKYRIM_IOS_MOD_HOOKS
+        pc_guest_forget_mod_hooks();
+#endif
+        return reject_guest(-6);
+    }
 #endif
     guest = g;
     g_modules[0] = (FnModule){"TESV.exe", guest->functions, guest->function_count};

@@ -1,0 +1,130 @@
+/* SPDX-License-Identifier: GPL-3.0-only
+ * Optional MOD hook interface between the Classic host and a guest built with
+ * reviewed staged units (scripts/mod_hooks_guest.py). It is separate from the
+ * Classic v1 callbacks in PcGuestSkseABI.h, which stay unchanged.
+ *
+ * The guest exports one bind function. The host calls it once from
+ * pc_guest_open after the Classic binding and learns which hook groups the
+ * guest was compiled with. Before the guest starts, the host selects groups
+ * once and passes its implementations. Until then, and for groups it does not
+ * select, every guest hook returns the value that keeps the original path.
+ * Both halves are compiled for arm64 with Clang, so the Fuz seam structures may
+ * be returned by value.
+ */
+#pragma once
+#include "PcGuestABI.h"
+#include "lift_world_seam.h" /* experiments/fuz-voice: menu, voice and policy types */
+#include <stdbool.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define PC_GUEST_MOD_HOOKS_ABI 1u
+#define PC_GUEST_MOD_HOOKS_BIND_SYMBOL "skyrim_guest_bind_mod_hooks_v1"
+
+enum {
+    PC_GUEST_MOD_HOOK_FUZ_MENU = 1u,
+    PC_GUEST_MOD_HOOK_FUZ_WORLD = 2u,
+    PC_GUEST_MOD_HOOK_VM_LIFECYCLE = 4u,
+    PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE = 8u,
+    /* Reserved: no reviewed stage or call contract exists yet. Version 1
+     * carries no table for them, and both halves reject them. */
+    PC_GUEST_MOD_HOOK_CAMERA_OBSERVE = 16u,
+    PC_GUEST_MOD_HOOK_CHARGEN_SLIDER = 32u,
+    PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE = 64u
+};
+#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD | \
+    PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE)
+
+/* Function types come from the reviewed experiment headers. */
+typedef struct {
+    void (*forget_response)(uint32_t response);
+    void (*choose_menu_voice)(const struct CPU *caller, uint32_t argument_slot, uint32_t response,
+                              SkyrimFuzLiftChoice *choice);
+    void (*note_menu_assignment)(uint32_t response, const SkyrimFuzLiftChoice *choice);
+    SkyrimFuzMenuScope (*capture_menu)(uint32_t manager, uint32_t node, uint32_t queued_title);
+    bool (*force_menu)(const SkyrimFuzMenuScope *scope, uint32_t return_address, uint32_t queued_title);
+} PcGuestModFuzMenuHooks;
+
+typedef struct {
+    SkyrimFuzWorldScope (*capture_world)(uint32_t response, uint32_t voice);
+    bool (*admit_world)(const SkyrimFuzWorldScope *scope, uint32_t return_address, uint32_t title);
+    void (*world_after_copy)(uint32_t array, uint32_t index, uint32_t source, const SkyrimFuzWorldScope *scope);
+    void (*release_chatter_title)(uint32_t title);
+    bool (*world_general)(uint32_t array, uint32_t record);
+} PcGuestModFuzWorldHooks;
+
+/* MOD_FIRST_WAVE_PLAN.md section 4.4: before the original revert, after the
+ * original VM load. */
+typedef struct {
+    void (*before_revert)(unsigned site);
+    void (*after_load)(int succeeded);
+} PcGuestModVmHooks;
+
+typedef struct {
+    bool (*skip_open_warm)(void);
+} PcGuestModChargenHooks;
+
+/* Host implementations. groups names the selection; only the tables of the
+ * selected groups are read, and each of their entries must be set. */
+typedef struct {
+    uint32_t version, bytes;
+    uint32_t groups, reserved;
+    PcGuestModFuzMenuHooks fuz_menu;
+    PcGuestModFuzWorldHooks fuz_world;
+    PcGuestModVmHooks vm_lifecycle;
+    PcGuestModChargenHooks chargen_precache;
+} PcGuestModHooks;
+
+/* Guest reply. select copies the selected tables and succeeds at most once. */
+typedef struct {
+    uint32_t version, bytes;
+    uint32_t compiled_groups, table_bytes;
+    int (*select)(const PcGuestModHooks *implementations);
+} PcGuestModHooksGuest;
+
+typedef const PcGuestModHooksGuest *(*PcGuestBindModHooks)(uint32_t version, uint32_t table_bytes);
+
+static inline int pc_guest_mod_hooks_groups_valid(uint32_t groups) {
+    return (groups & ~(uint32_t)PC_GUEST_MOD_HOOKS_DEFINED) == 0
+        /* The world stage reuses the menu's response assignment. */
+        && (!(groups & PC_GUEST_MOD_HOOK_FUZ_WORLD) || (groups & PC_GUEST_MOD_HOOK_FUZ_MENU));
+}
+
+static inline int pc_guest_mod_hooks_table_valid(const PcGuestModHooks *t) {
+    if (!t || t->version != PC_GUEST_MOD_HOOKS_ABI || t->bytes != sizeof(*t) || t->reserved
+            || !pc_guest_mod_hooks_groups_valid(t->groups)) return 0;
+    const uint32_t g = t->groups;
+    if ((g & PC_GUEST_MOD_HOOK_FUZ_MENU) && (!t->fuz_menu.forget_response || !t->fuz_menu.choose_menu_voice
+            || !t->fuz_menu.note_menu_assignment || !t->fuz_menu.capture_menu || !t->fuz_menu.force_menu))
+        return 0;
+    if ((g & PC_GUEST_MOD_HOOK_FUZ_WORLD) && (!t->fuz_world.capture_world || !t->fuz_world.admit_world
+            || !t->fuz_world.world_after_copy || !t->fuz_world.release_chatter_title
+            || !t->fuz_world.world_general))
+        return 0;
+    if ((g & PC_GUEST_MOD_HOOK_VM_LIFECYCLE) && (!t->vm_lifecycle.before_revert || !t->vm_lifecycle.after_load))
+        return 0;
+    if ((g & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE) && !t->chargen_precache.skip_open_warm) return 0;
+    return 1;
+}
+
+/* Guest side (pc_guest_mod_hooks_library.c): names called by staged units in
+ * addition to the skyrim_fuz_host_* imports of the Fuz seam headers. */
+void skyrim_vm_host_before_revert(unsigned site);
+void skyrim_vm_host_after_load(int succeeded);
+bool skyrim_chargen_probe_skip_open_warm(void);
+
+/* Host side (pc_guest_mod_hooks_host.c). */
+int pc_guest_bind_mod_hooks(void *library);  /* from pc_guest_open; a missing symbol is not an error */
+void pc_guest_forget_mod_hooks(void);         /* from pc_guest_open when it rejects the library later */
+uint32_t pc_guest_mod_hooks_compiled(void);   /* groups the opened guest carries, 0 without the symbol */
+/* Call once on the startup thread after pc_guest_open and before the guest
+ * starts. groups must be compiled into the guest; implementations may be NULL
+ * only when groups is 0. A failed call changes nothing and may be repeated. */
+int pc_guest_select_mod_hooks(uint32_t groups, const PcGuestModHooks *implementations);
+uint32_t pc_guest_mod_hooks_selected(void);
+
+#ifdef __cplusplus
+}
+#endif

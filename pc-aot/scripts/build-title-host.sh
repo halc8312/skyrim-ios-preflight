@@ -8,6 +8,7 @@ cd "$ROOT"
 CLASSIC_SKSE="${SKYRIM_IOS_CLASSIC_SKSE-0}"
 DLL_PROBE="${SKYRIM_IOS_SKSE_DLL_PROBE-0}"
 SETTINGS_PROBE="${SKYRIM_IOS_CLASSIC_SETTINGS_PROBE-0}"
+MOD_HOOKS="${SKYRIM_IOS_MOD_HOOKS-0}"
 case "$CLASSIC_SKSE" in
   0|1) ;;
   *) echo 'SKYRIM_IOS_CLASSIC_SKSE must be 0 or 1' >&2; exit 2 ;;
@@ -20,6 +21,14 @@ case "$SETTINGS_PROBE" in
   0|1) ;;
   *) echo 'SKYRIM_IOS_CLASSIC_SETTINGS_PROBE must be 0 or 1' >&2; exit 2 ;;
 esac
+case "$MOD_HOOKS" in
+  0) ;;
+  1) [[ "$CLASSIC_SKSE" == 1 ]] || { echo 'SKYRIM_IOS_MOD_HOOKS requires SKYRIM_IOS_CLASSIC_SKSE=1' >&2; exit 2; } ;;
+  *) echo 'SKYRIM_IOS_MOD_HOOKS must be 0 or 1' >&2; exit 2 ;;
+esac
+# The MOD hook interface and the reviewed seam headers it reuses.
+MOD_HOOK_HEADERS=(ios/private-abi/PcGuestModHooksABI.h experiments/fuz-voice/lift_menu_seam.h
+  experiments/fuz-voice/lift_world_seam.h experiments/fuz-voice/lift_voice_seam.h experiments/fuz-voice/voice_fallback.h)
 python3 scripts/check-public-tree.py
 mkdir -p local/title-host
 RUN="$(mktemp -d "$ROOT/local/title-host/run-XXXXXX")"
@@ -202,6 +211,7 @@ cmake -S ios/runtime-port -B "$RUN/build" -G 'Unix Makefiles' \
   "-DSKYRIM_IOS_CLASSIC_SKSE=$CLASSIC_SKSE" \
   "-DSKYRIM_IOS_SKSE_DLL_PROBE=$DLL_PROBE" \
   "-DSKYRIM_IOS_CLASSIC_SETTINGS_PROBE=$SETTINGS_PROBE" \
+  "-DSKYRIM_IOS_MOD_HOOKS=$MOD_HOOKS" \
   "-DSKYDREAM_SOURCE_DIR=$RUN/source" \
   "-DSKYRIM_IOS_RUNTIME_OVERLAY_DIR=$RUN/overlay/runtime" \
   "-DSKYRIM_IOS_BINDING_SOURCES=$ROOT/ios/private-abi/pc_guest_host.c" \
@@ -278,6 +288,13 @@ if [[ "$CLASSIC_SKSE" == 1 ]]; then
 elif grep -Eq ' [Tt] (_pc_guest_bind_classic_skse|_skse_register_natives)$' "$RUN/app-symbols.txt"; then
   echo 'A Classic runtime entry point is present in a host built without the feature.' >&2; exit 1
 fi
+if [[ "$MOD_HOOKS" == 1 ]]; then
+  for symbol in _pc_guest_bind_mod_hooks _pc_guest_select_mod_hooks; do
+    grep -Eq " [Tt] ${symbol}$" "$RUN/app-symbols.txt" || { echo "Missing MOD hook symbol $symbol" >&2; exit 1; }
+  done
+elif grep -Eq ' [Tt] _pc_guest_bind_mod_hooks$' "$RUN/app-symbols.txt"; then
+  echo 'The MOD hook interface is present in a host built without it.' >&2; exit 1
+fi
 if grep -Eq ' [Tt] (_skyrim_classic_probe_controller|_skyrim_classic_fixture_run|_skyrim_serial_i386_.*)$' "$RUN/app-symbols.txt"; then
   echo 'Unexpected lab fixture in the standard application.' >&2; exit 1
 fi
@@ -294,8 +311,11 @@ cp ios/private-abi/PcGuestABI.h "$RUN/artifacts/"
 if [[ "$CLASSIC_SKSE" == 1 ]]; then
   cp ios/private-abi/PcGuestSkseABI.h "$RUN/artifacts/"
 fi
+if [[ "$MOD_HOOKS" == 1 ]]; then
+  cp "${MOD_HOOK_HEADERS[@]}" "$RUN/artifacts/"
+fi
 ditto -c -k --keepParent "$APP" "$RUN/artifacts/SkyrimIOS-public-host.zip"
-python3 - "$RUN/artifacts" "$APP/Info.plist" "$CLASSIC_SKSE" "$DLL_PROBE" <<'PY'
+python3 - "$RUN/artifacts" "$APP/Info.plist" "$CLASSIC_SKSE" "$DLL_PROBE" "$MOD_HOOKS" <<'PY'
 from pathlib import Path
 import hashlib, json, os, plistlib, sys
 out=Path(sys.argv[1]); app=out/'SkyrimIOS-public-host.zip'
@@ -306,6 +326,10 @@ if info.get('CFBundleIdentifier') != 'org.skyrimios.pc2011' or info.get('CFBundl
 if ((classic and info.get('PcGuestClassicSkseExperiment') is not True)
         or (not classic and 'PcGuestClassicSkseExperiment' in info)):
     raise SystemExit('The app does not match the selected Classic guest ABI')
+hooks = sys.argv[5] == '1'
+if ((hooks and info.get('PcGuestModHooksABI') != 1)
+        or (not hooks and 'PcGuestModHooksABI' in info)):
+    raise SystemExit('The app does not match the selected MOD hook ABI')
 result = {
  'schema':1,'source_commit':os.environ.get('GITHUB_SHA') or os.environ.get('CM_COMMIT'),
  'artifact_sha256':hashlib.sha256(app.read_bytes()).hexdigest(),
@@ -315,6 +339,8 @@ result = {
 }
 if classic:
     result['classic_skse_experiment'] = True
+if hooks:
+    result['mod_hooks_abi'] = 1
 (out/'result.json').write_text(json.dumps(result,indent=2)+'\n')
 PY
 echo 'Public host built; local private-framework assembly and signing still required.'

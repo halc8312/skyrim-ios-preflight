@@ -30,3 +30,6 @@
 #elif defined(SKYDREAM_SKSE)
 #error "The ordinary iOS diagnostic archive does not include SKSE"
 #endif
+#if defined(SKYRIM_IOS_MOD_HOOKS) && (SKYRIM_IOS_MOD_HOOKS != 1 || !defined(SKYRIM_IOS_CLASSIC_SKSE))
+#error "The guest MOD hook interface requires the Classic Papyrus experiment"
+#endif
