@@ -18,6 +18,14 @@ typedef enum {
     SKSE_SCALAR_OK, SKSE_SCALAR_ARGUMENT, SKSE_SCALAR_MEMORY, SKSE_SCALAR_EXECUTION, SKSE_SCALAR_RESULT
 } SkseClassicScalarStatus;
 
+/* Only identity scalars from an independently validated VM Form argument.
+ * The interpreted wrapper never receives a pointer to the live game. */
+typedef struct {
+    uint32_t id;
+    uint8_t type;
+    uint64_t handle;
+} SkseClassicFormSnapshot;
+
 typedef struct {
     const SkseClassicCatalog *catalog;
     const SkseClassicDeclaration *prepare_method; /* Optional read-only preparation capability. */
@@ -27,6 +35,7 @@ typedef struct {
     const SkseX86Services *services;
     uint32_t epoch, stack_id;
     uint32_t arguments_base, text_base;
+    const SkseClassicFormSnapshot *first_form; /* optional borrowed identity for a Form argument in position 0 */
 } SkseClassicScalarScope;
 
 /* Single-owner hosted scope. The catalog and registry must remain alive for

@@ -444,6 +444,25 @@ static void check_actor_text(SksePluginSession *session, const SkseClassicDeclar
     assert(!strcmp(text, expected));
 }
 
+static uint32_t call_actor_scalar(SksePluginSession *session, const SkseClassicCatalog *catalog,
+                                  const SkseClassicDeclaration *method, const FixtureForm *actor, uint32_t bits) {
+    const SkseClassicFormSnapshot identity = actor ? (SkseClassicFormSnapshot){actor->id, actor->type, actor->handle}
+                                                   : (SkseClassicFormSnapshot){0};
+    const SkseClassicScalarScope scope = {.catalog = catalog, .images = session->vm.images,
+        .image_count = session->vm.count, .scratch = session->vm.scratch, .services = &session->vm.services,
+        .epoch = catalog->epoch, .stack_id = PAPYRUS_FIXTURE_STACK_ID, .arguments_base = 0x1400c000,
+        .first_form = actor ? &identity : NULL};
+    static const char key[] = "classicvalue";
+    const SkseClassicScalar args[] = {{.type = SKSE_CLASSIC_CATALOG_FORM},
+        {.type = 2, .text = key, .text_size = sizeof key}, {.type = 3, .bits = bits}};
+    SkseClassicScalarResult result;
+    SkseX86Result trace;
+    const SkseClassicScalarStatus status = skse_classic_scalar_call(&scope, method, args, 3, 80000, false, &result, &trace);
+    if (status) fprintf(stderr, "Actor integer call failed: status=%u execution=%u\n", status, trace.status);
+    assert(status == SKSE_SCALAR_OK && result.type == 3);
+    return result.bits;
+}
+
 static void write_owned_native_records(SksePluginSession *session, const SkseClassicCatalog *catalog, uint32_t key,
                                        const FixtureForm *actor, const char *path) {
     const uint32_t types[] = {SKSE_CLASSIC_CATALOG_FORM, 2, 3};
@@ -463,12 +482,11 @@ static void write_owned_native_records(SksePluginSession *session, const SkseCla
     FixtureForm other = *actor;
     other.id++;
     other.handle++;
-    const uint32_t actor_args[] = {0, 0, key, (uint32_t)-382};
-    assert(call_native_with_form(session, get, get_args, 4, actor) == (uint32_t)-99);
-    assert(call_native_with_form(session, set, actor_args, 4, actor) == (uint32_t)-382);
-    assert(call_native_with_form(session, get, get_args, 4, actor) == (uint32_t)-382);
-    assert(call_native_with_form(session, get, get_args, 4, &other) == (uint32_t)-99);
-    assert(call_native(session, get, get_args, 4) == (uint32_t)-731);
+    assert(call_actor_scalar(session, catalog, get, actor, (uint32_t)-99) == (uint32_t)-99);
+    assert(call_actor_scalar(session, catalog, set, actor, (uint32_t)-382) == (uint32_t)-382);
+    assert(call_actor_scalar(session, catalog, get, actor, (uint32_t)-99) == (uint32_t)-382);
+    assert(call_actor_scalar(session, catalog, get, &other, (uint32_t)-99) == (uint32_t)-99);
+    assert(call_actor_scalar(session, catalog, get, NULL, (uint32_t)-99) == (uint32_t)-731);
 
     const uint32_t string_types[] = {SKSE_CLASSIC_CATALOG_FORM, 2, 2};
     const SkseClassicDeclaration *get_text = declaration(catalog, "StorageUtil", "GetStringValue", 2, string_types, 3);
