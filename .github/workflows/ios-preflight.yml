@@ -202,7 +202,7 @@ jobs:
   classic-mod-simulator:
     if: ${{ inputs.mod_screens }}
     runs-on: macos-26
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       SKYRIM_IOS_CLASSIC_SKSE: '1'

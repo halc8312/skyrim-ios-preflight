@@ -10,9 +10,9 @@ allowance=900
 case "$mode" in
     screens)
         method=testActualSettingsModScreens
-        # The full flow showed eight minutes for the first three system picker
-        # visits on CI. Keep the individual waits bounded and allow the full flow.
-        allowance=1500
+        # The full flow reached the generated-output import at 25 minutes on CI.
+        # Allow that final profile check to finish. Individual waits stay bounded.
+        allowance=2100
         ;;
     nexus-live) method=testLiveNexusListing ;;
     dll-probe) method=testInstalledModDllDiagnostics; export SKYRIM_IOS_SKSE_DLL_PROBE=1 ;;
