@@ -45,3 +45,37 @@ no native binding or scene change.
 Set SKYRIM_TEST_OWNED_HDT_EFFECT_DLL to the exact owned beta 0.5 DLL and
 provide GNU objdump to verify the three native boundaries without loading
 the DLL.
+
+### Associate the static update call with its script instance
+
+The exact owned hdtHighHeelEffect PEX extends ActiveMagicEffect. MoveUp and
+the scheduled OnUpdate call KeepUpdate with the target and a Float from
+GetMagnitude on their instance. MoveDown calls StopUpdate with the target
+alone. OnEffectFinish and OnSit can reach MoveDown, and the sit path can
+unregister the scheduled update. StopUpdate therefore has no preceding
+GetMagnitude to correlate. Several live effects can share a target. The
+scheduled OnUpdate can also run on a different VM stack.
+
+The fixed ordinary native invoke in `f_C46CB0` passes the current frame as
+the last Run argument, and the owning stack's ID as the third argument. Its
+ordinary Run return site is `0xC46E61`. The fixed frame push in `f_C3C8A0`
+links the previous frame before publishing the new current frame, and the
+pop in `f_C3C6C0` restores that link before cleanup. The private hosted
+fixture executes the original invoke body with authored VM objects and Run
+dispatch. While Run is active it validates the current frame and reads the
+immediate caller's typed self. It exercises two distinct self values and
+rejects a different registry or epoch, a mismatched stack, a displaced
+current frame, an unexpected caller and a null self. Both paths leave the
+same guest results, frame bytes and stack bytes.
+
+The test supplies its function and class identities from the fixture.
+Connecting this path to played PEX requires proving that the live VM
+function and class belong to the exact winning script, obtaining the typed
+VMIdentifier handle while it is protected, and resolving it through the
+ActiveMagicEffect policy while the synchronous callback is active. A
+borrowed stack, frame or VMIdentifier cannot be stored after Run. The stack
+ID only checks the current invocation. If OnEffectFinish dispatches after
+the active-effect entry is removed, live resolution can fail. Future
+cleanup must retire only the authority of a previously authenticated
+effect instance, within its own world generation and equip lifetime.
+No runtime hook, handle decoder, transform or delayed request is installed.

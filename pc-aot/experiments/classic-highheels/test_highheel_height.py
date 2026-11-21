@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 
+import stage_effect_call
 import stage_effect_magnitude
 import stage_item_delivery
 import stage_task_queue
@@ -47,7 +48,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             self.assertEqual(result.strip(), "6 Classic HighHeels host scenarios passed")
 
     def test_unreviewed_lift_is_refused(self):
-        for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude):
+        for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude, stage_effect_call):
             with self.subTest(unit=stage.UNIT):
                 with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
                     unit_count = 1 + len(getattr(stage, "DEPENDENCIES", ()))
@@ -97,6 +98,12 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.run_reviewed_fixture(
             stage_effect_magnitude, "test_effect_magnitude_lift.c",
             "Classic typed effect lookup captures magnitude only in the matching visitor",
+        )
+
+    def test_reviewed_native_invoke_lends_nearest_typed_script_self(self):
+        self.run_reviewed_fixture(
+            stage_effect_call, "test_effect_call_lift.c",
+            "Classic ordinary native invocation lends the nearest typed script self",
         )
 
     def test_owned_effect_native_argument_boundaries(self):
