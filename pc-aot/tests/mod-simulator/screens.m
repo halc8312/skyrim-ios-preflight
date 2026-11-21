@@ -218,10 +218,10 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCUIElement *local = self.app.cells[@"DOC.sidebar.item.On My iPhone"];
     XCUIElement *browse = self.app.tabBars.buttons[@"Browse"];
     SKPickerLocation stage = SKPickerInitial;
-    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:35];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:60];
     NSDate *ready = [NSDate dateWithTimeIntervalSinceNow:3];
     NSUInteger scrolls = 0;
-    while (deadline.timeIntervalSinceNow > 0) {
+    for (;;) {
         XCUIElement *item = [self fileNamed:name inCollection:files];
         CGRect frame = elementFrame(item);
         if (!CGRectIsNull(frame) && item.enabled) {
@@ -236,10 +236,12 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
                 return item;
             }
         }
+        // Inspect the grid once after every move, including the last one.
+        // A drag and its accessibility queries can consume the remaining time.
+        if (deadline.timeIntervalSinceNow <= 0) break;
         if (stage < SKPickerSamples && bar.staticTexts[@"UI Samples"].exists) {
             stage = SKPickerSamples;
             ready = [NSDate dateWithTimeIntervalSinceNow:3];
-            deadline = [NSDate dateWithTimeIntervalSinceNow:22];
         }
         if (ready.timeIntervalSinceNow <= 0) {
             if (stage == SKPickerSamples) {
@@ -268,7 +270,6 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
                 if (place) {
                     [place tap];
                     ready = [NSDate dateWithTimeIntervalSinceNow:stage == SKPickerSamples ? 3 : .4];
-                    deadline = [NSDate dateWithTimeIntervalSinceNow:22];
                 }
             }
         }
