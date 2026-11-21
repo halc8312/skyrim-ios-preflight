@@ -114,9 +114,165 @@ static void check_replaced_selection(CPU *cpu, uint32_t stack, int dir, const ch
     classic_runtime_load_end(&load);
 }
 
+#if SKYRIM_TEST_PINNED_CRT
+#include "lift_prelude.h"
+#include "funcs_exe.h"
+
+enum {
+    CRT_STREAM = GUEST_HEAP_BASE + 0x1000, CRT_BSFILE = GUEST_HEAP_BASE + 0x2000,
+    CRT_FILE = 0x12de588 + 4 * 0x20, CRT_FILE_TABLE = GUEST_HEAP_BASE + 0x3000,
+    CRT_DESCRIPTOR_PAGE = GUEST_HEAP_BASE + 0x4000, CRT_BUFFER = GUEST_HEAP_BASE + 0x5000,
+    CRT_FILENO = 9, CRT_ENTRY = CRT_DESCRIPTOR_PAGE + CRT_FILENO * 0x40,
+    CRT_REQUEST = CLASSIC_FRESH_SLOT_READ_BYTES,
+};
+static uint64_t slot_result;
+static bool replace_descriptor_during_copy;
+
+void classic_runtime_fixture_crt_read(CPU *);
+
+void classic_runtime_fixture_slot_result(uint64_t generation) { slot_result = generation; }
+
+void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache) {
+    (void)cache;
+    if (target == 0xA57260u) f_A57260(cpu);
+    else if (target == 0xA57E70u) f_A57E70(cpu);
+    else abort();
+}
+
+/* The pinned logical read goes through the actual BSFile buffer branch.
+ * Keep copying and file-refill services distinct in the fixture. */
+void f_F52E30(CPU *cpu) {
+    const uint32_t stack = cpu->r[4], destination = M32(stack + 4);
+    assert(M32(stack) == 0xb29ab1u && M32(stack + 8) == CRT_BUFFER && M32(stack + 12) == CRT_REQUEST);
+    memcpy(MEM + destination, MEM + CRT_BUFFER, CRT_REQUEST);
+    if (replace_descriptor_during_copy) M32(CRT_ENTRY) += 1;
+    cpu->r[0] = destination;
+    cpu->r[4] += 4;
+}
+void f_B29850(CPU *cpu) { (void)cpu; abort(); }
+void f_F584BE(CPU *cpu) { (void)cpu; abort(); }
+void f_F53EBD(CPU *cpu) { (void)cpu; abort(); }
+void f_F549DC(CPU *cpu) { (void)cpu; abort(); }
+
+static void prepare_crt(uint32_t handle) {
+    M32(CRT_STREAM + 0x104) = CRT_BSFILE;
+    M32(CRT_BSFILE) = 0x110dba8u;
+    M32(0x110dba8u + 0x44) = 0xa57e70u;
+    M32(CRT_BSFILE + 8) = 0xa57260u;
+    M32(CRT_BSFILE + 0x14) = CRT_REQUEST;
+    M32(CRT_BSFILE + 0x18) = 0;
+    M32(CRT_BSFILE + 0x20) = CRT_BUFFER;
+    M32(CRT_BSFILE + 0x24) = CRT_FILE;
+    M8(CRT_BSFILE + 0x2c) = 1u;
+    M32(0x1bc046cu) = CRT_FILE_TABLE;
+    M32(0x1bc1480u) = 20;
+    M32(CRT_FILE_TABLE + 4 * 4) = CRT_FILE;
+    M32(CRT_FILE + 0xc) = 1;
+    M32(CRT_FILE + 0x10) = CRT_FILENO;
+    M32(0x1bc0320u) = 32;
+    M32(0x1bc0340u) = CRT_DESCRIPTOR_PAGE;
+    M32(CRT_ENTRY) = handle;
+    M8(CRT_ENTRY + 4) = 1;
+    memset(MEM + CRT_BUFFER, 0x57, CRT_REQUEST);
+}
+
+static uint32_t open_for_crt(CPU *cpu, uint32_t stack, int dir, const char *directory, ClassicRuntimeLoad *load) {
+    const uint32_t path = selected_path(cpu, stack, fixture);
+    cpu->r[1] = cpu->r[6] = CRT_STREAM;
+    assert(classic_runtime_load_begin(load, cpu, CRT_STREAM, path, dir, directory));
+    const uint32_t handle = open_readonly(cpu, stack - 512, fixture);
+    classic_runtime_load_open_leave(load, true);
+    prepare_crt(handle);
+    return handle;
+}
+
+static uint64_t call_crt_slot(CPU *cpu, uint32_t stack, uint32_t parent_return) {
+    cpu->r[4] = stack;
+    cpu->r[6] = CRT_STREAM;
+    M32(stack + 0x348) = parent_return;
+    M32(stack + 0x34c) = CRT_STREAM;
+    const uint32_t destination = stack + 0x98;
+    memset(MEM + destination, 0, CRT_REQUEST);
+    M32(CRT_BSFILE + 0x18) = 0;
+    slot_result = UINT64_MAX;
+    classic_runtime_fixture_crt_read(cpu);
+    assert(cpu->r[0] == CRT_REQUEST && cpu->r[4] == stack && cpu->r[6] == CRT_STREAM);
+    assert(M32(CRT_BSFILE + 0x18) == CRT_REQUEST && !memcmp(MEM + destination, MEM + CRT_BUFFER, CRT_REQUEST));
+    return slot_result;
+}
+
+static void check_crt_link(CPU *cpu, uint32_t stack, int dir, const char *directory) {
+    ClassicRuntimeLoad load;
+    const uint32_t api = stack - 512, slot = stack - 1024;
+    uint32_t handle = open_for_crt(cpu, stack, dir, directory, &load);
+    M32(api) = 0xF5835Au;
+    M32(api + 4) = CRT_FILE;
+    cpu->r[4] = api;
+    f_F680D9(cpu);
+    assert(cpu->r[0] == CRT_FILENO && cpu->r[4] == api + 4);
+
+    assert(!classic_runtime_load_bind_crt(cpu, CRT_STREAM + 4));
+    assert(classic_runtime_load_bind_crt(cpu, CRT_STREAM));
+    assert(!classic_runtime_load_bind_crt(cpu, CRT_STREAM));
+    const uint64_t generation = classic_runtime_load_generation(cpu, CRT_STREAM, handle);
+    assert(generation && call_crt_slot(cpu, slot, 0x68227au) == generation);
+    assert(!call_crt_slot(cpu, slot, 0x68227bu)); /* the fixed read still returns */
+    const uint32_t foreign = open_readonly(cpu, api, other);
+    assert(foreign != handle);
+    M32(CRT_ENTRY) = foreign;
+    assert(!call_crt_slot(cpu, slot, 0x68227au));
+    M32(CRT_ENTRY) = handle;
+    assert(!call_crt_slot(cpu, slot, 0x68227au)); /* restored numbers can't refresh evidence */
+    close_file(cpu, api, foreign);
+    close_file(cpu, api, handle);
+    classic_runtime_load_end(&load);
+
+    handle = open_for_crt(cpu, stack, dir, directory, &load);
+    assert(classic_runtime_load_bind_crt(cpu, CRT_STREAM));
+    close_file(cpu, api, handle);
+    const uint32_t reused = open_readonly(cpu, api, fixture);
+    assert(reused == handle && !call_crt_slot(cpu, slot, 0x68227au));
+    close_file(cpu, api, reused);
+    classic_runtime_load_end(&load);
+
+    handle = open_for_crt(cpu, stack, dir, directory, &load);
+    assert(classic_runtime_load_bind_crt(cpu, CRT_STREAM));
+    replace_descriptor_during_copy = true;
+    assert(!call_crt_slot(cpu, slot, 0x68227au));
+    replace_descriptor_during_copy = false;
+    close_file(cpu, api, handle);
+    classic_runtime_load_end(&load);
+
+    handle = open_for_crt(cpu, stack, dir, directory, &load);
+    assert(classic_runtime_load_bind_crt(cpu, CRT_STREAM));
+    const uint32_t other_file = CRT_FILE + 0x20;
+    M32(CRT_FILE_TABLE + 5 * 4) = other_file;
+    M32(other_file + 0xc) = 1;
+    M32(other_file + 0x10) = CRT_FILENO;
+    M32(CRT_BSFILE + 0x24) = other_file;
+    assert(!call_crt_slot(cpu, slot, 0x68227au)); /* same OS handle, different CRT object */
+    close_file(cpu, api, handle);
+    classic_runtime_load_end(&load);
+
+    handle = open_for_crt(cpu, stack, dir, directory, &load);
+    M32(0x1bc0320u) = 2080;
+    assert(!classic_runtime_load_bind_crt(cpu, CRT_STREAM));
+    M32(0x1bc0320u) = 32;
+    assert(!classic_runtime_load_bind_crt(cpu, CRT_STREAM));
+    close_file(cpu, api, handle);
+    classic_runtime_load_end(&load);
+    puts("PASS pinned buffered read with the selected CRT and native file identities");
+}
+#endif
+
+
 int main(int argc, char **argv) {
     assert(argc == 2);
+#if SKYRIM_TEST_PINNED_CRT
+    const size_t map_size = GUEST_HEAP_BASE + 0x6000;
+#else
     const size_t map_size = GUEST_TEB_BASE + 0x4000;
+#endif
     MEM = mmap(NULL, map_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     assert(MEM != MAP_FAILED);
     const int saved = snprintf(g_save_dir, sizeof g_save_dir, "%s", argv[1]);
@@ -172,6 +328,9 @@ int main(int argc, char **argv) {
     close_file(&cpu, api, handle);
     classic_runtime_load_end(&load);
 
+#if SKYRIM_TEST_PINNED_CRT
+    check_crt_link(&cpu, stack, dir, directory);
+#endif
     check_rejected_opens(&cpu, stack, dir, directory);
     check_replaced_selection(&cpu, stack, dir, directory);
     assert(!fstatat(dir, "Fixture.ESS", &after, AT_SYMLINK_NOFOLLOW));

@@ -5,6 +5,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "runtime_load.h"
+#include "lift_prelude.h"
 #include "rt.h"
 #include "save_paths.h"
 
@@ -121,6 +122,121 @@ uint64_t classic_runtime_load_generation(const struct CPU *cpu, uint32_t stream,
     errno = previous_errno;
     return owned(cpu) ? load->generation : 0;
 }
+
+/* Fixed Classic 1.9.32 CRT and f_67B720 call layouts. These reads only
+ * observe the owner's live stream and the runtime's reserved guest map. */
+enum {
+    BSFILE_LINK = 0x104, BSFILE_SIZE = 0x15c, BSFILE_VTABLE = 0x110dba8,
+    READ_CALLBACK = 0xa57260, READ_CALLBACK_SWAPPED = 0xa572a0, READ_VIRTUAL = 0xa57e70,
+    CRT_IOS = 0x1bc046c, CRT_IOS_COUNT = 0x1bc1480, CRT_IOS_MAX = 512,
+    CRT_STATIC_FILE = 0x12de588, CRT_STATIC_COUNT = 20, CRT_FILE_BYTES = 0x20,
+    CRT_DESCRIPTOR_COUNT = 0x1bc0320, CRT_DESCRIPTOR_PAGES = 0x1bc0340,
+    CRT_PAGE_COUNT = 64, CRT_PAGE_ENTRIES = 32, CRT_ENTRY_BYTES = 0x40,
+    SLOT_READ_RETURN = 0x67b875, SLOT_PARENT_RETURN = 0x68227a,
+    SLOT_PARENT_OFFSET = 0x354, SLOT_DESTINATION_OFFSET = 0xa4, SLOT_RETURN_POP = 12,
+};
+
+static bool guest_object(uint32_t address, uint32_t size, uint32_t end) {
+    return !(address & 3u) && address >= GUEST_HEAP_BASE && address <= end - size;
+}
+
+static uint32_t crt_file_slot(uint32_t file) {
+    const uint32_t table = TL32(CRT_IOS), count = TL32(CRT_IOS_COUNT);
+    if (count < CRT_STATIC_COUNT || count > CRT_IOS_MAX ||
+        !guest_object(table, count * 4u, GUEST_HEAP_END)) return 0;
+
+    const uint32_t static_end = CRT_STATIC_FILE + CRT_STATIC_COUNT * CRT_FILE_BYTES;
+    if (file >= CRT_STATIC_FILE && file < static_end) {
+        const uint32_t index = (file - CRT_STATIC_FILE) / CRT_FILE_BYTES;
+        const uint32_t slot = table + index * 4u;
+        return index >= 3 && file == CRT_STATIC_FILE + index * CRT_FILE_BYTES &&
+               TL32(slot) == file ? slot : 0;
+    }
+    if (!guest_object(file, CRT_FILE_BYTES, GUEST_HEAP_END)) return 0;
+    for (uint32_t index = CRT_STATIC_COUNT; index < count; ++index) {
+        const uint32_t slot = table + index * 4u;
+        if (TL32(slot) == file) return slot;
+    }
+    return 0;
+}
+
+static bool read_crt_file(uint32_t stream, ClassicRuntimeCrtFile *link) {
+    if (!MEM || !guest_object(stream, BSFILE_LINK + 4, GUEST_VA_END)) return false;
+    const uint32_t bsfile = TL32(stream + BSFILE_LINK);
+    if (!guest_object(bsfile, BSFILE_SIZE, GUEST_VA_END) || TL32(bsfile) != BSFILE_VTABLE ||
+        TL32(BSFILE_VTABLE + 0x44) != READ_VIRTUAL || !TL8(bsfile + 0x2c)) return false;
+    const uint32_t callback = TL32(bsfile + 8);
+    if (callback != READ_CALLBACK && callback != READ_CALLBACK_SWAPPED) return false;
+
+    const uint32_t file = TL32(bsfile + 0x24);
+    const uint32_t slot = crt_file_slot(file);
+    /* A successful rb stream has the read bit and neither write nor update. */
+    if (!slot || (TL32(file + 0xc) & 0x83u) != 1u) return false;
+    const uint32_t fileno = TL32(file + 0x10), count = TL32(CRT_DESCRIPTOR_COUNT);
+    if (!count || count > CRT_PAGE_COUNT * CRT_PAGE_ENTRIES || count % CRT_PAGE_ENTRIES ||
+        fileno < 3 || fileno >= count) return false;
+    const uint32_t page = TL32(CRT_DESCRIPTOR_PAGES + fileno / CRT_PAGE_ENTRIES * 4u);
+    if (!guest_object(page, CRT_PAGE_ENTRIES * CRT_ENTRY_BYTES, GUEST_HEAP_END)) return false;
+    const uint32_t descriptor = page + fileno % CRT_PAGE_ENTRIES * CRT_ENTRY_BYTES;
+    if (!(TL8(descriptor + 4) & 1u)) return false;
+    *link = (ClassicRuntimeCrtFile){bsfile, callback, file, slot, fileno, descriptor, TL32(descriptor)};
+    return link->handle && link->handle != UINT32_MAX;
+}
+
+bool classic_runtime_load_bind_crt(const struct CPU *cpu, uint32_t stream) {
+    ClassicRuntimeLoad *load = owned(cpu);
+    if (!load || load->opening || load->crt_attempted || stream != load->stream) return false;
+    load->crt_attempted = true;
+    ClassicRuntimeCrtFile link;
+    if (!read_crt_file(stream, &link) || !classic_runtime_load_generation(cpu, stream, link.handle)) return false;
+    load->crt = link;
+    return true;
+}
+
+static bool same_crt_file(const CPU *cpu, uint32_t stream) {
+    ClassicRuntimeLoad *load = owned(cpu);
+    if (!load || load->opening || !load->crt.file || stream != load->stream) return false;
+    ClassicRuntimeCrtFile current;
+    const ClassicRuntimeCrtFile *open = &load->crt;
+    if (read_crt_file(stream, &current) && current.bsfile == open->bsfile &&
+        current.callback == open->callback && current.file == open->file && current.file_slot == open->file_slot &&
+        current.fileno == open->fileno && current.descriptor == open->descriptor && current.handle == open->handle)
+        return true;
+    invalidate(load->generation);
+    return false;
+}
+
+static bool slot_read_frame(const CPU *cpu, uint32_t stream, uint32_t entry) {
+    const uintptr_t slot = (uintptr_t)cpu->thread;
+    if (!MEM || slot >= GUEST_STACK_SLOTS || cpu->fs_base != GUEST_TEB_BASE + slot * 0x2000u) return false;
+    const uint32_t lo = GUEST_STACK_BASE + (uint32_t)slot * GUEST_STACK_SIZE;
+    const uint32_t hi = lo + GUEST_STACK_SIZE - 64u;
+    return !(entry & 3u) && entry >= lo && entry <= hi - SLOT_PARENT_OFFSET - 8 &&
+           M32(cpu->fs_base + 4) == hi && M32(cpu->fs_base + 8) == lo &&
+           M32(entry) == SLOT_READ_RETURN && M32(entry + 4) == entry + SLOT_DESTINATION_OFFSET &&
+           M32(entry + 8) == CLASSIC_FRESH_SLOT_READ_BYTES &&
+           M32(entry + SLOT_PARENT_OFFSET) == SLOT_PARENT_RETURN &&
+           M32(entry + SLOT_PARENT_OFFSET + 4) == stream;
+}
+
+uint32_t classic_runtime_load_slot_read_begin(const struct CPU *cpu, uint32_t stream) {
+    ClassicRuntimeLoad *load = owned(cpu);
+    if (!load || stream != cpu->r[1] || stream != cpu->r[6] ||
+        !slot_read_frame(cpu, stream, cpu->r[4]) || !same_crt_file(cpu, stream) ||
+        !classic_runtime_load_generation(cpu, stream, load->crt.handle)) return 0;
+    return cpu->r[4];
+}
+
+uint64_t classic_runtime_load_slot_read_end(const struct CPU *cpu, uint32_t stream,
+                                           uint32_t entry_stack, uint32_t bytes) {
+    ClassicRuntimeLoad *load = owned(cpu);
+    if (!load || !entry_stack || !bytes || bytes > CLASSIC_FRESH_SLOT_READ_BYTES ||
+        bytes != cpu->r[0] || stream != cpu->r[6] ||
+        !slot_read_frame(cpu, stream, entry_stack) || cpu->r[4] != entry_stack + SLOT_RETURN_POP ||
+        !same_crt_file(cpu, stream)) return 0;
+    return classic_runtime_load_generation(cpu, stream, load->crt.handle);
+}
+
 
 void classic_runtime_load_end(ClassicRuntimeLoad *load) {
     if (!load || load != local_load || load->owner != rt_current_cpu()) return;

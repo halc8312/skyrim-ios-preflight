@@ -2,8 +2,10 @@
 
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
@@ -17,6 +19,57 @@ SAVE_PUBLISH = HERE.parent / "classic-save-publish"
 FRESH_LOAD = HERE.parent / "classic-fresh-load"
 COSAVE = HERE.parent / "skse-cosave"
 IOS_RUNTIME = ROOT / "ios" / "runtime-port"
+
+
+def crt_fixture(generation: Path) -> bytes:
+    sys.path.insert(0, str(FRESH_LOAD))
+    from test_slot_read import (
+        READ_CALL, READER_SHA, READER_UNIT, SLOT_UNIT, check_unit, fixture_function,
+        function_span, stage_slot_read, validate_generation,
+    )
+    state = json.loads((generation / "generation.json").read_bytes())
+    validate_generation(state)
+    image = Path(state["candidate"]).read_bytes()
+    if hashlib.sha256(image).hexdigest() != state["candidate_sha256"]:
+        raise ValueError("Pinned vtable comparison needs the original verified image")
+    pe, = struct.unpack_from("<I", image, 60)
+    sections, = struct.unpack_from("<H", image, pe + 6)
+    optional_size, = struct.unpack_from("<H", image, pe + 20)
+    for section in range(sections):
+        entry = pe + 24 + optional_size + section * 40
+        _, rva, raw_size, offset = struct.unpack_from("<4I", image, entry + 8)
+        slot = 0x110DBEC - (rva + 0x400000)
+        if 0 <= slot <= raw_size - 4 and struct.unpack_from("<I", image, offset + slot) == (0xA57E70,):
+            break
+    else:
+        raise ValueError("Pinned BSFile read slot differs from the reviewed input")
+
+    root = generation / "gen"
+    units = (
+        (READER_UNIT, READER_SHA, ("f_677990",)),
+        ("exe_261.c", "1f4ea50599764ad19c3bf5752598ab2036fb4b6fd8d7802774a288ab903331b5",
+         ("f_A57260", "f_A57E70")),
+        ("exe_295.c", "0efcfed401f53e7f1a6e05d69664975e95949895a0795094d063a03cba865404", ("f_B29A10",)),
+        ("exe_470.c", "f9498a5a82f02b1886e638c867eac04f83501f340f4fe13a52511c95eff0a3f7", ("f_F680D9",)),
+    )
+    _, read_block, _ = stage_slot_read((root / SLOT_UNIT).read_bytes())
+    wrapped = read_block.replace(READ_CALL, b"""{
+        const uint32_t stream = c->r[1];
+        const uint32_t frame = classic_runtime_load_slot_read_begin(c, stream);
+        f_677990(c);
+        classic_runtime_fixture_slot_result(classic_runtime_load_slot_read_end(c, stream, frame, c->r[0]));
+    }""", 1)
+    sources = [b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n#include "runtime_load.h"\n'
+               b'void classic_runtime_fixture_slot_result(uint64_t);\n']
+    for name, digest, functions in units:
+        data = (root / name).read_bytes()
+        check_unit(data, digest)
+        for function in functions:
+            begin, end = function_span(data, function)
+            sources.append(data[begin:end])
+    sources.append(fixture_function("classic_runtime_fixture_crt_read", wrapped))
+    return b"\n".join(sources)
+
 
 
 def main() -> None:
@@ -81,6 +134,12 @@ def main() -> None:
         if args.load_witness:
             includes += ["-I", FRESH_LOAD]
             variants.append(("selected-load-witness", [], [HERE / "test_runtime_load.c"]))
+            if args.generation is not None:
+                includes += ["-isystem", args.generation / "gen"]
+                linked_crt = out / "crt_read.c"
+                linked_crt.write_bytes(crt_fixture(args.generation))
+                variants.append(("selected-load-crt", ["-DSKYRIM_TEST_PINNED_CRT=1"],
+                                 [HERE / "test_runtime_load.c", linked_crt]))
         kernel_object = out / "kernel32.o"
         subprocess.run([args.cc, *flags, *includes, "-c", kernel, "-o", kernel_object], check=True, timeout=60)
         common = [kernel_object, HERE / "runtime_save.c", HERE / "host_traps.c", SAVE_PUBLISH / "save_publish.c"]

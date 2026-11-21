@@ -8,11 +8,16 @@
 #include "fresh_load.h"
 
 typedef struct {
+    uint32_t bsfile, callback, file, file_slot, fileno, descriptor, handle;
+} ClassicRuntimeCrtFile;
+
+typedef struct {
     const struct CPU *owner;
     uint64_t generation;
     uint32_t stream, handle;
     int directory, fd;
-    bool opening;
+    bool opening, crt_attempted;
+    ClassicRuntimeCrtFile crt;
     size_t leaf_offset;
     char directory_path[CLASSIC_FRESH_PATH_BYTES];
     char path[CLASSIC_FRESH_PATH_BYTES];
@@ -29,6 +34,15 @@ void classic_runtime_load_end(ClassicRuntimeLoad *);
 /* Return a live generation for this native handle and receiver. The caller
  * must still establish that the CRT uses this handle for its logical read. */
 uint64_t classic_runtime_load_generation(const struct CPU *, uint32_t stream, uint32_t handle);
+
+/* Opt-in hosted observation immediately after the verified first open. */
+bool classic_runtime_load_bind_crt(const struct CPU *, uint32_t stream);
+
+/* The original logical read still owns its call and return. The stack token
+ * brackets that exact slot read, and a zero token carries no evidence. */
+uint32_t classic_runtime_load_slot_read_begin(const struct CPU *, uint32_t stream);
+uint64_t classic_runtime_load_slot_read_end(const struct CPU *, uint32_t stream,
+                                           uint32_t entry_stack, uint32_t bytes);
 
 /* Staged native wrapper calls. The GFile carries this token independently
  * of the existing write observer. */
