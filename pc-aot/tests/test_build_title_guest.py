@@ -216,6 +216,80 @@ class BuildTests(unittest.TestCase):
             is_guest_binding = Path(cmd[cmd.index("-c")+1]).parent == self.abi
             self.assertEqual("-DSKYRIM_IOS_CLASSIC_SKSE=1" in cmd, is_guest_binding)
 
+    def test_mod_hook_variant_stages_units_exports_binding_and_records_groups(self):
+        with mock.patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
+            import classic_skse_guest as classic
+            import mod_hooks_guest as hooks
+            self.state.update(hooks.reviewed_generation())
+            self.state_path.write_text(json.dumps(self.state))
+            gen = self.stage / "gen"
+            (gen / "funcs_exe.h").write_bytes(b"/* authored declarations */")
+            (gen / "exe_0.c").write_bytes(b"\n".join(
+                b"void f_" + name + b"(CPU *c) { return; }" for name in classic.ENTRIES))
+            (gen / "exe_table.c").write_bytes(b"\n".join(
+                b"{0x" + name + b"u, f_" + name + b"}," for name in classic.ENTRIES))
+            (gen / "exe_7.c").write_bytes(b"/* authored unit */")
+            for name in ("PcGuestSkseABI.h", "pc_guest_skse_library.c", "pc_guest_mod_hooks_library.c"):
+                (self.abi / name).write_bytes(b"/* test */")
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                builder.main([str(self.stage), "--jobs", "1", "--mod-hooks", "fuz_menu"])
+            for groups, message in (("vm_lifecycle", "X4"), ("fuz_world", "list both"), ("bogus", "Unknown")):
+                stderr = io.StringIO()
+                with self.subTest(groups=groups), self.assertRaises(SystemExit), contextlib.redirect_stderr(stderr):
+                    builder.main([str(self.stage), "--jobs", "1", "--classic-skse", "--mod-hooks", groups])
+                self.assertIn(message, stderr.getvalue())
+            self.assertEqual(self.calls, [])
+            stages = {"fuz_menu": lambda root: {"exe_7.c": b"/* staged menu */"},
+                      "fuz_world": lambda root: {"exe_7.c": b"/* staged menu */"}}
+            with mock.patch.dict(hooks.STAGES, stages, clear=True):
+                builder.main([str(self.stage), "--jobs", "1", "--classic-skse", "--mod-hooks", "fuz_menu,fuz_world"])
+                self.calls.clear()
+                builder.main([str(self.stage), "--jobs", "1", "--classic-skse", "--mod-hooks", "fuz_menu,fuz_world"])
+                self.assertFalse(any("-c" in cmd for cmd in self.calls))
+                self.calls.clear()
+                builder.main([str(self.stage), "--jobs", "1", "--classic-skse", "--mod-hooks", "fuz_menu,fuz_world"])
+        build = self.stage / "arm64-ios-classic-skse-hooks-3"
+        self.assertFalse((self.stage / "arm64-ios-classic-skse").exists())
+        self.assertEqual((gen / "exe_7.c").read_bytes(), b"/* authored unit */")
+        self.assertEqual((build / "mod-hook-sources/exe_7.c").read_bytes(), b"/* staged menu */")
+        result = json.loads((build / "result.json").read_text())
+        contract = json.loads((build / "compile-contract.json").read_text())
+        self.assertIs(result["classic_skse_experiment"], True)
+        self.assertEqual(result["mod_hook_groups"], 3)
+        self.assertEqual(contract["mod_hook_groups"], 3)
+        self.assertEqual(contract["mod_hook_group_names"], ["fuz_menu", "fuz_world"])
+        self.assertEqual(contract["mod_hooks_header_sha256"], hooks.header_hashes())
+        self.assertEqual(set(contract["mod_hook_staged_units"]), {"exe_7.c"})
+        self.assertEqual(plistlib.loads((build / "SkyrimGuest.framework/Info.plist").read_bytes())["PcGuestModHooks"], 3)
+        self.assertEqual(set((build / "exports.txt").read_text().splitlines()),
+                         {"_skyrim_guest_classic_api_v1", "_skyrim_guest_bind_classic_v1",
+                          "_skyrim_guest_bind_mod_hooks_v1"})
+
+    def test_mod_hook_compile_flags_reach_only_staged_units_and_the_hook_library(self):
+        with mock.patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
+            import classic_skse_guest as classic
+            import mod_hooks_guest as hooks
+            self.state.update(hooks.reviewed_generation())
+            self.state_path.write_text(json.dumps(self.state))
+            gen = self.stage / "gen"
+            (gen / "funcs_exe.h").write_bytes(b"/* authored declarations */")
+            (gen / "exe_0.c").write_bytes(b"\n".join(
+                b"void f_" + name + b"(CPU *c) { return; }" for name in classic.ENTRIES))
+            (gen / "exe_table.c").write_bytes(b"\n".join(
+                b"{0x" + name + b"u, f_" + name + b"}," for name in classic.ENTRIES))
+            (gen / "exe_7.c").write_bytes(b"/* authored unit */")
+            for name in ("PcGuestSkseABI.h", "pc_guest_skse_library.c", "pc_guest_mod_hooks_library.c"):
+                (self.abi / name).write_bytes(b"/* test */")
+            with mock.patch.dict(hooks.STAGES, {"chargen_precache": lambda root: {"exe_7.c": b"/* gate */"}}, clear=True):
+                builder.main([str(self.stage), "--jobs", "1", "--classic-skse", "--mod-hooks", "chargen_precache"])
+        compiled = {Path(cmd[cmd.index("-c") + 1]).name: cmd for cmd in self.calls if "-c" in cmd}
+        self.assertEqual(set(compiled), {"exe_0.c", "exe_7.c", "exe_table.c", "pc_guest_library.c",
+                                         "pc_guest_skse_library.c", "pc_guest_mod_hooks_library.c"})
+        for name, cmd in compiled.items():
+            hooked = name in ("exe_7.c", "pc_guest_mod_hooks_library.c")
+            self.assertEqual("-DPC_GUEST_MOD_HOOKS_COMPILED=8u" in cmd, hooked, name)
+            self.assertEqual(str(hooks.SEAMS) in cmd, hooked, name)
+
     def test_unknown_import_blocks_link_and_success_result(self):
         self.import_mock.return_value=(["_not_allowed"],["_not_allowed"])
         with self.assertRaisesRegex(RuntimeError,"Unexpected private framework imports"):

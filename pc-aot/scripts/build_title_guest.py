@@ -148,6 +148,9 @@ def main(argv=None):
     p.add_argument("--jobs",type=int,choices=[1,2],default=2)
     p.add_argument("--classic-skse", action="store_true",
                    help="Build the opt-in experimental Classic VM/menu guest in its own directory")
+    p.add_argument("--mod-hooks", metavar="GROUPS",
+                   help="With --classic-skse: comma-separated reviewed MOD hook groups to stage "
+                        "(fuz_menu, fuz_world, chargen_precache)")
     p.add_argument("--llvm-bin",type=Path,help="Windows LLVM bin directory; defaults to SKYRIM_LLVM_BIN, PATH, or Program Files/LLVM/bin")
     p.add_argument("--darwin-headers",type=Path,help="Windows public any-darwin-any include directory; alternatively set SKYRIM_DARWIN_HEADERS")
     a=p.parse_args(argv)
@@ -159,9 +162,19 @@ def main(argv=None):
     state=json.loads((stage/"generation.json").read_text())
     if not state.get("generation_finished") or not state.get("inputs_unchanged") or state.get("fixed_native_replacements"):
         raise ValueError("Completed original-body generation required")
+    hook_groups = 0
+    if a.mod_hooks is not None and not a.classic_skse:
+        p.error("--mod-hooks is combined with --classic-skse")
     if a.classic_skse:
         from classic_skse_guest import prepare_sources, validate_generation
         validate_generation(state)
+    if a.mod_hooks is not None:
+        import mod_hooks_guest
+        try:
+            hook_groups = mod_hooks_guest.parse_groups(a.mod_hooks)
+            mod_hooks_guest.validate_generation(state, stage)
+        except ValueError as error:
+            p.error(str(error))
     inputs={key:state.get(key) for key in ("candidate_sha256","discovery_sha256")}
     if any(not isinstance(value,str) or not re.fullmatch(r"[0-9a-f]{64}",value) for value in inputs.values()):
         raise ValueError("Generation must bind exact candidate_sha256 and discovery_sha256")
@@ -173,6 +186,8 @@ def main(argv=None):
     except (ValueError,OSError,subprocess.SubprocessError) as error:
         p.error(str(error))
     build=stage/("arm64-ios-classic-skse" if a.classic_skse else "arm64-ios")
+    if hook_groups:
+        build=build.with_name(f"{build.name}-hooks-{hook_groups}")
     objects=build/"objects"
     logs=build/"logs"
     objects.mkdir(parents=True,exist_ok=True)
@@ -186,6 +201,10 @@ def main(argv=None):
     if a.classic_skse:
         declarations_hash = digest(stage/"gen/funcs_exe.h")
         generated_sources=prepare_sources(generated_sources, build/"classic-sources")
+    staged_units = {}
+    if hook_groups:
+        generated_sources, staged_units = mod_hooks_guest.prepare_sources(
+            generated_sources, build/"mod-hook-sources", hook_groups, state, stage)
     sources=generated_sources+[ABI/"pc_guest_library.c"]
     contract={"compiler":output([tool["clang"],"--version"]),"toolchain":tool["identity"],
               "inputs":inputs,"source_commit":state["source_commit"],
@@ -194,6 +213,11 @@ def main(argv=None):
         sources.append(ABI/"pc_guest_skse_library.c")
         contract.update(classic_skse_experiment=True,
                         classic_abi_header_sha256=digest(ABI/"PcGuestSkseABI.h"))
+    if hook_groups:
+        sources.append(ABI/"pc_guest_mod_hooks_library.c")
+        contract.update(mod_hook_groups=hook_groups, mod_hook_group_names=mod_hooks_guest.group_names(hook_groups),
+                        mod_hooks_header_sha256=mod_hooks_guest.header_hashes(),
+                        mod_hook_staged_units=staged_units)
     contract_file=build/"compile-contract.json"
     if contract_file.exists() and json.loads(contract_file.read_text())!=contract:
         raise ValueError("Compilation settings changed; preserve the old stage")
@@ -209,6 +233,9 @@ def main(argv=None):
                 return source.name,True
         started=time.monotonic()
         options = [*flags, "-DSKYRIM_IOS_CLASSIC_SKSE=1"] if a.classic_skse and source.parent == ABI else flags
+        if hook_groups and (source.name in staged_units or source.name == "pc_guest_mod_hooks_library.c"):
+            # Only the staged units and the hook library see the reviewed seam headers.
+            options = [*options, "-I", str(mod_hooks_guest.SEAMS), f"-DPC_GUEST_MOD_HOOKS_COMPILED={hook_groups}u"]
         command([tool["clang"],*options,"-c",source,"-o",obj],logs/(source.stem+".log"))
         evidence = {"source_sha256":source_hash, "object_sha256":digest(obj),
                     "seconds":round(time.monotonic()-started,2)}
@@ -239,8 +266,9 @@ def main(argv=None):
     framework.mkdir(exist_ok=True)
     binary=framework/"SkyrimGuest"
     exports=build/"exports.txt"
-    exports.write_text("_skyrim_guest_classic_api_v1\n_skyrim_guest_bind_classic_v1\n"
-                       if a.classic_skse else "_skyrim_guest_api_v1\n")
+    exports.write_text(("_skyrim_guest_classic_api_v1\n_skyrim_guest_bind_classic_v1\n"
+                        if a.classic_skse else "_skyrim_guest_api_v1\n")
+                       + ("_skyrim_guest_bind_mod_hooks_v1\n" if hook_groups else ""))
     command(link_command(tool,build,response,exports,binary,imports),logs/"link.log",timeout=600)
     info={"CFBundleDevelopmentRegion":"en","CFBundleExecutable":"SkyrimGuest",
           "CFBundleIdentifier":"org.skyrimios.pcguest","CFBundleInfoDictionaryVersion":"6.0",
@@ -248,6 +276,8 @@ def main(argv=None):
           "CFBundleShortVersionString":"0.1.0","CFBundleVersion":"1","MinimumOSVersion":"18.0"}
     if a.classic_skse:
         info["PcGuestClassicSkseExperiment"] = True
+    if hook_groups:
+        info["PcGuestModHooks"] = hook_groups
     (framework/"Info.plist").write_bytes(plistlib.dumps(info))
     result={"schema":1,"framework":str(framework),"bytes":binary.stat().st_size,
             "sha256":digest(binary),"translation_units":len(sources),"target":"arm64-apple-ios18.0",
@@ -258,6 +288,8 @@ def main(argv=None):
             "game_executed":False,"physical_iphone_verified":False}
     if a.classic_skse:
         result["classic_skse_experiment"] = True
+    if hook_groups:
+        result["mod_hook_groups"] = hook_groups
     (build/"result.json").write_text(json.dumps(result,indent=2)+"\n")
     print(json.dumps(result),flush=True)
 

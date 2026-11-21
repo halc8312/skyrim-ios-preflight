@@ -88,6 +88,9 @@ PY
     run_validation env SKYRIM_SKYDREAM_SOURCE="$ROOT/vendor/skydream" SKYDREAM_SOURCE_DIR="$ROOT/vendor/skydream" \
       python3 -m unittest discover -s tests -p 'test_classic_*.py' -v
   fi
+  if [[ "$MOD_HOOKS" == 1 ]]; then
+    run_validation env CC=clang python3 -m unittest discover -s tests -p 'test_mod_hooks_*.py' -v
+  fi
   if [[ "$DLL_PROBE" == 1 ]]; then
     run_validation env CC=clang PYTHONPATH="$ROOT/experiments/skse-plugin-vm" python3 -B -m unittest -v \
       test_classic_pex test_x86_sse_conversion \

@@ -1,0 +1,182 @@
+"""Compose MOD hook stages with authored units and hash tables; the pinned lift only when supplied."""
+import contextlib
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+import classic_skse_guest as classic  # noqa: E402
+import mod_hooks_guest as hooks  # noqa: E402
+
+spec = importlib.util.spec_from_file_location("title_assembly_for_hooks", ROOT / "scripts/assemble_title_ipa.py")
+assembly = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(assembly)
+
+
+class GroupTests(unittest.TestCase):
+    def test_parses_staged_groups(self):
+        self.assertEqual(hooks.parse_groups("fuz_menu"), 1)
+        self.assertEqual(hooks.parse_groups("fuz_menu,fuz_world"), 3)
+        self.assertEqual(hooks.parse_groups(" chargen_precache , fuz_menu "), 9)
+        self.assertEqual(hooks.group_names(11), ["fuz_menu", "fuz_world", "chargen_precache"])
+
+    def test_rejects_unknown_unstaged_duplicate_and_incomplete_lists(self):
+        for text, message in (("", "comma-separated"), ("fuz_menu,", "comma-separated"),
+                              ("fuz_menu,fuz_menu", "twice"), ("fuz", "Unknown"),
+                              ("vm_lifecycle", "X4"), ("camera_observe", "classic-camera"),
+                              ("chargen_slider", "not confirmed"), ("save_lifecycle", "P3-5"),
+                              ("fuz_world", "list both")):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
+                hooks.parse_groups(text)
+
+    def test_bits_and_headers_match_the_abi_and_the_assembly(self):
+        header = (ROOT / "ios/private-abi/PcGuestModHooksABI.h").read_text()
+        for name, bit in hooks.GROUPS.items():
+            self.assertIn(f"PC_GUEST_MOD_HOOK_{name.upper()} = {bit}u", header)
+        self.assertEqual({name: path.relative_to(ROOT).parent.as_posix() for name, path in hooks.HEADERS.items()},
+                         assembly.MOD_HOOK_HEADERS)
+        staged = sum(bit for name, bit in hooks.GROUPS.items() if name in hooks.STAGES)
+        self.assertEqual(staged & ~assembly.MOD_HOOK_GROUPS_DEFINED, 0)
+        self.assertEqual(set(hooks.STAGES) | set(hooks.UNSTAGED), set(hooks.GROUPS))
+
+
+class ComposeTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name) / "private/stage"
+        self.gen = self.root / "gen"
+        self.gen.mkdir(parents=True)
+        self.state = dict(hooks.reviewed_generation(), generation_finished=True)
+        (self.root / "generation.json").write_text(json.dumps(self.state))
+        self.units = {name: self.gen / name for name in ("exe_1.c", "exe_2.c", "exe_3.c", "exe_table.c")}
+        for name, path in self.units.items():
+            path.write_bytes(b"/* authored " + name.encode() + b" */\n")
+        self.sources = list(self.units.values())
+        self.output = self.root / "build/mod-hook-sources"
+
+    def stages(self, **groups):
+        return mock.patch.dict(hooks.STAGES, groups, clear=True)
+
+    def test_combines_groups_and_accepts_identical_shared_units(self):
+        menu = lambda root: {"exe_1.c": b"menu 1\n", "exe_2.c": b"shared\n"}  # noqa: E731
+        world = lambda root: {"exe_2.c": b"shared\n", "exe_3.c": b"world 3\n"}  # noqa: E731
+        before = {p: p.read_bytes() for p in self.sources}
+        with self.stages(fuz_menu=menu, fuz_world=world):
+            result, staged = hooks.prepare_sources(self.sources, self.output, 3, self.state, self.root)
+        self.assertEqual([p.parent for p in result], [self.output] * 3 + [self.gen])
+        self.assertEqual(staged, {name: hashlib.sha256(data).hexdigest() for name, data in
+                                  (("exe_1.c", b"menu 1\n"), ("exe_2.c", b"shared\n"), ("exe_3.c", b"world 3\n"))})
+        self.assertEqual((self.output / "exe_3.c").read_bytes(), b"world 3\n")
+        self.assertEqual({p: p.read_bytes() for p in self.sources}, before)
+        # Only the selected group runs.
+        with self.stages(fuz_menu=menu, fuz_world=lambda root: self.fail("not selected")):
+            result, staged = hooks.prepare_sources(self.sources, self.output, 1, self.state, self.root)
+        self.assertEqual(set(staged), {"exe_1.c", "exe_2.c"})
+        self.assertEqual(result[2], self.units["exe_3.c"])
+
+    def test_rejects_differing_shared_units(self):
+        with self.stages(fuz_menu=lambda root: {"exe_2.c": b"menu\n"},
+                         fuz_world=lambda root: {"exe_2.c": b"world\n"}):
+            with self.assertRaisesRegex(ValueError, "fuz_menu and fuz_world stages produce different"):
+                hooks.prepare_sources(self.sources, self.output, 3, self.state, self.root)
+        self.assertFalse(self.output.exists())
+
+    def test_rejects_overlap_with_the_classic_preparation(self):
+        renamed = self.root / "build/classic-sources/exe_1.c"
+        renamed.parent.mkdir(parents=True)
+        renamed.write_bytes(b"void f_8F9720_guest(CPU *c) {\n}\n")
+        sources = [renamed, *self.sources[1:]]
+        with self.stages(fuz_menu=lambda root: {"exe_1.c": b"staged\n"}):
+            with self.assertRaisesRegex(ValueError, "already changed by the Classic"):
+                hooks.prepare_sources(sources, self.output, 1, self.state, self.root)
+        # An original unit that still holds a Classic entry is refused as well.
+        self.units["exe_2.c"].write_bytes(b"void f_A60200(CPU *c) {\n}\n")
+        with self.stages(fuz_menu=lambda root: {"exe_2.c": b"staged\n"}):
+            with self.assertRaisesRegex(ValueError, "Classic entry point"):
+                hooks.prepare_sources(self.sources, self.output, 1, self.state, self.root)
+        self.assertFalse(self.output.exists())
+
+    def test_rejects_missing_duplicate_and_unknown_inputs(self):
+        with self.stages(fuz_menu=lambda root: {"exe_9.c": b"staged\n"}):
+            with self.assertRaisesRegex(ValueError, "missing from the guest sources"):
+                hooks.prepare_sources(self.sources, self.output, 1, self.state, self.root)
+            with self.assertRaisesRegex(ValueError, "appears twice"):
+                hooks.prepare_sources(self.sources + self.sources[:1], self.output, 1, self.state, self.root)
+            with self.assertRaisesRegex(ValueError, "No MOD hook groups"):
+                hooks.prepare_sources(self.sources, self.output, 0, self.state, self.root)
+            with self.assertRaisesRegex(ValueError, "no reviewed stage"):
+                hooks.prepare_sources(self.sources, self.output, 4, self.state, self.root)
+        self.assertFalse(self.output.exists())
+
+    def test_rejects_other_generations(self):
+        with self.stages(fuz_menu=lambda root: self.fail("must not stage")):
+            for key, value in hooks.reviewed_generation().items():
+                changed = dict(self.state, **{key: "other" if value is not True else False})
+                with self.subTest(key=key), self.assertRaisesRegex(ValueError, "reviewed Classic generation"):
+                    hooks.prepare_sources(self.sources, self.output, 1, changed, self.root)
+            (self.root / "generation.json").write_text(json.dumps(dict(self.state, extra=1)))
+            with self.assertRaisesRegex(ValueError, "changed while preparing"):
+                hooks.prepare_sources(self.sources, self.output, 1, self.state, self.root)
+
+    def test_real_precache_stage_with_an_authored_unit(self):
+        precache = hooks.load(ROOT / "experiments/classic-chargen-precache", "test_chargen_precache")
+        unit = (precache.PRELUDE + b"\nvoid f_886930(CPU *c) {\n" + precache.SETUP + precache.WARM
+                + precache.FOLLOWUP + b"\n}\n")
+        (self.gen / precache.MENU_UNIT).write_bytes(unit)
+        sources = [*self.sources, self.gen / precache.MENU_UNIT]
+        with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
+            hooks.prepare_sources(sources, self.output, 8, self.state, self.root)
+        with mock.patch.object(precache, "MENU_HASH", hashlib.sha256(unit).hexdigest()):
+            result, staged = hooks.prepare_sources(sources, self.output, 8, self.state, self.root)
+        data = result[-1].read_bytes()
+        self.assertEqual(list(staged), [precache.MENU_UNIT])
+        self.assertIn(precache.GATED_WARM, data)
+        self.assertEqual(data.replace(precache.HOOK, b"", 1).replace(precache.GATED_WARM, precache.WARM, 1), unit)
+
+
+class OwnedLiftTests(unittest.TestCase):
+    def test_all_stages_compose_and_parse_with_the_pinned_lift(self):
+        generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
+        if not generation:
+            self.skipTest("Set SKYRIM_TEST_OWNED_CLASSIC_LIFT to the reviewed private generation.")
+        compiler = shutil.which(os.environ.get("CC", "clang"))
+        if not compiler:
+            self.skipTest("A C compiler is required.")
+        root = Path(generation).resolve()
+        state = json.loads((root / "generation.json").read_text(encoding="utf-8"))
+        classic.validate_generation(state)
+        groups = hooks.parse_groups("fuz_menu,fuz_world,chargen_precache")
+        originals = sorted((root / "gen").glob("exe_*.c"))
+        before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
+        with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
+            work = Path(scratch)
+            sources = classic.prepare_sources(originals, work / "classic-sources")
+            result, staged = hooks.prepare_sources(sources, work / "mod-hook-sources", groups, state, root)
+            self.assertTrue({"exe_100.c", "exe_101.c", "exe_189.c", "exe_35.c", "exe_188.c",
+                             "exe_106.c", "exe_186.c"} <= set(staged))
+            runtime = root / "source/runtime"
+            for path in (p for p in result if p.name in staged):
+                with self.subTest(unit=path.name):
+                    subprocess.run([compiler, "-std=gnu11", "-fsyntax-only", "-w", "-DGAME_SKYRIM",
+                                    "-I", str(runtime), "-I", str(root / "gen"), "-I", str(hooks.SEAMS),
+                                    str(path)], check=True, timeout=300)
+            library = ROOT / "ios/private-abi/pc_guest_mod_hooks_library.c"
+            subprocess.run([compiler, "-std=gnu11", "-fsyntax-only", "-DSKYRIM_IOS_CLASSIC_SKSE=1",
+                            f"-DPC_GUEST_MOD_HOOKS_COMPILED={groups}u", "-I", str(runtime),
+                            "-I", str(ROOT / "ios/private-abi"), "-I", str(hooks.SEAMS), str(library)],
+                           check=True, timeout=60)
+        self.assertEqual({p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}, before)
+
+
+if __name__ == "__main__":
+    unittest.main()
