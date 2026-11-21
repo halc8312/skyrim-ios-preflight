@@ -75,4 +75,40 @@ the real VM frame lifetime. The host fixture exercises the exact owned DLL
 and demonstrates that a rejected save acknowledgement preserves the last
 published settings.
 
+### Classic Form arguments
+
+The private Form argument fixture uses the stock FormList.HasForm Run
+entry at `0x8F8120`. It obtains argument zero through the pinned
+`f_C3A620` and `f_C3AC40` VM page functions, then enters the generic Form
+unpacker `f_8D90E0`. The unpacker checks the VM identifier through
+`f_8D9070` with handle-policy type 0. It uses the stock identifier lock
+inside `f_C307C0` before checking validity and resolving the object.
+This exercises an Actor supplied through a Form parameter, which is the
+argument shape used for NPC state in Wearable Lanterns.
+
+The authored observer samples the two handle copies inside the stock
+identifier lock and uses the existing bounded FormID reader at the
+matching FormID-table entry before the original unlock. It checks that
+both observations refer to the same nondeleted Character and that the
+copied ID equals the table key and handle ID. The test compares that
+scalar with the stock Form.GetFormID callback. The VM page data, table
+entries and imported thread services are authored. The test stops at
+FormList's downstream call so it exercises argument handling without
+evaluating the FormList.
+
+An explicit type-0 None is reported as None. The fixture refuses a
+missing argument, typed null identifier, forged identifier, array,
+wrong handle kind, missing or deleted actor, mismatched FormID and a
+valid non-Actor Form. It also demonstrates that deletion between the
+two stock lookups can leave a borrowed pointer from Resolve while the
+observer rejects it. The observer adds no lock wait. The stock calls
+can wait and do not prove a native actor is retained. Live use still
+needs the accepted VM generation and an independently owned actor
+scope. The fixture publishes copied scalar results only to its own host
+test and performs no storage operation.
+[Form and retained actor lifetime](../classic-form-projection/README.md)
+
+Run with `SKYRIM_TEST_OWNED_CLASSIC_LIFT` set to the reviewed generation
+and a POSIX compiler using `python3 -B -m unittest -v test_classic_form_argument`.
+
 The tests generate their own DLLs. On Windows, `python -B -m unittest -v test_pe_image test_skse_plugin_vm test_dependency_plan test_classic_pex test_x86_sse_conversion` compares interpreted initialization to authored DLLs run by Windows, including relocations, allocated memory, thread-local values, callbacks and the attach and detach order of a four-DLL package. On Mac, `bash test-apple-sdk.sh` also checks the iPhoneOS sources and runs the same UI controller in an iOS simulator. It supplies selected URLs to the document picker's delegate and verifies the isolated diagnostic results in English and Japanese. Physical Files providers and gameplay need separate tests.
