@@ -474,6 +474,12 @@ class GenerationTests(GenerationHarness):
         self.assertEqual(self.native.commit(self.store, stage, C.byref(self.g(11))), OK)
 
     def test_refuses_other_databases_and_symlinks(self):
+        ancestor = self.root / "container-alias"
+        ancestor.symlink_to(self.root, target_is_directory=True)
+        rc, through_alias = self.native.store(ancestor / self.directory.name)
+        self.assertEqual(rc, OK)
+        self.native.close(through_alias)
+
         other = self.root / "other"
         other.mkdir()
         dbpath = other / self.db.name

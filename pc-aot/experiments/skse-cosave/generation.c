@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 #include "generation.h"
 #include "records.h"
 #include "digest.h"
 #include "immutable_ess.h"
 #include <errno.h>
+#include <limits.h>
 #include <sqlite3.h>
 #include <stdlib.h>
 #include <string.h>
@@ -74,10 +75,17 @@ static SksePairResult initialize(sqlite3 *db) {
 SksePairResult skse_pair_open(const char *directory, SksePairStore **out) {
     if (!out) return SKSE_PAIR_ARGUMENT;
     *out = NULL;
-    struct stat info;
+    struct stat info, resolved;
     if (!directory || !*directory || lstat(directory, &info) || !S_ISDIR(info.st_mode)) return SKSE_PAIR_ARGUMENT;
+    /* `/var` can legitimately alias an Apple container's ancestors. Give
+     * SQLite the same checked directory under its canonical spelling so
+     * SQLITE_OPEN_NOFOLLOW still rejects any alias of the database itself. */
+    char canonical[PATH_MAX];
+    if (!realpath(directory, canonical) || lstat(canonical, &resolved) ||
+        !S_ISDIR(resolved.st_mode) || info.st_dev != resolved.st_dev || info.st_ino != resolved.st_ino)
+        return SKSE_PAIR_STORAGE;
     SksePairStore *store = calloc(1, sizeof *store);
-    char *path = sqlite3_mprintf("%s/classic-generations.sqlite3", directory);
+    char *path = sqlite3_mprintf("%s/classic-generations.sqlite3", canonical);
     if (!path || !store) { free(store); sqlite3_free(path); return SKSE_PAIR_STORAGE; }
     /* A private store may not be an alias of another file. The directory is
      * owned by the caller and must be protected from concurrent path changes. */
