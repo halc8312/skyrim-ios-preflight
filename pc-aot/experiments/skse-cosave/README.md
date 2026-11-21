@@ -178,6 +178,8 @@ The optional owner test runs the original PapyrusUtil 3.3 `StorageUtil.dll`. It 
 
 Run `python3 -B -m unittest discover -s tests -p 'test_classic_interpreted_cosave.py' -v` from the title workspace. The optional case uses the same `SKYRIM_TEST_OWNED_PAPYRUS_ZIP` and `SKYRIM_TEST_OWNED_LE_EXE` inputs as the standalone DLL check. The fresh load adapter has a separate [lifted call-site fixture](../classic-fresh-load/README.md).
 
+A hosted registration handoff consumes the verified immutable load input, then decodes only the core registration rows. It frees the companion image before transfer. The VM owner receives copied names, mapped handles and the verified load event. Applying the preparation independently checks the VM's current load before calling its handle policy, with no storage access. The real Classic epoch guard rejects a pending handoff after revert. The fixture releases that guard before policy calls and uses a serialized authored VM owner. Production must still establish the equivalent VM dispatch and retirement order on iPhone.
+
 ## Tests
 
 The Linux test requires SQLite and OpenSSL development headers and libraries. On macOS it uses system SQLite and CommonCrypto. The adapter bounds each `.ess` scan to 512 MiB, each companion to 64 MiB and the combined owner/record headers to 100,000. These are experimental resource budgets. Each edit currently constructs a new in-memory companion. The database retains published generations and needs a separately validated retention policy before long-term gameplay.

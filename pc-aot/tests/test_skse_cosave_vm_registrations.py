@@ -1,5 +1,6 @@
 """A separately loaded synthetic game, Classic registration rows, and an epoch-aware fake VM."""
 import ctypes as C
+from concurrent.futures import ThreadPoolExecutor
 import os
 import struct
 import unittest
@@ -8,6 +9,7 @@ import test_skse_cosave_callbacks as cb
 import test_skse_cosave_generation as gen
 import test_skse_cosave_history as hist
 import test_skse_cosave_menu as menu
+import test_skse_cosave_opened_load as opened
 import test_skse_cosave_registrations as reg
 
 P, Ptr, U64 = C.POINTER, gen.PTR, C.c_uint64
@@ -37,6 +39,10 @@ class Binding:
             "vm_registrations_create": ([P(Policy), P(Ptr)], C.c_int),
             "bridge_load_registrations": ([Ptr, P(br.Event), P(br.Trace), P(br.Evidence), P(hist.Loaded), C.c_size_t,
                                            Ptr, P(Report)], C.c_int),
+            "bridge_prepare_registrations": ([P(Ptr), P(br.Trace), P(br.Evidence), P(hist.Loaded), C.c_size_t,
+                                               P(Ptr), P(Report)], C.c_int),
+            "vm_registrations_apply": ([Ptr, P(Ptr), P(Report)], C.c_int),
+            "vm_registrations_drop": ([P(Ptr)], None),
             "vm_registrations_clear": ([Ptr], C.c_int), "vm_registrations_close": ([P(Ptr)], C.c_int),
             "vm_registrations_visit": ([Ptr, VISIT, Ptr], C.c_int),
         }
@@ -338,6 +344,135 @@ class ActivationTests(br.BridgeHarness):
                          [("release", 2), ("release", 1)])
         self.assertEqual(self.activate(obs)[0], OK)
 
+
+
+class Scope(C.Structure):
+    _fields_ = [("epoch", U64), ("registry", C.c_uint32)]
+
+
+class DeferredActivationTests(opened.OpenedLoadHarness):
+    extra_sources = (*br.BridgeHarness.extra_sources, gen.SOURCE / "registration_activation.c",
+                     gen.SOURCE.parents[1] / "ios/runtime-port/classic_vm_epoch.c", "-pthread")
+
+    def setUp(self):
+        super().setUp()
+        self.bind = Binding(self.api.lib)
+        signatures = {
+            "registered": ([C.c_uint32], None), "before_revert": ([C.c_uint], None),
+            "after_load": ([C.c_int], None), "scope_current": ([P(Scope)], C.c_bool),
+            "commit_begin": ([P(Scope)], C.c_bool), "commit_end": ([], None),
+        }
+        self.epoch = {}
+        for name, (args, result) in signatures.items():
+            prefix = "skyrim_vm_" if name.startswith(("scope_", "commit_")) else "skyrim_vm_epoch_"
+            fn = getattr(self.api.lib, prefix + name)
+            fn.argtypes, fn.restype = args, result
+            self.epoch[name] = fn
+        self.epoch["registered"](0x12340000)
+        self.epoch["after_load"](1)
+        self.scope = Scope()
+        self.assertTrue(self.epoch["scope_current"](C.byref(self.scope)))
+
+    def prepared(self, *, flags=0, invalid=False):
+        prefix = hist.history(b"Skyrim.esm", b"Owner.esp")
+        name, handle = b"Strong Name", 0xabcd000001001234
+        data = gen.image(gen.section(0, [(hist.MODS, 0, prefix), (cb.MCBR, 1, b""),
+            cb.group(name, [(handle, b"OnFoo"), (handle, b"OnOther")]), (menu.REGE, 1, b"")]))
+        rc, store = self.native.store(self.private / "text-en-voice-en")
+        self.assertEqual(rc, gen.OK)
+        try:
+            g = self.g(10)
+            rc, stage = self.native.stage(g.key, data)
+            self.assertEqual(rc, gen.OK)
+            try:
+                self.assertIn(self.native.commit(store, stage, C.byref(g)), (gen.OK, gen.ALREADY))
+            finally:
+                self.native.discard(stage)
+        finally:
+            self.native.close(store)
+        rc, detail, bridge = self.api.open_at(self.private, self.running)
+        self.assertEqual((rc, detail), (br.OK, gen.OK))
+        original, self.bridge = self.bridge, bridge
+        try:
+            with self.sealed_input() as (source, _):
+                start, pending, observed = self.guest_load(source.fileno(), flags=flags)
+                self.assertEqual(start, (br.OK, gen.OK))
+            mods = (hist.Loaded * 2)(hist.Loaded(b"Skyrim.esm", 10, 0, 0), hist.Loaded(b"Owner.esp", 9, 5, 0))
+            proof = observed.base
+            if invalid:
+                proof.ess_fd = self.fd
+            hashes = self.deferred.hashes()
+            out, report = Ptr(), Report()
+            result = self.bind.bridge_prepare_registrations(C.byref(pending), C.byref(observed.trace()),
+                C.byref(proof), mods, len(mods), C.byref(out), C.byref(report))
+            self.assertFalse(pending)
+            self.assertEqual(self.deferred.hashes(), hashes + (not flags and not invalid))
+            return result, out, observed, report
+        finally:
+            self.bridge = original
+            self.api.close(bridge)
+
+    def test_copied_names_cross_to_vm_owner_after_bridge_close_and_guard_release(self):
+        outcome, prepared, observed, report = self.prepared()
+        self.assertEqual((outcome, report.rows, report.retained), (OK, 2, 0))
+        self.addCleanup(self.bind.vm_registrations_drop, C.byref(prepared))
+        hashes = self.deferred.hashes()
+
+        def vm_owner():
+            vm = FixtureVM(self.bind)
+            try:
+                # The production guard protects the handoff decision. Release it before policy calls.
+                self.assertTrue(self.epoch["commit_begin"](C.byref(self.scope)))
+                self.epoch["commit_end"]()
+                vm.confirm_load(observed)
+                seen = []
+
+                def reopen_epoch(_):
+                    actual = Scope()
+                    ready = self.epoch["scope_current"](C.byref(actual))
+                    seen.append((ready, actual.epoch, actual.registry))
+
+                vm.on_retain = reopen_epoch
+                result = self.bind.vm_registrations_apply(vm.state, C.byref(prepared), C.byref(report))
+                self.assertEqual((result, report.duplicates, report.retained, bool(prepared)), (OK, 1, 1, False))
+                self.assertEqual(seen, [(True, self.scope.epoch, self.scope.registry)])
+                self.assertEqual(vm.visit(), (OK, [(1, b"Strong Name", b"OnFoo", 0xabcd000005001234)]))
+                self.assertEqual(self.bind.vm_registrations_apply(vm.state, C.byref(prepared), None), ARG)
+                self.assertEqual(vm.errors, [])
+            finally:
+                self.assertEqual(vm.close(), OK)
+
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            worker.submit(vm_owner).result(10)
+        self.assertEqual(self.deferred.hashes(), hashes)
+
+    def test_retired_scope_and_another_completed_load_reject_old_preparation(self):
+        outcome, prepared, previous, _ = self.prepared()
+        self.assertEqual(outcome, OK)
+        self.addCleanup(self.bind.vm_registrations_drop, C.byref(prepared))
+        self.epoch["before_revert"](1)
+        self.epoch["after_load"](1)
+        accepted = self.epoch["commit_begin"](C.byref(self.scope))
+        if accepted:
+            self.epoch["commit_end"]()
+        self.assertFalse(accepted)
+        next_scope = Scope()
+        self.assertTrue(self.epoch["scope_current"](C.byref(next_scope)))
+        self.assertNotEqual(next_scope.epoch, self.scope.epoch)
+        now = self.observe(self.action(10, br.LOAD))
+        self.assertNotEqual(previous.requested.ticket, now.requested.ticket)
+        vm = FixtureVM(self.bind)
+        self.addCleanup(vm.close)
+        vm.confirm_load(now)
+        self.assertEqual(self.bind.vm_registrations_apply(vm.state, C.byref(prepared), None), WRONG_LOAD)
+        self.assertFalse(prepared)
+        self.assertEqual((vm.ops, vm.live), (["loaded"], []))
+
+    def test_unconsumed_descriptor_or_failed_vm_returns_no_prepared_records(self):
+        for flags, invalid, detail in ((br.VM_FAIL, False, br.REJECTED), (0, True, br.PAIR)):
+            with self.subTest(flags=flags, invalid=invalid):
+                result, prepared, _, report = self.prepared(flags=flags, invalid=invalid)
+                self.assertEqual((result, prepared.value, report.bridge), (BRIDGE, None, detail))
 
 if __name__ == "__main__":
     unittest.main()

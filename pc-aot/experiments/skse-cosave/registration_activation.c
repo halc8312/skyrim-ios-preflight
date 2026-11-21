@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "registration_activation.h"
+#include "core_view.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -10,6 +11,14 @@ typedef struct {
     uint64_t handle, key_token;
     uint32_t ordinal;
 } Candidate;
+
+struct SksePreparedRegistrations {
+    SkseGameEvent event;
+    SkseVmRegistrationReport report;
+    Candidate *rows;
+    uint8_t *names;
+    size_t count, names_size;
+};
 
 struct SkseVmRegistrations {
     SkseVmRegistrationPolicy policy;
@@ -115,8 +124,8 @@ static void collect_row(void *ctx, SkseRegistrationKey key, SkseRegistrationName
     }
 }
 
-static SkseVmRegistrationResult read_candidates(SkseVmRegistrations *s, const SkseCoreSnapshot *source,
-                                                size_t *count, SkseVmRegistrationReport *report) {
+static SkseVmRegistrationResult read_candidates(Candidate **rows, const SkseCoreSnapshot *source,
+                                              size_t *count, SkseVmRegistrationReport *report) {
     /* NINU as emitted by the stock writer is deliberately absent here. The
      * reader recognizes NiNU. Both tags stay visible in the inspection API. */
     static const SkseRegistrationFamily families[] = {
@@ -137,9 +146,9 @@ static SkseVmRegistrationResult read_candidates(SkseVmRegistrations *s, const Sk
     }
     size_t available = report->rows - report->missing_mod;
     if (!available) { *count = 0; return SKSE_VM_REG_OK; }
-    s->rows = calloc(available, sizeof *s->rows);
-    if (!s->rows) return SKSE_VM_REG_MEMORY;
-    Collection collected = {.rows = s->rows};
+    *rows = calloc(available, sizeof **rows);
+    if (!*rows) return SKSE_VM_REG_MEMORY;
+    Collection collected = {.rows = *rows};
     for (unsigned i = 0; i < FAMILIES; ++i) {
         if (!(present & (1u << i))) continue;
         collected.family = families[i];
@@ -204,14 +213,14 @@ static _Thread_local int fail_name_allocation;
 void skse_vm_test_fail_name_allocation(void) { fail_name_allocation = 1; }
 #endif
 
-/* The shared name of a keyed REGS group is a single slice in the Classic
- * image. unique_rows restores the input order, so its handles remain adjacent.
- * Keep only these bounded names when dropping the entire companion image. */
-static SkseVmRegistrationResult copy_names(SkseVmRegistrations *s, size_t count, size_t *bytes) {
+/* A keyed REGS group shares one name slice in the Classic image. Its handles
+ * stay adjacent in input order, which unique_rows also restores. Copy each
+ * such slice once before dropping the entire companion image. */
+static SkseVmRegistrationResult copy_names(Candidate *rows, size_t count, uint8_t **owned, size_t *bytes) {
     size_t size = 0;
     const uint8_t *previous = NULL;
     for (size_t i = 0; i < count; ++i) {
-        const Candidate *c = &s->rows[i];
+        const Candidate *c = &rows[i];
         if (c->key.name.data != previous) size += c->key.name.size;
         previous = c->key.name.data;
         size += c->callback.size;
@@ -221,12 +230,12 @@ static SkseVmRegistrationResult copy_names(SkseVmRegistrations *s, size_t count,
 #if defined(SKSE_REGISTRATION_TEST_ALLOC)
     if (fail_name_allocation) { fail_name_allocation = 0; return SKSE_VM_REG_MEMORY; }
 #endif
-    s->names = malloc(size);
-    if (!s->names) return SKSE_VM_REG_MEMORY;
-    uint8_t *next = s->names, *key = NULL;
+    *owned = malloc(size);
+    if (!*owned) return SKSE_VM_REG_MEMORY;
+    uint8_t *next = *owned, *key = NULL;
     previous = NULL;
     for (size_t i = 0; i < count; ++i) {
-        Candidate *c = &s->rows[i];
+        Candidate *c = &rows[i];
         if (c->key.name.size) {
             if (c->key.name.data != previous) {
                 key = next;
@@ -272,13 +281,13 @@ SkseVmRegistrationResult skse_bridge_load_registrations(SkseEventBridge *bridge,
         result = r->bridge == SKSE_BRIDGE_CORE ? SKSE_VM_REG_CORE : SKSE_VM_REG_BRIDGE;
     } else {
         size_t n = 0;
-        result = read_candidates(s, source, &n, r);
+        result = read_candidates(&s->rows, source, &n, r);
         if (result == SKSE_VM_REG_OK) result = bind_load(s, requested);
         if (result == SKSE_VM_REG_OK) result = current(s);
         if (result == SKSE_VM_REG_OK) result = unique_rows(s, &n, r);
         if (result == SKSE_VM_REG_OK) result = acquire(s, n, r);
         size_t names = 0;
-        if (result == SKSE_VM_REG_OK) result = copy_names(s, s->held, &names);
+        if (result == SKSE_VM_REG_OK) result = copy_names(s->rows, s->held, &s->names, &names);
         skse_core_snapshot_close(source);
         if (result == SKSE_VM_REG_OK) {
             s->active = 1;
@@ -291,6 +300,93 @@ SkseVmRegistrationResult skse_bridge_load_registrations(SkseEventBridge *bridge,
         }
     }
     s->busy = 0;
+    return result;
+}
+
+void skse_vm_registrations_drop(SksePreparedRegistrations **prepared) {
+    if (!prepared || !*prepared) return;
+    free((*prepared)->rows);
+    free((*prepared)->names);
+    free(*prepared);
+    *prepared = NULL;
+}
+
+SkseVmRegistrationResult skse_bridge_prepare_registrations(SkseLoadInput **pending,
+    const SkseEventTrace *trace, const SkseBaseEvidence *base, const SkseLoadedMod *mods, size_t count,
+    SksePreparedRegistrations **out, SkseVmRegistrationReport *report) {
+    SkseVmRegistrationReport r = {.map = SKSE_MAP_SOURCE_ERROR};
+    if (report) *report = r;
+    if (!out || *out || (!mods && count)) return SKSE_VM_REG_ARGUMENT;
+    void *image = NULL;
+    size_t length = 0;
+    r.bridge = skse_bridge_finish_load_input(pending, trace, base, &image, &length, &r.pair);
+    if (r.bridge != SKSE_BRIDGE_OK) {
+        if (report) *report = r;
+        return SKSE_VM_REG_BRIDGE;
+    }
+
+    SkseCoreSnapshot source = {.image = {image, length}};
+    r.pair = skse_records_owner(&source.image, 0, &source.core);
+    if (r.pair == SKSE_PAIR_OK) r.map = skse_mod_map_decode_core(&source.core, mods, count, &source.map);
+    SksePreparedRegistrations *prepared = NULL;
+    SkseVmRegistrationResult result = SKSE_VM_REG_CORE;
+    if (r.map == SKSE_MAP_OK) {
+        result = SKSE_VM_REG_MEMORY;
+        prepared = calloc(1, sizeof *prepared);
+        if (prepared) {
+            result = read_candidates(&prepared->rows, &source, &prepared->count, &r);
+            if (result == SKSE_VM_REG_OK)
+                result = copy_names(prepared->rows, prepared->count, &prepared->names, &prepared->names_size);
+        }
+    } else r.bridge = SKSE_BRIDGE_CORE;
+    free(image);
+    if (result == SKSE_VM_REG_OK) {
+        prepared->event = base->event;
+        prepared->report = r;
+        *out = prepared;
+    } else skse_vm_registrations_drop(&prepared);
+    if (report) *report = r;
+    return result;
+}
+
+SkseVmRegistrationResult skse_vm_registrations_apply(SkseVmRegistrations *s,
+    SksePreparedRegistrations **input, SkseVmRegistrationReport *report) {
+    if (report) *report = (SkseVmRegistrationReport){.map = SKSE_MAP_SOURCE_ERROR};
+    if (!s || !input || !*input) return SKSE_VM_REG_ARGUMENT;
+    SksePreparedRegistrations *prepared = *input;
+    *input = NULL;
+    SkseVmRegistrationReport r = prepared->report;
+    SkseVmRegistrationResult result;
+    if (s->busy) result = SKSE_VM_REG_BUSY;
+    else if (s->active || s->held) result = SKSE_VM_REG_OCCUPIED;
+    else {
+        s->busy = 1;
+        result = bind_load(s, &prepared->event);
+        if (result == SKSE_VM_REG_OK) result = current(s);
+        if (result == SKSE_VM_REG_OK) {
+            size_t n = prepared->count;
+            s->rows = prepared->rows;
+            s->names = prepared->names;
+            prepared->rows = NULL;
+            prepared->names = NULL;
+            result = unique_rows(s, &n, &r);
+            if (result == SKSE_VM_REG_OK) result = acquire(s, n, &r);
+        }
+        if (result == SKSE_VM_REG_OK) {
+            s->active = 1;
+            r.retained = (uint32_t)s->held;
+            const size_t capacity = compact_live_rows(s, prepared->count);
+            if (!s->held) { free(s->names); s->names = NULL; }
+            r.retained_bytes = (uint32_t)(sizeof *s + capacity * sizeof *s->rows +
+                                          (s->names ? prepared->names_size : 0));
+        } else {
+            SkseVmRegistrationResult cleared = clear_owned(s);
+            if (cleared != SKSE_VM_REG_OK) result = cleared;
+        }
+        s->busy = 0;
+    }
+    skse_vm_registrations_drop(&prepared);
+    if (report) *report = r;
     return result;
 }
 

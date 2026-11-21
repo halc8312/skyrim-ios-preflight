@@ -44,6 +44,7 @@ typedef struct {
     uint32_t retained_bytes;
 } SkseVmRegistrationReport;
 typedef struct SkseVmRegistrations SkseVmRegistrations;
+typedef struct SksePreparedRegistrations SksePreparedRegistrations;
 typedef void (*SkseActiveRegistration)(void *, SkseRegistrationFamily, SkseRegistrationKey,
                                       SkseRegistrationName callback, uint64_t mapped_handle);
 
@@ -57,6 +58,24 @@ SkseVmRegistrationResult skse_vm_registrations_create(const SkseVmRegistrationPo
 SkseVmRegistrationResult skse_bridge_load_registrations(SkseEventBridge *bridge, const SkseGameEvent *requested,
     const SkseEventTrace *trace, const SkseBaseEvidence *base, const SkseLoadedMod *current, size_t count,
     SkseVmRegistrations *registrations, SkseVmRegistrationReport *report);
+/* Prepare from the exact immutable input consumed by the completed game load.
+ * This consumes *pending on the bridge's owner thread and can hash and query
+ * storage. Pass an initially empty *out. A successful preparation owns the
+ * copied names, mapped handles and the
+ * verified event. The preparation does not call the VM policy and may be
+ * moved to the serialized VM owner after closing the bridge and input.
+ * Use the current catalog from that same verified VM generation. */
+SkseVmRegistrationResult skse_bridge_prepare_registrations(SkseLoadInput **pending,
+    const SkseEventTrace *trace, const SkseBaseEvidence *base, const SkseLoadedMod *current, size_t count,
+    SksePreparedRegistrations **out, SkseVmRegistrationReport *report);
+/* Apply once on the VM policy's serialized owner thread. Calling with a
+ * valid state and preparation consumes the preparation, including on failure.
+ * The policy independently confirms the event and world before retaining any
+ * handle. Do not hold the app epoch mutex here: policy calls may query it.
+ * The VM dispatcher must serialize this invocation with native VM retire. */
+SkseVmRegistrationResult skse_vm_registrations_apply(SkseVmRegistrations *, SksePreparedRegistrations **,
+                                                     SkseVmRegistrationReport *report);
+void skse_vm_registrations_drop(SksePreparedRegistrations **);
 /* Enumerates a completed set in the current VM. Borrowed names expire on clear. */
 SkseVmRegistrationResult skse_vm_registrations_visit(SkseVmRegistrations *, SkseActiveRegistration, void *context);
 /* Call on cancellation, explicit unload, or after the authoritative VM revert.
