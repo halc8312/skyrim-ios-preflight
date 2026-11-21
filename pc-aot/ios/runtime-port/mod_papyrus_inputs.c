@@ -17,8 +17,10 @@
 
 static const char dll_path[] = "Data/SKSE/Plugins/StorageUtil.dll";
 static const char pex_path[] = "Data/Scripts/JsonUtil.pex";
+static const char wearable_plugin_path[] = "Data/Chesko_WearableLantern.esp";
+static const char storage_pex_path[] = "Data/Scripts/StorageUtil.pex";
 /* PapyrusUtil Classic 3.3 is 978944 and 8182 bytes respectively. */
-enum { DLL_LIMIT = 2 * 1024 * 1024, PEX_LIMIT = 64 * 1024 };
+enum { DLL_LIMIT = 2 * 1024 * 1024, PEX_LIMIT = 64 * 1024, WEARABLE_PLUGIN_LIMIT = 110384 };
 static const SkyrimPapyrusInputs unavailable = {.settings_fd = -1, .game_fd = -1};
 
 static int hex_digit(unsigned char c) {
@@ -136,6 +138,10 @@ int skyrim_papyrus_inputs_open(int support_fd, const char *profile_id,
         inputs.settings_fd = owned_directory_at(support_fd, "PapyrusSettings", &support, true);
         if (inputs.settings_fd < 0) error = errno;
     }
+    if (!error && !snapshot(inputs.game_fd, wearable_plugin_path, WEARABLE_PLUGIN_LIMIT,
+                            &inputs.wearable_plugin, &inputs.wearable_plugin_size)) {
+        (void)snapshot(inputs.game_fd, storage_pex_path, PEX_LIMIT, &inputs.storage_pex, &inputs.storage_pex_size);
+    }
     if (error) skyrim_mods_release_papyrus_inputs(&inputs);
     else *out = inputs;
     return error;
@@ -147,5 +153,7 @@ void skyrim_mods_release_papyrus_inputs(SkyrimPapyrusInputs *inputs) {
     if (inputs->game_fd >= 0) close(inputs->game_fd);
     free(inputs->dll);
     free(inputs->pex);
+    free(inputs->wearable_plugin);
+    free(inputs->storage_pex);
     *inputs = unavailable;
 }

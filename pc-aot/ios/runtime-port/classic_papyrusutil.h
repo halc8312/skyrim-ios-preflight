@@ -29,6 +29,7 @@ typedef struct {
     bool (*read_guest)(void *context, CPU *, uint32_t address, void *bytes, size_t length);
     bool (*copy_string)(void *context, CPU *, uint32_t address, char *text, size_t capacity);
     void *context;
+    bool (*copy_form_id)(void *context, CPU *, const ClassicValueFrame *, uint32_t address, uint32_t *identity);
 } SkyrimPapyrusUtilBackend;
 
 typedef struct {
@@ -50,6 +51,11 @@ typedef struct {
     SkseClassicSettings *settings;
     uint64_t epoch;
     uint32_t uptime_ms;
+    uint8_t *storage_pex;
+    size_t storage_pex_size;
+    int game_fd;
+    uint64_t keyword_world;
+    uint32_t keyword_id;
 } SkyrimPapyrusUtilSettings;
 void skyrim_papyrusutil_settings_backend(SkyrimPapyrusUtilSettings *, SkyrimPapyrusUtilBackend *out);
 bool skyrim_papyrusutil_capture_storage(const SkyrimVmScope *, const SkseLoadedMod *, size_t count,

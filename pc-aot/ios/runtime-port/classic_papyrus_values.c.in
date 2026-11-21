@@ -64,7 +64,8 @@ bool skse_classic_values_request(const ClassicValueRequest *request) {
         }
         for (size_t j = 0; j < fn->count; ++j) {
             const uint8_t type = fn->arguments[j];
-            if (type < CLASSIC_VALUES_STRING || type > CLASSIC_VALUES_BOOL ||
+            if (type < CLASSIC_VALUES_FORM || type > CLASSIC_VALUES_BOOL ||
+                (type == CLASSIC_VALUES_FORM && !request->copy_form_id) ||
                 (type == CLASSIC_VALUES_STRING && !request->copy_string)) accepted = false;
         }
         if (!accepted) break;
@@ -125,6 +126,19 @@ static bool value_recheck_frame(CPU *c, const ClassicValueFunction *fn, const Cl
     return value_read_frame(c, fn, &current) && classic_value_same_frame(frame, &current);
 }
 
+bool skse_classic_values_matches_static_form(CPU *c, const ClassicValueFrame *frame,
+                                             uint32_t value_address, uint32_t expected) {
+    if (!c || c != rt_current_cpu() || !frame || !frame->registry || frame->registry != values_publication.registry ||
+        !(expected & 0xffffffu) || expected >> 24 == 0xff || value_address < 0x10000 ||
+        (value_address & 3) || value_address > UINT32_MAX - 7) return false;
+    const uint32_t args[] = {value_address, frame->registry};
+    // Use the pinned engine's Keyword argument conversion, even for a Form parameter.
+    const uint32_t supplied = skse_member(c, 0x8e0040u, 0, 2, args);
+    if (!supplied) return false;
+    // Game.GetForm's stock lookup uses the engine's registry read guard.
+    return supplied == skse_member(c, 0x451a30u, 0, 1, &expected);
+}
+
 static bool value_read_arguments(CPU *c, const ClassicValueFunction *fn, const ClassicValueFrame *frame,
                                  ClassicValue arguments[CLASSIC_VALUES_ARGS],
                                  char strings[CLASSIC_VALUES_ARGS][CLASSIC_VALUES_STRING_BYTES]) {
@@ -137,9 +151,16 @@ static bool value_read_arguments(CPU *c, const ClassicValueFunction *fn, const C
         const uint32_t address = skse_member(c, VM_ARG_GET, list, 3, get);
         uint32_t value[2] = {0};
         if (!address || address % 4 || address > UINT32_MAX - 7 ||
-            !request->read_guest(request->context, c, address, value, sizeof value) ||
-            value[0] != fn->arguments[i]) return false;
-        arguments[i].type = value[0];
+            !request->read_guest(request->context, c, address, value, sizeof value)) return false;
+        arguments[i].type = fn->arguments[i];
+        if (arguments[i].type == CLASSIC_VALUES_FORM) {
+            // A scalar VM object carries a class tag. The low bit denotes an array.
+            if (value[0] < 0x10000 || (value[0] & 3) || value[1] < 0x10000 || (value[1] & 3) ||
+                !request->copy_form_id(request->context, c, frame, address, &arguments[i].bits) ||
+                !arguments[i].bits) return false;
+            continue;
+        }
+        if (value[0] != arguments[i].type) return false;
         if (value[0] == CLASSIC_VALUES_STRING) {
             memset(strings[i], 0xff, sizeof strings[i]);
             if (!value[1] || !request->copy_string(request->context, c, value[1], strings[i], sizeof strings[i]) ||
@@ -221,7 +242,8 @@ static void classic_values_run(CPU *c) {
     RET(accepted,5);
 }
 
-static uint32_t make_value_native(CPU *c, const ClassicValueFunction *fn, uint32_t vtable_copy, bool copy_vtable) {
+static uint32_t make_value_native(CPU *c, const ClassicValueFunction *fn, uint32_t vtable_copy,
+                                  uint32_t form_type, bool copy_vtable) {
     const uint32_t class_bytes = (uint32_t)strlen(fn->class_name) + 1, name_bytes = (uint32_t)strlen(fn->name) + 1;
     const uint32_t names = gmalloc(class_bytes + name_bytes);
     if (!names) return 0;
@@ -242,17 +264,40 @@ static uint32_t make_value_native(CPU *c, const ClassicValueFunction *fn, uint32
             if (copy_vtable) memcpy(GPTR(vtable_copy), GPTR(M32(object) - 4), (RUN_SLOT + 2) * 4);
             M32(object + 0x14) = fn->result;
             M32(object + 0x2c) = fn->id;
-            for (uint32_t i = 0; i < fn->count; ++i) M32(types + i * 8 + 4) = fn->arguments[i];
+            for (uint32_t i = 0; i < fn->count; ++i)
+                M32(types + i * 8 + 4) = fn->arguments[i] == CLASSIC_VALUES_FORM ? form_type : fn->arguments[i];
         }
     }
     gfree(names);
     return object;
 }
 
+static uint32_t value_form_type(CPU *c, uint32_t registry) {
+    // Original Game.GetForm constructs its Form signature with this helper.
+    const uint32_t output = gmalloc(4);
+    if (!output) return 0;
+    M32(output) = 0;
+    const uint32_t args[] = {output, registry};
+    const uint32_t result = skse_member(c, 0x8c1b40u, 0, 2, args);
+    const uint32_t type = result == output ? M32(output) : 0;
+    gfree(output);
+    return type >= 0x10000 && !(type & 3) ? type : 0;
+}
+
 static void classic_values_publish(CPU *c, uint32_t registry, uint32_t has_thunk) {
     if (!registry || rt_current_cpu() != c || !int0_enter()) return;
     const ClassicValueRequest *request = &values_publication.request;
     if (!request->invoke || values_publication.registry) {
+        int0_leave();
+        return;
+    }
+    bool needs_form = false;
+    for (size_t i = 0; i < request->count; ++i) {
+        const ClassicValueFunction *fn = &values_publication.rows[i].function;
+        for (unsigned j = 0; j < fn->count; ++j) needs_form |= fn->arguments[j] == CLASSIC_VALUES_FORM;
+    }
+    const uint32_t form_type = needs_form ? value_form_type(c, registry) : 0;
+    if (needs_form && !form_type) {
         int0_leave();
         return;
     }
@@ -264,7 +309,7 @@ static void classic_values_publish(CPU *c, uint32_t registry, uint32_t has_thunk
     size_t made = 0;
     for (; made < request->count; ++made) {
         ClassicValueBinding *row = &values_publication.rows[made];
-        row->object = make_value_native(c, &row->function, table_copy, !made);
+        row->object = make_value_native(c, &row->function, table_copy, form_type, !made);
         if (!row->object) break;
     }
     if (made != request->count) {

@@ -119,7 +119,8 @@ class ClassicInt0StagingTests(unittest.TestCase):
         flags += self.sanitizer_flags()
         for defines, modes in (([], ("default",)),
                                ([PROBE_DEFINE], ("default", "success", "names", "table", "object", "values",
-                                                 "values-rollback", "values-string"))):
+                                                 "values-rollback", "values-string", "values-form",
+                                                 "values-form-unavailable"))):
             binary = self.stage.parent / ("int0-enabled" if defines else "int0-default")
             subprocess.run([*flags, *defines, fixture, "-o", binary], check=True, timeout=60)
             for mode in modes:

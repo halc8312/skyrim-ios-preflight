@@ -30,7 +30,7 @@ static struct { unsigned invokes, commits, discards; bool refuse_commit, fail_in
 static bool fake_invoke(void *ctx, unsigned method, const ClassicValue *args, size_t count, ClassicValue *result,
                         char *text, size_t capacity, uint64_t *ticket) {
     (void)ctx; (void)text; (void)capacity;
-    assert(method >= 1 && method <= SKYRIM_PAPYRUSUTIL_FUNCTIONS && count == captured.functions[method - 1].count);
+    assert(method >= 1 && method <= captured.count && count == captured.functions[method - 1].count);
     for (size_t i = 0; i < count; ++i) assert(args[i].type == captured.functions[method - 1].arguments[i]);
     ++store.invokes;
     if (store.fail_invoke) return false;
@@ -48,6 +48,37 @@ static bool fake_copy(void *ctx, CPU *c, uint32_t a, char *t, size_t n) { (void)
 static const ClassicValueFrame frame = {.object = 0x1000, .sp = 0x2000, .base = 0x2038, .registry = 0x3000,
                                         .stack_id = 7, .result = 0x202c, .state = 0x4000, .argument_list = 0x4100};
 static uint32_t vm_result;  /* the VM value the staged code writes after an accepted commit */
+
+static bool copy_keyword(void *ctx, CPU *c, const ClassicValueFrame *owner, uint32_t address, uint32_t *out) {
+    (void)ctx;
+    assert(c && owner->registry == frame.registry);
+    if (address != 0x10020) return false;
+    *out = 0x0401d9a9;
+    return true;
+}
+
+static void check_keyword_publication(SkyrimPapyrusUtilBackend *backend) {
+    backend->copy_form_id = copy_keyword;
+    assert(skyrim_papyrusutil_publish(backend, 1) == 0);
+    assert(captured.count == SKYRIM_PAPYRUSUTIL_FUNCTIONS + 2 && captured.copy_form_id);
+    const char *names[] = {"GetIntValue", "SetIntValue"};
+    for (unsigned i = 0; i < sizeof names / sizeof *names; ++i) {
+        const ClassicValueFunction *method = &captured.functions[SKYRIM_PAPYRUSUTIL_FUNCTIONS + i];
+        assert(!strcmp(method->class_name, "StorageUtil") && !strcmp(method->name, names[i]));
+        assert(method->result == CLASSIC_VALUES_INT && method->count == 3 &&
+               method->arguments[0] == CLASSIC_VALUES_FORM &&
+               method->arguments[1] == CLASSIC_VALUES_STRING && method->arguments[2] == CLASSIC_VALUES_INT);
+    }
+    skyrim_vm_epoch_registered(frame.registry);
+    CPU cpu = {0}, other = {0};
+    uint32_t id = 0;
+    assert(!captured.copy_form_id(captured.context, &cpu, &frame, 0x10020, &id));
+    assert(captured.owns_frame(captured.context, &cpu, captured.epoch, &frame));
+    assert(!captured.copy_form_id(captured.context, &other, &frame, 0x10020, &id));
+    assert(!captured.copy_form_id(captured.context, &cpu, &frame, 0x10024, &id));
+    assert(captured.copy_form_id(captured.context, &cpu, &frame, 0x10020, &id) && id == 0x0401d9a9);
+    captured.finished(captured.context, captured.epoch);
+}
 
 /* One Run, as value_invoke_owned orders the callbacks. revert_at: 0 none,
  * 1 after invoke, 2 after the second ownership check. */
@@ -91,8 +122,13 @@ static void expect(uint64_t calls, uint64_t stale, uint64_t commits, uint64_t di
            && s.discards == discards && s.errors == errors);
 }
 
-int main(void) {
-    SkyrimPapyrusUtilBackend backend = {fake_invoke, fake_commit, fake_discard, fake_read, fake_copy, NULL};
+int main(int argc, char **argv) {
+    SkyrimPapyrusUtilBackend backend = {fake_invoke, fake_commit, fake_discard, fake_read, fake_copy, NULL, NULL};
+    if (argc == 2 && !strcmp(argv[1], "keyword")) {
+        check_keyword_publication(&backend);
+        return 0;
+    }
+    assert(argc == 1);
     SkyrimPapyrusUtilBackend partial = backend;
     partial.commit = NULL;
     assert(skyrim_papyrusutil_publish(&partial, 1) != 0 && skyrim_papyrusutil_publish(&backend, 0) != 0);

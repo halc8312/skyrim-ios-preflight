@@ -16,6 +16,8 @@ static void print_hex(const uint8_t *bytes, size_t size) {
 static void require_empty(const SkyrimPapyrusInputs *inputs) {
     assert(inputs->settings_fd == -1 && inputs->game_fd == -1);
     assert(!inputs->dll && !inputs->pex && !inputs->dll_size && !inputs->pex_size);
+    assert(!inputs->wearable_plugin && !inputs->wearable_plugin_size);
+    assert(!inputs->storage_pex && !inputs->storage_pex_size);
     for (size_t i = 0; i < sizeof inputs->profile; ++i) assert(!inputs->profile[i]);
 }
 
@@ -50,6 +52,14 @@ int main(int argc, char **argv) {
         print_hex(inputs.dll, inputs.dll_size);
         printf(" ");
         print_hex(inputs.pex, inputs.pex_size);
+        if (inputs.wearable_plugin) {
+            printf(" ");
+            print_hex(inputs.wearable_plugin, inputs.wearable_plugin_size);
+        }
+        if (inputs.storage_pex) {
+            printf(" ");
+            print_hex(inputs.storage_pex, inputs.storage_pex_size);
+        }
         int game = inputs.game_fd, settings = inputs.settings_fd;
         skyrim_mods_release_papyrus_inputs(&inputs);
         assert(fcntl(game, F_GETFD) == -1 && errno == EBADF);

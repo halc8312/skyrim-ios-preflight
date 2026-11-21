@@ -11,7 +11,8 @@
 /* Include after the runtime's x86.h, which declares CPU. */
 
 enum { CLASSIC_VALUES_FUNCTIONS = 16, CLASSIC_VALUES_ARGS = 4, CLASSIC_VALUES_STRING_BYTES = 512 };
-enum { CLASSIC_VALUES_STRING = 2, CLASSIC_VALUES_INT = 3, CLASSIC_VALUES_FLOAT = 4, CLASSIC_VALUES_BOOL = 5 };
+enum { CLASSIC_VALUES_FORM = 1, CLASSIC_VALUES_STRING = 2, CLASSIC_VALUES_INT = 3,
+       CLASSIC_VALUES_FLOAT = 4, CLASSIC_VALUES_BOOL = 5 };
 /* Non-latent NativeFunctionBase::Invoke in the pinned 1.9.32 image. */
 enum { CLASSIC_VALUES_RUN_RETURN = 0xc46e61, CLASSIC_VALUES_RESULT_OFFSET = 0x2c,
        CLASSIC_VALUES_BASE_OFFSET = 0x38 };
@@ -44,6 +45,9 @@ typedef struct {
     size_t count;
     bool (*read_guest)(void *, CPU *, uint32_t address, void *, size_t);
     bool (*copy_string)(void *, CPU *, uint32_t address, char *, size_t);
+    /* An allowlisted Form provider copies a nonzero identity in the current
+     * invocation. The returned scalar never carries a live guest pointer. */
+    bool (*copy_form_id)(void *, CPU *, const ClassicValueFrame *, uint32_t value_address, uint32_t *identity);
     /* Attest the exact frame and its VM-owned storage. The provider keeps
      * this scope alive and exclusively owned until Run returns. */
     bool (*owns_frame)(void *, CPU *, uint64_t epoch, const ClassicValueFrame *);
@@ -64,6 +68,11 @@ typedef struct {
  * Calls are serialized: a Run that finds another call in progress returns 0. */
 bool skse_classic_values_request(const ClassicValueRequest *request);
 bool skse_classic_values_retire(uint64_t epoch);
+/* During copy_form_id, check the typed argument against the original registry's
+ * entry for a static FormID already authenticated by the provider. The result
+ * only compares the engine's two references while the same frame is current. */
+bool skse_classic_values_matches_static_form(CPU *, const ClassicValueFrame *, uint32_t value_address,
+                                             uint32_t expected);
 /* Nonblocking serialized access for the registered provider's save/load
  * records. The operation must return without entering a Papyrus native. */
 bool skse_classic_values_with_provider(uint64_t epoch, uint32_t registry,

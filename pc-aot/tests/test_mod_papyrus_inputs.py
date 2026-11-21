@@ -136,6 +136,20 @@ class PapyrusInputTests(unittest.TestCase):
         self.check_refused({errno.EFBIG}, PAPYRUS)
         self.assertFalse(self.settings.exists())
 
+    def test_optional_lantern_snapshots_leave_the_base_pair_available(self):
+        esp, pex = b"authored Lantern plugin", b"authored StorageUtil script"
+        script = self.write(self.view, "data/SCRIPTS/StorageUtil.pex", pex)
+        self.check_success(PAPYRUS)
+        plugin = self.write(self.view, "data/CHESKO_WEARABLELANTERN.ESP", esp)
+        prefix = [PROFILE.replace("-", ""), DLL.hex(), PEX.hex(), esp.hex()]
+        self.assertEqual(self.acquire(PAPYRUS), (0, [*prefix, pex.hex()]))
+        with script.open("wb") as file:
+            file.truncate(64 * 1024 + 1)
+        self.assertEqual(self.acquire(PAPYRUS), (0, prefix))
+        with plugin.open("wb") as file:
+            file.truncate(110385)
+        self.check_success(PAPYRUS)
+
 
 if __name__ == "__main__":
     unittest.main()

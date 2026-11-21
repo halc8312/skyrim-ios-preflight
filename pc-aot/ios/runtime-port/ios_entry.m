@@ -79,8 +79,40 @@ static void probe_classic_settings(void) {
 #include "x86.h"
 #include "classic_papyrusutil.h"
 #include "mod_features.h"
+#include "PcGuestModHooksABI.h"
 /* Plan P3-2: one settings scope for the run, opened before the guest starts. */
 static SkyrimPapyrusUtilSettings papyrusutil_scope;
+
+static bool wearable_profile_assets(const SkyrimPapyrusInputs *selected) {
+    static const unsigned char esp_digest[CC_SHA256_DIGEST_LENGTH] = {
+        0x8e, 0x6c, 0x17, 0x00, 0x6b, 0x8f, 0x57, 0xb3,
+        0x57, 0xde, 0x2e, 0xd7, 0x7f, 0xd1, 0x2e, 0x8c,
+        0xfc, 0x69, 0x09, 0x81, 0x86, 0x75, 0x27, 0x20,
+        0x50, 0xaf, 0xb2, 0x1b, 0xac, 0x77, 0xf2, 0x08
+    };
+    static const unsigned char pex_digest[CC_SHA256_DIGEST_LENGTH] = {
+        0xbd, 0xb7, 0xa7, 0xde, 0xbb, 0xbb, 0x46, 0x23,
+        0x20, 0xec, 0xfb, 0x1c, 0x3f, 0x31, 0x7a, 0xb7,
+        0x53, 0xa4, 0x88, 0xbc, 0xb5, 0xee, 0x1a, 0xe6,
+        0x4f, 0x71, 0x45, 0xf4, 0x9d, 0x18, 0x55, 0x13
+    };
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    return selected->wearable_plugin && selected->wearable_plugin_size == 110384 &&
+        CC_SHA256(selected->wearable_plugin, (CC_LONG)selected->wearable_plugin_size, digest) &&
+        memcmp(digest, esp_digest, sizeof digest) == 0 &&
+        selected->storage_pex && selected->storage_pex_size == 19558 &&
+        CC_SHA256(selected->storage_pex, (CC_LONG)selected->storage_pex_size, digest) &&
+        memcmp(digest, pex_digest, sizeof digest) == 0;
+}
+
+static void close_papyrusutil_scope(void) {
+    skse_classic_settings_close(papyrusutil_scope.settings);
+    if (papyrusutil_scope.storage_pex) {
+        close(papyrusutil_scope.game_fd);
+        free(papyrusutil_scope.storage_pex);
+    }
+    papyrusutil_scope = (SkyrimPapyrusUtilSettings){0};
+}
 
 static void publish_papyrusutil(void) {
     if (!classic_input_verified || !skyrim_mods_feature_enabled(SKYRIM_FEATURE_PAPYRUSUTIL)) return;
@@ -101,26 +133,33 @@ static void publish_papyrusutil(void) {
     memcpy(inputs.bootstrap, classic_bootstrap, sizeof inputs.bootstrap);
     SkseClassicSettings *settings = NULL;
     SkseSettingsStatus status = skse_classic_settings_open(&inputs, &settings);
-    skyrim_mods_release_papyrus_inputs(&selected);
     if (status != SKSE_SETTINGS_OK) {
+        skyrim_mods_release_papyrus_inputs(&selected);
         fprintf(stderr, "IOS_PAPYRUSUTIL_OPEN status=%u\n", (unsigned)status);
         return;
     }
-    papyrusutil_scope = (SkyrimPapyrusUtilSettings){settings, inputs.epoch, inputs.uptime_ms};
+    papyrusutil_scope = (SkyrimPapyrusUtilSettings){
+        .settings = settings, .epoch = inputs.epoch, .uptime_ms = inputs.uptime_ms, .game_fd = -1
+    };
+    if ((pc_guest_mod_hooks_selected() & PC_GUEST_MOD_HOOK_FRESH_LOAD) &&
+        wearable_profile_assets(&selected)) {
+        papyrusutil_scope.storage_pex = selected.storage_pex;
+        papyrusutil_scope.storage_pex_size = selected.storage_pex_size;
+        papyrusutil_scope.game_fd = selected.game_fd;
+        selected.storage_pex = NULL;
+        selected.game_fd = -1;
+    }
+    skyrim_mods_release_papyrus_inputs(&selected);
     SkyrimPapyrusUtilBackend backend;
     skyrim_papyrusutil_settings_backend(&papyrusutil_scope, &backend);
-    if (skyrim_papyrusutil_publish(&backend, 1) != 0) {
-        skse_classic_settings_close(settings);
-        papyrusutil_scope = (SkyrimPapyrusUtilSettings){0};
-    }
+    if (skyrim_papyrusutil_publish(&backend, 1) != 0) close_papyrusutil_scope();
 }
 
 static void retire_papyrusutil(void) {
     if (!papyrusutil_scope.settings) return;
     skyrim_papyrusutil_report();
     if (!skse_classic_values_retire(1)) return;
-    skse_classic_settings_close(papyrusutil_scope.settings);
-    papyrusutil_scope = (SkyrimPapyrusUtilSettings){0};
+    close_papyrusutil_scope();
 }
 #endif
 

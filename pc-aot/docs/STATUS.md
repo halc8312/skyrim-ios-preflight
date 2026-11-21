@@ -2,13 +2,13 @@
 
 **2026-11-22　MOD第一弾の配布前確認**
 
-固定版LEの生成物、所有者のECE入力、固定版libarchiveとliblzmaを使ったMOD関連のPC試験はGCCのASan/UBSanで109件すべて合格した。ゲストは第一弾の13種類のフックを含め、Windows上のLLVMでiPhoneOS向けの516ファイルをコンパイルして非署名でリンクした。元のゲーム、MOD、セーブは読み取り専用で扱った。Tailscaleの既存HTTPS配布サービスが非公開で稼働していることを確認した。先行版のApple SDKビルドとMOD画面の試験は合格した。追加変更を含む回ではiPhoneOSアプリはリンクでき、シミュレーターが生成物の取り込み後に時間上限に達したため再検査している。 [先行版の検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44932615027) [再検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44947542660)
+固定版LEの生成物、所有者のECE入力、固定版libarchiveとliblzmaを使ったMOD関連のPC試験はGCCのASan/UBSanで109件すべて合格した。追加のECE診断を含む統合試験はClangで49件合格した。ゲストは診断を含む15種類のフックを組み込み、Windows上のLLVMでiPhoneOS向けの516ファイルを非署名でリンクした。変更を確認した28ファイルを再コンパイルし、残りはハッシュを照合して再利用した。元のゲーム、MOD、セーブは読み取り専用で扱った。Apple SDKでのiPhoneアプリのリンクと、生成物の取り込みを含むMOD画面のシミュレーター試験は合格した。 [検査結果](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44947542660)
 
 | 対象 | 現在までの確認 | 配布前の確認 |
 | --- | --- | --- |
 | SKSE / SkyUI | 通常版22でインベントリとMCMを実機確認済み。固定版の登録・再読み込みをPCで確認。横長画面の表示試験を設定に追加 | 更新版でError Code 1、MCM、表示とタッチ位置を確認 |
 | Fuz Ro D-oh | 固定版の会話経路を接続。実物の代替音声10本のPCMと長さをPCで照合 | 通常音声、無音声の台詞、字幕と口の動きを比較 |
-| PapyrusUtil / Wearable Lanterns | 実物PapyrusUtilでMCMの設定と起動時の整数リスト読み書きを確認。入力・メーターのホスト試験が合格 | 点灯、長押し、設定と再起動後の復元。NPCの持ち方を保存するForm引数を検証中 |
+| PapyrusUtil / Wearable Lanterns | 実物PapyrusUtilでMCMの設定と起動時の整数リスト読み書きを確認。NPCごとの持ち方を保存する共通キーワードの整数読み書きを、実物のDLLとPEXで確認 | 点灯、長押し、設定と再起動後の復元。保存・読み込み前の新規ゲームでのキーワード認証は検証中 |
 | 追加セーブ | 固定版のPC往復試験9条件。名前付きプロファイルの試験構成に、所有者のStorageUtil 3.3の記録と読み込み時の復元を接続 | Apple SDKで統合を確認し、iPhoneで連続セーブ、ゲーム再起動後の復元、別セーブへの漏れ、読込時間を検証 |
 | RaceMenu / ECE / NiOverride | RaceMenuの標準の鼻の高さを接続。ECEの変換式を照合し、女性Nordの鼻が実際に選んだ顔TRIとファイルの読み取りをつなぐ詳細診断を追加。NiOverrideの提供元と版を表示 | 実機で同じ顔TRIを確認する。スロット反映への接続後に同じキャラクターの見た目と、再起動後の保持を比較 |
 | XPMSE / XPMS / Realistic Ragdolls and Force | プロファイルごとの骨格の選択と前提ファイルを検査 | 実物の骨格とアニメーションを別プロファイルで確認 |
@@ -17,9 +17,9 @@
 | ShowRaceMenu Precache Killer / KS Hairdos / Apachii | 実物DLLで先読みの位置を照合し、固定版へ接続。テスト用の髪の配置を検査 | 実物の髪型を選び、表示と時間を比較 |
 | Enhanced Camera | カメラ状態と腕・体を観測。詳細診断に一人称の描画リスト作成時と描画前の判定を1フレームずつ調べる経路を追加。ゲスト統合・診断試験52件合格 | 実機で体がどの判定から外れるかを観測し、表示変更に必要な参照の保持区間を確認する |
 | Safety Load | 実物1.2を照合し、ロード中だけ試せる設定を接続。元のヒープと復帰を試験 | ロード時間、メモリと安定性を実機で比較 |
-| HDT Physics Extensions / HDT HighHeels | 実物の物理設定3件の展開と配置を照合。HighHeelsは実物の効果値、保持される対象、両足とふくらはぎから補正量を計算する式を確認。ClangとGCC ASan/UBSanで各10件合格 | 物理は静止表示まで。高さ補正は現在の対象と描画ノードを同じ更新で保持できる経路が必要 |
+| HDT Physics Extensions / HDT HighHeels | 実物の物理設定3件の展開と配置を照合。HighHeelsは固定版が保持した対象と実行時の効果値を確認し、両足とふくらはぎから補正量を計算して反映・解除をホスト試験した。実物の入力を含むClang試験11件合格 | 物理は静止表示まで。高さ補正は現在の対象と描画ノードを同じ更新で保持できる経路が必要 |
 
-第一弾の配布版は未作成。所有者のPCで3つのDLCと一部の骨格、髪型、体型、生成済みデータの実物を確認できていない。表の実機試験には、該当する入力とiPhoneが必要。 [第一弾の計画と実機手順](MOD_FIRST_WAVE_PLAN.md)
+第一弾の配布版は未作成。非公開のTailscaleサービスと既存の署名用プロファイルの有効性は確認した。PCで3つのDLCと一部の骨格、髪型、体型、生成済みデータの実物を確認できていない。表の実機試験には、該当する入力とiPhoneが必要。 [第一弾の計画と実機手順](MOD_FIRST_WAVE_PLAN.md)
 
 **2026-11-22　試験プロファイルで追加セーブの保存と復元を接続**
 
@@ -29,7 +29,9 @@
 
 **2026-11-22　Wearable Lanternsの起動時の設定チェックを追加**
 
-4.0.2の設定画面が呼ぶ7種類に加え、起動時の確認が使う `Load` と4種類の `IntList*` を、固定版のPapyrusUtil 3.3と実際のPEXで照合した。元のゲームビューからの読み取りと、専用プロファイルへの書き込みを使い、7個の整数を保存・再読み込みして一致を確認した。NPCの持ち方に使う `StorageUtil.GetIntValue` と `SetIntValue` は、別途実際のForm引数と対象の寿命を確認する。 [作者の4.0.2の起動時チェック](https://github.com/chesko256/WearableLanterns/blob/ebf678e6a17c5f3ee0723e851e1ff4497e77fe19/Scripts/Source/_WL_Compatibility.psc)
+4.0.2の設定画面が呼ぶ7種類に加え、起動時の確認が使う `Load` と4種類の `IntList*` を、固定版のPapyrusUtil 3.3と実際のPEXで照合した。元のゲームビューからの読み取りと、専用プロファイルへの書き込みを使い、7個の整数を保存・再読み込みして一致を確認した。NPCの持ち方は `StorageUtil.GetIntValue` と `SetIntValue` の共有キーワードと、NPCごとに異なる文字列で記録される。実物のDLLとスクリプトで2件の独立した値、未登録時の既定値、プラグイン順の変更後に追加セーブから戻せることを確認した。 [作者の4.0.2の起動時チェック](https://github.com/chesko256/WearableLanterns/blob/ebf678e6a17c5f3ee0723e851e1ff4497e77fe19/Scripts/Source/_WL_Compatibility.psc)
+
+通常版の試験構成は、展開したプラグインとスクリプトの両方を照合し、ゲームが保存・読み込みで使う実際のプラグイン順からキーワードを確認する。後続プラグインが対象を上書きできる場合は、互換の対象から外す。最初の認証は保存または読み込み時に行う。iPhoneでの点灯、MCM、実セーブの再読み込みは未確認。
 
 実物のSkyUI 5.1と公式のClassic SKSE 1.7.3で、起動時のスクリプト確認が4本すべて合格した。Wearable Lanternsの作者の固定コミットから、ESP、SEQ、メーター、翻訳、設定用PEX2本をホストの取り込みと起動用ビューに通し、元のファイルと照合した。作者のソースにある `JsonUtil.pex` と `StorageUtil.dll` はPapyrusUtil 3.3と異なるため、試験時は同じプロファイルでPapyrusUtil 3.3を後に置く。実機での点灯とMCMは次の確認に残る。 [Classic SKSE 1.7.3](https://skse.silverlock.org/) [Wearable Lanternsの作者リポジトリ](https://github.com/chesko256/WearableLanterns/tree/ebf678e6a17c5f3ee0723e851e1ff4497e77fe19)
 

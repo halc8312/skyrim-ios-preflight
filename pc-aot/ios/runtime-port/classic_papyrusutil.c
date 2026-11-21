@@ -8,8 +8,10 @@
 #include <string.h>
 #include <time.h>
 
+enum { STORAGE_GET = SKYRIM_PAPYRUSUTIL_FUNCTIONS + 1, STORAGE_SET, ALL_FUNCTIONS = STORAGE_SET };
+
 /* Types: 2 string, 3 int, 4 float, 5 bool (classic_settings signatures). */
-static const ClassicValueFunction functions[SKYRIM_PAPYRUSUTIL_FUNCTIONS] = {
+static const ClassicValueFunction functions[ALL_FUNCTIONS] = {
     {"JsonUtil", "GetIntValue", 1, 3, 3, {2, 2, 3}},
     {"JsonUtil", "GetFloatValue", 2, 4, 3, {2, 2, 4}},
     {"JsonUtil", "GetStringValue", 3, 2, 3, {2, 2, 2}},
@@ -22,6 +24,8 @@ static const ClassicValueFunction functions[SKYRIM_PAPYRUSUTIL_FUNCTIONS] = {
     {"JsonUtil", "IntListGet", 10, 3, 3, {2, 2, 3}},
     {"JsonUtil", "IntListResize", 11, 3, 4, {2, 2, 3, 3}},
     {"JsonUtil", "IntListSet", 12, 3, 4, {2, 2, 3, 3}},
+    {"StorageUtil", "GetIntValue", STORAGE_GET, 3, 3, {CLASSIC_VALUES_FORM, 2, 3}},
+    {"StorageUtil", "SetIntValue", STORAGE_SET, 3, 3, {CLASSIC_VALUES_FORM, 2, 3}},
 };
 
 static SkyrimPapyrusUtilBackend backend;
@@ -56,6 +60,12 @@ static bool copy_string(void *context, CPU *c, uint32_t address, char *text, siz
     return backend.copy_string(backend.context, c, address, text, capacity);
 }
 
+static bool copy_form_id(void *context, CPU *c, const ClassicValueFrame *frame, uint32_t address, uint32_t *identity) {
+    (void)context;
+    return backend.copy_form_id && call.active && c == call.owner && classic_value_same_frame(frame, &call.frame) &&
+           still_current() && backend.copy_form_id(backend.context, c, frame, address, identity);
+}
+
 static bool owns_frame(void *context, CPU *c, uint64_t epoch, const ClassicValueFrame *frame) {
     (void)context; (void)epoch;
     if (!c || !frame) return false;
@@ -79,7 +89,8 @@ static bool owns_frame(void *context, CPU *c, uint64_t epoch, const ClassicValue
 static bool invoke(void *context, uint64_t epoch, uint32_t function, const ClassicValue *args, size_t count,
                    ClassicValue *result, char *text, size_t capacity) {
     (void)context; (void)epoch;
-    if (!call.active || call.ticketed || !function || function > SKYRIM_PAPYRUSUTIL_FUNCTIONS) return false;
+    const unsigned supported = backend.copy_form_id ? ALL_FUNCTIONS : SKYRIM_PAPYRUSUTIL_FUNCTIONS;
+    if (!call.active || call.ticketed || !function || function > supported) return false;
     atomic_fetch_add_explicit(&calls, 1, memory_order_relaxed);
     uint64_t ticket = 0;
     if (!backend.invoke(backend.context, function, args, count, result, text, capacity, &ticket)) {
@@ -129,9 +140,11 @@ int skyrim_papyrusutil_publish(const SkyrimPapyrusUtilBackend *source, uint64_t 
     if (!source || !source->invoke || !source->commit || !source->discard || !source->read_guest
             || !source->copy_string || !values_epoch || backend.invoke) return -1;
     backend = *source;
+    const size_t count = backend.copy_form_id ? ALL_FUNCTIONS : SKYRIM_PAPYRUSUTIL_FUNCTIONS;
     const ClassicValueRequest request = {
-        .epoch = values_epoch, .functions = functions, .count = SKYRIM_PAPYRUSUTIL_FUNCTIONS,
-        .read_guest = read_guest, .copy_string = copy_string, .owns_frame = owns_frame, .invoke = invoke,
+        .epoch = values_epoch, .functions = functions, .count = count,
+        .read_guest = read_guest, .copy_string = copy_string,
+        .copy_form_id = backend.copy_form_id ? copy_form_id : NULL, .owns_frame = owns_frame, .invoke = invoke,
         .commit = commit, .discard = discard, .finished = finished, .context = &backend
     };
     if (!skse_classic_values_request(&request)) {
@@ -142,7 +155,7 @@ int skyrim_papyrusutil_publish(const SkyrimPapyrusUtilBackend *source, uint64_t 
 #ifdef SKYRIM_CLASSIC_SETTINGS_BACKEND
     provider_epoch = values_epoch;
 #endif
-    atomic_store(&published, SKYRIM_PAPYRUSUTIL_FUNCTIONS);
+    atomic_store(&published, count);
     return 0;
 }
 
@@ -163,9 +176,76 @@ void skyrim_papyrusutil_report(void) {
 }
 
 #ifdef SKYRIM_CLASSIC_SETTINGS_BACKEND
+#include "mod_plugins.h"
+#include "probe_asset_file.h"
+#include <stdlib.h>
+
+static const char wearable_owner[] = "Chesko_WearableLantern.esp";
+enum { LANTERN_LOCAL_KEYWORD = 0x01d9a9, FORM_KEYWORD = 4 };
+
+static bool is_wearable_owner(const uint8_t *name, size_t length) {
+    return !skse_classic_mod_name_compare(name, length, (const uint8_t *)wearable_owner, sizeof wearable_owner - 1);
+}
+
+static bool may_override_keyword(int view, const SkseLoadedMod *mod) {
+    const char *name = (const char *)mod->name;
+    if (!skyrim_plugin_name_valid(name)) return true;
+    char path[5 + 256 + 1];
+    const int path_length = snprintf(path, sizeof path, "Data/%s", name);
+    if (path_length < 0 || (size_t)path_length >= sizeof path) return true;
+    uint8_t *bytes = NULL;
+    size_t length = 0;
+    if (skse_probe_asset_read_prefix_unique(&view, path, 64 * 1024, &bytes, &length)) return true;
+    SkyrimPluginHeader header;
+    const int status = skyrim_plugin_parse_header(bytes, length, &header);
+    free(bytes);
+    if (status != SKYRIM_PLUGIN_HEADER_OK) return true;
+    bool possible = false;
+    const char *master = header.masters;
+    for (unsigned i = 0; i < header.master_count; ++i) {
+        const size_t n = strlen(master);
+        if (is_wearable_owner((const uint8_t *)master, n)) { possible = true; break; }
+        master += n + 1;
+    }
+    skyrim_plugin_header_free(&header);
+    return possible;
+}
+
+static bool bind_wearable_keyword(SkyrimPapyrusUtilSettings *scope, uint64_t world,
+                                  const SkseLoadedMod *mods, size_t count) {
+    if (!scope->storage_pex || !world || (count && !mods)) return false;
+    if (scope->keyword_world == world) return true;
+    const uint32_t previous = scope->keyword_id;
+    size_t owner = 0;
+    while (owner < count && !is_wearable_owner(mods[owner].name, mods[owner].length)) ++owner;
+    if (owner == count) return false;
+    for (size_t i = owner + 1; i < count; ++i)
+        if (may_override_keyword(scope->game_fd, &mods[i])) return false;
+    const uint32_t full_id = (uint32_t)mods[owner].index << 24 | LANTERN_LOCAL_KEYWORD;
+    if ((previous && previous != full_id) || skse_classic_storage_enable_keyword(scope->settings, scope->epoch,
+            scope->storage_pex, scope->storage_pex_size, &mods[owner]) != SKSE_SETTINGS_OK) return false;
+    scope->keyword_id = full_id;
+    scope->keyword_world = world;
+    return true;
+}
+
 static bool settings_invoke(void *context, unsigned method, const ClassicValue *args, size_t count,
                             ClassicValue *result, char *text, size_t capacity, uint64_t *ticket) {
     SkyrimPapyrusUtilSettings *scope = context;
+    if (method == STORAGE_GET || method == STORAGE_SET) {
+        if (count != 3 || args[0].type != CLASSIC_VALUES_FORM || scope->keyword_world != call.scope.epoch ||
+            args[0].bits != scope->keyword_id || args[1].type != CLASSIC_VALUES_STRING || !args[1].string ||
+            args[2].type != CLASSIC_VALUES_INT) return false;
+        const SkseClassicFormSnapshot keyword = {.id = args[0].bits, .type = FORM_KEYWORD,
+            .handle = UINT64_C(0xffff00000000) | args[0].bits};
+        SkseClassicScalarResult value;
+        if (skse_classic_storage_invoke_keyword(scope->settings, scope->epoch,
+                method == STORAGE_GET ? SKSE_STORAGE_KEYWORD_GET_INT : SKSE_STORAGE_KEYWORD_SET_INT,
+                &keyword, args[1].string, strlen(args[1].string) + 1, args[2].bits, scope->uptime_ms,
+                &value, ticket, NULL) != SKSE_SETTINGS_OK) return false;
+        *result = (ClassicValue){.type = value.type, .bits = value.bits};
+        return true;
+    }
     SkseClassicScalar scalars[CLASSIC_VALUES_ARGS];
     if (count > CLASSIC_VALUES_ARGS) return false;
     for (size_t i = 0; i < count; ++i) {
@@ -209,6 +289,16 @@ static bool settings_read(void *context, CPU *c, uint32_t address, void *bytes, 
     return true;
 }
 
+static bool settings_copy_form(void *context, CPU *c, const ClassicValueFrame *frame, uint32_t address,
+                               uint32_t *identity) {
+    SkyrimPapyrusUtilSettings *scope = context;
+    // A save or load boundary supplies the authenticated plugin order.
+    if (scope->keyword_world != call.scope.epoch || !scope->keyword_id || !still_current() ||
+        !skse_classic_values_matches_static_form(c, frame, address, scope->keyword_id)) return false;
+    *identity = scope->keyword_id;
+    return true;
+}
+
 static bool settings_copy_string(void *context, CPU *c, uint32_t address, char *text, size_t capacity) {
     (void)context; (void)c;
     if (!capacity || !guest_range(address, 1)) return false;
@@ -221,7 +311,7 @@ static bool settings_copy_string(void *context, CPU *c, uint32_t address, char *
 
 void skyrim_papyrusutil_settings_backend(SkyrimPapyrusUtilSettings *scope, SkyrimPapyrusUtilBackend *out) {
     *out = (SkyrimPapyrusUtilBackend){settings_invoke, settings_commit, settings_discard, settings_read,
-                                      settings_copy_string, scope};
+                                      settings_copy_string, scope, scope->storage_pex ? settings_copy_form : NULL};
 }
 
 typedef struct {
@@ -248,6 +338,9 @@ static bool capture_storage(void *context) {
     StorageCapture *capture = context;
     if (!current_capture(capture)) return false;
     SkyrimPapyrusUtilSettings *scope = backend.context;
+    const bool had_keyword = scope->keyword_id != 0;
+    const bool bound = bind_wearable_keyword(scope, capture->expected.epoch, capture->mods, capture->count);
+    if (!bound && had_keyword) return false;
     uint32_t uptime;
     if (!storage_uptime(&uptime)) return false;
     SksePluginRecordSet *records = NULL;
@@ -280,8 +373,10 @@ typedef struct {
 static bool apply_storage(void *context) {
     const StorageLoad *load = context;
     uint32_t uptime;
-    if (!storage_uptime(&uptime) || !skyrim_vm_commit_begin(&load->vm)) return false;
     SkyrimPapyrusUtilSettings *scope = backend.context;
+    const bool had_keyword = scope->keyword_id != 0;
+    const bool bound = bind_wearable_keyword(scope, load->vm.epoch, load->mods, load->count);
+    if ((!bound && had_keyword) || !storage_uptime(&uptime) || !skyrim_vm_commit_begin(&load->vm)) return false;
     SkseSettingsStatus status = load->records ?
         skse_classic_storage_restore(scope->settings, scope->epoch, load->mods, load->count,
                                      uptime, load->records, load->resolvers) :

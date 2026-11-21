@@ -9,6 +9,8 @@ typedef struct {
     int settings_fd, game_fd;
     uint8_t *dll, *pex;
     size_t dll_size, pex_size;
+    uint8_t *wearable_plugin, *storage_pex;
+    size_t wearable_plugin_size, storage_pex_size;
 } SkyrimPapyrusInputs;
 
 /* Open the app's private settings directory and snapshot one paired package

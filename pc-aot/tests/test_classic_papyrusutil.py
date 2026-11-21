@@ -36,7 +36,8 @@ class PapyrusUtilTests(unittest.TestCase):
             binary = stage / "papyrusutil"
             subprocess.run([*flags, ROOT / "tests/native/test_classic_papyrusutil.c", PORT / "classic_papyrusutil.c",
                             PORT / "classic_vm_epoch.c", "-o", binary], check=True)
-            subprocess.run([binary], check=True, timeout=60)
+            for args in ([], ["keyword"]):
+                subprocess.run([binary, *args], check=True, timeout=60)
 
     def test_function_table_matches_the_settings_methods(self):
         source = (PORT / "classic_papyrusutil.c").read_text()

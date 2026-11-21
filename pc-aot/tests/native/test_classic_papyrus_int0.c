@@ -15,6 +15,8 @@ enum {
     STATE = 0x780, LIST = 0x7c0, ARGS = 0x800, FIXTURE_RUN_RETURN = 0xc46e61,
     FILE_TEXT = 0x900, KEY_TEXT = 0x980, INPUT_TEXT_BYTES = 128, GUEST_HEAP = 0x1000,
     STRING_POOL = 0x3000, STRING_SLOTS = 4, STRING_BYTES = 512, FIXTURE_FUNCTIONS = 8,
+    FIXTURE_FORM_VALUE = 0x10020, FIXTURE_FORM_CLASS = 0x111100, FIXTURE_KEYWORD_CLASS = 0x124800,
+    FIXTURE_KEYWORD = 0x128000, FIXTURE_KEYWORD_RECORD = 0x138000,
 };
 #define THUNK_BASE UINT32_C(0xff000000)
 
@@ -25,12 +27,14 @@ typedef struct {
 } Allocation;
 
 static CPU cpu;
-static uint32_t memory[(STRING_POOL + STRING_SLOTS * STRING_BYTES) / 4];
+static uint32_t memory[(FIXTURE_FORM_VALUE + 8) / 4];
 static uint32_t next_address = GUEST_HEAP;
 static Allocation allocations[64];
 static unsigned allocated, registrations, guest_attempts, result_deletions, form_deletions;
 static unsigned fail_guest;
 static bool fail_form;
+static bool no_form_class;
+static bool form_argument, other_static_form;
 static unsigned fail_parameter_row;
 static uint32_t objects[FIXTURE_FUNCTIONS + 1];
 static uint32_t fixture_return_token = FIXTURE_RUN_RETURN, fixture_stack_id = 1;
@@ -151,6 +155,16 @@ uint32_t rt_invoke(CPU *c, uint32_t address, int argc, const uint32_t *args) {
         M32(self) = NATIVE_VTABLE;
         return self;
     }
+    case 0x8c1b40:
+        assert(!self && argc == 2 && args[1] == REGISTRY && !M32(args[0]));
+        M32(args[0]) = no_form_class ? 1 : FIXTURE_FORM_CLASS;
+        return args[0];
+    case 0x8e0040:
+        assert(!self && argc == 2 && args[0] == FIXTURE_FORM_VALUE && args[1] == REGISTRY);
+        return M32(args[0]) == FIXTURE_KEYWORD_CLASS && M32(args[0] + 4) == FIXTURE_KEYWORD ? FIXTURE_KEYWORD_RECORD : 0;
+    case 0x451a30:
+        assert(!self && argc == 1 && args[0] == 0x0401d9a9);
+        return FIXTURE_KEYWORD_RECORD + (other_static_form ? 4 : 0);
     case REGISTRY_METHOD: {
         assert(self == REGISTRY && argc == 1 && registrations < sizeof objects / sizeof objects[0]);
         assert(M32(args[0] + 0x14) >= 2 && M32(args[0] + 0x14) <= 5);
@@ -165,6 +179,7 @@ uint32_t rt_invoke(CPU *c, uint32_t address, int argc, const uint32_t *args) {
         return 2;
     case VM_ARG_GET:
         assert(self == LIST && argc == 3 && args[0] == STATE && args[1] < 4 && args[2] == 2);
+        if (form_argument && args[1] == 0) return FIXTURE_FORM_VALUE;
         return ARGS + 8 * args[1];
     case FLAGS_METHOD:
         assert(self == REGISTRY && argc == 3 && registrations == 1 && args[2] == 1);
@@ -286,6 +301,7 @@ static bool read_values(void *context, CPU *owner, uint32_t address, void *out, 
     assert(context && owner == &cpu);
     if ((address != STACK || length != 24) && (address != BASE || length != 8) &&
         (address != STATE || length != 4) &&
+        (address != FIXTURE_FORM_VALUE || length != 8) &&
         (address < ARGS || address > ARGS + 24 || length != 8 || (address - ARGS) % 8)) return false;
     memcpy(out, GPTR(address), length);
     return true;
@@ -335,8 +351,9 @@ static bool invoke_values(void *context, uint64_t epoch, uint32_t method, const 
 }
 
 static void argument(unsigned index, uint32_t type, uint32_t bits) {
-    M32(ARGS + index * 8) = type;
-    M32(ARGS + index * 8 + 4) = bits;
+    const uint32_t address = form_argument && index == 0 ? FIXTURE_FORM_VALUE : ARGS + index * 8;
+    M32(address) = type;
+    M32(address + 4) = bits;
 }
 
 static bool invoke_text_result(void *context, uint64_t epoch, uint32_t method, const ClassicValue *args,
@@ -661,6 +678,67 @@ static void test_values(bool fail_registration) {
     assert(!run_values(run, objects[2], REGISTRY, RESULT) && provider.calls == 5);
 }
 
+static bool copy_form_id(void *context, CPU *owner, const ClassicValueFrame *frame, uint32_t address,
+                         uint32_t *identity) {
+    const ValueProvider *provider = context;
+    assert(owner == &cpu && frame->argument_list == LIST && address == FIXTURE_FORM_VALUE);
+    if (provider->invalidate || !skse_classic_values_matches_static_form(owner, frame, address, 0x0401d9a9))
+        return false;
+    *identity = 0x0401d9a9;
+    return true;
+}
+
+static bool invoke_form(void *context, uint64_t epoch, uint32_t method, const ClassicValue *args,
+                        size_t count, ClassicValue *out, char *result_text, size_t result_capacity) {
+    ValueProvider *provider = context;
+    assert(epoch == FIXTURE_EPOCH && method == 9 && count == 2 && !result_text && !result_capacity);
+    assert(args[0].type == CLASSIC_VALUES_FORM && args[0].bits == 0x0401d9a9 && !args[0].string);
+    assert(args[1].type == CLASSIC_VALUES_INT);
+    ++provider->calls;
+    *out = (ClassicValue){.type = CLASSIC_VALUES_INT, .bits = args[1].bits};
+    return true;
+}
+
+static void test_form_values(bool unavailable) {
+    ValueProvider provider = {.result_live = true};
+    const ClassicValueFunction method = {"StorageUtil", "ProbeKeyword", 9, CLASSIC_VALUES_INT, 2,
+                                          {CLASSIC_VALUES_FORM, CLASSIC_VALUES_INT}};
+    ClassicValueRequest request = {.epoch = FIXTURE_EPOCH, .functions = &method, .count = 1,
+        .read_guest = read_values, .owns_frame = owns_value_frame, .invoke = invoke_form, .context = &provider};
+    assert(!skse_classic_values_request(&request));
+    request.copy_form_id = copy_form_id;
+    assert(skse_classic_values_request(&request));
+    no_form_class = unavailable;
+    register_functions();
+    check_builtin();
+    if (unavailable) {
+        assert(registrations == 1 && thunk_count == 2 && live_allocations(false) == 1);
+        return;
+    }
+    assert(registrations == 2 && thunk_count == 3);
+    const uint32_t object = objects[1];
+    assert(M32(M32(object + 0x18) + 4) == FIXTURE_FORM_CLASS);
+    const uint32_t run = M32(M32(object) + RUN_SLOT * 4);
+    M32(STATE) = LIST;
+    form_argument = true;
+    argument(1, CLASSIC_VALUES_INT, 17);
+    argument(0, 0, 0);
+    assert(!run_values(run, object, REGISTRY, RESULT) && !provider.calls);
+    argument(0, FIXTURE_KEYWORD_CLASS | 1, FIXTURE_KEYWORD);
+    assert(!run_values(run, object, REGISTRY, RESULT) && !provider.calls);
+    argument(0, FIXTURE_KEYWORD_CLASS, FIXTURE_KEYWORD + 4);
+    assert(!run_values(run, object, REGISTRY, RESULT) && !provider.calls);
+    argument(0, FIXTURE_KEYWORD_CLASS, FIXTURE_KEYWORD);
+    provider.invalidate = true;
+    assert(!run_values(run, object, REGISTRY, RESULT) && !provider.calls);
+    provider.invalidate = false;
+    other_static_form = true;
+    assert(!run_values(run, object, REGISTRY, RESULT) && !provider.calls);
+    other_static_form = false;
+    assert(run_values(run, object, REGISTRY, RESULT) && provider.calls == 1);
+    assert(M32(RESULT) == CLASSIC_VALUES_INT && M32(RESULT + 4) == 17);
+}
+
 static void test_probe(const char *mode) {
     char type[] = "ClassicLabFixture", name[] = "IntegerProbe";
     TestProvider provider = {0};
@@ -927,6 +1005,8 @@ int main(int argc, char **argv) {
 #ifdef SKYRIM_IOS_CLASSIC_INT0_PROBE
     if (!strcmp(argv[1], "values-string"))
         test_string_result();
+    else if (!strcmp(argv[1], "values-form") || !strcmp(argv[1], "values-form-unavailable"))
+        test_form_values(!strcmp(argv[1], "values-form-unavailable"));
     else if (!strcmp(argv[1], "values") || !strcmp(argv[1], "values-rollback"))
         test_values(!strcmp(argv[1], "values-rollback"));
     else test_probe(argv[1]);
