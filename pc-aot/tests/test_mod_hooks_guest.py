@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -241,6 +242,12 @@ class OwnedLiftTests(unittest.TestCase):
             from_end = tri_original.index(b"\n}\n", from_start) + len(b"\n}\n")
             self.assertIn(tri_original[from_start:from_end], tri_stage)
             self.assertEqual(tri_stage.count(b"ece_nose_parse(c,"), 1)
+            reader = (root / "gen" / "exe_261.c").read_bytes()
+            start, end = hooks.function_span(reader, "f_A580A0")
+            caller = re.search(rb"LOOSE_READ_RETURN\s*=\s*(0x[0-9A-F]+)",
+                               (ROOT / "ios/runtime-port/mod_ece_tri_host.c").read_bytes()).group(1)
+            calls = re.findall(rb"0x106B284u\)\); esp -= 4; M32\(esp\) = (0x[0-9A-F]+)u", reader[start:end])
+            self.assertEqual(calls, [caller])
             self.assertIn(b"skyrim_ece_nose_guest_selected &&", (work / "mod-hook-sources" / "exe_185.c").read_bytes())
             with self.assertRaisesRegex(ValueError, "unreviewed earlier stage"):
                 hooks.stage_ece_nose_observe(root, {tri.UNIT: tri_original + b"// unrelated edit\n"})

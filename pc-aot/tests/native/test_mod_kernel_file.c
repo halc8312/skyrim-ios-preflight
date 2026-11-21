@@ -89,7 +89,7 @@ static void check_ece_nose(CPU *cpu, uint32_t handle, uint32_t other) {
                 assert(!NOSE(Parse, ECE_PATH, ECE_STREAM, 0, 0, 0));
             }
             const uint32_t read_args[] = {selected, BUFFER, 32, BYTES_READ, BYTES_READ + 8};
-            M32(STACK) = 0xA58152;
+            M32(STACK) = 0xA580E2;
             assert(invoke(cpu, shim_ReadFile, 5, read_args) == 1 && M32(BYTES_READ) == 32);
             const bool fresh = NOSE(Parsed, 1, 0, 0, 0, ticket);
             assert(fresh == (test == 0) && !skyrim_ece_tri_read_pending);
@@ -124,9 +124,10 @@ static void check_ece_read(CPU *cpu, uint32_t handle) {
     assert(ticket && skyrim_ece_tri_read_pending);
     const uint32_t overlapped = BYTES_READ + 8;
     const uint32_t read_args[] = {handle, BUFFER, 32, BYTES_READ, overlapped};
+    M32(STACK) = 0xA58152;  // The real WriteFile return must not witness this read.
     assert(invoke(cpu, shim_ReadFile, 5, read_args) == 1 && M32(BYTES_READ) == 32);
     assert(skyrim_ece_tri_read_pending); // Wrong guest return address cannot witness the read.
-    M32(STACK) = 0xA58152;
+    M32(STACK) = 0xA580E2;
     assert(invoke(cpu, shim_ReadFile, 5, read_args) == 1 && M32(BYTES_READ) == 32);
     assert(!skyrim_ece_tri_read_pending);
     skyrim_ece_tri_app_finish(cpu, ticket + 1, 1);
@@ -141,6 +142,11 @@ static void check_ece_read(CPU *cpu, uint32_t handle) {
     skyrim_ece_tri_app_finish(cpu, archive, 0);
 
     M32(ECE_STREAM) = 0x110CD68;
+    M32(ECE_STREAM + 0x30) = 1;
+    const uint64_t backed = skyrim_ece_tri_app_begin(cpu, ECE_PATH, ECE_STREAM);
+    assert(backed && !skyrim_ece_tri_read_pending);
+    skyrim_ece_tri_app_finish(cpu, backed, 1);
+    M32(ECE_STREAM + 0x30) = 0;
     uint64_t repeated = skyrim_ece_tri_app_begin(cpu, ECE_PATH, ECE_STREAM);
     assert(repeated && !skyrim_ece_tri_app_begin(cpu, ECE_PATH, ECE_STREAM));
     assert(!skyrim_ece_tri_read_pending);
@@ -155,7 +161,7 @@ static void check_ece_read(CPU *cpu, uint32_t handle) {
     M32(ECE_STREAM + 0x1C) = other;
     repeated = skyrim_ece_tri_app_begin(cpu, ECE_PATH, ECE_STREAM);
     const uint32_t other_read[] = {other, BUFFER, 32, BYTES_READ, overlapped};
-    M32(STACK) = 0xA58152;
+    M32(STACK) = 0xA580E2;
     assert(repeated && invoke(cpu, shim_ReadFile, 5, other_read) == 1 && M32(BYTES_READ) == 32);
     assert(!skyrim_ece_tri_read_pending);
     skyrim_ece_tri_app_finish(cpu, repeated, 1);

@@ -21,7 +21,7 @@ static bool same_file(const struct stat *actual);
 enum {
     FIRST_MAPPED = 0x10000, LOOSE_STREAM = 0x110CD68,
     ARCHIVE_STREAM = 0x110CBB4, ARCHIVE_ENTRY_STREAM = 0x110CBE4,
-    LOOSE_FILE_HANDLE = 0x1C, LOOSE_READ_RETURN = 0xA58152,
+    LOOSE_FILE_HANDLE = 0x1C, LOOSE_BACKING_STREAM = 0x30, LOOSE_READ_RETURN = 0xA580E2,
     UNKNOWN = 0, LOOSE = 1, BSA = 2
 };
 
@@ -101,9 +101,9 @@ static uint64_t begin_read(const struct CPU *cpu, uint32_t path, uint32_t stream
     if (!current.ticket) current.ticket = ++current.next;
     current.stream = stream;
     current.source = UNKNOWN;
-    if (stream >= FIRST_MAPPED && stream <= UINT32_MAX - LOOSE_FILE_HANDLE - 3 && !(stream & 3)) {
+    if (stream >= FIRST_MAPPED && stream <= UINT32_MAX - LOOSE_BACKING_STREAM - 3 && !(stream & 3)) {
         const uint32_t type = word(stream);
-        skyrim_ece_tri_read_pending = type == LOOSE_STREAM;
+        skyrim_ece_tri_read_pending = type == LOOSE_STREAM && !word(stream + LOOSE_BACKING_STREAM);
         if (type == ARCHIVE_STREAM || type == ARCHIVE_ENTRY_STREAM) current.source = BSA;
     }
     return current.ticket;
@@ -129,7 +129,8 @@ static bool same_file(const struct stat *actual) {
 void skyrim_ece_tri_app_read(const struct CPU *cpu, uint32_t caller, uint32_t handle, int fd, ssize_t bytes) {
     if (!skyrim_ece_tri_read_pending || current.owner != cpu || cpu != rt_current_cpu() ||
         caller != LOOSE_READ_RETURN || bytes <= 0 || fd < 0 ||
-        word(current.stream) != LOOSE_STREAM || handle != word(current.stream + LOOSE_FILE_HANDLE)) return;
+        word(current.stream) != LOOSE_STREAM || word(current.stream + LOOSE_BACKING_STREAM) ||
+        handle != word(current.stream + LOOSE_FILE_HANDLE)) return;
     const int saved_errno = errno;
     struct stat actual;
     current.source = fstat(fd, &actual) == 0 && same_file(&actual) ? LOOSE : UNKNOWN;
