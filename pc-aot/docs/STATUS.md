@@ -2,7 +2,7 @@
 
 **2026-11-22　MOD第一弾の配布前確認**
 
-固定版LEの生成物、所有者のECE入力、固定版libarchiveとliblzmaを使ったMOD関連のPC試験は102件すべて合格した。元のゲーム、MOD、セーブは読み取り専用で扱った。Tailscaleの既存HTTPS配布サービスが非公開で稼働していることを確認した。先行版のApple SDKビルドとMOD画面のシミュレーター試験は合格した。 [先行版の検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44932615027)
+固定版LEの生成物、所有者のECE入力、固定版libarchiveとliblzmaを使ったMOD関連のPC試験は104件すべて合格した。ゲストは第一弾の13種類のフックを含め、Windows上のLLVMでiPhoneOS向けの516ファイルをコンパイルして非署名でリンクした。元のゲーム、MOD、セーブは読み取り専用で扱った。Tailscaleの既存HTTPS配布サービスが非公開で稼働していることを確認した。先行版のApple SDKビルドとMOD画面のシミュレーター試験は合格した。 [先行版の検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44932615027)
 
 | 対象 | 現在までの確認 | 配布前の確認 |
 | --- | --- | --- |
@@ -10,16 +10,16 @@
 | Fuz Ro D-oh | 固定版の会話経路を接続。実物の代替音声10本のPCMと長さをPCで照合 | 通常音声、無音声の台詞、字幕と口の動きを比較 |
 | PapyrusUtil / Wearable Lanterns | 実物PapyrusUtilでMCMの設定と起動時の整数リスト読み書きを確認。入力・メーターのホスト試験が合格 | 点灯、長押し、設定と再起動後の復元。NPCの持ち方を保存するForm引数を検証中 |
 | 追加セーブ | 固定版のPC往復試験9条件。名前付きプロファイルの試験構成に、所有者のStorageUtil 3.3の記録と読み込み時の復元を接続 | Apple SDKで統合を確認し、iPhoneで連続セーブ、ゲーム再起動後の復元、別セーブへの漏れ、読込時間を検証 |
-| RaceMenu / ECE / NiOverride | RaceMenuの標準の鼻の高さを接続。ECEの顔TRIをゲームがどこから読んだかを詳細診断で記録。NiOverrideの提供元と版を表示 | ECEで鼻の高さだけを変えた同一キャラクターの書き出しと、実機での顔データの選択を照合 |
+| RaceMenu / ECE / NiOverride | RaceMenuの標準の鼻の高さを接続。固定版ECEのスロットの値と標準スライダーへの変換を照合。NiOverrideの提供元と版を表示 | ECEは女性Nordのプレビューと実際に選んだ顔TRIを照合し、同じキャラクターの書き出しと表示を比較 |
 | XPMSE / XPMS / Realistic Ragdolls and Force | プロファイルごとの骨格の選択と前提ファイルを検査 | 実物の骨格とアニメーションを別プロファイルで確認 |
 | CBBE / UNP / BodySlide / FNIS | 体型の優先順と生成時の構成を試験 | 実物の体型、対象プロファイルで生成した出力の表示 |
 | USLEEP / DLC | 必須マスターと並びをPCで検証 | 3つのDLCとUSLEEPの変更レコードを確認 |
 | ShowRaceMenu Precache Killer / KS Hairdos / Apachii | 実物DLLで先読みの位置を照合し、固定版へ接続。テスト用の髪の配置を検査 | 実物の髪型を選び、表示と時間を比較 |
-| Enhanced Camera | カメラ状態と腕・体を観測。詳細診断で一人称の描画リストに渡る体のルートと子孫を調べられる | 実機でリストの観測を行い、体の表示変更に必要な参照の保持区間を確認する |
+| Enhanced Camera | カメラ状態と腕・体を観測。詳細診断に一人称の描画リスト作成時と描画前の判定を1フレームずつ調べる経路を追加。ゲスト統合・診断試験52件合格 | 実機で体がどの判定から外れるかを観測し、表示変更に必要な参照の保持区間を確認する |
 | Safety Load | 実物1.2を照合し、ロード中だけ試せる設定を接続。元のヒープと復帰を試験 | ロード時間、メモリと安定性を実機で比較 |
-| HDT Physics Extensions / HDT HighHeels | 実物の物理設定3件の展開と配置を照合。HighHeelsは固定版の処理で装備効果と対象への対応を確認 | 物理は静止表示まで。高さ補正は実行時の値とノードの寿命を確認してから接続 |
+| HDT Physics Extensions / HDT HighHeels | 実物の物理設定3件の展開と配置を照合。HighHeelsは実物のスクリプトが渡す高さと、固定版の通知中に保持される対象を確認。ClangとGCC ASan/UBSanで各10件合格 | 物理は静止表示まで。高さ補正は現在の対象と描画ノードを同じ更新で保持できる経路が必要 |
 
-第一弾の配布版は未作成。 [第一弾の計画と実機手順](MOD_FIRST_WAVE_PLAN.md)
+第一弾の配布版は未作成。所有者のPCで3つのDLCと一部の骨格、髪型、体型、生成済みデータの実物を確認できていない。表の実機試験には、該当する入力とiPhoneが必要。 [第一弾の計画と実機手順](MOD_FIRST_WAVE_PLAN.md)
 
 **2026-11-22　試験プロファイルで追加セーブの保存と復元を接続**
 

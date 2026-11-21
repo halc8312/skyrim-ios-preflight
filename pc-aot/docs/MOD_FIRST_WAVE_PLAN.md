@@ -345,8 +345,8 @@ python3 scripts/build_title_guest.py private/<stage> --classic-skse --mod-hooks 
 #### P4-3 ECE 1.59
 
 - 取り込み済みの `.slot` は残す。ECE 1.59の公式 `humanraces_slider.ini` とNordの同梱プリセットで、標準 `NoseUpDown` のIDが12であることを確認した。
-- `mod_ece_slot.{c,h}` は検証用の読み取り処理。上限1 MiBのスロットからID 12の生の値を取り出し、壊れた行やID 12の重複を拒否する。作者のプリセットと、鼻の高さだけを変えたコピーをホストで比較する。
-- WindowsのECEで同じキャラクターのスロットを2つ書き出し、IDと値の方向・範囲を確認する。その後、P4-2の経路を使う。RaceMenuとは別のプロファイルでiPhoneの反映を試すため、現行UIの表示は取り込みまで。
+- `mod_ece_slot.{c,h}` は上限1 MiBのスロットからID 12を取り出し、壊れた行や重複を拒否する。固定版のDLLとメニューで、旧形式は値を1.5倍し、`# version: 2.0` より後の値はそのまま使い、−1〜1に収めることを確認した。
+- P4-2の経路に接続する前に、キャラクターメニューの現在の女性Nordと、鼻の処理が実際に選んだTRIを同じ呼び出し内で照合する。iPhoneではRaceMenuと別のプロファイルにし、同一キャラクターのECE書き出しを使って標準の鼻の高さの変化を比較する。
 
 #### P4-4 NiOverrideの重複
 

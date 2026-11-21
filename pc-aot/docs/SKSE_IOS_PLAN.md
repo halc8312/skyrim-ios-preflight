@@ -66,24 +66,32 @@ Compare startup, frame times and save behavior to the same build with the
 test profile disabled. Match the signed app to its guest ABI and verify
 owner-only delivery after the gameplay paths are available.
 
-Current host checks cover the PapyrusUtil registration, scalar settings and
-integer and text records restored by the original DLL in a new process. They
-also cover the Wearable Lanterns input and meter notification routes, separate
-RaceMenu and ECE preset imports, deployment recovery, selected DLC and generated
-asset placement, and both Fuz subtitle routes. The pinned actor-reference
-experiment proves a retained reference at the crosshair call site. The original
-DLL record test uses authored forms and a separate Classic companion. Most
-native MODs still need their game callbacks and the iPhone checks in this table.
+Current host checks cover PapyrusUtil registration, the Wearable Lanterns
+configuration and startup settings, and integer and text records restored by the
+original DLL in a new process. An opt-in named profile now connects the companion
+writer to successful base-save publication and checks the selected base stream
+before restoring records to the corresponding VM. The native actor reference
+and the managed VM identity have separate ownership scopes. Authored actor
+records pass the hosted tests. Live NPC StorageUtil calls and iPhone save
+recovery still need verification.
+
+The other host checks cover Wearable Lanterns input and meter notifications,
+separate RaceMenu and ECE imports, deployment recovery, selected DLC and generated
+asset placement, and both Fuz subtitle routes. The fixed ECE 1.59 DLL and menu
+confirm how the slot version changes the value passed to the stock Nose Height
+slider. Applying it still requires the current preview and selected TRI to match.
 The isolated DLL file probe completes ShowRaceMenu Precache Killer 1.3
 initialization. The startup-view check recognizes the exact DLL and enables
 the verified guest precache return only for the selected profile. Enhanced
 Camera 1.4 completes isolated PC initialization when the diagnostic work
 limit is raised for that run. It records 49 requests to change game code, with
-none applied. Safety Load 1.2 reaches a read of live game state after reading
-its bundled INI. HDT HighHeels beta 0.5 has host tests for applying and removing
-the node offset and for observing the original task queue on its caller. Its
-equipment and node lifetime have yet to be verified in game. The resident DLL
-loader and the app's diagnostic work limit are unchanged.
+none applied. The Safety Load 1.2 experiment recognizes the exact DLL and uses
+the reviewed allocation branch during the loading menu. HDT HighHeels beta 0.5
+has host tests for typed VM arguments, a retained target during its stock native
+effect event, and applying and removing the node offset in a separate fixture.
+The integration still needs the current actor and scene node to be held through
+one update. These tests use the existing diagnostic work limit outside the
+separately documented Enhanced Camera experiment.
 [Progress](STATUS.md)
 
 ## RaceMenu LE appearance editing
