@@ -117,6 +117,36 @@ the entry is removed, live resolution can fail. Cleanup needs a
 previously authenticated instance and its world generation and equip
 lifetime.
 
+### Observe the stock effect event while its actor is retained
+
+The pinned effect phase routine `f_656CB0` takes smart references to the
+target and optional caster through `f_4952A0` before publishing the
+start event (return `0x656EC5`, phase 1) or finish event (return
+`0x65710B`, phase 0). It releases its slots after publishing. The common
+publisher `f_656860` adds a second reference for each non-null object
+while the original dispatcher `f_6EBC10` calls native listeners
+synchronously. The event has caster at +0, target at +4, a 16-bit effect
+number at +8 and phase at +0xA. Event copies release their references
+when dispatch returns.
+
+The private fixture runs the unchanged acquisition, publication,
+dispatch and release bodies on authored handle entries and one native
+listener. Interlocked imports and uncontended guard acquisition are
+modeled. It covers start, finish, self-cast, optional caster, missing or
+stale target, and a retained non-Actor. For an Actor it copies only the
+FormID, effect number and phase while the target is retained. It checks
+that all additional references are balanced. The no-target and
+non-Actor inputs exercise the listener boundary independently of the
+conditions in the original effect phase routine.
+
+The stock VM listener `f_8D65B0` submits the corresponding Papyrus event.
+The native event carries no ActiveEffect pointer or magnitude. Further
+work must tie the played KeepUpdate or StopUpdate call to the effect
+instance and world/equipment lifetime, including reuse of a 16-bit
+effect number. The effect phase producer and the VM listener were read
+from the pinned lift. This fixture starts below the producer and does
+not execute Papyrus or keep an actor pointer after dispatch.
+
 ### Refresh the same named node after applying or removing the offset
 
 In the exact owned DLL, refresh and undo each resolve the current

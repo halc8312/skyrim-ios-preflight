@@ -11,6 +11,7 @@ import tempfile
 import unittest
 
 import stage_effect_call
+import stage_effect_event
 import stage_effect_magnitude
 import stage_item_delivery
 import stage_scene_refresh
@@ -50,7 +51,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
 
     def test_unreviewed_lift_is_refused(self):
         for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude,
-                      stage_effect_call, stage_scene_refresh):
+                      stage_effect_call, stage_effect_event, stage_scene_refresh):
             with self.subTest(unit=stage.UNIT):
                 with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
                     unit_count = 1 + len(getattr(stage, "DEPENDENCIES", ()))
@@ -106,6 +107,12 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.run_reviewed_fixture(
             stage_effect_call, "test_effect_call_lift.c",
             "Classic ordinary native invocation lends the nearest typed script self",
+        )
+
+    def test_reviewed_effect_event_retains_target_through_native_dispatch(self):
+        self.run_reviewed_fixture(
+            stage_effect_event, "test_effect_event_lift.c",
+            "Classic effect events lend the target actor through synchronous native dispatch",
         )
 
     def test_reviewed_scene_refresh_recomposes_owned_adjustment_and_undo(self):
