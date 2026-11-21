@@ -23,8 +23,9 @@ class FeatureTests(unittest.TestCase):
         flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O2", "-I", PORT]
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
             flags += ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-        subprocess.run([cc, *flags, ROOT / "tests/native/test_mod_features.c", PORT / "mod_features.c",
-                        PORT / "mod_plugins.c", "-o", cls.binary], check=True, timeout=60)
+        vm = ROOT / "experiments/skse-plugin-vm"
+        subprocess.run([cc, *flags, "-I", vm, ROOT / "tests/native/test_mod_features.c", PORT / "mod_features.c",
+                        PORT / "mod_plugins.c", vm / "pe_image.c", "-o", cls.binary], check=True, timeout=60)
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -43,6 +44,27 @@ class FeatureTests(unittest.TestCase):
     def scan(self, *roots):
         out = subprocess.check_output([self.binary, *roots], text=True, timeout=10).split()
         return int(out[0]), {item.split(":")[0]: tuple(map(int, item.split(":")[1:])) for item in out[1:]}
+
+    def test_duplicate_nioverride_reports_each_pe_version(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("pe_fixture", ROOT / "experiments/skse-plugin-vm/test_pe_image.py")
+        pe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pe)
+        racemenu = self.root("racemenu", ["SKSE/Plugins/chargen.dll"])
+        (racemenu / "SKSE/Plugins/nioverride.dll").write_bytes(pe.add_version(pe.make_image(), (3, 4, 5, 0)))
+        standalone = self.root("nioverride", [])
+        (standalone / "SKSE/Plugins").mkdir(parents=True)
+        (standalone / "SKSE/Plugins/NIOverride.dll").write_bytes(pe.add_version(pe.make_image(), (3, 4, 4, 0)))
+        plain = self.root("plain", ["SKSE/Plugins/nioverride.dll"])       # no version resource
+        none = self.root("none", ["Meshes/x.nif"])
+        twice = self.root("twice", ["SKSE/Plugins/nioverride.dll", "SKSE/Plugins/nioverride_old.dll"])
+        env = dict(os.environ, FEATURE_VERSION="nioverride")
+        out = subprocess.check_output([self.binary, racemenu, standalone, plain, none, twice], text=True,
+                                      timeout=10, env=env).splitlines()
+        self.assertIn("nioverride:4:4", out[0])   # four packages provide it; the last one wins
+        import errno
+        self.assertEqual(out[1:], ["0:3.4.5.0", "0:3.4.4.0", f"{errno.EIO}:0.0.0.0",
+                                   f"{errno.ENOENT}:0.0.0.0", f"{errno.EMLINK}:0.0.0.0"])
 
     def test_detection_by_marker_names_ignores_case_and_spacing(self):
         a = self.root("a", ["SKSE/Plugins/Fuz Ro D-oh.DLL", "SKSE/Plugins/StorageUtil.dll",

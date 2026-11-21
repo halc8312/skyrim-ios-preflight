@@ -2,6 +2,11 @@
 #define _GNU_SOURCE
 #include "mod_features.h"
 #include "mod_plugins.h"
+#include "pe_image.h"
+
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -99,5 +104,53 @@ int skyrim_features_scan(const char *const *roots, size_t count, SkyrimFeatureSc
         for (int f = 0; f < SKYRIM_FEATURE_COUNT; ++f)
             if (mask & (1u << f)) { ++out->features[f].providers; out->features[f].winner = (int)i; }
     }
+    return 0;
+}
+
+enum { FEATURE_DLL_MAX_BYTES = 32 * 1024 * 1024 };
+
+int skyrim_feature_dll_version(const char *root, unsigned feature, uint16_t version[4]) {
+    if (!root || !version || feature >= SKYRIM_FEATURE_COUNT || !rows[feature].dll_keyword) return EINVAL;
+    memset(version, 0, 4 * sizeof version[0]);
+    char skse[4096], plugins[4096], path[4096] = "";
+    int e = child_directory(root, "SKSE", skse, sizeof skse);
+    if (e > 0) e = child_directory(skse, "Plugins", plugins, sizeof plugins);
+    if (e < 0) return EIO;
+    if (!e) return ENOENT;
+    DIR *dir = opendir(plugins);
+    if (!dir) return EIO;
+    unsigned matches = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir))) {
+        size_t n = strlen(entry->d_name);
+        if (n < 5 || strcasecmp(entry->d_name + n - 4, ".dll") || !strcasestr(entry->d_name, rows[feature].dll_keyword))
+            continue;
+        char candidate[4096];
+        struct stat st;
+        if (snprintf(candidate, sizeof candidate, "%s/%s", plugins, entry->d_name) >= (int)sizeof candidate ||
+            lstat(candidate, &st) || !S_ISREG(st.st_mode)) continue;
+        if (++matches == 1) memcpy(path, candidate, sizeof path);
+    }
+    closedir(dir);
+    if (!matches) return ENOENT;
+    if (matches > 1) return EMLINK;
+    const int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return EIO;
+    struct stat st;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode)) { close(fd); return EIO; }
+    if (st.st_size > FEATURE_DLL_MAX_BYTES) { close(fd); return EFBIG; }
+    uint8_t *bytes = malloc(st.st_size ? (size_t)st.st_size : 1);
+    size_t have = 0;
+    while (bytes && have < (size_t)st.st_size) {
+        const ssize_t got = read(fd, bytes + have, (size_t)st.st_size - have);
+        if (got <= 0) break;
+        have += (size_t)got;
+    }
+    close(fd);
+    SksePeVersion pe;
+    const int ok = bytes && have == (size_t)st.st_size && skse_pe_version_info(bytes, have, &pe) == SKSE_PE_OK;
+    free(bytes);
+    if (!ok) return EIO;
+    memcpy(version, pe.file, sizeof pe.file);
     return 0;
 }

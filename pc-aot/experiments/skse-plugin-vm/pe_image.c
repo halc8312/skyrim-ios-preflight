@@ -791,6 +791,62 @@ SksePeStatus skse_pe_classic_exports(const uint8_t *file, size_t length) {
     return status == SKSE_PE_OK ? read_exports(&pe, NULL) : status;
 }
 
+/* Resource directory entries: 16-byte table header, 8-byte entries, the
+ * high bit of the offset marks a subdirectory. Offsets are relative to the
+ * resource directory. */
+static const uint8_t *resource_child(const PeFile *pe, uint32_t offset, uint32_t id, int want_directory,
+                                     uint32_t *child) {
+    const PeSpan dir = pe->dir[RESOURCES];
+    if (offset > dir.length || dir.length - offset < 16) return NULL;
+    const uint8_t *table = file_at_rva(pe, dir.address + offset, 16, NULL);
+    if (!table) return NULL;
+    const uint32_t count = (uint32_t)u16(table + 12) + u16(table + 14);
+    if (count > 4096 || (uint64_t)offset + 16 + (uint64_t)count * 8 > dir.length) return NULL;
+    const uint8_t *entries = file_at_rva(pe, dir.address + offset + 16, (size_t)count * 8, NULL);
+    for (uint32_t i = 0; entries && i < count; ++i) {
+        const uint32_t name = u32(entries + i * 8), target = u32(entries + i * 8 + 4);
+        if (id != UINT32_MAX && name != id) continue;
+        if (!!(target & 0x80000000u) != want_directory) return NULL;
+        *child = target & 0x7fffffffu;
+        return entries;
+    }
+    return NULL;
+}
+
+SksePeStatus skse_pe_version_info(const uint8_t *file, size_t length, SksePeVersion *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!file || !out) return SKSE_PE_BAD_ARGUMENT;
+    PeFile pe = {.file = file, .file_length = length};
+    SksePeStatus status = read_headers(&pe);
+    if (status != SKSE_PE_OK) return status;
+    if (!(pe.directory_mask & (1u << RESOURCES))) return SKSE_PE_BAD_FORMAT;
+    uint32_t names, languages, data;
+    if (!resource_child(&pe, 0, 16, 1, &names)                  /* RT_VERSION */
+        || !resource_child(&pe, names, UINT32_MAX, 1, &languages)
+        || !resource_child(&pe, languages, UINT32_MAX, 0, &data)
+        || data > pe.dir[RESOURCES].length || pe.dir[RESOURCES].length - data < 16)
+        return SKSE_PE_BAD_FORMAT;
+    const uint8_t *entry = file_at_rva(&pe, pe.dir[RESOURCES].address + data, 16, NULL);
+    if (!entry) return SKSE_PE_BAD_FORMAT;
+    const uint32_t rva = u32(entry), size = u32(entry + 4);
+    /* VS_VERSIONINFO: wLength, wValueLength, wType, L"VS_VERSION_INFO", padding, VS_FIXEDFILEINFO. */
+    enum { FIXED = 40, FIXED_BYTES = 52 };  /* 6-byte header, 32-byte key, padding to 4 */
+    static const char key[] = "VS_VERSION_INFO";
+    const uint8_t *info = size >= FIXED + FIXED_BYTES ? file_at_rva(&pe, rva, FIXED + FIXED_BYTES, NULL) : NULL;
+    if (!info || u16(info) < FIXED + FIXED_BYTES || u16(info) > size || u16(info + 2) != FIXED_BYTES)
+        return SKSE_PE_BAD_FORMAT;
+    for (unsigned i = 0; i < sizeof key; ++i)
+        if (u16(info + 6 + 2 * i) != (uint8_t)key[i]) return SKSE_PE_BAD_FORMAT;
+    const uint8_t *fixed = info + FIXED;
+    if (u32(fixed) != 0xfeef04bdu) return SKSE_PE_BAD_FORMAT;
+    const uint32_t words[4] = {u32(fixed + 8), u32(fixed + 12), u32(fixed + 16), u32(fixed + 20)};
+    *out = (SksePeVersion){
+        .file = {(uint16_t)(words[0] >> 16), (uint16_t)words[0], (uint16_t)(words[1] >> 16), (uint16_t)words[1]},
+        .product = {(uint16_t)(words[2] >> 16), (uint16_t)words[2], (uint16_t)(words[3] >> 16), (uint16_t)words[3]},
+    };
+    return SKSE_PE_OK;
+}
+
 static SksePeStatus copy_image(PeFile *pe, const ImportPlan *plan, const RelocationWords *move, SksePeImage *out) {
     pe->image.bytes = calloc(1, pe->image.size);
     if (!pe->image.bytes) return SKSE_PE_NO_MEMORY;

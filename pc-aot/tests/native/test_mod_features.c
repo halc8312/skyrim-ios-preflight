@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "mod_features.h"
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* argv: root... ; prints "unreadable key:providers:winner ..." */
 int main(int argc, char **argv) {
@@ -16,5 +18,16 @@ int main(int argc, char **argv) {
     for (int i = 0; i < SKYRIM_FEATURE_COUNT; ++i)
         if (scan.features[i].providers) printf(" %s:%u:%d", skyrim_feature_key(i), scan.features[i].providers, scan.features[i].winner);
     printf("\n");
+    /* FEATURE_VERSION=<key>: the DLL version in each root. */
+    const char *key = getenv("FEATURE_VERSION");
+    if (key) {
+        const int feature = skyrim_feature_from_key(key);
+        uint16_t v[4];
+        assert(feature >= 0 && skyrim_feature_dll_version(argv[1], (unsigned)feature, NULL) == EINVAL);
+        for (int i = 1; i < argc; ++i) {
+            const int rc = skyrim_feature_dll_version(argv[i], (unsigned)feature, v);
+            printf("%d:%u.%u.%u.%u\n", rc, v[0], v[1], v[2], v[3]);
+        }
+    }
     return 0;
 }

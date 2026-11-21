@@ -106,6 +106,31 @@ def make_image():
     return d
 
 
+class Version(c.Structure):
+    _fields_ = [("file", c.c_uint16 * 4), ("product", c.c_uint16 * 4)]
+
+
+def add_version(d, file=(3, 4, 4, 0), product=(3, 4, 4, 0), key="VS_VERSION_INFO", signature=0xFEEF04BD):
+    """RT_VERSION resource in the unused end of .rdata (RVA 0x2100): root, type, name, data, VS_VERSIONINFO."""
+    at, rva = RD + 0x100, 0x2100
+    d[at:at + 0x100] = bytes(0x100)
+    put(d, at + 14, "H", 1)
+    put(d, at + 16, "II", 16, 0x80000000 | 0x18)      # RT_VERSION
+    put(d, at + 0x18 + 14, "H", 1)
+    put(d, at + 0x18 + 16, "II", 1, 0x80000000 | 0x30)
+    put(d, at + 0x30 + 14, "H", 1)
+    put(d, at + 0x30 + 16, "II", 0x409, 0x48)          # language -> data entry
+    put(d, at + 0x48, "IIII", rva + 0x58, 92, 0, 0)
+    info = at + 0x58
+    put(d, info, "HHH", 92, 52, 0)
+    encoded = (key + "\0").encode("utf-16-le")
+    d[info + 6:info + 6 + len(encoded)] = encoded
+    put(d, info + 40, "IIIIII", signature, 0x10000, file[0] << 16 | file[1], file[2] << 16 | file[3],
+        product[0] << 16 | product[1], product[2] << 16 | product[3])
+    directory(d, 2, rva, 0xb4)
+    return d
+
+
 def add_imports(d):
     d[DATA:DATA + 0x100] = bytes(0x100)
     directory(d, 1, 0x3000, 40)
@@ -184,7 +209,7 @@ class PeReaderTest(unittest.TestCase):
             definitions = cls.work / "reader.def"
             symbols = ("skse_pe_map", "skse_pe_map_with_imports", "skse_pe_map_at_base", "skse_pe_map_library",
                        "skse_pe_map_tls", "skse_pe_inspect", "skse_pe_classic_exports",
-                       "skse_pe_allows", "skse_pe_free", "skse_pe_status_text")
+                       "skse_pe_allows", "skse_pe_free", "skse_pe_status_text", "skse_pe_version_info")
             definitions.write_text("EXPORTS\n" + "\n".join(symbols) + "\n", encoding="ascii")
             options.extend(["-shared", "-Xlinker", "/def:" + str(definitions)])
         else:
@@ -211,6 +236,7 @@ class PeReaderTest(unittest.TestCase):
         cls.lib.skse_pe_status_text.restype = c.c_char_p
         cls.lib.skse_pe_free.argtypes = [c.POINTER(Image)]
         cls.lib.skse_pe_free.restype = None
+        cls.lib.skse_pe_version_info.argtypes = [c.c_void_p, c.c_size_t, c.POINTER(Version)]
 
     def map(self, data):
         buf = c.create_string_buffer(bytes(data))
@@ -244,6 +270,34 @@ class PeReaderTest(unittest.TestCase):
             self.assertFalse(image.bytes)
             self.assertEqual((0, 0, 0), (image.query_va, image.load_va, image.section_count))
         return self.lib.skse_pe_status_text(status).decode("ascii"), image
+
+    def version(self, data):
+        buf = c.create_string_buffer(bytes(data))
+        out = Version()
+        status = self.lib.skse_pe_version_info(buf, len(data), c.byref(out))
+        self.assertEqual(bytes(data), buf.raw[:len(data)])
+        return self.lib.skse_pe_status_text(status).decode("ascii"), tuple(out.file), tuple(out.product)
+
+    def test_version_resource_is_read_without_mapping(self):
+        self.assertEqual(self.version(add_version(make_image(), (3, 4, 4, 1), (3, 4, 5, 0))),
+                         ("ok", (3, 4, 4, 1), (3, 4, 5, 0)))
+        no_resource = self.version(make_image())
+        self.assertNotEqual(no_resource[0], "ok")
+        self.assertEqual(no_resource[1:], ((0,) * 4, (0,) * 4))
+        for broken in (add_version(make_image(), key="VS_VERSION_INFX"),
+                       add_version(make_image(), signature=0x12345678)):
+            self.assertNotEqual(self.version(broken)[0], "ok")
+        wrong_type = add_version(make_image())
+        put(wrong_type, RD + 0x100 + 16, "I", 3)   # RT_ICON only
+        self.assertNotEqual(self.version(wrong_type)[0], "ok")
+        leaf = add_version(make_image())
+        put(leaf, RD + 0x100 + 0x30 + 20, "I", 0x80000000 | 0x48)  # a directory where data belongs
+        self.assertNotEqual(self.version(leaf)[0], "ok")
+        outside = add_version(make_image())
+        put(outside, RD + 0x100 + 0x48, "I", 0x9000)  # data outside the image
+        self.assertNotEqual(self.version(outside)[0], "ok")
+        truncated = add_version(make_image())[:RD + 0x120]
+        self.assertNotEqual(self.version(truncated)[0], "ok")
 
     def test_owned_image_permissions_header_gaps_padding_and_zero_fill(self):
         d = make_image()

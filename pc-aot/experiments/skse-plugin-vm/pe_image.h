@@ -121,6 +121,13 @@ SksePeStatus skse_pe_map_tls(const uint8_t *file, size_t length, uint32_t guest_
                              SksePeRequiredExport *required, size_t required_count,
                              SksePeImage *out, SksePeTlsInfo *out_tls);
 void skse_pe_free(SksePeImage *image);
+/* Read-only: the fixed file and product versions of the first RT_VERSION
+ * resource (VS_FIXEDFILEINFO). Nothing is mapped or run. SKSE_PE_BAD_FORMAT
+ * covers an absent or malformed version resource. */
+typedef struct {
+    uint16_t file[4], product[4]; /* major, minor, build, revision */
+} SksePeVersion;
+SksePeStatus skse_pe_version_info(const uint8_t *file, size_t length, SksePeVersion *out);
 /* Nonempty range must fit fully inside one region with every requested bit. */
 int skse_pe_allows(const SksePeImage *image, uint32_t va, size_t length, unsigned required);
 /* The returned region is clipped to the image allocation. Headers form a

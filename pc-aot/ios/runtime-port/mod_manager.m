@@ -1905,6 +1905,7 @@ static NSString *FeatureName(unsigned feature) {
 
 @interface SKFeatures : UITableViewController
 @property(nonatomic) SkyrimFeatureScan scan;
+@property(nonatomic, strong) NSArray<NSString *> *roots;  /* Data roots of the scan, in overwrite order */
 @property(nonatomic, strong) NSArray<NSNumber *> *found;
 @end
 @implementation SKFeatures
@@ -1915,6 +1916,7 @@ static NSString *FeatureName(unsigned feature) {
 - (void)reload {
     EnsureState();
     self.scan = FeatureScanFor(EnabledPackageIds(SelectedProfile()));
+    self.roots = DataRootsFor(EnabledPackageIds(SelectedProfile()));
     NSMutableArray *found = [NSMutableArray array];
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) if (self.scan.features[f].providers) [found addObject:@(f)];
     self.found = found;
@@ -1949,8 +1951,19 @@ static NSString *FeatureName(unsigned feature) {
     }
 #endif
     unsigned providers = self.scan.features[f].providers;
-    if (providers > 1)
+    if (providers > 1) {
         status = [status stringByAppendingFormat:T(@" %u packages provide it; the later one in the list is used.", @" %u個のパッケージが含みます。一覧で後のものが使われます。"), providers];
+        /* Plan P4-4: show the file version of the DLL that is used (for example NiOverride from
+         * RaceMenu 3.4.5 and from NetImmerse Override 3.4.4). */
+        const int winner = self.scan.features[f].winner;
+        uint16_t v[4];
+        if (winner >= 0 && (NSUInteger)winner < self.roots.count &&
+            !skyrim_feature_dll_version(self.roots[winner].fileSystemRepresentation, f, v))
+            status = [status stringByAppendingFormat:T(@" Used: version %u.%u.%u.%u.", @" 使われる版：%u.%u.%u.%u。"),
+                      v[0], v[1], v[2], v[3]];
+        else if (winner >= 0)
+            status = [status stringByAppendingString:T(@" The version of the used DLL could not be read.", @" 使われるDLLの版を読めませんでした。")];
+    }
     c.detailTextLabel.text = status;
     if (implemented) {
         UISwitch *toggle = [UISwitch new]; toggle.on = FeatureSelected(SelectedProfile(), f); toggle.tag = f;

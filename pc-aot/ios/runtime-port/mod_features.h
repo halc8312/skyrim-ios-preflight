@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #pragma once
 #include <stddef.h>
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -36,6 +37,12 @@ typedef struct {
 /* roots: the original Data folder and enabled packages' Data folders in
  * overwrite order. Links are not followed. Returns 0, or EINVAL. */
 int skyrim_features_scan(const char *const *roots, size_t count, SkyrimFeatureScan *out);
+
+/* The PE file version (major, minor, build, revision) of the feature's DLL in
+ * one Data root's SKSE/Plugins, read-only and at most 32 MiB. Returns 0,
+ * ENOENT when the root has none, EMLINK when several DLLs match, EFBIG, or
+ * EIO when the file cannot be read or carries no version resource. */
+int skyrim_feature_dll_version(const char *root, unsigned feature, uint16_t version[4]);
 
 /* Stable ASCII key used in saved profile state and accessibility identifiers. */
 const char *skyrim_feature_key(unsigned feature);
