@@ -1,23 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #pragma once
+#include "classic_mod_layout.h"
 #include <stdatomic.h>
 #include <stdio.h>
-
-/* Public 32-bit TESV 1.9.32 layout described by the Classic 1.7.3 SDK.
- * The loaded count, linked-list position, and a master's assigned load index
- * are separate values; a profile's requested order cannot supply these. */
-enum {
-    CLASSIC_DATA_HANDLER = 0x012e2cb8,
-    CLASSIC_MOD_LIST = 0x694,
-    CLASSIC_LOADED_COUNT = 0x69c,
-    CLASSIC_FILE_NAME = 0x20,
-    CLASSIC_FILE_NAME_BYTES = 0x104,
-    CLASSIC_FILE_MASTER_COUNT = 0x3fc,
-    CLASSIC_FILE_MASTERS = 0x400,
-    CLASSIC_FILE_INDEX = 0x40c,
-    CLASSIC_FILE_AUTHOR = 0x410,
-    CLASSIC_FILE_DESCRIPTION = 0x418
-};
 
 static int skse_classic_file_property(CPU *cpu, unsigned op, uint32_t file,
         uint32_t master_index, uint32_t result) {

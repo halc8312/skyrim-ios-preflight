@@ -16,6 +16,18 @@ typedef struct {
     SkseLoadedModKind kind;
 } SkseLoadedMod;
 
+/* Use the same byte comparison for Classic histories and active catalogues.
+ * Names remain in the game's encoding. Only ASCII case participates. */
+static inline int skse_classic_mod_name_compare(const uint8_t *a, size_t na, const uint8_t *b, size_t nb) {
+    size_t limit = na < nb ? na : nb;
+    for (size_t i = 0; i < limit; ++i) {
+        int left = a[i] >= 'A' && a[i] <= 'Z' ? a[i] + ('a' - 'A') : a[i];
+        int right = b[i] >= 'A' && b[i] <= 'Z' ? b[i] + ('a' - 'A') : b[i];
+        if (left != right) return left - right;
+    }
+    return (na > nb) - (na < nb);
+}
+
 typedef enum {
     SKSE_MAP_OK, SKSE_MAP_ARGUMENT, SKSE_MAP_SOURCE_ERROR, SKSE_MAP_HISTORY_MISSING,
     SKSE_MAP_UNSUPPORTED_VERSION, SKSE_MAP_INVALID_HISTORY, SKSE_MAP_DUPLICATE_HISTORY,

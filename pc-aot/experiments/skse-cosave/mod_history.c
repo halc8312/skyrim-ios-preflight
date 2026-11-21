@@ -13,16 +13,8 @@ typedef struct {
     int seen;
 } History;
 
-static uint8_t fold(uint8_t value) {
-    return value >= 'A' && value <= 'Z' ? (uint8_t)(value + ('a' - 'A')) : value;
-}
 static int compare_names(ModName a, ModName b) {
-    size_t n = a.size < b.size ? a.size : b.size;
-    for (size_t i = 0; i < n; ++i) {
-        int diff = (int)fold(a.bytes[i]) - (int)fold(b.bytes[i]);
-        if (diff) return diff;
-    }
-    return (a.size > b.size) - (a.size < b.size);
+    return skse_classic_mod_name_compare(a.bytes, a.size, b.bytes, b.size);
 }
 static int order_name(const void *a, const void *b) {
     return compare_names(*(const ModName *)a, *(const ModName *)b);
