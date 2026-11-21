@@ -105,12 +105,10 @@ jobs:
           if [[ "$SKYRIM_IOS_SKSE_DLL_PROBE" == 1 ]]; then
             defs+=(-DSKYRIM_IOS_SKSE_DLL_PROBE=1 -I../../experiments/skse-plugin-vm)
           fi
-          if [[ "$SKYRIM_IOS_MOD_HOOKS" == 1 ]]; then
-            defs+=(-DSKYRIM_IOS_MOD_HOOKS=1 -I../../experiments/fuz-voice)
-          fi
           if [[ "$SKYRIM_IOS_CLASSIC_PAPYRUSUTIL" == 1 ]]; then
             defs+=(-DSKYRIM_IOS_CLASSIC_PAPYRUSUTIL=1)
           fi
+          # The full build below checks MOD hooks with the prepared Skydream headers.
           xcrun --sdk iphoneos clang -isysroot "$sdk" -target arm64-apple-ios18.0 -fobjc-arc -fmodules \
             "${defs[@]}" -fsyntax-only mod_manager.m mod_fomod.m
       - name: Prepare the public build tools
