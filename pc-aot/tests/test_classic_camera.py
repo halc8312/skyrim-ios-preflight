@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CAMERA = ROOT / "experiments/classic-camera"
 sys.path[:0] = [str(CAMERA), str(ROOT / "scripts")]
 import stage_camera as camera
+import stage_camera_render as render
 from classic_skse_guest import validate_generation
 
 LIFT_HEADERS = {
@@ -43,6 +44,38 @@ class CameraStageTests(unittest.TestCase):
         with mock.patch.object(camera, "CAMERA_SHA256", sha256(duplicate_exit).hexdigest()):
             with self.assertRaisesRegex(ValueError, "ambiguous"):
                 camera.stage_camera(duplicate_exit)
+
+    def test_render_handoff_staging(self):
+        body = render.ENTRY + render.CALL + b"}\n"
+        unit = b'#include "funcs_exe.h"\n\n' + body
+        with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
+            render.stage_camera_render(unit)
+        with mock.patch.object(render, "RENDER_SHA256", sha256(unit).hexdigest()):
+            staged = render.stage_camera_render(unit)
+        self.assertIn(render.OBSERVE + render.CALL, staged)
+        self.assertEqual(staged.removeprefix(render.DECLARATION).replace(render.CAPTURE, b"", 1)
+                         .replace(render.OBSERVE, b"", 1), unit)
+
+    def test_reviewed_render_handoff_stages_and_compiles(self):
+        generation, headers, compiler = self.owned_lift()
+        source = generation / "gen" / render.RENDER_UNIT
+        original = source.read_bytes()
+        staged = render.stage_camera_render(original)
+        self.assertEqual(staged.removeprefix(render.DECLARATION).replace(render.CAPTURE, b"", 1)
+                         .replace(render.OBSERVE, b"", 1), original)
+        with tempfile.TemporaryDirectory(prefix="classic-camera-render-") as d:
+            unit = Path(d) / render.RENDER_UNIT
+            unit.write_bytes(staged)
+            subprocess.run([compiler, "-std=gnu11", "-w", "-fsyntax-only", *headers, unit],
+                           check=True, timeout=60)
+        self.assertEqual(source.read_bytes(), original)
+
+    def test_camera_render_reader(self):
+        compiler = shutil.which(os.environ.get("CC", "cc"))
+        if not compiler:
+            self.skipTest("C compiler unavailable")
+        with tempfile.TemporaryDirectory() as d:
+            self.compile_and_run(Path(d), compiler, [CAMERA / "test_camera_render.c"])
 
     def test_camera_state_reader(self):
         compiler = shutil.which(os.environ.get("CC", "cc"))

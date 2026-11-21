@@ -37,3 +37,20 @@ typedef struct {
 bool classic_camera_sample_after_return(const char *image_sha256, uint32_t completed_entry,
                                         uint32_t receiver, ClassicCameraReadWord read_word, void *guest,
                                         ClassicCameraSample *sample);
+
+/* Bits describe retained entries in one list at the reviewed render handoff.
+ * An incomplete list or ancestry contributes UNKNOWN even if it also proves
+ * a body match. The caller must still own these live lists. */
+enum {
+    CLASSIC_CAMERA_RENDER_BODY = 1u,
+    CLASSIC_CAMERA_RENDER_DESCENDANT = 2u,
+    CLASSIC_CAMERA_RENDER_OTHER = 4u,
+    CLASSIC_CAMERA_RENDER_UNKNOWN = 8u
+};
+
+typedef struct {
+    unsigned first, second;
+} ClassicCameraRenderSample;
+
+bool classic_camera_sample_render(const char *image_sha256, uint32_t frame, uint32_t first, uint32_t second,
+                                  ClassicCameraReadWord read_word, void *guest, ClassicCameraRenderSample *sample);

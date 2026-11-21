@@ -96,3 +96,104 @@ bool classic_camera_sample_after_return(const char *image_sha256, uint32_t compl
     if (have_body) sample->body = read_root(read_word, guest, body);
     return true;
 }
+
+enum { RENDER_LIST_LIMIT = 128, RENDER_PARENT_LIMIT = 8 };
+
+typedef struct {
+    uint32_t nodes[RENDER_LIST_LIMIT];
+    uint32_t parents[RENDER_LIST_LIMIT];
+    unsigned count, mask;
+} CameraRenderList;
+
+static bool first_person(ClassicCameraReadWord read_word, void *guest) {
+    uint32_t camera, current, first;
+    return read_word(guest, PLAYER_CAMERA_SINGLETON, &camera) &&
+           read_field(read_word, guest, camera, CURRENT_STATE_OFFSET, &current) && current &&
+           read_field(read_word, guest, camera, PLAYER_STATE_TABLE_OFFSET, &first) && current == first;
+}
+
+static bool body_identity(ClassicCameraReadWord read_word, void *guest, uint32_t *identity) {
+    uint32_t actor, loaded, arms;
+    return read_word(guest, PLAYER_ACTOR_SINGLETON, &actor) &&
+           read_field(read_word, guest, actor, ACTOR_LOADED_STATE, &loaded) &&
+           read_field(read_word, guest, loaded, LOADED_STATE_ROOT, identity) && valid_object_address(*identity) &&
+           read_field(read_word, guest, actor, ACTOR_FIRST_PERSON_ROOT, &arms) && arms != *identity;
+}
+
+static void capture_list(ClassicCameraReadWord read_word, void *guest, uint32_t list, CameraRenderList *out) {
+    uint32_t nodes, capacity, count;
+    if (!read_field(read_word, guest, list, 0x8, &count) ||
+        !read_field(read_word, guest, list, 0x4, &capacity) || count > capacity ||
+        (count && (!read_field(read_word, guest, list, 0, &nodes) || !valid_object_address(nodes) ||
+                   count - 1 > (UINT32_MAX - nodes) / 4))) {
+        out->mask = CLASSIC_CAMERA_RENDER_UNKNOWN;
+        return;
+    }
+    if (count > RENDER_LIST_LIMIT) {
+        count = RENDER_LIST_LIMIT;
+        out->mask = CLASSIC_CAMERA_RENDER_UNKNOWN;
+    }
+    for (unsigned i = 0; i < count; ++i) {
+        uint32_t node;
+        if (!read_field(read_word, guest, nodes, i * 4u, &node)) {
+            out->mask |= CLASSIC_CAMERA_RENDER_UNKNOWN;
+            break;
+        }
+        if (!node) continue;
+        uint32_t parent;
+        // Membership is proven by the native frame's retained list. The parent
+        // value is only used as an identity and is not dereferenced on its own.
+        if (!read_field(read_word, guest, node, SCENE_ROOT_PARENT, &parent)) {
+            out->mask |= CLASSIC_CAMERA_RENDER_UNKNOWN;
+            continue;
+        }
+        out->nodes[out->count] = node;
+        out->parents[out->count++] = parent;
+    }
+}
+
+static uint32_t retained_parent(const CameraRenderList lists[2], uint32_t node) {
+    for (unsigned list = 0; list < 2; ++list) {
+        for (unsigned i = 0; i < lists[list].count; ++i) {
+            if (lists[list].nodes[i] == node) return lists[list].parents[i];
+        }
+    }
+    return UINT32_MAX;
+}
+
+static unsigned relation(const CameraRenderList lists[2], uint32_t body, uint32_t node, uint32_t parent) {
+    if (node == body) return CLASSIC_CAMERA_RENDER_BODY;
+    for (unsigned depth = 0; depth < RENDER_PARENT_LIMIT; ++depth) {
+        if (!parent) return CLASSIC_CAMERA_RENDER_OTHER;
+        if (parent == body) return CLASSIC_CAMERA_RENDER_DESCENDANT;
+        if (!valid_object_address(parent)) break;
+        parent = retained_parent(lists, parent);
+    }
+    return CLASSIC_CAMERA_RENDER_UNKNOWN;
+}
+
+bool classic_camera_sample_render(const char *image_sha256, uint32_t frame, uint32_t first, uint32_t second,
+                                  ClassicCameraReadWord read_word, void *guest, ClassicCameraRenderSample *sample) {
+    if (!sample || !read_word || !classic_camera_image_supported(image_sha256) ||
+        !valid_object_address(frame) || frame > UINT32_MAX - 0xDF ||
+        first != frame + 0xC8 || second != frame + 0xD4 || !first_person(read_word, guest))
+        return false;
+
+    uint32_t body = 0, after = 0;
+    if (!body_identity(read_word, guest, &body)) {
+        *sample = (ClassicCameraRenderSample){CLASSIC_CAMERA_RENDER_UNKNOWN, CLASSIC_CAMERA_RENDER_UNKNOWN};
+        return true;
+    }
+    CameraRenderList lists[2] = {0};
+    capture_list(read_word, guest, first, &lists[0]);
+    capture_list(read_word, guest, second, &lists[1]);
+    for (unsigned list = 0; list < 2; ++list) {
+        CameraRenderList *current = &lists[list];
+        for (unsigned i = 0; i < current->count; ++i)
+            current->mask |= relation(lists, body, current->nodes[i], current->parents[i]);
+    }
+    if (!first_person(read_word, guest) || !body_identity(read_word, guest, &after) || after != body)
+        return false;
+    *sample = (ClassicCameraRenderSample){lists[0].mask, lists[1].mask};
+    return true;
+}

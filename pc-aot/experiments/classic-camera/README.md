@@ -163,3 +163,28 @@ verified completion boundary before restoring visibility. Returning to third
 person or replacing the root on reload must preserve the engine's final
 visibility. The ordinary first-person test also needs to distinguish body
 geometry from duplicate third-person hands, head geometry and shadows.
+
+### Read-only retained list diagnostic
+
+The optional handoff observer runs just before the original call to
+`f_CB9E20` in the reviewed `f_69A9F0` branch, only when called from the
+original `f_69B810` first-person frame path. The two list addresses come
+from the game's prepared arguments, and the observer checks them against
+the same frame. The camera's current state must match the first-person
+slot before and after inspection.
+
+Each list classification is a bitmask. Bit 1 means the body root is an
+exact retained entry. Bit 2 means an entry's parent reaches the body root,
+directly or through other entries retained by these same lists. Bit 4
+means an entry's parent chain ended without reaching the body. Bit 8
+means an entry or its ancestry could not be classified within the
+observation scope. A zero mask is empty. Bits can appear together.
+The reader inspects at most 128 entries per list and eight parent links
+per candidate. It treats an unretained intermediate parent as unknown
+without reading that object's memory. The body identity is read anew
+before and after the scan. All guest addresses and sampled references
+are discarded before the original call.
+
+These results refer to retained entries passed to the original
+culling routine. Actual draw submission and an ownership window for
+a body-visibility change remain separate questions.
