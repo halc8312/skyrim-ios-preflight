@@ -219,3 +219,32 @@ doubles. This verifies the selector and lookup lifetime separately from
 the live FaceGen resource cache. Applying a slot still requires a live
 preflight that covers the current geometry and selected resources for all
 relevant head parts before the stock slider changes them.
+
+### ECE all-head preflight fixture
+
+Run `test_ece_head_preflight` with the same private lift and optional owned
+ECE Data directory. The fixture feeds authored slot values through the
+app's slot parser and the fixed stock Nose Height routine. A positive to
+negative change removes NoseUp before applying NoseDown. The reverse
+removes NoseDown before applying NoseUp. The original visitor walks both
+normal and override head lists. The original TRI selector verifies the
+exact requested record at each visit. With the owned ECE Data, the head
+fixture uses the audited TRI's vertex count and actual record ordinals.
+
+The first pass intercepts the per-part apply call and skips the two
+persistence stores. A stale geometry receipt, wrong vertex count, unknown
+source, or a missing last record prevents the entire second pass. The test
+checks all geometry buffers, the FaceMorphs record, and the menu value for
+changes before the second pass and on refusal. On success, the second pass
+applies changes to authored geometry and runs the original FaceMorphs and
+menu value stores.
+
+The fixture supplies the geometry and resource receipts at the part call.
+It checks sign ordering and complete admission. The real `f_5A4070` path
+can allocate and replace cached state inside `f_5A3F20`, before the later
+TRI selector. A live preflight still needs a read-only route to the same
+retained geometry and TRI for every participating part. It also needs
+proof that those resources remain valid through the scoped update. The
+existing diagnostic shows only the default female Nord head in one stock
+call. Device comparison still needs an authentic ECE slot and the same
+character before and after applying it on both platforms.
