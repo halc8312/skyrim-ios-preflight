@@ -182,23 +182,23 @@ class ModArchiveTests(unittest.TestCase):
         self.assertEqual(files_in(game), {})
 
     def test_skeleton_winners_follow_each_profile_and_never_reach_the_game(self):
-        # Authored bytes; XPMS and Realistic Ragdolls and Force both place skeleton.nif.
+        # Authored bytes exercise competing LE male and female skeleton paths.
         path = "meshes/actors/character/character assets/skeleton.nif"
         female = "meshes/actors/character/character assets female/skeleton_female.nif"
         game = self.dir / "skeleton-game"
-        (game / "Data/Meshes").mkdir(parents=True)
+        original = {path: b"base skeleton", female: b"base female"}
         packages = {}
         for name, files in {
             "xpms": {path: b"xpms skeleton", female: b"xpms female"},
-            "rrf": {path: b"rrf skeleton"},
+            "rrf": {path: b"rrf skeleton", female.upper(): b"rrf female"},
             "other": {path: b"other profile skeleton"},
+            "original": original,
         }.items():
-            root = self.dir / ("skeleton-" + name)
+            root = game / "Data" if name == "original" else self.dir / ("skeleton-" + name)
             for relative, content in files.items():
                 (root / relative).parent.mkdir(parents=True, exist_ok=True)
                 (root / relative).write_bytes(content)
             packages[name] = root
-        before = sorted(p.relative_to(game).as_posix() for p in game.rglob("*"))
 
         def view_files(view):
             root = view / "Data"
@@ -209,16 +209,16 @@ class ModArchiveTests(unittest.TestCase):
         self.assertIn("deploy 0", self.run_driver("deploy", game, first, first_conflicts, "a",
                                                   packages["xpms"], packages["rrf"]))
         self.assertIn("deploy 0", self.run_driver("deploy", game, second, second_conflicts, "b", packages["other"]))
-        self.assertEqual(view_files(first), {path: b"rrf skeleton", female: b"xpms female"})
+        self.assertEqual(view_files(first), {path: b"rrf skeleton", female: b"rrf female"})
         self.assertIn(f"{path}\t0\t1", first_conflicts.read_text().lower().splitlines())
-        self.assertNotIn(female, first_conflicts.read_text().lower())
-        self.assertEqual(view_files(second), {path: b"other profile skeleton"})
-        # Rebuilding the first profile in the opposite order flips only that winner.
+        self.assertIn(f"{female}\t0\t1", first_conflicts.read_text().lower().splitlines())
+        self.assertEqual(view_files(second), {path: b"other profile skeleton", female: b"base female"})
+        # Rebuilding the first profile in the opposite order flips both winners.
         self.assertIn("deploy 0", self.run_driver("deploy", game, first, first_conflicts, "a2",
                                                   packages["rrf"], packages["xpms"]))
-        self.assertEqual(view_files(first)[path], b"xpms skeleton")
-        self.assertEqual(view_files(second), {path: b"other profile skeleton"})
-        self.assertEqual(sorted(p.relative_to(game).as_posix() for p in game.rglob("*")), before)
+        self.assertEqual(view_files(first), {path: b"xpms skeleton", female: b"xpms female"})
+        self.assertEqual(view_files(second), {path: b"other profile skeleton", female: b"base female"})
+        self.assertEqual(view_files(game), original)
 
     def test_cbbe_and_unp_body_winners_follow_each_profile(self):
         # Small authored LE NIF headers. The markers distinguish providers.
