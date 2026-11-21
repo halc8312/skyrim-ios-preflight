@@ -6,13 +6,20 @@ import sys
 import tempfile
 import unittest
 
+from test_mod_requirements import bsa, skse_pex
+
 ROOT = Path(__file__).resolve().parents[1]
 PORT = ROOT / "ios/runtime-port"
+VM = ROOT / "experiments/skse-plugin-vm"
 
 
 def between(source, first, following):
     start = source.index(first)
     return source[start:source.index(following, start)]
+
+
+def function(source, signature):
+    return between(source, signature, "\n}\n") + "\n}\n"
 
 
 class ClassicSkyUITrialTests(unittest.TestCase):
@@ -35,22 +42,35 @@ class ClassicSkyUITrialTests(unittest.TestCase):
             header = struct.pack("<4sHfII", b"HEDR", 12, 1.7, 0, 0x800)
             (game_data / "sKyUI.EsP").write_bytes(
                 struct.pack("<4sIIIIHH", b"TES4", len(header), 0, 0, 0, 43, 0) + header)
+            (game_data / "SkyUI.bsa").write_bytes(bsa())
+            scripts = game_data / "Scripts"
+            scripts.mkdir()
+            (scripts / "SKSE.pex").write_bytes(skse_pex())
+            for name in ("UI", "UICallback", "Input", "StringUtil"):
+                (scripts / f"{name}.pex").write_bytes(b"support marker")
+            bad_scripts = root / "Packages/bad-skse/Data/Scripts"
+            bad_scripts.mkdir(parents=True)
+            (bad_scripts / "SKSE.pex").write_bytes(skse_pex(release=False))
             source = root / "trial.m"
             source.write_text(r'''
 #import <Foundation/Foundation.h>
 #include <assert.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include "mod_plugins.h"
+#include "mod_requirements.h"
 #include "PcGuestSkseTrial.h"
-static BOOL launchWithoutMods, launchPluginListFailed, healthyMarked;
+static BOOL launchWithoutMods, launchPluginListFailed, launchHasPackages, healthyMarked;
 static NSMutableDictionary *state, *launchSetup;
-static NSString *activeProfile;
+static NSString *activeProfile, *originalGameDirectory, *packagesPath;
 static NSString *launchNotice, *profilePath, *modGamePath, *modNotice;
 static NSArray<NSDictionary *> *launchPlugins, *modPlugins;
+static NSArray<NSString *> *launchPackageIds;
+static NSDictionary *frozenFeaturesProfile;
 static int bridgeCalls, bridgeSelection, rejectSelection;
 int pc_guest_select_classic_skse(int enabled) {
     ++bridgeCalls;
@@ -60,12 +80,20 @@ int pc_guest_select_classic_skse(int enabled) {
 static NSString *T(NSString *english, NSString *japanese) { (void)japanese; return english; }
 static NSString *StatePath(void) { return [profilePath stringByAppendingPathComponent:@"state.json"]; }
 static NSString *LaunchPath(void) { return [profilePath stringByAppendingPathComponent:@"launch.json"]; }
+static NSString *PackageDir(NSString *pid) { return [packagesPath stringByAppendingPathComponent:pid]; }
+/* Other MOD features have their own tests. Observe the startup handoff here. */
+static void FreezeFeatures(NSDictionary *profile) { frozenFeaturesProfile = profile; }
 #define L T
-static void skyrim_mods_no_plugin_loaded(void) {}
-''' + between(manager, "static id MutableJSON(", "static NSString *ProfileDir(")
-    + between(manager, "static BOOL AnyOn(", "static NSInteger AskBeforeLaunch(")
-    + between(manager, "BOOL skyrim_mods_manages_plugins(", "void skyrim_mods_no_plugin_loaded(")
-    + between(manager, "void skyrim_mods_frame(", "/* ---- import")
+''' + between(manager, "static id MutableJSON(", "static NSString *ProfileName(")
+    + function(manager, "static BOOL AnyOn(")
+    + function(manager, "static NSArray<NSString *> *DataRootsFor(")
+    + function(manager, "static SkyrimSkyUIRequirements SkyUIRequirementsFor(")
+    + function(manager, "static NSString *SkyUIRequirementText(")
+    + function(manager, "static BOOL SkyUITrialSelected(")
+    + function(manager, "BOOL skyrim_mods_prepare_skyui_trial(")
+    + function(manager, "static void RestoreLastGoodSetup(")
+    + between(manager, "BOOL skyrim_mods_manages_plugins(", "NSArray<NSDictionary *> *skyrim_mods_plugin_choices(")
+    + function(manager, "void skyrim_mods_frame(")
     + between(mobile, "static int readPluginHeader(", "static NSString *modStateText(") + r'''
 @interface TrialSwitch : NSObject
 @property(nonatomic) BOOL on;
@@ -87,16 +115,21 @@ static void start(NSString *game, int expected) {
     assert(WriteJSON(@{@"healthy":@NO}, LaunchPath()));
     launchSetup = [@{@"packages":@[], @"plugins":launchPlugins} mutableCopy];
     launchNotice = nil;
+    frozenFeaturesProfile = nil;
     int before = bridgeCalls;
     assert(skyrim_mobile_prepare_mods(game.fileSystemRepresentation));
     assert(bridgeCalls == before + 1 && bridgeSelection == expected);
     assert(SkyUITrialSelected(launchSetup) == expected);
+    assert(frozenFeaturesProfile == RunningProfile());
 }
 
 int main(int argc, char **argv) { @autoreleasepool {
     assert(argc == 2);
     NSString *root = [NSString stringWithUTF8String:argv[1]];
     NSString *game = [root stringByAppendingPathComponent:@"Game"];
+    originalGameDirectory = game;
+    packagesPath = [root stringByAppendingPathComponent:@"Packages"];
+    launchPackageIds = @[];
     profilePath = [root stringByAppendingPathComponent:@"Profile"];
     NSString *folder = [profilePath stringByAppendingPathComponent:@"Documents/Skyrim"];
     NSString *list = [folder stringByAppendingPathComponent:@"plugins.txt"];
@@ -128,6 +161,11 @@ int main(int argc, char **argv) { @autoreleasepool {
     start(game, 0);
     activeProfile = @"second";
     start(game, 1);
+    assert(!launchNotice);
+    launchPackageIds = @[@"bad-skse"];
+    start(game, 1);
+    assert([launchNotice containsString:@"Scripts/SKSE.pex is not the SKSE 1.7.3 script."]);
+    launchPackageIds = @[];
     toggle.on = NO;
     [hub skyuiTrialToggled:toggle];
     int before = bridgeCalls;
@@ -174,8 +212,9 @@ int main(int argc, char **argv) { @autoreleasepool {
     rejectSelection = 1;
     int callsBeforeFailure = bridgeCalls;
     launchSetup = [NSMutableDictionary dictionary];
+    frozenFeaturesProfile = nil;
     assert(!skyrim_mobile_prepare_mods(game.fileSystemRepresentation));
-    assert(bridgeCalls == callsBeforeFailure + 1 && !SkyUITrialSelected(launchSetup));
+    assert(bridgeCalls == callsBeforeFailure + 1 && !SkyUITrialSelected(launchSetup) && !frozenFeaturesProfile);
     rejectSelection = 0;
     launchPlugins = @[@{@"name":@"SkyUI.esp", @"on":@NO}];
     start(game, 0);
@@ -191,14 +230,16 @@ int main(int argc, char **argv) { @autoreleasepool {
     puts("Classic SkyUI trial startup and recovery PASS");
 } }
 ''', encoding="utf-8")
-            flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-I", str(PORT),
+            flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-I", str(PORT), "-I", str(VM),
                      "-I", str(ROOT / "ios/private-abi")]
-            objects = root / "plugins.o"
+            objects = []
+            for c_source in (PORT / "mod_plugins.c", PORT / "mod_requirements.c", VM / "classic_pex.c"):
+                obj = root / f"{c_source.stem}.o"
+                subprocess.run(["clang", *flags, "-c", str(c_source), "-o", str(obj)], check=True, timeout=60)
+                objects.append(str(obj))
             binary = root / "trial"
-            subprocess.run(["clang", *flags, "-c", str(PORT / "mod_plugins.c"), "-o", str(objects)],
-                           check=True, timeout=60)
             subprocess.run(["clang", *flags, "-DSKYRIM_IOS_CLASSIC_SKSE=1", "-fobjc-arc", str(source),
-                            str(objects), "-framework", "Foundation", "-o", str(binary)],
+                            *objects, "-framework", "Foundation", "-o", str(binary)],
                            check=True, timeout=60)
             result = subprocess.run([str(binary), str(root)], check=True, text=True,
                                     capture_output=True, timeout=15)
