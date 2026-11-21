@@ -15,6 +15,7 @@ import stage_effect_call
 import stage_effect_event
 import stage_effect_magnitude
 import stage_item_delivery
+import stage_pex_proof
 import stage_scene_refresh
 import stage_task_queue
 
@@ -52,7 +53,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
 
     def test_unreviewed_lift_is_refused(self):
         for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude,
-                      stage_effect_call, stage_effect_event, stage_scene_refresh):
+                      stage_effect_call, stage_effect_event, stage_scene_refresh, stage_pex_proof):
             with self.subTest(unit=stage.UNIT):
                 with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
                     unit_count = 1 + len(getattr(stage, "DEPENDENCIES", ()))
@@ -103,6 +104,22 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             stage_effect_magnitude, "test_effect_magnitude_lift.c",
             "Classic typed effect lookup captures magnitude only in the matching visitor",
         )
+
+    def test_reviewed_pex_reader_and_linked_class_witness(self):
+        supplied = os.environ.get("SKYRIM_TEST_OWNED_HDT_EFFECT_PEX")
+        if not supplied:
+            self.skipTest("Set SKYRIM_TEST_OWNED_HDT_EFFECT_PEX to the unchanged HDT HighHeels beta 0.5 LE PEX")
+        pex = Path(supplied)
+        with pex.open("rb") as stream:
+            contents = stream.read(5876)
+        self.assertEqual(len(contents), 5875)
+        self.assertEqual(sha256(contents).hexdigest(), EFFECT_PEX_SHA256)
+        self.run_reviewed_fixture(
+            stage_pex_proof, "test_pex_proof_lift.c",
+            "Classic HighHeels PEX witness joins fresh Store reads, successful parsing and linked class state",
+            arguments=(pex,),
+        )
+        self.assertEqual(pex.read_bytes(), contents)
 
     def test_reviewed_native_invoke_lends_nearest_typed_script_self(self):
         self.run_reviewed_fixture(
@@ -230,7 +247,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.assertEqual(library.read_bytes(), contents)
 
 
-    def run_reviewed_fixture(self, stage, test, expected_output, *, extra_sources=()):
+    def run_reviewed_fixture(self, stage, test, expected_output, *, extra_sources=(), arguments=()):
         supplied_generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
         cc = shutil.which(os.environ.get("CC", "cc"))
         if not (supplied_generation and cc and os.name == "posix"):
@@ -266,7 +283,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
                  staged, HERE / test, *extra_sources, native / "guest_memory.c", "-lm", "-o", binary],
                 check=True, timeout=60,
             )
-            result = subprocess.check_output([binary], text=True, timeout=10)
+            result = subprocess.check_output([binary, *arguments], text=True, timeout=10)
             self.assertEqual(result.strip(), expected_output)
         for source, original in zip(sources, originals):
             self.assertEqual(source.read_bytes(), original)

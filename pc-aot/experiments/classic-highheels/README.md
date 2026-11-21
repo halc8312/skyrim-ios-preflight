@@ -211,6 +211,19 @@ the expected EffectSetting FormID for a separately authenticated native
 event. A device witness still needs to link the selected file to the
 guest's successfully bound script in the current world.
 
+The hosted PEX witness runs the pinned class loader, its original Store
+open/read/close and the loose stream's original ReadFile route. The harness
+models the parser's inner results and the caller's link result. It uses the
+original final state write and admits only state 3 on the same pending class.
+At the actual loose read return (`0xA580E2`), it compares the live descriptor's
+bytes with the owner-supplied, digest-checked PEX without advancing the file.
+Reused classes or stores, a different payload, a different same-name linked
+type, a foreign thread, and parse or link failures produce no evidence.
+Each case compares the original outcome, registers, flags, and guest fixture
+memory with and without observation. Set `SKYRIM_TEST_OWNED_CLASSIC_LIFT` and
+`SKYRIM_TEST_OWNED_HDT_EFFECT_PEX` to run it. The fixture does not establish
+the effective script of an individual live VM object or enable HighHeels.
+
 The private fixture now also runs the full producer on authored world
 objects, including the fixed ScriptEffect phase callbacks and its
 finish cleanup. It copies the retained actor's FormID, the EffectSetting
