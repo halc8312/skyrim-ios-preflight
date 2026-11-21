@@ -344,9 +344,9 @@ python3 scripts/build_title_guest.py private/<stage> --classic-skse --mod-hooks 
 
 #### P4-3 ECE 1.59
 
-- 取り込み済みの `.slot` は残す。形式は未解析のため、所有者が同じキャラクターで1つのスライダーだけを変えて保存した `.slot` の組を用意し、差分から位置を確かめる（§9）。
-- 確定後に `mod_ece_slot.{c,h}` で読み取り、P4-2と同じ経路で反映する。RaceMenuとは別のプロファイルで試す。
-- 確定までは「ECEのスロットの反映は未対応（形式の確認待ち）」と表示する。
+- 取り込み済みの `.slot` は残す。ECE 1.59の公式 `humanraces_slider.ini` とNordの同梱プリセットで、標準 `NoseUpDown` のIDが12であることを確認した。
+- `mod_ece_slot.{c,h}` は検証用の読み取り処理。上限1 MiBのスロットからID 12の生の値を取り出し、壊れた行やID 12の重複を拒否する。作者のプリセットと、鼻の高さだけを変えたコピーをホストで比較する。
+- WindowsのECEで同じキャラクターのスロットを2つ書き出し、IDと値の方向・範囲を確認する。その後、P4-2の経路を使う。RaceMenuとは別のプロファイルでiPhoneの反映を試すため、現行UIの表示は取り込みまで。
 
 #### P4-4 NiOverrideの重複
 
