@@ -1290,8 +1290,8 @@ static void ImportEceSlot(NSString *staged, NSString *name, NSString *targetProf
         } else if (error) {
             skyrim_mobile_show_notice(T(@"Could not prepare the ECE slot.", @"ECEスロットを用意できませんでした。"));
         } else {
-            skyrim_mobile_show_notice([NSString stringWithFormat:T(@"Prepared ECE slot %u in %@. It needs a compatible ECE runtime. Loading on iOS is unverified.",
-                @"ECEスロット%uを「%@」に用意しました。対応するECEが必要です。iOSでの読み込みは未確認です。"), slot, ProfileName(profile)]);
+            skyrim_mobile_show_notice([NSString stringWithFormat:T(@"Stored ECE slot %u in %@. Applying ECE slots on iOS is still unsupported pending format verification.",
+                @"ECEスロット%uを「%@」に保存しました。形式の確認が済むまで、iOSでの外見への反映は未対応です。"), slot, ProfileName(profile)]);
         }
     });
 }
