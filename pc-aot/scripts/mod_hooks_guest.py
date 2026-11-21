@@ -16,6 +16,8 @@ from pathlib import Path
 import re
 import sys
 
+from classic_skse_guest import DEFINITION as CLASSIC_DEFINITION
+
 ROOT = Path(__file__).resolve().parents[1]
 EXPERIMENTS = ROOT / "experiments"
 SEAMS = EXPERIMENTS / "fuz-voice"
@@ -24,6 +26,7 @@ SEAMS = EXPERIMENTS / "fuz-voice"
 GROUPS = {
     "fuz_menu": 1, "fuz_world": 2, "vm_lifecycle": 4, "chargen_precache": 8,
     "camera_observe": 16, "chargen_slider": 32, "save_lifecycle": 64,
+    "loading_menu_observe": 128,
 }
 # Groups without a production binding, with the reason shown to the caller.
 UNSTAGED = {
@@ -38,9 +41,9 @@ HEADERS = {
     "lift_voice_seam.h": SEAMS / "lift_voice_seam.h",
     "voice_fallback.h": SEAMS / "voice_fallback.h",
 }
-# Same pattern as classic_skse_guest.DEFINITION, kept local so the check does
-# not depend on the order in which the two preparations run.
-CLASSIC_DEFINITION = re.compile(rb"^void f_(8F9720|A60200|842140|873D70)(_guest)?\(CPU \*c\) \{", re.M)
+# In this pinned unit the loading dispatch body is separate from the Classic
+# entry definition. Only this reviewed pair of edits can share a unit.
+LOADING_MENU_UNIT = "exe_262.c"
 
 
 def digest(data: bytes) -> str:
@@ -169,6 +172,11 @@ def stage_camera_observe(root: Path) -> dict[str, bytes]:
     return {name: camera.stage_camera((root / "gen" / name).read_bytes())}
 
 
+def stage_loading_menu_observe(root: Path) -> dict[str, bytes]:
+    loading_menu = load(EXPERIMENTS / "classic-loading-menu", "stage_loading_menu")
+    return {LOADING_MENU_UNIT: loading_menu.stage_loading_menu((root / "gen" / LOADING_MENU_UNIT).read_bytes())}
+
+
 def function_span(unit: bytes, function: str) -> tuple[int, int]:
     marker = f"\nvoid {function}(CPU *c) {{\n".encode("ascii")
     if unit.count(marker) != 1:
@@ -205,6 +213,7 @@ STAGES = {
     "chargen_precache": stage_chargen_precache,
     "chargen_slider": stage_chargen_slider,
     "camera_observe": stage_camera_observe,
+    "loading_menu_observe": stage_loading_menu_observe,
 }
 
 
@@ -227,9 +236,9 @@ def prepare_sources(sources: list[Path], destination: Path, groups: int, state: 
                     root: Path) -> tuple[list[Path], dict[str, str]]:
     """Return the source list with staged units replaced, and their SHA-256 by name.
 
-    Call after classic_skse_guest.prepare_sources. A unit the Classic step
-    renamed, or one that holds a Classic entry definition, is refused: the two
-    preparations must not touch the same unit.
+    Call after classic_skse_guest.prepare_sources. Reuse the reviewed loading
+    unit's Classic entry rename after checking the exact bytes. Reject any
+    other overlap between these preparations.
     """
     if not groups:
         raise ValueError("No MOD hook groups selected")
@@ -245,6 +254,16 @@ def prepare_sources(sources: list[Path], destination: Path, groups: int, state: 
         source = by_name.get(unit)
         if source is None:
             raise ValueError(f"{unit}: staged by a MOD hook group but missing from the guest sources")
+        if unit == LOADING_MENU_UNIT and groups & GROUPS["loading_menu_observe"]:
+            entry = b"void f_A60200(CPU *c) {"
+            renamed = b"void f_A60200_guest(CPU *c) {"
+            original = (generated / unit).read_bytes()
+            if (CLASSIC_DEFINITION.findall(original) != [(b"A60200", b"")]
+                    or CLASSIC_DEFINITION.findall(staged[unit]) != [(b"A60200", b"")]
+                    or source.read_bytes() != original.replace(entry, renamed, 1)):
+                raise ValueError(f"{unit}: expected exactly the reviewed Classic entry rename")
+            staged[unit] = staged[unit].replace(entry, renamed, 1)
+            continue
         if source.resolve().parent != generated:
             raise ValueError(f"{unit}: already changed by the Classic preparation")
         if CLASSIC_DEFINITION.search(source.read_bytes()) or CLASSIC_DEFINITION.search(staged[unit]):

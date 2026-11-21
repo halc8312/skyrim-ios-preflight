@@ -38,6 +38,7 @@
 #include "mod_fuz.h"
 #include "mod_fuz_host.h"
 #include "mod_hook_selection.h"
+#include "mod_loading_menu_host.h"
 #include "mod_racemenu_preset.h"
 /* classic_skse_control.h, in the staged skse_system.c */
 void skyrim_classic_control_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle);
@@ -504,6 +505,8 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
      * Enhanced Camera rendering feature. */
     if (!launchWithoutMods && !launchPluginListFailed && skyrim_camera_app_ready() &&
         (compiled & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_CAMERA_OBSERVE;
+    if (!launchWithoutMods && !launchPluginListFailed && skyrim_loading_menu_app_ready() &&
+        (compiled & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE;
     PcGuestModHooks table = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof table, .groups = plan->groups};
     if (plan->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
         table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load,
@@ -514,6 +517,7 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
     if (plan->groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER)
         table.chargen_slider = (PcGuestModChargenSliderHooks){RaceMenuPendingValue, TakeRaceMenuNoseHeight, RaceMenuDidApply};
     if (plan->groups & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) table.camera.observe_return = skyrim_camera_app_observe;
+    if (plan->groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) table.loading_menu.observe = skyrim_loading_menu_app_observe;
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
     /* Keep the original paths: select nothing. */
     if (pc_guest_select_mod_hooks(0, NULL) != 0) fputs("IOS_MOD_HOOKS selection failed\n", stderr);

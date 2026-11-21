@@ -21,10 +21,17 @@ int pc_guest_bind_mod_hooks(void *library) {
         bind_attempted = 1;
         return 0;
     }
-    const PcGuestModHooksGuest *reply = bind(PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooks));
+    uint32_t table_bytes = sizeof(PcGuestModHooks);
+    const PcGuestModHooksGuest *reply = bind(PC_GUEST_MOD_HOOKS_ABI, table_bytes);
+    if (!reply) {
+        table_bytes = PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES;
+        reply = bind(PC_GUEST_MOD_HOOKS_ABI, table_bytes);
+    }
     if (!reply || reply->version != PC_GUEST_MOD_HOOKS_ABI || reply->bytes != sizeof(*reply)
-            || reply->table_bytes != sizeof(PcGuestModHooks) || !reply->select
-            || !pc_guest_mod_hooks_groups_valid(reply->compiled_groups)) {
+            || reply->table_bytes != table_bytes || !reply->select
+            || !pc_guest_mod_hooks_groups_valid(reply->compiled_groups)
+            || (table_bytes == PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES &&
+                (reply->compiled_groups & ~PC_GUEST_MOD_HOOKS_ORIGINAL))) {
         fputs("PRIVATE_GUEST incompatible MOD hook interface\n", stderr);
         return -1;
     }
@@ -46,6 +53,7 @@ uint32_t pc_guest_mod_hooks_selected(void) { return selected; }
 
 int pc_guest_select_mod_hooks(uint32_t groups, const PcGuestModHooks *implementations) {
     if (!bind_attempted || selection_final) return -1;
+    if (implementations && implementations->bytes != sizeof(*implementations)) return -1;
     if (!groups) {
         if (implementations && !pc_guest_mod_hooks_table_valid(implementations)) return -1;
         if (implementations && implementations->groups) return -1;
@@ -54,8 +62,10 @@ int pc_guest_select_mod_hooks(uint32_t groups, const PcGuestModHooks *implementa
         return -1;
     }
     if (guest) {
-        const PcGuestModHooks none = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof none};
-        if (guest->select(groups ? implementations : &none) != 0) return -1;
+        PcGuestModHooks table = {.version = PC_GUEST_MOD_HOOKS_ABI};
+        if (groups) table = *implementations;
+        table.bytes = guest->table_bytes;
+        if (guest->select(&table) != 0) return -1;
     }
     selected = groups;
     selection_final = 1;

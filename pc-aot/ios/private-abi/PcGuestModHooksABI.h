@@ -15,6 +15,7 @@
 #include "PcGuestABI.h"
 #include "lift_world_seam.h" /* experiments/fuz-voice: menu, voice and policy types */
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,11 +32,13 @@ enum {
     PC_GUEST_MOD_HOOK_CAMERA_OBSERVE = 16u,
     PC_GUEST_MOD_HOOK_CHARGEN_SLIDER = 32u,
     /* Reserved: no reviewed stage or call contract exists. */
-    PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE = 64u
+    PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE = 64u,
+    PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE = 128u
 };
-#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD | \
+#define PC_GUEST_MOD_HOOKS_ORIGINAL (PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD | \
     PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER | \
     PC_GUEST_MOD_HOOK_CAMERA_OBSERVE)
+#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOKS_ORIGINAL | PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE)
 
 /* Function types come from the reviewed experiment headers. */
 typedef struct {
@@ -82,6 +85,11 @@ typedef struct {
     void (*observe_return)(uint32_t receiver);
 } PcGuestModCameraHooks;
 
+/* Runs at the two reviewed calls immediately before the original dispatch. */
+typedef struct {
+    void (*observe)(uint32_t site, uint32_t dispatcher, uint32_t event);
+} PcGuestModLoadingMenuHooks;
+
 /* Host implementations. groups names the selection; only the tables of the
  * selected groups are read, and each of their entries must be set. */
 typedef struct {
@@ -93,7 +101,11 @@ typedef struct {
     PcGuestModChargenHooks chargen_precache;
     PcGuestModChargenSliderHooks chargen_slider;
     PcGuestModCameraHooks camera;
+    PcGuestModLoadingMenuHooks loading_menu;
 } PcGuestModHooks;
+
+/* Hosts and guests built with the original v1 table still use this prefix. */
+#define PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES offsetof(PcGuestModHooks, loading_menu)
 
 /* Guest reply. select copies the selected tables and succeeds at most once. */
 typedef struct {
@@ -111,9 +123,11 @@ static inline int pc_guest_mod_hooks_groups_valid(uint32_t groups) {
 }
 
 static inline int pc_guest_mod_hooks_table_valid(const PcGuestModHooks *t) {
-    if (!t || t->version != PC_GUEST_MOD_HOOKS_ABI || t->bytes != sizeof(*t) || t->reserved
+    if (!t || t->version != PC_GUEST_MOD_HOOKS_ABI
+            || (t->bytes != sizeof(*t) && t->bytes != PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES) || t->reserved
             || !pc_guest_mod_hooks_groups_valid(t->groups)) return 0;
     const uint32_t g = t->groups;
+    if (t->bytes == PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES && (g & ~PC_GUEST_MOD_HOOKS_ORIGINAL)) return 0;
     if ((g & PC_GUEST_MOD_HOOK_FUZ_MENU) && (!t->fuz_menu.forget_response || !t->fuz_menu.choose_menu_voice
             || !t->fuz_menu.note_menu_assignment || !t->fuz_menu.capture_menu || !t->fuz_menu.force_menu))
         return 0;
@@ -128,6 +142,7 @@ static inline int pc_guest_mod_hooks_table_valid(const PcGuestModHooks *t) {
     if ((g & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) &&
         (!t->chargen_slider.pending || !t->chargen_slider.nose_height || !t->chargen_slider.did_apply)) return 0;
     if ((g & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) && !t->camera.observe_return) return 0;
+    if ((g & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) && !t->loading_menu.observe) return 0;
     return 1;
 }
 
@@ -142,6 +157,7 @@ bool skyrim_racemenu_probe_nose_height(uint32_t menu, uint32_t actor, uint32_t b
                                      float minimum, float maximum, float *value);
 void skyrim_racemenu_probe_did_apply(void);
 void skyrim_camera_observe_return(uint32_t receiver);
+void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t event);
 
 /* Host side (pc_guest_mod_hooks_host.c). */
 int pc_guest_bind_mod_hooks(void *library);  /* from pc_guest_open; a missing symbol is not an error */

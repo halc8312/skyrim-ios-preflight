@@ -16,16 +16,18 @@ _Static_assert(!((PC_GUEST_MOD_HOOKS_COMPILED) & PC_GUEST_MOD_HOOK_FUZ_WORLD)
                "The world stage reuses the menu stage's response assignment");
 
 static uint32_t selected;
-static int bound, selection_final;
+static uint32_t bound_bytes;
+static int selection_final;
 static PcGuestModFuzMenuHooks fuz_menu;
 static PcGuestModFuzWorldHooks fuz_world;
 static PcGuestModVmHooks vm_lifecycle;
 static PcGuestModChargenHooks chargen_precache;
 static PcGuestModChargenSliderHooks chargen_slider;
 static PcGuestModCameraHooks camera;
+static PcGuestModLoadingMenuHooks loading_menu;
 
 static int select_hooks(const PcGuestModHooks *table) {
-    if (!bound || selection_final || !pc_guest_mod_hooks_table_valid(table)
+    if (!bound_bytes || selection_final || !pc_guest_mod_hooks_table_valid(table) || table->bytes != bound_bytes
             || (table->groups & ~(uint32_t)(PC_GUEST_MOD_HOOKS_COMPILED))) return -1;
     if (table->groups & PC_GUEST_MOD_HOOK_FUZ_MENU) fuz_menu = table->fuz_menu;
     if (table->groups & PC_GUEST_MOD_HOOK_FUZ_WORLD) fuz_world = table->fuz_world;
@@ -33,6 +35,7 @@ static int select_hooks(const PcGuestModHooks *table) {
     if (table->groups & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE) chargen_precache = table->chargen_precache;
     if (table->groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) chargen_slider = table->chargen_slider;
     if (table->groups & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) camera = table->camera;
+    if (table->groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) loading_menu = table->loading_menu;
     selected = table->groups;
     selection_final = 1;
     return 0;
@@ -44,11 +47,18 @@ static const PcGuestModHooksGuest reply = {
     .select = select_hooks
 };
 
+static const PcGuestModHooksGuest original_reply = {
+    .version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof(PcGuestModHooksGuest),
+    .compiled_groups = PC_GUEST_MOD_HOOKS_COMPILED & PC_GUEST_MOD_HOOKS_ORIGINAL,
+    .table_bytes = PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES, .select = select_hooks
+};
+
 __attribute__((visibility("default")))
 const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uint32_t table_bytes) {
-    if (bound || version != PC_GUEST_MOD_HOOKS_ABI || table_bytes != sizeof(PcGuestModHooks)) return 0;
-    bound = 1;
-    return &reply;
+    if (bound_bytes || version != PC_GUEST_MOD_HOOKS_ABI
+            || (table_bytes != sizeof(PcGuestModHooks) && table_bytes != PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES)) return 0;
+    bound_bytes = table_bytes;
+    return table_bytes == PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES ? &original_reply : &reply;
 }
 
 /* FUZ_MENU */
@@ -120,4 +130,8 @@ void skyrim_racemenu_probe_did_apply(void) {
 
 void skyrim_camera_observe_return(uint32_t receiver) {
     if (selected & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) camera.observe_return(receiver);
+}
+
+void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t event) {
+    if (selected & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) loading_menu.observe(site, dispatcher, event);
 }

@@ -135,12 +135,14 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_SKSE=1 SKYDREAM_SKSE=1)
     if(SKYRIM_IOS_MOD_HOOKS)
         set(camera_sources "${SKYRIM_IOS_ROOT}/experiments/classic-camera")
+        set(loading_menu_sources "${SKYRIM_IOS_ROOT}/experiments/classic-loading-menu")
         target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/classic_vm_epoch.c"
             "${SKYRIM_IOS_ROOT}/experiments/classic-mod-events/mod_event.c"
             "${SKYRIM_IOS_ROOT}/experiments/classic-control-events/control_bridge.c"
-            "${camera_sources}/camera_state.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_camera_host.c")
+            "${camera_sources}/camera_state.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_camera_host.c"
+            "${loading_menu_sources}/loading_menu.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_loading_menu_host.c")
         target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_ROOT}/experiments/classic-mod-events"
-            "${SKYRIM_IOS_ROOT}/experiments/classic-control-events" "${camera_sources}")
+            "${SKYRIM_IOS_ROOT}/experiments/classic-control-events" "${camera_sources}" "${loading_menu_sources}")
         target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_MOD_HOOK_SEAMS}")
         target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_MOD_HOOKS=1)
     endif()

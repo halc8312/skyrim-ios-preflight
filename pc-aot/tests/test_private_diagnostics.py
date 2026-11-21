@@ -98,6 +98,8 @@ class ReceiverTests(unittest.TestCase):
             self.schema.line('IOS_STAGE ' + stage + ' monotonic=1.000000000')
         for slot in (0, 9, 12):
             self.schema.line(f'IOS_CAMERA_STATE slot={slot}')
+        self.schema.line('IOS_LOADING_MENU opening=1 ts_ns=123456')
+        self.schema.line('IOS_LOADING_MENU opening=0 ts_ns=234567')
 
     def test_same_id_replay_idempotent_and_conflicting_content_never_overwritten(self):
         _, first = self.receive()
@@ -197,6 +199,8 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_DIAG_ERROR code=0', 'IOS_DIAG_ERROR code=1\nGame input: private',
                      'IOS_STAGE private-directory monotonic=1.000000000', 'IOS_CAMERA_STATE slot=13',
                      'IOS_CAMERA_STATE slot=12 camera=/private/address',
+                     'IOS_LOADING_MENU opening=2 ts_ns=123456',
+                     'IOS_LOADING_MENU opening=1 ts_ns=123456 event=/private/address',
                      timing().replace('samples=1', 'samples=2'),
                      self.bundle['sessions'][0]['lines'][-1].replace('result=-1', 'result=2147483648')]
         for line in bad_lines:

@@ -28,6 +28,7 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle"), 7)
         self.assertEqual(hooks.parse_groups(" chargen_precache , fuz_menu "), 9)
         self.assertEqual(hooks.parse_groups("camera_observe"), 16)
+        self.assertEqual(hooks.parse_groups("loading_menu_observe"), 128)
         self.assertEqual(hooks.group_names(11), ["fuz_menu", "fuz_world", "chargen_precache"])
 
     def test_rejects_unknown_unstaged_duplicate_and_incomplete_lists(self):
@@ -118,6 +119,24 @@ class ComposeTests(unittest.TestCase):
                 hooks.prepare_sources(self.sources, self.output, 4, self.state, self.root)
         self.assertFalse(self.output.exists())
 
+    def test_loading_menu_stage_requires_the_exact_classic_entry_rename(self):
+        name = hooks.LOADING_MENU_UNIT
+        original = self.gen / name
+        entry = b"\nvoid f_A60200(CPU *c) {\n}\n"
+        renamed = entry.replace(b"f_A60200(", b"f_A60200_guest(")
+        original.write_bytes(entry)
+        classic_source = self.root / "classic-sources" / name
+        classic_source.parent.mkdir()
+        classic_source.write_bytes(renamed)
+        staged = b"/* authored loading observation */"
+        with self.stages(loading_menu_observe=lambda root: {name: staged + entry}):
+            result, _ = hooks.prepare_sources([classic_source], self.output, 128, self.state, self.root)
+            self.assertEqual(result[0].read_bytes(), staged + renamed)
+            for source_edit in (entry, renamed + b"/* other source edit */"):
+                classic_source.write_bytes(source_edit)
+                with self.assertRaisesRegex(ValueError, "exactly the reviewed Classic entry rename"):
+                    hooks.prepare_sources([classic_source], self.output, 128, self.state, self.root)
+
     def test_rejects_other_generations(self):
         with self.stages(fuz_menu=lambda root: self.fail("must not stage")):
             for key, value in hooks.reviewed_generation().items():
@@ -192,7 +211,8 @@ class OwnedLiftTests(unittest.TestCase):
         root = Path(generation).resolve()
         state = json.loads((root / "generation.json").read_text(encoding="utf-8"))
         classic.validate_generation(state)
-        groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe")
+        groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe,"
+                                    "loading_menu_observe")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
@@ -200,7 +220,7 @@ class OwnedLiftTests(unittest.TestCase):
             sources = classic.prepare_sources(originals, work / "classic-sources")
             result, staged = hooks.prepare_sources(sources, work / "mod-hook-sources", groups, state, root)
             self.assertTrue({"exe_95.c", "exe_100.c", "exe_101.c", "exe_189.c", "exe_35.c", "exe_188.c",
-                             "exe_106.c", "exe_185.c", "exe_186.c", "exe_199.c"} <= set(staged))
+                             "exe_106.c", "exe_185.c", "exe_186.c", "exe_199.c", "exe_262.c"} <= set(staged))
             runtime = root / "source/runtime"
             for path in (p for p in result if p.name in staged):
                 with self.subTest(unit=path.name):

@@ -2,16 +2,19 @@
 #include "guest_memory.h"
 #include "lift_prelude.h"
 #include "loading_menu.h"
+#include "mod_loading_menu_host.h"
 
 #include <assert.h>
 #include <stdlib.h>
 
 enum {
     MANAGER_SLOT = 0x012E3548, HOLDER_SLOT = 0x012E35E0,
-    MANAGER = 0x2100, HOLDER = 0x2200, EVENT = 0x2300, STACK = 0x2FC0, LOADING_NAME = 0x2400
+    MANAGER = 0x12100, HOLDER = 0x12200, EVENT = 0x12300, STACK = 0x12FC0, LOADING_NAME = 0x12400
 };
 
 uint8_t *MEM;
+uint64_t skyrim_perf_now_ns(void);
+uint64_t skyrim_perf_now_ns(void) { return 1234567; }
 static gm_space guest;
 static uint32_t expected_event, expected_dispatcher, expected_return;
 static unsigned dispatch_count, observations;
@@ -75,9 +78,18 @@ int main(void) {
     M32(EVENT) = LOADING_NAME;
     M32(EVENT + 4) = 0xababab01;
     run_case(true, MANAGER + 4, EVENT, CLASSIC_LOADING_MENU_OPEN);
+    skyrim_loading_menu_app_configure("different input");
+    assert(!skyrim_loading_menu_app_ready());
+    skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, EVENT);
+    skyrim_loading_menu_app_configure("d97eb0cc0ceef0923d2234d42b382c0d033853356528b271bc043542b1f5e605");
+    assert(skyrim_loading_menu_app_ready());
+    skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, EVENT);
+    skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, 0x500);
     run_case(false, MANAGER + 4, EVENT, CLASSIC_LOADING_MENU_NONE);
     M32(EVENT + 4) = 0xababab00;
     run_case(false, MANAGER + 4, EVENT, CLASSIC_LOADING_MENU_CLOSE);
+    skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_CLOSE_SITE, MANAGER + 4, EVENT);
+    skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_CLOSE_SITE, MANAGER + 0x34, EVENT);
     run_case(false, MANAGER + 0x34, EVENT, CLASSIC_LOADING_MENU_NONE);
     run_case(false, MANAGER + 4, 0, CLASSIC_LOADING_MENU_NONE);
     run_case(false, MANAGER + 4, UINT32_MAX - 2, CLASSIC_LOADING_MENU_NONE);

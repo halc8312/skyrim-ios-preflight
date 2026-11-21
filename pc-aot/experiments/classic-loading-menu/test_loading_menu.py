@@ -53,8 +53,9 @@ class LoadingMenuTests(unittest.TestCase):
             unstaged = unstaged.replace(observer_call(site), b"", 1)
         self.assertEqual(unstaged, original)
 
+        app = ROOT / "ios/runtime-port"
         includes = ["-isystem", str(generation / "gen"), "-isystem", str(runtime),
-                    "-I", str(ROOT / "native")]
+                    "-I", str(ROOT / "native"), "-I", str(app), "-I", str(HERE)]
         with tempfile.TemporaryDirectory(prefix="classic-loading-menu-") as temporary:
             directory = Path(temporary)
             full_unit = directory / UNIT
@@ -76,9 +77,12 @@ class LoadingMenuTests(unittest.TestCase):
                     flags.extend(["-fno-pie", "-no-pie"])
             binary = directory / "loading-menu"
             subprocess.run([compiler, *flags, *includes, fixture, HERE / "test_loading_menu.c",
-                            HERE / "loading_menu.c", ROOT / "native/guest_memory.c", "-o", binary],
+                            HERE / "loading_menu.c", app / "mod_loading_menu_host.c",
+                            ROOT / "native/guest_memory.c", "-o", binary],
                            check=True, timeout=60)
-            subprocess.run([binary], check=True, timeout=30)
+            run = subprocess.run([binary], check=True, timeout=30, text=True, capture_output=True)
+            self.assertEqual(run.stderr.splitlines(), ["IOS_LOADING_MENU opening=1 ts_ns=1234567",
+                                                       "IOS_LOADING_MENU opening=0 ts_ns=1234567"])
         self.assertEqual(source.read_bytes(), original)
 
 

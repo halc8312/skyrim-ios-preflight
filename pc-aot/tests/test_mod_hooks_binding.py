@@ -48,7 +48,8 @@ class GroupRules(unittest.TestCase):
     def test_header_bits_match_the_plan(self):
         text = (ABI / "PcGuestModHooksABI.h").read_text()
         for name, value in (("FUZ_MENU", 1), ("FUZ_WORLD", 2), ("VM_LIFECYCLE", 4), ("CHARGEN_PRECACHE", 8),
-                            ("CAMERA_OBSERVE", 16), ("CHARGEN_SLIDER", 32), ("SAVE_LIFECYCLE", 64)):
+                            ("CAMERA_OBSERVE", 16), ("CHARGEN_SLIDER", 32), ("SAVE_LIFECYCLE", 64),
+                            ("LOADING_MENU_OBSERVE", 128)):
             self.assertIn(f"PC_GUEST_MOD_HOOK_{name} = {value}u", text)
         self.assertIn('"skyrim_guest_bind_mod_hooks_v1"', text)
 
@@ -68,7 +69,7 @@ class NativeBinding(unittest.TestCase):
             guest = [*flags, "-fPIC", "-fvisibility=hidden", "-dynamiclib" if mac else "-shared",
                      "-DMOD_FIXTURE_GUEST", FIXTURE, ABI / "pc_guest_library.c", ABI / "pc_guest_skse_library.c"]
             guests = {}
-            for groups in (15, 3, 8, 4, 16, 32, 63):
+            for groups in (15, 3, 8, 4, 16, 32, 128, 191):
                 guests[groups] = stage / f"guest-{groups}"
                 subprocess.run([*guest, ABI / "pc_guest_mod_hooks_library.c",
                                 f"-DPC_GUEST_MOD_HOOKS_COMPILED={groups}u", "-o", guests[groups]], check=True)
@@ -76,8 +77,10 @@ class NativeBinding(unittest.TestCase):
             subprocess.run([*guest, "-DMOD_FIXTURE_NO_HOOKS", "-o", plain], check=True)
             bad = stage / "guest-bad-reply"
             subprocess.run([*guest, "-DMOD_FIXTURE_NO_HOOKS", "-DMOD_FIXTURE_BAD_REPLY", "-o", bad], check=True)
-            # Groups outside version 1, and a world stage without the menu stage, cannot compile.
-            for groups in (128, 2):
+            original = stage / "guest-original-table"
+            subprocess.run([*guest, "-DMOD_FIXTURE_NO_HOOKS", "-DMOD_FIXTURE_ORIGINAL_TABLE", "-o", original], check=True)
+            # Reserved groups and a world stage without the menu stage cannot compile.
+            for groups in (64, 256, 2):
                 with self.subTest(compiled=groups):
                     rejected = subprocess.run([*guest, ABI / "pc_guest_mod_hooks_library.c",
                                                f"-DPC_GUEST_MOD_HOOKS_COMPILED={groups}u",
@@ -89,7 +92,7 @@ class NativeBinding(unittest.TestCase):
                             ABI / "pc_guest_skse_host.c", ABI / "pc_guest_mod_hooks_host.c",
                             *([] if mac else ["-ldl"]), "-o", host], check=True)
             for compiled, choice in ((15, 0), (15, 15), (15, 1), (15, 4), (3, 3), (3, 1), (8, 8), (4, 4),
-                                     (16, 0), (16, 16), (32, 0), (32, 32), (63, 63)):
+                                     (16, 0), (16, 16), (32, 0), (32, 32), (128, 0), (128, 128), (191, 191)):
                 with self.subTest(compiled=compiled, choice=choice):
                     run = subprocess.run([host, guests[compiled], str(compiled), str(choice), plain, bad],
                                          capture_output=True, text=True)
@@ -99,6 +102,10 @@ class NativeBinding(unittest.TestCase):
             run = subprocess.run([host, guests[15], "15", "no-hooks", plain, bad], capture_output=True, text=True)
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertNotIn("MOD hook groups", run.stderr)
+            for binary, groups, mode in ((original, 16, "original-guest"), (guests[191], 191, "original-host")):
+                with self.subTest(mode=mode):
+                    run = subprocess.run([host, binary, str(groups), mode, plain, bad], capture_output=True, text=True)
+                    self.assertEqual(run.returncode, 0, run.stderr)
 
 
 if __name__ == "__main__":
