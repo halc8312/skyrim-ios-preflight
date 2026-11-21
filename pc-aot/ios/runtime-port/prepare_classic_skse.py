@@ -188,6 +188,39 @@ def adapt_vm_epoch(text):
                         "    unsigned count=0, passed=0;", name)
 
 
+MOD_EVENT_ROWS = (
+    # Classic 1.7.3 PapyrusModEvent: static, NoWait. Types: 2 string, 3 int, 5 bool.
+    ('Create', 3, (2,), 'S_MODEVENT_CREATE'),
+    ('PushBool', 0, (3, 5), 'S_MODEVENT_PUSH_BOOL'),
+    ('Send', 5, (3,), 'S_MODEVENT_SEND'),
+    ('Release', 0, (3,), 'S_MODEVENT_RELEASE'),
+)
+
+
+def adapt_mod_event(name, text):
+    # Plan P3-3: ModEvent statics for boolean packets (MOD hook builds only).
+    if name == "skse_compat.h":
+        return replace_once(text, " S_METHOD=0x8000",
+                            " S_MODEVENT_CREATE=1330,S_MODEVENT_PUSH_BOOL,S_MODEVENT_SEND,S_MODEVENT_RELEASE,\n"
+                            " S_METHOD=0x8000", name)
+    if name == "skse_compat_values.c":
+        rows = []
+        for function, result, args, op in MOD_EVENT_ROWS:
+            parameters = [result, len(args), *args, *([0] * (4 - len(args)))]
+            rows.append(f'    F("ModEvent","{function}",' + ",".join(map(str, parameters)) + f",{op}),")
+        return replace_once(text, "\n};\n#undef F", "\n#ifdef SKYRIM_IOS_MOD_HOOKS\n" + "\n".join(rows)
+                            + "\n#endif\n};\n#undef F", name)
+    if name != "skse_system.c":
+        return text
+    text = replace_once(text, '#include "classic_skse_mod_list.h"',
+                        '#include "classic_skse_mod_list.h"\n#include "classic_skse_mod_event.h"', name)
+    return replace_once(text, "    if(op==1300)", (
+        "#ifdef SKYRIM_IOS_MOD_HOOKS\n"
+        "    if (op >= S_MODEVENT_CREATE && op <= S_MODEVENT_RELEASE) return skse_classic_mod_event(c, op, args, registry, result);\n"
+        "#endif\n"
+        "    if(op==1300)"), name)
+
+
 def prepare(source, runtime):
     from classic_skse_extra import adapt as adapt_extra
     from classic_skse_translation import adapt as adapt_translation, adapt_profile_list
@@ -206,13 +239,15 @@ def prepare(source, runtime):
         release_logged = adapt_skyui_release_log(input_queries) if name == "skse_compat.c" else input_queries
         int0 = adapt_int0_probe(release_logged) if name == "skse_compat.c" else release_logged
         values = adapt_values_probe(int0) if name == "skse_compat.c" else int0
-        new = adapt_vm_epoch(values) if name == "skse_compat.c" else values
+        epoch = adapt_vm_epoch(values) if name == "skse_compat.c" else values
+        new = adapt_mod_event(name, epoch)
         target = runtime / name
         if target.is_symlink() or target.samefile(source / name):
             raise ValueError(f"{name}: expected an independent staged copy")
         old = target.read_text(encoding="utf-8")
         if old != new:
-            stages = [original, previous, adapted, before_input_queries, input_queries, release_logged, int0, values]
+            stages = [original, previous, adapted, before_input_queries, input_queries, release_logged, int0, values,
+                      epoch]
             if name == "skse_compat.c":
                 # Earlier stages that already carry the VM generation call.
                 for stage in stages[2:7]:

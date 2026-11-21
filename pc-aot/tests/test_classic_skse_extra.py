@@ -56,5 +56,43 @@ class ClassicControlTests(unittest.TestCase):
         self.run_native("test_classic_skse_ui_values")
 
 
+class ClassicModEventTests(unittest.TestCase):
+    def setUp(self):
+        self.vendor = Path(os.environ.get("SKYRIM_SKYDREAM_SOURCE", ROOT / "vendor/skydream"))
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.stage = Path(tmp.name) / "runtime"
+        self.stage.mkdir()
+        for name in (*classic.PINNED, classic.PRESENT_FILE, "skse_translation.c"):
+            shutil.copyfile(self.vendor / "runtime" / name, self.stage / name)
+        classic.prepare(self.vendor, self.stage)
+
+    def test_statics_are_registered_only_in_hook_builds(self):
+        table = (self.stage / "skse_compat_values.c").read_text()
+        block = table[table.index("#ifdef SKYRIM_IOS_MOD_HOOKS\n"):table.index("\n};\n#undef F")]
+        for row in ('F("ModEvent","Create",3,1,2,0,0,0,S_MODEVENT_CREATE)',
+                    'F("ModEvent","PushBool",0,2,3,5,0,0,S_MODEVENT_PUSH_BOOL)',
+                    'F("ModEvent","Send",5,1,3,0,0,0,S_MODEVENT_SEND)',
+                    'F("ModEvent","Release",0,1,3,0,0,0,S_MODEVENT_RELEASE)'):
+            self.assertIn(row, block)
+        self.assertIn("S_MODEVENT_CREATE=1330", (self.stage / "skse_compat.h").read_text())
+        system = (self.stage / "skse_system.c").read_text()
+        self.assertIn('#include "classic_skse_mod_event.h"', system)
+        self.assertIn("return skse_classic_mod_event(c, op, args, registry, result);", system)
+
+    @unittest.skipUnless(os.name == "posix", "uses a POSIX C compiler")
+    def test_native_packets_delivery_and_generations(self):
+        compiler = os.environ.get("CC", "cc")
+        binary = self.stage.parent / "mod_event"
+        sanitizers = (["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
+                      if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1" else [])
+        events = ROOT / "experiments/classic-mod-events"
+        subprocess.run([compiler, "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-pthread", *sanitizers,
+                        "-DSKYRIM_IOS_MOD_HOOKS=1", "-I", str(PORT), "-I", str(events),
+                        str(ROOT / "tests/native/test_classic_skse_mod_event.c"), str(events / "mod_event.c"),
+                        str(PORT / "classic_vm_epoch.c"), "-o", str(binary)], check=True, timeout=60)
+        subprocess.run([str(binary)], check=True, timeout=30)
+
+
 if __name__ == "__main__":
     unittest.main()
