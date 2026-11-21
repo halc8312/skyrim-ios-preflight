@@ -6,6 +6,7 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -65,3 +66,22 @@ class EnbTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(shutil.which(os.environ.get("CC", "cc")), "C compiler required")
+class ReportTests(unittest.TestCase):
+    def test_report_lists_effects_missing_includes_and_plans(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "Data"
+            (root / "enbseries").mkdir(parents=True)
+            (root / "enbseries.ini").write_text("[EFFECT]\nEnableBloom=true\n")
+            (root / "enbseries" / "enbeffect.fx").write_text('#include "missing.fxh"\n' + MAIN_FX)
+            (root / "enbseries" / "enbbloom.fx").write_text(BLOOM_FX)
+            run = subprocess.run([sys.executable, str(ROOT / "scripts/enb_report.py"), str(root), str(Path(tmp) / "none")],
+                                 capture_output=True, text=True, env=dict(os.environ, CC=os.environ.get("CC", "cc")))
+            self.assertEqual(run.returncode, 1, run.stderr)       # the second folder has no preset
+            self.assertIn("include: missing.fxh (MISSING)", run.stdout)
+            self.assertIn("bloom         present", run.stdout)
+            self.assertIn("quality 1: bloom/4(x1) main/1(x1)", run.stdout)
+            self.assertIn("IOS_ENB schema=1 ini=1 native_dll=0 files=2 usable=2", run.stdout)
+            self.assertIn("cannot load", run.stdout)
