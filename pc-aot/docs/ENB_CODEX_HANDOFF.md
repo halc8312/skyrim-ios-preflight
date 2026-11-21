@@ -1,6 +1,6 @@
 # ENB対応：Codexへの引き継ぎ
 
-作成 2026-11-21。計画は [ENB_PLAN.md](ENB_PLAN.md)。作業ブランチ `claude/laughing-cannon-fvpznk`（`d667103` 以降）。
+作成 2026-11-21。計画は [ENB_PLAN.md](ENB_PLAN.md)。作業ブランチ `claude/laughing-cannon-fvpznk`。ENB関連は `32005d3`、`d667103`、`6e6636d`、`2c008cd`。**コピーして使うプロンプトは [ENB_CODEX_PROMPT.md](ENB_CODEX_PROMPT.md)。**
 
 ## 1. いまの状態
 
@@ -66,17 +66,31 @@ python3 scripts/enb_report.py /path/to/preset-a /path/to/preset-b ...
 - 時刻・天候・室内の値、HUD直前の位置が固定版生成物から確定しないとき：その項目を止め、診断に「近似」と出して、理由を記録する。
 - 所有者のプリセットが使う名前や構文が、vkd3d-shaderのSM3で扱えないとき：その効果を無効にして一覧に出す（成功に見せかけない）。
 
-## 6. Codexへのプロンプト（コピーして使う）
+## 6. 作業の前に知っておくこと
 
-> `pc-aot/docs/ENB_PLAN.md` と `pc-aot/docs/ENB_CODEX_HANDOFF.md` を読み、ブランチ `claude/laughing-cannon-fvpznk` からENB対応の続きを実装してください。ENB本体（`d3d9.dll`）は読み込まず、所有者のプリセット（`enbseries.ini` と `enbseries/*.fx`）をアプリ内の後処理で実行します。
->
-> 1. まず所有者のプリセット数個で `python3 scripts/enb_report.py <プリセットのフォルダ>…` を実行し、結果で `enb_fx.c` の `engine[]` 表と `enb_preset.c` の `effects[]` 表（ともに未検証）を直してください。直した内容と対応できない名前の一覧を `docs/ENB_PLAN.md` §5 に記録してください。
-> 2. `enb_runtime` と `enb_exec`（Linuxで画素検証済み）をアプリへ接続してください。`SKYRIM_IOS_ENB`（既定OFF）、vkd3d-shaderのコンパイル関数、起動時の選択・固定、Presentへの差し込み、品質の自動調整を、ハンドオフ文書の §3 の順に実装してください。オフのときの出力と画素は従来と一致させてください。
-> 3. 時刻・天候・室内の値とHUD直前の位置は固定版生成物から特定し、特定できない場合は止めて理由を記録してください。推測のアドレスは使わないでください。
-> 4. 診断行は数値だけにし、許可リストと試験を同時に更新してください。ENB本体、プリセット、`.fx`、ゲームのファイル、生成コードはGitHubへ入れないでください。
-> 5. 自作の `.fx` と `.ini` で試験を書き、Linux（ASan/UBSan）とMac（Apple SDK）で通してください。実機での確認項目はハンドオフ文書の §4 です。GitHub ActionsとCodemagicは所有者の「go」がない限り実行しないでください。
->
-> 目標は、ビルドしてすぐiPhoneで有名なプリセットを検証できる状態です。性能の目標は30 fps前後です。
+**ブランチと他の作業**
+- `claude/laughing-cannon-fvpznk` は `claude/skyrim-ios-mod-first-wave-17hieg` の続きで、MOD第一弾の実装（X1〜X4、Fuz、PapyrusUtil、ModEvent、操作イベントなど）も同じブランチにある。
+- `207d14e`（DLLのコード変更要求の記録、計画のX5）は、X5をCodexへ引き継いだ後に誤ってこのブランチへ入れたもの。取り込むか取り消すかはCodexが決める（ENBの作業とは独立）。
+- `experiments/d3d9-postprocess`、`d3d9-present-grade`、`classic-d3d9-device` は `codex/first-wave-apple-check` にだけあり、このブランチにはない。必要なら取り込む。ENBの試験（`experiments/enb-exec`）はそれらに依存しない。
+
+**Linuxでの再現（所有者のPCはWindowsなので、WSLのUbuntuでよい）**
+- `experiments/enb-exec/README.md` の手順で、DXVKとvkd3d 2.0をビルドし、`enb_exec_test` を実行する。期待する出力は `Verified 17 ENB effect checks`。`tests/test_enb_exec.py` は環境変数 `SKYRIM_ENB_EXEC_TEST` にそのバイナリを指定したときだけ実行される。
+- ENBの読み取り・計画の試験は `python3 -B -m unittest tests/test_enb.py`（`SKYRIM_TEST_SANITIZERS=1` でASan/UBSan）。
+- ルートの `.gitignore` は「すべて無視して許可したものだけ追跡」の方式。新しいファイルは `git add -f` するか許可の行を足す（`pc-aot/AGENTS.md` と `MOD_FIRST_WAVE_PLAN.md` §11 を参照）。
+
+**未検証の仮定（実物のプリセットで確認が必要）**
+1. `enb_fx.c` の `engine[]`：ENBが `.fx` に渡す変数・画像の名前と、供給できるかの区分。
+2. `enb_preset.c` の `effects[]`：各効果のオン／オフが `enbseries.ini` の `[EFFECT]` のどのキーか。キーが違うと「常にオン」になる。
+3. `enb_runtime.cpp`：UI変数の値を `[EFFECT]` の「UIName と同じキー」から読む（節名もキーも仮定）。ベクトル値の書式は `a, b, c` と仮定している。
+4. `enb_runtime.cpp`：段の間の受け渡し（ブルーム・レンズ・順応が画像になり、他の効果が `TextureBloom` などとして読む、プリペース→被写界深度→本体→ポストパスの連鎖）。省いた段の中立画像（順応は白、ブルームとレンズは黒）も仮定。
+5. `enb_exec.cpp`：`RenderTarget<N>` は N×N の8ビット画像、名前に `RGBA64F`／`R32F` などを含むと対応する浮動小数点形式、それ以外の名前は拒否する。
+6. `enb_preset.c` の `enb_vars_compute`：時刻の昼夜の重みの境界時刻と `Timer` の定義は近似。
+
+**既知の制限**
+- `EnbEffectExec::run` は、MSAAでない `A8R8G8B8`／`X8R8G8B8` の描画ターゲットだけを出力に受け付ける。アプリでは、MSAAの解決後の画像を渡す。
+- パスの描画状態（`AlphaBlendEnable`、`ZEnable` など）は適用せず、無視した名前を `EnbLowered::ignored_states` に残す。効果が必要とする状態があれば追加する。
+- 画像ファイル（`enbpalette.png` など）の読み込みは未実装。`EnbFxImage::resource` と `EnbLowered::texture_resources` に名前だけ取れている。
+- `.fx` のコンパイルはゲーム開始前に済ませる設計だが、アプリ側の呼び出しは未実装。
 
 ## 7. 所有者に必要なもの
 

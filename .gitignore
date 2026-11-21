@@ -867,6 +867,7 @@
 !/pc-aot/docs/MOD_FIRST_WAVE_PLAN.md
 !/pc-aot/docs/ENB_PLAN.md
 !/pc-aot/docs/ENB_CODEX_HANDOFF.md
+!/pc-aot/docs/ENB_CODEX_PROMPT.md
 
 # Source-only MOD archive preparation and simulator checks.
 !/pc-aot/scripts/build-dependencies.sh
