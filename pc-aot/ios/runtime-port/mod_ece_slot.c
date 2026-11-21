@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-enum { NOSE_HEIGHT_ID = 12, SLOT_LINE_LIMIT = 1024, NUMBER_LIMIT = 64 };
+enum { NOSE_HEIGHT_ID = 12, SLOT_LINE_LIMIT = 1024, NUMBER_LIMIT = 64, ECE_FRACTION_DIGITS = 6 };
 
 typedef struct {
     const char *next, *end;
@@ -42,7 +42,7 @@ static bool read_row_id(SlotText *line, unsigned *id, bool *negative) {
 
 /* The bundled presets use ASCII fixed decimals. Reading that grammar
  * directly keeps the input independent of the host's decimal separator. */
-static bool read_value(SlotText line, double *value) {
+static bool read_value(SlotText line, unsigned precision, double *value) {
     if ((size_t)(line.end - line.next) > NUMBER_LIMIT) return false;
     const bool negative = line.next < line.end && *line.next == '-';
     if (negative || (line.next < line.end && *line.next == '+')) ++line.next;
@@ -54,6 +54,8 @@ static bool read_value(SlotText line, double *value) {
         if (!digit(line)) return false;
         double place = 0.1;
         do {
+            if (!precision) return false;
+            --precision;
             amount += (*line.next++ - '0') * place;
             place *= 0.1;
         } while (digit(line));
@@ -63,13 +65,14 @@ static bool read_value(SlotText line, double *value) {
     return true;
 }
 
-SkyrimEceSlotStatus skyrim_ece_slot_read_nose_height(const char *slot, size_t length, float *out) {
+static SkyrimEceSlotStatus read_nose_height(const char *slot, size_t length, bool stock, float *out) {
     if (length > SKYRIM_ECE_SLOT_LIMIT) return SKYRIM_ECE_SLOT_TOO_LARGE;
     if (!slot || !length || !out || memchr(slot, '\0', length)) return SKYRIM_ECE_SLOT_MALFORMED;
 
     const char *end = slot + length;
     if (length >= 3 && !memcmp(slot, "\xef\xbb\xbf", 3)) slot += 3;
     bool header = false, pairs = false, found = false;
+    bool legacy = true;
     double nose_height = 0;
     while (slot < end) {
         const char *newline = memchr(slot, '\n', (size_t)(end - slot));
@@ -87,6 +90,12 @@ SkyrimEceSlotStatus skyrim_ece_slot_read_nose_height(const char *slot, size_t le
             continue;
         }
         if (*line.next == '#') {
+            if (stock && same_text(line, "# version: 2.0")) {
+                legacy = false;
+            } else if (stock && (size_t)(line.end - line.next) >= sizeof("# version:") - 1 &&
+                       !memcmp(line.next, "# version:", sizeof("# version:") - 1)) {
+                return SKYRIM_ECE_SLOT_UNSUPPORTED_VERSION;
+            }
             if (same_text(line, "# 'uniqueID, value' pair")) {
                 if (pairs) return SKYRIM_ECE_SLOT_MALFORMED;
                 pairs = true;
@@ -98,16 +107,28 @@ SkyrimEceSlotStatus skyrim_ece_slot_read_nose_height(const char *slot, size_t le
         if (!pairs || !read_row_id(&line, &id, &negative)) return SKYRIM_ECE_SLOT_MALFORMED;
         const bool nose = !negative && id == NOSE_HEIGHT_ID;
         double value;
-        if (!read_value(line, &value))
+        if (!read_value(line, stock && nose ? ECE_FRACTION_DIGITS : NUMBER_LIMIT, &value))
             return nose ? SKYRIM_ECE_SLOT_BAD_NOSE_HEIGHT : SKYRIM_ECE_SLOT_MALFORMED;
         if (nose) {
             if (found || value < -1e6 || value > 1e6) return SKYRIM_ECE_SLOT_BAD_NOSE_HEIGHT;
-            nose_height = value;
+            nose_height = stock && legacy ? value * 1.5 : value;
             found = true;
         }
     }
     if (!pairs) return SKYRIM_ECE_SLOT_MALFORMED;
     if (!found) return SKYRIM_ECE_SLOT_NO_NOSE_HEIGHT;
+    if (stock) {
+        if (nose_height < -1.0) nose_height = -1.0;
+        if (nose_height > 1.0) nose_height = 1.0;
+    }
     *out = (float)nose_height;
     return SKYRIM_ECE_SLOT_OK;
+}
+
+SkyrimEceSlotStatus skyrim_ece_slot_read_nose_height(const char *slot, size_t length, float *out) {
+    return read_nose_height(slot, length, false, out);
+}
+
+SkyrimEceSlotStatus skyrim_ece_slot_stock_nose_height(const char *slot, size_t length, float *out) {
+    return read_nose_height(slot, length, true, out);
 }

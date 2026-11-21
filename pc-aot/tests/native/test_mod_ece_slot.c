@@ -4,9 +4,10 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int main(int argc, char **argv) {
-    assert(argc == 2);
+    assert(argc == 2 || (argc == 3 && !strcmp(argv[2], "stock")));
     FILE *f = fopen(argv[1], "rb");
     if (!f) return 2;
     char *bytes = malloc(SKYRIM_ECE_SLOT_LIMIT + 1);
@@ -16,7 +17,8 @@ int main(int argc, char **argv) {
     fclose(f);
     if (failed) { free(bytes); return 2; }
     float value = 123.f;
-    SkyrimEceSlotStatus status = skyrim_ece_slot_read_nose_height(bytes, length, &value);
+    SkyrimEceSlotStatus status = argc == 3 ? skyrim_ece_slot_stock_nose_height(bytes, length, &value)
+                                           : skyrim_ece_slot_read_nose_height(bytes, length, &value);
     free(bytes);
     assert(status == SKYRIM_ECE_SLOT_OK || value == 123.f);
     printf("%u %.9g\n", (unsigned)status, value);

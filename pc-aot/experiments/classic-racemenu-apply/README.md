@@ -58,27 +58,28 @@ Enhanced Character Edit's numbered slot is already imported into
 12, type 200 and the left/right NoseDown and NoseUp morphs. Its LE DLL
 normalizes the INI type to continuous morph type 0 with option flags
 3. The default descriptor is -1 to +1. The slot writer formats its
-stored binary64 value directly as decimal, and the slot reader passes
-its stored value directly to the Scaleform position result. ECE's optional
-SliderScale changes the active bounds. The author describes retention
-of saved values and clamping when loading in an environment with a
-narrower range. [ECE author documentation](https://tktk1.net/skyrim/mymod/enhancedcharacteredit/)
+stored binary64 value directly as decimal. The reader multiplies a
+legacy ID 12 row by 1.5 unless it has already seen the version 2.0
+marker. The menu uses the parsed position and clamps it to the active
+slider range. ECE's optional SliderScale changes that range.
+[ECE author documentation](https://tktk1.net/skyrim/mymod/enhancedcharacteredit/)
 
 The pinned stock descriptor also starts at -1 to +1. Its FaceGen
 option 1 selects NoseDown for negative values and NoseUp for positive
 values. The ECE configuration can select and merge multiple TRI
-sources for the same named morph. The matched names, default bounds
-and decimal transport leave the ECE UI-to-output sign and magnitude
-and the resulting FaceGen effect under the selected race and setup
-unverified. Use a pair of actual exports with one known directed
-change on the same character, and compare the accepted stock input
-and face effect before connecting ECE to the stock apply path.
+sources for the same named morph. The pinned ECE implementation selects
+NoseDown for a negative coefficient and NoseUp for a positive one,
+then uses the absolute value as the weight. The standalone slot conversion
+uses the same signed coefficient for stock option 1 with the audited
+default range. A same-character export pair remains useful for comparing
+rendered faces on device and verifying the active race and head parts.
 
 The optional host audit in `tests/test_mod_ece_slot.py` checks the exact
-owner DLL's descriptor, writer and reader without executing it. Set
-`SKYRIM_TEST_ECE_CME_LIBRARY` to that unmodified LE DLL and use GNU
-objdump. The provided author preset and its altered test copy still
-exercise decimal parsing only.
+owner DLL without executing it. Set `SKYRIM_TEST_ECE_CME_LIBRARY` to
+the unmodified LE DLL and use GNU objdump. For the other checks, set
+`SKYRIM_TEST_ECE_RELEASE_MENU` to the shipped `racesex_menu.gfx`,
+`SKYRIM_TEST_ECE_RELEASE_PRESETS` to the shipped Presets directory,
+and `SKYRIM_TEST_OWNED_CLASSIC_LIFT` to the reviewed stock generation.
 
 The profile check verifies the actual loose winners in a held, already-deployed
 Data view. It checks the exact default `FemaleHeadCharGen.tri`, the two

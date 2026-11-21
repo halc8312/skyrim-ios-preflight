@@ -12,7 +12,8 @@ typedef enum {
     SKYRIM_ECE_SLOT_TOO_LARGE,
     SKYRIM_ECE_SLOT_MALFORMED,
     SKYRIM_ECE_SLOT_NO_NOSE_HEIGHT,
-    SKYRIM_ECE_SLOT_BAD_NOSE_HEIGHT
+    SKYRIM_ECE_SLOT_BAD_NOSE_HEIGHT,
+    SKYRIM_ECE_SLOT_UNSUPPORTED_VERSION
 } SkyrimEceSlotStatus;
 
 /* Read the raw signed NoseUpDown value (ID 12) of an ECE LE face slot.
@@ -21,6 +22,14 @@ typedef enum {
  * race FormID, sex, or active guest receiver. Check those and the slider
  * limits independently before applying. */
 SkyrimEceSlotStatus skyrim_ece_slot_read_nose_height(const char *slot, size_t length, float *out);
+
+/* Translate the ECE 1.59 default NoseUpDown coefficient to the stock
+ * signed slider range. An exact version 2.0 marker applies to rows that
+ * follow it. A legacy row uses the original 1.5 multiplier before clamp.
+ * Accepts the released fixed-decimal representation, with up to six
+ * fractional digits. An explicit unknown version is rejected.
+ * The caller must validate the active race, morph resources and slider. */
+SkyrimEceSlotStatus skyrim_ece_slot_stock_nose_height(const char *slot, size_t length, float *out);
 
 #ifdef __cplusplus
 }
