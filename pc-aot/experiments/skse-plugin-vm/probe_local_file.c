@@ -44,9 +44,11 @@ SkseProbeFileStatus skse_probe_snapshot_file(const char *path, uint8_t **bytes, 
     *bytes = NULL;
     *length = 0;
     if (!path || !*path) return SKSE_PROBE_FILE_UNAVAILABLE;
-    int flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC;
+    int flags = O_RDONLY | O_NONBLOCK | O_CLOEXEC;
 #ifdef O_NOFOLLOW_ANY
     flags |= O_NOFOLLOW_ANY;
+#else
+    flags |= O_NOFOLLOW;
 #endif
     int fd = open(path, flags);
     if (fd < 0) return SKSE_PROBE_FILE_UNAVAILABLE;

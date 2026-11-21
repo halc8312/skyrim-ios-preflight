@@ -355,9 +355,11 @@ static NSArray<NSString *> *EnabledPackageIds(NSDictionary *profile);
 
 static NSData *ReadBoundedRegularFile(NSString *path, size_t limit) {
     if (!path) return nil;
-    int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
+    int flags = O_RDONLY | O_CLOEXEC | O_NONBLOCK;
 #ifdef O_NOFOLLOW_ANY
     flags |= O_NOFOLLOW_ANY;
+#else
+    flags |= O_NOFOLLOW;
 #endif
     int fd = open(path.fileSystemRepresentation, flags);
     if (fd < 0) return nil;
