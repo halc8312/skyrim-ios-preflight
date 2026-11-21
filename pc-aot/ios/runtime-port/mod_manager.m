@@ -583,10 +583,13 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
 #ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
         unsigned text, voices;
         NSUUID *profileId = [[NSUUID alloc] initWithUUIDString:activeProfile];
-        if (profileId && skyrim_mobile_classic_game_language(&text, &voices)) {
+        const BOOL supportsLoad = (compiled & PC_GUEST_MOD_HOOK_FRESH_LOAD) &&
+            (plan->groups & PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED) == PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED;
+        if (supportsLoad && profileId && skyrim_mobile_classic_game_language(&text, &voices)) {
             uuid_t idBytes;
             [profileId getUUIDBytes:idBytes];
-            (void)skyrim_save_app_configure_storage(saveProfile.fileSystemRepresentation, idBytes, text, voices);
+            if (skyrim_save_app_configure_storage(saveProfile.fileSystemRepresentation, idBytes, text, voices))
+                plan->groups |= PC_GUEST_MOD_HOOK_FRESH_LOAD;
         }
 #endif
     }

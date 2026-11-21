@@ -260,7 +260,9 @@ def adapt_input(text):
     return replace_once(text, INPUT_GFX_CALL, INPUT_CONTROL_EDGE + INPUT_GFX_CALL, INPUT_FILE)
 
 
-def prepare(source, runtime, save_observe=False):
+def prepare(source, runtime, save_observe=False, load_observe=False):
+    if load_observe and not save_observe:
+        raise ValueError("Fresh load preparation requires save observation")
     from classic_skse_extra import adapt as adapt_extra
     from classic_skse_translation import adapt as adapt_translation, adapt_profile_list
 
@@ -331,10 +333,12 @@ def prepare(source, runtime, save_observe=False):
         if target.is_symlink() or target.samefile(original):
             raise ValueError("Save observation requires an independent staged runtime")
         base = patch_kernel(verified_source(original.read_bytes()))
-        observed = transform(base, app=True)
+        save_only = transform(base, app=True)
+        with_load = transform(base, load_witness=True, load_clone=True, app=True)
+        observed = with_load if load_observe else save_only
         old = target.read_text(encoding="utf-8")
         if old != observed:
-            if old != base:
+            if old not in (base, save_only, with_load):
                 raise ValueError("Save observation requires the reviewed iOS kernel preparation")
             changes.append((target, observed))
         # A guest longjmp can skip all of the save routine's ordinary returns.
@@ -372,8 +376,10 @@ if __name__ == "__main__":
     parser.add_argument("--source", type=Path,
                         default=Path(__file__).resolve().parents[2] / "vendor/skydream")
     parser.add_argument("--save-observe", action="store_true")
+    parser.add_argument("--load-observe", action="store_true")
     args = parser.parse_args()
     try:
-        print(f"Classic runtime validated; updated {prepare(args.source, args.runtime, args.save_observe)} staged files.")
+        count = prepare(args.source, args.runtime, args.save_observe, args.load_observe)
+        print(f"Classic runtime validated; updated {count} staged files.")
     except (OSError, ValueError) as error:
         parser.exit(1, f"Classic runtime preparation failed: {error}\n")

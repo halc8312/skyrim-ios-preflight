@@ -93,6 +93,9 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
             "${SKYRIM_IOS_SAVE_WITNESS}/stage_runtime.py" "${CMAKE_CURRENT_SOURCE_DIR}/prepare_runtime.py")
     endif()
+    if(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
+        list(APPEND classic_adapter_options --load-observe)
+    endif()
     execute_process(COMMAND "${Python3_EXECUTABLE}" "${classic_adapter}"
         --source "${SKYDREAM_SOURCE_DIR}" --runtime "${SKYRIM_IOS_RUNTIME_OVERLAY_DIR}"
         ${classic_adapter_options} COMMAND_ERROR_IS_FATAL ANY)
@@ -214,9 +217,14 @@ if(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
         "${CMAKE_CURRENT_SOURCE_DIR}/classic_mod_catalog.c"
         "${cosave_source}/generation.c" "${cosave_source}/digest.c" "${cosave_source}/immutable_ess.c"
         "${cosave_source}/mod_history.c" "${cosave_source}/core_snapshot.c" "${cosave_source}/plugin_records.c"
-        "${cosave_source}/plugin_stream.c" "${cosave_source}/event_bridge.c" "${cosave_source}/event_trace.c")
+        "${cosave_source}/plugin_stream.c" "${cosave_source}/event_bridge.c" "${cosave_source}/event_trace.c"
+        "${cosave_source}/interpreted_records.c" "${SKYRIM_IOS_SAVE_WITNESS}/runtime_load.c"
+        "${SKYRIM_IOS_SAVE_WITNESS}/native_load.c" "${SKYRIM_IOS_ROOT}/experiments/classic-fresh-load/fresh_load.c"
+        "${SKYRIM_IOS_ROOT}/experiments/classic-fresh-load/selected_path.c")
+    target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_ROOT}/experiments/classic-fresh-load")
     target_link_libraries(skyrim_ios_runtime PUBLIC sqlite3)
-    target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_INT0_PROBE=1 SKYRIM_IOS_CLASSIC_PAPYRUSUTIL=1)
+    target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_INT0_PROBE=1
+        SKYRIM_IOS_CLASSIC_PAPYRUSUTIL=1 SKYRIM_EXPERIMENT_CLONE_LOAD=1)
 endif()
 if(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE OR SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
     set(profile_json_source "${SKYRIM_IOS_ROOT}/experiments/skse-profile-json")

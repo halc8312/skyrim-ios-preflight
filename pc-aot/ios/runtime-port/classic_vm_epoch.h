@@ -7,8 +7,8 @@
  *
  * Lock order: this lock, then any lock a subscriber or a committer takes.
  * Subscribers run with this lock held and must not call back into this API.
- * While a commit holds the lock the committer may only run the engine's own
- * result copy; a revert waits for the commit to end.
+ * While a commit holds the lock the committer may copy a result or apply
+ * already validated, bounded private records. A revert waits for it to end.
  */
 #pragma once
 #include <stdbool.h>
@@ -28,6 +28,9 @@ void skyrim_vm_epoch_registered(uint32_t registry);  /* after Classic's registra
 void skyrim_vm_epoch_before_revert(unsigned site);   /* immediately before the original revert */
 void skyrim_vm_epoch_after_load(int succeeded);      /* immediately after the original VM load */
 bool skyrim_vm_scope_current(SkyrimVmScope *out);    /* false while reverting, closed or unregistered */
+/* Same registered VM after a revert, before a reviewed original load.
+ * It remains invalid for commit until the engine marks that generation open. */
+bool skyrim_vm_scope_pending_load(SkyrimVmScope *out);
 bool skyrim_vm_commit_begin(const SkyrimVmScope *);  /* true: lock held and the scope is current */
 void skyrim_vm_commit_end(void);                     /* only after a successful commit_begin */
 /* Register before the first skyrim_vm_epoch_registered call (before guest start). */

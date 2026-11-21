@@ -56,6 +56,10 @@ typedef struct {
 void skyrim_papyrusutil_settings_backend(SkyrimPapyrusUtilSettings *, SkyrimPapyrusUtilBackend *out);
 bool skyrim_papyrusutil_capture_storage(const SkyrimVmScope *, const SkseLoadedMod *, size_t count,
                                         SksePluginRecordSet **out);
+/* After authentication of a completed base load, a NULL input runs only the
+ * previous-world reset. A non-NULL input was verified against that base. */
+bool skyrim_papyrusutil_apply_storage(const SkyrimVmScope *, const SkseLoadedMod *, size_t count,
+                                     const SksePluginRecordSet *input, const SkseSerialResolvers *);
 #endif
 
 #ifdef __cplusplus

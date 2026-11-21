@@ -373,11 +373,13 @@ class HostClassicOptionTests(unittest.TestCase):
             (port/"prepare_classic_skse.py").write_text(
                 "from pathlib import Path\nimport argparse\n"
                 "p=argparse.ArgumentParser()\np.add_argument('--runtime', type=Path)\n"
-                "p.add_argument('--source', type=Path)\np.add_argument('--save-observe', action='store_true')\na=p.parse_args()\n"
+                "p.add_argument('--source', type=Path)\np.add_argument('--save-observe', action='store_true')\n"
+                "p.add_argument('--load-observe', action='store_true')\na=p.parse_args()\n"
                 "assert a.source.resolve() == Path(__file__).resolve().parents[2] / 'vendor'\n"
                 "assert (a.runtime/'main.c').read_text() == 'ordinary\\n'\n"
                 "(a.runtime/'main.c').write_text('classic\\n')\n"
-                "if a.save_observe: (a.runtime/'kernel32.c').write_text('observed-save\\n')\n")
+                "if a.save_observe: (a.runtime/'kernel32.c').write_text('observed-save\\n')\n"
+                "if a.load_observe:\n assert a.save_observe\n (a.runtime/'kernel32.c').write_text('observed-load\\n')\n")
             # Capture only target metadata. Commands that stage directories and configure
             # the plist below are genuine CMake; the fixture has no executable target.
             (port/"CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.24)\nproject(Capability NONE)\n" +
@@ -395,9 +397,12 @@ class HostClassicOptionTests(unittest.TestCase):
             if shutil.which("ninja"):
                 command += ["-G", "Ninja"]
             normal_info = plistlib.loads((port/"Info.plist.in").read_bytes())
-            for feature, hooks in ((None, None), (True, False), (False, False), (True, True), (True, False)):
+            for feature, hooks, load in ((None, None, False), (True, False, False), (False, False, False),
+                                         (True, True, False), (True, True, True), (True, False, False)):
                 args = [] if feature is None else ["-DSKYRIM_IOS_CLASSIC_SKSE=" + ("1" if feature else "0"),
-                                                   "-DSKYRIM_IOS_MOD_HOOKS=" + ("1" if hooks else "0")]
+                                                   "-DSKYRIM_IOS_MOD_HOOKS=" + ("1" if hooks else "0"),
+                                                   f"-DSKYRIM_IOS_CLASSIC_PAPYRUSUTIL={int(load)}",
+                                                   f"-DSKYRIM_IOS_SKSE_DLL_PROBE={int(load)}"]
                 check = subprocess.run(command + args, capture_output=True, text=True, timeout=60)
                 self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
                 runtime, plist, sources, app_sources, defines = (root/"build/state").read_text().splitlines()
@@ -412,7 +417,7 @@ class HostClassicOptionTests(unittest.TestCase):
                 self.assertEqual("SKYRIM_IOS_CLASSIC_SKSE=1" in defines, bool(feature))
                 self.assertEqual("pc_guest_mod_hooks_host.c" in app_sources, bool(hooks))
                 self.assertEqual((Path(runtime)/"kernel32.c").read_text(),
-                                 "observed-save\n" if hooks else "ordinary-save\n")
+                                 "observed-load\n" if load else "observed-save\n" if hooks else "ordinary-save\n")
                 self.assertEqual("SKYRIM_IOS_MOD_HOOKS=1" in defines, bool(hooks))
                 self.assertEqual((Path(runtime)/"main.c").read_text(), "classic\n" if feature else "ordinary\n")
                 self.assertEqual((overlay/"main.c").read_text(), "ordinary\n")

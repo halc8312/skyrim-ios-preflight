@@ -93,6 +93,7 @@ int main(int argc, char **argv) {
 
     /* Unregistered: nothing is current, nothing commits. */
     assert(!skyrim_vm_scope_current(&scope));
+    assert(!skyrim_vm_scope_pending_load(&scope));
     assert(!skyrim_vm_commit_begin(&scope));
     skyrim_vm_commit_end();  /* without begin: no effect */
     assert(!skyrim_vm_epoch_subscribe(NULL, NULL));
@@ -105,6 +106,7 @@ int main(int argc, char **argv) {
     assert(!skyrim_vm_scope_current(&scope));
     skyrim_vm_epoch_registered(0x1000);
     assert(skyrim_vm_scope_current(&scope) && scope.epoch == 1 && scope.registry == 0x1000);
+    assert(!skyrim_vm_scope_pending_load(&scope));
     skyrim_vm_epoch_registered(0x1000);  /* the same VM again */
     assert(skyrim_vm_scope_current(&old) && old.epoch == 1 && retired_count == 0);
 
@@ -118,9 +120,13 @@ int main(int argc, char **argv) {
     skyrim_vm_epoch_before_revert(SKYRIM_VM_REVERT_LOAD);
     assert(retired_count == 1 && retired[0] == 1 && retired_second == 1);
     assert(!skyrim_vm_scope_current(&scope));
+    SkyrimVmScope pending;
+    assert(skyrim_vm_scope_pending_load(&pending) && pending.epoch == 2 && pending.registry == 0x1000);
     assert(!skyrim_vm_commit_begin(&old));
     skyrim_vm_epoch_after_load(1);
     assert(skyrim_vm_scope_current(&scope) && scope.epoch == 2);
+    assert(skyrim_vm_commit_begin(&pending));
+    skyrim_vm_commit_end();
     assert(!skyrim_vm_commit_begin(&old));
 
     /* A failed load stays closed until a later revert and successful load. */

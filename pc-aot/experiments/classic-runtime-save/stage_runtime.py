@@ -109,8 +109,6 @@ def verified_source(raw: bytes) -> str:
 def transform(source: str, load_witness: bool = False, load_clone: bool = False, *, app: bool = False) -> str:
     if load_clone and not load_witness:
         raise ValueError("Cloned load staging requires the read-only witness")
-    if app and (load_witness or load_clone):
-        raise ValueError("The app stage observes fresh saves")
     load_header = '#include "runtime_load.h"\n' if load_witness else ""
     load_field = " uint64_t classic_load_generation;" if load_witness else ""
     observed_open = OPEN_OBSERVED

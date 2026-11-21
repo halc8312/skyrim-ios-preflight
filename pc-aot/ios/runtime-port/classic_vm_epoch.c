@@ -64,14 +64,17 @@ void skyrim_vm_epoch_after_load(int succeeded) {
     pthread_mutex_unlock(&lock);
 }
 
-bool skyrim_vm_scope_current(SkyrimVmScope *out) {
+static bool vm_scope(bool opened, SkyrimVmScope *out) {
     if (!out) return false;
     pthread_mutex_lock(&lock);
-    const bool current = open;
+    const bool current = registry && open == opened;
     if (current) *out = (SkyrimVmScope){epoch, registry};
     pthread_mutex_unlock(&lock);
     return current;
 }
+
+bool skyrim_vm_scope_current(SkyrimVmScope *out) { return vm_scope(true, out); }
+bool skyrim_vm_scope_pending_load(SkyrimVmScope *out) { return vm_scope(false, out); }
 
 bool skyrim_vm_commit_begin(const SkyrimVmScope *scope) {
     if (!scope || committing) return false;

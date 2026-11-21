@@ -234,13 +234,19 @@ static bool current_capture(const StorageCapture *capture) {
            current.registry == capture->expected.registry;
 }
 
+static bool storage_uptime(uint32_t *out) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now)) return false;
+    *out = (uint32_t)((uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000);
+    return true;
+}
+
 static bool capture_storage(void *context) {
     StorageCapture *capture = context;
     if (!current_capture(capture)) return false;
     SkyrimPapyrusUtilSettings *scope = backend.context;
-    struct timespec now = {0};
-    if (clock_gettime(CLOCK_MONOTONIC, &now)) return false;
-    const uint32_t uptime = (uint32_t)((uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000);
+    uint32_t uptime;
+    if (!storage_uptime(&uptime)) return false;
     SksePluginRecordSet *records = NULL;
     if (skse_classic_storage_capture(scope->settings, scope->epoch, capture->mods, capture->count,
                                      uptime, &records) != SKSE_SETTINGS_OK)
@@ -258,5 +264,33 @@ bool skyrim_papyrusutil_capture_storage(const SkyrimVmScope *scope, const SkseLo
     if (!scope || !out || *out || backend.invoke != settings_invoke) return false;
     StorageCapture capture = {*scope, mods, count, out};
     return skse_classic_values_with_provider(provider_epoch, scope->registry, capture_storage, &capture);
+}
+
+typedef struct {
+    SkyrimVmScope vm;
+    const SkseLoadedMod *mods;
+    size_t count;
+    const SksePluginRecordSet *records;
+    const SkseSerialResolvers *resolvers;
+} StorageLoad;
+
+static bool apply_storage(void *context) {
+    const StorageLoad *load = context;
+    uint32_t uptime;
+    if (!storage_uptime(&uptime) || !skyrim_vm_commit_begin(&load->vm)) return false;
+    SkyrimPapyrusUtilSettings *scope = backend.context;
+    SkseSettingsStatus status = load->records ?
+        skse_classic_storage_restore(scope->settings, scope->epoch, load->mods, load->count,
+                                     uptime, load->records, load->resolvers) :
+        skse_classic_storage_reset(scope->settings, scope->epoch, load->mods, load->count, uptime);
+    skyrim_vm_commit_end();
+    return status == SKSE_SETTINGS_OK;
+}
+
+bool skyrim_papyrusutil_apply_storage(const SkyrimVmScope *scope, const SkseLoadedMod *mods, size_t count,
+                                     const SksePluginRecordSet *records, const SkseSerialResolvers *resolvers) {
+    if (!scope || (records && !resolvers) || backend.invoke != settings_invoke) return false;
+    StorageLoad load = {*scope, mods, count, records, resolvers};
+    return skse_classic_values_with_provider(provider_epoch, scope->registry, apply_storage, &load);
 }
 #endif
