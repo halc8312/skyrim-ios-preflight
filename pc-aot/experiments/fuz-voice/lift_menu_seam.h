@@ -40,7 +40,10 @@ bool skyrim_fuz_menu_force(const SkyrimFuzMenuTracker *, const SkyrimFuzLiftMemo
 /* Host-side imports used only by the privately staged lift. */
 struct CPU;
 void skyrim_fuz_host_forget_response(uint32_t response);
-void skyrim_fuz_host_choose_menu_voice(uint32_t argument_slot, uint32_t response, SkyrimFuzLiftChoice *);
+/* The caller is the lifted constructor's CPU, for the game's resource lookup
+ * on the same thread (see lift_resource_lookup.h). */
+void skyrim_fuz_host_choose_menu_voice(const struct CPU *caller, uint32_t argument_slot, uint32_t response,
+                                       SkyrimFuzLiftChoice *);
 void skyrim_fuz_host_note_menu_assignment(uint32_t response, const SkyrimFuzLiftChoice *);
 SkyrimFuzMenuScope skyrim_fuz_host_capture_menu(uint32_t manager, uint32_t node, uint32_t queued_title);
 bool skyrim_fuz_host_force_menu(const SkyrimFuzMenuScope *, uint32_t return_address, uint32_t queued_title);

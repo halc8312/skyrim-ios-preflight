@@ -47,7 +47,7 @@ def prepare_responses(source):
         raise ValueError("The original Classic voice line changed.")
     observed = (b"    {\n"
                 b"    SkyrimFuzLiftChoice chosen = {0};\n"
-                b"    skyrim_fuz_host_choose_menu_voice(esp, esi, &chosen);\n"
+                b"    skyrim_fuz_host_choose_menu_voice(c, esp, esi, &chosen);\n"
                 + original +
                 b"    skyrim_fuz_host_note_menu_assignment(esi, &chosen);\n"
                 b"    }\n")

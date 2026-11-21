@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "guest_memory.h"
-#include "voice_fallback.h"
+#include "lift_resource_lookup.h"
 #include "lift_prelude.h"
 #include "funcs_exe.h"
 
@@ -9,9 +9,12 @@
 #include <string.h>
 
 enum {
-    OBJECT = 0x2100, STREAM = 0x2140, STREAM_VTABLE = 0x2200, PATH = 0x2600, CALLER_OFFSET = 0x2800,
-    RESOLVE_OUTPUT = 0x2804,
+    STREAM = 0x2140, STREAM_VTABLE = 0x2200, CALLER_OFFSET = 0x2800, RESOLVE_OUTPUT = 0x2804,
     DEFAULT_ROOT = 0x2900, STACK = 0x2fe0, PATH_CAPACITY = 260,
+    // lift_resource_lookup.c places the name and object below the live stack.
+    PATH = 0x2eb0, OBJECT = 0x2e70,
+    // A response whose stack path frame begins at STACK + 0x14.
+    RESPONSE = 0x3200, RESPONSE_TEXT = 0x3240,
     COMPARE_EXCHANGE_SLOT = 0x106b14c, ROOT_VTABLE = 0x110cc68, DEFAULT_ROOT_SLOT = 0x1b41100,
     INPUT_STREAM_VTABLE = 0x111eaf8, HEAP = 0x1b418b0,
     STREAM_REFERENCE = 0x1000, INITIAL_STREAM_FLAGS = 0x100, FIXTURE_CURSOR = 0x4321,
@@ -29,15 +32,15 @@ typedef struct {
 typedef struct {
     const Resource *entries;
     size_t count;
-    const char *requested;
     unsigned probes, opens, closes, disposals, frees, names;
     const Resource *resolved;
     uint32_t lookup_status;
-    bool owns_object;
 } Fixture;
 
 uint8_t *MEM;
 static Fixture *active;
+static gm_space space;
+static const CPU caller = {0}; // The reviewed routines run with the fixture's zero TLS base.
 
 static uint32_t argument(CPU *cpu, unsigned index) {
     return M32(cpu->r[4] + 4 * (index + 1));
@@ -82,12 +85,11 @@ void f_A3F780(CPU *cpu) {
     return_guest(cpu, 0, 1);
 }
 
+/* The stack-owned stream object is destroyed with flag 0, never freed. */
 void f_A487B0(CPU *cpu) {
-    assert(cpu->r[1] == HEAP && argument(cpu, 0) == OBJECT && !argument(cpu, 1));
-    assert(active->owns_object && !active->names);
-    active->owns_object = false;
+    (void)cpu;
     ++active->frees;
-    return_guest(cpu, 2, 0);
+    assert(!"stack-owned BSIStream reached the heap release");
 }
 
 static void resolve_from_catalog(CPU *cpu) {
@@ -96,11 +98,13 @@ static void resolve_from_catalog(CPU *cpu) {
     uint32_t auxiliary = argument(cpu, 2);
     assert(argument(cpu, 0) == PATH && auxiliary == wrapper + 0x1c &&
            !M32(auxiliary) && !argument(cpu, 3));
-    assert(!M32(output) && !strcmp((const char *)MEM + PATH, active->requested));
+    assert(!M32(output) && memchr(MEM + PATH, 0, PATH_CAPACITY));
     ++active->probes;
+    active->resolved = NULL;
+    active->lookup_status = FIXTURE_NOT_FOUND;
     for (size_t i = 0; i < active->count; ++i) {
         const Resource *resource = &active->entries[i];
-        if (!strcmp(resource->path, active->requested)) {
+        if (!strcmp(resource->path, (const char *)MEM + PATH)) {
             active->resolved = resource;
             active->lookup_status = resource->lookup_status;
             if (!resource->lookup_status) {
@@ -158,43 +162,30 @@ void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache) {
 }
 
 /* These private routines are compiled from the pinned lift in scratch.
- * Every address supplied here refers to an authored, owned guest range. */
+ * Every address supplied here refers to an authored, owned guest range. The
+ * policy reaches them only through lift_resource_lookup.c. */
 static SkyrimFuzAvailability lookup_lifted(void *context, const char *relative) {
     Fixture *fixture = context;
-    assert(!active && !fixture->owns_object && !fixture->names);
-    const size_t length = strlen(relative);
-    if (length >= PATH_CAPACITY) return SKYRIM_FUZ_LOOKUP_ERROR;
-    memcpy(MEM + PATH, relative, length + 1);
-    fixture->requested = relative;
-    fixture->resolved = NULL;
-    fixture->lookup_status = FIXTURE_NOT_FOUND;
-    fixture->owns_object = true;
-    active = fixture;
-
-    CPU cpu = {0};
-    cpu.r[1] = OBJECT;
-    cpu.r[4] = STACK;
-    M32(STACK) = 0;
-    M32(STACK + 4) = PATH;
-    M32(STACK + 8) = 0;
-    f_B08630(&cpu);
-    assert(cpu.r[0] == OBJECT && cpu.r[4] == STACK + 12);
-    assert(M32(OBJECT) == INPUT_STREAM_VTABLE && M32(OBJECT + 12) == PATH && fixture->names == 1);
+    assert(active == fixture && !fixture->names);
+    const unsigned probes = fixture->probes, streams = fixture->disposals;
+    SkyrimFuzGuestResources resources = {.caller = &caller, .live_stack = STACK};
+    const SkyrimFuzAvailability found = skyrim_fuz_guest_resource_lookup(&resources, relative);
+    assert(!strcmp((const char *)MEM + PATH, relative));
+    assert(fixture->probes == probes + 1 && !fixture->names && !fixture->frees);
+    assert(M32(CALLER_OFFSET) == FIXTURE_CURSOR);
     const bool opened = fixture->resolved && !fixture->lookup_status;
-    const bool valid = opened && !fixture->resolved->open_status;
-    assert(M8(OBJECT + 8) == valid && M32(OBJECT + 4) == (opened ? STREAM : 0));
+    assert(fixture->disposals == streams + opened);
+    if (found == SKYRIM_FUZ_PRESENT) assert(opened && !fixture->resolved->open_status);
+    // A known resolver failure without a stream is ABSENT, as in LE 6.1.
+    if (found == SKYRIM_FUZ_ABSENT) assert(!opened);
+    if (found == SKYRIM_FUZ_LOOKUP_ERROR) assert(opened && fixture->resolved->open_status);
+    return found;
+}
 
-    cpu.r[1] = OBJECT;
-    cpu.r[4] = STACK;
-    M32(STACK + 4) = 1;
-    f_B08970(&cpu); // The verified first slot of INPUT_STREAM_VTABLE.
-    assert(cpu.r[0] == OBJECT && cpu.r[4] == STACK + 8);
-    assert(!fixture->owns_object && !fixture->names && M32(CALLER_OFFSET) == FIXTURE_CURSOR);
-    fixture->requested = NULL;
-    active = NULL;
-    if (valid) return SKYRIM_FUZ_PRESENT;
-    // Real BSIStream loses the reason. Only this known fixture miss is ABSENT.
-    return fixture->resolved ? SKYRIM_FUZ_LOOKUP_ERROR : SKYRIM_FUZ_ABSENT;
+static Fixture *begin(Fixture *fixture, const Resource *entries, size_t count) {
+    *fixture = (Fixture){.entries = entries, .count = count};
+    active = fixture;
+    return fixture;
 }
 
 static const char *const original[] = {
@@ -207,17 +198,14 @@ static const char packed[] = "Sound/Voice/OwnerSample/Stock_4.fuz";
 static const char response[] = "The gate remains closed until sunrise";
 
 static void check_lifetime(const Fixture *fixture, unsigned probes, unsigned streams) {
-    assert(fixture->probes == probes && fixture->frees == probes);
+    assert(fixture->probes == probes && !fixture->frees && !fixture->names);
     assert(fixture->opens == streams && fixture->closes == streams && fixture->disposals == streams);
 }
 
 static uint32_t probe_resolver_failure(Fixture *fixture, const char *path) {
     const size_t length = strlen(path);
-    assert(length < PATH_CAPACITY && !active);
+    assert(length < PATH_CAPACITY && active == fixture);
     memcpy(MEM + PATH, path, length + 1);
-    fixture->requested = path;
-    fixture->lookup_status = FIXTURE_NOT_FOUND;
-    active = fixture;
     CPU cpu = {0};
     cpu.r[4] = STACK;
     M32(STACK) = 0;
@@ -226,18 +214,55 @@ static uint32_t probe_resolver_failure(Fixture *fixture, const char *path) {
     M32(STACK + 12) = M32(STACK + 16) = M32(RESOLVE_OUTPUT) = 0;
     f_A3F810(&cpu);
     assert(cpu.r[4] == STACK + 4 && !M32(RESOLVE_OUTPUT) && !fixture->opens && !fixture->frees);
-    fixture->requested = NULL;
-    active = NULL;
     return cpu.r[0];
 }
 
+static bool read_guest(void *context, uint32_t address, void *bytes, size_t length) {
+    const void *data = gm_pointer(context, address, length);
+    if (data) memcpy(bytes, data, length);
+    return data != NULL;
+}
+
+static bool replace_guest(void *context, uint32_t address, const void *expected, const void *replacement,
+                          size_t length) {
+    void *data = gm_pointer(context, address, length);
+    if (!data || memcmp(data, expected, length)) return false;
+    memcpy(data, replacement, length);
+    return true;
+}
+
+static const char game_original[] = "Data\\Sound\\Voice\\Fixture.esp\\Narrator\\Test.wav";
+static const char game_stock[] = "Data\\Sound\\Voice\\OwnerSample\\Stock_4.xwm";
+
+/* The pinned constructor's stack argument slot, path frame and response. */
+static bool choose_in_game(const SkyrimFuzPolicy *policy, SkyrimFuzLiftChoice *choice) {
+    const uint32_t frame = STACK + SKYRIM_FUZ_LIFT_FRAME_FROM_SLOT;
+    M32(STACK) = frame;
+    memset(MEM + frame, 0, SKYRIM_FUZ_LIFT_FRAME_BYTES);
+    memcpy(MEM + frame, game_original, sizeof game_original);
+    memcpy(MEM + RESPONSE_TEXT, response, sizeof response);
+    M32(RESPONSE) = RESPONSE_TEXT;
+    M32(RESPONSE + 4) = (uint32_t)(sizeof response - 1) | ((uint32_t)sizeof response << 16);
+    const SkyrimFuzLiftMemory access = {read_guest, replace_guest, &space};
+    const bool changed = skyrim_fuz_choose_with_guest_resources(policy, &access, &caller, STACK, RESPONSE, choice);
+    assert(M32(STACK) == frame && !memcmp(MEM + RESPONSE_TEXT, response, sizeof response));
+    const char *expected = changed ? game_stock : game_original;
+    assert(!strcmp((const char *)MEM + frame, expected));
+    if (changed) assert(!strcmp(choice->assigned_path, game_stock) && choice->force_subtitle);
+    else assert(!choice->assigned_path[0] && !choice->force_subtitle);
+    return changed;
+}
+
 int main(void) {
-    gm_space memory = {0};
-    assert(gm_reserve(&memory, NULL));
-    const uint32_t addresses[] = {OBJECT, COMPARE_EXCHANGE_SLOT, ROOT_VTABLE, DEFAULT_ROOT_SLOT};
-    for (size_t i = 0; i < sizeof addresses / sizeof addresses[0]; ++i)
-        assert(gm_commit_page(&memory, (addresses[i] / memory.page_size) * memory.page_size, NULL));
-    MEM = memory.base;
+    assert(gm_reserve(&space, NULL));
+    const uint32_t addresses[] = {OBJECT, RESPONSE, COMPARE_EXCHANGE_SLOT, ROOT_VTABLE, DEFAULT_ROOT_SLOT};
+    for (size_t i = 0; i < sizeof addresses / sizeof addresses[0]; ++i) {
+        const uint64_t page = (addresses[i] / space.page_size) * space.page_size;
+        if (!gm_pointer(&space, addresses[i], 1)) assert(gm_commit_page(&space, page, NULL));
+    }
+    MEM = space.base;
+    SkyrimFuzGuestLookupLayout layout;
+    assert(skyrim_fuz_guest_lookup_layout(STACK, &layout) && layout.name == PATH && layout.object == OBJECT);
     M32(COMPARE_EXCHANGE_SLOT) = TEST_COMPARE_EXCHANGE;
     M32(ROOT_VTABLE + 12) = TEST_RESOLVE;
     M32(DEFAULT_ROOT_SLOT) = DEFAULT_ROOT;
@@ -253,50 +278,70 @@ int main(void) {
     policy.stock_paths[3] = stock;
     for (unsigned i = 0; i < 3; ++i) {
         resource = (Resource){.path = original[i]};
-        fixture = (Fixture){.entries = &resource, .count = 1};
+        begin(&fixture, &resource, 1);
         SkyrimFuzVoice voice = skyrim_fuz_choose_voice(&policy, original[0], response, false);
         assert(voice.decision == SKYRIM_FUZ_KEEP_VOICE && !voice.stock_path && !voice.force_subtitle);
         check_lifetime(&fixture, i + 1, 1);
     }
 
     resource = (Resource){.path = original[0], .lookup_status = FIXTURE_RESOLVER_FAILURE};
-    fixture = (Fixture){.entries = &resource, .count = 1};
+    begin(&fixture, &resource, 1);
     assert(probe_resolver_failure(&fixture, original[0]) == FIXTURE_RESOLVER_FAILURE);
-    fixture = (Fixture){0};
+    begin(&fixture, NULL, 0);
     assert(probe_resolver_failure(&fixture, original[0]) == FIXTURE_NOT_FOUND);
-    fixture = (Fixture){.entries = &resource, .count = 1};
-    assert(lookup_lifted(&fixture, original[0]) == SKYRIM_FUZ_LOOKUP_ERROR);
+    // BSIStream drops the resolver status. LE 6.1 also reads this as missing.
+    begin(&fixture, &resource, 1);
+    assert(lookup_lifted(&fixture, original[0]) == SKYRIM_FUZ_ABSENT);
     assert(fixture.lookup_status == FIXTURE_RESOLVER_FAILURE);
     check_lifetime(&fixture, 1, 0);
 
     resource = (Resource){.path = original[0], .open_status = FIXTURE_OPEN_FAILURE};
-    fixture = (Fixture){.entries = &resource, .count = 1};
+    begin(&fixture, &resource, 1);
     assert(lookup_lifted(&fixture, original[0]) == SKYRIM_FUZ_LOOKUP_ERROR);
     check_lifetime(&fixture, 1, 1);
 
     resource = (Resource){.path = stock};
-    fixture = (Fixture){.entries = &resource, .count = 1};
+    begin(&fixture, &resource, 1);
     SkyrimFuzVoice voice = skyrim_fuz_choose_voice(&policy, original[0], response, false);
     assert(voice.decision == SKYRIM_FUZ_USE_STOCK && voice.stock_path == stock && voice.seconds == 4);
     check_lifetime(&fixture, 4, 1);
 
     resource = (Resource){.path = packed};
-    fixture = (Fixture){.entries = &resource, .count = 1};
+    begin(&fixture, &resource, 1);
     assert(lookup_lifted(&fixture, packed) == SKYRIM_FUZ_PRESENT);
     assert(lookup_lifted(&fixture, stock) == SKYRIM_FUZ_ABSENT);
     assert(fixture.lookup_status == FIXTURE_NOT_FOUND);
     check_lifetime(&fixture, 2, 1);
-    fixture = (Fixture){.entries = &resource, .count = 1};
+    begin(&fixture, &resource, 1);
     voice = skyrim_fuz_choose_voice(&policy, original[0], response, false);
     assert(voice.decision == SKYRIM_FUZ_STOCK_UNAVAILABLE && !voice.force_subtitle);
     check_lifetime(&fixture, 4, 0);
-    fixture = (Fixture){.entries = &resource, .count = 1};
+    begin(&fixture, &resource, 1);
     policy.stock_paths[3] = packed;
     voice = skyrim_fuz_choose_voice(&policy, original[0], response, false);
     assert(voice.decision == SKYRIM_FUZ_USE_STOCK && voice.stock_path == packed);
     check_lifetime(&fixture, 4, 1);
+    policy.stock_paths[3] = stock;
 
-    assert(gm_release(&memory, NULL));
-    puts("Reviewed LE resource stream construction and disposal passed with an authored catalog.");
+    // The pinned assignment site through the game's own lookup on this thread.
+    SkyrimFuzLiftChoice choice;
+    const Resource catalog[] = {{.path = original[1]}, {.path = stock}};
+    begin(&fixture, catalog, 2);
+    assert(!choose_in_game(&policy, &choice)); // An existing FUZ keeps the original path.
+    check_lifetime(&fixture, 2, 1);
+    begin(&fixture, catalog + 1, 1);
+    assert(choose_in_game(&policy, &choice));
+    check_lifetime(&fixture, 4, 1);
+    begin(&fixture, NULL, 0);
+    assert(!choose_in_game(&policy, &choice)); // Missing stock: the normal path.
+    check_lifetime(&fixture, 4, 0);
+    resource = (Resource){.path = original[2], .open_status = FIXTURE_OPEN_FAILURE};
+    begin(&fixture, &resource, 1);
+    assert(!choose_in_game(&policy, &choice)); // An unreadable XWM is not replaced.
+    check_lifetime(&fixture, 3, 1);
+    active = NULL;
+
+    assert(gm_release(&space, NULL));
+    puts("Reviewed LE resource lookup selected only missing voices through the stack-owned stream.");
     return 0;
 }

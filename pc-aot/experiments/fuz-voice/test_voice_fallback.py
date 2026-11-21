@@ -61,6 +61,14 @@ class FuzVoiceFallbackTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="fuz-lift-host-") as scratch:
             self.run_lift_fixture(Path(scratch))
 
+    def test_hosted_game_lookup_glue(self):
+        with tempfile.TemporaryDirectory(prefix="fuz-guest-lookup-") as scratch:
+            self.run_fixture(
+                Path(scratch), "test_guest_lookup.c", [f"-I{HERE / 'hosted-abi'}", f"-I{GUEST_HELPERS}"],
+                [HERE / "lift_resource_lookup.c", HERE / "lift_voice_seam.c", HERE / "lift_menu_seam.c",
+                 GUEST_HELPERS / "x86_winfile.c"],
+            )
+
     def test_stager_rejects_unreviewed_input(self):
         with tempfile.TemporaryDirectory(prefix="fuz-lift-rejected-") as scratch:
             root = Path(scratch)
@@ -131,7 +139,11 @@ class FuzVoiceFallbackTests(unittest.TestCase):
             args = [f"-I{native}", "-isystem", str(root / "gen"), "-isystem", str(root / "source" / "runtime")]
             if sys.platform.startswith("linux"):
                 args.append("-D_DEFAULT_SOURCE")
-            self.run_fixture(temporary, "test_resource_lift.c", args, [staged, native / "guest_memory.c"])
+            args += [f"-I{HERE}", f"-I{GUEST_HELPERS}"]
+            self.run_fixture(temporary, "test_resource_lift.c", args, [
+                staged, native / "guest_memory.c", HERE / "lift_resource_lookup.c",
+                HERE / "lift_voice_seam.c", GUEST_HELPERS / "x86_winfile.c",
+            ])
 
 
     def run_queue_fixture(self, root, staged, fixture, test_source, helpers=()):

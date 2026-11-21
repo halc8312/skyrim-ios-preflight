@@ -96,7 +96,9 @@ void skyrim_fuz_host_forget_response(uint32_t response) {
     skyrim_fuz_menu_forget(&host.responses, response);
 }
 
-void skyrim_fuz_host_choose_menu_voice(uint32_t argument, uint32_t response, SkyrimFuzLiftChoice *choice) {
+void skyrim_fuz_host_choose_menu_voice(const CPU *caller, uint32_t argument, uint32_t response,
+                                       SkyrimFuzLiftChoice *choice) {
+    assert(caller && caller->fs_base == FS_BASE);
     (void)skyrim_fuz_apply_lifted_path_choice(&host.policy, &host.memory, argument, response, choice);
 }
 
