@@ -46,7 +46,7 @@ static bool fake_read(void *ctx, CPU *c, uint32_t a, void *b, size_t n) { (void)
 static bool fake_copy(void *ctx, CPU *c, uint32_t a, char *t, size_t n) { (void)ctx; (void)c; (void)a; (void)n; t[0] = 0; return true; }
 
 static const ClassicValueFrame frame = {.object = 0x1000, .sp = 0x2000, .base = 0x2038, .registry = 0x3000,
-                                        .stack_id = 7, .result = 0x202c, .state = 0x4000};
+                                        .stack_id = 7, .result = 0x202c, .state = 0x4000, .argument_list = 0x4100};
 static uint32_t vm_result;  /* the VM value the staged code writes after an accepted commit */
 
 /* One Run, as value_invoke_owned orders the callbacks. revert_at: 0 none,
@@ -149,6 +149,16 @@ int main(void) {
     other.stack_id = 8;
     assert(captured.owns_frame(captured.context, &cpu, captured.epoch, &frame));
     assert(!captured.owns_frame(captured.context, &cpu, captured.epoch, &other));
+    other = frame;
+    other.argument_list = 0x4200;
+    assert(!captured.owns_frame(captured.context, &cpu, captured.epoch, &other));
+    CPU other_cpu = {0};
+    assert(!captured.owns_frame(captured.context, &other_cpu, captured.epoch, &frame));
+    captured.finished(captured.context, captured.epoch);
+
+    other = frame;
+    other.registry = 0x3400;
+    assert(!captured.owns_frame(captured.context, &cpu, captured.epoch, &other));
     captured.finished(captured.context, captured.epoch);
 
     /* A revert waits until the committed result is written. */
@@ -180,7 +190,7 @@ int main(void) {
     close(fd);
     unlink(path);
     regex_t pattern;
-    assert(!regcomp(&pattern, "^IOS_PAPYRUSUTIL schema=1 published=12 calls=6 refused_stale=4 commits=2 "
+    assert(!regcomp(&pattern, "^IOS_PAPYRUSUTIL schema=1 published=12 calls=6 refused_stale=5 commits=2 "
                     "discards=3 errors=3\n$", REG_EXTENDED));
     assert(!regexec(&pattern, line, 0, NULL, 0));
     regfree(&pattern);

@@ -279,7 +279,7 @@ static bool invoke_int0(void *context, uint64_t epoch, uint32_t function_id, uin
 
 typedef struct {
     unsigned calls, commits, discards;
-    bool bad_type, invalidate, result_live, reject_commit, other_text;
+    bool bad_type, invalidate, result_live, reject_commit, other_text, replace_arguments;
 } ValueProvider;
 
 static bool read_values(void *context, CPU *owner, uint32_t address, void *out, size_t length) {
@@ -330,6 +330,7 @@ static bool invoke_values(void *context, uint64_t epoch, uint32_t method, const 
         *out = (ClassicValue){.type = 5, .bits = provider->bad_type ? 2u : 1u};
     }
     if (provider->invalidate) provider->result_live = false;
+    if (provider->replace_arguments) M32(STATE) = LIST + 4;
     return true;
 }
 
@@ -652,8 +653,12 @@ static void test_values(bool fail_registration) {
     argument(1, 5, UINT32_C(0x91827300));
     assert(run_values(run, objects[2], REGISTRY, RESULT) && provider.calls == 4);
     assert(M32(RESULT) == 5 && M32(RESULT + 4) == 1 && result_deletions == 3);
+    provider.replace_arguments = true;
+    assert(!run_values(run, objects[2], REGISTRY, RESULT) && provider.calls == 5 && result_deletions == 3);
+    assert(M32(RESULT) == 5 && M32(RESULT + 4) == 1);
+    M32(STATE) = LIST;
     assert(skse_classic_values_retire(FIXTURE_EPOCH));
-    assert(!run_values(run, objects[2], REGISTRY, RESULT) && provider.calls == 4);
+    assert(!run_values(run, objects[2], REGISTRY, RESULT) && provider.calls == 5);
 }
 
 static void test_probe(const char *mode) {

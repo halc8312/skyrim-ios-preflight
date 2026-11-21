@@ -32,6 +32,12 @@ typedef struct {
     uint32_t object, sp, base, registry, stack_id, result, state, argument_list;
 } ClassicValueFrame;
 
+static inline bool classic_value_same_frame(const ClassicValueFrame *a, const ClassicValueFrame *b) {
+    return a->object == b->object && a->sp == b->sp && a->base == b->base && a->registry == b->registry &&
+           a->stack_id == b->stack_id && a->result == b->result && a->state == b->state &&
+           a->argument_list == b->argument_list;
+}
+
 typedef struct {
     uint64_t epoch;
     const ClassicValueFunction *functions;

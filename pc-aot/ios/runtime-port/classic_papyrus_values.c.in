@@ -120,6 +120,11 @@ static bool value_read_frame(CPU *c, const ClassicValueFunction *fn, ClassicValu
     return request->owns_frame(request->context, c, request->epoch, frame);
 }
 
+static bool value_recheck_frame(CPU *c, const ClassicValueFunction *fn, const ClassicValueFrame *frame) {
+    ClassicValueFrame current;
+    return value_read_frame(c, fn, &current) && classic_value_same_frame(frame, &current);
+}
+
 static bool value_read_arguments(CPU *c, const ClassicValueFunction *fn, const ClassicValueFrame *frame,
                                  ClassicValue arguments[CLASSIC_VALUES_ARGS],
                                  char strings[CLASSIC_VALUES_ARGS][CLASSIC_VALUES_STRING_BYTES]) {
@@ -169,7 +174,7 @@ static bool value_invoke_owned(CPU *c, const ClassicValueFunction *fn, const Cla
     bool accepted = completed && output.type == fn->result && !output.string &&
                     (output.type != CLASSIC_VALUES_BOOL || output.bits <= 1) &&
                     (!text || (end && !output.bits)) &&
-                    request->owns_frame(request->context, c, request->epoch, frame);
+                    value_recheck_frame(c, fn, frame);
     uint32_t interned = 0;
     if (accepted && text) {
         const uint32_t text_address = scratch + 8;
@@ -178,8 +183,7 @@ static bool value_invoke_owned(CPU *c, const ClassicValueFunction *fn, const Cla
         M32(scratch + 4) = 0;
         skse_member(c, STRING_SET, scratch + 4, 1, &text_address);
         interned = M32(scratch + 4);
-        accepted = interned > CLASSIC_VALUES_STRING_DATA_OFFSET &&
-                   request->owns_frame(request->context, c, request->epoch, frame);
+        accepted = interned > CLASSIC_VALUES_STRING_DATA_OFFSET && value_recheck_frame(c, fn, frame);
     }
     if (accepted && request->commit)
         accepted = request->commit(request->context, request->epoch, fn->id);

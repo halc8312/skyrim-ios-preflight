@@ -37,13 +37,9 @@ static struct {
     bool active, ticketed, committing;
     SkyrimVmScope scope;
     ClassicValueFrame frame;
+    const CPU *owner;
     uint64_t ticket;
 } call;
-
-static bool same_frame(const ClassicValueFrame *a, const ClassicValueFrame *b) {
-    return a->sp == b->sp && a->base == b->base && a->registry == b->registry && a->stack_id == b->stack_id
-        && a->result == b->result && a->state == b->state && a->object == b->object;
-}
 
 static bool still_current(void) {
     SkyrimVmScope now;
@@ -61,18 +57,20 @@ static bool copy_string(void *context, CPU *c, uint32_t address, char *text, siz
 }
 
 static bool owns_frame(void *context, CPU *c, uint64_t epoch, const ClassicValueFrame *frame) {
-    (void)context; (void)c; (void)epoch;
+    (void)context; (void)epoch;
+    if (!c || !frame) return false;
     if (!call.active) {
         /* The first check of a Run: the VM must be open, and this generation is the call's. */
-        if (!skyrim_vm_scope_current(&call.scope)) {
+        if (!skyrim_vm_scope_current(&call.scope) || call.scope.registry != frame->registry) {
             atomic_fetch_add_explicit(&refused_stale, 1, memory_order_relaxed);
             return false;
         }
         call.active = true;
         call.frame = *frame;
+        call.owner = c;
         return true;
     }
-    if (!same_frame(&call.frame, frame)) return false;
+    if (c != call.owner || !classic_value_same_frame(&call.frame, frame)) return false;
     if (still_current()) return true;
     atomic_fetch_add_explicit(&refused_stale, 1, memory_order_relaxed);
     return false;
