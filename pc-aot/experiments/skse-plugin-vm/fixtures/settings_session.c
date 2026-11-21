@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "classic_settings.h"
+#include "owned_storage.h"
 #include "mod_papyrus_inputs.h"
 #include <assert.h>
 #include <fcntl.h>
@@ -70,6 +71,33 @@ static uint32_t reopen_brightness(const SkseSettingsInputs *inputs) {
     skse_classic_settings_close(reader);
     assert(value.type == 3);
     return value.bits;
+}
+
+static void check_storage_records(const SkseSettingsInputs *inputs) {
+    static const SkseLoadedMod current[] = {
+        {(const uint8_t *)"Skyrim.esm", sizeof "Skyrim.esm" - 1, 0, SKSE_LOADED_CLASSIC},
+        {(const uint8_t *)"OwnedFixture.esp", sizeof "OwnedFixture.esp" - 1, 1, SKSE_LOADED_CLASSIC}
+    };
+    SkseClassicSettings *settings = open_settings(inputs);
+    SksePluginRecordSet *captured = NULL;
+    assert(skse_classic_storage_capture(settings, inputs->epoch + 1, current, 2, 4510, &captured) ==
+           SKSE_SETTINGS_ARGUMENT && !captured);
+    SkseSettingsStatus status = skse_classic_storage_capture(settings, inputs->epoch, current, 2, 4510, &captured);
+    if (status) fprintf(stderr, "storage capture status=%u\n", status);
+    assert(status == SKSE_SETTINGS_OK);
+    owned_storage_expect(captured, false, false);
+    SksePluginRecordSet *seeded = owned_storage_add_integer(captured);
+    skse_plugin_record_set_close(captured);
+    captured = NULL;
+    skse_classic_settings_close(settings);
+
+    settings = open_settings(inputs);
+    assert(skse_classic_storage_restore(settings, inputs->epoch, current, 2, 4520, seeded, NULL) == SKSE_SETTINGS_OK);
+    assert(skse_classic_storage_capture(settings, inputs->epoch, current, 2, 4530, &captured) == SKSE_SETTINGS_OK);
+    owned_storage_expect(captured, false, true);
+    skse_plugin_record_set_close(captured);
+    skse_plugin_record_set_close(seeded);
+    skse_classic_settings_close(settings);
 }
 
 #ifdef SKYRIM_TEST_CLASSIC_VALUES_ENGINE
@@ -287,6 +315,8 @@ int main(int argc, char **argv) {
         save_check(inputs);
     } else if (!strcmp(argv[6], "read")) {
         read_check(inputs);
+    } else if (!strcmp(argv[6], "records")) {
+        check_storage_records(&inputs);
     } else if (!strcmp(argv[6], "view")) {
         selected_view_check(inputs);
     } else {

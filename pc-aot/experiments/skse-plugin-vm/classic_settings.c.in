@@ -4,6 +4,7 @@
 #include "classic_settings.h"
 #include "classic_pex.h"
 #include "probe_asset_file.h"
+#include "../../ios/runtime-port/classic_mod_layout.h"
 #include "../skse-profile-json/profile_overlay.h"
 
 #include <fcntl.h>
@@ -366,4 +367,101 @@ SkseSettingsStatus skse_classic_settings_commit(SkseClassicSettings *settings, u
 void skse_classic_settings_discard(SkseClassicSettings *settings, uint64_t epoch, uint64_t ticket) {
     if (settings && settings->epoch == epoch && ticket && settings->pending == ticket)
         settings_retire(settings, SKSE_SETTINGS_RETIRED);
+}
+
+enum { ClassicStorageUid = 0x424510a2, ClassicStorageWork = 250000 };
+
+static SkseSettingsStatus storage_views(SkseClassicSettings *settings, uint64_t epoch,
+    const SkseLoadedMod *mods, size_t count, uint8_t singleton[4], SkseX86ReadView views[4]) {
+    enum { ViewBase = 0x14000000, EntryStart = 0xb00, EntrySize = 0x428 };
+    if (!settings || settings->epoch != epoch || settings->pending || !mods ||
+        !count || count > SKSE_CLASSIC_MOD_LIMIT) return SKSE_SETTINGS_ARGUMENT;
+    if (settings->retired) return SKSE_SETTINGS_RETIRED;
+    const SksePluginSession *session = &settings->session;
+    if (session->result.status != SKSE_TRIAL_ENGINE_HOOKS_OBSERVED ||
+        !session->vm.services.serialization || session->serial.uid != ClassicStorageUid)
+        return SKSE_SETTINGS_STARTUP;
+    for (size_t i = 0; i < count; ++i) {
+        const SkseLoadedMod *mod = &mods[i];
+        if (mod->kind != SKSE_LOADED_CLASSIC || mod->index != i ||
+            !mod->name || !mod->length || mod->length > SKSE_CLASSIC_MOD_NAME_LIMIT ||
+            memchr(mod->name, '\0', mod->length)) return SKSE_SETTINGS_ARGUMENT;
+    }
+
+    const size_t size = EntryStart + EntrySize * count;
+    uint8_t *catalog = calloc(1, size);
+    if (!catalog) return SKSE_SETTINGS_MEMORY;
+    write_word(singleton, ViewBase);
+    write_word(catalog + CLASSIC_LOADED_COUNT, (uint32_t)count);
+    /* DataHandler embeds the tList head. The remaining nodes occupy the
+     * first 8 bytes of each entry, before the copied ModInfo names. */
+    for (size_t i = 0; i < count; ++i) {
+        const uint32_t offset = EntryStart + (uint32_t)i * EntrySize;
+        const uint32_t object = ViewBase + offset + 8;
+        uint8_t *entry = catalog + offset;
+        uint8_t *node = i ? entry : catalog + CLASSIC_MOD_LIST;
+        write_word(node, object);
+        if (i + 1 < count) write_word(node + 4, ViewBase + offset + EntrySize);
+        write_word(catalog + CLASSIC_LOADED_MODS + 4 * i, object);
+        memcpy(entry + 8 + CLASSIC_FILE_NAME, mods[i].name, mods[i].length);
+        entry[8 + CLASSIC_FILE_INDEX] = (uint8_t)i;
+    }
+    views[0] = settings->bootstrap_views[0];
+    views[1] = settings->bootstrap_views[1];
+    views[2] = (SkseX86ReadView){CLASSIC_DATA_HANDLER, singleton, 4};
+    views[3] = (SkseX86ReadView){ViewBase, catalog, size};
+    return SKSE_SETTINGS_OK;
+}
+
+static SkseSessionResult restore_storage(SksePluginSession *session, const SksePluginRecordSet *input,
+                                         const SkseSerialResolvers *resolvers, uint32_t uptime_ms) {
+    if (!session->serial.callbacks[SKSE_SERIAL_REVERT - SKSE_SERIAL_REVERT] ||
+        !session->serial.callbacks[SKSE_SERIAL_LOAD - SKSE_SERIAL_REVERT]) return SKSE_SESSION_UNAVAILABLE;
+    if (!skse_x86_records_copy(&session->serial.records, &input->records)) return SKSE_SESSION_NO_MEMORY;
+    SkseSessionResult result = session_serialization(session, SKSE_SERIAL_REVERT, ClassicStorageWork, uptime_ms);
+    if (result == SKSE_SESSION_OK) {
+        session->serial.resolvers = resolvers;
+        result = session_serialization(session, SKSE_SERIAL_LOAD, ClassicStorageWork, uptime_ms);
+        session->serial.resolvers = NULL;
+    }
+    skse_x86_records_close(&session->serial.records);
+    return result;
+}
+
+static SkseSettingsStatus storage_run(SkseClassicSettings *settings, uint64_t epoch,
+    const SkseLoadedMod *mods, size_t count, uint32_t uptime_ms,
+    const SksePluginRecordSet *input, const SkseSerialResolvers *resolvers, SksePluginRecordSet **out) {
+    uint8_t singleton[4];
+    SkseX86ReadView views[4];
+    SkseSettingsStatus status = storage_views(settings, epoch, mods, count, singleton, views);
+    if (status != SKSE_SETTINGS_OK) return status;
+
+    SksePluginSession *session = &settings->session;
+    SkseX86Services *services = &session->vm.services;
+    const SkseX86ReadView *old_views = services->read_views;
+    const size_t old_count = services->read_view_count;
+    services->read_views = views;
+    services->read_view_count = sizeof views / sizeof views[0];
+    SkseSessionResult result = SKSE_SESSION_UNAVAILABLE;
+    if (input) result = restore_storage(session, input, resolvers, uptime_ms);
+    else if (session->serial.callbacks[SKSE_SERIAL_SAVE - SKSE_SERIAL_REVERT])
+        result = collect_session_records(session, ClassicStorageWork, uptime_ms, out);
+    services->read_views = old_views;
+    services->read_view_count = old_count;
+    free((void *)views[3].bytes);
+    if (result == SKSE_SESSION_NO_MEMORY) return SKSE_SETTINGS_MEMORY;
+    return result == SKSE_SESSION_OK ? SKSE_SETTINGS_OK : settings_retire(settings, SKSE_SETTINGS_EXECUTION);
+}
+
+SkseSettingsStatus skse_classic_storage_capture(SkseClassicSettings *settings, uint64_t epoch,
+    const SkseLoadedMod *mods, size_t count, uint32_t uptime_ms, SksePluginRecordSet **out) {
+    if (!out || *out) return SKSE_SETTINGS_ARGUMENT;
+    return storage_run(settings, epoch, mods, count, uptime_ms, NULL, NULL, out);
+}
+
+SkseSettingsStatus skse_classic_storage_restore(SkseClassicSettings *settings, uint64_t epoch,
+    const SkseLoadedMod *mods, size_t count, uint32_t uptime_ms,
+    const SksePluginRecordSet *input, const SkseSerialResolvers *resolvers) {
+    if (skse_plugin_record_set_uid(input) != ClassicStorageUid) return SKSE_SETTINGS_ARGUMENT;
+    return storage_run(settings, epoch, mods, count, uptime_ms, input, resolvers, NULL);
 }

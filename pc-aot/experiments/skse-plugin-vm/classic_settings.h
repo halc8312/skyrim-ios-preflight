@@ -2,6 +2,8 @@
 #ifndef SKYRIM_CLASSIC_SETTINGS_H
 #define SKYRIM_CLASSIC_SETTINGS_H
 #include "classic_scalar.h"
+#include "plugin_trial.h"
+#include "../skse-cosave/mod_history.h"
 
 typedef struct SkseClassicSettings SkseClassicSettings;
 
@@ -54,4 +56,14 @@ SkseSettingsStatus skse_classic_settings_invoke(SkseClassicSettings *, uint64_t 
     SkseX86Result *);
 SkseSettingsStatus skse_classic_settings_commit(SkseClassicSettings *, uint64_t epoch, uint64_t ticket);
 void skse_classic_settings_discard(SkseClassicSettings *, uint64_t epoch, uint64_t ticket);
+
+/* Exact PapyrusUtil 3.3 record callbacks in the same isolated session as its
+ * natives. The owner serializes calls and supplies the current, frozen
+ * Classic catalog for the verified game save or load. The callback sees
+ * independent copies of the names and indices. */
+SkseSettingsStatus skse_classic_storage_capture(SkseClassicSettings *, uint64_t epoch,
+    const SkseLoadedMod *, size_t count, uint32_t uptime_ms, SksePluginRecordSet **out);
+SkseSettingsStatus skse_classic_storage_restore(SkseClassicSettings *, uint64_t epoch,
+    const SkseLoadedMod *, size_t count, uint32_t uptime_ms,
+    const SksePluginRecordSet *, const SkseSerialResolvers *);
 #endif

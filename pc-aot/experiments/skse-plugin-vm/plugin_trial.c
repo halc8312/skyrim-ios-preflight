@@ -1281,11 +1281,8 @@ static SkseSessionResult session_serialization(SksePluginSession *session, SkseS
     return SKSE_SESSION_OK;
 }
 
-SkseSessionResult skse_plugin_session_save(SksePluginSession *session, uint32_t work_limit,
-                                          uint32_t uptime_ms, SksePluginRecordSet **output) {
-    if (!output || *output) return SKSE_SESSION_ARGUMENT;
-    SkseSessionResult ready = serialization_ready(session, SKSE_SERIAL_SAVE, work_limit);
-    if (ready != SKSE_SESSION_OK) return ready;
+static SkseSessionResult collect_session_records(SksePluginSession *session, uint32_t work_limit,
+                                                uint32_t uptime_ms, SksePluginRecordSet **output) {
     SksePluginRecordSet *saved = calloc(1, sizeof *saved);
     if (!saved) return SKSE_SESSION_NO_MEMORY;
 
@@ -1301,6 +1298,13 @@ SkseSessionResult skse_plugin_session_save(SksePluginSession *session, uint32_t 
     session->result.serialization_records = skse_x86_records_count(&saved->records);
     *output = saved;
     return SKSE_SESSION_OK;
+}
+
+SkseSessionResult skse_plugin_session_save(SksePluginSession *session, uint32_t work_limit,
+                                          uint32_t uptime_ms, SksePluginRecordSet **output) {
+    if (!output || *output) return SKSE_SESSION_ARGUMENT;
+    SkseSessionResult ready = serialization_ready(session, SKSE_SERIAL_SAVE, work_limit);
+    return ready == SKSE_SESSION_OK ? collect_session_records(session, work_limit, uptime_ms, output) : ready;
 }
 
 SkseSessionResult skse_plugin_session_revert(SksePluginSession *session, uint32_t work_limit,
