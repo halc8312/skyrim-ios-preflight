@@ -56,6 +56,10 @@ typedef struct {
     uint64_t keyword_world;
     uint32_t keyword_id;
 } SkyrimPapyrusUtilSettings;
+enum SkyrimLanternDiagnostic {
+    SKYRIM_LANTERN_ASSETS, SKYRIM_LANTERN_CATALOG, SKYRIM_LANTERN_GET, SKYRIM_LANTERN_SET
+};
+void skyrim_papyrusutil_report_lantern(enum SkyrimLanternDiagnostic, bool accepted);
 void skyrim_papyrusutil_settings_backend(SkyrimPapyrusUtilSettings *, SkyrimPapyrusUtilBackend *out);
 bool skyrim_papyrusutil_needs_initial_catalog(void);
 bool skyrim_papyrusutil_initial_catalog(const SkyrimVmScope *, const SkseLoadedMod *, size_t count);

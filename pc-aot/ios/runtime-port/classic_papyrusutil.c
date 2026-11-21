@@ -3,6 +3,7 @@
 #include "classic_papyrusutil.h"
 #include "classic_vm_epoch.h"
 
+#include <errno.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -32,6 +33,15 @@ static SkyrimPapyrusUtilBackend backend;
 static atomic_ullong published, calls, refused_stale, commits, discards, errors;
 #ifdef SKYRIM_CLASSIC_SETTINGS_BACKEND
 static uint64_t provider_epoch;
+static atomic_uint lantern_reports;
+
+void skyrim_papyrusutil_report_lantern(enum SkyrimLanternDiagnostic phase, bool accepted) {
+    const unsigned bit = 1u << ((unsigned)phase * 2u + (unsigned)accepted);
+    if (atomic_fetch_or_explicit(&lantern_reports, bit, memory_order_relaxed) & bit) return;
+    const int saved_errno = errno;
+    fprintf(stderr, "IOS_CLASSIC_LANTERN schema=1 phase=%u accepted=%u\n", (unsigned)phase, (unsigned)accepted);
+    errno = saved_errno;
+}
 #endif
 
 /* One call at a time: the staged Run holds its busy flag for the whole call,
@@ -43,6 +53,9 @@ static struct {
     ClassicValueFrame frame;
     const CPU *owner;
     uint64_t ticket;
+#ifdef SKYRIM_CLASSIC_SETTINGS_BACKEND
+    enum SkyrimLanternDiagnostic lantern;
+#endif
 } call;
 
 static bool still_current(void) {
@@ -103,7 +116,7 @@ static bool invoke(void *context, uint64_t epoch, uint32_t function, const Class
 }
 
 static bool commit(void *context, uint64_t epoch, uint32_t function) {
-    (void)context; (void)epoch; (void)function;
+    (void)context; (void)epoch;
     if (!call.active || !call.ticketed) return false;
     if (!skyrim_vm_commit_begin(&call.scope)) {
         /* Reverted since the call began: write neither the result nor the file. */
@@ -118,6 +131,12 @@ static bool commit(void *context, uint64_t epoch, uint32_t function) {
     call.ticketed = false;
     call.committing = true;  /* held until the result is written (finished) */
     atomic_fetch_add_explicit(&commits, 1, memory_order_relaxed);
+#ifdef SKYRIM_CLASSIC_SETTINGS_BACKEND
+    if (function == STORAGE_GET || function == STORAGE_SET)
+        call.lantern = function == STORAGE_GET ? SKYRIM_LANTERN_GET : SKYRIM_LANTERN_SET;
+#else
+    (void)function;
+#endif
     return true;
 }
 
@@ -133,6 +152,9 @@ static void finished(void *context, uint64_t epoch) {
     (void)context; (void)epoch;
     if (call.ticketed) discard(NULL, 0);  /* a path that never reached commit or discard */
     if (call.committing) skyrim_vm_commit_end();
+#ifdef SKYRIM_CLASSIC_SETTINGS_BACKEND
+    if (call.lantern) skyrim_papyrusutil_report_lantern(call.lantern, true);
+#endif
     memset(&call, 0, sizeof call);
 }
 
@@ -352,7 +374,9 @@ static bool bind_initial_catalog(void *context) {
 bool skyrim_papyrusutil_initial_catalog(const SkyrimVmScope *scope, const SkseLoadedMod *mods, size_t count) {
     if (!scope || scope->epoch != 1 || !skyrim_papyrusutil_needs_initial_catalog()) return false;
     StorageCapture capture = {*scope, mods, count, NULL};
-    return skse_classic_values_with_provider(provider_epoch, scope->registry, bind_initial_catalog, &capture);
+    const bool bound = skse_classic_values_with_provider(provider_epoch, scope->registry, bind_initial_catalog, &capture);
+    skyrim_papyrusutil_report_lantern(SKYRIM_LANTERN_CATALOG, bound);
+    return bound;
 }
 
 static bool storage_uptime(uint32_t *out) {

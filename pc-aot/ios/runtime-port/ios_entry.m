@@ -141,8 +141,10 @@ static void publish_papyrusutil(void) {
     papyrusutil_scope = (SkyrimPapyrusUtilSettings){
         .settings = settings, .epoch = inputs.epoch, .uptime_ms = inputs.uptime_ms, .game_fd = -1
     };
-    if ((pc_guest_mod_hooks_selected() & PC_GUEST_MOD_HOOK_FRESH_LOAD) &&
-        wearable_profile_assets(&selected)) {
+    const bool lantern_assets = (pc_guest_mod_hooks_selected() & PC_GUEST_MOD_HOOK_FRESH_LOAD) &&
+        wearable_profile_assets(&selected);
+    if (selected.wearable_plugin) skyrim_papyrusutil_report_lantern(SKYRIM_LANTERN_ASSETS, lantern_assets);
+    if (lantern_assets) {
         papyrusutil_scope.storage_pex = selected.storage_pex;
         papyrusutil_scope.storage_pex_size = selected.storage_pex_size;
         papyrusutil_scope.game_fd = selected.game_fd;
