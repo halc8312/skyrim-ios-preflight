@@ -3,16 +3,11 @@
 #include "classic_mod_layout.h"
 #include <stdatomic.h>
 #include <stdio.h>
+#include <string.h>
 
 static int skse_classic_file_property(CPU *cpu, unsigned op, uint32_t file,
         uint32_t master_index, uint32_t result) {
     switch (op) {
-    case S_MOD_NAME: {
-        const char *name = str(file + CLASSIC_FILE_NAME);
-        if (!memchr(name, 0, CLASSIC_FILE_NAME_BYTES)) return 0;
-        vm_string(cpu, result, name);
-        return 1;
-    }
     case S_MOD_AUTHOR:
     case S_MOD_DESCRIPTION: {
         unsigned field = op == S_MOD_AUTHOR ? CLASSIC_FILE_AUTHOR : CLASSIC_FILE_DESCRIPTION;
@@ -38,11 +33,27 @@ static int skse_classic_file_property(CPU *cpu, unsigned op, uint32_t file,
     }
 }
 
+/* The selected TESFile name belongs to DataHandler. Copy the fixed-size field
+ * before string interning, which calls back into the guest VM. */
+static int skse_classic_copy_mod_name(CPU *cpu, uint32_t handler, uint32_t node,
+                                      uint32_t file, uint32_t result) {
+    char name[CLASSIC_FILE_NAME_BYTES];
+    memcpy(name, str(file + CLASSIC_FILE_NAME), sizeof name);
+    if (!memchr(name, 0, sizeof name) || M32(CLASSIC_DATA_HANDLER) != handler || M32(node) != file)
+        return 0;
+    vm_string(cpu, result, name);
+    return 1;
+}
+
 /* Called on Papyrus queries only, after the dispatcher has initialized the
  * typed result to zero. No per-frame work and no copy of the game registry. */
 static int skse_classic_read_mod_query(CPU *cpu, unsigned op, const uint32_t *args, uint32_t result) {
+    enum { FIRST_MAPPED = 0x10000 };
+    /* SKSE returns a null BSFixedString for out-of-range GetModName before
+     * touching DataHandler. The dispatcher has already set String+null. */
+    if (op == S_MOD_NAME && args[0] > UINT8_MAX) return 1;
     uint32_t handler = M32(CLASSIC_DATA_HANDLER);
-    if (!handler || handler > UINT32_MAX - CLASSIC_LOADED_COUNT - 3u) return 0;
+    if (handler < FIRST_MAPPED || (handler & 3u) || handler > UINT32_MAX - CLASSIC_LOADED_COUNT - 3u) return 0;
     if (op == S_MOD_COUNT) {
         M32(result + 4) = M32(handler + CLASSIC_LOADED_COUNT);
         return 1;
@@ -54,10 +65,10 @@ static int skse_classic_read_mod_query(CPU *cpu, unsigned op, const uint32_t *ar
     uint32_t node = handler + CLASSIC_MOD_LIST;
     uint32_t slow = node;
     for (uint32_t position = 0; node; ++position) {
-        if (node > UINT32_MAX - 7u) return 0;
+        if (node < FIRST_MAPPED || (node & 3u) || node > UINT32_MAX - 7u) return 0;
         uint32_t file = M32(node);
         if (!file) return 1;  /* Classic tList's terminating empty item. */
-        if (file > UINT32_MAX - CLASSIC_FILE_DESCRIPTION - 3u) return 0;
+        if (file < FIRST_MAPPED || (file & 3u) || file > UINT32_MAX - CLASSIC_FILE_DESCRIPTION - 3u) return 0;
         if (by_name) {
             const char *name = str(file + CLASSIC_FILE_NAME);
             if (!memchr(name, 0, CLASSIC_FILE_NAME_BYTES)) return 0;
@@ -66,6 +77,9 @@ static int skse_classic_read_mod_query(CPU *cpu, unsigned op, const uint32_t *ar
                 return 1;
             }
         } else if (position == args[0]) {
+            /* Classic GetModName indexes modInfoList, including entries that
+             * have no assigned active load index. */
+            if (op == S_MOD_NAME) return skse_classic_copy_mod_name(cpu, handler, node, file, result);
             return skse_classic_file_property(cpu, op, file, args[1], result);
         }
         node = M32(node + 4);
