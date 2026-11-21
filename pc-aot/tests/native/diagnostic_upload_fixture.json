@@ -1,6 +1,7 @@
 {
   "allowed": [
     "IOS_OVERLAY_LAYOUT schema=1 view_pt=956x440 safe=0,62,21,62 top_controls_max_y=77 scale=300",
+    "IOS_MOD_FEATURE id=0 requested=1 available=1 enabled=0 reason=1",
     "IOS_CLASSIC_SKYUI requested=1 enabled=1",
     "IOS_CLASSIC_SKYUI requested=1 enabled=0",
     "IOS_CLASSIC_SKYUI requested=0 enabled=0",
@@ -59,6 +60,9 @@
   "excluded": [
     "IOS_OVERLAY_LAYOUT schema=1 view_pt=956x440 safe=0,62,21,62 top_controls_max_y=-1 scale=300",
     "IOS_OVERLAY_LAYOUT schema=1 view_pt=956x440 safe=0,62,21,62 top_controls_max_y=77 scale=300 name=Personal",
+    "IOS_MOD_FEATURE id=0 requested=0 available=1 enabled=0 reason=1",
+    "IOS_MOD_FEATURE id=0 requested=1 available=1 enabled=0 reason=4",
+    "IOS_MOD_FEATURE id=0 requested=1 available=1 enabled=0 reason=1 name=Personal",
     "IOS_CLASSIC_SKYUI requested=0 enabled=1",
     "IOS_CLASSIC_SKYUI requested=1 enabled=1 profile=Personal",
     "IOS_CLASSIC_SKYUI_INPUTS skyui=2 skse_pex=0 support=3",

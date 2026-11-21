@@ -27,6 +27,7 @@
 #include "PcGuestSkseTrial.h"
 #include "inspect.h"
 #include "mod_requirements.h"
+#include "mod_features.h"
 #endif
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
 #include "mod_dll_probe.h"
@@ -239,7 +240,7 @@ static BOOL AnyOn(NSArray *rows) {
 
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 /* Read-only: the original Data folder, then the profile's enabled packages in order. */
-static SkyrimSkyUIRequirements SkyUIRequirementsFor(NSArray<NSString *> *packageIds) {
+static NSArray<NSString *> *DataRootsFor(NSArray<NSString *> *packageIds) {
     NSMutableArray<NSString *> *roots = [NSMutableArray array];
     if (originalGameDirectory.length) {
         char data[4096];
@@ -250,6 +251,11 @@ static SkyrimSkyUIRequirements SkyUIRequirementsFor(NSArray<NSString *> *package
         NSString *dir = PackageDir(pid);
         if (dir) [roots addObject:[dir stringByAppendingPathComponent:@"Data"]];
     }
+    return roots;
+}
+
+static SkyrimSkyUIRequirements SkyUIRequirementsFor(NSArray<NSString *> *packageIds) {
+    NSArray<NSString *> *roots = DataRootsFor(packageIds);
     const char **paths = calloc(roots.count + 1, sizeof *paths);
     SkyrimSkyUIRequirements result = {.status = SKYRIM_SKYUI_REQ_UNREADABLE};
     if (paths) {
@@ -258,6 +264,17 @@ static SkyrimSkyUIRequirements SkyUIRequirementsFor(NSArray<NSString *> *package
         free(paths);
     }
     return result;
+}
+
+static SkyrimFeatureScan FeatureScanFor(NSArray<NSString *> *packageIds) {
+    NSArray<NSString *> *roots = DataRootsFor(packageIds);
+    const char **paths = calloc(roots.count + 1, sizeof *paths);
+    SkyrimFeatureScan scan;
+    if (!paths) { memset(&scan, 0, sizeof scan); return scan; }
+    for (NSUInteger i = 0; i < roots.count; ++i) paths[i] = roots[i].fileSystemRepresentation;
+    if (skyrim_features_scan(paths, roots.count, &scan)) memset(&scan, 0, sizeof scan);
+    free(paths);
+    return scan;
 }
 
 /* Text for a missing or unusable requirement, nil when SkyUI is absent or complete. */
@@ -284,6 +301,33 @@ static NSString *SkyUIRequirementText(SkyrimSkyUIRequirements r) {
     }
 }
 
+/* Chosen in the profile (profile[@"features"][key]); frozen at launch below. */
+static BOOL FeatureSelected(NSDictionary *profile, unsigned feature) {
+    NSDictionary *chosen = profile[@"features"];
+    return [chosen isKindOfClass:NSDictionary.class] && [chosen[@(skyrim_feature_key(feature) ?: "")] isEqual:@YES];
+}
+static uint32_t launchFeatureMask; /* set once on the startup thread before the guest runs */
+int skyrim_mods_feature_enabled(unsigned feature) {
+    return feature < SKYRIM_FEATURE_COUNT && (__atomic_load_n(&launchFeatureMask, __ATOMIC_RELAXED) >> feature & 1u);
+}
+
+/* Reasons: 0 enabled, 1 no implementation yet, 2 MOD not in the active packages, 3 safe mode or plugin list failure. */
+static void FreezeFeatures(NSDictionary *profile) {
+    NSMutableDictionary *enabledKeys = [NSMutableDictionary dictionary];
+    SkyrimFeatureScan scan = FeatureScanFor(launchWithoutMods ? @[] : launchPackageIds);
+    uint32_t mask = 0;
+    for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
+        if (!FeatureSelected(profile, f)) continue;
+        unsigned reason = launchWithoutMods || launchPluginListFailed ? 3 : !skyrim_feature_implemented(f) ? 1
+                        : !scan.features[f].providers ? 2 : 0;
+        if (!reason) { mask |= 1u << f; enabledKeys[@(skyrim_feature_key(f))] = @YES; }
+        fprintf(stderr, "IOS_MOD_FEATURE id=%u requested=1 available=%u enabled=%u reason=%u\n", f,
+                scan.features[f].providers ? 1u : 0u, reason ? 0u : 1u, reason);
+    }
+    if (enabledKeys.count) launchSetup[@"features"] = enabledKeys;
+    __atomic_store_n(&launchFeatureMask, mask, __ATOMIC_RELAXED);
+}
+
 static BOOL SkyUITrialSelected(NSDictionary *profile) {
     return [profile[@"skyuiTrial"] isEqual:@YES];
 }
@@ -293,6 +337,7 @@ BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed) {
     BOOL enabled = requested && !launchWithoutMods && !launchPluginListFailed && skyui_listed;
     if (pc_guest_select_classic_skse(enabled) != 0) return NO;
     if (enabled) launchSetup[@"skyuiTrial"] = @YES;
+    FreezeFeatures(RunningProfile());
     if (requested && !enabled && !launchNotice) {
         launchNotice = launchPluginListFailed
             ? T(@"SkyUI is off for this launch because the active plugin list could not be verified.",
@@ -320,6 +365,7 @@ static void RestoreLastGoodSetup(NSMutableDictionary *profile) {
     profile[@"plugins"] = [lastGood[@"plugins"] mutableCopy];
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     profile[@"skyuiTrial"] = SkyUITrialSelected(lastGood) ? @YES : nil;
+    profile[@"features"] = [lastGood[@"features"] isKindOfClass:NSDictionary.class] ? [lastGood[@"features"] mutableCopy] : nil;
 #endif
 }
 
@@ -1777,6 +1823,92 @@ static NSArray<NSString *> *ReportLines(NSDictionary *package) {
     return bad;
 }
 
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+/* First-wave MOD features found in the selected profile. Off by default; each
+ * switch applies at the next launch. Detection is by file name only. */
+static NSString *FeatureName(unsigned feature) {
+    switch (feature) {
+    case SKYRIM_FEATURE_FUZ: return T(@"Fuz Ro D-oh (subtitles and lip sync for unvoiced lines)", @"Fuz Ro D-oh（無音声の台詞に字幕と口の動き）");
+    case SKYRIM_FEATURE_PAPYRUSUTIL: return T(@"PapyrusUtil (settings and saved values)", @"PapyrusUtil（設定と保存値）");
+    case SKYRIM_FEATURE_PRECACHE_KILLER: return @"ShowRaceMenu Precache Killer";
+    case SKYRIM_FEATURE_RACEMENU: return @"RaceMenu";
+    case SKYRIM_FEATURE_NIOVERRIDE: return @"NetImmerse Override";
+    case SKYRIM_FEATURE_ECE: return @"Enhanced Character Edit";
+    case SKYRIM_FEATURE_ENHANCED_CAMERA: return @"Enhanced Camera";
+    case SKYRIM_FEATURE_SAFETY_LOAD: return @"Safety Load";
+    case SKYRIM_FEATURE_HDT_PHYSICS: return @"HDT Physics Extensions";
+    case SKYRIM_FEATURE_HDT_HIGHHEELS: return @"HDT High Heels";
+    }
+    return @"";
+}
+
+@interface SKFeatures : UITableViewController
+@property(nonatomic) SkyrimFeatureScan scan;
+@property(nonatomic, strong) NSArray<NSNumber *> *found;
+@end
+@implementation SKFeatures
+- (void)viewDidLoad {
+    [super viewDidLoad]; self.title = T(@"MOD features", @"MODの機能");
+    [self reload];
+}
+- (void)reload {
+    EnsureState();
+    self.scan = FeatureScanFor(EnabledPackageIds(SelectedProfile()));
+    NSMutableArray *found = [NSMutableArray array];
+    for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) if (self.scan.features[f].providers) [found addObject:@(f)];
+    self.found = found;
+    [self.tableView reloadData];
+}
+- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { (void)t; (void)s; return self.found.count ? (NSInteger)self.found.count : 1; }
+- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
+    (void)t; (void)s;
+    return T(@"Found by file name only; versions are not checked. Switches start off and apply at the next full restart. Enable the MOD's own plugin and files in this profile first.",
+             @"ファイル名だけで検出しており、版は確認していません。スイッチは初期状態ではオフで、次回の完全な再起動から反映します。先にこのプロファイルでMODのプラグインとファイルを有効にしてください。");
+}
+- (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)p {
+    (void)t;
+    UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    c.textLabel.numberOfLines = 0; c.detailTextLabel.numberOfLines = 0; c.selectionStyle = UITableViewCellSelectionStyleNone;
+    if (!self.found.count) {
+        c.textLabel.text = T(@"No supported MOD features found in this profile", @"このプロファイルに対応する機能のMODは見つかりません");
+        return c;
+    }
+    unsigned f = self.found[p.row].unsignedIntValue;
+    c.textLabel.text = FeatureName(f);
+    BOOL implemented = skyrim_feature_implemented(f) != 0;
+    NSString *status = implemented ? T(@"Found by file name (version not checked).", @"ファイル名で検出しました（版は未確認）。")
+                                   : T(@"Found. Not supported on iPhone yet.", @"検出しました。iPhoneではまだ対応していません。");
+    unsigned providers = self.scan.features[f].providers;
+    if (providers > 1)
+        status = [status stringByAppendingFormat:T(@" %u packages provide it; the later one in the list is used.", @" %u個のパッケージが含みます。一覧で後のものが使われます。"), providers];
+    c.detailTextLabel.text = status;
+    if (implemented) {
+        UISwitch *toggle = [UISwitch new]; toggle.on = FeatureSelected(SelectedProfile(), f); toggle.tag = f;
+        toggle.accessibilityLabel = FeatureName(f);
+        toggle.accessibilityIdentifier = [@"mod-feature-" stringByAppendingString:@(skyrim_feature_key(f))];
+        [toggle addTarget:self action:@selector(toggled:) forControlEvents:UIControlEventValueChanged];
+        c.accessoryView = toggle;
+    }
+    return c;
+}
+- (void)toggled:(UISwitch *)toggle {
+    NSMutableDictionary *profile = SelectedProfile();
+    NSString *key = @(skyrim_feature_key((unsigned)toggle.tag) ?: "");
+    NSDictionary *previous = [profile[@"features"] isKindOfClass:NSDictionary.class] ? profile[@"features"] : nil;
+    NSMutableDictionary *next = [previous mutableCopy] ?: [NSMutableDictionary dictionary];
+    if (toggle.on) next[key] = @YES; else [next removeObjectForKey:key];
+    profile[@"features"] = next.count ? next : nil;
+    if (!SaveState()) {
+        profile[@"features"] = previous;
+        toggle.on = !toggle.on;
+        skyrim_mobile_show_notice(T(@"Could not save the setting.", @"設定を保存できませんでした。"));
+        return;
+    }
+    skyrim_mobile_show_notice(T(@"Saved for the next launch.", @"次回起動から反映するよう保存しました。"));
+}
+@end
+#endif
+
 @interface SKModHub : UITableViewController <UIDocumentPickerDelegate>
 @property(nonatomic, strong) NSMutableArray<NSMutableDictionary *> *rows;   /* selected choices and available packages */
 @property(nonatomic, strong) NSDictionary<NSString *, NSDictionary *> *packages;
@@ -1787,7 +1919,7 @@ enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, 
 enum {
     HubOrderRow, HubConflictRow, HubSavesRow,
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
-    HubSkyUITrialRow,
+    HubSkyUITrialRow, HubFeaturesRow,
 #endif
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
     HubDllProbeRow,
@@ -1924,6 +2056,14 @@ enum {
             toggle.accessibilityIdentifier = @"mod-skyui-trial";
             [toggle addTarget:self action:@selector(skyuiTrialToggled:) forControlEvents:UIControlEventValueChanged];
             c.accessoryView = toggle; c.selectionStyle = UITableViewCellSelectionStyleNone;
+            break;
+        }
+#endif
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        if (p.row == HubFeaturesRow) {
+            c.textLabel.text = T(@"MOD features", @"MODの機能");
+            c.imageView.image = [UIImage systemImageNamed:@"slider.horizontal.3"];
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             break;
         }
 #endif
@@ -2124,6 +2264,10 @@ enum {
 #endif
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
         if (p.row == HubSkyUITrialRow) break;
+        if (p.row == HubFeaturesRow) {
+            [self.navigationController pushViewController:[[SKFeatures alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
+            break;
+        }
 #endif
         if (p.row == HubOrderRow) [self.navigationController pushViewController:skyrim_mobile_plugin_controller() animated:YES];
         else if (p.row == HubConflictRow) [self.navigationController pushViewController:[[SKConflicts alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];

@@ -21,6 +21,11 @@ NSString *skyrim_mods_prepare_game(NSString *game_directory);
  * MOD view. The caller releases the snapshots and descriptors. */
 int skyrim_mods_acquire_papyrus_inputs(SkyrimPapyrusInputs *inputs);
 #endif
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+/* 1 when the feature (a SkyrimFeature value) was chosen in the running profile
+ * and passed its launch checks. Fixed after startup; any thread. */
+int skyrim_mods_feature_enabled(unsigned feature);
+#endif
 /* Text for the overlay after startup (nil when nothing to say). */
 NSString *skyrim_mods_launch_notice(void);
 /* Plugin on/off and order for the running profile (array of {name, on}). */
