@@ -187,3 +187,19 @@ fresh=N record=N`, with six Boolean fields. A cached lookup or separate
 successful resource log can leave provenance unknown. First real-device
 observations are still needed. The witness leaves preset and game state
 untouched.
+
+The hosted lookup-only test runs the reviewed `f_5A5B70` prefix up to the
+lookup return. It runs the original `f_5A7570` selector for both nose names
+while the entry is retained, then takes the original decrement and cleanup
+branch. It compares the authored geometry bytes before and after. A last
+reference expires the receipt before storage reuse. A separate test keeps
+the cache reference and expires the observation at scope exit.
+
+With `SKYRIM_TEST_ECE_DEFAULT_DATA` set, the test hashes and reads the owner's
+default ECE female head TRI. It exercises the two actual morph ordinals and
+the vertex count in the authored runtime table, using the original game
+selector. The resource loader and backing runtime objects are hosted test
+doubles. This verifies the selector and lookup lifetime separately from
+the live FaceGen resource cache. Applying a slot still requires a live
+preflight that covers the current geometry and selected resources for all
+relevant head parts before the stock slider changes them.
