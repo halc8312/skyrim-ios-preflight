@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -112,8 +113,30 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
     def test_reviewed_effect_event_retains_target_through_native_dispatch(self):
         self.run_reviewed_fixture(
             stage_effect_event, "test_effect_event_lift.c",
-            "Classic effect events lend the target actor through synchronous native dispatch",
+            "Classic effect events lend the target and preserve effect identity and magnitude through native dispatch",
         )
+
+    def test_owned_esm_pins_script_effect_identity(self):
+        supplied = os.environ.get("SKYRIM_TEST_OWNED_HDT_EFFECT_ESM")
+        if not supplied:
+            self.skipTest("Set SKYRIM_TEST_OWNED_HDT_EFFECT_ESM to the unchanged HDT HighHeels beta 0.5 LE ESM")
+        esm = Path(supplied)
+        with esm.open("rb") as stream:
+            contents = stream.read(4096)
+        self.assertEqual(len(contents), 1934)
+        self.assertEqual(sha256(contents).hexdigest(),
+                         "7c7b6bb6ba4585e9f55a5b0459bb275a2f6d7f37542f3f12239f5b1c32c52c32")
+        # File-local high byte 1 selects the file itself, after its sole Skyrim master.
+        self.assertEqual(contents[56:73], b"MAST\x0b\0Skyrim.esm\0")
+        self.assertEqual(contents.count(b"MAST"), 1)
+        self.assertEqual(struct.unpack_from("<4sIII", contents, 200), (b"MGEF", 531, 0, 0x01000800))
+        self.assertEqual(contents[230:248], b"hdtHighHeelEffect\0")
+        self.assertEqual(struct.unpack_from("<HHHH", contents, 254), (5, 2, 1, 17))
+        self.assertEqual(contents[262:279], b"hdtHighHeelEffect")
+        self.assertEqual(struct.unpack_from("<I", contents, 572)[0], 0x08200210)
+        self.assertEqual(struct.unpack_from("<I", contents, 572 + 8)[0], 0)  # No legacy script form.
+        self.assertEqual(struct.unpack_from("<I", contents, 572 + 64)[0], 1)  # Script archetype.
+        self.assertEqual(esm.read_bytes(), contents)
 
     def test_reviewed_scene_refresh_recomposes_owned_adjustment_and_undo(self):
         self.run_reviewed_fixture(

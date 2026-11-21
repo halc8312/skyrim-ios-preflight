@@ -194,12 +194,31 @@ non-Actor inputs exercise the listener boundary independently of the
 conditions in the original effect phase routine.
 
 The stock VM listener `f_8D65B0` submits the corresponding Papyrus event.
-The native event carries no ActiveEffect pointer or magnitude. Further
-work must tie the played KeepUpdate or StopUpdate call to the effect
-instance and world/equipment lifetime, including reuse of a 16-bit
-effect number. The effect phase producer and the VM listener were read
-from the pinned lift. This fixture starts below the producer and does
-not execute Papyrus or keep an actor pointer after dispatch.
+The producer has its ActiveEffect in ESI and the target in a held stack
+slot at both original publication calls. The optional owner ESM check pins
+`hdtHighHeel.esm`, its `hdtHighHeelEffect` ScriptEffect and that record's
+local FormID `0x800`. The upper byte at runtime must come from the loaded
+plugin's actual index. An overriding record or replacement script needs
+independent verification. Set `SKYRIM_TEST_OWNED_HDT_EFFECT_ESM` to the
+unchanged LE beta 0.5 ESM to run this check.
+
+The private fixture now also runs the full producer on authored world
+objects, including the fixed ScriptEffect phase callbacks and its
+finish cleanup. It copies the retained actor's FormID, the EffectSetting
+FormID, the effect number, the magnitude bits and the phase just before
+native dispatch. The magnitude comes from the ActiveEffect field used by
+Classic SKSE's GetMagnitude, with values distinct from the enchantment's
+base magnitude. The cases exercise a missing target, a stale target
+handle, a non-Actor, the wrong setting type, the right local ID in a
+different plugin and a nonfinite magnitude. The original and observed
+executions produce the same event, reference counts, CPU state, stack,
+effect state and exercised call sites. The fixture uses authored objects
+and substitutes for unrelated engine services.
+
+The 16-bit effect number can be reused. A connection to the played
+KeepUpdate or StopUpdate calls still needs to match the instance and its
+world and equipment lifetime. Furniture and scheduled updates follow
+their own script paths.
 
 ### Refresh the same named node after applying or removing the offset
 
