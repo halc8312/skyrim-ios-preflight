@@ -50,6 +50,11 @@ int fixture_runtime_open(CPU *cpu, const char *temp) {
 ssize_t fixture_runtime_write(CPU *cpu, const char *bytes, size_t count, bool short_write) {
     assert(count && count < COUNT - DATA);
     memcpy(MEM + DATA, bytes, count);
+    return fixture_runtime_write_buffer(cpu, DATA, count, short_write);
+}
+
+ssize_t fixture_runtime_write_buffer(CPU *cpu, uint32_t buffer, size_t count, bool short_write) {
+    assert(count && count <= UINT32_MAX);
     struct rlimit original;
     if (short_write) {
         const off_t position = lseek(save.file.writer, 0, SEEK_CUR);
@@ -58,8 +63,9 @@ ssize_t fixture_runtime_write(CPU *cpu, const char *bytes, size_t count, bool sh
         limit.rlim_cur = (rlim_t)position + count - 1;
         assert(!setrlimit(RLIMIT_FSIZE, &limit));
     }
-    const uint32_t args[] = {save.guest_handle, DATA, (uint32_t)count, COUNT, 0};
-    const uint32_t result = shim(cpu, ClassicWriteFile, 0xf6a564, 5, args);
+    const uint32_t args[] = {save.guest_handle, buffer, (uint32_t)count, COUNT, 0};
+    /* Use the fixed CRT return site for binary WriteFile, with no text conversion. */
+    const uint32_t result = shim(cpu, ClassicWriteFile, 0xf6a97c, 5, args);
     if (short_write) assert(!setrlimit(RLIMIT_FSIZE, &original));
     assert(result == 1 && save.last_requested == count && save.last_written == (ssize_t)M32(COUNT));
     return save.last_written;

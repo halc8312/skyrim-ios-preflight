@@ -19,6 +19,7 @@ from stage import check_unit, function_span, validate_generation
 from stage_save_notifications import CLOSE_CALL, FLUSH_CALL, MOVE, SLOT_CALL, UNITS, VM_CALL
 
 
+BUFFER_UNIT = "0efcfed401f53e7f1a6e05d69664975e95949895a0795094d063a03cba865404"
 MOVED = (b"    esp -= 4; M32(esp) = 0x68031Cu; SPILL();\n"
          b"    fixture_final_move_enter(c);\n"
          b"    f_F53F06(c);\n"
@@ -43,7 +44,7 @@ def witness_result(body: bytes, call: bytes, witness: bytes) -> bytes:
     return at_site(body, call, before + b"\n    " + witness + b"(c);\n    RELOAD();\n")
 
 
-def lifted_fixture(generation: Path) -> bytes:
+def lifted_fixture(generation: Path, *, buffered: bool = False) -> bytes:
     state = json.loads((generation / "generation.json").read_bytes())
     validate_generation(state)
     if (state.get("mode") != "original-guest-bodies" or state.get("fixed_native_replacements") is not False or
@@ -75,9 +76,18 @@ def lifted_fixture(generation: Path) -> bytes:
         block, VM_CALL, b"f_8CD8F0(c)", b"SkyrimSaveVM", BOOL_RESULT,
     ) + b"L_8D385A:\nL_8D38D2:\n    SPILL(); return;\n}\n"
 
-    prototypes = b"".join(f"void {name}(CPU *);\n".encode("ascii") for name in CALLEES)
+    writers = b""
+    callees = CALLEES
+    if buffered:
+        buffer = (generation / "gen" / "exe_295.c").read_bytes()
+        check_unit(buffer, BUFFER_UNIT)
+        writers = (original(units["exe_101.c"], "f_6779D0") + original(units["exe_261.c"], "f_A57280") +
+                   original(units["exe_261.c"], "f_A57240") + original(buffer, "f_B29AD0") +
+                   original(buffer, "f_B29850"))
+        callees += ("f_B29AD0", "f_F52E30", "f_F57FB6")
+    prototypes = b"".join(f"void {name}(CPU *);\n".encode("ascii") for name in callees)
     return (b'#include "lift_prelude.h"\n#include "observer/lifecycle.h"\n' + prototypes + save +
-            close_save + crt_move + close_stream + destructor + vm)
+            close_save + crt_move + close_stream + destructor + vm + writers)
 
 
 def main() -> None:

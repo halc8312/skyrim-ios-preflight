@@ -86,7 +86,7 @@ def main() -> None:
         out = Path(stage)
         kernel, save, load = (out / name for name in ("kernel32.c", "save.c", "load.c"))
         kernel.write_text("#define _GNU_SOURCE\n" + transform(patch_kernel(verified_source(original))), encoding="utf-8")
-        save.write_bytes(lifted_save(args.generation))
+        save.write_bytes(lifted_save(args.generation, buffered=True))
         _, load_lift = lifted_load(args.generation, True)
         load.write_bytes(load_lift)
 
@@ -125,7 +125,7 @@ def main() -> None:
             return output
 
         saver = build("save", ["-DSKYRIM_TEST_FILE_RUNTIME=1", "-DSKYRIM_TEST_SAVE_COSAVE=1",
-                               "-DSKYRIM_TEST_SAVE_ROUNDTRIP=1"],
+                               "-DSKYRIM_TEST_SAVE_ROUNDTRIP=1", "-DSKYRIM_TEST_BUFFERED_SAVE=1"],
                       [kernel_object, save, SAVE / "test_save_publish.c", SAVE / "save_publish.c",
                        HERE / "save_phase.c", IOS / "performance_metrics.c",
                        RUNTIME / "runtime_save.c", RUNTIME / "lifted_backend.c", RUNTIME / "host_traps.c"])

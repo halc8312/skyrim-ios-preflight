@@ -33,6 +33,7 @@ enum {
     MANAGER = 0x31000, STREAM = 0x32000, STREAM_FILE = 0x33000, SAVE_GLOBAL = 0x34000, VM = 0x36000,
     SLOT = 0x38000, BOOKKEEPING = 0x39000, ENGINE_SAVE = 0x1b2e38c, BACKUPS = 0x1272450,
     CRT_FILE = 0x3a000, BSFILE_TABLE = 0x110dba8, BSFILE_DESTROY = 0xa579b0,
+    BSFILE_BUFFER = 0x50000, SOURCE_BYTES = 0x60000, WRITE_STACK = 0x61000, FILE_MODE = 0x1b2e3a8,
     IAT_GET_LAST_ERROR = 0x106b058, IAT_DELETE = 0x106b094, IAT_TICK = 0x106b144, IAT_MOVE = 0x106b250,
 };
 typedef enum { ACCEPT, VM_FALSE, SHORT_WRITE, FLUSH_ERROR, CRT_CLOSE_ERROR, CLOSE_ERROR,
@@ -52,6 +53,7 @@ typedef struct {
     uint64_t token;
     bool in_final_move, move_succeeded, have_before_close;
     unsigned slots, vm_saves, flushes, closes, releases, final_moves, backup_moves, sidecars;
+    unsigned physical_writes;
 } Engine;
 
 uint8_t *MEM;
@@ -61,6 +63,11 @@ static uint64_t handle_serial;
 void f_6814D0(CPU *);
 void f_8D3750(CPU *);
 void f_A579B0(CPU *);
+#if defined(SKYRIM_TEST_BUFFERED_SAVE)
+void f_6779D0(CPU *);
+void f_A57280(CPU *);
+void f_A57240(CPU *);
+#endif
 
 static uint32_t arg(const CPU *cpu, unsigned i) { return M32(cpu->r[4] + 4 + 4 * i); }
 static uint32_t ret(const CPU *cpu) { return M32(cpu->r[4]); }
@@ -110,6 +117,15 @@ void f_677A40(CPU *cpu) {
     M32(STREAM_FILE) = BSFILE_TABLE;
     M32(STREAM_FILE + 0x24) = CRT_FILE;
     M8(STREAM_FILE + 0x2c) = 1;
+#if defined(SKYRIM_TEST_BUFFERED_SAVE)
+    M32(STREAM_FILE + 4) = 0;
+    M32(STREAM_FILE + 0x0c) = 0xa57280;
+    M32(STREAM_FILE + 0x10) = arg(cpu, 2);
+    M32(STREAM_FILE + 0x18) = 0;
+    M32(STREAM_FILE + 0x20) = BSFILE_BUFFER;
+    M32(STREAM_FILE + 0x28) = 1;
+    M32(STREAM_FILE + 0x150) = 0;
+#endif
     cpu->r[0] = STREAM;
     cpu->r[4] += 4;
 }
@@ -131,6 +147,22 @@ void f_677540(CPU *cpu) {
 
 static void write_base(CPU *cpu, const char *bytes, bool short_write) {
     const size_t length = strlen(bytes);
+#if defined(SKYRIM_TEST_BUFFERED_SAVE)
+    (void)short_write; /* Only the physical write can fail after these logical writes. */
+    const uint32_t buffered = M32(STREAM_FILE + 0x18);
+    CPU writer = *cpu;
+    writer.r[1] = STREAM;
+    writer.r[4] = WRITE_STACK;
+    M32(WRITE_STACK) = 0x12345678;
+    M32(WRITE_STACK + 4) = SOURCE_BYTES;
+    M32(WRITE_STACK + 8) = (uint32_t)length;
+    memcpy(MEM + SOURCE_BYTES, bytes, length);
+    f_6779D0(&writer);
+    CHECK(writer.r[4] == WRITE_STACK + 12 && writer.r[0] == length);
+    CHECK(M32(STREAM_FILE + 0x18) == buffered + length && M32(STREAM_FILE + 4) == buffered + length);
+    CHECK(!memcmp(MEM + BSFILE_BUFFER + buffered, bytes, length));
+    CHECK(!engine->physical_writes && lseek(engine->writer, 0, SEEK_CUR) == 0);
+#else
 #if defined(SKYRIM_TEST_FILE_RUNTIME)
     const ssize_t actual = fixture_runtime_write(cpu, bytes, length, short_write);
 #else
@@ -139,6 +171,7 @@ static void write_base(CPU *cpu, const char *bytes, bool short_write) {
 #endif
     CHECK(actual == (ssize_t)(length - short_write));
     classic_save_written(&engine->witness, engine->writer, engine->token, length, actual);
+#endif
 }
 
 void f_67E020(CPU *cpu) {
@@ -181,16 +214,46 @@ void f_680F60(CPU *cpu) {
     cpu->r[4] += 4;
 }
 
+#if defined(SKYRIM_TEST_BUFFERED_SAVE)
+void f_F52E30(CPU *cpu) {
+    CHECK(ret(cpu) == 0xb29b63 && arg(cpu, 1) == SOURCE_BYTES && arg(cpu, 2) < 64);
+    CHECK(arg(cpu, 0) == BSFILE_BUFFER + M32(STREAM_FILE + 0x18));
+    memcpy(MEM + arg(cpu, 0), MEM + arg(cpu, 1), arg(cpu, 2));
+    cpu->r[0] = arg(cpu, 0);
+    cpu->r[4] += 4;
+}
+
+void f_F57FB6(CPU *cpu) {
+    CHECK(ret(cpu) == 0xb29882 && arg(cpu, 0) == BSFILE_BUFFER && arg(cpu, 1) == 1);
+    CHECK(arg(cpu, 2) == sizeof expected - 1 && arg(cpu, 3) == CRT_FILE && !engine->physical_writes);
+    CHECK(!memcmp(MEM + BSFILE_BUFFER, expected, sizeof expected - 1));
+    const size_t count = arg(cpu, 2);
+    const bool short_write = engine->mode == SHORT_WRITE;
+    const ssize_t actual = fixture_runtime_write_buffer(cpu, BSFILE_BUFFER, count, short_write);
+    CHECK(actual == (ssize_t)(count - short_write));
+    classic_save_written(&engine->witness, engine->writer, engine->token, count, actual);
+    ++engine->physical_writes;
+    cpu->r[0] = (uint32_t)actual;
+    cpu->r[4] += 4;
+}
+#else
 void f_B29850(CPU *cpu) {
     CHECK(ret(cpu) == 0xa579ca && cpu->r[1] == STREAM_FILE && !engine->flushes);
-    ++engine->flushes;
     if (engine->mode == FLUSH_ERROR) M8(STREAM_FILE + 0x2c) = 0;
     cpu->r[0] = 0x12345600u | (engine->mode != FLUSH_ERROR);
     cpu->r[4] += 4;
 }
 
+#endif
+
 void fixture_flush_result(CPU *cpu) {
-    CHECK(engine->flushes == 1 && engine->writer >= 0);
+    CHECK(!engine->flushes && engine->writer >= 0);
+    ++engine->flushes;
+#if defined(SKYRIM_TEST_BUFFERED_SAVE)
+    const bool success = engine->mode != SHORT_WRITE;
+    CHECK(engine->physical_writes == 1 && ((uint8_t)cpu->r[0] != 0) == success);
+    CHECK((M8(STREAM_FILE + 0x2c) != 0) == success);
+#endif
     classic_save_flushed(&engine->witness, engine->writer, engine->token, (uint8_t)cpu->r[0] != 0);
 #if defined(SKYRIM_TEST_FILE_RUNTIME)
     classic_runtime_save_flush_result(cpu, (uint8_t)cpu->r[0] != 0);
@@ -300,6 +363,18 @@ void fixture_final_move_leave(CPU *cpu) {
 
 void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache) {
     (void)cache;
+#if defined(SKYRIM_TEST_BUFFERED_SAVE)
+    if (target == 0xa57280) {
+        CHECK(ret(cpu) == 0x677a33 && arg(cpu, 0) == STREAM_FILE);
+        f_A57280(cpu);
+        return;
+    }
+    if (target == 0xa57240) {
+        CHECK(ret(cpu) == 0xa57295 && cpu->r[1] == STREAM_FILE);
+        f_A57240(cpu);
+        return;
+    }
+#endif
     if (target == BSFILE_DESTROY) {
         CHECK(ret(cpu) == 0x677532 && cpu->r[1] == STREAM_FILE && arg(cpu, 0) == 1);
         f_A579B0(cpu);
@@ -450,6 +525,15 @@ static void run(int root, const char *directory, Scenario mode, ClassicSaveOutco
         CHECK(!fstat(reader, &info) && !fstatat(current.dir, final, &named, AT_SYMLINK_NOFOLLOW));
         CHECK(info.st_ino == named.st_ino && info.st_dev == named.st_dev);
     } else CHECK(reader == -1);
+#if defined(SKYRIM_TEST_BUFFERED_SAVE)
+    if (mode == SHORT_WRITE) {
+        char bytes[sizeof expected];
+        int truncated = openat(current.dir, final, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        CHECK(current.move_succeeded && truncated >= 0);
+        CHECK(pread(truncated, bytes, sizeof bytes, 0) == sizeof expected - 2);
+        CHECK(!memcmp(bytes, expected, sizeof expected - 2) && !close(truncated));
+    }
+#endif
 #if defined(SKYRIM_TEST_FILE_RUNTIME)
     fixture_runtime_end(reader);
 #endif
@@ -483,6 +567,10 @@ int main(int argc, char **argv) {
     M32(IAT_TICK) = IAT_TICK;
     M32(IAT_GET_LAST_ERROR) = IAT_GET_LAST_ERROR;
     M32(BSFILE_TABLE) = BSFILE_DESTROY;
+#if defined(SKYRIM_TEST_BUFFERED_SAVE)
+    M32(BSFILE_TABLE + 0x48) = 0xa57240;
+    M32(FILE_MODE) = SAVE_GLOBAL;
+#endif
     memcpy(MEM + 0x10cc8ac, ".bak", 5);
 
 #if defined(SKYRIM_TEST_SAVE_ROUNDTRIP)
@@ -510,7 +598,7 @@ int main(int argc, char **argv) {
 #endif
     CHECK(M8(SAVE_CODE) == 0 && M8(MOVE_CODE) == 0 && !munmap(MEM, MEMORY_BYTES) && !close(root));
 #if defined(SKYRIM_TEST_SAVE_ROUNDTRIP)
-    puts("PASS authored save, publication evidence and deferred companion decision");
+    puts("PASS buffered save, publication evidence and deferred companion decision");
 #elif defined(SKYRIM_TEST_SAVE_COSAVE)
     puts("PASS lifted save publication and true VM result required by the existing companion bridge");
 #elif defined(SKYRIM_TEST_FILE_RUNTIME)
