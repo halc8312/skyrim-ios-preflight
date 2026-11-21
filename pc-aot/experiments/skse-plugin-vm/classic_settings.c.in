@@ -369,7 +369,7 @@ void skse_classic_settings_discard(SkseClassicSettings *settings, uint64_t epoch
         settings_retire(settings, SKSE_SETTINGS_RETIRED);
 }
 
-enum { ClassicStorageUid = 0x424510a2, ClassicStorageWork = 250000 };
+enum { ClassicStorageWork = 250000 };
 
 static SkseSettingsStatus storage_views(SkseClassicSettings *settings, uint64_t epoch,
     const SkseLoadedMod *mods, size_t count, uint8_t singleton[4], SkseX86ReadView views[4]) {
@@ -379,7 +379,7 @@ static SkseSettingsStatus storage_views(SkseClassicSettings *settings, uint64_t 
     if (settings->retired) return SKSE_SETTINGS_RETIRED;
     const SksePluginSession *session = &settings->session;
     if (session->result.status != SKSE_TRIAL_ENGINE_HOOKS_OBSERVED ||
-        !session->vm.services.serialization || session->serial.uid != ClassicStorageUid)
+        !session->vm.services.serialization || session->serial.uid != SKSE_CLASSIC_STORAGE_UID)
         return SKSE_SETTINGS_STARTUP;
     for (size_t i = 0; i < count; ++i) {
         const SkseLoadedMod *mod = &mods[i];
@@ -444,6 +444,7 @@ static SkseSettingsStatus storage_run(SkseClassicSettings *settings, uint64_t ep
     services->read_view_count = sizeof views / sizeof views[0];
     SkseSessionResult result = SKSE_SESSION_UNAVAILABLE;
     if (input) result = restore_storage(session, input, resolvers, uptime_ms);
+    else if (!out) result = session_serialization(session, SKSE_SERIAL_REVERT, ClassicStorageWork, uptime_ms);
     else if (session->serial.callbacks[SKSE_SERIAL_SAVE - SKSE_SERIAL_REVERT])
         result = collect_session_records(session, ClassicStorageWork, uptime_ms, out);
     services->read_views = old_views;
@@ -459,9 +460,14 @@ SkseSettingsStatus skse_classic_storage_capture(SkseClassicSettings *settings, u
     return storage_run(settings, epoch, mods, count, uptime_ms, NULL, NULL, out);
 }
 
+SkseSettingsStatus skse_classic_storage_reset(SkseClassicSettings *settings, uint64_t epoch,
+    const SkseLoadedMod *mods, size_t count, uint32_t uptime_ms) {
+    return storage_run(settings, epoch, mods, count, uptime_ms, NULL, NULL, NULL);
+}
+
 SkseSettingsStatus skse_classic_storage_restore(SkseClassicSettings *settings, uint64_t epoch,
     const SkseLoadedMod *mods, size_t count, uint32_t uptime_ms,
     const SksePluginRecordSet *input, const SkseSerialResolvers *resolvers) {
-    if (skse_plugin_record_set_uid(input) != ClassicStorageUid) return SKSE_SETTINGS_ARGUMENT;
+    if (skse_plugin_record_set_uid(input) != SKSE_CLASSIC_STORAGE_UID) return SKSE_SETTINGS_ARGUMENT;
     return storage_run(settings, epoch, mods, count, uptime_ms, input, resolvers, NULL);
 }

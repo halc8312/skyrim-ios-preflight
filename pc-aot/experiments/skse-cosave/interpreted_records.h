@@ -27,6 +27,11 @@ SkseBridgeResult skse_bridge_finish_interpreted_load(SkseLoadInput **pending,
     const SkseEventTrace *trace, const SkseBaseEvidence *completed, uint32_t uid,
     SksePluginRecordSet **out, SkseInterpretedModMap *catalog, SksePairResult *detail);
 
+/* Decode an already verified image returned by the native-load bridge. The
+ * record set owns its own data; the caller still owns the source image. */
+SksePairResult skse_interpreted_decode(const void *bytes, size_t size, uint32_t uid,
+    SksePluginRecordSet **out, SkseInterpretedModMap *catalog);
+
 /* The returned callbacks borrow the map only during the interpreted load. */
 SkseSerialResolvers skse_interpreted_resolvers(const SkseModMap *map);
 

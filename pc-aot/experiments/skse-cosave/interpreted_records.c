@@ -32,20 +32,19 @@ static int keep_record(void *context, const SksePairRecord *row) {
     return 1;
 }
 
-SkseBridgeResult skse_bridge_finish_interpreted_load(SkseLoadInput **pending,
-    const SkseEventTrace *trace, const SkseBaseEvidence *completed, uint32_t uid,
-    SksePluginRecordSet **out, SkseInterpretedModMap *catalog, SksePairResult *detail) {
-    if (detail) *detail = SKSE_PAIR_OK;
+static void clear_catalog(SkseInterpretedModMap *catalog) {
     if (catalog) {
         skse_mod_map_clear(&catalog->map);
         catalog->status = SKSE_MAP_SOURCE_ERROR;
     }
-    if (!uid || !out || *out) return SKSE_BRIDGE_ARGUMENT;
-    void *bytes = NULL;
-    size_t size = 0;
-    SkseBridgeResult result = skse_bridge_finish_load_input(pending, trace, completed, &bytes, &size, detail);
-    if (result != SKSE_BRIDGE_OK) return result;
-    const SksePairImage image = {bytes, size};
+}
+
+SksePairResult skse_interpreted_decode(const void *bytes, size_t size, uint32_t uid,
+    SksePluginRecordSet **out, SkseInterpretedModMap *catalog) {
+    clear_catalog(catalog);
+    if (!bytes || size < 20 || size > SKSE_PAIR_MAX_COMPANION || !uid || !out || *out)
+        return SKSE_PAIR_ARGUMENT;
+    const SksePairImage image = {(void *)bytes, size};
     RecordSelection selected = {0};
     SksePairResult wire = skse_records_visit(&image, uid, keep_record, &selected);
     if (wire == SKSE_PAIR_OWNER_MISSING) wire = SKSE_PAIR_OK;
@@ -62,6 +61,20 @@ SkseBridgeResult skse_bridge_finish_interpreted_load(SkseLoadInput **pending,
             catalog->status = skse_mod_map_decode_core(&core, catalog->current, catalog->current_count, &catalog->map);
         else if (found == SKSE_PAIR_OWNER_MISSING) catalog->status = SKSE_MAP_HISTORY_MISSING;
     }
+    return wire;
+}
+
+SkseBridgeResult skse_bridge_finish_interpreted_load(SkseLoadInput **pending,
+    const SkseEventTrace *trace, const SkseBaseEvidence *completed, uint32_t uid,
+    SksePluginRecordSet **out, SkseInterpretedModMap *catalog, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    clear_catalog(catalog);
+    if (!uid || !out || *out) return SKSE_BRIDGE_ARGUMENT;
+    void *bytes = NULL;
+    size_t size = 0;
+    SkseBridgeResult result = skse_bridge_finish_load_input(pending, trace, completed, &bytes, &size, detail);
+    if (result != SKSE_BRIDGE_OK) return result;
+    SksePairResult wire = skse_interpreted_decode(bytes, size, uid, out, catalog);
     free(bytes);
     if (detail) *detail = wire;
     return wire == SKSE_PAIR_OK ? SKSE_BRIDGE_OK : SKSE_BRIDGE_PAIR;

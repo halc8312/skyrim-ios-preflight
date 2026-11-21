@@ -63,6 +63,10 @@ void skse_classic_settings_discard(SkseClassicSettings *, uint64_t epoch, uint64
  * independent copies of the names and indices. */
 SkseSettingsStatus skse_classic_storage_capture(SkseClassicSettings *, uint64_t epoch,
     const SkseLoadedMod *, size_t count, uint32_t uptime_ms, SksePluginRecordSet **out);
+enum { SKSE_CLASSIC_STORAGE_UID = 0x424510a2 };
+/* Reset the previous world's records after a verified load without a match. */
+SkseSettingsStatus skse_classic_storage_reset(SkseClassicSettings *, uint64_t epoch,
+    const SkseLoadedMod *, size_t count, uint32_t uptime_ms);
 SkseSettingsStatus skse_classic_storage_restore(SkseClassicSettings *, uint64_t epoch,
     const SkseLoadedMod *, size_t count, uint32_t uptime_ms,
     const SksePluginRecordSet *, const SkseSerialResolvers *);

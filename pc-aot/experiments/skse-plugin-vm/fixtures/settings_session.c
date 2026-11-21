@@ -96,6 +96,12 @@ static void check_storage_records(const SkseSettingsInputs *inputs) {
     assert(skse_classic_storage_capture(settings, inputs->epoch, current, 2, 4530, &captured) == SKSE_SETTINGS_OK);
     owned_storage_expect(captured, false, true);
     skse_plugin_record_set_close(captured);
+    captured = NULL;
+    assert(skse_classic_storage_reset(settings, inputs->epoch + 1, current, 2, 4540) == SKSE_SETTINGS_ARGUMENT);
+    assert(skse_classic_storage_reset(settings, inputs->epoch, current, 2, 4550) == SKSE_SETTINGS_OK);
+    assert(skse_classic_storage_capture(settings, inputs->epoch, current, 2, 4560, &captured) == SKSE_SETTINGS_OK);
+    owned_storage_expect(captured, false, false);
+    skse_plugin_record_set_close(captured);
     skse_plugin_record_set_close(seeded);
     skse_classic_settings_close(settings);
 }
