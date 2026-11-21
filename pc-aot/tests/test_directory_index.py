@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -14,9 +15,41 @@ spec=importlib.util.spec_from_file_location('directory_stage',ROOT/'ios/runtime-
 adapter=importlib.util.module_from_spec(spec);spec.loader.exec_module(adapter)
 
 
+
+def pinned_kernel():
+    runtime = Path(os.environ.get("SKYRIM_SKYDREAM_SOURCE", ROOT / "vendor/skydream")) / "runtime"
+    if not (runtime / "kernel32.c").is_file():
+        raise unittest.SkipTest("Pinned Skydream checkout required")
+    original = (runtime / "kernel32.c").read_text(encoding="utf-8")
+    assert hashlib.sha256(original.encode()).hexdigest() == adapter.EXPECTED["kernel32.c"]
+    return runtime, original
+
+
+def kernel_file_fixture(folder):
+    """Stage the normal iOS file shims with authored CPU/guest memory."""
+    compiler = shutil.which(os.environ.get("CC", "cc"))
+    if not compiler:
+        raise unittest.SkipTest("C compiler required")
+    runtime, original = pinned_kernel()
+    port = ROOT / "ios/runtime-port"
+    # The import registration table roots every shim under ASan. This fixture
+    # invokes the three unchanged file entry points directly instead.
+    source = adapter.patch_kernel(original).split("\nstatic const ShimDef k32[] = {", 1)
+    assert len(source) == 2
+    (folder / "kernel32.c").write_text(source[0] + "\n", encoding="utf-8")
+    binary = folder / "kernel-file"
+    flags = ["-std=gnu11", "-DGAME_SKYRIM", "-O1", "-g", "-ffunction-sections", "-fdata-sections", "-pthread"]
+    flags += ["-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections"]
+    if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
+        flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+    sources = [ROOT / "tests/native/test_mod_kernel_file.c", port / "performance_metrics.c"]
+    subprocess.run([compiler, *flags, "-I", folder, "-I", runtime, "-I", port,
+                    *sources, "-lm", "-o", binary], check=True, timeout=90)
+    return binary
+
+
 def fixture(folder, measured=False):
-    original=(ROOT/'vendor/skydream/runtime/kernel32.c').read_text(encoding='utf-8')
-    assert hashlib.sha256(original.encode()).hexdigest()==adapter.EXPECTED['kernel32.c']
+    _, original = pinned_kernel()
     chunks=[]
     for label,text in [('old',original),('new',adapter.patch_directory_index(original))]:
         body=text[text.index('/* Directory listings for case-insensitive lookups.'):text.index('/* Resolve each path component case-insensitively')]

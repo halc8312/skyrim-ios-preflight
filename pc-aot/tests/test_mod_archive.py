@@ -1,5 +1,6 @@
 """Real MOD archive reader, data-root detection and launch view; authored files only."""
 import errno
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -8,6 +9,8 @@ import subprocess
 import tempfile
 import unittest
 import zipfile
+
+from test_directory_index import kernel_file_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 PORT = ROOT / "ios/runtime-port"
@@ -428,6 +431,67 @@ class ModArchiveTests(unittest.TestCase):
         self.assertEqual(self.run_driver("ece-slot", staged, end, other), f"ece-slot {errno.EEXIST} 40\n")
         self.assertEqual(occupied.read_bytes(), b"older case spelling")
         self.assertEqual(sum(p.name.lower() == end.lower() for p in occupied.parent.iterdir()), 1)
+
+
+    def check_skydream_chargen_winner(self, ece):
+        with tempfile.TemporaryDirectory(prefix="mod-chargen-view-") as tmp:
+            root = Path(tmp)
+            binary = kernel_file_fixture(root)
+            mesh = Path("meshes/Actors/Character/Character Assets/FemaleHeadCharGen.tri")
+            game, default, competitor = [root / leaf for leaf in ("game", "default", "competitor")]
+            stock = b"authored initial game file"
+            other = b"authored other profile winner"
+            for base, contents in ((game / "Data", stock), (default, ece), (competitor, other)):
+                target = base / mesh
+                target.parent.mkdir(parents=True)
+                target.write_bytes(contents)
+            face_nif = b"authored separate face mesh"
+            (game / "Data" / mesh.with_name("FemaleHead.nif")).write_bytes(face_nif)
+
+            # FaceGen constructs the meshes-relative resource. Kernel32 sees
+            # a Data-rooted loose request. This fixture starts at that boundary.
+            entry = r"Data\meshes\Actors\Character\Character Assets\FemaleHeadCharGen.tri"
+            absolute = "C:\\Skyrim\\" + entry.upper()
+            for name, order, expected in (
+                ("ece-view", (competitor, default), ece),
+                ("other-view", (default, competitor), other),
+            ):
+                view = root / name
+                log = self.run_driver("deploy", game, view, root / (name + ".tsv"), name, *order)
+                self.assertIn("deploy 0  matches 1", log)
+                for request in (entry, absolute):
+                    result = subprocess.run([binary, view, request], check=True, capture_output=True, timeout=15)
+                    self.assertEqual(hashlib.sha256(result.stdout).digest(), hashlib.sha256(expected).digest())
+
+                # Unknown TRI variants and the wrong extension at the same
+                # stem miss. A different file that exists gets its own bytes.
+                for request in (entry.removeprefix("Data\\"),
+                                entry.replace(".tri", ".nif"),
+                                entry.replace("CharGen", "Races")):
+                    result = subprocess.run([binary, view, request], capture_output=True, timeout=15)
+                    self.assertEqual((result.returncode, result.stdout), (3, b""))
+                result = subprocess.run([binary, view, entry.replace("CharGen.tri", ".nif")],
+                                        check=True, capture_output=True, timeout=15)
+                self.assertEqual(result.stdout, face_nif)
+            result = subprocess.run([binary, game, entry], check=True, capture_output=True, timeout=15)
+            self.assertEqual(result.stdout, stock)
+            self.assertEqual((game / "Data" / mesh).read_bytes(), stock)
+
+    def test_skydream_chargen_reads_the_active_profile_winner(self):
+        self.check_skydream_chargen_winner(b"FRTRI003 authored exact-path profile test")
+
+    def test_skydream_chargen_reads_the_owned_ece_tri(self):
+        owned = os.environ.get("SKYRIM_TEST_ECE_DEFAULT_DATA")
+        if not owned:
+            self.skipTest("Set SKYRIM_TEST_ECE_DEFAULT_DATA to the private Data contents from ECE 1.59 00 Main.")
+        path = Path(owned) / "meshes/actors/character/character assets/femaleheadchargen.tri"
+        with path.open("rb") as stream:
+            tri = stream.read(803425)
+        self.assertEqual(hashlib.sha256(tri).hexdigest(),
+                         "39f940fcf6f2b3cb3f9ffefca09e5bc82ea676ec12251e4e61cf1abd5df09475")
+        self.check_skydream_chargen_winner(tri)
+        self.assertEqual(hashlib.sha256(path.read_bytes()).digest(), hashlib.sha256(tri).digest())
+
 
     def test_deploy_overlay_priority_protection_and_reuse(self):
         game = self.dir / "game"; (game / "Data/Textures").mkdir(parents=True)

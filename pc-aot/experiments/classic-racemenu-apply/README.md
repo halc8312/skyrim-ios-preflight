@@ -101,3 +101,11 @@ race FormID or sex. The slot parser returns the raw value, and the file check
 does not inspect the running character or resolve the engine's resource
 winner. Application still requires validation of that receiver and resource,
 and a comparison using two actual exports.
+
+A separate hosted test uses the real launch-view overlay and the staged
+Skydream Kernel32 file shims. It reads the winning loose TRI by the
+Data-rooted form of the FaceGen resource name and checks the full file
+digest. Reversing package priority changes the returned bytes without
+altering the original game directory. The fixture runs beneath the game's
+resource layer. The in-game choice between the loose file and BSA remains
+to be observed.
