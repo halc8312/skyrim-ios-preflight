@@ -3,6 +3,7 @@
     "IOS_CLASSIC_SKYUI requested=1 enabled=1",
     "IOS_CLASSIC_SKYUI requested=1 enabled=0",
     "IOS_CLASSIC_SKYUI requested=0 enabled=0",
+    "IOS_CLASSIC_SKYUI_INPUTS skyui=1 skse_pex=0 support=3",
     "IOS_CLASSIC_VM registered=99 primitive_passed=36",
     "IOS_CLASSIC_RELEASE value=48",
     "IOS_CLASSIC_HOOK point=1 order=1 startup_thread=1",
@@ -57,6 +58,9 @@
   "excluded": [
     "IOS_CLASSIC_SKYUI requested=0 enabled=1",
     "IOS_CLASSIC_SKYUI requested=1 enabled=1 profile=Personal",
+    "IOS_CLASSIC_SKYUI_INPUTS skyui=2 skse_pex=0 support=3",
+    "IOS_CLASSIC_SKYUI_INPUTS skyui=1 skse_pex=1 support=5",
+    "IOS_CLASSIC_SKYUI_INPUTS skyui=1 skse_pex=1 support=4 profile=Personal",
     "IOS_CLASSIC_VM registered=12345678901 primitive_passed=36",
     "IOS_CLASSIC_RELEASE value=48 path=/private/example",
     "IOS_CLASSIC_HOOK point=3 order=1 startup_thread=1",

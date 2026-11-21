@@ -78,6 +78,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_STATE_CACHE", "^IOS_STATE_CACHE entries=[0-9]{1,20} shader_tuples=[0-9]{1,20} wakeup_links=[0-9]{1,20}$") \
     X("IOS_GAME_LANGUAGE", "^IOS_GAME_LANGUAGE requested_text=[01] text=[01] text_reason=[0-3] requested_voices=[01] voices=[01] voices_reason=[0-3]$") \
     X("IOS_CLASSIC_SKYUI", "^IOS_CLASSIC_SKYUI (?:requested=0 enabled=0|requested=1 enabled=[01])$") \
+    X("IOS_CLASSIC_SKYUI_INPUTS", "^IOS_CLASSIC_SKYUI_INPUTS skyui=[01] skse_pex=[01] support=[0-4]$") \
     X("IOS_CLASSIC_VM", "^IOS_CLASSIC_VM registered=[0-9]{1,10} primitive_passed=[0-9]{1,10}$") \
     X("IOS_CLASSIC_RELEASE", "^IOS_CLASSIC_RELEASE value=[0-9]{1,10}$") \
     X("IOS_CLASSIC_HOOK", "^IOS_CLASSIC_HOOK point=[12] order=[12] startup_thread=[01]$") \

@@ -113,8 +113,11 @@ set(cosave_source "${SKYRIM_IOS_ROOT}/experiments/skse-cosave")
 target_sources(skyrim_ios_runtime PRIVATE "${cosave_source}/copy_pair.c")
 target_include_directories(skyrim_ios_runtime PRIVATE "${cosave_source}")
 if(SKYRIM_IOS_CLASSIC_SKSE)
+    set(skse_vm_source "${SKYRIM_IOS_ROOT}/experiments/skse-plugin-vm")
     target_sources(skyrim_ios_runtime PRIVATE
-        "${cosave_source}/inspect.c" "${cosave_source}/records.c")
+        "${cosave_source}/inspect.c" "${cosave_source}/records.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mod_requirements.c" "${skse_vm_source}/classic_pex.c")
+    target_include_directories(skyrim_ios_runtime PRIVATE "${skse_vm_source}")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_SKSE=1 SKYDREAM_SKSE=1)
 endif()
 if(SKYRIM_IOS_SKSE_DLL_PROBE)
@@ -145,7 +148,7 @@ endif()
 if(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE)
     set(profile_json_source "${SKYRIM_IOS_ROOT}/experiments/skse-profile-json")
     target_sources(skyrim_ios_runtime PRIVATE
-        "${dll_probe_source}/classic_pex.c" "${dll_probe_source}/classic_scalar.c"
+        "${dll_probe_source}/classic_scalar.c"
         "${profile_json_source}/profile_json.c" "${profile_json_source}/profile_overlay.c")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_CLASSIC_SETTINGS_BACKEND=1)
 endif()

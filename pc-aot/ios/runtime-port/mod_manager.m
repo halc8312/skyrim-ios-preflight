@@ -26,6 +26,7 @@
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 #include "PcGuestSkseTrial.h"
 #include "inspect.h"
+#include "mod_requirements.h"
 #endif
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
 #include "mod_dll_probe.h"
@@ -237,6 +238,52 @@ static BOOL AnyOn(NSArray *rows) {
 }
 
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
+/* Read-only: the original Data folder, then the profile's enabled packages in order. */
+static SkyrimSkyUIRequirements SkyUIRequirementsFor(NSArray<NSString *> *packageIds) {
+    NSMutableArray<NSString *> *roots = [NSMutableArray array];
+    if (originalGameDirectory.length) {
+        char data[4096];
+        if (skyrim_plugin_child_path(originalGameDirectory.fileSystemRepresentation, "Data", data, sizeof data) >= 0)
+            [roots addObject:@(data)];
+    }
+    for (NSString *pid in packageIds) {
+        NSString *dir = PackageDir(pid);
+        if (dir) [roots addObject:[dir stringByAppendingPathComponent:@"Data"]];
+    }
+    const char **paths = calloc(roots.count + 1, sizeof *paths);
+    SkyrimSkyUIRequirements result = {.status = SKYRIM_SKYUI_REQ_UNREADABLE};
+    if (paths) {
+        for (NSUInteger i = 0; i < roots.count; ++i) paths[i] = roots[i].fileSystemRepresentation;
+        if (skyrim_skyui_requirements(paths, roots.count, &result)) result.status = SKYRIM_SKYUI_REQ_UNREADABLE;
+        free(paths);
+    }
+    return result;
+}
+
+/* Text for a missing or unusable requirement, nil when SkyUI is absent or complete. */
+static NSString *SkyUIRequirementText(SkyrimSkyUIRequirements r) {
+    switch (r.status) {
+    case SKYRIM_SKYUI_REQ_SKSE_SCRIPT_MISSING:
+        return T(@"SkyUI needs the SKSE 1.7.3 scripts. Add your own SKSE Classic 1.7.3 archive to this profile.",
+                 @"SkyUIにはSKSE 1.7.3のスクリプトが必要です。所有しているSKSE Classic 1.7.3のアーカイブをこのプロファイルに追加してください。");
+    case SKYRIM_SKYUI_REQ_SKSE_SCRIPT_INVALID:
+        return T(@"Scripts/SKSE.pex is not the SKSE 1.7.3 script. Add your own SKSE Classic 1.7.3 archive.",
+                 @"Scripts/SKSE.pex がSKSE 1.7.3のスクリプトではありません。所有しているSKSE Classic 1.7.3のアーカイブを追加してください。");
+    case SKYRIM_SKYUI_REQ_SKYUI_ARCHIVE_UNSUPPORTED:
+        return T(@"SkyUI.esp is present, but SkyUI.bsa is missing or is not the Skyrim 2011 (LE) version.",
+                 @"SkyUI.espはありますが、SkyUI.bsaがない、またはSkyrim 2011年版（LE）用ではありません。");
+    case SKYRIM_SKYUI_REQ_UNREADABLE:
+        return T(@"The SkyUI files in this profile cannot be checked (links, duplicate names or read errors).",
+                 @"このプロファイルのSkyUIのファイルを確認できません（リンク、同名のファイル、読み取りエラー）。");
+    case SKYRIM_SKYUI_REQ_OK:
+        if (r.support_present < r.support_expected)
+            return [NSString stringWithFormat:T(@"Some SKSE support scripts are missing (%u of %u present).",
+                @"SKSEの補助スクリプトが一部ありません（%u／%u個）。"), r.support_present, r.support_expected];
+        return nil;
+    default: return nil;
+    }
+}
+
 static BOOL SkyUITrialSelected(NSDictionary *profile) {
     return [profile[@"skyuiTrial"] isEqual:@YES];
 }
@@ -254,6 +301,14 @@ BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed) {
                 @"今回はSkyUI試験が無効です。このプロファイルでSkyUI.espを有効にして、起動し直してください。");
     }
     fprintf(stderr, "IOS_CLASSIC_SKYUI requested=%d enabled=%d\n", (int)requested, (int)enabled);
+    if (requested) {
+        SkyrimSkyUIRequirements needs = SkyUIRequirementsFor(launchWithoutMods ? @[] : launchPackageIds);
+        fprintf(stderr, "IOS_CLASSIC_SKYUI_INPUTS skyui=%d skse_pex=%d support=%u\n",
+                needs.status != SKYRIM_SKYUI_REQ_SKYUI_ABSENT && needs.status != SKYRIM_SKYUI_REQ_UNREADABLE,
+                needs.status == SKYRIM_SKYUI_REQ_OK, needs.support_present);
+        NSString *warning = SkyUIRequirementText(needs);
+        if (warning) launchNotice = launchNotice ? [launchNotice stringByAppendingFormat:@"\n%@", warning] : warning;
+    }
     return YES;
 }
 #endif
@@ -624,8 +679,15 @@ static void AttachPackage(NSMutableDictionary *profile, NSDictionary *package) {
         return;
     }
     [NSNotificationCenter.defaultCenter postNotificationName:@"SKModsChanged" object:nil];
-    skyrim_mobile_show_notice([NSString stringWithFormat:T(@"Added %@ to profile \"%@\". Save your game, then fully close and reopen the app.",
-        @"%@ をプロファイル「%@」に追加しました。ゲーム内で保存し、アプリを完全終了して開き直すと反映します。"), name, profileName]);
+    NSString *added = [NSString stringWithFormat:T(@"Added %@ to profile \"%@\". Save your game, then fully close and reopen the app.",
+        @"%@ をプロファイル「%@」に追加しました。ゲーム内で保存し、アプリを完全終了して開き直すと反映します。"), name, profileName];
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+    BOOL providesSkyUI = NO;
+    for (id plugin in names) if ([plugin isKindOfClass:NSString.class] && [[plugin lowercaseString] isEqualToString:@"skyui.esp"]) providesSkyUI = YES;
+    NSString *skyuiWarning = providesSkyUI ? SkyUIRequirementText(SkyUIRequirementsFor(EnabledPackageIds(profile))) : nil;
+    if (skyuiWarning) added = [added stringByAppendingFormat:@"\n%@", skyuiWarning];
+#endif
+    skyrim_mobile_show_notice(added);
 }
 
 static BOOL ReuseInstalledArchive(NSString *digest, NSString *targetProfileID) {
@@ -1855,6 +1917,8 @@ enum {
         if (p.row == HubSkyUITrialRow) {
             c.textLabel.text = T(@"SkyUI 5.1 trial", @"SkyUI 5.1 の試験");
             c.detailTextLabel.text = T(@"Enable SkyUI.esp in this profile, then restart.", @"このプロファイルでSkyUI.espを有効にし、アプリを起動し直してください。");
+            NSString *missing = SkyUIRequirementText(SkyUIRequirementsFor(EnabledPackageIds(SelectedProfile())));
+            if (missing) c.detailTextLabel.text = missing;
             UISwitch *toggle = [UISwitch new]; toggle.on = SkyUITrialSelected(SelectedProfile());
             toggle.accessibilityLabel = c.textLabel.text;
             toggle.accessibilityIdentifier = @"mod-skyui-trial";

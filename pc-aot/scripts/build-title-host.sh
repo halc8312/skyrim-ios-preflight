@@ -103,6 +103,7 @@ PY
   run_validation python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_game_language.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_plugins.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_mod_requirements.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_archive.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_optimize.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_libarchive.py' -v

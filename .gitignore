@@ -879,3 +879,9 @@
 !/pc-aot/tests/mod-simulator/prepare.py
 !/pc-aot/tests/mod_archive_fixtures.py
 !/pc-aot/docs/MOD_ARCHIVE_DEPENDENCIES.md
+
+# First-wave MOD sources and tests (patterns keep new files reviewable).
+!/pc-aot/ios/runtime-port/mod_*.c
+!/pc-aot/ios/runtime-port/mod_*.h
+!/pc-aot/tests/test_mod_*.py
+!/pc-aot/tests/native/test_mod_*.c
