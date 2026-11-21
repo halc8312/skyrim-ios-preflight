@@ -879,6 +879,65 @@ static void check_read_only_views(void) {
     assert(run(read, sizeof read, 10, services).status == SKSE_X86_BAD_ARGUMENT);
 }
 
+static SkseX86Result run_byte_scan(const SkseX86ReadView *view, uint8_t prefix, bool backwards,
+                                   uint32_t address, uint32_t count, uint8_t accumulator, uint32_t limit) {
+    uint8_t code[48] = {0x57, 0xbf}; // Preserve EDI. MOV EDI, address.
+    size_t used = 2;
+    append_word(code, &used, address);
+    code[used++] = 0xb9; // MOV ECX, count.
+    append_word(code, &used, count);
+    code[used++] = 0xb0; // MOV AL, accumulator.
+    code[used++] = accumulator;
+    code[used++] = 0xf9; // STC, giving a recognizable initial flags value.
+    if (backwards) code[used++] = 0xfd;
+    if (prefix) code[used++] = prefix;
+    code[used++] = 0xae; // SCASB.
+    code[used++] = 0x89;
+    code[used++] = 0x3d; // MOV [scratch], EDI.
+    append_word(code, &used, scratch_base);
+    code[used++] = 0x89;
+    code[used++] = 0x0d; // MOV [scratch + 4], ECX.
+    append_word(code, &used, scratch_base + 4);
+    const uint8_t tail[] = {0x9c, 0x58, 0xfc, 0x5f, 0xc3}; // Return flags and restore DF and EDI.
+    memcpy(code + used, tail, sizeof tail);
+    return run(code, used + sizeof tail, limit, (SkseX86Services){.read_views = view, .read_view_count = 1});
+}
+
+static void check_byte_scan(void) {
+    uint8_t bytes[] = {5, 5, 0};
+    const uint32_t base = 0x00400000;
+    const SkseX86ReadView view = {base, bytes, sizeof bytes};
+    const struct {
+        uint8_t prefix, accumulator;
+        bool backwards;
+        uint32_t address, count, remaining, ending_address, flags;
+        unsigned comparisons;
+    } cases[] = {
+        {0xf2, 0, false, base, UINT32_MAX, UINT32_MAX - 3, base + 3, 0x246, 3},
+        {0xf3, 5, false, base, 5, 2, base + 3, 0x206, 3},
+        {0xf2, 5, true, base + 2, 3, 1, base, 0x646, 2},
+        {0xf2, 3, false, base, 2, 0, base + 2, 0x293, 2},
+        {0xf2, 1, false, UINT32_MAX, 0, 0, UINT32_MAX, 0x203, 0},
+        {0,    5, false, base, 0, 0, base + 1, 0x246, 0}
+    };
+    for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+        const SkseX86Result result = run_byte_scan(&view, cases[i].prefix, cases[i].backwards,
+                                                   cases[i].address, cases[i].count, cases[i].accumulator, 100);
+        assert(result.status == SKSE_X86_OK && result.eax == cases[i].flags);
+        assert(result.work - result.instructions == cases[i].comparisons);
+        uint8_t expected[8];
+        size_t offset = 0;
+        append_word(expected, &offset, cases[i].ending_address);
+        append_word(expected, &offset, cases[i].remaining);
+        assert(!memcmp(scratch, expected, sizeof expected));
+    }
+    const SkseX86Result read_fault = run_byte_scan(&view, 0xf2, false, base + 2, 2, 1, 100);
+    assert(read_fault.status == SKSE_X86_MEMORY_FAULT && read_fault.fault_address == base + 3 &&
+           read_fault.fault_access == SKSE_PE_READ);
+    const SkseX86Result budget = run_byte_scan(&view, 0xf2, false, base, UINT32_MAX, 1, 8);
+    assert(budget.status == SKSE_X86_INSTRUCTION_LIMIT && budget.instructions == 6 && budget.work == 8);
+}
+
 static void check_win32_guest_flags(void) {
     uint8_t initial[] = {0x9c, 0x58, 0xc3}; // PUSHFD; POP EAX; RET
     SkseX86Result result = ARRAY_RUN(initial);
@@ -917,6 +976,7 @@ static void check_win32_guest_flags(void) {
 
 int main(void) {
     check_win32_guest_flags();
+    check_byte_scan();
     // CALL forwards to another x86 region and that callee returns into the caller.
     uint8_t nested[] = {0xe8, 1, 0, 0, 0, 0xc3, 0xb8, 42, 0, 0, 0, 0xc3};
     SkseX86Result result = ARRAY_RUN(nested);

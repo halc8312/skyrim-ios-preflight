@@ -780,6 +780,35 @@ static void string_memory(Vm *vm, bool moving, bool repeat, unsigned width) {
     if (repeat) vm->registers[ECX] = 0;
 }
 
+typedef enum { SCAN_ONCE, SCAN_WHILE_EQUAL, SCAN_WHILE_NOT_EQUAL } ScanRepeat;
+
+static void scan_string_byte(Vm *vm, ScanRepeat mode) {
+    const bool repeated = mode != SCAN_ONCE;
+    const bool stop_on_match = mode == SCAN_WHILE_NOT_EQUAL;
+    uint32_t remaining = repeated ? vm->registers[ECX] : 1;
+    const uint32_t starting_flags = vm->flags;
+    const uint32_t delta = (starting_flags & DF) ? UINT32_MAX : 1;
+    const uint32_t accumulator = vm->registers[EAX];
+
+    while (remaining) {
+        // Charge each iteration before reading. ECX may be arbitrarily large,
+        // and the first match can legitimately precede an unmapped address.
+        if (repeated && !reserve_bulk(vm, 1)) return;
+        const uint32_t value = read_memory(vm, vm->registers[EDI], 1);
+        if (vm->status != SKSE_X86_OK) {
+            // A faulting repeated comparison restores its incoming flags.
+            if (repeated) vm->flags = starting_flags;
+            return;
+        }
+        alu(vm, CMP, 1, accumulator, value);
+        vm->registers[EDI] += delta;
+        if (!repeated) return;
+        vm->registers[ECX] = --remaining;
+        const bool matched = (vm->flags & ZF) != 0;
+        if (matched == stop_on_match) return;
+    }
+}
+
 static bool is_core_sender(Vm *vm, uint32_t name) {
     static const uint8_t expected[] = "skse";
     if (!name || name > UINT32_MAX - 4) return false;
@@ -2631,7 +2660,9 @@ static void step(Vm *vm) {
         return;
     }
     if (opcode == 0xf2) {
-        if (fetch(vm, 1) != 0x0f || !vector_instruction(vm, fetch(vm, 1), 0xf2))
+        opcode = fetch(vm, 1);
+        if (opcode == 0xae) scan_string_byte(vm, SCAN_WHILE_NOT_EQUAL);
+        else if (opcode != 0x0f || !vector_instruction(vm, fetch(vm, 1), 0xf2))
             fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
         return;
     }
@@ -2650,6 +2681,10 @@ static void step(Vm *vm) {
     }
     if (opcode == 0xa4 || opcode == 0xa5 || opcode == 0xaa || opcode == 0xab) {
         string_memory(vm, opcode < 0xaa, repeat, opcode & 1 ? word : 1);
+        return;
+    }
+    if (opcode == 0xae) {
+        scan_string_byte(vm, repeat ? SCAN_WHILE_EQUAL : SCAN_ONCE);
         return;
     }
     if (opcode == 0x0f && (!repeat || word == 4)) {
