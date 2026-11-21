@@ -85,3 +85,24 @@ def stage_save_notifications(root: Path) -> dict[str, bytes]:
             body = body.replace(anchor, updated)
         staged[name] = PRELUDE + HEADER + unit[len(PRELUDE):start] + body + unit[end:]
     return staged
+
+
+def stage_save_and_load_notifications(root: Path) -> dict[str, bytes]:
+    """Combine the two reviewed paths, which share an output translation unit."""
+    sys.path.insert(0, str(SAVE_DIR.parent / "classic-fresh-load"))
+    try:
+        from test_fresh_load import INCLUDE, UNIT, transform
+    finally:
+        sys.path.pop(0)
+    original = (root / "gen" / UNIT).read_bytes()
+    load = transform(original)
+    staged = stage_save_notifications(root)
+    name = "f_6821C0"
+    start, end = function_span(original, name)
+    load_start, load_end = function_span(load, name)
+    save = staged[UNIT]
+    save_start, save_end = function_span(save, name)
+    if save[save_start:save_end] != original[start:end]:
+        raise ValueError("Save notifications changed the selected-load function")
+    staged[UNIT] = INCLUDE + save[:save_start] + load[load_start:load_end] + save[save_end:]
+    return staged

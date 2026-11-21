@@ -31,6 +31,8 @@ The optional fresh-save notification stager preserves each reviewed engine call 
 
 Only the four reviewed output units are staged. The pinned stage test compiles those units and reverses the insertions byte-for-byte. No game-derived C is published. Run on Linux or WSL with `SKYRIM_TEST_OWNED_CLASSIC_LIFT` pointing at the completed private generation.
 
+The combined experiment includes the reviewed selected-load notices. Save and load share one translation unit. The stager verifies the selected-load function is unchanged by save staging before inserting the load notices and the test checks the remaining bytes are identical. None of the four units overlaps the current optional MOD stages.
+
 `save_attempt.c` accepts those notices after the caller authenticates the guest call frame and resolves its path with the actual file mapper. It checks that the mapped temporary file is a direct child of the selected profile directory and uses that attempt's same-thread lifecycle scope and file observer. At the normal return it borrows the matching read-only descriptor and the VM and slot trace for one synchronous result. Repeated VM returns, false or short writes, failed VM, close or rename results, and replaced output produce no report. The prepared-runtime test drives this adapter with authored notices and real staged file shims. The pinned lifted fixture separately checks the original save tail with the same shims. The live guest binding and immutable handoff to the companion store still need to be integrated.
 
 ```sh

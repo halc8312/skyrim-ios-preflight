@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_SAVE = ROOT / "experiments" / "classic-runtime-save"
 sys.path.insert(0, str(RUNTIME_SAVE))
 sys.path.insert(0, str(ROOT / "scripts"))
-from stage_save_notifications import HEADER, PRELUDE, SAVE_SITES, stage_save_notifications
+from stage_save_notifications import (HEADER, PRELUDE, SAVE_SITES, function_span,
+                                      stage_save_and_load_notifications, stage_save_notifications)
 import mod_hooks_guest
 
 
@@ -38,6 +39,19 @@ class SaveNotificationStageTests(unittest.TestCase):
         self.assertEqual(set(staged), set(SAVE_SITES))
         live = mod_hooks_guest.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,camera_observe,chargen_slider")
         self.assertFalse(staged.keys() & mod_hooks_guest.compose(original, live).keys())
+        combined = stage_save_and_load_notifications(original)
+        self.assertEqual(staged.keys(), combined.keys())
+        load_name = "f_6821C0"
+        load_unit = "exe_103.c"
+        before, after = staged[load_unit], combined[load_unit]
+        lo, hi = function_span(before, load_name)
+        new_lo, new_hi = function_span(after, load_name)
+        self.assertEqual(after[:new_lo], b'#include "fresh_load.h"\n' + before[:lo])
+        self.assertEqual(after[new_hi:], before[hi:])
+        self.assertIn(b"classic_fresh_slot_enter", after[new_lo:new_hi])
+        self.assertIn(b"classic_fresh_cached", after[new_lo:new_hi])
+        self.assertEqual({k: v for k, v in combined.items() if k != load_unit},
+                         {k: v for k, v in staged.items() if k != load_unit})
         private = ROOT / "private"
         if private.resolve() != private:
             raise ValueError("Generated sources must stay in private/")
@@ -52,11 +66,12 @@ class SaveNotificationStageTests(unittest.TestCase):
                         rebuilt = rebuilt.replace(after, before)
                     self.assertEqual(rebuilt, (original / "gen" / name).read_bytes())
                     path = Path(folder) / name
-                    path.write_bytes(data)
+                    path.write_bytes(combined[name])
                     subprocess.run([cc, "-std=gnu11", "-DGAME_SKYRIM", "-fsyntax-only",
                                     "-Wno-parentheses-equality",
                                     "-I", str(original / "source" / "runtime"), "-I", str(original / "gen"),
-                                    "-I", str(RUNTIME_SAVE), str(path)], check=True, timeout=60)
+                                    "-I", str(RUNTIME_SAVE), "-I", str(RUNTIME_SAVE.parent / "classic-fresh-load"),
+                                    str(path)], check=True, timeout=60)
 
 
 if __name__ == "__main__":
