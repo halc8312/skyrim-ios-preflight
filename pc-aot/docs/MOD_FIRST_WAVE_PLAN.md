@@ -425,7 +425,7 @@ python3 scripts/build_title_guest.py private/<stage> --classic-skse --mod-hooks 
 
 ### 8.3 Apple SDKとシミュレーター
 
-`SKYRIM_IOS_CLASSIC_SKSE=1 SKYRIM_IOS_SKSE_DLL_PROBE=1 SKYRIM_IOS_MOD_HOOKS=1 bash scripts/build-title-host.sh`、`bash experiments/skse-plugin-vm/test-apple-sdk.sh`、MOD画面のシミュレーター試験（日英）。
+`SKYRIM_IOS_CLASSIC_SKSE=1 SKYRIM_IOS_SKSE_DLL_PROBE=1 SKYRIM_IOS_MOD_HOOKS=1 SKYRIM_IOS_CLASSIC_PAPYRUSUTIL=1 bash scripts/build-title-host.sh`、`bash experiments/skse-plugin-vm/test-apple-sdk.sh`、MOD画面のシミュレーター試験（日英）。
 
 ### 8.4 実機での比較（同じIPA、MOD無効のプロファイルとの比較）
 
@@ -442,13 +442,15 @@ python3 scripts/build_title_guest.py private/<stage> --classic-skse --mod-hooks 
 | SKSEとSkyUI | 持ち物一覧とMCMをタッチで開く。MCMの設定を変えて保存し、終了して読み込み直す。Error Code 1が出ない。上端の表示（P1-3） |
 | Fuz | 無音声の会話で字幕の時間と口の動き（メニューと周囲の会話）。通常の音声つきの台詞が変わらない。同じ文面の別台詞に字幕が出ない |
 | PapyrusUtilとWL | MCMでランタンの設定を変え、プロファイルに保存し、アプリを再起動して戻る。ランタンを装備して点灯する。メーターの表示。長押しで切り替わる |
-| 追加セーブ | `.skse` が作られ、別プロファイルへのコピー後も値が戻る |
+| 追加セーブ | 対応する追加データが保存される。ゲームの再起動、連続保存、別プロファイルへのコピー後に、それぞれ対応する値だけが戻る |
 | RaceMenu | プリセットを選び、キャラクターメニューを開いて鼻の高さが変わる。保存、再ロード、再起動の後も残る |
-| ECE | 別プロファイルで同じ確認（形式が確定した後） |
+| ECE | ECE専用プロファイルで詳細診断を有効にし、新規起動後に女性Nordの鼻の高さを動かす。`IOS_ECE_NOSE` の `fresh=1 record=1` で実際に採用されたTRIを確認する。反映を接続した後は同じキャラクターで標準の鼻の高さと再起動後の保持を比較する |
 | Precache Killerと髪 | キャラクターメニューを初めて開くまでの時間と、髪を変えたときの最初の表示までの時間を、機能のオンとオフで比べる |
 | 骨格と体型 | 各プロファイルで骨格、体型、動きの切り替え |
 | USLEEP | DLCのマスターが解決され、選んだレコードが変わっている |
-| Enhanced Camera | `IOS_CAMERA_STATE` と画面で、主観視点の体の表示（未対応なら未対応と確認） |
+| Enhanced Camera | 通常の徒歩で一人称と三人称を切り替え、腕と体を画面で確認する。詳細診断の `IOS_CAMERA_CULL` で、一人称の体が描画リストの作成と描画前のどの判定を通ったかを確認する |
+| Safety Load | 同じコピーしたセーブで設定のオンとオフを比較する。ロードにかかった時間、失敗、メモリを記録する |
+| HDT Physics ExtensionsとHighHeels | 物理設定とメッシュを取り込み、静止時の表示を確認する。高さ補正を接続した後は同じ靴を装備・解除し、立つ・歩く・泳ぐ・衣装を変えるときの高さと元の姿勢への復帰を比較する |
 
 ## 9. 必要な入力（Web環境にないもの）
 
