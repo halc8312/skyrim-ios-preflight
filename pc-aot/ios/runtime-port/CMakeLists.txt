@@ -140,7 +140,8 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
     set(skse_vm_source "${SKYRIM_IOS_ROOT}/experiments/skse-plugin-vm")
     target_sources(skyrim_ios_runtime PRIVATE
         "${cosave_source}/inspect.c" "${cosave_source}/records.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/mod_requirements.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_features.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_fuz.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mod_requirements.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_features.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/enb_ini.c" "${CMAKE_CURRENT_SOURCE_DIR}/enb_fx.c" "${CMAKE_CURRENT_SOURCE_DIR}/enb_preset.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_fuz.c"
         "${skse_vm_source}/classic_pex.c")
     target_include_directories(skyrim_ios_runtime PRIVATE "${skse_vm_source}")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_SKSE=1 SKYDREAM_SKSE=1)
