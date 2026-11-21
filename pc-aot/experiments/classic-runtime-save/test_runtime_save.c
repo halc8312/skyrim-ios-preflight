@@ -9,12 +9,15 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <unistd.h>
 
 #define CHECK(cond) do { \
     if (!(cond)) { fprintf(stderr, "Failed at line %d: %s\n", __LINE__, #cond); exit(1); } \
 } while (0)
+
+void classic_runtime_fixture_attach(CPU *cpu);
 
 enum {
     STACK = 0x7000, OTHER_STACK = 0x8000, TEB_BASE = 0x9000, OTHER_TEB = 0xa000,
@@ -291,10 +294,58 @@ static void run_notification_case(int root, const char *root_path, Scenario scen
     CHECK(!close(dir));
 }
 
+static void run_guest_authorization(int root, const char *root_path) {
+    const int profile = case_directory(root, root_path, "spilled-save-factory");
+    CHECK(!mkdirat(profile, "My Games", 0700));
+    const int dir = openat(profile, "My Games", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    CHECK(dir >= 0 && !close(profile));
+    char save_directory[CLASSIC_RUNTIME_PATH_BYTES];
+    static const char suffix[] = "/My Games";
+    const size_t profile_length = strlen(g_save_dir);
+    CHECK(profile_length + sizeof suffix <= sizeof save_directory);
+    memcpy(save_directory, g_save_dir, profile_length);
+    memcpy(save_directory + profile_length, suffix, sizeof suffix);
+    CPU cpu = {0};
+    classic_runtime_fixture_attach(&cpu);
+    const uint32_t stack = cpu.r[4] - 512;
+    const uint32_t name = stack + 0x28;
+    cpu.r[4] = stack;
+    M32(stack) = 0x681658;
+    M32(stack + 4) = name;
+    M32(stack + 8) = 1;
+    M32(stack + 12) = 0x10000;
+    ClassicSaveAttempt attempt;
+    AttemptReport report = {0, -1};
+    const uint32_t bad_addresses[] = {0, name + 1, UINT32_MAX};
+    for (size_t i = 0; i < sizeof bad_addresses / sizeof bad_addresses[0]; ++i)
+        CHECK(!classic_save_attempt_begin_guest(&attempt, &cpu, stack, bad_addresses[i], dir, save_directory,
+                                                 report_attempt, &report));
+    memset(GSTR(name), 'a', 260);
+    CHECK(!classic_save_attempt_begin_guest(&attempt, &cpu, stack, name, dir, save_directory, report_attempt, &report));
+    strcpy(GSTR(name), "C:\\Users\\Player\\..\\Fixture.ess.tmp");
+    CHECK(!classic_save_attempt_begin_guest(&attempt, &cpu, stack, name, dir, save_directory, report_attempt, &report));
+    strcpy(GSTR(name), "C:\\Users\\Player\\Fixture.ess.tmp");
+    CHECK(!classic_save_attempt_begin_guest(&attempt, &cpu, stack, name, dir, save_directory, report_attempt, &report));
+    strcpy(GSTR(name), "C:\\Users\\Player\\my games\\Fixture.ess.tmp");
+    CPU foreign = cpu;
+    CHECK(!classic_save_attempt_begin_guest(&attempt, &foreign, stack, name, dir, save_directory, report_attempt, &report));
+    M32(stack) = 0x681657;
+    CHECK(!classic_save_attempt_begin_guest(&attempt, &cpu, stack, name, dir, save_directory, report_attempt, &report));
+    M32(stack) = 0x681658;
+    errno = ERANGE;
+    const uint64_t ticket = classic_save_attempt_begin_guest(&attempt, &cpu, stack, name, dir, save_directory,
+                                                            report_attempt, &report);
+    CHECK(ticket && errno == ERANGE);
+    classic_save_attempt_cancel(&cpu, ticket);
+    CHECK(!report.count && faccessat(dir, temp_leaf, F_OK, 0) && errno == ENOENT);
+    CHECK(!close(dir));
+}
+
 int main(int argc, char **argv) {
     CHECK(argc == 2 && signal(SIGXFSZ, SIG_IGN) != SIG_ERR);
-    MEM = calloc(1, 1u << 20);
-    CHECK(MEM);
+    const size_t mapped = GUEST_TEB_BASE + 0x2000;
+    MEM = mmap(NULL, mapped, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(MEM != MAP_FAILED);
     strcpy(GSTR(NAME_TEMP), "C:\\Users\\Player\\Fixture.ess.tmp");
     strcpy(GSTR(NAME_FINAL), "C:\\Users\\Player\\Fixture.ess");
     strcpy(GSTR(NAME_BACKUP), "C:\\Users\\Player\\Fixture.ess.bak");
@@ -310,8 +361,9 @@ int main(int argc, char **argv) {
     run_notification_case(root, argv[1], MOVE_ERR, true);
     run_notification_case(root, argv[1], SWAPPED_TEMP, true);
     run_notification_case(root, argv[1], REPEATED_VM_NOTICE, true);
+    run_guest_authorization(root, argv[1]);
     CHECK(!close(root));
-    free(MEM);
+    CHECK(!munmap(MEM, mapped));
     puts("PASS real Skydream file shims, unchanged guest status, and scoped save evidence");
     return 0;
 }

@@ -35,6 +35,8 @@ The combined experiment includes the reviewed selected-load notices. Save and lo
 
 `save_attempt.c` accepts those notices after the caller authenticates the guest call frame and resolves its path with the actual file mapper. It checks that the mapped temporary file is a direct child of the selected profile directory and uses that attempt's same-thread lifecycle scope and file observer. At the normal return it borrows the matching read-only descriptor and the VM and slot trace for one synchronous result. Repeated VM returns, false or short writes, failed VM, close or rename results, and replaced output produce no report. The prepared-runtime test drives this adapter with authored notices and real staged file shims. The pinned lifted fixture separately checks the original save tail with the same shims. The live guest binding and immutable handoff to the companion store still need to be integrated.
 
+`classic_save_attempt_begin_guest` checks the runtime thread's actual CPU and stack bounds, the reviewed factory return and arguments, and the path stored inside that frame. It copies a bounded, terminated input and uses the original `rt_host_path`. The hosted test uses the real staged TEB setup and mapper with a nested profile directory. A valid path opens a witness without producing a file. Foreign CPUs, incorrect factory markers, out-of-frame or unterminated names, and paths outside the authorized saves directory cannot open a witness.
+
 ```sh
 python3 -B -m unittest discover -s tests -p test_stage_save_notifications.py -v
 ```

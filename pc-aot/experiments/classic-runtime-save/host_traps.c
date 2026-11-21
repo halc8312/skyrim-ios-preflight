@@ -3,6 +3,7 @@
 
 int g_log_level;
 char g_game_dir[1024], g_save_dir[1024];
+static _Thread_local bool attaching;
 
 /* The sanitized runtime retains its import table. Calls outside the hosted
  * file fixture must stop the test if any are unexpectedly reached. */
@@ -17,7 +18,12 @@ void gvfree(uint32_t address) { (void)address; abort(); }
 int rt_host_cpu_count(void) { abort(); }
 int rt_host_match(const char *pattern, const char *name) { (void)pattern; (void)name; abort(); }
 uint32_t rt_import_opt(const char *library, const char *name) { (void)library; (void)name; abort(); }
-void rt_altstack(void) { abort(); }
+void rt_altstack(void) { if (!attaching) abort(); }
+void classic_runtime_fixture_attach(CPU *cpu) {
+    attaching = true;
+    rt_thread_init(cpu);
+    attaching = false;
+}
 void skyrim_ios_pump_events(void) { abort(); }
 uint32_t rt_invoke(CPU *cpu, uint32_t fn, int nargs, const uint32_t *args) {
     (void)cpu;

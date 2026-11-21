@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #define _POSIX_C_SOURCE 200809L
 #include "save_attempt.h"
+#include "rt.h"
 
 #include <errno.h>
 #include <string.h>
@@ -42,6 +43,42 @@ uint64_t classic_save_attempt_begin(ClassicSaveAttempt *attempt, const struct CP
             skyrim_lifecycle_scope_close(&attempt->lifecycle);
         }
     }
+    errno = original_errno;
+    return ticket;
+}
+
+uint64_t classic_save_attempt_begin_guest(ClassicSaveAttempt *attempt, const struct CPU *cpu, uint32_t stack,
+    uint32_t temporary_path, int directory, const char *mapped_directory, ClassicSaveAttemptReport report,
+    void *context) {
+    enum { FACTORY_RETURN = 0x681658, FACTORY_PATH_OFFSET = 0x28, PATH_BYTES = 260, TEB_STRIDE = 0x2000 };
+    if (active || !attempt || !report || !cpu || cpu != rt_current_cpu() || !MEM ||
+        !mapped_directory || cpu->r[4] != stack) return 0;
+    const uintptr_t slot = (uintptr_t)cpu->thread;
+    if (slot >= GUEST_STACK_SLOTS || cpu->fs_base != GUEST_TEB_BASE + slot * TEB_STRIDE) return 0;
+    const uint32_t lo = GUEST_STACK_BASE + (uint32_t)slot * GUEST_STACK_SIZE;
+    const uint32_t hi = lo + GUEST_STACK_SIZE - 64u;
+    if ((stack & 3u) || stack < lo || stack > hi - FACTORY_PATH_OFFSET - PATH_BYTES ||
+        temporary_path != stack + FACTORY_PATH_OFFSET ||
+        M32(cpu->fs_base + 4) != hi || M32(cpu->fs_base + 8) != lo ||
+        M32(stack) != FACTORY_RETURN || M32(stack + 4) != temporary_path ||
+        M32(stack + 8) != 1 || M32(stack + 12) != 0x10000) return 0;
+
+    char original[PATH_BYTES], mapped[CLASSIC_RUNTIME_PATH_BYTES];
+    const char *path = (const char *)MEM + temporary_path;
+    const size_t length = strnlen(path, sizeof original);
+    if (!length || length == sizeof original ||
+        strnlen(mapped_directory, sizeof mapped) + length + 1 >= sizeof mapped) return 0;
+    memcpy(original, path, length + 1);
+    for (const char *component = original; *component;) {
+        const size_t width = strcspn(component, "\\/");
+        if (width == 2 && component[0] == '.' && component[1] == '.') return 0;
+        component += width;
+        if (*component) ++component;
+    }
+    const int original_errno = errno;
+    /* False is the ordinary result before a fresh temporary exists. */
+    rt_host_path(original, mapped, sizeof mapped);
+    uint64_t ticket = classic_save_attempt_begin(attempt, cpu, directory, mapped_directory, mapped, report, context);
     errno = original_errno;
     return ticket;
 }
