@@ -173,12 +173,12 @@ static ssize_t read_retry(int fd, uint8_t *out, size_t size) {
     return n;
 }
 
-static uint32_t snapshot_file(int fd, const struct stat *before, size_t max_size,
+static uint32_t snapshot_file(int fd, const struct stat *before, size_t max_size, bool prefix,
                               uint8_t **candidate, size_t *size) {
     const uintmax_t n = (uintmax_t)before->st_size;
     if (before->st_size < 0) return INCOMPLETE;
-    if (n > max_size) return TOO_LARGE;
-    *size = (size_t)n;
+    if (n > max_size && !prefix) return TOO_LARGE;
+    *size = n > max_size ? max_size : (size_t)n;
     *candidate = malloc(*size ? *size : 1);
     if (!*candidate) return NO_MEMORY;
     size_t at = 0;
@@ -190,7 +190,8 @@ static uint32_t snapshot_file(int fd, const struct stat *before, size_t max_size
     }
     uint8_t extra;
     struct stat after;
-    if (read_retry(fd, &extra, 1) != 0 || fstat(fd, &after) < 0 || !unchanged(before, &after)) return INCOMPLETE;
+    if ((n == *size && read_retry(fd, &extra, 1) != 0) ||
+        fstat(fd, &after) < 0 || !unchanged(before, &after)) return INCOMPLETE;
     return 0;
 }
 
@@ -204,7 +205,7 @@ static int authorized_directory(void *context, struct stat *directory) {
 }
 
 static uint32_t read_asset(void *context, const char *path, size_t max_size,
-                           uint8_t **bytes, size_t *length, bool unique) {
+                           uint8_t **bytes, size_t *length, bool unique, bool prefix) {
     if (bytes) *bytes = NULL;
     if (length) *length = 0;
     if (!bytes || !length || !normalized_path(path)) return DENIED;
@@ -232,7 +233,7 @@ static uint32_t read_asset(void *context, const char *path, size_t max_size,
     } else if (fstat(file, &opened) < 0 || !unchanged(&listed, &opened)) {
         result = INCOMPLETE;
     } else {
-        result = snapshot_file(file, &opened, max_size, &candidate, &size);
+        result = snapshot_file(file, &opened, max_size, prefix, &candidate, &size);
     }
     close(parent);
     if (file >= 0) {
@@ -258,12 +259,17 @@ static uint32_t read_asset(void *context, const char *path, size_t max_size,
 
 uint32_t skse_probe_asset_read(void *context, const char *path, size_t max_size,
                                uint8_t **bytes, size_t *length) {
-    return read_asset(context, path, max_size, bytes, length, false);
+    return read_asset(context, path, max_size, bytes, length, false, false);
 }
 
 uint32_t skse_probe_asset_read_unique(void *context, const char *path, size_t max_size,
                                       uint8_t **bytes, size_t *length) {
-    return read_asset(context, path, max_size, bytes, length, true);
+    return read_asset(context, path, max_size, bytes, length, true, false);
+}
+
+uint32_t skse_probe_asset_read_prefix_unique(void *context, const char *path, size_t limit,
+                                             uint8_t **bytes, size_t *length) {
+    return read_asset(context, path, limit, bytes, length, true, true);
 }
 
 uint32_t skse_probe_asset_attributes(void *context, const char *path, uint32_t *attributes) {

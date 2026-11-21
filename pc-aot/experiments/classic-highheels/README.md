@@ -202,6 +202,15 @@ plugin's actual index. An overriding record or replacement script needs
 independent verification. Set `SKYRIM_TEST_OWNED_HDT_EFFECT_ESM` to the
 unchanged LE beta 0.5 ESM to run this check.
 
+The hosted identity join checks the original ESM and loose effect PEX in
+the stable deployed Data directory and takes the load index from the
+copied Classic DataHandler array for that launch. It checks up to 64 KiB
+of each later active plugin for a complete TES4 header and treats a
+dependency on the HighHeels ESM as a possible override. The result is
+the expected EffectSetting FormID for a separately authenticated native
+event. A device witness still needs to link the selected file to the
+guest's successfully bound script in the current world.
+
 The private fixture now also runs the full producer on authored world
 objects, including the fixed ScriptEffect phase callbacks and its
 finish cleanup. It copies the retained actor's FormID, the EffectSetting

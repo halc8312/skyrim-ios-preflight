@@ -21,6 +21,11 @@ uint32_t skse_probe_asset_read(void *context, const char *path, size_t max_size,
  * even when the requested spelling also exists exactly. */
 uint32_t skse_probe_asset_read_unique(void *context, const char *path, size_t max_size,
                                       uint8_t **bytes, size_t *length);
+/* Snapshot up to limit bytes from the start of one uniquely named asset.
+ * A larger regular file is allowed. The same descriptor, identity, and
+ * post-read name checks apply as with the complete-file reader. */
+uint32_t skse_probe_asset_read_prefix_unique(void *context, const char *path, size_t limit,
+                                             uint8_t **bytes, size_t *length);
 /* Get the selected file or directory's type without reading its contents. */
 uint32_t skse_probe_asset_attributes(void *context, const char *path, uint32_t *attributes);
 
