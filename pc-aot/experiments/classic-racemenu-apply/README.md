@@ -141,3 +141,41 @@ may bypass this parser, so use a fresh launch for a device check.
 The test exercises the exact staged code and the prepared file wrappers
 against authored guest objects. A first real-device observation and an
 ECE-to-stock morph comparison still need to be made.
+
+### Hosted female Nord nose witness
+
+The optional hosted witness stages only the same reviewed original-body lift
+used in the other Classic experiments. It sees the menu through the
+engine's retained `RaceSexMenu` frame dispatch before the stock slider
+callback. It checks that the live preview is the player's NPC base, the
+base has female sex and NordRace, the actor's effective race agrees, and
+the female race entry selected by the menu agrees. It observes the
+existing stock Nose Height call without changing its value.
+
+The witness then follows the face node returned by the original player
+method and the retained geometry selected by the stock head-part lookup.
+It accepts the expected female Nord head part only. It observes the
+actual TRI pathname chosen by the head part, and counts a named NoseUp
+or NoseDown record when the stock morph lookup returns one for that
+geometry. The report contains booleans only. An instance or resource
+address stays inside the synchronous menu scope.
+
+The temporary object used by the TRI parser is separate from the actual
+TRI that the morph code uses. For the reviewed direct-parser route,
+`f_5A0710` turns a successful parse into a resource entry with
+`f_5A0550`. The witness requires an independently audited source receipt
+for that invocation, the new entry's original runtime TRI, the same
+entry returned by the stock resource lookup, and that same runtime TRI
+given to the morph code. Loss of the entry, a cached lookup, or lack of
+a source receipt leaves fresh source unproved. The alternate parser
+route and the production app are outside this experiment.
+
+With the owned generation set in `SKYRIM_TEST_OWNED_CLASSIC_LIFT`, run
+`python3 -B -m unittest -v test_ece_nose_witness` from this directory.
+The test syntax-checks all staged units and runs the fixed lookup and
+parser wrappers and named morph selector with authored backing records.
+The positive receipt comes from the test fixture. On a device the same
+scope would need the verified read of the already-open loose winner and
+a fresh lookup. A separate successful resource log, a path match on a
+cached hit, or the slot's text can leave provenance unknown. Those
+checks do not authorize a preset write.
