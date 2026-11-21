@@ -13,12 +13,14 @@ extern uint8_t *MEM;
 enum { LOADING = 1u, CHARGEN = 2u };
 static bool ready, verbose;
 static atomic_uint open_menus;
+static atomic_ullong safety_accepted;
 
 void skyrim_loading_menu_app_configure(const char *verified_image_sha256, bool diagnostics) {
     static const char classic_1932[] = "d97eb0cc0ceef0923d2234d42b382c0d033853356528b271bc043542b1f5e605";
     ready = verified_image_sha256 && strcmp(verified_image_sha256, classic_1932) == 0;
     verbose = diagnostics && ready;
     atomic_store_explicit(&open_menus, 0, memory_order_relaxed);
+    atomic_store_explicit(&safety_accepted, 0, memory_order_relaxed);
 }
 
 bool skyrim_loading_menu_app_ready(void) { return ready; }
@@ -39,12 +41,19 @@ void skyrim_loading_menu_app_observe(uint32_t site, uint32_t dispatcher, uint32_
     const unsigned menu = chargen ? CHARGEN : LOADING;
     if (opening) atomic_fetch_or_explicit(&open_menus, menu, memory_order_relaxed);
     else atomic_fetch_and_explicit(&open_menus, ~menu, memory_order_relaxed);
-    if (verbose)
+    if (verbose) {
         fprintf(stderr, "%s opening=%d ts_ns=%llu\n", chargen ? "IOS_CHARGEN_MENU" : "IOS_LOADING_MENU",
                 opening, (unsigned long long)skyrim_perf_now_ns());
+        if (direction == CLASSIC_LOADING_MENU_CLOSE) {
+            const unsigned long long accepted = atomic_exchange_explicit(&safety_accepted, 0, memory_order_relaxed);
+            if (accepted) fprintf(stderr, "IOS_SAFETY_LOAD accepted=%llu\n", accepted);
+        }
+    }
 }
 
 bool skyrim_safety_load_app_bypass(void) {
-    return ready && atomic_load_explicit(&open_menus, memory_order_relaxed) == LOADING &&
-           !skyrim_device_memory_pressure(skyrim_perf_now_ns());
+    if (!ready || atomic_load_explicit(&open_menus, memory_order_relaxed) != LOADING ||
+        skyrim_device_memory_pressure(skyrim_perf_now_ns())) return false;
+    if (verbose) atomic_fetch_add_explicit(&safety_accepted, 1, memory_order_relaxed);
+    return true;
 }

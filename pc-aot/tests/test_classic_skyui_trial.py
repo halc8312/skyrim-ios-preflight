@@ -71,6 +71,7 @@ static NSString *launchNotice, *profilePath, *modGamePath, *modNotice;
 static NSArray<NSDictionary *> *launchPlugins, *modPlugins;
 static NSArray<NSString *> *launchPackageIds;
 static NSDictionary *frozenFeaturesProfile;
+static BOOL frozenSkyUIAssetsReady;
 static int bridgeCalls, bridgeSelection, rejectSelection;
 int pc_guest_select_classic_skse(int enabled) {
     ++bridgeCalls;
@@ -84,8 +85,8 @@ static NSString *PackageDir(NSString *pid) { return [packagesPath stringByAppend
 static NSDictionary *LoadPackage(NSString *pid) { (void)pid; return nil; }
 /* Other MOD features have their own tests. Observe the startup handoff here. */
 static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady) {
-    (void)skyuiAssetsReady;
     frozenFeaturesProfile = profile;
+    frozenSkyUIAssetsReady = skyuiAssetsReady;
 }
 #define L T
 ''' + between(manager, "static id MutableJSON(", "static NSString *ProfileName(")
@@ -170,10 +171,11 @@ int main(int argc, char **argv) { @autoreleasepool {
     start(game, 0);
     activeProfile = @"second";
     start(game, 1);
-    assert(!launchNotice);
+    assert(!launchNotice && frozenSkyUIAssetsReady);
     launchPackageIds = @[@"bad-skse"];
     start(game, 1);
     assert([launchNotice containsString:@"Scripts/SKSE.pex is not the SKSE 1.7.3 script."]);
+    assert(!frozenSkyUIAssetsReady);
     launchPackageIds = @[];
     toggle.on = NO;
     [hub skyuiTrialToggled:toggle];

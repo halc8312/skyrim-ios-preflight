@@ -97,6 +97,9 @@ PY
   fi
   if [[ "$MOD_HOOKS" == 1 ]]; then
     run_validation env CC=clang python3 -m unittest discover -s tests -p 'test_mod_hooks_*.py' -v
+    run_validation env CC=clang PYTHONPATH=tests python3 -B -m unittest -v \
+      test_skse_cosave_opened_load.NativeOpenedLoadTests \
+      test_skse_cosave_vm_registrations.DeferredActivationTests
   fi
   if [[ "$DLL_PROBE" == 1 ]]; then
     run_validation env CC=clang PYTHONPATH="$ROOT/experiments/skse-plugin-vm" python3 -B -m unittest -v \

@@ -37,7 +37,8 @@ class SaveNotificationStageTests(unittest.TestCase):
         self.assertTrue(original.is_dir())
         staged = stage_save_notifications(original)
         self.assertEqual(set(staged), set(SAVE_SITES))
-        live = mod_hooks_guest.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,camera_observe,chargen_slider")
+        live = mod_hooks_guest.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,camera_observe,chargen_slider,"
+                                          "loading_menu_observe,inventory_fit,safety_load")
         self.assertFalse(staged.keys() & mod_hooks_guest.compose(original, live).keys())
         combined = stage_save_and_load_notifications(original)
         self.assertEqual(staged.keys(), combined.keys())

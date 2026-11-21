@@ -5,6 +5,7 @@ import fcntl
 import os
 from pathlib import Path
 import stat
+import sys
 import tempfile
 
 import test_skse_cosave_bridge as br
@@ -91,6 +92,10 @@ class NativeOpenedLoadTests(OpenedLoadHarness):
                 self.assertEqual(os.lseek(fd, 0, os.SEEK_CUR), 0)
                 self.assertTrue(fcntl.fcntl(fd, fcntl.F_GETFD) & fcntl.FD_CLOEXEC)
                 self.assertEqual(fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE, os.O_RDONLY)
+                if sys.platform == "darwin":
+                    self.ess.write_bytes(b"authored overwrite during load")
+                    self.ess.rename(self.root / "previous.ess")
+                    self.ess.write_bytes(self.original)
                 reads.append(os.read(fd, 7))
 
             hashes = self.deferred.hashes()

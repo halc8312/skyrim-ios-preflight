@@ -104,6 +104,7 @@ class ReceiverTests(unittest.TestCase):
         self.schema.line('IOS_LOADING_MENU opening=0 ts_ns=234567')
         self.schema.line('IOS_CHARGEN_MENU opening=1 ts_ns=345678')
         self.schema.line('IOS_INVENTORY_FIT armed=1')
+        self.schema.line('IOS_SAFETY_LOAD accepted=2')
 
     def test_same_id_replay_idempotent_and_conflicting_content_never_overwritten(self):
         _, first = self.receive()
@@ -210,6 +211,7 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_LOADING_MENU opening=1 ts_ns=123456 event=/private/address',
                      'IOS_CHARGEN_MENU opening=-1 ts_ns=123456',
                      'IOS_INVENTORY_FIT armed=1 path=/private/address',
+                     'IOS_SAFETY_LOAD accepted=2 path=/private/address',
                      timing().replace('samples=1', 'samples=2'),
                      self.bundle['sessions'][0]['lines'][-1].replace('result=-1', 'result=2147483648')]
         for line in bad_lines:

@@ -92,6 +92,8 @@ int main(void) {
     assert(skyrim_loading_menu_app_ready());
     skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, EVENT);
     skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, 0x500);
+    assert(skyrim_safety_load_app_bypass());
+    assert(skyrim_safety_load_app_bypass());
     run_case(false, MANAGER + 4, EVENT, CLASSIC_MENU_NONE);
     M32(EVENT + 4) = 0xababab00;
     run_case(false, MANAGER + 4, EVENT, CLASSIC_LOADING_MENU_CLOSE);
