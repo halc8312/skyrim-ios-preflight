@@ -28,8 +28,9 @@ GROUPS = {
     "fuz_menu": 1, "fuz_world": 2, "vm_lifecycle": 4, "chargen_precache": 8,
     "camera_observe": 16, "chargen_slider": 32, "save_lifecycle": 64,
     "loading_menu_observe": 128, "inventory_fit": 256, "safety_load": 512,
-    "camera_render_observe": 1024, "ece_tri_observe": 2048,
+    "camera_render_observe": 1024, "ece_tri_observe": 2048, "fresh_load": 4096,
 }
+FRESH_LOAD_DEPS = GROUPS["save_lifecycle"] | GROUPS["vm_lifecycle"]
 # The interface header and the reviewed seam headers its tables use; the IPA
 # assembly checks the same five (scripts/assemble_title_ipa.py).
 HEADERS = {
@@ -104,6 +105,8 @@ def parse_groups(text: str) -> int:
         raise ValueError("fuz_world reuses the fuz_menu response stage; list both")
     if mask & GROUPS["safety_load"] and not mask & GROUPS["loading_menu_observe"]:
         raise ValueError("safety_load needs loading_menu_observe; list both")
+    if mask & GROUPS["fresh_load"] and mask & FRESH_LOAD_DEPS != FRESH_LOAD_DEPS:
+        raise ValueError("fresh_load needs save_lifecycle and vm_lifecycle; list both")
     return mask
 
 
@@ -201,6 +204,11 @@ def stage_save_lifecycle(root: Path) -> dict[str, bytes]:
     return save.stage_save_notifications(root)
 
 
+def stage_fresh_load(root: Path) -> dict[str, bytes]:
+    load_stage = load(SAVE_SEAMS, "stage_native_load")
+    return load_stage.stage_native_load(root, app=True)
+
+
 def function_span(unit: bytes, function: str) -> tuple[int, int]:
     marker = f"\nvoid {function}(CPU *c) {{\n".encode("ascii")
     if unit.count(marker) != 1:
@@ -243,6 +251,7 @@ STAGES = {
     "inventory_fit": stage_inventory_fit,
     "safety_load": stage_safety_load,
     "save_lifecycle": stage_save_lifecycle,
+    "fresh_load": stage_fresh_load,
 }
 
 
@@ -251,6 +260,8 @@ def compose(root: Path, mask: int) -> dict[str, bytes]:
     staged: dict[str, bytes] = {}
     owner: dict[str, str] = {}
     for name in group_names(mask):
+        if mask & GROUPS["fresh_load"] and name in ("save_lifecycle", "vm_lifecycle"):
+            continue  # the verified combined stage includes both original edits
         if name not in STAGES:
             raise ValueError(f"MOD hook group {name} has no reviewed stage")
         for unit, data in STAGES[name](root).items():

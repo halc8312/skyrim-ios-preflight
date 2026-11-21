@@ -31,6 +31,7 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups("camera_render_observe"), 1024)
         self.assertEqual(hooks.parse_groups("ece_tri_observe"), 2048)
         self.assertEqual(hooks.parse_groups("save_lifecycle"), 64)
+        self.assertEqual(hooks.parse_groups("fresh_load,save_lifecycle,vm_lifecycle"), 4164)
         self.assertEqual(hooks.parse_groups("loading_menu_observe"), 128)
         self.assertEqual(hooks.parse_groups("inventory_fit"), 256)
         self.assertEqual(hooks.parse_groups("loading_menu_observe,safety_load"), 640)
@@ -39,7 +40,8 @@ class GroupTests(unittest.TestCase):
     def test_rejects_unknown_duplicate_and_incomplete_lists(self):
         for text, message in (("", "comma-separated"), ("fuz_menu,", "comma-separated"),
                               ("fuz_menu,fuz_menu", "twice"), ("fuz", "Unknown"),
-                              ("fuz_world", "list both"), ("safety_load", "list both")):
+                              ("fuz_world", "list both"), ("safety_load", "list both"),
+                              ("fresh_load,save_lifecycle", "needs")):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
                 hooks.parse_groups(text)
 
@@ -216,7 +218,8 @@ class OwnedLiftTests(unittest.TestCase):
         state = json.loads((root / "generation.json").read_text(encoding="utf-8"))
         classic.validate_generation(state)
         groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe,"
-                                    "loading_menu_observe,inventory_fit,safety_load,camera_render_observe,ece_tri_observe")
+                                    "loading_menu_observe,inventory_fit,safety_load,camera_render_observe,"
+                                    "ece_tri_observe,save_lifecycle,fresh_load")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
@@ -236,11 +239,18 @@ class OwnedLiftTests(unittest.TestCase):
             self.assertEqual(menu.count(b"skyrim_inventory_fit_enabled()"), 1)
             self.assertEqual(menu.count(b"skyrim_loading_menu_observe(0x"), 2)
             self.assertEqual(menu.count(b"void f_A60200_guest(CPU *c)"), 1)
+            selected = (work / "mod-hook-sources" / "exe_103.c").read_bytes()
+            self.assertEqual(selected.count(b"skyrim_load_notify(c, SkyrimFreshFinish"), 1)
+            self.assertEqual(selected.count(b"skyrim_save_notify_begin(c,"), 1)
+            vm = (work / "mod-hook-sources" / "exe_199.c").read_bytes()
+            self.assertEqual(vm.count(b"skyrim_load_notify(c, SkyrimFreshVmBegin"), 1)
+            self.assertEqual(vm.count(b"skyrim_vm_host_after_load((uint8_t)"), 1)
             runtime = root / "source/runtime"
             for path in (p for p in result if p.name in staged):
                 with self.subTest(unit=path.name):
                     subprocess.run([compiler, "-std=gnu11", "-fsyntax-only", "-w", "-DGAME_SKYRIM",
                                     "-I", str(runtime), "-I", str(root / "gen"), "-I", str(hooks.SEAMS),
+                                    "-I", str(hooks.SAVE_SEAMS), "-I", str(ROOT / "ios/private-abi"),
                                     str(path)], check=True, timeout=300)
             library = ROOT / "ios/private-abi/pc_guest_mod_hooks_library.c"
             subprocess.run([compiler, "-std=gnu11", "-fsyntax-only", "-DSKYRIM_IOS_CLASSIC_SKSE=1",
