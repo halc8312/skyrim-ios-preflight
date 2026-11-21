@@ -69,7 +69,11 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             if sys.platform.startswith("linux"):
                 flags += ["-fno-pie", "-no-pie"]
         native = ROOT / "native"
-        with tempfile.TemporaryDirectory(prefix="classic-highheel-queue-") as directory:
+        private = ROOT / "private"
+        if private.resolve() != private:
+            raise ValueError("Lifted task-queue fixtures must stay in private/")
+        private.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="classic-highheel-queue-", dir=private) as directory:
             scratch = Path(directory)
             staged = scratch / "lifted_task_queue.c"
             staged.write_bytes(private_fixture(original))
