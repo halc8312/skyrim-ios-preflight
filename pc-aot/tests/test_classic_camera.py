@@ -21,6 +21,9 @@ LIFT_HEADERS = {
     "lift_prelude.h": "59cd9f85d2a5905c0c04dd1b5c71de0443e51dad06d19c09fc69259e6637a746",
     "rt_table.h": "eba5a14664b66a8eccfa901f289d80e6155dac0df5e72a84f24a5f641656a612",
 }
+LIFT_REGISTERS = (b"    uint32_t eax = c->r[0], ecx = c->r[1], edx = c->r[2], ebx = c->r[3], "
+                  b"esp = c->r[4], ebp = c->r[5], esi = c->r[6], edi = c->r[7];\n"
+                  b"    Flags f = c->flags;\n")
 
 
 class CameraStageTests(unittest.TestCase):
@@ -116,24 +119,54 @@ class CameraStageTests(unittest.TestCase):
         visibility_end = visibility.index(b"\nL_7488AE:\n", visibility_start)
         release_start = release.index(b"    edi = ", release.index(b"\nL_73A689:\n"))
         release_end = release.index(b"\nL_73A6BB:\n", release_start)
-        registers = (b"    uint32_t eax = c->r[0], ecx = c->r[1], edx = c->r[2], ebx = c->r[3], "
-                     b"esp = c->r[4], ebp = c->r[5], esi = c->r[6], edi = c->r[7];\n"
-                     b"    Flags f = c->flags;\n")
         with tempfile.TemporaryDirectory(prefix="classic-camera-roots-") as d:
             directory = Path(d)
             fixture = directory / "root_blocks.c"
             fixture.write_bytes(
                 b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n'
-                b"int classic_camera_visibility_block(CPU *c) {\n" + registers +
+                b"int classic_camera_visibility_block(CPU *c) {\n" + LIFT_REGISTERS +
                 b"    goto L_748835;\n" + visibility[visibility_start:visibility_end] +
                 b"\nL_7488AE: return 1;\nL_7489B6: return 0;\n}\n"
-                b"void classic_camera_release_block(CPU *c) {\n" + registers +
+                b"void classic_camera_release_block(CPU *c) {\n" + LIFT_REGISTERS +
                 release[release_start:release_end] +
                 b"\nL_73A6BB: SPILL(); return;\n}\n"
             )
             self.compile_and_run(directory, compiler, [fixture, CAMERA / "test_camera_root_lift.c"], headers)
         self.assertEqual(visibility_source.read_bytes(), visibility)
         self.assertEqual(release_source.read_bytes(), release)
+
+    def test_reviewed_node_updates_and_render_arms_scope(self):
+        generation, headers, compiler = self.owned_lift()
+        pinned = {
+            "exe_129.c": "930fff20445acd19639369a300f6fb7725721defa106108aa4d91497f1a734c9",
+            "exe_132.c": "ad21bbdf90ee77aa0747db86732ae10210c736778013e4966e56f4ac15b7b0df",
+            "exe_275.c": "c980cb667ac15d7f1bbe6df18de61cb550dd8319719eac53e5f74da4cd33a716",
+            "exe_107.c": "c0a140d6fe5a3c86e3f0c970e669c8911f787ce14a72ff7da352e1c0c82e85d7",
+        }
+        units = {name: (generation / "gen" / name).read_bytes() for name in pinned}
+        for name, digest in pinned.items():
+            self.assertEqual(sha256(units[name]).hexdigest(), digest, name)
+
+        def excerpt(unit, begin, end):
+            start = unit.index(begin) + len(begin)
+            return unit[start:unit.index(end, start)]
+
+        body = excerpt(units["exe_129.c"], b"\nL_724244:\n",
+                       b"\n    edx = (uint32_t)((uint32_t)(ebp + 0xCu));")
+        arms = excerpt(units["exe_132.c"], b"\nL_73500F:\n", b"\nL_73502D:")
+        render = excerpt(units["exe_107.c"], b"\nL_69B930:\n", b"\n    (void)sub8(")
+        update_entry = b"void f_AAF320(CPU *c) {\n"
+        update = update_entry + excerpt(units["exe_275.c"], b"\n" + update_entry, b"\n}\n") + b"\n}\n"
+
+        with tempfile.TemporaryDirectory(prefix="classic-camera-update-") as d:
+            directory = Path(d)
+            fixture = directory / "update_blocks.c"
+            wrapper = b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n' + update
+            for name, block in ((b"body_update", body), (b"arms_update", arms), (b"render_arms", render)):
+                wrapper += (b"void classic_camera_" + name + b"(CPU *c) {\n" + LIFT_REGISTERS + block
+                            + b"\n    SPILL();\n}\n")
+            fixture.write_bytes(wrapper)
+            self.compile_and_run(directory, compiler, [fixture, CAMERA / "test_camera_update_lift.c"], headers)
 
     def compile_and_run(self, root, compiler, files, headers=()):
         binary = root / "test_camera"

@@ -84,6 +84,40 @@ It checks complementary bits, preservation of the other flag bits, and the
 release, destruction and clear order with a missing, singly held or multiply
 held reference. It does not exercise a render pass.
 
+## Scene updates and render traversal
+
+The owned 1.4 archive intercepts two calls to `NiAVObject::UpdateNode`:
+
+- `0x724255` in `f_723FE0` updates a reference's scene root, including the
+  player's third-person root. The native call passes a zero-delta,
+  zero-flags context. This route first handles a TLS-dependent deferral.
+  The DLL may restore its previously cached player-body local translation
+  and request a separate update before issuing the native call.
+- `0x735028` in `f_734F50` updates the first-person root after an earlier
+  third-person-root update. Both native calls pass the game's frame delta
+  with flags `0x2001`. The DLL issues the native arms update before its own
+  helper re-acquires the roots and may update the body again. Its translation
+  cache and the earlier restoration path span separate scene updates.
+
+The pinned `UpdateNode` routine `f_AAF320` calls the receiver's downward
+update and then reads the current parent and updates its bound before
+returning. It does not acquire a reference for the caller or wait for a
+render pass. The hosted fixture exercises both native call contexts and a
+parent attached, removed or replaced during the downward update.
+
+A separate render phase in `f_69B810` gets the player arms with
+`GetNiRootNode(1)`. After setting the culling bit before `f_698800`, the
+engine clears that bit at `0x69B930` for the `f_C7A510` traversal and sets
+only that bit again at `0x69B943`. The hosted fixture runs that original
+block and verifies the arms bit during and after traversal, other flag bits
+and the untouched third-person root. The native traversal iterates four
+contexts. An inner loop in `f_C7A1E0` retains each selected list item around
+`f_C78E70`, which removes matching context entries and compacts the list.
+That reference covers list cleanup. The DLL's pre-render hook at
+`0x69B96A` runs before the subsequent `f_69A9F0` phase, outside the observed
+vanilla arms window. The test does not establish third-person root
+ownership through the renderer's submission.
+
 Use the same game version, save copy and ordinary on-foot scene for a Windows
 reference run with the MOD off and on. Inspect the player camera slot and
 record the first-person arms, torso and legs separately. Compare the transition
