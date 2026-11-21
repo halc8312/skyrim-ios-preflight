@@ -6,6 +6,19 @@
 
 /* argv: root... ; prints "unreadable key:providers:winner ..." */
 int main(int argc, char **argv) {
+    if (argc >= 2 && !strcmp(argv[1], "--nioverride")) {
+        const char *const *roots = (const char *const *)argv + 2;
+        SkyrimFeatureScan scan;
+        assert(!skyrim_features_scan(roots, (size_t)(argc - 2), &scan));
+        SkyrimFeatureState ni = scan.features[SKYRIM_FEATURE_NIOVERRIDE];
+        printf("%u %d", ni.providers, ni.winner);
+        uint16_t version[4];
+        if (ni.winner >= 0 && skyrim_nioverride_file_version(roots[ni.winner], version))
+            printf(" %u.%u.%u.%u", (unsigned)version[0], (unsigned)version[1],
+                   (unsigned)version[2], (unsigned)version[3]);
+        puts("");
+        return 0;
+    }
     if (argc == 3 && !strcmp(argv[1], "--precache-path")) {
         char path[4096];
         int found = skyrim_precache_killer_path(argv[2], path, sizeof path);

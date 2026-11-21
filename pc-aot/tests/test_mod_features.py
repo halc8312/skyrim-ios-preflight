@@ -2,12 +2,56 @@
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 PORT = ROOT / "ios/runtime-port"
+
+
+def versioned_pe(file_version, *, pe64=False, second_language=None):
+    pe, raw, rva = 0x80, 0x200, 0x1000
+    table = 112 if pe64 else 96
+    optional_size = table + 16 * 8
+    payload = bytearray(0x400)
+    payload[:2] = b"MZ"
+    struct.pack_into("<I", payload, 60, pe)
+    struct.pack_into("<4sHHIIIHH", payload, pe, b"PE\0\0", 0x8664 if pe64 else 0x14C,
+                     1, 0, 0, 0, optional_size, 0x2002)
+    optional = pe + 24
+    struct.pack_into("<H", payload, optional, 0x20B if pe64 else 0x10B)
+    struct.pack_into("<I", payload, optional + table - 4, 16)
+    struct.pack_into("<II", payload, optional + table + 16, rva, 0x200)
+    struct.pack_into("<8sIIII", payload, optional + optional_size, b".rsrc", 0x200, rva, 0x200, raw)
+
+    def node(offset, entries):
+        struct.pack_into("<H", payload, raw + offset + 14, len(entries))
+        for i, entry in enumerate(entries):
+            struct.pack_into("<II", payload, raw + offset + 16 + i * 8, *entry)
+
+    node(0, [(16, 0x80000020)])
+    node(0x20, [(1, 0x80000040)])
+    languages = [(1033, 0x70)]
+    if second_language is not None:
+        languages.append((1041, 0x80))
+    node(0x40, languages)
+
+    def write_version(entry, data, version):
+        at = raw + data
+        struct.pack_into("<II", payload, raw + entry, rva + data, 92)
+        struct.pack_into("<HHH", payload, at, 92, 52, 0)
+        payload[at + 6:at + 38] = "VS_VERSION_INFO\0".encode("utf-16le")
+        major, minor, build, revision = version
+        struct.pack_into("<6I", payload, at + 40, 0xFEEF04BD, 0x10000,
+                         major << 16 | minor, build << 16 | revision, 0x98765432, 0)
+
+    write_version(0x70, 0x100, file_version)
+    if second_language is not None:
+        write_version(0x80, 0x160, second_language)
+    return payload
 
 
 @unittest.skipUnless(os.name == "posix", "Requires POSIX paths")
@@ -23,6 +67,8 @@ class FeatureTests(unittest.TestCase):
         flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O2", "-I", PORT]
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
             flags += ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+            if sys.platform.startswith("linux"):
+                flags += ["-fno-pie", "-no-pie"]
         subprocess.run([cc, *flags, ROOT / "tests/native/test_mod_features.c", PORT / "mod_features.c",
                         PORT / "mod_plugins.c", "-o", cls.binary], check=True, timeout=60)
 
@@ -68,6 +114,46 @@ class FeatureTests(unittest.TestCase):
         b = self.root("b", ["SKSE/Plugins/fuz.dll"])
         c = self.root("c", ["SKSE/Plugins/NiOverride.dll"])
         self.assertEqual(self.scan(a, b, c), (0, {"nioverride": (2, 2), "fuz": (1, 1)}))
+
+    def nioverride(self, *roots):
+        return subprocess.check_output([self.binary, "--nioverride", *roots], text=True, timeout=10).split()
+
+    def test_nioverride_uses_the_exact_name_and_the_winning_files_metadata(self):
+        a = self.root("racemenu", ["SKSE/Plugins/NIOverride.dll"])
+        b = self.root("standalone", ["skse/plugins/nioverride.dll"])
+        c = self.root("other", ["SKSE/Plugins/archive_nioverride.dll"])
+        first, second = a / "SKSE/Plugins/NIOverride.dll", b / "skse/plugins/nioverride.dll"
+        first.write_bytes(versioned_pe((3, 4, 5, 2)))
+        second.write_bytes(versioned_pe((3, 4, 4, 0), pe64=True, second_language=(3, 4, 4, 0)))
+        self.assertEqual(self.nioverride(a, b, c), ["2", "1", "3.4.4.0"])
+        self.assertEqual(self.nioverride(b, a, c), ["2", "1", "3.4.5.2"])
+        self.assertEqual(self.nioverride(c), ["0", "-1"])
+
+        second.write_bytes(b"No fixed metadata")
+        self.assertEqual(self.nioverride(a, b), ["2", "1"])
+
+    def test_nioverride_refuses_ambiguous_and_out_of_bounds_metadata(self):
+        a = self.root("a", ["SKSE/Plugins/nioverride.dll"])
+        dll = a / "SKSE/Plugins/nioverride.dll"
+        ambiguous = versioned_pe((1, 2, 3, 4), second_language=(1, 2, 3, 5))
+        forged = bytearray(versioned_pe((1, 2, 3, 4)))
+        struct.pack_into("<I", forged, 0x270, 0xFFFFFF00)
+        for data in (ambiguous, forged, versioned_pe((1, 2, 3, 4))[:-1]):
+            with self.subTest(size=len(data)):
+                dll.write_bytes(data)
+                self.assertEqual(self.nioverride(a), ["1", "0"])
+
+    def test_nioverride_skips_links_and_case_aliases(self):
+        actual = self.root("actual", ["SKSE/Plugins/nioverride.dll"])
+        (actual / "SKSE/Plugins/nioverride.dll").write_bytes(versioned_pe((1, 0, 0, 0)))
+        linked = self.root("linked", ["SKSE/Plugins/fuz.dll"])
+        (linked / "SKSE/Plugins/nioverride.dll").symlink_to(actual / "SKSE/Plugins/nioverride.dll")
+        self.assertEqual(self.nioverride(linked), ["0", "-1"])
+        self.assertEqual(self.scan(linked), (1, {"fuz": (1, 0)}))
+        alias = actual / "SKSE/Plugins/NiOverride.dll"
+        if not alias.exists():
+            alias.write_bytes(b"other version")
+            self.assertEqual(self.nioverride(actual), ["0", "-1"])
 
     def test_links_and_ambiguous_aliases_are_skipped(self):
         real = self.root("real", ["SKSE/Plugins/fuz.dll"])

@@ -255,22 +255,29 @@ static BOOL AnyOn(NSArray *rows) {
 
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 /* Read-only: the original Data folder, then the profile's enabled packages in order. */
-static NSArray<NSString *> *DataRootsFor(NSArray<NSString *> *packageIds) {
+static NSArray<NSString *> *DataRootsFor(NSArray<NSString *> *packageIds, NSMutableArray<NSString *> *labels) {
     NSMutableArray<NSString *> *roots = [NSMutableArray array];
     if (originalGameDirectory.length) {
         char data[4096];
-        if (skyrim_plugin_child_path(originalGameDirectory.fileSystemRepresentation, "Data", data, sizeof data) >= 0)
+        if (skyrim_plugin_child_path(originalGameDirectory.fileSystemRepresentation, "Data", data, sizeof data) >= 0) {
             [roots addObject:@(data)];
+            [labels addObject:T(@"Original game Data", @"元のゲームのData")];
+        }
     }
     for (NSString *pid in packageIds) {
         NSString *dir = PackageDir(pid);
-        if (dir) [roots addObject:[dir stringByAppendingPathComponent:@"Data"]];
+        if (!dir) continue;
+        [roots addObject:[dir stringByAppendingPathComponent:@"Data"]];
+        if (labels) {
+            id name = LoadPackage(pid)[@"name"];
+            [labels addObject:[name isKindOfClass:NSString.class] && [name length] ? name : pid];
+        }
     }
     return roots;
 }
 
 static SkyrimSkyUIRequirements SkyUIRequirementsFor(NSArray<NSString *> *packageIds) {
-    NSArray<NSString *> *roots = DataRootsFor(packageIds);
+    NSArray<NSString *> *roots = DataRootsFor(packageIds, nil);
     const char **paths = calloc(roots.count + 1, sizeof *paths);
     SkyrimSkyUIRequirements result = {.status = SKYRIM_SKYUI_REQ_UNREADABLE};
     if (paths) {
@@ -282,7 +289,7 @@ static SkyrimSkyUIRequirements SkyUIRequirementsFor(NSArray<NSString *> *package
 }
 
 static NSArray<NSString *> *XpmseRequirementLines(NSArray<NSString *> *packageIds) {
-    NSArray<NSString *> *roots = DataRootsFor(packageIds);
+    NSArray<NSString *> *roots = DataRootsFor(packageIds, nil);
     const char **paths = calloc(roots.count + 1, sizeof *paths);
     if (!paths) return @[];
     for (NSUInteger i = 0; i < roots.count; ++i) paths[i] = roots[i].fileSystemRepresentation;
@@ -291,22 +298,25 @@ static NSArray<NSString *> *XpmseRequirementLines(NSArray<NSString *> *packageId
     free(paths);
     if (status) return @[];
     NSMutableArray *lines = [NSMutableArray arrayWithArray:@[
-        [NSString stringWithFormat:T(@"Common FNIS output files in this profile: %u of %u.",
-          @"このプロファイルにある主なFNIS出力ファイル：%u／%u個。"),
+        [NSString stringWithFormat:T(@"Common FNIS-related files present: %u of %u.",
+          @"このプロファイルにある主なFNIS関連ファイル：%u／%u個。"),
           result.fnis_present, (unsigned)SKYRIM_XPMSE_FNIS_MARKERS],
         result.skse_script ? T(@"SKSE Classic script found.", @"SKSE Classicのスクリプトを確認しました。")
                            : T(@"Add the SKSE Classic scripts to this profile.", @"このプロファイルにSKSE Classicのスクリプトを追加してください。"),
-        result.nioverride ? T(@"NiOverride file found.", @"NiOverrideファイルを確認しました。")
-                          : T(@"Some XPMSE options use NiOverride from RaceMenu or the standalone package.",
-                              @"XPMSEの一部のオプションにはRaceMenu同梱または単体版のNiOverrideが必要です。"),
     ]];
+    [lines addObject:T(@"For animation changes, use the FNIS output generated on a PC for this Skyrim LE profile.",
+                       @"アニメーションを変えるには、このSkyrim LEプロファイル用にPCで生成したFNISの出力を使います。")];
+    [lines addObject:T(@"NiOverride is optional for the skeleton files. Some XPMSE options on PC use RaceMenu's bundled copy or the standalone package.",
+                       @"骨格ファイルにNiOverrideは必須ではありません。PC版XPMSEの一部のオプションには、RaceMenu同梱版か単体版を使います。")];
+    if (result.nioverride)
+        [lines addObject:T(@"NiOverride DLL detected. Running NiOverride in the game on iPhone is still unsupported.",
+                           @"NiOverrideのDLLを検出しました。iPhoneのゲーム内でのNiOverride実行は未対応です。")];
     if (result.unreadable) [lines addObject:T(@"Some dependency paths could not be checked.",
                                                @"前提ファイルの一部を確認できませんでした。")];
     return lines;
 }
 
-static SkyrimFeatureScan FeatureScanFor(NSArray<NSString *> *packageIds) {
-    NSArray<NSString *> *roots = DataRootsFor(packageIds);
+static SkyrimFeatureScan FeatureScanRoots(NSArray<NSString *> *roots) {
     const char **paths = calloc(roots.count + 1, sizeof *paths);
     SkyrimFeatureScan scan;
     if (!paths) { memset(&scan, 0, sizeof scan); return scan; }
@@ -492,7 +502,7 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
     const uint32_t compiled = pc_guest_mod_hooks_compiled();
     skyrim_mod_hook_plan(requested, compiled, host, plan);
     if (plan->groups & fuzGroups) {
-        NSArray<NSString *> *roots = DataRootsFor(launchPackageIds);
+        NSArray<NSString *> *roots = DataRootsFor(launchPackageIds, nil);
         const char **paths = calloc(roots.count + 1, sizeof *paths);
         SkyrimFuzSettings settings;
         for (NSUInteger i = 0; paths && i < roots.count; ++i) paths[i] = roots[i].fileSystemRepresentation;
@@ -532,7 +542,7 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
  * failure, 4 the guest lacks the needed hook groups (rebuild it), 5 the MOD version could not be verified. */
 static void FreezeFeatures(NSDictionary *profile) {
     NSMutableDictionary *enabledKeys = [NSMutableDictionary dictionary];
-    SkyrimFeatureScan scan = FeatureScanFor(launchWithoutMods ? @[] : launchPackageIds);
+    SkyrimFeatureScan scan = FeatureScanRoots(DataRootsFor(launchWithoutMods ? @[] : launchPackageIds, nil));
     uint32_t mask = 0;
     unsigned reasons[SKYRIM_FEATURE_COUNT];
     uint32_t hooked = 0;
@@ -2182,6 +2192,7 @@ static NSString *FeatureName(unsigned feature) {
 @interface SKFeatures : UITableViewController
 @property(nonatomic) SkyrimFeatureScan scan;
 @property(nonatomic, strong) NSArray<NSNumber *> *found;
+@property(nonatomic, copy) NSString *nioverrideDetails;
 @end
 @implementation SKFeatures
 - (void)viewDidLoad {
@@ -2190,7 +2201,29 @@ static NSString *FeatureName(unsigned feature) {
 }
 - (void)reload {
     EnsureState();
-    self.scan = FeatureScanFor(EnabledPackageIds(SelectedProfile()));
+    NSMutableArray<NSString *> *labels = [NSMutableArray array];
+    NSArray<NSString *> *roots = DataRootsFor(EnabledPackageIds(SelectedProfile()), labels);
+    SkyrimFeatureScan scan = FeatureScanRoots(roots);
+    self.scan = scan;
+    self.nioverrideDetails = nil;
+    SkyrimFeatureState nioverride = scan.features[SKYRIM_FEATURE_NIOVERRIDE];
+    if (nioverride.winner >= 0 && (NSUInteger)nioverride.winner < roots.count) {
+        NSUInteger winner = (NSUInteger)nioverride.winner;
+        NSMutableString *details = [NSMutableString string];
+        if (nioverride.providers > 1)
+            [details appendFormat:T(@" Duplicate copies in %u sources.", @" %uか所に重複しています。"),
+                                  nioverride.providers];
+        [details appendFormat:scan.unreadable_roots
+             ? T(@" Highest priority among checked sources: %@.", @" 確認できた中で最優先の提供元：%@。")
+             : T(@" Selected source: %@.", @" 選ばれる提供元：%@。"), labels[winner]];
+        uint16_t version[4];
+        if (skyrim_nioverride_file_version(roots[winner].fileSystemRepresentation, version))
+            [details appendFormat:T(@" DLL file version %u.%u.%u.%u.", @" DLLのファイルバージョン %u.%u.%u.%u。"),
+                                  (unsigned)version[0], (unsigned)version[1], (unsigned)version[2], (unsigned)version[3]];
+        else
+            [details appendString:T(@" DLL file version unavailable.", @" DLLのファイルバージョンは不明です。")];
+        self.nioverrideDetails = details;
+    }
     NSMutableArray *found = [NSMutableArray array];
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) if (self.scan.features[f].providers) [found addObject:@(f)];
     self.found = found;
@@ -2199,8 +2232,8 @@ static NSString *FeatureName(unsigned feature) {
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { (void)t; (void)s; return self.found.count ? (NSInteger)self.found.count : 1; }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
     (void)t; (void)s;
-    return T(@"Found by file name only; versions are not checked. Switches start off and apply at the next full restart. Enable the MOD's own plugin and files in this profile first.",
-             @"ファイル名だけで検出しており、版は確認していません。スイッチは初期状態ではオフで、次回の完全な再起動から反映します。先にこのプロファイルでMODのプラグインとファイルを有効にしてください。");
+    return T(@"Detected by file name. File versions appear when available. Switches start off and apply at the next full restart. Enable the MOD's own plugin and files in this profile first.",
+             @"ファイル名で検出し、確認できたファイルバージョンを表示します。スイッチは初期状態ではオフで、次回の完全な再起動から反映します。先にこのプロファイルでMODのプラグインとファイルを有効にしてください。");
 }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)p {
     (void)t;
@@ -2225,7 +2258,9 @@ static NSString *FeatureName(unsigned feature) {
     }
 #endif
     unsigned providers = self.scan.features[f].providers;
-    if (providers > 1)
+    if (f == SKYRIM_FEATURE_NIOVERRIDE && self.nioverrideDetails)
+        status = [status stringByAppendingString:self.nioverrideDetails];
+    else if (providers > 1)
         status = [status stringByAppendingFormat:T(@" %u packages provide it; the later one in the list is used.", @" %u個のパッケージが含みます。一覧で後のものが使われます。"), providers];
     c.detailTextLabel.text = status;
     if (implemented) {

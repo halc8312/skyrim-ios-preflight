@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #pragma once
 #include <stddef.h>
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -36,6 +37,10 @@ typedef struct {
 /* roots: the original Data folder and enabled packages' Data folders in
  * overwrite order. Links are not followed. Returns 0, or EINVAL. */
 int skyrim_features_scan(const char *const *roots, size_t count, SkyrimFeatureScan *out);
+
+/* On demand, read the selected root's NiOverride DLL fixed file version.
+ * Returns 1 when available, 0 for a missing or unusable resource. */
+int skyrim_nioverride_file_version(const char *root, uint16_t version[4]);
 
 /* Locate the reviewed package's DLL under one already selected Data view.
  * Returns 1 when found, 0 when absent, -1 for ambiguous names or unsafe files. */
