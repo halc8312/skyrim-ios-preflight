@@ -11,6 +11,10 @@ on:
         description: Include the per-profile SkyUI 5.1 trial in the unsigned standard iPhone app
         type: boolean
         default: false
+      first_wave_trial:
+        description: Build the unsigned iPhone host with the opt-in Fuz and PapyrusUtil trials
+        type: boolean
+        default: false
       dll_probe:
         description: Check the isolated LE DLL diagnostic with the device SDK and simulator
         type: boolean
@@ -21,7 +25,7 @@ permissions:
 
 jobs:
   apple-sdk-preflight:
-    if: ${{ !inputs.full_title_host && !inputs.classic_trial && !inputs.dll_probe }}
+    if: ${{ !inputs.full_title_host && !inputs.classic_trial && !inputs.dll_probe && !inputs.first_wave_trial }}
     runs-on: macos-26
     timeout-minutes: 25
     env:
@@ -68,14 +72,16 @@ jobs:
           retention-days: 7
 
   standard-title-host:
-    if: ${{ inputs.full_title_host || inputs.classic_trial }}
+    if: ${{ inputs.full_title_host || inputs.classic_trial || inputs.first_wave_trial }}
     runs-on: macos-26
     timeout-minutes: 120
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       IPHONEOS_DEPLOYMENT_TARGET: '18.0'
-      SKYRIM_IOS_CLASSIC_SKSE: ${{ inputs.classic_trial && '1' || '0' }}
-      SKYRIM_IOS_SKSE_DLL_PROBE: ${{ inputs.dll_probe && '1' || '0' }}
+      SKYRIM_IOS_CLASSIC_SKSE: ${{ (inputs.classic_trial || inputs.first_wave_trial) && '1' || '0' }}
+      SKYRIM_IOS_SKSE_DLL_PROBE: ${{ (inputs.dll_probe || inputs.first_wave_trial) && '1' || '0' }}
+      SKYRIM_IOS_MOD_HOOKS: ${{ inputs.first_wave_trial && '1' || '0' }}
+      SKYRIM_IOS_CLASSIC_PAPYRUSUTIL: ${{ inputs.first_wave_trial && '1' || '0' }}
       JOBS: '2'
       HOMEBREW_NO_AUTO_UPDATE: '1'
     steps:
