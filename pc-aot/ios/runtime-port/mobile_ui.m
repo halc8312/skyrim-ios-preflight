@@ -310,6 +310,13 @@ const char *skyrim_mobile_classic_text_language(void) {
     if (!gameLanguagePrepared || (!startup[@"game_text"] && !startup[@"game_voices"])) return NULL;
     return gameLanguage.text == SKYRIM_GAME_JAPANESE ? "JAPANESE" : "ENGLISH";
 }
+
+int skyrim_mobile_classic_game_language(unsigned *text, unsigned *voices) {
+    if (!text || !voices || !skyrim_mobile_classic_text_language()) return 0;
+    *text = gameLanguage.text;
+    *voices = gameLanguage.voices;
+    return 1;
+}
 #endif
 
 static NSString *gameLanguageFallback(void) {

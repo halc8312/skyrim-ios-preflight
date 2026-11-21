@@ -210,7 +210,11 @@ endif()
 if(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
     # The staged value publication (classic_papyrus_values.c.in) is compiled into skse_compat.c.
     target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/classic_papyrusutil.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/classic_mod_catalog.c")
+        "${CMAKE_CURRENT_SOURCE_DIR}/classic_mod_catalog.c"
+        "${cosave_source}/generation.c" "${cosave_source}/digest.c" "${cosave_source}/immutable_ess.c"
+        "${cosave_source}/mod_history.c" "${cosave_source}/core_snapshot.c" "${cosave_source}/plugin_records.c"
+        "${cosave_source}/plugin_stream.c" "${cosave_source}/event_bridge.c" "${cosave_source}/event_trace.c")
+    target_link_libraries(skyrim_ios_runtime PUBLIC sqlite3)
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_INT0_PROBE=1 SKYRIM_IOS_CLASSIC_PAPYRUSUTIL=1)
 endif()
 if(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE OR SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)

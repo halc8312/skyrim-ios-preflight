@@ -530,8 +530,18 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     if (inventoryFit && (compiled & PC_GUEST_MOD_HOOK_INVENTORY_FIT))
         plan->groups |= PC_GUEST_MOD_HOOK_INVENTORY_FIT;
     if (saveProfile && (compiled & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) &&
-        skyrim_save_app_configure(saveProfile.fileSystemRepresentation))
+        skyrim_save_app_configure(saveProfile.fileSystemRepresentation)) {
         plan->groups |= PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE;
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+        unsigned text, voices;
+        NSUUID *profileId = [[NSUUID alloc] initWithUUIDString:activeProfile];
+        if (profileId && skyrim_mobile_classic_game_language(&text, &voices)) {
+            uuid_t idBytes;
+            [profileId getUUIDBytes:idBytes];
+            (void)skyrim_save_app_configure_storage(saveProfile.fileSystemRepresentation, idBytes, text, voices);
+        }
+#endif
+    }
     PcGuestModHooks table = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof table, .groups = plan->groups};
     if (plan->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
         table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load,

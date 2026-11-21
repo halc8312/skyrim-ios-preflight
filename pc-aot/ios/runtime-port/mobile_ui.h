@@ -13,6 +13,7 @@ int skyrim_mobile_prepare_game_language(const char *game_directory);
 /* Effective text from an explicitly prepared game profile, or NULL when
  * the guest's existing ini supplies the language. Immutable during play. */
 const char *skyrim_mobile_classic_text_language(void);
+int skyrim_mobile_classic_game_language(unsigned *text, unsigned *voices);
 #endif
 /* Once after the language step and before guest threads. Reads only plugin
  * headers in Data and publishes the profile plugins.txt for the user's MOD
