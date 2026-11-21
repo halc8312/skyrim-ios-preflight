@@ -25,9 +25,9 @@ GROUPS = {
     "fuz_menu": 1, "fuz_world": 2, "vm_lifecycle": 4, "chargen_precache": 8,
     "camera_observe": 16, "chargen_slider": 32, "save_lifecycle": 64,
 }
-# Groups without a reviewed stage in this tree, with the reason shown to the caller.
+# Groups without a production binding, with the reason shown to the caller.
 UNSTAGED = {
-    "save_lifecycle": "the save lifecycle stage (plan P3-5) is not written yet",
+    "save_lifecycle": "the experimental save and load notices (plan P3-5) are not bound to the app",
 }
 # The interface header and the reviewed seam headers its tables use; the IPA
 # assembly checks the same five (scripts/assemble_title_ipa.py).
