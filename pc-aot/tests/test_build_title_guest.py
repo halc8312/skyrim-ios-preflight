@@ -233,7 +233,7 @@ class BuildTests(unittest.TestCase):
                 (self.abi / name).write_bytes(b"/* test */")
             with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
                 builder.main([str(self.stage), "--jobs", "1", "--mod-hooks", "fuz_menu"])
-            for groups, message in (("vm_lifecycle", "0x8D6E16"), ("fuz_world", "list both"), ("bogus", "Unknown")):
+            for groups, message in (("camera_observe", "classic-camera"), ("fuz_world", "list both"), ("bogus", "Unknown")):
                 stderr = io.StringIO()
                 with self.subTest(groups=groups), self.assertRaises(SystemExit), contextlib.redirect_stderr(stderr):
                     builder.main([str(self.stage), "--jobs", "1", "--classic-skse", "--mod-hooks", groups])

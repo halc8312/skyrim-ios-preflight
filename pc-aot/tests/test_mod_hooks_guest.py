@@ -25,14 +25,14 @@ spec.loader.exec_module(assembly)
 class GroupTests(unittest.TestCase):
     def test_parses_staged_groups(self):
         self.assertEqual(hooks.parse_groups("fuz_menu"), 1)
-        self.assertEqual(hooks.parse_groups("fuz_menu,fuz_world"), 3)
+        self.assertEqual(hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle"), 7)
         self.assertEqual(hooks.parse_groups(" chargen_precache , fuz_menu "), 9)
         self.assertEqual(hooks.group_names(11), ["fuz_menu", "fuz_world", "chargen_precache"])
 
     def test_rejects_unknown_unstaged_duplicate_and_incomplete_lists(self):
         for text, message in (("", "comma-separated"), ("fuz_menu,", "comma-separated"),
                               ("fuz_menu,fuz_menu", "twice"), ("fuz", "Unknown"),
-                              ("vm_lifecycle", "0x8D6E16"), ("camera_observe", "classic-camera"),
+                              ("camera_observe", "classic-camera"),
                               ("chargen_slider", "not confirmed"), ("save_lifecycle", "P3-5"),
                               ("fuz_world", "list both")):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
@@ -128,22 +128,17 @@ class ComposeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "changed while preparing"):
                 hooks.prepare_sources(self.sources, self.output, 1, self.state, self.root)
 
-    def test_vm_lifecycle_stage_with_an_authored_unit_and_pending_reload_site(self):
+    def test_vm_lifecycle_stage_with_an_authored_unit(self):
         revert, load, delete = (site[3] for site in hooks.VM_SITES)
         reload_call = b"    esp -= 4; M32(esp) = 0x8D6E1Bu; SPILL(); f_8D5DF0(c); RELOAD();\n"
         unit = (b'#include "funcs_exe.h"\n\nvoid f_8D6990(CPU *c) {\n' + revert + b"}\n"
                 b"\nvoid f_8D69C0(CPU *c) {\n    eax = 1;\n" + load + b"}\n"
                 b"\nvoid f_8D6550(CPU *c) {\n" + delete + b"}\n"
-                b"\nvoid f_8D6DF0(CPU *c) {\n" + reload_call + b"}\n")
+                b"\nvoid f_8D6D00(CPU *c) {\n" + reload_call + b"}\n")
         (self.gen / "exe_199.c").write_bytes(unit)
         sources = [*self.sources, self.gen / "exe_199.c"]
         authored = hashlib.sha256(unit).hexdigest()
-        # The reload site is not confirmed: the group is refused before staging.
-        with self.assertRaisesRegex(ValueError, "0x8D6E16"):
-            hooks.parse_groups("vm_lifecycle")
-        with self.assertRaisesRegex(ValueError, "0x8D6E16"):
-            hooks.prepare_sources(sources, self.output, 4, self.state, self.root)
-        site = ("exe_199.c", authored, "f_8D6DF0", reload_call, "b", b"    skyrim_vm_host_before_revert(2u);\n")
+        site = ("exe_199.c", authored, "f_8D6D00", reload_call, "b", b"    skyrim_vm_host_before_revert(2u);\n")
         sites = [(u, authored, *rest) for u, _sha, *rest in hooks.VM_SITES]
         with mock.patch.object(hooks, "VM_SCRIPT_RELOAD_SITE", site):
             self.assertEqual(hooks.parse_groups("vm_lifecycle"), 4)
@@ -196,7 +191,7 @@ class OwnedLiftTests(unittest.TestCase):
         root = Path(generation).resolve()
         state = json.loads((root / "generation.json").read_text(encoding="utf-8"))
         classic.validate_generation(state)
-        groups = hooks.parse_groups("fuz_menu,fuz_world,chargen_precache")
+        groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
@@ -204,7 +199,7 @@ class OwnedLiftTests(unittest.TestCase):
             sources = classic.prepare_sources(originals, work / "classic-sources")
             result, staged = hooks.prepare_sources(sources, work / "mod-hook-sources", groups, state, root)
             self.assertTrue({"exe_100.c", "exe_101.c", "exe_189.c", "exe_35.c", "exe_188.c",
-                             "exe_106.c", "exe_186.c"} <= set(staged))
+                             "exe_106.c", "exe_186.c", "exe_199.c"} <= set(staged))
             runtime = root / "source/runtime"
             for path in (p for p in result if p.name in staged):
                 with self.subTest(unit=path.name):

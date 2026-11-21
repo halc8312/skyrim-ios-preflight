@@ -57,7 +57,8 @@ def header_hashes() -> dict[str, str]:
 # experiments/classic-fresh-load/test_fresh_load.py. Each entry: unit, unit
 # SHA-256, containing function, the exact lifted call line, and the line added
 # before (b) or after (a) it.
-VM_HOOK_DECLARATIONS = (b"void skyrim_vm_host_before_revert(unsigned site);\n"
+VM_HOOK_DECLARATIONS = (b"#include <stdint.h>\n"
+                        b"void skyrim_vm_host_before_revert(unsigned site);\n"
                         b"void skyrim_vm_host_after_load(int succeeded);\n"
                         b"struct CPU;\n"
                         b"void skyrim_vm_host_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle);\n")
@@ -82,18 +83,11 @@ VM_SITES = [
     ("exe_199.c", VM_UNIT_SHA256, "f_8D6550",  # 0x8D657A sleep-unregister on form deletion
      FORM_DELETE_CALL, "r", FORM_DELETE_STAGED),
 ]
-# The script-reload revert at 0x8D6E16 (return 0x8D6E1B, callee f_8D5DF0) has
-# no reviewed unit, function or hash in this tree. Without it a reload would
-# leave old scopes current, so the group cannot be built until the pinned lift
-# confirms the site (MOD_FIRST_WAVE_PLAN.md section 8.2).
-VM_SCRIPT_RELOAD_SITE = None
-
-
-def unstaged_reason(name: str) -> str | None:
-    if name == "vm_lifecycle" and VM_SCRIPT_RELOAD_SITE is None:
-        return ("the script-reload revert at 0x8D6E16 is not confirmed from the pinned lift; "
-                "plan X4 stops this site until then")
-    return UNSTAGED.get(name)
+VM_SCRIPT_RELOAD_SITE = (
+    "exe_199.c", VM_UNIT_SHA256, "f_8D6D00",  # 0x8D6E16 script reload revert
+    b"    esp -= 4; M32(esp) = 0x8D6E1Bu; SPILL(); f_8D5DF0(c); RELOAD();\n",
+    "b", b"    skyrim_vm_host_before_revert(2u);\n",
+)
 
 
 def parse_groups(text: str) -> int:
@@ -106,7 +100,7 @@ def parse_groups(text: str) -> int:
     for name in names:
         if name not in GROUPS:
             raise ValueError(f"Unknown MOD hook group {name!r}; known groups: {', '.join(GROUPS)}")
-        reason = unstaged_reason(name)
+        reason = UNSTAGED.get(name)
         if reason:
             raise ValueError(f"MOD hook group {name} cannot be built: {reason}")
         mask |= GROUPS[name]
@@ -174,10 +168,7 @@ def function_span(unit: bytes, function: str) -> tuple[int, int]:
 
 
 def stage_vm_lifecycle(root: Path) -> dict[str, bytes]:
-    sites = list(VM_SITES)
-    if VM_SCRIPT_RELOAD_SITE is None:
-        raise ValueError(unstaged_reason("vm_lifecycle"))
-    sites.append(VM_SCRIPT_RELOAD_SITE)
+    sites = [*VM_SITES, VM_SCRIPT_RELOAD_SITE]
     staged: dict[str, bytes] = {}
     for unit, sha256, function, anchor, where, line in sites:
         data = staged.get(unit)
