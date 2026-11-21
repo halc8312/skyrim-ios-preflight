@@ -105,8 +105,14 @@ class RequirementTests(unittest.TestCase):
         (linked / "Scripts").mkdir()
         (linked / "Scripts/SKSE.pex").symlink_to(real / "x.pex")
         self.assertEqual(self.check(skyui, linked)[0], UNREADABLE)
-        alias = self.root("alias", {"Scripts/SKSE.pex": skse_pex(), "scripts/skse.pex": skse_pex()})
-        self.assertEqual(self.check(skyui, alias)[0], UNREADABLE)
+        alias = self.root("alias", {"Scripts/SKSE.pex": skse_pex()})
+        alternate = alias / "scripts/skse.pex"
+        if alternate.exists():
+            self.assertEqual(self.check(skyui, alias)[0], OK)  # One entry on a case-insensitive volume.
+        else:
+            alternate.parent.mkdir()
+            alternate.write_bytes(skse_pex())
+            self.assertEqual(self.check(skyui, alias)[0], UNREADABLE)
         linked_dir = self.root("linked_dir", {})
         (linked_dir / "Scripts").symlink_to(real)
         self.assertEqual(self.check(skyui, linked_dir)[0], UNREADABLE)

@@ -89,9 +89,13 @@ class FuzSettingsTests(unittest.TestCase):
         (linked / "SKSE/Plugins/Fuz Ro D'oh.ini").symlink_to(Path(real) / NAME)
         self.assertEqual(self.run_binary("read", real, str(linked)), (2, 1, UNREADABLE, 0))
         alias = self.root("alias", "x", NAME)
-        (Path(alias) / "skse/plugins").mkdir(parents=True)
-        (Path(alias) / "skse/plugins/fuz ro d'oh.ini").write_bytes(b"x")
-        self.assertEqual(self.run_binary("read", real, alias), (2, 1, UNREADABLE, 0))
+        alternate = Path(alias) / "skse/plugins/fuz ro d'oh.ini"
+        if alternate.exists():
+            self.assertEqual(self.run_binary("read", real, alias), (2, 1, 0, 1))
+        else:
+            alternate.parent.mkdir(parents=True)
+            alternate.write_bytes(b"x")
+            self.assertEqual(self.run_binary("read", real, alias), (2, 1, UNREADABLE, 0))
         big = self.root("big", b"[General]\n" + b";" * (70 * 1024))
         self.assertEqual(self.run_binary("read", big), (2, 1, UNREADABLE, 0))
 

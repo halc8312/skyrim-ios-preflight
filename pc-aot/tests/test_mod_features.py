@@ -73,21 +73,33 @@ class FeatureTests(unittest.TestCase):
         real = self.root("real", ["SKSE/Plugins/fuz.dll"])
         linked = self.root("linked", [])
         (linked / "SKSE").symlink_to(real / "SKSE")
-        alias = self.root("alias", ["SKSE/Plugins/fuz.dll", "skse/plugins/fuz.dll"])
+        alias = self.root("alias", ["SKSE/Plugins/fuz.dll"])
         dll_link = self.root("dll_link", [])
         (dll_link / "SKSE/Plugins").mkdir(parents=True)
         (dll_link / "SKSE/Plugins/fuz.dll").symlink_to(real / "SKSE/Plugins/fuz.dll")
-        unreadable, found = self.scan(linked, alias, dll_link)
-        self.assertEqual((unreadable, found), (2, {}))
+        self.assertEqual(self.scan(linked, dll_link), (1, {}))
+        alternate = alias / "skse/plugins/fuz.dll"
+        if alternate.exists():
+            self.assertEqual(self.scan(alias), (0, {"fuz": (1, 0)}))
+        else:
+            alternate.parent.mkdir(parents=True)
+            alternate.write_bytes(b"x")
+            self.assertEqual(self.scan(alias), (1, {}))
 
     def test_precache_launch_path_requires_the_original_dll_name(self):
         selected = "skse/Plugins/ShowRacemenu_PrecacheKiller.DLL"
         a = self.root("selected", [selected, "skse/Plugins/another-precache.dll"])
         b = self.root("generic", ["SKSE/Plugins/another-precache.dll"])
-        c = self.root("ambiguous", [selected, selected.lower().replace("/plugins/", "/Plugins/")])
+        c = self.root("ambiguous", [selected])
+        alternate = c / Path(selected).with_name(Path(selected).name.lower())
+        if alternate.exists():
+            c_result = ["1", str(c / selected)]
+        else:
+            alternate.write_bytes(b"x")
+            c_result = ["-1"]
         d = self.root("link", ["SKSE/Plugins/unrelated.dll"])
         (d / "SKSE/Plugins/showRaceMenu_preCacheKiller.dll").symlink_to(a / selected)
-        for root, expected in ((a, ["1", str(a / selected)]), (b, ["0"]), (c, ["-1"]), (d, ["-1"])):
+        for root, expected in ((a, ["1", str(a / selected)]), (b, ["0"]), (c, c_result), (d, ["-1"])):
             with self.subTest(root=root):
                 self.assertEqual(subprocess.check_output([self.binary, "--precache-path", root], text=True,
                                                          timeout=10).splitlines(), expected)
