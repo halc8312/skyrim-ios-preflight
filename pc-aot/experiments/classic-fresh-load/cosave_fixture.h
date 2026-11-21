@@ -22,6 +22,7 @@ void classic_cosave_fixture_close(void);
 void classic_cosave_roundtrip_configure(const char *expected);
 bool classic_cosave_roundtrip_cached(void);
 bool classic_cosave_roundtrip_same_input(int fd);
+void classic_cosave_roundtrip_bind_slot(void);
 #endif
 
 #endif

@@ -35,6 +35,14 @@ bool skyrim_lifecycle_scope_close(SkyrimLifecycleScope *scope) {
     return !scope->invalid && !scope->current;
 }
 
+SkyrimLifecycleCall skyrim_lifecycle_scope_current(void) {
+    const SkyrimLifecycleScope *scope = active_scope;
+    if (!scope || scope->invalid) return (SkyrimLifecycleCall){0};
+    if (!scope->current) return (SkyrimLifecycleCall){.generation = scope->generation};
+    const SkyrimLifecycleRow *row = &scope->rows[scope->current - 1];
+    return (SkyrimLifecycleCall){row->site, row->ticket, row->parent, scope->generation};
+}
+
 static SkyrimLifecycleCall scoped_begin(SkyrimLifecycleScope *scope, uint32_t site) {
     SkyrimLifecycleCall call = {.site = site, .generation = scope->generation};
     if (scope->invalid || scope->count == SkyrimLifecycleCapacity ||

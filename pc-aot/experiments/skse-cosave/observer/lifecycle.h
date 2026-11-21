@@ -25,6 +25,9 @@ typedef struct {
  * cancellation. The scope must stay alive until close. */
 bool skyrim_lifecycle_scope_open(SkyrimLifecycleScope *scope);
 bool skyrim_lifecycle_scope_close(SkyrimLifecycleScope *scope);
+/* Owner-thread identity for an active attempt. An idle scope has a
+ * generation and no ticket. An invalid or absent scope returns zeroes. */
+SkyrimLifecycleCall skyrim_lifecycle_scope_current(void);
 SkyrimLifecycleCall skyrim_lifecycle_begin(uint32_t site);
 void skyrim_lifecycle_end(SkyrimLifecycleCall call, uint32_t outcome);
 /* On the owner thread, an open scope supplies only its own prefix. Otherwise

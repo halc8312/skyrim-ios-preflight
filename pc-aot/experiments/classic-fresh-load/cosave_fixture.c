@@ -7,6 +7,7 @@
 #include "roundtrip.h"
 #include "records.h"
 #include "save_paths.h"
+#include <pthread.h>
 #endif
 
 #include <assert.h>
@@ -65,6 +66,26 @@ bool classic_cosave_roundtrip_cached(void) { return load_mode == PRELOADED; }
 bool classic_cosave_roundtrip_same_input(int fd) {
     struct stat held;
     return pending && !fstat(fd, &held) && skse_save_same_version(&opened_input, &held);
+}
+
+static void *try_other_load_scope(void *unused) {
+    (void)unused;
+    SkyrimLifecycleScope scope;
+    assert(skyrim_lifecycle_scope_open(&scope));
+    const SkyrimLifecycleCall other = skyrim_lifecycle_begin(SkyrimLoadSlot);
+    SkseGameEvent rejected;
+    assert(skse_bridge_bind_load_slot(pending, &rejected) == SKSE_BRIDGE_SCOPE && !rejected.ticket);
+    skyrim_lifecycle_end(other, SkyrimReturnedTrue);
+    assert(skyrim_lifecycle_scope_close(&scope));
+    return NULL;
+}
+
+void classic_cosave_roundtrip_bind_slot(void) {
+    if (load_mode == PRELOADED) return;
+    SkseGameEvent rejected;
+    assert(skse_bridge_bind_load_slot(pending, &event) == SKSE_BRIDGE_OK);
+    assert(event.ticket == before_count + 3);
+    assert(skse_bridge_bind_load_slot(pending, &rejected) == SKSE_BRIDGE_STATE && !rejected.ticket);
 }
 
 static int verify_record(void *context, const SksePairRecord *record) {
@@ -135,18 +156,21 @@ int classic_cosave_fixture_load_fd(int original) {
     uint64_t dropped = 0;
     before_count = skyrim_lifecycle_snapshot(rows, SkyrimLifecycleCapacity, &dropped);
     assert(!dropped && before_count < SkyrimLifecycleCapacity);
-    /* This single-thread fixture verifies the actual later reservation before
-     * asking the bridge to accept any result. No ticket is inferred by name. */
-    event.ticket = (uint32_t)before_count + 1;
     assert(lseek(original, 7, SEEK_SET) == 7);
     SksePairResult detail;
 #if defined(SKYRIM_TEST_LOAD_ROUNDTRIP)
     assert(load_mode != PRELOADED && roundtrip_digest_bytes() == 0);
     roundtrip_expect_clone(original, false);
-    assert(skse_bridge_prepare_named_load(bridge, event.ticket, scratch, "Fixture.ess", original, scratch,
-                                          &event, &pending, &loader, &detail)
+    assert(skse_bridge_capture_named_load(bridge, skyrim_lifecycle_scope_current, scratch, "Fixture.ess",
+                                          original, scratch, &pending, &loader, &detail)
            == SKSE_BRIDGE_OK && detail == SKSE_PAIR_OK && pending && loader >= 0);
+    SkseGameEvent rejected;
+    assert(skse_bridge_bind_load_slot(pending, &rejected) == SKSE_BRIDGE_EVENT && !rejected.ticket);
+    pthread_t other;
+    assert(!pthread_create(&other, NULL, try_other_load_scope, NULL) && !pthread_join(other, NULL));
 #else
+    /* Exercise the original explicit-ticket path, including a shifted ticket. */
+    event.ticket = (uint32_t)before_count + 1;
     assert(skse_bridge_prepare_load_input(bridge, &event, original, scratch, &pending, &loader, &detail)
            == SKSE_BRIDGE_OK && detail == SKSE_PAIR_OK && pending && loader >= 0);
 #endif
@@ -173,10 +197,18 @@ size_t classic_cosave_fixture_read(int fd, bool in_slot) {
 }
 
 void classic_cosave_fixture_after_metadata(void) {
+#if defined(SKYRIM_TEST_LOAD_ROUNDTRIP)
+    if (load_mode == PRELOADED) return;
+    SkyrimLifecycleCall extra = skyrim_lifecycle_begin(SkyrimRegisterPapyrus);
+    SkseGameEvent rejected;
+    assert(skse_bridge_bind_load_slot(pending, &rejected) == SKSE_BRIDGE_EVENT && !rejected.ticket);
+    skyrim_lifecycle_end(extra, SkyrimNoResult);
+#else
     if (test_case == COSAVE_TICKET_SHIFT) {
         SkyrimLifecycleCall extra = skyrim_lifecycle_begin(SkyrimRegisterPapyrus);
         skyrim_lifecycle_end(extra, SkyrimNoResult);
     }
+#endif
 }
 
 void f_C398A0(CPU *cpu) {
@@ -258,7 +290,9 @@ void classic_cosave_fixture_finish(ClassicFreshReport report, const char *other)
     SkseEventTrace trace = {.rows = rows};
     memcpy(trace.launch, event.scope.launch, sizeof trace.launch);
     trace.count = skyrim_lifecycle_snapshot(rows, SkyrimLifecycleCapacity, &trace.dropped);
+#if !defined(SKYRIM_TEST_LOAD_ROUNDTRIP)
     assert(skyrim_lifecycle_scope_close(&lifecycle));
+#endif
     uint32_t actual_ticket = 0;
     bool returned = false;
     for (size_t i = before_count; i < trace.count; ++i) {
@@ -304,6 +338,7 @@ void classic_cosave_fixture_finish(ClassicFreshReport report, const char *other)
     SksePairResult detail;
     const SkseBridgeResult result = skse_bridge_finish_load_input(&pending, &trace, &proof, &bytes, &size, &detail);
 #if defined(SKYRIM_TEST_LOAD_ROUNDTRIP)
+    assert(skyrim_lifecycle_scope_close(&lifecycle));
     assert(!pending && report.result == CLASSIC_FRESH_READY);
     if (load_mode == MATCHED) {
         assert(result == SKSE_BRIDGE_OK && detail == SKSE_PAIR_OK && bytes);

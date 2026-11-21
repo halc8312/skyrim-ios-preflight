@@ -116,6 +116,17 @@ SkseBridgeResult skse_bridge_prepare_load_input(SkseEventBridge *bridge, const S
 SkseBridgeResult skse_bridge_prepare_named_load(SkseEventBridge *bridge, uint32_t ticket,
     int saves, const char *leaf, int source, int private_scratch, SkseGameEvent *event,
     SkseLoadInput **pending, int *loader_fd, SksePairResult *detail);
+/* For a loader that opens before the slot exists: capture under an idle
+ * owner scope, give the loader the returned snapshot before any read, and
+ * bind once while the genuine root load slot is active in that same scope.
+ * Finish after the slot returns and before closing the scope. The caller
+ * still proves that the original loader consumed the returned descriptor.
+ * Supply the owning lifecycle observer even if it lives in a guest library. */
+typedef SkyrimLifecycleCall (*SkseLoadScopeCurrent)(void);
+SkseBridgeResult skse_bridge_capture_named_load(SkseEventBridge *bridge, SkseLoadScopeCurrent scope_current,
+    int saves, const char *leaf,
+    int source, int private_scratch, SkseLoadInput **pending, int *loader_fd, SksePairResult *detail);
+SkseBridgeResult skse_bridge_bind_load_slot(SkseLoadInput *pending, SkseGameEvent *event);
 /* One completion attempt consumes *pending. After the game and VM have
  * accepted the same immutable input and the stored generation digest agrees,
  * returns an owned Classic image for inspection. Caller frees it with free().

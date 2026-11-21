@@ -185,6 +185,9 @@ void f_67B720(CPU *cpu) {
     CHECK(M32(cpu->r[4]) == 0x68227a && M32(cpu->r[4] + 4) == engine->stream);
     CHECK(cpu->r[1] == M32(GAME_LOAD_SINGLETON) && !engine->loads);
     ++engine->loads;
+#if defined(SKYRIM_TEST_LOAD_ROUNDTRIP)
+    classic_cosave_roundtrip_bind_slot();
+#endif
     const Scenario scenario = engine->scenario;
     if (scenario == NESTED) run(OK, 0, true, 1);
     int fd = engine->fd;
