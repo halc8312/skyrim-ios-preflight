@@ -153,7 +153,7 @@ static SkseModResolution resolve(const SkseModMap *map, uint8_t saved, uint8_t *
 }
 SkseModResolution skse_mod_resolve_form(const SkseModMap *map, uint32_t saved, uint32_t *out) {
     if (!map || !out) return SKSE_MOD_ARGUMENT;
-    uint8_t slot;
+    uint8_t slot = 0;
     SkseModResolution result = resolve(map, (uint8_t)(saved >> 24), &slot);
     if (result == SKSE_MOD_RESOLVED || result == SKSE_MOD_DYNAMIC)
         *out = (saved & UINT32_C(0x00ffffff)) | ((uint32_t)slot << 24);
@@ -161,7 +161,7 @@ SkseModResolution skse_mod_resolve_form(const SkseModMap *map, uint32_t saved, u
 }
 SkseModResolution skse_mod_resolve_handle(const SkseModMap *map, uint64_t saved, uint64_t *out) {
     if (!map || !out) return SKSE_MOD_ARGUMENT;
-    uint8_t slot;
+    uint8_t slot = 0;
     SkseModResolution result = resolve(map, (uint8_t)(saved >> 24), &slot);
     if (result == SKSE_MOD_RESOLVED || result == SKSE_MOD_DYNAMIC)
         *out = (saved & UINT64_C(0xffffffff00ffffff)) | ((uint64_t)slot << 24);
