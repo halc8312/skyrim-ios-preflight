@@ -14,6 +14,27 @@ The private item-delivery fixture observes the primary item-specific VM call in 
 
 The optional owner PEX check pins the actual LE beta 0.5 effect bytecode. It verifies the unqualified native state and types, including the instance getter GetMagnitude returning Float, global KeepUpdate taking ObjectReference and Float, and global StopUpdate taking ObjectReference. The parser verifies the two encoded KeepUpdate sites and one StopUpdate site. It also rejects a truncated copy in memory. Runtime values, actual native registration, and the retention of the effect or actor across a queue boundary are still unverified.
 
+### Compute the offset from the current legs
+
+The exact beta 0.5 library selects the left and right Foot and Calf world
+positions under the loaded skeleton. It subtracts Foot from Calf for each
+leg, measures both lengths, and chooses the larger nonnegative ratio of
+vertical rise to length. Starting with the sum of both lengths divided by
+the binary32 reference length `55.8993988`, it multiplies by the NPC node's
+local scale, divides by its world scale, multiplies by the effect magnitude
+and that ratio, and adds the configured base adjustment. One state bit
+produces zero. Smoothing mode 1 limits change only in the selected movement
+state. Mode 2 always limits it to the configured step around the previous
+owned height. The comparison uses the fixed-library instruction and constant
+checks, plus authored poses with different scales, slopes and movement modes.
+The owner archive's INI supplies zero base adjustment, smoothing mode 1
+and a maximum step of 0.1. The fixture also covers mode 2 and bypass.
+
+`classic_heel_pose_height` consumes copied, finite pose data. A missing or
+degenerate leg or invalid scale cannot produce a scene write. This math
+function never resolves a node. Capturing the four points and committing the
+offset still requires the same verified scene ownership window.
+
 In the pinned LE lift, the attach blocker BSFixedString constructor calls the string hash/length helper and enters the game's intern pool before publishing a reference. The pool path uses the guest's shared initialization, lock and entry lifetime. The existing scalar frame helper is enabled only during an already-registered VM invoke. This fixture leaves both the attach path and pool untouched.
 
 Run locally with a C11 compiler:

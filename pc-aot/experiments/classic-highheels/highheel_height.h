@@ -4,6 +4,27 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+typedef struct {
+    float x, y, z;
+} ClassicHeelPoint;
+
+typedef struct {
+    ClassicHeelPoint foot, calf; /* world positions from the same scene update */
+} ClassicHeelLeg;
+
+typedef struct {
+    ClassicHeelLeg left, right;
+    float local_scale, world_scale, magnitude, added_height;
+    float previous_height, max_step;
+    unsigned smoothing_mode;
+    bool smooth_this_state, suspended;
+} ClassicHeelPose;
+
+/* Compute the fixed beta 0.5 offset from copied pose values. Invalid input
+ * leaves the output alone. Modes 0, 1 and 2 are unbounded, state-dependent
+ * smoothing and unconditional smoothing, respectively. */
+bool classic_heel_pose_height(const ClassicHeelPose *pose, float *height);
+
 typedef struct ClassicHeelNode {
     uint64_t root_generation;
     uint64_t node_generation;

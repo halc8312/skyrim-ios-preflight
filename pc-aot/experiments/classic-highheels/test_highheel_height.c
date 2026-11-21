@@ -142,6 +142,65 @@ static void reject_bad_values(void)
     assert(actor.writes == 0 && height.root_generation == 0);
 }
 
+static void calculate_pose_height(void)
+{
+    ClassicHeelPose pose = {
+        .left = {.foot = {1.0f, 2.0f, -4.0f}, .calf = {1.0f, 2.0f, 26.0f}},
+        .right = {.foot = {-7.0f, 1.0f, 2.0f}, .calf = {17.0f, 1.0f, 20.0f}},
+        .local_scale = 2.0f, .world_scale = 4.0f, .magnitude = 8.0f, .added_height = 0.5f,
+    };
+    float height = 0.0f;
+    assert(classic_heel_pose_height(&pose, &height));
+    assert(fabsf(height - 4.793427f) < 0.00001f);
+    pose.left = (ClassicHeelLeg){.calf = {3.0f, 4.0f, 0.0f}};
+    pose.right = (ClassicHeelLeg){.calf = {3.0f, 4.0f, 12.0f}};
+    pose.local_scale = pose.world_scale = 1.0f;
+    assert(classic_heel_pose_height(&pose, &height));
+    assert(fabsf(height - 2.877897f) < 0.00001f);
+    pose.right.calf.z = -12.0f;
+    assert(classic_heel_pose_height(&pose, &height));
+    assert(height == 0.5f);
+}
+
+static void smooth_or_suspend_pose_height(void)
+{
+    ClassicHeelPose pose = {
+        .left = {.calf = {0, 0, 30}}, .right = {.calf = {0, 0, 30}},
+        .local_scale = 1, .world_scale = 1, .magnitude = 8,
+        .previous_height = 2, .max_step = 0.125f, .smoothing_mode = 1,
+    };
+    float height = 0;
+    assert(classic_heel_pose_height(&pose, &height) && height > 8.0f);
+    pose.smooth_this_state = true;
+    assert(classic_heel_pose_height(&pose, &height) && height == 2.125f);
+    pose.smoothing_mode = 2;
+    pose.smooth_this_state = false;
+    pose.magnitude = 0;
+    assert(classic_heel_pose_height(&pose, &height) && height == 1.875f);
+    pose.suspended = true;
+    assert(classic_heel_pose_height(&pose, &height) && height == 0);
+}
+
+static void reject_invalid_pose_inputs(void)
+{
+    ClassicHeelPose pose = {.left = {.calf = {0, 0, 1}}, .right = {.calf = {0, 0, 1}},
+                            .local_scale = 1, .world_scale = 0, .magnitude = 1};
+    float height = 98.0f;
+    assert(!classic_heel_pose_height(&pose, &height) && height == 98.0f);
+    pose.world_scale = 1;
+    pose.left.calf.z = 0;
+    assert(!classic_heel_pose_height(&pose, &height) && height == 98.0f);
+    pose.left.calf.z = INFINITY;
+    assert(!classic_heel_pose_height(&pose, &height) && height == 98.0f);
+    pose.left.calf.z = 1;
+    pose.magnitude = NAN;
+    assert(!classic_heel_pose_height(&pose, &height) && height == 98.0f);
+    pose.magnitude = 1;
+    pose.smoothing_mode = 2;
+    pose.max_step = -0.125f;
+    assert(!classic_heel_pose_height(&pose, &height) && height == 98.0f);
+}
+
 int main(void)
 {
     equip_and_restore();
@@ -150,6 +209,9 @@ int main(void)
     reject_stale_write_and_retry();
     keep_ownership_on_failure();
     reject_bad_values();
-    puts("6 Classic HighHeels host scenarios passed");
+    calculate_pose_height();
+    smooth_or_suspend_pose_height();
+    reject_invalid_pose_inputs();
+    puts("9 Classic HighHeels host scenarios passed");
     return 0;
 }

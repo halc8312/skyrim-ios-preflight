@@ -3,6 +3,47 @@
 
 #include <math.h>
 
+#ifdef __clang__
+#pragma clang fp contract(off)
+#endif
+
+static float leg_length(ClassicHeelLeg leg, float *rise) {
+    const float x = leg.calf.x - leg.foot.x;
+    const float y = leg.calf.y - leg.foot.y;
+    const float z = leg.calf.z - leg.foot.z;
+    *rise = z;
+    return sqrtf((x * x + z * z) + y * y);
+}
+
+bool classic_heel_pose_height(const ClassicHeelPose *pose, float *height) {
+    if (!pose || !height || pose->smoothing_mode > 2) return false;
+    if (pose->suspended) {
+        *height = 0.0f;
+        return true;
+    }
+
+    float left_rise, right_rise;
+    const float left = leg_length(pose->left, &left_rise);
+    const float right = leg_length(pose->right, &right_rise);
+    if (!isfinite(left) || !isfinite(right) || left <= 0.0f || right <= 0.0f ||
+        !isfinite(pose->local_scale) || !isfinite(pose->world_scale) ||
+        pose->local_scale <= 0.0f || pose->world_scale <= 0.0f) return false;
+
+    const float ratio = fmaxf(0.0f, fmaxf(left_rise / left, right_rise / right));
+    const float scale = (left + right) / 0x1.bf31f8p+5f * pose->local_scale / pose->world_scale;
+    float target = scale * pose->magnitude * ratio + pose->added_height;
+    if (!isfinite(target)) return false;
+
+    if (pose->smoothing_mode == 2 || (pose->smoothing_mode == 1 && pose->smooth_this_state)) {
+        const float low = pose->previous_height - pose->max_step;
+        const float high = pose->previous_height + pose->max_step;
+        if (!isfinite(low) || !isfinite(high) || pose->max_step < 0.0f) return false;
+        target = fminf(high, fmaxf(low, target));
+    }
+    *height = target;
+    return true;
+}
+
 ClassicHeelResult classic_heel_set_height(ClassicHeelHeight *height, float desired_offset,
                                          void *actor, ClassicHeelReadNode read_node,
                                          ClassicHeelCommitNode commit_node)

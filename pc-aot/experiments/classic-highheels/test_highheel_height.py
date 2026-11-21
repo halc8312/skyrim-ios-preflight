@@ -43,11 +43,11 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / "highheel_height"
             subprocess.run(
-                [cc, *flags, HERE / "highheel_height.c", HERE / "test_highheel_height.c", "-o", binary],
+                [cc, *flags, HERE / "highheel_height.c", HERE / "test_highheel_height.c", "-lm", "-o", binary],
                 check=True, timeout=60,
             )
             result = subprocess.check_output([binary], text=True, timeout=10)
-            self.assertEqual(result.strip(), "6 Classic HighHeels host scenarios passed")
+            self.assertEqual(result.strip(), "9 Classic HighHeels host scenarios passed")
 
     def test_unreviewed_lift_is_refused(self):
         for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude,
@@ -174,6 +174,27 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         find_node = instruction_at(0x1000A27B, 0x1000A2AA)
         self.assertEqual(find_node[0x1000A28F], "mov ecx,dword ptr [ecx+0x20]")
         self.assertEqual(find_node[0x1000A2A0], "mov eax,dword ptr [eax+0x9c]")
+        names = instruction_at(0x1002B6F0, 0x1002B761)
+        for site, name, pointer in ((0x1002B6F0, 0x10034318, 0x1003B168), (0x1002B710, 0x1003432C, 0x1003B178),
+                                    (0x1002B730, 0x10034340, 0x1003B198), (0x1002B750, 0x10034354, 0x1003B16C)):
+            self.assertEqual(names[site], f"push {name:#x}")
+            self.assertEqual(names[site + 10], f"mov ecx,{pointer:#x}")
+        pose = instruction_at(0x1000A3D9, 0x1000A568)
+        for address, instruction in {
+            0x1000A425: "subps xmm4,xmm3", 0x1000A43C: "haddps xmm4,xmm4",
+            0x1000A444: "sqrtps xmm6,xmm4", 0x1000A468: "subps xmm4,xmm3",
+            0x1000A492: "divss xmm1,xmm6", 0x1000A49E: "sqrtps xmm0,xmm4",
+            0x1000A4A1: "divss xmm2,xmm0", 0x1000A4B2: "comiss xmm3,xmm5",
+            0x1000A4C4: "addss xmm0,xmm6", 0x1000A4D6: "divss xmm0,dword ptr ds:0x10034b40",
+            0x1000A4E1: "mulss xmm0,dword ptr [edx+0x50]", 0x1000A4EC: "divss xmm0,dword ptr [edx+0x84]",
+            0x1000A4F4: "and eax,0x400", 0x1000A4FC: "mulss xmm0,dword ptr [edi+0x8]",
+            0x1000A501: "mulss xmm0,xmm1", 0x1000A505: "addss xmm0,dword ptr ds:0x100396ec",
+            0x1000A527: "and ecx,0x20", 0x1000A532: "subss xmm1,xmm2", 0x1000A543: "addss xmm2,xmm4",
+        }.items():
+            self.assertEqual(pose[address], instruction)
+        data = subprocess.check_output([objdump, "-s", "--start-address=0x10034b40",
+                                        "--stop-address=0x10034b44", library], text=True, timeout=10)
+        self.assertRegex(data, r"10034b40\s+fc985f42\b")
         update = instruction_at(0x1000A568, 0x1000A58E)
         self.assertEqual(update[0x1000A56B], "subss xmm0,dword ptr [edi+0xc]")
         self.assertEqual(update[0x1000A577], "addss xmm0,dword ptr [edx+0x4c]")
@@ -219,7 +240,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             binary = scratch / "classic_fixture"
             subprocess.run(
                 [cc, *flags, "-isystem", generation / "gen", "-isystem", runtime, "-I", native,
-                 staged, HERE / test, *extra_sources, native / "guest_memory.c", "-o", binary],
+                 staged, HERE / test, *extra_sources, native / "guest_memory.c", "-lm", "-o", binary],
                 check=True, timeout=60,
             )
             result = subprocess.check_output([binary], text=True, timeout=10)
