@@ -314,3 +314,207 @@ int enb_fx_scan(const char *text, size_t length, EnbFx *out) {
     if (!out->technique_count) issue(out, ENB_FX_ISSUE_NO_TECHNIQUE, "");
     return 0;
 }
+
+/* Lowering ---------------------------------------------------------------*/
+
+static void copy_name(char *out, size_t capacity, const char *text) { snprintf(out, capacity, "%.*s", (int)capacity - 1, text); }
+
+static void note_ignored(EnbLowered *low, const char *state) {
+    for (unsigned i = 0; i < low->ignored_state_count; ++i) if (!strcmp(low->ignored_states[i], state)) return;
+    if (low->ignored_state_count < ENB_LOWER_MAX_STATES) copy_name(low->ignored_states[low->ignored_state_count++], ENB_FX_NAME, state);
+}
+
+/* After the technique name and any annotation: parse the passes. */
+static void lower_technique(Cursor *c, EnbLowered *low, Token name) {
+    EnbTechniqueProgram *t = low->technique_count < ENB_FX_MAX_TECHNIQUES ? &low->techniques[low->technique_count++] : NULL;
+    if (t && name.kind == 0) copy_name(t->name, ENB_FX_NAME, name.text);
+    Token tok = name;
+    while (tok.kind >= 0 && !is_punct(&tok, '{')) {
+        if (is_punct(&tok, '<')) { Annotation skip[8]; unsigned n; read_annotations(c, skip, &n, 8); }
+        tok = next(c);
+    }
+    for (;;) {
+        tok = next(c);
+        if (tok.kind < 0 || is_punct(&tok, '}')) return;
+        if (tok.kind != 0 || strcmp(tok.text, "pass")) continue;
+        Token pass = next(c);
+        EnbPassProgram *p = t && t->pass_count < ENB_FX_MAX_PASSES ? &t->passes[t->pass_count++] : NULL;
+        if (p && pass.kind == 0) copy_name(p->name, ENB_FX_NAME, pass.text);
+        Token open = pass.kind == 0 ? next(c) : pass;
+        while (open.kind >= 0 && !is_punct(&open, '{')) {
+            if (is_punct(&open, '<')) { Annotation skip[8]; unsigned n; read_annotations(c, skip, &n, 8); }
+            open = next(c);
+        }
+        for (;;) {   /* pass states: Name = value; */
+            Token key = next(c);
+            if (key.kind < 0 || is_punct(&key, '}')) break;
+            if (key.kind != 0) continue;
+            Token eq = next(c);
+            if (!is_punct(&eq, '=')) continue;
+            const int shader = !strcasecmp(key.text, "VertexShader") || !strcasecmp(key.text, "PixelShader");
+            Token first = next(c);
+            if (shader && first.kind == 0 && !strcmp(first.text, "compile")) {
+                Token profile = next(c), entry = next(c);
+                if (p) {
+                    const int vertex = !strcasecmp(key.text, "VertexShader");
+                    copy_name(vertex ? p->vs_profile : p->ps_profile, 16, profile.text);
+                    copy_name(vertex ? p->vs_entry : p->ps_entry, ENB_FX_NAME, entry.text);
+                }
+            } else if (!shader && !strcasecmp(key.text, "RenderTarget")) {
+                if (p && first.kind == 0) copy_name(p->render_target, ENB_FX_NAME, first.text);
+            } else if (!shader) {
+                note_ignored(low, key.text);
+            }
+            Token skip = first;
+            while (skip.kind >= 0 && !is_punct(&skip, ';')) skip = next(c);
+        }
+    }
+}
+
+static void lower_sampler_block(const char *begin, const char *end, EnbSamplerBinding *s) {
+    Cursor c = {begin, end};
+    for (;;) {
+        Token key = next(&c);
+        if (key.kind < 0) return;
+        if (key.kind != 0) continue;
+        Token eq = next(&c);
+        if (!is_punct(&eq, '=')) continue;
+        Token value = next(&c);
+        char text[ENB_FX_NAME] = "";
+        if (is_punct(&value, '<')) { Token n = next(&c); copy_name(text, sizeof text, n.text); next(&c); }
+        else copy_name(text, sizeof text, value.text);
+        if (!strcasecmp(key.text, "Texture")) copy_name(s->texture, ENB_FX_NAME, text);
+        else if (!strcasecmp(key.text, "MinFilter")) copy_name(s->min_filter, 16, text);
+        else if (!strcasecmp(key.text, "MagFilter")) copy_name(s->mag_filter, 16, text);
+        else if (!strcasecmp(key.text, "MipFilter")) copy_name(s->mip_filter, 16, text);
+        else if (!strcasecmp(key.text, "AddressU")) copy_name(s->address_u, 16, text);
+        else if (!strcasecmp(key.text, "AddressV")) copy_name(s->address_v, 16, text);
+        Token skip = value;
+        while (skip.kind >= 0 && !is_punct(&skip, ';')) skip = next(&c);
+    }
+}
+
+typedef struct { char *data; size_t length, capacity; int failed; } Output;
+
+static void put(Output *o, const char *p, size_t n) {
+    if (o->failed) return;
+    if (o->length + n + 1 > o->capacity) {
+        size_t bigger = (o->capacity ? o->capacity : 1024);
+        while (o->length + n + 1 > bigger) bigger *= 2;
+        char *grown = realloc(o->data, bigger);
+        if (!grown) { o->failed = 1; return; }
+        o->data = grown;
+        o->capacity = bigger;
+    }
+    memcpy(o->data + o->length, p, n);
+    o->length += n;
+    o->data[o->length] = 0;
+}
+
+int enb_fx_lower(const char *text, size_t length, EnbLowered *out) {
+    if (!out || (length && !text)) return EINVAL;
+    *out = (EnbLowered){0};
+    if (length > ENB_FX_MAX_BYTES) return EFBIG;
+    Output o = {0};
+    EnbFx *scratch = calloc(1, sizeof *scratch);   /* skip_block notes engine names it does not report here */
+    if (!scratch) return ENOMEM;
+    Cursor c = {text, text + length};
+    for (;;) {
+        skip_space(&c);
+        const char *start = c.p;
+        Token first = next(&c);
+        if (first.kind < 0) break;
+        if (is_punct(&first, '#')) {
+            while (c.p < c.end && *c.p != '\n') ++c.p;
+            put(&o, start, (size_t)(c.p - start));
+            put(&o, "\n", 1);
+            continue;
+        }
+        if (first.kind == 0 && !strncasecmp(first.text, "technique", 9)) { lower_technique(&c, out, next(&c)); continue; }
+        if (first.kind != 0) {
+            if (is_punct(&first, '{')) skip_block(&c, scratch);
+            continue;
+        }
+        Token tok = first, stmt[24];
+        unsigned count = 0;
+        int has_paren = 0, has_assign = 0, body = 0, sampler_state = 0;
+        const char *cut_begin[4], *cut_end[4];
+        unsigned cuts = 0;
+        const char *block_begin = NULL, *block_end = NULL;
+        for (; tok.kind >= 0; tok = next(&c)) {
+            if (is_punct(&tok, ';')) break;
+            if (is_punct(&tok, '{')) { body = 1; block_begin = c.p; break; }
+            if (is_punct(&tok, '<') && !has_paren && !has_assign && count >= 2) {
+                Annotation notes[12];
+                unsigned n;
+                const char *begin = c.p - 1;
+                read_annotations(&c, notes, &n, 12);
+                if (cuts < 4) { cut_begin[cuts] = begin; cut_end[cuts] = c.p; ++cuts; }
+                continue;
+            }
+            if (is_punct(&tok, '(')) has_paren = 1;
+            if (is_punct(&tok, '=')) has_assign = 1;
+            if (tok.kind == 0 && !strcmp(tok.text, "sampler_state")) sampler_state = 1;
+            if (count < 24) stmt[count++] = tok;
+        }
+        if (body) {
+            skip_block(&c, scratch);
+            block_end = c.p - 1;
+            if (!has_paren) { Token t; do { t = next(&c); } while (t.kind >= 0 && !is_punct(&t, ';')); }
+        }
+        const char *end = c.p;
+        unsigned at = 0;
+        while (at < count && stmt[at].kind == 0 && (!strcmp(stmt[at].text, "uniform") || !strcmp(stmt[at].text, "extern") ||
+               !strcmp(stmt[at].text, "shared") || !strcmp(stmt[at].text, "static") || !strcmp(stmt[at].text, "const") ||
+               !strcmp(stmt[at].text, "volatile"))) ++at;
+        int sampler = 0, sm4 = 0;
+        const int image = at + 1 < count && stmt[at].kind == 0 && stmt[at + 1].kind == 0 && !has_paren && type_is_image(stmt[at].text, &sampler, &sm4);
+        if (image && !sampler) {   /* texture declarations are supplied by the executor */
+            if (out->texture_count < ENB_LOWER_MAX_TEXTURES) {
+                copy_name(out->textures[out->texture_count], ENB_FX_NAME, stmt[at + 1].text);
+                for (unsigned i = 0; i < cuts; ++i) { /* ResourceName annotation */
+                    Cursor a = {cut_begin[i] + 1, cut_end[i]};
+                    Annotation notes[12];
+                    unsigned n;
+                    read_annotations(&a, notes, &n, 12);
+                    for (unsigned k = 0; k < n; ++k)
+                        if (notes[k].has_text && !strcasecmp(notes[k].name, "ResourceName"))
+                            copy_name(out->texture_resources[out->texture_count], ENB_FX_NAME, notes[k].text);
+                }
+                ++out->texture_count;
+            }
+            continue;
+        }
+        if (image && sampler && sampler_state) {
+            if (out->sampler_count < ENB_LOWER_MAX_SAMPLERS) {
+                EnbSamplerBinding *s = &out->samplers[out->sampler_count++];
+                copy_name(s->name, ENB_FX_NAME, stmt[at + 1].text);
+                if (block_begin && block_end && block_end >= block_begin) lower_sampler_block(block_begin, block_end, s);
+            }
+            char line[ENB_FX_NAME + 32];
+            const int n = snprintf(line, sizeof line, "%s %s;\n", stmt[at].text, stmt[at + 1].text);
+            put(&o, line, (size_t)n);
+            continue;
+        }
+        if (image && sampler) {
+            if (out->sampler_count < ENB_LOWER_MAX_SAMPLERS) copy_name(out->samplers[out->sampler_count++].name, ENB_FX_NAME, stmt[at + 1].text);
+        }
+        /* Copy the statement without its annotations. */
+        const char *p = start;
+        for (unsigned i = 0; i < cuts; ++i) { put(&o, p, (size_t)(cut_begin[i] - p)); p = cut_end[i]; }
+        put(&o, p, (size_t)(end - p));
+        put(&o, "\n", 1);
+    }
+    free(scratch);
+    if (o.failed) { free(o.data); return ENOMEM; }
+    if (!o.data) { o.data = calloc(1, 1); if (!o.data) return ENOMEM; }
+    out->hlsl = o.data;
+    out->hlsl_length = o.length;
+    return 0;
+}
+
+void enb_lowered_free(EnbLowered *low) {
+    if (!low) return;
+    free(low->hlsl);
+    *low = (EnbLowered){0};
+}
