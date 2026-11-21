@@ -111,6 +111,23 @@ class RequirementTests(unittest.TestCase):
         (linked_dir / "Scripts").symlink_to(real)
         self.assertEqual(self.check(skyui, linked_dir)[0], UNREADABLE)
 
+    def test_xpmse_reports_dependencies_in_profile_order(self):
+        fnis = self.root("fnis", {
+            "meshes/actors/character/Characters/defaultmale.hkx": b"graph",
+            "meshes/actors/character/characters female/defaultfemale.hkx": b"graph",
+            "meshes/actors/character/behaviors/FNIS_FNISBase_Behavior.HKX": b"graph",
+        })
+        skse = self.root("skse", {"Scripts/SKSE.pex": skse_pex()})
+        nioverride = self.root("nioverride", {"SKSE/Plugins/NiOverride.dll": b"authored marker"})
+        self.assertEqual(self.check("--xpmse", fnis, skse, nioverride), [3, 1, 1, 0])
+        self.assertEqual(self.check("--xpmse", skse), [0, 1, 0, 0])
+
+        invalid = self.root("invalid", {"scripts/skse.pex": skse_pex(release=False)})
+        self.assertEqual(self.check("--xpmse", skse, invalid), [0, 0, 0, 0])
+        absent = self.root("absent", {})
+        (absent / "Meshes").symlink_to(fnis / "meshes")
+        self.assertEqual(self.check("--xpmse", fnis, absent, skse), [0, 1, 0, 3])
+
     def test_missing_roots_do_not_fail(self):
         skyui = self.root("skyui", self.skyui())
         self.assertEqual(self.check(skyui, str(self.top / "nope"))[0], NO_SCRIPT)

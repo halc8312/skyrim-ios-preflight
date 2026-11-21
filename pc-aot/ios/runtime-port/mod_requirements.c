@@ -114,3 +114,29 @@ int skyrim_skyui_requirements(const char *const *roots, size_t count, SkyrimSkyU
                 : !found ? SKYRIM_SKYUI_REQ_SKSE_SCRIPT_MISSING : check_skse_script(path);
     return 0;
 }
+
+int skyrim_xpmse_requirements(const char *const *roots, size_t count, SkyrimXpmseRequirements *out) {
+    if (!out || (count && !roots)) return EINVAL;
+    *out = (SkyrimXpmseRequirements){0};
+    /* The generated character graphs and base behavior are common FNIS
+     * files. Add-ons and enabled patches may provide additional graphs. */
+    static const char *const fnis[SKYRIM_XPMSE_FNIS_MARKERS] = {
+        "meshes/actors/character/characters/defaultmale.hkx",
+        "meshes/actors/character/characters female/defaultfemale.hkx",
+        "meshes/actors/character/behaviors/FNIS_FNISBase_Behavior.hkx",
+    };
+    char path[PATH_MAX_BYTES];
+    for (size_t i = 0; i < SKYRIM_XPMSE_FNIS_MARKERS; ++i) {
+        int found = winner(roots, count, fnis[i], path, sizeof path);
+        if (found < 0) ++out->unreadable;
+        if (found > 0) ++out->fnis_present;
+    }
+    int found = winner(roots, count, "Scripts/SKSE.pex", path, sizeof path);
+    if (found < 0) ++out->unreadable;
+    if (found > 0) out->skse_script = check_skse_script(path) == SKYRIM_SKYUI_REQ_OK;
+
+    found = winner(roots, count, "SKSE/Plugins/nioverride.dll", path, sizeof path);
+    if (found < 0) ++out->unreadable;
+    if (found > 0) out->nioverride = 1;
+    return 0;
+}

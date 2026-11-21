@@ -29,6 +29,19 @@ typedef struct {
  * overwrite order (later wins). Returns 0, or EINVAL for bad arguments. */
 int skyrim_skyui_requirements(const char *const *data_roots, size_t count,
                               SkyrimSkyUIRequirements *out);
+enum { SKYRIM_XPMSE_FNIS_MARKERS = 3 };
+
+typedef struct {
+    unsigned fnis_present;  /* common generated character graphs and FNISBase */
+    unsigned skse_script;   /* verified SKSE.GetVersionRelease PEX declaration */
+    unsigned nioverride;    /* supplied by RaceMenu or a standalone package */
+    unsigned unreadable;    /* ambiguous paths, links or read errors */
+} SkyrimXpmseRequirements;
+
+/* Inspect ordered Data roots. These checks describe the available files. The
+ * generator configuration and in-game functionality require separate checks. */
+int skyrim_xpmse_requirements(const char *const *data_roots, size_t count,
+                              SkyrimXpmseRequirements *out);
 #ifdef __cplusplus
 }
 #endif

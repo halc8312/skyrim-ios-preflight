@@ -252,6 +252,42 @@ class ModArchiveTests(unittest.TestCase):
         self.assertEqual(sorted(p.relative_to(game / "Data").as_posix()
                                 for p in (game / "Data").rglob("*") if p.is_file()), meshes)
 
+    def test_hair_packages_keep_headpart_plugins_archive_and_loose_files(self):
+        def record(kind, flags, form, data):
+            return struct.pack("<4sIIIIHH", kind, len(data), flags, form, 0, 43, 0) + data
+
+        def sub(kind, data):
+            return struct.pack("<4sH", kind, len(data)) + data
+
+        fields = (sub(b"HEDR", struct.pack("<fII", 1.7, 1, 0x801))
+                  + sub(b"MAST", b"Skyrim.esm\0") + sub(b"DATA", bytes(8)))
+        headpart = record(b"HDPT", 0, 0x01000800, sub(b"EDID", b"AuthoredHair\0"))
+        headparts = struct.pack("<4sI4sIHHI", b"GRUP", 24 + len(headpart), b"HDPT", 0, 0, 0, 0) + headpart
+        classic_bsa_header = struct.pack("<4sIIIIIIII", b"BSA\0", 104, 36, 3, 0, 0, 0, 0, 0)
+        packages = {
+            "KS": {"KS Hairdo's.esp": record(b"TES4", 0, 0, fields) + headparts,
+                   "meshes/authored-ks/hair.nif": b"authored loose hair mesh",
+                   "textures/authored-ks/hair.dds": b"authored loose hair texture"},
+            "Apachii": {"ApachiiSkyHair.esm": record(b"TES4", 1, 0, fields) + headparts,
+                        "ApachiiSkyHair.bsa": classic_bsa_header},
+        }
+        game = self.dir / "hair-game"
+        (game / "Data").mkdir(parents=True)
+        roots = []
+        for name, files in packages.items():
+            path = self.make_zip(f"{name}-hair.zip", {f"{name}/Data/{k}": v for k, v in files.items()})
+            self.assertIn("root 1", self.run_driver("root", path))
+            root = self.dir / f"{name}-hair"
+            root.mkdir()
+            self.run_driver("extract", path, root)
+            roots.append(root)
+        view = self.dir / "hair-view"
+        self.assertIn("deploy 0", self.run_driver("deploy", game, view, self.dir / "hair.tsv", "hair", *roots))
+        for files in packages.values():
+            for relative, data in files.items():
+                self.assertEqual((view / "Data" / relative).read_bytes(), data)
+        self.assertEqual(list((game / "Data").iterdir()), [])
+
     def test_game_assets_at_root_stay_with_their_tools(self):
         bundle = self.make_zip("game-assets-and-tools.zip", {
             "Bundle/meshes/body.nif": b"body",

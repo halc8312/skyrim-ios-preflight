@@ -32,6 +32,9 @@ def fixtures(directory):
     folder_file = inputs / "AuthoredFolder" / "Data" / common
     folder_file.parent.mkdir(parents=True)
     folder_file.write_text("authored folder\n", encoding="utf-8")
+    generated_file = inputs / "AuthoredGenerated" / "Data" / "meshes" / "authored" / "body.nif"
+    generated_file.parent.mkdir(parents=True)
+    generated_file.write_bytes(b"authored output fixture")
     plugin_body = struct.pack("<4sHfII", b"HEDR", 12, 1.7, 0, 0x800)
     with ZipFile(inputs / "AuthoredZip.zip", "w", ZIP_DEFLATED) as archive:
         archive.writestr("Data/" + common, b"authored zip\n")
@@ -224,6 +227,10 @@ def project(work, sdl_prefix, archive_prefix):
         "probe_local_file.c", "probe_directory.c", "probe_asset_file.c", "mod_dll_probe.m"
     ]] if dll_enabled else []
     classic_enabled = os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1"
+    if classic_enabled:
+        app_sources.extend(("mod_requirements.c", "mod_features.c"))
+    if classic_enabled or dll_enabled:
+        dll_sources.append(DLL_PROBE / "classic_pex.c")
     if classic_enabled and dll_enabled:
         app_sources.append("mod_papyrus_inputs.c")
     cosave_sources = [COSAVE / "copy_pair.c"]
@@ -261,7 +268,7 @@ def project(work, sdl_prefix, archive_prefix):
         "PRODUCT_NAME":APP, "PRODUCT_BUNDLE_IDENTIFIER":APP_ID, "INFOPLIST_FILE":str(work/"HostInfo.plist"),
         "SWIFT_VERSION":"6.0", "SWIFT_STRICT_CONCURRENCY":"complete",
         "HEADER_SEARCH_PATHS":[str(PORT),str(ROOT/"ios/private-abi"),str(sdl_prefix/"include"),str(archive_prefix/"include"),
-                               str(COSAVE), *([str(DLL_PROBE)] if dll_enabled else [])],
+                               str(COSAVE), *([str(DLL_PROBE)] if dll_enabled or classic_enabled else [])],
         "SYSTEM_HEADER_SEARCH_PATHS":[str(ROOT/"vendor/bcdec"),str(ROOT/"vendor/stb")],
         "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", "SKYRIM_HAVE_LIBARCHIVE=1", *classic_defines, *dll_defines],
         "OTHER_LDFLAGS":["$(inherited)",*map(str,static_libs),"-lz","-liconv",
@@ -345,7 +352,7 @@ def verify(container, assets, summary):
     assert profiles["Trial Two (imported)"]["packages"] == active["packages"]
     assert len(active["packages"]) == 4 and all(p["on"] for p in active["packages"])
     default_enabled = {p["id"] for p in profiles["Default"]["packages"] if p["on"]}
-    assert len(default_enabled) == 2
+    assert len(default_enabled) == 3
     default_plugins = {row["name"]: row["on"] for row in profiles["Default"]["plugins"]}
     assert default_plugins["Dragonborn.esm"] is False
     assert "Dawnguard.esm" not in default_plugins and "HearthFires.esm" not in default_plugins
@@ -362,8 +369,21 @@ def verify(container, assets, summary):
     assert not (view/"unselected-folder-file.txt").exists()
     assert not (view/"missing.txt").exists()
     packages = [json.loads(path.read_text()) for path in (base/"Mods").glob("*/package.json")]
-    assert {p["name"] for p in packages} == {"AuthoredZip", "AuthoredFolder", "AuthoredInstaller", "AuthoredFolderInstaller"}
-    assert len(packages) == 4 and not list((base/"Mods").glob(".staging-*"))
+    assert {p["name"] for p in packages} == {"AuthoredZip", "AuthoredFolder", "AuthoredInstaller",
+                                              "AuthoredFolderInstaller", "AuthoredGenerated"}
+    assert len(packages) == 5 and not list((base/"Mods").glob(".staging-*"))
+    generated = next(p for p in packages if p["name"] == "AuthoredGenerated")
+    profile = profiles["Default"]
+    ids = [p["id"] for p in profile["packages"] if p["on"] and p["id"] != generated["id"]]
+    assert generated["id"] in default_enabled
+    assert generated["generatedFor"] == {
+        "profile": profile["id"],
+        "packagesSHA256": hashlib.sha256(",".join(ids).encode()).hexdigest(),
+    }
+    relative = Path("Data/meshes/authored/body.nif")
+    source = assets / "Imports/AuthoredGenerated" / relative
+    assert (base / "Mods" / generated["id"] / relative).read_bytes() == source.read_bytes()
+    assert not (base / "Views" / active["id"] / relative).exists()
     authored_zip = next(p for p in packages if p["name"] == "AuthoredZip")
     assert authored_zip["report"]["hkx64"] == 1
     with ZipFile(assets / "Imports/AuthoredZip.zip") as source:

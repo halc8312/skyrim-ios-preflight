@@ -275,6 +275,30 @@ static SkyrimSkyUIRequirements SkyUIRequirementsFor(NSArray<NSString *> *package
     return result;
 }
 
+static NSArray<NSString *> *XpmseRequirementLines(NSArray<NSString *> *packageIds) {
+    NSArray<NSString *> *roots = DataRootsFor(packageIds);
+    const char **paths = calloc(roots.count + 1, sizeof *paths);
+    if (!paths) return @[];
+    for (NSUInteger i = 0; i < roots.count; ++i) paths[i] = roots[i].fileSystemRepresentation;
+    SkyrimXpmseRequirements result;
+    int status = skyrim_xpmse_requirements(paths, roots.count, &result);
+    free(paths);
+    if (status) return @[];
+    NSMutableArray *lines = [NSMutableArray arrayWithArray:@[
+        [NSString stringWithFormat:T(@"Common FNIS output files in this profile: %u of %u.",
+          @"このプロファイルにある主なFNIS出力ファイル：%u／%u個。"),
+          result.fnis_present, (unsigned)SKYRIM_XPMSE_FNIS_MARKERS],
+        result.skse_script ? T(@"SKSE Classic script found.", @"SKSE Classicのスクリプトを確認しました。")
+                           : T(@"Add the SKSE Classic scripts to this profile.", @"このプロファイルにSKSE Classicのスクリプトを追加してください。"),
+        result.nioverride ? T(@"NiOverride file found.", @"NiOverrideファイルを確認しました。")
+                          : T(@"Some XPMSE options use NiOverride from RaceMenu or the standalone package.",
+                              @"XPMSEの一部のオプションにはRaceMenu同梱または単体版のNiOverrideが必要です。"),
+    ]];
+    if (result.unreadable) [lines addObject:T(@"Some dependency paths could not be checked.",
+                                               @"前提ファイルの一部を確認できませんでした。")];
+    return lines;
+}
+
 static SkyrimFeatureScan FeatureScanFor(NSArray<NSString *> *packageIds) {
     NSArray<NSString *> *roots = DataRootsFor(packageIds);
     const char **paths = calloc(roots.count + 1, sizeof *paths);
@@ -501,6 +525,23 @@ static NSArray<NSString *> *EnabledPackageIds(NSDictionary *profile) {
     return ids;
 }
 
+/* The enabled immutable package IDs identify the source MODs and their order.
+ * Ignore other generated outputs so replacing one does not invalidate the rest. */
+static NSString *GeneratedInputDigest(NSArray<NSString *> *enabled) {
+    NSMutableArray<NSString *> *inputs = [NSMutableArray array];
+    for (NSString *packageID in enabled)
+        if (!LoadPackage(packageID)[@"generatedFor"]) [inputs addObject:packageID];
+    return HexDigest([[inputs componentsJoinedByString:@","] dataUsingEncoding:NSUTF8StringEncoding]);
+}
+
+static NSString *GeneratedOutputWarning(NSDictionary *package, NSString *profileID, NSString *digest) {
+    id stored = package[@"generatedFor"];
+    if (![stored isKindOfClass:NSDictionary.class]) return nil;
+    if ([stored[@"profile"] isEqual:profileID] && [stored[@"packagesSHA256"] isEqual:digest]) return nil;
+    return T(@"These generated files were added with a different MOD setup. Regenerate for this profile.",
+             @"別のMOD構成で追加した生成ファイルです。このプロファイル用に再生成してください。");
+}
+
 NSString *skyrim_mods_prepare_game(NSString *game) {
     EnsureState();
     originalGameDirectory = game;
@@ -536,6 +577,18 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
         if ([l isKindOfClass:NSMutableDictionary.class]) { l[@"backgrounded"] = @YES; WriteJSON(l, LaunchPath()); }
     }];
     if (!ids.count) return game;
+    NSString *digest = nil;
+    for (NSString *packageID in ids) {
+        NSDictionary *package = LoadPackage(packageID);
+        if (!package[@"generatedFor"]) continue;
+        if (!digest) digest = GeneratedInputDigest(ids);
+        NSString *warning = GeneratedOutputWarning(package, profile[@"id"], digest);
+        if (warning) {
+            NSString *message = [NSString stringWithFormat:@"%@ — %@", package[@"name"] ?: @"MOD", warning];
+            launchNotice = launchNotice ? [launchNotice stringByAppendingFormat:@"\n%@", message] : message;
+            break;
+        }
+    }
     uint64_t signature = 0;
     int signatureError = skyrim_tree_signature(game.fileSystemRepresentation, &signature);
     NSString *keySource = [NSString stringWithFormat:@"v1|%llx|%@", (unsigned long long)signature, [ids componentsJoinedByString:@","]];
@@ -1128,7 +1181,7 @@ static void ImportEceSlot(NSString *staged, NSString *name, NSString *targetProf
 }
 
 /* Import a folder chosen in the Files app (copied; the source is unchanged). */
-static void ImportFolder(NSString *folder, NSString *targetProfileID) {
+static void ImportFolder(NSString *folder, NSString *targetProfileID, NSDictionary *generatedFor) {
     NSFileManager *fm = NSFileManager.defaultManager;
     NSMutableArray<NSString *> *rels = [NSMutableArray array];
     NSDirectoryEnumerator *en = [fm enumeratorAtPath:folder];
@@ -1140,6 +1193,11 @@ static void ImportFolder(NSString *folder, NSString *targetProfileID) {
     char prefix[1024]; int installer = 0;
     int found = skyrim_mod_data_root(paths, rels.count, prefix, sizeof prefix, &installer);
     free(paths);
+    if (installer && generatedFor) {
+        Notice(T(@"Select the generated output folder, without a MOD installer.",
+                 @"MODインストーラーを含まない生成済み出力フォルダを選んでください。"));
+        return;
+    }
     if (!found && !installer) {
         Notice(T(@"No Skyrim game files were found in this folder.", @"このフォルダにSkyrimのゲーム用ファイルが見つかりませんでした。"));
         return;
@@ -1188,17 +1246,22 @@ static void ImportFolder(NSString *folder, NSString *targetProfileID) {
     package[@"files"] = @(files);
     package[@"bytes"] = @(bytes);
     package[@"dataPrefix"] = [NSString stringWithUTF8String:prefix];
+    if (generatedFor) package[@"generatedFor"] = generatedFor;
     PublishStaged(staging, package, targetProfileID);
 }
 
 static void ImportModList(NSString *path);
 
-void skyrim_mods_import_url(NSURL *url, BOOL scoped) {
+static void ImportURL(NSURL *url, BOOL scoped, BOOL generated) {
     /* A profile can change while the archive is being unpacked or optimized. */
     __block NSString *targetProfileID;
+    __block NSDictionary *generatedFor;
     void (^captureProfile)(void) = ^{
         EnsureState();
-        targetProfileID = [SelectedProfile()[@"id"] copy];
+        NSDictionary *profile = SelectedProfile();
+        targetProfileID = [profile[@"id"] copy];
+        if (generated) generatedFor = @{@"profile":targetProfileID,
+            @"packagesSHA256":GeneratedInputDigest(EnabledPackageIds(profile))};
     };
     if (NSThread.isMainThread) captureProfile();
     else dispatch_sync(dispatch_get_main_queue(), captureProfile);
@@ -1215,9 +1278,14 @@ void skyrim_mods_import_url(NSURL *url, BOOL scoped) {
         NSString *source = url.path;
         Notice(T(@"Adding MOD folder…", @"MODフォルダを追加しています…"));
         dispatch_async(ImportQueue(), ^{
-            ImportFolder(source, targetProfileID);
+            ImportFolder(source, targetProfileID, generatedFor);
             if (accessing) [url stopAccessingSecurityScopedResource];
         });
+        return;
+    }
+    if (generatedFor) {
+        if (accessing) [url stopAccessingSecurityScopedResource];
+        Notice(T(@"Select a generated output folder.", @"生成済み出力フォルダを選んでください。"));
         return;
     }
     NSString *copy = [inbox stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingPathExtension:name.pathExtension]];
@@ -1242,6 +1310,8 @@ void skyrim_mods_import_url(NSURL *url, BOOL scoped) {
         [NSFileManager.defaultManager removeItemAtPath:copy error:NULL];
     });
 }
+
+void skyrim_mods_import_url(NSURL *url, BOOL scoped) { ImportURL(url, scoped, NO); }
 
 /* Files shared with "Open in SkyrimIOS". SDL owns the application delegate;
  * its open-URL method is replaced once at load time so early cold-launch
@@ -1987,7 +2057,7 @@ static NSString *FeatureName(unsigned feature) {
 @property(nonatomic, strong) NSMutableArray<NSMutableDictionary *> *rows;   /* selected choices and available packages */
 @property(nonatomic, strong) NSDictionary<NSString *, NSDictionary *> *packages;
 @property(nonatomic, strong) NSDictionary<NSString *, NSString *> *summaries;   /* computed once per reload */
-@property(nonatomic) BOOL pickingFolder, pickingList;
+@property(nonatomic) BOOL pickingGenerated;
 @end
 enum { HubProfile, HubMods, HubAdd, HubTools, HubOptimize, HubSafety, HubShare, HubCount };
 enum {
@@ -2056,7 +2126,7 @@ enum {
     (void)t;
     switch (s) {
     case HubMods: return self.rows.count ? (NSInteger)self.rows.count : 1;
-    case HubAdd: return 3;
+    case HubAdd: return 4;
     case HubTools: return HubToolCount;
     case HubOptimize: return 2;
     case HubShare: return 2;
@@ -2105,8 +2175,9 @@ enum {
         break;
     }
     case HubAdd: {
-        NSArray *titles = @[T(@"Add an archive or character preset", @"圧縮ファイル・キャラクタープリセットを追加"), T(@"Add a folder", @"フォルダを選んで追加"), T(@"Find on Nexus Mods", @"Nexus ModsでMODを探す")];
-        NSArray *icons = @[@"doc.zipper", @"folder", @"safari"];
+        NSArray *titles = @[T(@"Add an archive or character preset", @"圧縮ファイル・キャラクタープリセットを追加"), T(@"Add a folder", @"フォルダを選んで追加"), T(@"Find on Nexus Mods", @"Nexus ModsでMODを探す"),
+            T(@"Add BodySlide or FNIS output folder", @"BodySlide・FNISの出力フォルダを追加")];
+        NSArray *icons = @[@"doc.zipper", @"folder", @"safari", @"folder.badge.plus"];
         c.textLabel.text = titles[p.row]; c.imageView.image = [UIImage systemImageNamed:icons[p.row]];
         break;
     }
@@ -2282,15 +2353,15 @@ enum {
     }]];
     [self presentViewController:c animated:YES completion:nil];
 }
-- (void)pick:(NSArray<UTType *> *)types folder:(BOOL)folder list:(BOOL)list {
-    self.pickingFolder = folder; self.pickingList = list;
+- (void)pick:(NSArray<UTType *> *)types single:(BOOL)single generated:(BOOL)generated {
+    self.pickingGenerated = generated;
     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:NO];
-    picker.delegate = self; picker.allowsMultipleSelection = !folder && !list;
+    picker.delegate = self; picker.allowsMultipleSelection = !single;
     [self presentViewController:picker animated:YES completion:nil];
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)picker didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     (void)picker;
-    for (NSURL *url in urls) skyrim_mods_import_url(url, YES);
+    for (NSURL *url in urls) ImportURL(url, YES, self.pickingGenerated);
 }
 - (void)share:(NSURL *)file from:(NSIndexPath *)p {
     if (!file) return;
@@ -2309,6 +2380,19 @@ enum {
         NSMutableArray *lines = [NSMutableArray arrayWithObject:[NSString stringWithFormat:T(@"File: %@", @"元のファイル：%@"), pkg[@"archive"] ?: @"?"]];
         if ([pkg[@"plugins"] count]) [lines addObject:[NSString stringWithFormat:T(@"Plugins: %@", @"プラグイン：%@"), [pkg[@"plugins"] componentsJoinedByString:@", "]]];
         [lines addObjectsFromArray:ReportLines(pkg)];
+        if (pkg[@"generatedFor"]) {
+            NSDictionary *profile = SelectedProfile();
+            NSString *warning = GeneratedOutputWarning(pkg, profile[@"id"], GeneratedInputDigest(EnabledPackageIds(profile)));
+            [lines addObject:warning ?: T(@"Added as generated output for this MOD setup.",
+                                         @"このMOD構成の生成済み出力として追加されました。")];
+        }
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        for (NSString *plugin in pkg[@"plugins"])
+            if ([plugin caseInsensitiveCompare:@"XPMSE.esp"] == NSOrderedSame) {
+                [lines addObjectsFromArray:XpmseRequirementLines(EnabledPackageIds(SelectedProfile()))];
+                break;
+            }
+#endif
         detail.lines = lines; detail.title = pkg[@"name"];
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
         NSDictionary *analysis = pkg[@"report"];
@@ -2324,9 +2408,10 @@ enum {
         if (p.row == 0) {
             NSMutableArray *types = [NSMutableArray arrayWithObject:UTTypeZIP];
             for (NSString *ext in @[@"7z", @"rar", @"jslot", @"slot"]) { UTType *u = [UTType typeWithFilenameExtension:ext]; if (u) [types addObject:u]; }
-            [self pick:types folder:NO list:NO];
-        } else if (p.row == 1) [self pick:@[UTTypeFolder] folder:YES list:NO];
-        else [self.navigationController pushViewController:skyrim_mods_browser_controller() animated:YES];
+            [self pick:types single:NO generated:NO];
+        } else if (p.row == 1) [self pick:@[UTTypeFolder] single:YES generated:NO];
+        else if (p.row == 2) [self.navigationController pushViewController:skyrim_mods_browser_controller() animated:YES];
+        else [self pick:@[UTTypeFolder] single:YES generated:YES];
         break;
     case HubTools:
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
@@ -2351,7 +2436,7 @@ enum {
         if (p.row == 1) [self chooseLimit:p];
         break;
     case HubShare:
-        if (p.row) [self pick:@[UTTypeJSON] folder:NO list:YES];
+        if (p.row) [self pick:@[UTTypeJSON] single:YES generated:NO];
         else [self share:ExportModList(SelectedProfile()) from:p];
         break;
     }

@@ -404,9 +404,25 @@ static void profile_dlc_inheritance(const char *root) {
     puts("profile DLC inheritance PASS");
 }
 
+static void hair_pack_masters(void) {
+    const char *base[] = {"Skyrim.esm", NULL};
+    const char *patch_masters[] = {"Skyrim.esm", "ApachiiSkyHair.esm", "KS Hairdo's.esp", NULL};
+    add("Authored Hair Patch.esp", 1, 0, patch_masters);
+    add("KS Hairdo's.esp", 1, 0, base);
+    add("ApachiiSkyHair.esm", 1, 1, base);
+    EXPECT_ORDER(run(), "ApachiiSkyHair.esm,KS Hairdo's.esp,Authored Hair Patch.esp");
+    entries[2].enabled = 0;
+    size_t loaded = run();
+    EXPECT_ORDER(loaded, "KS Hairdo's.esp");
+    assert(state[0] == SKYRIM_PLUGIN_MISSING_MASTER);
+    assert(!strcmp(skyrim_plugin_master(entries[0].header, (unsigned)problem[0]), "ApachiiSkyHair.esm"));
+    reset();
+    puts("hair pack masters PASS");
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2);
     parsing(); names(); ordering(); usleep_dlc_masters(); list_text(); paths(argv[1]); profile_list(argv[1]);
-    profile_dlc_inheritance(argv[1]);
+    profile_dlc_inheritance(argv[1]); hair_pack_masters();
     return 0;
 }

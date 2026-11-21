@@ -662,5 +662,22 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [[self findRow:@"Trial Two"] tap];
     [self findRow:@"Trial Two (imported)"];
     [self capture:@"imported-profile"];
+
+    [[self findRow:@"Default"] tap];
+    [self goBackFrom:@"Profiles"];
+    [[self findRow:@"Add BodySlide or FNIS output folder"] tap];
+    [self pick:@"AuthoredGenerated" folder:YES];
+    [[self findRow:@"AuthoredGenerated"] tap];
+    [self findRow:@"Added as generated output for this MOD setup."];
+    [self goBackFrom:@"AuthoredGenerated"];
+    XCUIElement *basePackage = [self findRow:@"AuthoredFolder"].switches.firstMatch;
+    [basePackage tap];
+    [[self findRow:@"AuthoredGenerated"] tap];
+    [self findRow:@"These generated files were added with a different MOD setup. Regenerate for this profile."];
+    [self goBackFrom:@"AuthoredGenerated"];
+    [[self findRow:@"AuthoredFolder"].switches.firstMatch tap];
+    [[self findRow:@"Default"] tap];
+    [[self findRow:@"Trial Two"] tap];
+    [self goBackFrom:@"Profiles"];
 }
 @end

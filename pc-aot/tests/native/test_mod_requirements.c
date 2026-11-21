@@ -2,9 +2,16 @@
 #include "mod_requirements.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* argv: root... ; prints "<status> <present> <expected>" */
 int main(int argc, char **argv) {
+    if (argc > 1 && !strcmp(argv[1], "--xpmse")) {
+        SkyrimXpmseRequirements x;
+        if (skyrim_xpmse_requirements((const char *const *)argv + 2, (size_t)(argc - 2), &x)) return 1;
+        printf("%u %u %u %u\n", x.fnis_present, x.skse_script, x.nioverride, x.unreadable);
+        return 0;
+    }
     SkyrimSkyUIRequirements r;
     int e = skyrim_skyui_requirements((const char *const *)argv + 1, (size_t)(argc - 1), &r);
     if (e) { printf("error %d\n", e); return 0; }
