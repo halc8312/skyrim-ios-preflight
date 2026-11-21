@@ -1,4 +1,4 @@
-"""Exercise a single optional first-open warm call in the reviewed LE lift."""
+"""Exercise the optional cache warm routine in the reviewed LE lift."""
 import hashlib
 import json
 import os
@@ -21,7 +21,11 @@ READINESS_HASH = "4b53b0aa8cf4974dbfd01654ad1e519d4d053b3b933e414c9d6decad9ce32a
 SETUP = b"    esp -= 4; M32(esp) = 0x886ACBu; SPILL(); f_880EA0(c); RELOAD();\n"
 WARM = b"    esp -= 4; M32(esp) = 0x886AD0u; SPILL(); f_8868C0(c); RELOAD();\n"
 FOLLOWUP = b"    esp -= 4; M32(esp) = 0x886ADFu; SPILL(); f_878DB0(c); RELOAD();\n"
-GATED_WARM = b"    if (!skyrim_chargen_probe_skip_open_warm()) {\n    " + WARM + b"    }\n"
+WARM_ENTRY = b"\nvoid f_8868C0(CPU *c) {\n"
+SKIP_WARM = (b"    if (skyrim_chargen_probe_skip_open_warm()) {\n"
+             b"        c->r[4] += 4u;\n"
+             b"        return;\n"
+             b"    }\n")
 PRELUDE = b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n'
 HOOK = b"#include <stdbool.h>\nbool skyrim_chargen_probe_skip_open_warm(void);\n"
 RUNTIME_HEADERS = {
@@ -48,11 +52,13 @@ def select_function(unit, name):
 def stage_open(unit):
     verify_digest(unit, MENU_HASH)
     menu = select_function(unit, "f_886930")
-    if unit.count(WARM) != 1 or menu.count(SETUP + WARM) != 1 or menu.count(FOLLOWUP) != 1:
+    if unit.count(WARM_ENTRY) != 1 or menu.count(SETUP + WARM) != 1 or menu.count(FOLLOWUP) != 1:
         raise ValueError("The first-open warm call is missing or ambiguous.")
     if not unit.startswith(PRELUDE):
         raise ValueError("The reviewed unit's prelude is missing.")
-    return PRELUDE + HOOK + unit[len(PRELUDE):].replace(WARM, GATED_WARM, 1)
+    # The LE 1.3 package returns before the warm routine's prologue.
+    # Leave the original calls and the flags untouched in that mode.
+    return PRELUDE + HOOK + unit[len(PRELUDE):].replace(WARM_ENTRY, WARM_ENTRY + SKIP_WARM, 1)
 
 
 def staged_fixture(staged, readiness):
@@ -60,7 +66,8 @@ def staged_fixture(staged, readiness):
     instructions = menu[menu.index(SETUP):menu.index(FOLLOWUP) + len(FOLLOWUP)]
     locals_ = menu[menu.index(b"    uint32_t eax"):menu.index(b"L_886930:")]
     return (PRELUDE + HOOK + b"void skyrim_chargen_probe_open_calls(CPU *c) {\n" + locals_
-            + instructions + b"    SPILL();\n}\n" + select_function(readiness, "f_87EAA0")
+            + instructions + b"    SPILL();\n}\n" + select_function(staged, "f_8868C0")
+            + select_function(readiness, "f_87EAA0")
             + select_function(staged, "f_886B50"))
 
 
@@ -87,7 +94,7 @@ class ChargenPrecacheTests(unittest.TestCase):
         source = generated / MENU_UNIT
         original = source.read_bytes()
         staged = stage_open(original)
-        self.assertEqual(staged.replace(HOOK, b"", 1).replace(GATED_WARM, WARM, 1), original)
+        self.assertEqual(staged.replace(HOOK, b"", 1).replace(SKIP_WARM, b"", 1), original)
         readiness = (generated / READINESS_UNIT).read_bytes()
         verify_digest(readiness, READINESS_HASH)
 

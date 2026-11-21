@@ -5,10 +5,13 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 enum {
     STACK = 0x2fe0, MENU = 0x2100, ROWS = 0x2260, REQUESTS = 0x2400,
     FOLLOWUP_TARGET = 0x2500, FOLLOWUP_SLOT = 0x1b10d5c, CACHE_ARRAYS = 0x1b3fd30,
+    PLAYER_SLOT = 0x1b2e8e4,
     ARRAY_COUNT = 3, ARRAY_BYTES = 12, REQUEST_BYTES = 32,
     IN_PROGRESS = 0x10000000, OTHER_PENDING = 0x20000000, READY = 0x40000000,
 };
@@ -16,8 +19,10 @@ enum {
 uint8_t *MEM;
 static bool skip_initial_warm;
 static unsigned setup_calls, warm_calls, followup_calls, clear_calls;
+static uint32_t expected_warm_return = 0x886ad0;
 
 void skyrim_chargen_probe_open_calls(CPU *cpu);
+void f_8868C0(CPU *cpu);
 void f_87EAA0(CPU *cpu);
 void f_886B50(CPU *cpu);
 
@@ -46,13 +51,19 @@ void f_880EA0(CPU *cpu) {
     return_guest(cpu, 0);
 }
 
-void f_8868C0(CPU *cpu) {
-    assert(M32(cpu->r[4]) == 0x886ad0 && setup_calls == followup_calls + 1);
+void f_44D240(CPU *cpu) {
+    assert(M32(cpu->r[4]) == 0x8868d2 && M32(cpu->r[4] + 16u) == expected_warm_return);
     ++warm_calls;
-    // An authored pending request models the prefetch boundary.
+    // Record entry into the original routine and stop before engine traversal.
     set_request(0, IN_PROGRESS);
+    cpu->r[0] = 0;
     return_guest(cpu, 0);
 }
+
+void f_55B510(CPU *cpu) { (void)cpu; abort(); }
+void f_8867A0(CPU *cpu) { (void)cpu; abort(); }
+void f_8816A0(CPU *cpu) { (void)cpu; abort(); }
+void f_881BF0(CPU *cpu) { (void)cpu; abort(); }
 
 void f_878DB0(CPU *cpu) {
     assert(M32(cpu->r[4]) == 0x886adf && M32(cpu->r[4] + 4) == MENU + 0x1c);
@@ -88,14 +99,42 @@ static bool has_ready_cache(void) {
     return (uint8_t)cpu.r[0] != 0;
 }
 
+static void check_warm_callers(void) {
+    const uint32_t callers[] = {0x886ad0u, 0x887069u, 0x887233u};
+    for (size_t i = 0; i < sizeof callers / sizeof callers[0]; ++i) {
+        const unsigned before = warm_calls;
+        expected_warm_return = callers[i];
+        M32(STACK) = expected_warm_return;
+        M32(STACK - 4u) = 0x315dc0deu;
+        CPU cpu = menu_cpu();
+        cpu.r[0] = 0x12345678u;
+        cpu.r[1] = 0x89abcdefu;
+        cpu.flags = (Flags){.cf = 1, .zf = 1, .of = 1};
+        CPU original = cpu;
+
+        skip_initial_warm = true;
+        f_8868C0(&cpu);
+        assert(cpu.r[4] == STACK + 4u && warm_calls == before);
+        cpu.r[4] = STACK;
+        assert(!memcmp(cpu.r, original.r, sizeof cpu.r) &&
+               !memcmp(&cpu.flags, &original.flags, sizeof cpu.flags));
+        assert(M32(STACK) == expected_warm_return && M32(STACK - 4u) == 0x315dc0deu);
+
+        skip_initial_warm = false;
+        f_8868C0(&cpu);
+        assert(cpu.r[4] == STACK + 4u && warm_calls == before + 1);
+    }
+}
+
 int main(void) {
     gm_space memory = {0};
     assert(gm_reserve(&memory, NULL));
-    const uint32_t ranges[] = {MENU, FOLLOWUP_SLOT, CACHE_ARRAYS};
+    const uint32_t ranges[] = {MENU, FOLLOWUP_SLOT, CACHE_ARRAYS, PLAYER_SLOT};
     for (size_t i = 0; i < sizeof ranges / sizeof ranges[0]; ++i)
         assert(gm_commit_page(&memory, (ranges[i] / memory.page_size) * memory.page_size, NULL));
     MEM = memory.base;
     M32(FOLLOWUP_SLOT) = FOLLOWUP_TARGET;
+    M32(PLAYER_SLOT) = MENU;
 
     assert(has_ready_cache());
     CPU cpu = menu_cpu();
@@ -115,6 +154,7 @@ int main(void) {
     skyrim_chargen_probe_open_calls(&cpu);
     assert(cpu.r[4] == STACK && setup_calls == 3 && warm_calls == 1 && followup_calls == 3);
     assert(!has_ready_cache()); // A request already in flight still participates in readiness.
+    check_warm_callers();
 
     for (unsigned i = 0; i < ARRAY_COUNT; ++i) set_request(i, READY);
     assert(has_ready_cache());
@@ -134,6 +174,6 @@ int main(void) {
     assert(has_ready_cache());
 
     assert(gm_release(&memory, NULL));
-    puts("Reviewed LE first-open warm boundary and original cache readiness passed.");
+    puts("Reviewed LE warm entry preserved guest state and original cache readiness.");
     return 0;
 }

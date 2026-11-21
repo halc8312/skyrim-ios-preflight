@@ -166,8 +166,8 @@ class ComposeTests(unittest.TestCase):
 
     def test_real_precache_stage_with_an_authored_unit(self):
         precache = hooks.load(ROOT / "experiments/classic-chargen-precache", "test_chargen_precache")
-        unit = (precache.PRELUDE + b"\nvoid f_886930(CPU *c) {\n" + precache.SETUP + precache.WARM
-                + precache.FOLLOWUP + b"\n}\n")
+        unit = (precache.PRELUDE + precache.WARM_ENTRY + b"    fixture_warm(c);\n}\n"
+                + b"\nvoid f_886930(CPU *c) {\n" + precache.SETUP + precache.WARM + precache.FOLLOWUP + b"\n}\n")
         (self.gen / precache.MENU_UNIT).write_bytes(unit)
         sources = [*self.sources, self.gen / precache.MENU_UNIT]
         with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
@@ -176,8 +176,9 @@ class ComposeTests(unittest.TestCase):
             result, staged = hooks.prepare_sources(sources, self.output, 8, self.state, self.root)
         data = result[-1].read_bytes()
         self.assertEqual(list(staged), [precache.MENU_UNIT])
-        self.assertIn(precache.GATED_WARM, data)
-        self.assertEqual(data.replace(precache.HOOK, b"", 1).replace(precache.GATED_WARM, precache.WARM, 1), unit)
+        self.assertIn(precache.WARM_ENTRY + precache.SKIP_WARM, data)
+        self.assertIn(precache.WARM, data)
+        self.assertEqual(data.replace(precache.HOOK, b"", 1).replace(precache.SKIP_WARM, b"", 1), unit)
 
 
 class OwnedLiftTests(unittest.TestCase):
