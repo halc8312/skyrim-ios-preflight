@@ -106,7 +106,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
     def test_reviewed_native_invoke_lends_nearest_typed_script_self(self):
         self.run_reviewed_fixture(
             stage_effect_call, "test_effect_call_lift.c",
-            "Classic ordinary native invocation lends the nearest typed script self",
+            "Classic ordinary native invocation lends typed script self and update arguments",
         )
 
     def test_reviewed_effect_event_retains_target_through_native_dispatch(self):
@@ -151,11 +151,23 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.assertEqual(instance[0x1000B0FC], "mov eax,dword ptr [esi+0x2c]")
         self.assertEqual(getter[0x1000A776], "fld dword ptr [eax+0x50]")
         keep = instruction_at(0x1000B220, 0x1000B2C0)
+        self.assertEqual(keep[0x1000B22E], "mov eax,0xc3a620")
+        self.assertEqual(keep[0x1000B23A], "push 0x0")
+        self.assertEqual(keep[0x1000B23D], "mov eax,0xc3ac40")
         self.assertEqual(keep[0x1000B244], "mov edx,0x3d")
+        self.assertEqual(keep[0x1000B253], "push 0x1")
+        self.assertEqual(keep[0x1000B259], "mov eax,0xc3ac40")
+        self.assertEqual(keep[0x1000B260], "mov ecx,dword ptr [eax]")
+        self.assertEqual(keep[0x1000B262], "sub ecx,0x3")
+        self.assertEqual(keep[0x1000B267], "dec ecx")
+        self.assertEqual(keep[0x1000B268], "je 0x1000b27c")
         self.assertEqual(keep[0x1000B27C], "movss xmm0,dword ptr [eax+0x4]")
         self.assertEqual(keep[0x1000B294], "push dword ptr [ebp+0x18]")
         self.assertEqual(keep[0x1000B297], "push 0x0")
         stop = instruction_at(0x1000B3B0, 0x1000B409)
+        self.assertEqual(stop[0x1000B3BD], "mov eax,0xc3a620")
+        self.assertEqual(stop[0x1000B3C7], "push 0x0")
+        self.assertEqual(stop[0x1000B3CA], "mov eax,0xc3ac40")
         self.assertEqual(stop[0x1000B3D1], "mov edx,0x3d")
         self.assertEqual(stop[0x1000B3DD], "push eax")
         self.assertEqual(stop[0x1000B3E1], "push 0x0")

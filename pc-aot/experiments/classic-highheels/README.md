@@ -74,6 +74,39 @@ function and class belong to the exact winning script. A borrowed stack,
 frame or VMIdentifier cannot be stored after Run. The stack ID only checks
 the current invocation.
 
+### Read the two typed update arguments during Run
+
+The exact owner archive includes the effect and footwear PSC alongside
+their PEX. Shoes add their configured spell after the equip checks and
+remove it on unequip. The included effect script obtains GetMagnitude
+from its own ActiveMagicEffect in MoveUp and scheduled OnUpdate.
+OnUpdate schedules the next update after 0.1 seconds while raised.
+MoveDown passes only the target to StopUpdate. The beta 0.5 ESM binds
+hdtHighHeelEffect through the MGEF's VMAD. Its three shipped enchantments
+use that effect with magnitudes 8, 11.8 and 15. Those records are examples
+of effect data and do not fix the amount for other footwear. The
+magnitude passed by the script is an input to the plugin's pose
+calculation.
+
+The exact DLL's KeepUpdate Run obtains the page with `f_C3A620` and
+the two VMValues with `f_C3AC40`. Each VMValue has a type at +0 and
+a payload at +4. Argument 0 carries an ObjectReference identifier to
+the policy unpacker with type 0x3D. Argument 1 carries an IEEE-754
+Float when its tag is 4. The DLL wrapper also handles integer and bool
+conversions. The checked PEX's declared Float path is the scope of
+this fixture. StopUpdate reads argument 0 only. Neither argument
+contains the script's ActiveMagicEffect itself.
+
+The existing owner-Run fixture now executes both stock argument
+getters on authored inline and external VM pages. It verifies a
+signed Float payload, reads the exact one or two argument slots
+while the authenticated caller is current, and exercises missing
+arguments, null or array identifiers, an integer in place of Float
+and a nonfinite Float. The fixture reads the raw identifier during
+Run and has no claim to its separate world-object lifetime. The
+owned DLL checks pin the relevant wrapper instructions without
+executing the DLL.
+
 ### Resolve the borrowed effect and compare the target
 
 The fixed Classic registration for ActiveMagicEffect.GetTargetActor uses
@@ -166,11 +199,22 @@ an independent change to the local baseline, rejection when the root
 changes between read and commit, and a missing NPC name. The fixture's
 scene is single-threaded and its nodes have fixed lifetimes. The exact
 DLL instructions for local Z and refresh are also checked by disassembly.
-Classic SKSE's separate NetImmerse queue takes a node reference for its
-refresh task and releases it when the task is disposed. This is evidence
-for the refresh lifetime of that task, while the task's reference cannot
-prove that the node is still part of the actor's current root.
-[Classic SKSE task implementation](https://github.com/Amelinyaa/SKSE/blob/master/src/skse/skse/GameThreads.cpp)
+
+The official 1.7.3 `SKSETaskUpdateWorldData` takes a NiAVObject
+reference in Create, calls the world refresh in Run and releases
+the reference in Dispose. The queue's lock protects the delegate
+queue. The pinned original `f_6A0B30` also balances its own queue
+guard acquisitions before returning to `0x69110B`. The SKSE task
+stores only the node pointer and therefore cannot
+establish Actor ownership, current-root membership or serialization
+with the rest of the scene. The acquired Actor references in the
+effect-event fixture end with native dispatch. An application path
+needs a bounded owner-thread window in which it can resolve the
+current actor and root, take the required references and verify
+membership through the write and refresh. The app's existing typed
+Papyrus provider attests a VM frame and epoch, a different lifetime
+from a scene root.
+[Classic SKSE 1.7.3 source archive](https://skse.silverlock.org/)
 
 Played PEX identity, live third-person root ownership and serialization
 with animation or rendering still need verification. The alternate

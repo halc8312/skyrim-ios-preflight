@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+#include "funcs_exe.h"
 #include "guest_memory.h"
 #include "lift_prelude.h"
 
@@ -14,6 +15,8 @@ enum {
     KEEP = 0x4000, STOP = 0x4100, NATIVE_TABLE = 0x4200, REGISTRY = 0x4300,
     MOVE_UP = 0x4400, ON_UPDATE = 0x4500, MOVE_DOWN = 0x4600,
     EFFECT_CLASS = 0x4700, FIRST_SELF = 0x4800, SECOND_SELF = 0x4900,
+    ARGUMENT_PAGE = 0x1a80, ARGUMENT_PAGES = 0x1a10, PROBE_SP = 0x2b80,
+    ARG_OBJECT_CLASS = 0x4a00, ARG_OBJECT = 0x4b00, VM_FLOAT = 4,
     SLOT_CHECK = 1, SLOT_RUN = 2, RUN_RETURN = 0xc46e61, STACK_ID = 73, EPOCH = 7,
 };
 
@@ -29,8 +32,97 @@ static const AuthoredBindings bindings = {
 static bool observe;
 static unsigned runs, observations;
 static uint32_t expected_self;
+static unsigned argument_checks;
 
-void f_C46CB0(CPU *);
+typedef struct BorrowedArguments {
+    uint32_t target_class, target_identifier, magnitude_bits;
+} BorrowedArguments;
+
+/* The caller and authored VM page map were already checked. These helpers
+ * run the stock getters on a separate stack in this host test. */
+static uint32_t argument_page(CPU *scratch)
+{
+    scratch->r[1] = STACK;
+    scratch->r[4] = PROBE_SP;
+    M32(PROBE_SP + 4) = FRAME;
+    f_C3A620(scratch);
+    assert(scratch->r[4] == PROBE_SP + 8);
+    return scratch->r[0];
+}
+
+static uint32_t argument_value(CPU *scratch, uint32_t index, uint32_t page)
+{
+    scratch->r[1] = STACK;
+    scratch->r[4] = PROBE_SP;
+    M32(PROBE_SP + 4) = FRAME;
+    M32(PROBE_SP + 8) = index;
+    M32(PROBE_SP + 12) = page;
+    f_C3AC40(scratch);
+    assert(scratch->r[4] == PROBE_SP + 16);
+    return scratch->r[0];
+}
+
+static bool read_fixture_arguments(const CPU *cpu, BorrowedArguments *sample)
+{
+    bool keep = cpu->r[1] == KEEP;
+    if (M32(FRAME + 0x1c) != (keep ? 2u : 1u))
+        return false;
+    CPU scratch = *cpu;
+    uint32_t page = argument_page(&scratch);
+    uint32_t reference = argument_value(&scratch, 0, page);
+    assert(reference == FRAME + 0x24);
+    uint32_t kind = M32(reference), identifier = M32(reference + 4);
+    if (kind != ARG_OBJECT_CLASS || !identifier || !gm_pointer(&space, identifier, 0x1c))
+        return false;
+    uint32_t bits = 0;
+    if (keep) {
+        uint32_t magnitude = argument_value(&scratch, 1, page);
+        assert(magnitude == FRAME + 0x2c);
+        if (M32(magnitude) != VM_FLOAT)
+            return false;
+        bits = M32(magnitude + 4);
+        if ((bits & 0x7f800000u) == 0x7f800000u)
+            return false;
+    }
+    *sample = (BorrowedArguments){kind, identifier, bits};
+    return true;
+}
+
+static void check_fixture_arguments(const CPU *cpu)
+{
+    bool keep = cpu->r[1] == KEEP;
+    M32(FRAME + 0x24) = ARG_OBJECT_CLASS;
+    M32(FRAME + 0x28) = ARG_OBJECT;
+    M32(FRAME + 0x2c) = VM_FLOAT;
+    M32(FRAME + 0x30) = 0xc0200000u;
+    BorrowedArguments sample = {0};
+    for (unsigned external = 0; external < 2; ++external) {
+        M32(STACK + 0xc) = external ? 0 : 0x80000000u;
+        M32(STACK + 0x10) = external ? ARGUMENT_PAGES : ARGUMENT_PAGE;
+        M32(FRAME + 0x1c) = 0;
+        assert(!read_fixture_arguments(cpu, &sample));
+        M32(FRAME + 0x1c) = keep ? 2u : 1u;
+        assert(read_fixture_arguments(cpu, &sample));
+        assert(sample.target_class == ARG_OBJECT_CLASS && sample.target_identifier == ARG_OBJECT);
+        assert(sample.magnitude_bits == (keep ? 0xc0200000u : 0));
+        M32(FRAME + 0x24) = ARG_OBJECT_CLASS | 1u;
+        assert(!read_fixture_arguments(cpu, &sample));
+        M32(FRAME + 0x24) = ARG_OBJECT_CLASS;
+        M32(FRAME + 0x28) = 0;
+        assert(!read_fixture_arguments(cpu, &sample));
+        M32(FRAME + 0x28) = ARG_OBJECT;
+        M32(FRAME + 0x2c) = 3; /* Int instead of this script's declared Float. */
+        assert(read_fixture_arguments(cpu, &sample) == !keep);
+        M32(FRAME + 0x2c) = VM_FLOAT;
+        M32(FRAME + 0x30) = 0x7fc00000u;
+        assert(read_fixture_arguments(cpu, &sample) == !keep);
+        M32(FRAME + 0x30) = 0xc0200000u;
+    }
+    /* Restore authored test inputs before returning to the original Run body. */
+    M32(STACK + 0xc) = M32(STACK + 0x10) = 0;
+    memset(MEM + FRAME + 0x1c, 0, 0x18);
+    ++argument_checks;
+}
 
 /* Model authenticated function/type identities. Read only while the owner
  * is inside this ordinary Run callback. The observer borrows the VMValue. */
@@ -116,7 +208,10 @@ void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache)
         M32(STACK + 0x44) = STACK_ID + 1;
         assert(!observe_caller(cpu, &bindings, EPOCH, check_borrowed_self));
         M32(STACK + 0x44) = STACK_ID;
-        assert(observe_caller(cpu, &bindings, EPOCH, check_borrowed_self) == !!expected_self);
+        bool accepted = observe_caller(cpu, &bindings, EPOCH, check_borrowed_self);
+        assert(accepted == !!expected_self);
+        if (accepted)
+            check_fixture_arguments(cpu);
     }
     cpu->r[0] = 1;
     cpu->r[4] += 24;
@@ -152,11 +247,11 @@ static Result invoke(uint32_t native, uint32_t caller_function, uint32_t owner,
     M32(CALLER + 0x18) = self;
     observe = probe;
     expected_self = accepted ? self : 0;
-    runs = observations = 0;
+    runs = observations = argument_checks = 0;
     f_C46CB0(&cpu);
     assert(cpu.r[0] == 0 && cpu.r[4] == SP + 20);
     assert(M32(TLS_DATA + 0x4ac) == 5);
-    assert(runs == 1 && observations == (unsigned)(probe && accepted));
+    assert(runs == 1 && observations == (unsigned)(probe && accepted) && argument_checks == observations);
     Result result = {.flags = cpu.flags};
     memcpy(result.registers, cpu.r, sizeof result.registers);
     memcpy(result.frame_bytes, MEM + FRAME, sizeof result.frame_bytes);
@@ -167,7 +262,7 @@ static Result invoke(uint32_t native, uint32_t caller_function, uint32_t owner,
 int main(void)
 {
     assert(gm_reserve(&space, NULL));
-    const uint32_t locations[] = {TLS, SP - 0x880, SP, NATIVE_TABLE, TLS_INDEX};
+    const uint32_t locations[] = {TLS, PROBE_SP, SP - 0x880, SP, NATIVE_TABLE, TLS_INDEX};
     for (size_t i = 0; i < sizeof locations / sizeof locations[0]; ++i) {
         uint32_t address = locations[i];
         if (!gm_pointer(&space, address, 4))
@@ -183,6 +278,9 @@ int main(void)
     M32(STACK_REF) = STACK;
     M32(STACK + 0x30) = FRAME;
     M32(STACK + 0x44) = STACK_ID;
+    M32(STACK + 0x28) = 1;
+    M32(ARGUMENT_PAGES) = ARGUMENT_PAGE;
+    M32(ARGUMENT_PAGE) = 0x100;
     M32(FRAME) = M32(OUTER) = STACK;
     M32(FRAME + 4) = CALLER;
     M32(CALLER + 4) = OUTER;
@@ -213,6 +311,6 @@ int main(void)
         assert(!memcmp(plain.stack_bytes, sample.stack_bytes, sizeof plain.stack_bytes));
     }
     assert(gm_release(&space, NULL));
-    puts("Classic ordinary native invocation lends the nearest typed script self");
+    puts("Classic ordinary native invocation lends typed script self and update arguments");
     return 0;
 }
