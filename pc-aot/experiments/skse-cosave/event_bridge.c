@@ -156,6 +156,27 @@ SkseBridgeResult skse_bridge_begin_save(SkseEventBridge *bridge, const SkseGameE
     return result;
 }
 
+SkseBridgeResult skse_bridge_begin_published_save(SkseEventBridge *bridge, const SkseEventTrace *trace,
+    uint32_t ticket, int saves, const char *leaf, int source,
+    SksePendingSave **out, SkseBaseEvidence *proof, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (out) *out = NULL;
+    if (proof) *proof = (SkseBaseEvidence){.ess_fd = -1};
+    if (!bridge || !out || !proof || !ticket || ticket > SkyrimLifecycleCapacity)
+        return SKSE_BRIDGE_ARGUMENT;
+
+    const SkseGameEvent request = {.scope = bridge->running, .ticket = ticket};
+    SkseBridgeResult result = skse_bridge_check_call(&request, SkyrimSaveSlot, trace);
+    if (result != SKSE_BRIDGE_OK) return result;
+
+    SkseGameEvent bound;
+    result = skse_bridge_bind_named_ess(bridge, ticket, saves, leaf, source, &bound, detail);
+    if (result != SKSE_BRIDGE_OK) return result;
+    result = skse_bridge_begin_save(bridge, &bound, NULL, out, detail);
+    if (result == SKSE_BRIDGE_OK) *proof = (SkseBaseEvidence){bound, SKSE_BASE_SAVED, source};
+    return result;
+}
+
 SksePairResult skse_bridge_write_owner(SksePendingSave *save, uint32_t uid,
                                       const SksePairRecord *records, size_t count) {
     if (!save) return SKSE_PAIR_ARGUMENT;

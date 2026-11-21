@@ -72,6 +72,12 @@ SkseBridgeResult skse_bridge_bind_named_ess(SkseEventBridge *bridge, uint32_t ti
 SkseBridgeResult skse_bridge_begin_save(SkseEventBridge *bridge, const SkseGameEvent *requested,
                                        const SksePairGeneration *verified_base,
                                        SksePendingSave **out, SksePairResult *detail);
+/* Admit a fresh save witnessed by the actual writer. Check the closed save
+ * and VM call trace before opening a stage for owner records. On success the
+ * returned proof borrows source; use it with the same trace to capture. */
+SkseBridgeResult skse_bridge_begin_published_save(SkseEventBridge *bridge, const SkseEventTrace *trace,
+    uint32_t ticket, int saves, const char *leaf, int source,
+    SksePendingSave **out, SkseBaseEvidence *proof, SksePairResult *detail);
 SksePairResult skse_bridge_write_owner(SksePendingSave *pending, uint32_t uid,
                                       const SksePairRecord *records, size_t count);
 SksePairResult skse_bridge_write_plugins(SksePendingSave *pending, SksePluginRegistry *plugins,

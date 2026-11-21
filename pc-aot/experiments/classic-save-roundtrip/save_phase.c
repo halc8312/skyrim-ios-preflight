@@ -182,27 +182,28 @@ void save_composition_close(void) {
     const bool clones = mode == COMMIT || mode == INTERRUPT || mode == REPLACE || mode == CLONE_FAILURE;
     SkseDeferredSave *job = NULL;
     SksePairResult detail;
-    SkseGameEvent bound;
-    const SkseBridgeResult binding = skse_bridge_bind_named_ess(bridge, event.ticket, scratch, "Fixture.ess", held,
-                                                               &bound, &detail);
-    if (matched) {
-        assert(binding == SKSE_BRIDGE_OK);
-        event = bound;
-        assert(skse_bridge_begin_save(bridge, &event, NULL, &pending, &detail) == SKSE_BRIDGE_OK);
+    SkseBaseEvidence base;
+    const SkseBridgeResult binding = skse_bridge_begin_published_save(bridge, &trace, event.ticket,
+        scratch, "Fixture.ess", held, &pending, &base, &detail);
+    assert((pending != NULL) == (binding == SKSE_BRIDGE_OK));
+    if (binding != SKSE_BRIDGE_OK) assert(base.ess_fd == -1 && !base.event.ticket);
+    if (matched && mode != SKIP_VM) {
+        assert(binding == SKSE_BRIDGE_OK && base.ess_fd == held && base.outcome == SKSE_BASE_SAVED);
+        event = base.event;
         const SksePairRecord record = {ROUNDTRIP_RECORD, ROUNDTRIP_RECORD_VERSION,
                                        sizeof ROUNDTRIP_RECORD_DATA, ROUNDTRIP_RECORD_DATA};
         const bool bad_record = mode == RECORD_FAILURE;
         assert(skse_bridge_write_owner(pending, ROUNDTRIP_OWNER, bad_record ? NULL : &record, 1) ==
                (bad_record ? SKSE_PAIR_ARGUMENT : SKSE_PAIR_OK));
-        const SkseBaseEvidence base = {event, SKSE_BASE_SAVED, held};
         if (clones) roundtrip_expect_clone(held, mode == CLONE_FAILURE);
         const SkseBridgeResult result = skse_bridge_defer_named_save(pending, &trace, &base, scratch, "Fixture.ess",
                                                                      scratch, &job, &detail);
         if (mode == RECORD_FAILURE) assert(result == SKSE_BRIDGE_PAIR && detail == SKSE_PAIR_ARGUMENT);
         else if (mode == CLONE_FAILURE) assert(result == SKSE_BRIDGE_PAIR && detail == SKSE_PAIR_UNSUPPORTED);
-        else if (mode == SKIP_VM) assert(result == SKSE_BRIDGE_REJECTED);
         else assert(result == SKSE_BRIDGE_OK && detail == SKSE_PAIR_OK);
         assert((job != NULL) == (result == SKSE_BRIDGE_OK));
+    } else if (mode == SKIP_VM) {
+        assert(binding == SKSE_BRIDGE_REJECTED);
     } else if (held >= 0) {
         assert(binding == SKSE_BRIDGE_PAIR && detail == SKSE_PAIR_ESS_CHANGED);
     } else {
