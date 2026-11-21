@@ -31,6 +31,8 @@ The optional fresh-save notification stager preserves each reviewed engine call 
 
 Only the four reviewed output units are staged. The pinned stage test compiles those units and reverses the insertions byte-for-byte. No game-derived C is published. Run on Linux or WSL with `SKYRIM_TEST_OWNED_CLASSIC_LIFT` pointing at the completed private generation.
 
+`save_attempt.c` accepts those notification events after the caller has authenticated the selected profile, path and guest call frame. It uses the same thread's lifecycle scope and the actual file observer. At the normal return it borrows the matching read-only descriptor and the VM and slot trace for one synchronous result. Failed or short writes, false VM returns, mismatched or stale tokens, cancellation, failed close or rename, and replacement of the output inode produce no result. The prepared-runtime test drives this adapter with authored notices and real staged file shims. The pinned lifted fixture separately checks the original save tail with the same shims. The live guest binding, profile authorization and immutable handoff to the companion store still need to be integrated.
+
 ```sh
 python3 -B -m unittest discover -s tests -p test_stage_save_notifications.py -v
 ```

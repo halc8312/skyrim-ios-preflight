@@ -2,6 +2,7 @@
 #define _GNU_SOURCE 1
 #include "rt.h"
 #include "runtime_save.h"
+#include "save_attempt.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -205,6 +206,75 @@ static void stale_handle_after_end(int root, const char *root_path) {
     CHECK(!close(dir));
 }
 
+typedef struct { unsigned count; int reader; } AttemptReport;
+
+static void report_attempt(void *context, int dir, const char *leaf, int ess,
+                           const SkyrimLifecycleScope *trace, uint32_t slot_ticket) {
+    AttemptReport *report = context;
+    CHECK(!report->count && ess >= 0 && !strcmp(leaf, final_leaf));
+    struct stat held, named;
+    CHECK(!fstat(ess, &held) && !fstatat(dir, leaf, &named, AT_SYMLINK_NOFOLLOW));
+    CHECK(held.st_dev == named.st_dev && held.st_ino == named.st_ino && held.st_size == sizeof sample - 1);
+    CHECK(trace->count == 4 && !trace->invalid && trace->current == 0);
+    CHECK(trace->rows[0].site == SkyrimSaveSlot && trace->rows[0].ticket == slot_ticket);
+    CHECK(trace->rows[1].site == SkyrimSaveVM && trace->rows[1].parent == slot_ticket);
+    CHECK(trace->rows[2].returning && trace->rows[2].outcome == SkyrimReturnedTrue);
+    CHECK(trace->rows[3].returning && trace->rows[3].ticket == slot_ticket);
+    report->reader = ess;
+    ++report->count;
+}
+
+static void run_notification_case(int root, const char *root_path, Scenario scenario, bool vm_ok) {
+    char subdir[32];
+    CHECK(snprintf(subdir, sizeof subdir, "notice-%u-%d", (unsigned)scenario, vm_ok) > 0);
+    const int dir = case_directory(root, root_path, subdir);
+    if (scenario == MOVE_ERR) CHECK(!mkdirat(dir, final_leaf, 0700));
+    CPU cpu = {.fs_base = TEB_BASE}, other = {.fs_base = OTHER_TEB};
+    ClassicSaveAttempt attempt;
+    AttemptReport report = {0, -1};
+    errno = ERANGE;
+    const uint64_t cancelled = classic_save_attempt_begin(&attempt, &cpu, dir, g_save_dir, final_leaf,
+                                                          report_attempt, &report);
+    CHECK(cancelled && errno == ERANGE);
+    classic_save_attempt_cancel(&cpu, cancelled);
+    CHECK(errno == ERANGE && !report.count);
+    const uint64_t ticket = classic_save_attempt_begin(&attempt, &cpu, dir, g_save_dir, final_leaf,
+                                                       report_attempt, &report);
+    CHECK(ticket && ticket != cancelled);
+    classic_save_attempt_event(&cpu, cancelled, SkyrimSaveAttemptLeft, 0);
+    classic_save_attempt_event(&other, ticket, SkyrimSaveAttemptLeft, 0);
+    CHECK(!classic_save_attempt_current(&cpu, SkyrimSaveInSlot));
+    const uint32_t handle = open_temp(&cpu, 0x40000000u, 2);
+    CHECK(handle == attempt.runtime.guest_handle && handle != UINT32_MAX);
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveOpenFinished, 0);
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveSlotEntered, 0);
+    CHECK(classic_save_attempt_current(&cpu, SkyrimSaveInSlot) == ticket);
+    CHECK(!classic_save_attempt_current(&other, SkyrimSaveInSlot));
+    actual_write(&cpu, handle, scenario, &attempt.runtime);
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveVmReturned, vm_ok);
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveSlotLeft, 0);
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveCloseEntered, 0);
+    CHECK(classic_save_attempt_current(&cpu, SkyrimSaveInClose) == ticket);
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveFlushReturned, 1);
+    if (scenario == CLOSE_ERR) CHECK(!close(attempt.runtime.file.writer));
+    CHECK(invoke(&cpu, ClassicCloseHandle, CLOSE_RETURN, 1, &handle) == 1);
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveCrtCloseReturned, 1);
+    if (scenario == SWAPPED_TEMP) {
+        CHECK(!unlinkat(dir, temp_leaf, 0));
+        write_leaf(dir, temp_leaf, sample);
+    }
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveMoveEntered, 0);
+    CHECK(move_file(&cpu, NAME_TEMP, NAME_FINAL) == (scenario != MOVE_ERR));
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveCrtMoveReturned, 1);
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveCloseLeft, 0);
+    CHECK(!report.count);
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveAttemptLeft, 0);
+    classic_save_attempt_event(&cpu, ticket, SkyrimSaveAttemptLeft, 0);
+    CHECK(report.count == (unsigned)(scenario == ACCEPT && vm_ok));
+    if (report.reader >= 0) CHECK(fcntl(report.reader, F_GETFL) < 0 && errno == EBADF);
+    CHECK(!close(dir));
+}
+
 int main(int argc, char **argv) {
     CHECK(argc == 2 && signal(SIGXFSZ, SIG_IGN) != SIG_ERR);
     MEM = calloc(1, 1u << 20);
@@ -217,6 +287,12 @@ int main(int argc, char **argv) {
     CHECK(root >= 0);
     for (Scenario scenario = ACCEPT; scenario <= DIFFERENT_THREAD; ++scenario) run_case(root, argv[1], scenario);
     stale_handle_after_end(root, argv[1]);
+    run_notification_case(root, argv[1], ACCEPT, true);
+    run_notification_case(root, argv[1], ACCEPT, false);
+    run_notification_case(root, argv[1], SHORT, true);
+    run_notification_case(root, argv[1], CLOSE_ERR, true);
+    run_notification_case(root, argv[1], MOVE_ERR, true);
+    run_notification_case(root, argv[1], SWAPPED_TEMP, true);
     CHECK(!close(root));
     free(MEM);
     puts("PASS real Skydream file shims, unchanged guest status, and scoped save evidence");
