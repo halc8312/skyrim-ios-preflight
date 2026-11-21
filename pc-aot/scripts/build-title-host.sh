@@ -106,6 +106,7 @@ PY
   run_validation python3 -m unittest discover -s tests -p 'test_mod_requirements.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_features.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_fuz.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_mod_racemenu_preset.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_archive.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_optimize.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_libarchive.py' -v
