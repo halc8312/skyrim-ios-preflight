@@ -22,6 +22,10 @@ HDT HighHeelsの同梱DLLが参照する骨格の `NPC` ノードを対象に、
 
 DLLファイル診断のMac試験で、通常ファイルを開けない問題を再現した。Appleのカーネルが併用を拒否する `O_NOFOLLOW_ANY` と `O_NOFOLLOW` を、利用可能な一方だけ指定するように変更した。Precache KillerとRaceMenuの照合用ファイル読み取りにも同じ修正を入れた。修正後はiPhoneOS SDKのコンパイルと、日本語・英語のDLL診断シミュレーター試験が合格した。 [Apple XNUの実装](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/vfs/vfs_vnops.c) · [DLL診断の検査結果](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44896596227)
 
+Safety Loadが参照するのは、ロード画面の開閉通知を持つ `MenuManager`。固定版の開閉通知2か所を読み取り専用で観測する試作を追加した。Clang 18とGCCのASan/UBSanで各2件が合格し、元の呼び出し、スタック、レジスタとフラグを検査した。観測はiPhoneアプリに未接続で、実機の通知順序とローダーの待ち動作は未確認。 [開閉通知の試作](../experiments/classic-loading-menu/README.md)
+
+通常版の画面試験では、ZIPの取り込み、英語と日本語の詳細、別プロファイルでの同じZIPの再利用まで到達した。再利用直後のスイッチがナビゲーションバーに隠れたため、表示位置を確認してから操作するよう試験を直した。コピーしたセーブは再起動後の対象プロファイルに表示され、MOD構成だけを取り込んだ別プロファイルには複製されないことを検査する。 [画面試験の記録](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44901583151)
+
 **2026-11-21　第一弾の追加素材4本を確認しFuzの音声検索を修正**
 
 TaildropでEnhanced Character Edit LE 1.59、チャット添付でFuz Ro D-oh LE 6.1、ShowRaceMenu Precache Killer 1.3、HDT Physics Extensions 14.28を受領。4アーカイブの整合性を検査し、私用の確認フォルダに保持した。単独DLLの診断では、Fuzは `GetPrivateProfileSectionA`、HDT Physicsは `PathAppendA`、ECEは `FindFirstFileA` のインポートが未対応。Precache Killerは初期化中の `HeapCreate` で停止した。
