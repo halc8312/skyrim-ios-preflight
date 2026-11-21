@@ -1895,6 +1895,7 @@ static NSString *FeatureName(unsigned feature) {
     case SKYRIM_FEATURE_RACEMENU: return @"RaceMenu";
     case SKYRIM_FEATURE_NIOVERRIDE: return @"NetImmerse Override";
     case SKYRIM_FEATURE_ECE: return @"Enhanced Character Edit";
+    case SKYRIM_FEATURE_ENB: return T(@"ENB preset (the ENB DLL itself is never loaded)", @"ENBプリセット（ENB本体のDLLは読み込みません）");
     case SKYRIM_FEATURE_ENHANCED_CAMERA: return @"Enhanced Camera";
     case SKYRIM_FEATURE_SAFETY_LOAD: return @"Safety Load";
     case SKYRIM_FEATURE_HDT_PHYSICS: return @"HDT Physics Extensions";

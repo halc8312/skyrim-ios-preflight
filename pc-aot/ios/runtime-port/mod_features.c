@@ -30,6 +30,7 @@ typedef struct {
     const char *key;
     const char *dll_keyword; /* case-insensitive part of a DLL name in SKSE/Plugins, or NULL */
     const char *plugin;      /* exact plugin file name in Data, or NULL */
+    const char *root_file;   /* a regular file at the Data root (any extension), or NULL */
     int implemented;
 } FeatureRow;
 
@@ -37,16 +38,18 @@ typedef struct {
  * spacing and capitalization. None of them is a statement about a version. */
 static const FeatureRow rows[SKYRIM_FEATURE_COUNT] = {
     /* MOD hook builds carry the app half (mod_fuz_host.c); the guest half is checked at launch. */
-    [SKYRIM_FEATURE_FUZ] = {"fuz", "fuz", NULL, MOD_HOOKS_IMPLEMENTED},
-    [SKYRIM_FEATURE_PAPYRUSUTIL] = {"papyrusutil", "storageutil", NULL, PAPYRUSUTIL_IMPLEMENTED},
-    [SKYRIM_FEATURE_PRECACHE_KILLER] = {"precache", "precache", NULL, 0},
-    [SKYRIM_FEATURE_RACEMENU] = {"racemenu", "chargen", NULL, 0},
-    [SKYRIM_FEATURE_NIOVERRIDE] = {"nioverride", "nioverride", NULL, 0},
-    [SKYRIM_FEATURE_ECE] = {"ece", NULL, "EnhancedCharacterEdit.esp", 0},
-    [SKYRIM_FEATURE_ENHANCED_CAMERA] = {"enhancedcamera", "enhancedcamera", NULL, 0},
-    [SKYRIM_FEATURE_SAFETY_LOAD] = {"safetyload", "safetyload", NULL, 0},
-    [SKYRIM_FEATURE_HDT_PHYSICS] = {"hdtphysics", "hdtphysics", NULL, 0},
-    [SKYRIM_FEATURE_HDT_HIGHHEELS] = {"hdthighheels", "highheel", NULL, 0},
+    [SKYRIM_FEATURE_FUZ] = {"fuz", "fuz", NULL, NULL, MOD_HOOKS_IMPLEMENTED},
+    [SKYRIM_FEATURE_PAPYRUSUTIL] = {"papyrusutil", "storageutil", NULL, NULL, PAPYRUSUTIL_IMPLEMENTED},
+    [SKYRIM_FEATURE_PRECACHE_KILLER] = {"precache", "precache", NULL, NULL, 0},
+    [SKYRIM_FEATURE_RACEMENU] = {"racemenu", "chargen", NULL, NULL, 0},
+    [SKYRIM_FEATURE_NIOVERRIDE] = {"nioverride", "nioverride", NULL, NULL, 0},
+    [SKYRIM_FEATURE_ECE] = {"ece", NULL, "EnhancedCharacterEdit.esp", NULL, 0},
+    [SKYRIM_FEATURE_ENHANCED_CAMERA] = {"enhancedcamera", "enhancedcamera", NULL, NULL, 0},
+    [SKYRIM_FEATURE_SAFETY_LOAD] = {"safetyload", "safetyload", NULL, NULL, 0},
+    [SKYRIM_FEATURE_HDT_PHYSICS] = {"hdtphysics", "hdtphysics", NULL, NULL, 0},
+    [SKYRIM_FEATURE_HDT_HIGHHEELS] = {"hdthighheels", "highheel", NULL, NULL, 0},
+    /* Found now; the renderer is Codex's integration (ENB_CODEX_HANDOFF.md), so no switch yet. */
+    [SKYRIM_FEATURE_ENB] = {"enb", NULL, NULL, "enbseries.ini", 0},
 };
 
 const char *skyrim_feature_key(unsigned feature) { return feature < SKYRIM_FEATURE_COUNT ? rows[feature].key : NULL; }
@@ -91,6 +94,12 @@ static int scan_root(const char *root, unsigned *mask) {
     }
     for (int f = 0; f < SKYRIM_FEATURE_COUNT; ++f)
         if (rows[f].plugin && skyrim_plugin_file_present(root, rows[f].plugin)) *mask |= 1u << f;
+    for (int f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
+        char path[4096];
+        struct stat st;
+        if (rows[f].root_file && skyrim_plugin_child_path(root, rows[f].root_file, path, sizeof path) == 1 &&
+            !lstat(path, &st) && S_ISREG(st.st_mode)) *mask |= 1u << f;
+    }
     return 0;
 }
 

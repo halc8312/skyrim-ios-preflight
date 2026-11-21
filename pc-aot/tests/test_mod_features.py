@@ -78,6 +78,17 @@ class FeatureTests(unittest.TestCase):
             "fuz", "papyrusutil", "precache", "racemenu", "nioverride", "ece", "enhancedcamera",
             "safetyload", "hdtphysics", "hdthighheels")})
 
+    def test_enb_is_found_by_its_ini_at_the_data_root_only(self):
+        a = self.root("a", ["EnbSeries.INI", "d3d9.dll"])
+        b = self.root("b", ["enbseries/enbseries.ini", "Textures/enbseries.ini"])
+        unreadable, found = self.scan(a, b)
+        self.assertEqual(unreadable, 0)
+        self.assertEqual(found, {"enb": (1, 0)})
+        link = self.top / "c"
+        link.mkdir()
+        os.symlink(self.top / "a" / "EnbSeries.INI", link / "enbseries.ini")
+        self.assertEqual(self.scan(link)[1], {})
+
     def test_non_dll_files_and_wrong_folders_do_not_match(self):
         a = self.root("a", ["SKSE/Plugins/fuz.ini", "SKSE/Plugins/fuz.dll.txt", "Plugins/fuz.dll",
                             "SKSE/fuz.dll", "SKSE/Plugins/sub/fuz.dll", "ece.esp"])

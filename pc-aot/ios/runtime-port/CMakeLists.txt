@@ -129,7 +129,8 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
     set(skse_vm_source "${SKYRIM_IOS_ROOT}/experiments/skse-plugin-vm")
     target_sources(skyrim_ios_runtime PRIVATE
         "${cosave_source}/inspect.c" "${cosave_source}/records.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/mod_requirements.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_features.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_fuz.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mod_requirements.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_features.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/enb_ini.c" "${CMAKE_CURRENT_SOURCE_DIR}/enb_fx.c" "${CMAKE_CURRENT_SOURCE_DIR}/enb_preset.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_fuz.c"
         "${skse_vm_source}/classic_pex.c")
     if(NOT SKYRIM_IOS_SKSE_DLL_PROBE)
         # Read-only PE version resources for the MOD features screen (the DLL probe adds it otherwise).

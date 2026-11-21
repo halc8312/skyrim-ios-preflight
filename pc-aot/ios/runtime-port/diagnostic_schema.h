@@ -82,6 +82,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_MOD_FEATURE", "^IOS_MOD_FEATURE id=[0-9]{1,2} requested=1 available=[01] enabled=[01] reason=[0-4]$") \
     X("IOS_PAPYRUSUTIL", "^IOS_PAPYRUSUTIL schema=1 published=[0-9]{1,2} calls=[0-9]{1,20} refused_stale=[0-9]{1,20} commits=[0-9]{1,20} discards=[0-9]{1,20} errors=[0-9]{1,20}$") \
     X("IOS_PAPYRUSUTIL_OPEN", "^IOS_PAPYRUSUTIL_OPEN (acquisition=-?[0-9]{1,5}|status=[0-9]{1,2})$") \
+    X("IOS_ENB", "^IOS_ENB schema=1 ini=[01] native_dll=[01] files=[0-9]{1,2} usable=[0-9]{1,2} passes=[0-9]{1,3} unsupported_names=[0-9]{1,4} quality=[0-3]$") \
     X("IOS_FUZ", "^IOS_FUZ schema=1 enabled=[01] substituted=[0-9]{1,20} kept=[0-9]{1,20} missing=[0-9]{1,20} errors=[0-9]{1,20}$") \
     X("IOS_CLASSIC_SKYUI_INPUTS", "^IOS_CLASSIC_SKYUI_INPUTS skyui=[01] skse_pex=[01] support=[0-4]$") \
     X("IOS_CLASSIC_VM", "^IOS_CLASSIC_VM registered=[0-9]{1,10} primitive_passed=[0-9]{1,10}$") \
