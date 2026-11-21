@@ -75,6 +75,7 @@ __attribute__((visibility("default"))) unsigned exercise_mod_hooks(unsigned expe
     else assert(value == 0.0f);
     skyrim_racemenu_probe_did_apply();
     skyrim_camera_observe_return(0x123456);
+    skyrim_camera_observe_render(0x60000, 0x600C8, 0x600D4);
     skyrim_loading_menu_observe(0xA5D9CF, 0x57000, 0x58000);
     if (skyrim_inventory_fit_enabled()) seen |= 1u << 8;
     if (skyrim_safety_load_bypass_reclamation()) seen |= 1u << 9;
@@ -111,7 +112,7 @@ void f_A60200(CPU *c) { (void)c; }
 void f_842140(CPU *c) { (void)c; }
 void f_873D70(CPU *c) { (void)c; }
 
-static unsigned calls[23];
+static unsigned calls[24];
 static void forget(uint32_t r) { assert(r == 7); ++calls[0]; }
 static void choose(const struct CPU *c, uint32_t slot, uint32_t r, SkyrimFuzLiftChoice *out) {
     assert(!c && slot == 0x1000 && r == 7);
@@ -174,13 +175,19 @@ static void save_event(const struct CPU *c, uint64_t attempt, unsigned site, int
     ++calls[22];
 }
 
+static void camera_render_observed(uint32_t frame, uint32_t first, uint32_t second) {
+    assert(frame == 0x60000 && first == 0x600C8 && second == 0x600D4);
+    ++calls[23];
+}
+
 static PcGuestModHooks full_table(uint32_t groups) {
     return (PcGuestModHooks){
         PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooks), groups, 0,
         {forget, choose, note, capture, force},
         {capture_world, admit, after_copy, release_title, general},
         {before_revert, after_load, form_deleted}, {skip_warm}, {slider_pending, slider_nose, slider_applied},
-        {camera_observed}, {loading_observed}, {safety_bypass}, {save_begin, save_current, save_event}};
+        {camera_observed}, {loading_observed}, {safety_bypass}, {save_begin, save_current, save_event},
+        {camera_render_observed}};
 }
 
 static unsigned expected_seen(uint32_t groups) {
@@ -209,6 +216,7 @@ static void check_calls(uint32_t groups, unsigned rounds) {
     assert(calls[18] == (groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE ? rounds : 0));
     assert(calls[19] == (groups & PC_GUEST_MOD_HOOK_SAFETY_LOAD ? rounds : 0));
     for (int n = 20; n < 23; ++n) assert(calls[n] == (groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE ? rounds : 0));
+    assert(calls[23] == (groups & PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE ? rounds : 0));
 }
 
 /* argv: hooked-guest compiled-groups select-groups no-hooks-guest bad-reply-guest */
@@ -250,9 +258,11 @@ int main(int argc, char **argv) {
     assert(!bind(PC_GUEST_MOD_HOOKS_ABI + 1, sizeof(PcGuestModHooks)));
     assert(!bind(PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooks) - 1));
 
-    if (!strcmp(argv[3], "original-host") || !strcmp(argv[3], "observer-host") || !strcmp(argv[3], "safety-host")) {
+    if (!strcmp(argv[3], "original-host") || !strcmp(argv[3], "observer-host") ||
+        !strcmp(argv[3], "safety-host") || !strcmp(argv[3], "save-host")) {
         const uint32_t bytes = !strcmp(argv[3], "original-host") ? PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES
-            : !strcmp(argv[3], "observer-host") ? PC_GUEST_MOD_HOOKS_OBSERVED_BYTES : PC_GUEST_MOD_HOOKS_SAFETY_BYTES;
+            : !strcmp(argv[3], "observer-host") ? PC_GUEST_MOD_HOOKS_OBSERVED_BYTES
+            : !strcmp(argv[3], "safety-host") ? PC_GUEST_MOD_HOOKS_SAFETY_BYTES : PC_GUEST_MOD_HOOKS_SAVE_BYTES;
         const uint32_t supported = pc_guest_mod_hooks_groups_for_bytes(bytes);
         const PcGuestModHooksGuest *reply = bind(PC_GUEST_MOD_HOOKS_ABI, bytes);
         assert(reply && reply->table_bytes == bytes);
@@ -260,7 +270,7 @@ int main(int argc, char **argv) {
         PcGuestModHooks table = full_table(PC_GUEST_MOD_HOOK_CAMERA_OBSERVE);
         assert(reply->select(&table) != 0); /* The agreed size is mandatory. */
         table.bytes = bytes;
-        table.groups |= PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE;
+        table.groups |= PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE;
         assert(reply->select(&table) != 0);
         table.groups = PC_GUEST_MOD_HOOK_CAMERA_OBSERVE;
         assert(reply->select(&table) == 0);
@@ -290,7 +300,7 @@ int main(int argc, char **argv) {
         PcGuestModHooks other = full_table(absent);
         assert(pc_guest_select_mod_hooks(absent, &other) != 0);
     }
-    const uint32_t unknown_group = 1024u;
+    const uint32_t unknown_group = 2048u;
     PcGuestModHooks unknown = full_table(unknown_group);
     assert(pc_guest_select_mod_hooks(unknown_group, &unknown) != 0);
     PcGuestModHooks world_only = full_table(PC_GUEST_MOD_HOOK_FUZ_WORLD);
@@ -320,6 +330,7 @@ int main(int argc, char **argv) {
         else if (choice & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) wrong.loading_menu.observe = NULL;
         else if (choice & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) wrong.chargen_slider.did_apply = NULL;
         else if (choice & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) wrong.save.event = NULL;
+        else if (choice & PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE) wrong.camera_render.observe = NULL;
         /* Inventory fit is a guest-only capability with no host callback. */
         if (choice != PC_GUEST_MOD_HOOK_INVENTORY_FIT)
             assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
@@ -339,6 +350,7 @@ int main(int argc, char **argv) {
     table.loading_menu.observe = NULL;
     table.safety_load.bypass_reclamation = NULL;
     table.save.begin = NULL;
+    table.camera_render.observe = NULL;
     assert(exercise(expected_seen(choice)) == expected_seen(choice));
     check_calls(choice, 1);
 

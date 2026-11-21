@@ -10,7 +10,8 @@ uint8_t *MEM;
 enum {
     SINGLETON = 0x012E7288, PLAYER = 0x20000, CURRENT = PLAYER + 0x20, TABLE = PLAYER + 0x6C,
     ACTOR_SINGLETON = 0x01B2E8E4, ACTOR = 0x40000, LOADED_STATE = 0x41000,
-    ARMS_ROOT = 0x42000, BODY_ROOT = 0x43000, PARENT = 0x44000
+    ARMS_ROOT = 0x42000, BODY_ROOT = 0x43000, PARENT = 0x44000,
+    FRAME = 0x45000, FIRST = FRAME + 0xC8, SECOND = FRAME + 0xD4, ITEMS = 0x46000
 };
 
 static void word(uint32_t address, uint32_t value) { memcpy(MEM + address, &value, sizeof value); }
@@ -45,6 +46,19 @@ int main(void) {
     word(BODY_ROOT + 0x98, 0x100);
     skyrim_camera_app_observe(PLAYER); /* Root changed without a slot change. */
     skyrim_camera_app_observe(PLAYER);
+    word(FIRST, ITEMS);
+    word(FIRST + 4, 1);
+    word(FIRST + 8, 1);
+    word(ITEMS, BODY_ROOT);
+    skyrim_camera_app_observe_render(FRAME, FIRST, SECOND);
+    for (unsigned i = 0; i < 120; ++i) skyrim_camera_app_observe_render(FRAME, FIRST, SECOND);
+    word(FIRST + 8, 0);
+    word(SECOND, ITEMS);
+    word(SECOND + 4, 1);
+    word(SECOND + 8, 1);
+    word(ITEMS, ARMS_ROOT);
+    word(ARMS_ROOT + 0x18, BODY_ROOT);
+    for (unsigned i = 0; i < 120; ++i) skyrim_camera_app_observe_render(FRAME, FIRST, SECOND);
     word(CURRENT, 0);
     skyrim_camera_app_observe(PLAYER);
     word(CURRENT, 0x30010);

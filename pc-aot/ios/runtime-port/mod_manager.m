@@ -522,10 +522,9 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
         free(paths);
         if (!ready) skyrim_mod_hook_plan(requested, compiled, host & ~fuzGroups, plan);
     }
-    /* Camera logging is a diagnostic group, independent of the unsupported
-     * Enhanced Camera rendering feature. */
-    if (!launchWithoutMods && !launchPluginListFailed && skyrim_camera_app_ready() &&
-        (compiled & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_CAMERA_OBSERVE;
+    /* Camera diagnostics report observations while the original renderer runs. */
+    if (!launchWithoutMods && !launchPluginListFailed && skyrim_camera_app_ready())
+        plan->groups |= compiled & (PC_GUEST_MOD_HOOK_CAMERA_OBSERVE | PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE);
     if (!launchWithoutMods && !launchPluginListFailed && menuObserver && skyrim_mobile_verbose() &&
         (compiled & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE;
     if (inventoryFit && (compiled & PC_GUEST_MOD_HOOK_INVENTORY_FIT))
@@ -543,6 +542,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     if (plan->groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER)
         table.chargen_slider = (PcGuestModChargenSliderHooks){RaceMenuPendingValue, TakeRaceMenuNoseHeight, RaceMenuDidApply};
     if (plan->groups & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) table.camera.observe_return = skyrim_camera_app_observe;
+    if (plan->groups & PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE) table.camera_render.observe = skyrim_camera_app_observe_render;
     if (plan->groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) table.loading_menu.observe = skyrim_loading_menu_app_observe;
     if (plan->groups & PC_GUEST_MOD_HOOK_SAFETY_LOAD) table.safety_load.bypass_reclamation = skyrim_safety_load_app_bypass;
     if (plan->groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) skyrim_save_app_fill(&table);

@@ -9,3 +9,4 @@
 void skyrim_camera_app_configure(const char *verified_image_sha256);
 bool skyrim_camera_app_ready(void);
 void skyrim_camera_app_observe(uint32_t receiver);
+void skyrim_camera_app_observe_render(uint32_t frame, uint32_t first, uint32_t second);

@@ -97,6 +97,8 @@ class CameraStageTests(unittest.TestCase):
             "IOS_CAMERA_STATE slot=0",
             "IOS_CAMERA_BODY schema=1 slot=0 arms=4 body=5",
             "IOS_CAMERA_BODY schema=1 slot=0 arms=4 body=4",
+            "IOS_CAMERA_RENDER schema=1 first=1 second=0",
+            "IOS_CAMERA_RENDER schema=1 first=0 second=2",
             "IOS_CAMERA_STATE slot=12",
         ])
 

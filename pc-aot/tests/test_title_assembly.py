@@ -179,7 +179,7 @@ class ArtifactBindingTests(unittest.TestCase):
             self.check()
         contract["mod_hooks_header_sha256"] = hashes
         path.write_text(json.dumps(contract))
-        for invalid in (True, "3", 512, 1024, 2, -1):
+        for invalid in (True, "3", 512, 2048, 2, -1):
             self.result.write_text(json.dumps(dict(guest, mod_hook_groups=invalid)))
             with self.subTest(groups=invalid), self.assertRaisesRegex(ValueError, "Invalid MOD hook groups"):
                 self.check()

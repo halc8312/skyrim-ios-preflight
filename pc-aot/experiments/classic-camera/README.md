@@ -188,3 +188,13 @@ are discarded before the original call.
 These results refer to retained entries passed to the original
 culling routine. Actual draw submission and an ownership window for
 a body-visibility change remain separate questions.
+
+The private guest build can select `camera_render_observe` in its
+`--mod-hooks` list. The ordinary app only selects it on a pinned image
+with detailed diagnostics enabled. It checks every 120th call at the
+reviewed boundary and emits `IOS_CAMERA_RENDER schema=1 first=N second=N`
+only when the first-person classification changes, at most 32 lines per run.
+The first value is the frame's earlier list argument and the second is
+its later list argument. Use the transition diagnostics to confirm first
+person, then remain in the relevant view for several seconds. The log
+contains only the two masks.
