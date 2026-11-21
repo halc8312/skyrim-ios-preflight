@@ -31,6 +31,8 @@
 
 4.0.2の設定画面が呼ぶ7種類に加え、起動時の確認が使う `Load` と4種類の `IntList*` を、固定版のPapyrusUtil 3.3と実際のPEXで照合した。元のゲームビューからの読み取りと、専用プロファイルへの書き込みを使い、7個の整数を保存・再読み込みして一致を確認した。NPCの持ち方に使う `StorageUtil.GetIntValue` と `SetIntValue` は、別途実際のForm引数と対象の寿命を確認する。 [作者の4.0.2の起動時チェック](https://github.com/chesko256/WearableLanterns/blob/ebf678e6a17c5f3ee0723e851e1ff4497e77fe19/Scripts/Source/_WL_Compatibility.psc)
 
+実物のSkyUI 5.1と公式のClassic SKSE 1.7.3で、起動時のスクリプト確認が4本すべて合格した。Wearable Lanternsの作者の固定コミットから、ESP、SEQ、メーター、翻訳、設定用PEX2本をホストの取り込みと起動用ビューに通し、元のファイルと照合した。作者のソースにある `JsonUtil.pex` と `StorageUtil.dll` はPapyrusUtil 3.3と異なるため、試験時は同じプロファイルでPapyrusUtil 3.3を後に置く。実機での点灯とMCMは次の確認に残る。 [Classic SKSE 1.7.3](https://skse.silverlock.org/) [Wearable Lanternsの作者リポジトリ](https://github.com/chesko256/WearableLanterns/tree/ebf678e6a17c5f3ee0723e851e1ff4497e77fe19)
+
 **2026-11-22　持ち物画面の拡大指定とFuzの付属音声を照合**
 
 固定版の持ち物画面はScaleformのモード3を指定する。横長画面で一部が切れる説明と一致し、通常の16:9、別メニュー、試験オフでは元の指定を維持する。対応ゲストとSkyUI試験がそろったプロファイルで選べる設定に接続した。Clang 18とGCC ASan/UBSanで各2件、固定版のゲスト統合14件とIPA組み立て試験11件が合格。iPhoneでSkyUIの見え方とタッチ位置を比較してから採用を判断する。 [持ち物画面の試作](../experiments/classic-inventory-fit/README.md)
