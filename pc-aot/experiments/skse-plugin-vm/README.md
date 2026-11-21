@@ -118,6 +118,25 @@ scope. The fixture publishes copied scalar results only to its own host
 test and performs no storage operation.
 [Form and retained actor lifetime](../classic-form-projection/README.md)
 
+The same fixed wrapper and form policy have a separate Wearable Lanterns
+case with the audited storage Keyword's local FormID `0x01D9A9` and an
+authored installed load index. The same guest CPU calls the original
+FormID lookup while the original wrapper frame is active. The decoded
+references must match and the registry read guard covers the copied key,
+type and FormID. Only the scalar leaves the frame. Cases cover the Keyword
+passed directly and as Form, a different plugin with an identical local
+ID, unexpected type or ID fields in the registry, an array or empty
+argument, another VM registry and an already stale epoch.
+
+Both the stock generic decoder (`f_8D90E0`) and stock typed Keyword
+decoder (`f_8E0040`) accept the correct generic Form or Keyword class tag.
+The typed decoder uses the same scalar argument and the original type
+policy. That policy accepts an exact type 4 or its type-5 fallback, so the
+bounded registry sample still checks the exact Keyword type. The fixture
+authors the objects and frame/epoch inputs. The policy's one relevant
+selector and fallback address were checked against the fixed input and
+recreated in the fixture. No gameplay actor ownership is inferred.
+
 Run with `SKYRIM_TEST_OWNED_CLASSIC_LIFT` set to the reviewed generation
 and a POSIX compiler using `python3 -B -m unittest -v test_classic_form_argument`.
 

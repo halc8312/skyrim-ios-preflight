@@ -13,7 +13,11 @@ enum {
     ACTOR_CLASS = 0x2a00, FORM_CLASS = 0x2a10, NATIVE = 0x2900, TABLE = 0x2800,
     ENTRY = 0x2780, POLICY = 0x2600, POLICY_VTABLE = 0x2620, PAGE = 0x2400,
     FRAME = PAGE + 0x10, FIRST_ARG = FRAME + 0x24, STACK = 0x2200, PAGES = 0x2260,
-    REGISTRY = 0x2110, FORM_ID = 0x0a012345,
+    REGISTRY = 0x2110, FORM_ID = 0x0a012345, BASE_VALUE = FRAME + 0x14,
+    KEYWORD_CLASS = 0x2a20, KEYWORD_TYPE = 0x04, KEYWORD_ID = 0x4a01d9a9, OTHER_KEYWORD_ID = 0x4b01d9a9,
+    OTHER_KEYWORD = 0x2b80, OTHER_ENTRY = ENTRY + 12, STACK_ID = 9, RESULT = 0x2e00,
+    SCOPE_EPOCH = 17, AUDITED_LOOKUP = 0x10000,
+    KEYWORD_TYPE_SELECTOR = 0x8b3d24, KEYWORD_TYPE_DESTINATION = 0x8b3d10, KEYWORD_TYPE_FALLBACK = 0x8b3c78,
     FORM_HIGH = 0xffff, DELETED = 1 << 21, FORM_TABLE_LOCK = 0x12e59e4,
     FORM_TABLE_GLOBAL = 0x12e59d4, POLICY_GLOBAL = 0x1ba7008,
     VALUE_INITIALIZED = 0x1ba7024, SLEEP_IMPORT = 0x106b148, CAS_IMPORT = 0x106b14c,
@@ -22,7 +26,7 @@ enum {
     HOST_CAS = 1, HOST_SLEEP = 2, HOST_THREAD = 3, HOST_DECREMENT = 4,
 };
 
-typedef enum FormResult { INVALID, NONE, RESOLVED_ACTOR } FormResult;
+typedef enum FormResult { INVALID, NONE, RESOLVED_ACTOR, RESOLVED_KEYWORD } FormResult;
 
 typedef struct EntrySample {
     uint32_t key, form_id, flags;
@@ -33,14 +37,18 @@ static gm_space space;
 static const CPU *invoker;
 static unsigned locks, handle_count, entry_count;
 static uint64_t handles[2];
-static EntrySample entries[2];
+static EntrySample entries[5];
 static FormResult result;
 static uint32_t result_id, unpacked_type;
 static bool stock_resolved, replace_during_resolve;
+static bool keyword_trial, typed_keyword;
+static uint32_t scoped_value, scoped_epoch;
 
 void f_8F8120(CPU *);
 void f_8D90E0(CPU *);
 void f_8FCD50(CPU *);
+void f_451A30(CPU *);
+void f_8E0040(CPU *);
 void f_8B4300(CPU *);
 void f_8B3B20(CPU *);
 void f_8B3D60(CPU *);
@@ -136,11 +144,15 @@ void fixture_form_handle(const CPU *cpu, uint32_t low, uint32_t high)
 
 void fixture_form_entry(const CPU *cpu, uint32_t site, uint32_t key, uint32_t form)
 {
-    assert(cpu == invoker && M32(FORM_TABLE_LOCK) == 1 && entry_count < 2);
-    assert(site == (entry_count ? 0x8b3eb0u : 0x8b3dbeu));
-    assert(form == ACTOR && gm_pointer(&space, form, 0x13));
+    const uint32_t generic_sites[] = {0x8b3dbe, 0x8b3eb0, AUDITED_LOOKUP};
+    const uint32_t typed_sites[] = {0x8b3c26, 0x8b3dbe, 0x8b3c26, 0x8b3eb0, AUDITED_LOOKUP};
+    const unsigned max_reads = typed_keyword ? 5 : keyword_trial ? 3 : 2;
+    assert(cpu == invoker && M32(FORM_TABLE_LOCK) == 1 && entry_count < max_reads);
+    assert(site == (typed_keyword ? typed_sites : generic_sites)[entry_count]);
+    assert((form == ACTOR || (keyword_trial && form == OTHER_KEYWORD)) && gm_pointer(&space, form, 0x13));
     EntrySample sample = {.key = key, .flags = M32(form + 0x8)};
-    (void)classic_read_form_id(cpu, form, CLASSIC_CHARACTER_FORM, &sample.form_id);
+    const uint8_t expected_type = keyword_trial ? KEYWORD_TYPE : CLASSIC_CHARACTER_FORM;
+    (void)classic_read_form_id(cpu, form, expected_type, &sample.form_id);
     entries[entry_count++] = sample;
 }
 
@@ -150,6 +162,7 @@ void fixture_unpack_form(CPU *cpu)
     assert(cpu == invoker && M32(sp) == 0x8f814d && value == FIRST_ARG);
     assert(gm_pointer(&space, value, 8));
     unpacked_type = M32(value);
+    if (keyword_trial && M32(sp + 8) == REGISTRY) scoped_value = value;
     uint32_t identifier = M32(value + 4);
     if (unpacked_type >= 16 && !(unpacked_type & 1u) &&
         identifier && (identifier != IDENTIFIER || !gm_pointer(&space, identifier, 0x1c))) {
@@ -158,7 +171,37 @@ void fixture_unpack_form(CPU *cpu)
         cpu->r[4] += 4;
         return;
     }
-    f_8D90E0(cpu);
+    if (typed_keyword) f_8E0040(cpu);
+    else f_8D90E0(cpu);
+}
+
+/* Only a copied numeric identity can leave this original wrapper frame. */
+static uint32_t project_keyword(CPU *cpu, uint32_t sp, uint32_t supplied)
+{
+    const unsigned native_reads = typed_keyword ? 4 : 2;
+    if (!supplied || cpu != invoker || scoped_value != FIRST_ARG || scoped_epoch != SCOPE_EPOCH ||
+        M32(sp + 4) != BASE_VALUE || M32(sp + 16) != REGISTRY ||
+        M32(sp + 20) != STACK_ID || M32(sp + 24) != RESULT ||
+        M32(SP + 20) != FRAME || M32(FRAME) != STACK ||
+        (unpacked_type != KEYWORD_CLASS && unpacked_type != FORM_CLASS) ||
+        M32(FIRST_ARG) != unpacked_type || M32(FIRST_ARG + 4) != IDENTIFIER ||
+        handle_count != 2 || handles[0] != handles[1] || entry_count != native_reads) return 0;
+
+    /* Use the same guest CPU in the current native invocation. The original
+     * registry lookup acquires and releases its own scoped read guard. */
+    const CPU caller = *cpu;
+    cpu->r[4] = ID_SP;
+    M32(ID_SP) = AUDITED_LOOKUP;
+    M32(ID_SP + 4) = KEYWORD_ID;
+    f_451A30(cpu);
+    const bool same = cpu->r[0] == supplied;
+    assert(cpu->r[4] == ID_SP + 4);
+    *cpu = caller;
+    if (!same || entry_count != native_reads + 1 || handles[1] != ((uint64_t)FORM_HIGH << 32 | KEYWORD_ID)) return 0;
+    for (unsigned i = 0; i < entry_count; ++i)
+        if (entries[i].key != KEYWORD_ID || entries[i].form_id != KEYWORD_ID || (entries[i].flags & DELETED))
+            return 0;
+    return entries[native_reads].form_id;
 }
 
 /* The stock Run continues here into FormList's base/return handling.
@@ -166,10 +209,14 @@ void fixture_unpack_form(CPU *cpu)
 void f_8F7C80(CPU *cpu)
 {
     uint32_t sp = cpu->r[4], form = M32(sp + 12);
-    assert(M32(sp) == 0x8f816e && M32(sp + 8) == 0x8f78c0 && M32(sp + 16) == REGISTRY);
+    assert(M32(sp) == 0x8f816e && M32(sp + 8) == 0x8f78c0);
+    assert(keyword_trial || M32(sp + 16) == REGISTRY);
     assert(cpu == invoker && !M32(FORM_TABLE_LOCK));
     stock_resolved = form != 0;
-    if (unpacked_type == 0 && !form) {
+    if (keyword_trial) {
+        result_id = project_keyword(cpu, sp, form);
+        if (result_id) result = RESOLVED_KEYWORD;
+    } else if (unpacked_type == 0 && !form) {
         result = NONE;
     } else if (form && (unpacked_type == ACTOR_CLASS || unpacked_type == FORM_CLASS) &&
                handle_count == 2 && handles[0] == handles[1] && entry_count == 2) {
@@ -195,6 +242,8 @@ void f_8F7C80(CPU *cpu)
 typedef struct Scenario {
     const char *label;
     uint32_t kind, identifier, hi, id, flags;
+    uint32_t keyword_handle;
+    bool wrong_registry, inactive_epoch;
     uint8_t form_type;
     bool missing_argument, missing_form, external_pages, deleted_during_resolve, stock_resolves;
     FormResult expected;
@@ -203,20 +252,30 @@ typedef struct Scenario {
 static void run(const Scenario *s)
 {
     CPU cpu = {.r = {0, NATIVE, 0, 0, SP}};
+    keyword_trial = s->keyword_handle != 0;
+    scoped_value = 0;
+    scoped_epoch = s->inactive_epoch ? SCOPE_EPOCH - 1 : SCOPE_EPOCH;
     M32(SP + 4) = FRAME + 0x14;
-    M32(SP + 8) = REGISTRY;
-    M32(SP + 12) = 1;
-    M32(SP + 16) = FRAME + 0x14;
+    M32(SP + 8) = s->wrong_registry ? REGISTRY + 4 : REGISTRY;
+    M32(SP + 12) = STACK_ID;
+    M32(SP + 16) = RESULT;
     M32(SP + 20) = FRAME;
     M32(STACK + 0x0c) = s->external_pages ? 0 : UINT32_C(0x80000000);
     M32(STACK + 0x10) = s->external_pages ? PAGES : PAGE;
     M32(FRAME + 0x1c) = s->missing_argument ? 0 : 1;
     M32(FIRST_ARG) = s->kind;
     M32(FIRST_ARG + 4) = s->identifier;
-    M32(IDENTIFIER + 0x10) = FORM_ID;
+    M32(IDENTIFIER + 0x10) = keyword_trial ? s->keyword_handle : FORM_ID;
     M32(IDENTIFIER + 0x14) = s->hi;
     M32(IDENTIFIER + 0x18) = 2;
-    M32(ENTRY + 8) = s->missing_form ? 0 : 1;
+    M32(ENTRY) = keyword_trial ? KEYWORD_ID : FORM_ID;
+    M32(ENTRY + 8) = s->missing_form ? 0 : keyword_trial ? OTHER_ENTRY : 1;
+    M32(OTHER_ENTRY) = OTHER_KEYWORD_ID;
+    M32(OTHER_ENTRY + 4) = OTHER_KEYWORD;
+    M32(OTHER_ENTRY + 8) = 1;
+    M32(OTHER_KEYWORD + 0x8) = 0;
+    M32(OTHER_KEYWORD + 0xc) = OTHER_KEYWORD_ID;
+    M8(OTHER_KEYWORD + 0x12) = KEYWORD_TYPE;
     M32(ACTOR + 0xc) = s->id;
     M32(ACTOR + 0x8) = s->flags;
     M8(ACTOR + 0x12) = s->form_type;
@@ -228,19 +287,81 @@ static void run(const Scenario *s)
     result_id = locks = handle_count = entry_count = 0;
     f_8F8120(&cpu);
     invoker = NULL;
+    scoped_value = 0;
     if (result != s->expected || stock_resolved != s->stock_resolves)
-        fprintf(stderr, "unexpected result for %s\n", s->label);
+        fprintf(stderr, "unexpected result for %s: projection=%d stock=%u table_hits=%u handle_reads=%u\n",
+                s->label, (int)result, (unsigned)stock_resolved, entry_count, handle_count);
     assert(result == s->expected && stock_resolved == s->stock_resolves);
-    assert(result_id == (result == RESOLVED_ACTOR ? FORM_ID : 0));
+    const uint32_t expected_id = result == RESOLVED_KEYWORD ? KEYWORD_ID : result == RESOLVED_ACTOR ? FORM_ID : 0;
+    assert(result_id == expected_id);
     assert(!M32(FORM_TABLE_LOCK) && cpu.r[4] == SP + 24 && M32(IDENTIFIER + 0x18) == 2);
     assert(M32(FIRST_ARG) == s->kind && M32(FIRST_ARG + 4) == s->identifier);
     assert(M32(ACTOR + 0xc) == s->id && M32(IDENTIFIER + 0x14) == s->hi);
 }
 
-int main(void)
+static void wearable_keyword_cases(void)
+{
+    const Scenario keyword = {
+        .label = "audited Wearable Lanterns Keyword in the owned VM frame",
+        .kind = KEYWORD_CLASS, .identifier = IDENTIFIER, .hi = FORM_HIGH,
+        .id = KEYWORD_ID, .form_type = KEYWORD_TYPE, .keyword_handle = KEYWORD_ID,
+        .stock_resolves = true, .expected = RESOLVED_KEYWORD,
+    };
+    run(&keyword);
+    Scenario s = keyword;
+    s.label = "same Keyword passed as Form via the external argument page";
+    s.kind = FORM_CLASS;
+    s.external_pages = true;
+    run(&s);
+    s = keyword;
+    s.label = "equal local FormID in another plugin";
+    s.keyword_handle = OTHER_KEYWORD_ID;
+    s.expected = INVALID;
+    run(&s);
+    s = keyword;
+    s.label = "matching registry pointer and ID, but not a Keyword";
+    s.form_type = CLASSIC_CHARACTER_FORM;
+    s.stock_resolves = !typed_keyword;
+    s.expected = INVALID;
+    run(&s);
+    s = keyword;
+    s.label = "the engine's type policy alias is not an exact Keyword";
+    s.form_type = 5; /* LocationRefType falls back through the policy for 4. */
+    s.expected = INVALID;
+    run(&s);
+    s = keyword;
+    s.label = "matching registry pointer and type, but mismatched stored FormID";
+    s.id ^= 1;
+    s.expected = INVALID;
+    run(&s);
+    s = keyword;
+    s.label = "Keyword array instead of scalar argument";
+    s.kind |= 1;
+    s.stock_resolves = false;
+    s.expected = INVALID;
+    run(&s);
+    s = keyword;
+    s.label = "typed empty Keyword";
+    s.identifier = 0;
+    s.stock_resolves = false;
+    s.expected = INVALID;
+    run(&s);
+    s = keyword;
+    s.label = "right Keyword outside the accepted registry";
+    s.wrong_registry = true;
+    s.expected = INVALID;
+    run(&s);
+    s = keyword;
+    s.label = "right Keyword in an already stale VM epoch";
+    s.inactive_epoch = true;
+    s.expected = INVALID;
+    run(&s);
+}
+
+int main(int argc, char **argv)
 {
     assert(gm_reserve(&space, NULL));
-    const uint32_t locations[] = {SP, CAS_IMPORT, POLICY_GLOBAL, FORM_TABLE_GLOBAL, CRC_TABLE};
+    const uint32_t locations[] = {SP, CAS_IMPORT, POLICY_GLOBAL, FORM_TABLE_GLOBAL, CRC_TABLE, KEYWORD_TYPE_SELECTOR};
     for (size_t i = 0; i < sizeof locations / sizeof locations[0]; ++i) {
         uint32_t address = locations[i];
         if (!gm_pointer(&space, address, 4))
@@ -268,6 +389,18 @@ int main(void)
     M32(STACK + 0x28) = 1;
     M32(PAGES) = PAGE;
     M32(PAGE) = 0x100;
+    /* From the reviewed LE input: requested type 4 picks slot zero when the
+     * stored form type has already failed the exact comparison. */
+    M8(KEYWORD_TYPE_SELECTOR) = 0;
+    M32(KEYWORD_TYPE_DESTINATION) = KEYWORD_TYPE_FALLBACK;
+    if (argc == 2 && (!strcmp(argv[1], "wearable-keyword") || !strcmp(argv[1], "wearable-typed-keyword"))) {
+        typed_keyword = !strcmp(argv[1], "wearable-typed-keyword");
+        wearable_keyword_cases();
+        assert(gm_release(&space, NULL));
+        puts("Classic Form argument joins the audited Wearable Lanterns Keyword");
+        return 0;
+    }
+    assert(argc == 1);
     const Scenario live = {
         .label = "Actor held as a Form argument", .kind = ACTOR_CLASS, .identifier = IDENTIFIER,
         .hi = FORM_HIGH, .id = FORM_ID, .form_type = CLASSIC_CHARACTER_FORM,

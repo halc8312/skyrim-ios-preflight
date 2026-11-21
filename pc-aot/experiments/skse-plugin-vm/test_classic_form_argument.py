@@ -25,6 +25,8 @@ UNITS = (
      (0xC3A620, 0xC3A830, 0xC3AC40)),
     ("exe_199.c", "f550390f7023b2375da3746cfd6b99be32bfd4fecabff2ce5396b73e2e18bf3c",
      (0x8D9070, 0x8D90E0)),
+    ("exe_200.c", "ca038cc85f7955aaaca6bdd45a26fd620db6716dd687058af7aefff076247d73",
+     (0x8DF0B0, 0x8E0040)),
     ("exe_337.c", "bc5a71831af1bc743116b91a79eff10f48fd7350e2ec5af8792b4fbdbd5460fa",
      (0xC307C0, 0xC322E0)),
     ("exe_193.c", "fc151c85a6652f425fef73929585d366ab5c809486d5f1b360b9203016916218",
@@ -109,8 +111,15 @@ class ClassicFormArgumentTest(unittest.TestCase):
                  native / "guest_memory.c", PACKAGE_FIXTURE / "form_view.c", "-o", binary],
                 check=True, timeout=60,
             )
-            output = subprocess.check_output([binary], text=True, timeout=10)
-            self.assertEqual(output.strip(), "Classic Form argument distinguishes None and verifies live Actor FormID")
+            cases = (
+                ([], "Classic Form argument distinguishes None and verifies live Actor FormID"),
+                (["wearable-keyword"], "Classic Form argument joins the audited Wearable Lanterns Keyword"),
+                (["wearable-typed-keyword"], "Classic Form argument joins the audited Wearable Lanterns Keyword"),
+            )
+            for arguments, expected in cases:
+                with self.subTest(arguments=arguments):
+                    output = subprocess.check_output([binary, *arguments], text=True, timeout=10)
+                    self.assertEqual(output.strip(), expected)
         for digest, path in paths.items():
             self.assertEqual(path.read_bytes(), sources[digest])
 
