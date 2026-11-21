@@ -17,7 +17,7 @@ static float leg_length(ClassicHeelLeg leg, float *rise) {
 
 bool classic_heel_pose_height(const ClassicHeelPose *pose, float *height) {
     if (!pose || !height || pose->smoothing_mode > 2) return false;
-    if (pose->suspended) {
+    if (pose->swimming) {
         *height = 0.0f;
         return true;
     }

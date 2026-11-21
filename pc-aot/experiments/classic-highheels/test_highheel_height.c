@@ -162,7 +162,7 @@ static void calculate_pose_height(void)
     assert(height == 0.5f);
 }
 
-static void smooth_or_suspend_pose_height(void)
+static void smooth_or_swim_pose_height(void)
 {
     ClassicHeelPose pose = {
         .left = {.calf = {0, 0, 30}}, .right = {.calf = {0, 0, 30}},
@@ -177,7 +177,7 @@ static void smooth_or_suspend_pose_height(void)
     pose.smooth_this_state = false;
     pose.magnitude = 0;
     assert(classic_heel_pose_height(&pose, &height) && height == 1.875f);
-    pose.suspended = true;
+    pose.swimming = true;
     assert(classic_heel_pose_height(&pose, &height) && height == 0);
 }
 
@@ -210,7 +210,7 @@ int main(void)
     keep_ownership_on_failure();
     reject_bad_values();
     calculate_pose_height();
-    smooth_or_suspend_pose_height();
+    smooth_or_swim_pose_height();
     reject_invalid_pose_inputs();
     puts("9 Classic HighHeels host scenarios passed");
     return 0;

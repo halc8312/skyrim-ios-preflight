@@ -4,6 +4,7 @@
 #include "lift_prelude.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,6 +12,7 @@
 enum {
     STACK = 0x2f00, NODE_TABLE = 0x2100, ROOT = 0x2200, NPC = 0x2300,
     OTHER_ROOT = 0x2400, OTHER_NPC = 0x2500, CHILDREN = 0x2600, OTHER_CHILDREN = 0x2610,
+    LEG_CHILDREN = 0x2620, LEG_NAMES = 0x2800, LEG_NODES = 0x2a00, LEG_COUNT = 4,
     INTERNED_NPC = 0x2700, INTERNED_ROOT = 0x2710, NAME = 0x2720, CONTEXT = 0x2730,
     GET_NAME = 0xaae1d0, REFRESH = 0xab53e0,
 };
@@ -41,9 +43,10 @@ typedef struct Scene {
     unsigned refreshes;
 } Scene;
 
-static uint32_t find_npc(const Scene *scene)
+static uint32_t find_named_node(const Scene *scene, uint32_t interned_name)
 {
     CPU cpu = {.r = {0, scene->root, 0, 0, STACK}};
+    M32(NAME) = interned_name;
     M32(STACK + 4) = NAME;
     assert(M32(M32(scene->root) + 0x9c) == GET_NAME);
     f_AAE1D0(&cpu);
@@ -55,7 +58,7 @@ static bool read_node(void *actor, const char *name, ClassicHeelNode *out)
 {
     assert(!strcmp(name, "NPC"));
     const Scene *scene = actor;
-    uint32_t node = find_npc(scene);
+    uint32_t node = find_named_node(scene, INTERNED_NPC);
     if (!node || M32(node + 0x18) != scene->root)
         return false;
     *out = (ClassicHeelNode){scene->generation, node, MF32(node + 0x4c)};
@@ -110,13 +113,57 @@ static void make_scene(uint32_t root, uint32_t node, uint32_t children, float he
     MF32(node + 0x50) = 1.0f;
 }
 
+static void test_pose_on_named_nodes(void)
+{
+    static const char *const names[LEG_COUNT] = {
+        "NPC L Foot [Lft ]", "NPC L Calf [LClf]", "NPC R Foot [Rft ]", "NPC R Calf [RClf]",
+    };
+    static const ClassicHeelPoint points[LEG_COUNT] = {{15, 0, 0}, {15, 0, 30}, {0, 0, 0}, {24, 0, 18}};
+    make_scene(ROOT, NPC, CHILDREN, 10.0f);
+    MF32(NPC + 0x84) = 2.0f;
+    M32(NPC + 0xac) = LEG_CHILDREN;
+    M16(NPC + 0xb2) = LEG_COUNT;
+    for (unsigned i = 0; i < LEG_COUNT; ++i) {
+        uint32_t node = LEG_NODES + i * 0x100;
+        uint32_t name = LEG_NAMES + i * 32;
+        strcpy((char *)MEM + name, names[i]);
+        M32(LEG_CHILDREN + i * 4) = node;
+        M32(node) = NODE_TABLE;
+        M32(node + 0x8) = name;
+        M32(node + 0x18) = NPC;
+        MF32(node + 0x78) = points[i].x;
+        MF32(node + 0x7c) = points[i].y;
+        MF32(node + 0x80) = points[i].z;
+    }
+
+    Scene scene = {.root = ROOT, .generation = 1};
+    const uint32_t npc = find_named_node(&scene, INTERNED_NPC);
+    assert(npc == NPC);
+    ClassicHeelPose pose = {.magnitude = 8.0f, .added_height = 0.5f,
+                            .local_scale = MF32(npc + 0x50), .world_scale = MF32(npc + 0x84)};
+    ClassicHeelPoint *const values[LEG_COUNT] = {&pose.left.foot, &pose.left.calf, &pose.right.foot, &pose.right.calf};
+    for (unsigned i = 0; i < LEG_COUNT; ++i) {
+        const uint32_t node = find_named_node(&scene, LEG_NAMES + i * 32);
+        assert(node == LEG_NODES + i * 0x100 && M32(node + 0x18) == npc);
+        *values[i] = (ClassicHeelPoint){MF32(node + 0x78), MF32(node + 0x7c), MF32(node + 0x80)};
+    }
+
+    ClassicHeelHeight height = {0};
+    float target;
+    assert(classic_heel_pose_height(&pose, &target) && fabsf(target - 4.793427f) < 0.00001f);
+    assert(classic_heel_set_height(&height, target, &scene, read_node, commit_node) == CLASSIC_HEEL_APPLIED);
+    assert(fabsf(MF32(NPC + 0x4c) - 14.793427f) < 0.00001f);
+    assert(fabsf(MF32(NPC + 0x80) - 329.58685f) < 0.0001f);
+    assert(classic_heel_set_height(&height, 0, &scene, read_node, commit_node) == CLASSIC_HEEL_APPLIED);
+    assert(MF32(NPC + 0x4c) == 10.0f && MF32(NPC + 0x80) == 320.0f && scene.refreshes == 2);
+}
+
 int main(void)
 {
     gm_space space = {0};
     assert(gm_reserve(&space, NULL));
     assert(gm_commit_page(&space, STACK / space.page_size * space.page_size, NULL));
     MEM = space.base;
-    M32(NAME) = INTERNED_NPC;
     M32(NODE_TABLE + 0x9c) = GET_NAME;
     M32(NODE_TABLE + 0xb4) = REFRESH;
     make_scene(ROOT, NPC, CHILDREN, 10.0f);
@@ -144,6 +191,7 @@ int main(void)
     M32(OTHER_NPC + 0x8) = INTERNED_ROOT;
     assert(classic_heel_set_height(&height, 1.0f, &scene, read_node, commit_node) == CLASSIC_HEEL_NODE_UNAVAILABLE);
     assert(MF32(OTHER_NPC + 0x4c) == 20.0f && scene.refreshes == 5);
+    test_pose_on_named_nodes();
     assert(gm_release(&space, NULL));
     puts("Classic scene recomposes owned local height and undo in the authored NiNode hierarchy");
     return 0;

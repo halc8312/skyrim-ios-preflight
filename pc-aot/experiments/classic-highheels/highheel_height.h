@@ -17,7 +17,7 @@ typedef struct {
     float local_scale, world_scale, magnitude, added_height;
     float previous_height, max_step;
     unsigned smoothing_mode;
-    bool smooth_this_state, suspended;
+    bool smooth_this_state, swimming;
 } ClassicHeelPose;
 
 /* Compute the fixed beta 0.5 offset from copied pose values. Invalid input

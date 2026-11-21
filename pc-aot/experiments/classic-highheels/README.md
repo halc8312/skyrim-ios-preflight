@@ -22,7 +22,7 @@ leg, measures both lengths, and chooses the larger nonnegative ratio of
 vertical rise to length. Starting with the sum of both lengths divided by
 the binary32 reference length `55.8993988`, it multiplies by the NPC node's
 local scale, divides by its world scale, multiplies by the effect magnitude
-and that ratio, and adds the configured base adjustment. One state bit
+and that ratio, and adds the configured base adjustment. The swimming state
 produces zero. Smoothing mode 1 limits change only in the selected movement
 state. Mode 2 always limits it to the configured step around the previous
 owned height. The comparison uses the fixed-library instruction and constant
@@ -215,9 +215,11 @@ dispatches separately.
 
 The private scene fixture connects the height model to the original
 NiNode name search and direct world-data path. It uses two authored
-hierarchies with a named child and a scaled parent. It checks apply, undo,
-an independent change to the local baseline, rejection when the root
-changes between read and commit, and a missing NPC name. The fixture's
+hierarchies with a named child and a scaled parent. One pose test resolves
+both legs' `Foot` and `Calf` names through the lifted lookup, computes
+the offset, refreshes world position and undoes the change. The fixture
+also checks an independent change to the local baseline, rejection when
+the root changes between read and commit, and a missing NPC name. The fixture's
 scene is single-threaded and its nodes have fixed lifetimes. The exact
 DLL instructions for local Z and refresh are also checked by disassembly.
 
