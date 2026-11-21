@@ -9,7 +9,8 @@ enum { EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI };
 enum { CF = 1, PF = 4, ZF = 0x40, SF = 0x80, DF = 0x400, OF = 0x800 };
 enum { ADD, OR, ADC, SBB, AND, SUB, XOR, CMP };
 enum { MAX_SCRATCH = 256 * 1024, MAX_ARGUMENTS = 16, MAX_STEPS = 1000000 };
-enum { MAX_READ_VIEWS = 8, MAX_READ_VIEW_BYTES = 8 * 1024 * 1024 };
+/* One approved LE .text view plus the small data snapshots read during init. */
+enum { MAX_READ_VIEWS = 8, MAX_READ_VIEW_BYTES = 16 * 1024 * 1024 };
 enum { GUEST_PAGE_BYTES = 4096, WIN_PAGE_NOACCESS = 1, WIN_PAGE_READONLY = 2, WIN_PAGE_READWRITE = 4 };
 enum { SERVICE_SLOT_BITS = 9, SERVICE_SLOTS = 1 << SERVICE_SLOT_BITS };
 _Static_assert(SKSE_X86_MAX_SERVICES * 2 <= SERVICE_SLOTS && SKSE_X86_MAX_SERVICES <= UINT8_MAX,

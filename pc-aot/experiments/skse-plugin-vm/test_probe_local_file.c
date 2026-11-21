@@ -125,6 +125,43 @@ static int trace_owned_papyrus(const char *dll, const char *snapshot, bool obser
     return 0;
 }
 
+static int audit_owned_papyrus(const char *dll, const char *snapshot, const char *code_path) {
+    uint8_t words[8], header[4];
+    if (!owned_storage_read_initializers(snapshot, words)) return 2;
+    FILE *input = fopen(code_path, "rb");
+    const size_t cap = 16 * 1024 * 1024;
+    uint8_t *code = malloc(cap);
+    assert(input && code);
+    assert(fread(header, 1, sizeof header, input) == sizeof header);
+    size_t length = fread(code, 1, cap, input);
+    assert(length && fgetc(input) == EOF && !ferror(input) && fclose(input) == 0);
+    uint32_t base = (uint32_t)header[0] | (uint32_t)header[1] << 8 |
+                    (uint32_t)header[2] << 16 | (uint32_t)header[3] << 24;
+    const SkseX86ReadView views[] = {
+        {0x0124166c, words, 4}, {0x012b5b80, words + 4, 4}, {base, code, length}
+    };
+    SkseX86CodeAudit audit = {.read_view_index = 2};
+    const SkseLocalProbeSetup setup = {
+        .read_views = views, .read_view_count = sizeof views / sizeof views[0],
+        .capture_papyrus_startup = true, .code_audit = &audit
+    };
+    SkseLocalDllReport report;
+    SkseProbeFileStatus file_status = skse_probe_local_dll_with_setup(dll, 4427, &setup, &report);
+    printf("audit status=%u load=%u writes=%zu truncated=%u\n", (unsigned)report.trial.status,
+           (unsigned)report.trial.load.status, audit.count, (unsigned)audit.truncated);
+    free(code);
+    if (file_status != SKSE_PROBE_FILE_CHECKED || report.trial.status != SKSE_TRIAL_ENGINE_HOOKS_OBSERVED ||
+        audit.truncated || audit.count != 6) return 3;
+    const uint32_t sites[] = {0x006a9e90, 0x008cab54, 0x006f02ff};
+    for (size_t i = 0; i < sizeof sites / sizeof sites[0]; ++i) {
+        const SkseX86CodeWrite *opcode = &audit.writes[i*2], *displacement = opcode + 1;
+        if (opcode->address != sites[i] || opcode->width != 1 || opcode->value != 0xe9 ||
+            displacement->address != sites[i] + 1 || displacement->width != 4) return 4;
+    }
+    puts("observed 6 scalar requests across 3 known sites");
+    return 0;
+}
+
 static int check_owned_cosave(const char *dll, const char *snapshot) {
     uint8_t initializers[8];
     if (!owned_storage_read_initializers(snapshot, initializers)) return 2;
@@ -179,6 +216,7 @@ int main(int argc, char **argv) {
     if (argc < 2) return 2;
     if (argc == 3 && !strcmp(argv[1], "--owned-int-leaf")) return check_owned_leaf(argv[2]);
     if (argc == 4 && !strcmp(argv[1], "--owned-cosave")) return check_owned_cosave(argv[2], argv[3]);
+    if (argc == 5 && !strcmp(argv[1], "--audit-papyrus")) return audit_owned_papyrus(argv[2], argv[3], argv[4]);
     if (argc == 4 && !strcmp(argv[1], "--owned-papyrus")) return trace_owned_papyrus(argv[2], argv[3], false);
     if (argc == 4 && !strcmp(argv[1], "--observe-papyrus-hooks")) return trace_owned_papyrus(argv[2], argv[3], true);
     if (argc == 3 && !strcmp(argv[1], "--session")) {
