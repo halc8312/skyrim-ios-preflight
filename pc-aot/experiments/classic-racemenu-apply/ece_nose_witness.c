@@ -13,7 +13,7 @@ typedef struct {
     void *context;
     EceNoseWitnessReport output;
     uint32_t menu, actor, preview, race, face, geometry, entry, tri;
-    bool applying, head, lookup, looked_up, parse_started, morph;
+    bool applying, head, lookup, looked_up, parse_started, morph, invalid;
 } EceWitness;
 
 static _Thread_local EceWitness witness;
@@ -54,10 +54,17 @@ static bool same_player(void) {
            word(witness.menu, 0xF4) == 1;
 }
 
+void ece_nose_witness_disarm(void) {
+    if (!witness.menu) witness = (EceWitness){0};
+}
+
 bool ece_nose_menu(uint32_t caller, uint32_t menu) {
-    if (!witness.read || witness.menu || caller != MENU_TICK ||
-        word(menu, 0) != MENU_VTABLE || !(byte(menu, 0x10) & 0x40))
+    if (!witness.read || caller != MENU_TICK || word(menu, 0) != MENU_VTABLE || !(byte(menu, 0x10) & 0x40))
         return false;
+    if (witness.menu) {
+        witness.invalid = true;
+        return false;
+    }
     witness.menu = menu;
     return true;
 }
@@ -66,7 +73,7 @@ void ece_nose_menu_end(bool active) {
     if (!active) return;
     EceWitness finished = witness;
     witness = (EceWitness){0};
-    finished.report(finished.context, finished.output);
+    if (!finished.invalid) finished.report(finished.context, finished.output);
 }
 
 bool ece_nose_begin(uint32_t menu, uint32_t preview, uint32_t descriptor_race) {
@@ -140,7 +147,7 @@ void ece_nose_lookup_end(bool active, uint32_t result) {
 }
 
 uint64_t ece_nose_parse(const struct CPU *cpu, uint32_t path, uint32_t stream) {
-    if (!witness.lookup || witness.parse_started || !witness.begin || !stream) return 0;
+    if (!witness.lookup || witness.invalid || witness.parse_started || !witness.begin || !stream) return 0;
     witness.parse_started = true;
     if (!tri_path(path)) return 0;
     return witness.begin(witness.context, cpu, path, stream);
@@ -148,7 +155,7 @@ uint64_t ece_nose_parse(const struct CPU *cpu, uint32_t path, uint32_t stream) {
 
 bool ece_nose_parsed(const struct CPU *cpu, uint64_t receipt, bool parsed) {
     if (!receipt || !witness.lookup) return false;
-    return witness.finish(witness.context, cpu, receipt) && parsed;
+    return witness.finish(witness.context, cpu, receipt) && parsed && !witness.invalid;
 }
 
 void ece_nose_constructed(bool fresh, uint32_t entry) {

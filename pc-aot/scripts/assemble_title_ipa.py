@@ -18,7 +18,7 @@ MOD_HOOK_HEADERS = {
     "lift_voice_seam.h": "experiments/fuz-voice",
     "voice_fallback.h": "experiments/fuz-voice",
 }
-MOD_HOOK_GROUPS_DEFINED = 63 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192  # Version 1
+MOD_HOOK_GROUPS_DEFINED = 63 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384  # Version 1
 
 
 def load_diagnostics_pairing(path):
@@ -56,7 +56,8 @@ def mod_hook_groups(record, key="mod_hook_groups"):
     value = record.get(key, 0)
     if (type(value) is not int or value & ~MOD_HOOK_GROUPS_DEFINED or value < 0
             or (value & 2 and not value & 1) or (value & 512 and not value & 128)
-            or (value & 4096 and value & (64 | 4) != (64 | 4))):
+            or (value & 4096 and value & (64 | 4) != (64 | 4))
+            or (value & 16384 and not value & 2048)):
         raise ValueError("Invalid MOD hook groups marker")
     return value
 

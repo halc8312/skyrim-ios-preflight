@@ -2,6 +2,7 @@
 #pragma once
 
 #include "mod_ece_profile.h"
+#include "PcGuestModHooksABI.h"
 #include <sys/types.h>
 
 struct CPU;
@@ -12,6 +13,8 @@ void skyrim_ece_tri_retire(void);
 
 uint64_t skyrim_ece_tri_app_begin(const struct CPU *cpu, uint32_t path, uint32_t stream);
 void skyrim_ece_tri_app_finish(const struct CPU *cpu, uint64_t ticket, uint8_t parsed);
+uint64_t skyrim_ece_nose_app_observe(const struct CPU *cpu, enum SkyrimEceNoseNotice site, uint32_t first,
+                                    uint32_t second, uint32_t third, uint32_t fourth, uint64_t ticket);
 
 /* Prepared Kernel32 ReadFile, after the original syscall. */
 extern _Thread_local bool skyrim_ece_tri_read_pending;

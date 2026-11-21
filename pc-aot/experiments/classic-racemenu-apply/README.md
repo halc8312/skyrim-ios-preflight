@@ -142,7 +142,7 @@ The test exercises the exact staged code and the prepared file wrappers
 against authored guest objects. A first real-device observation and an
 ECE-to-stock morph comparison still need to be made.
 
-### Hosted female Nord nose witness
+### Female Nord nose diagnostics
 
 The optional hosted witness stages only the same reviewed original-body lift
 used in the other Classic experiments. It sees the menu through the
@@ -168,14 +168,22 @@ for that invocation, the new entry's original runtime TRI, the same
 entry returned by the stock resource lookup, and that same runtime TRI
 given to the morph code. Loss of the entry, a cached lookup, or lack of
 a source receipt leaves fresh source unproved. The alternate parser
-route and the production app are outside this experiment.
+route remains unverified.
 
 With the owned generation set in `SKYRIM_TEST_OWNED_CLASSIC_LIFT`, run
 `python3 -B -m unittest -v test_ece_nose_witness` from this directory.
 The test syntax-checks all staged units and runs the fixed lookup and
 parser wrappers and named morph selector with authored backing records.
-The positive receipt comes from the test fixture. On a device the same
-scope would need the verified read of the already-open loose winner and
-a fresh lookup. A separate successful resource log, a path match on a
-cached hit, or the slot's text can leave provenance unknown. Those
-checks do not authorize a preset write.
+The hosted fixture supplies the source receipt. The app uses the same
+witness with `ece_nose_observe` and `ece_tri_observe` both compiled, the
+existing detailed-diagnostics and ECE profile checks passed, and preset
+substitution disabled. It verifies that the original file read in the
+same parse used the already-audited loose winner. Idle menu frames leave
+the attempt budget untouched. At most 64 stock Nose Height scope attempts
+are observed per launch, with one line per observed combination.
+
+The record is `IOS_ECE_NOSE schema=1 female_nord=N head=N geometry=N path=N
+fresh=N record=N`, with six Boolean fields. A cached lookup or separate
+successful resource log can leave provenance unknown. First real-device
+observations are still needed. The witness leaves preset and game state
+untouched.

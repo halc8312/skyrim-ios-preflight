@@ -136,6 +136,11 @@ class EceProfileTests(unittest.TestCase):
                 "IOS_ECE_TRI schema=1 source=0 parsed=0",
                 "IOS_ECE_TRI schema=1 source=0 parsed=1",
             ])
+            nose = [line for line in completed.stderr.decode().splitlines() if line.startswith("IOS_ECE_NOSE")]
+            self.assertEqual(nose, [
+                "IOS_ECE_NOSE schema=1 female_nord=1 head=1 geometry=1 path=1 fresh=1 record=1",
+                "IOS_ECE_NOSE schema=1 female_nord=1 head=1 geometry=1 path=1 fresh=0 record=1",
+            ])
 
     def test_private_owned_default_and_modified_effective_tri(self):
         private = os.environ.get("SKYRIM_TEST_ECE_DEFAULT_DATA")

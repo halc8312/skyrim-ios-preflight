@@ -103,6 +103,7 @@ class ReceiverTests(unittest.TestCase):
         self.schema.line('IOS_CAMERA_RENDER schema=1 first=0 second=15')
         self.schema.line('IOS_CAMERA_CULL schema=1 stages=7 producer=129,128,0 first=1,0,1 second=0,0,0')
         self.schema.line('IOS_ECE_TRI schema=1 source=1 parsed=1')
+        self.schema.line('IOS_ECE_NOSE schema=1 female_nord=1 head=1 geometry=1 path=1 fresh=1 record=1')
         self.schema.line('IOS_LOADING_MENU opening=1 ts_ns=123456')
         self.schema.line('IOS_LOADING_MENU opening=0 ts_ns=234567')
         self.schema.line('IOS_CHARGEN_MENU opening=1 ts_ns=345678')
@@ -214,6 +215,8 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_STAGE private-directory monotonic=1.000000000', 'IOS_CAMERA_STATE slot=13',
                      'IOS_CAMERA_STATE slot=12 camera=/private/address',
                      'IOS_ECE_TRI schema=1 source=2 parsed=0',
+                     'IOS_ECE_NOSE schema=1 female_nord=1 head=1 geometry=1 path=1 fresh=2 record=1',
+                     'IOS_ECE_NOSE schema=1 female_nord=1 head=1 geometry=1 path=1 fresh=1 record=1 file=Data/face.tri',
                      'IOS_ECE_TRI schema=1 source=1 parsed=1 path=Data/face.tri',
                      'IOS_CAMERA_RENDER schema=1 first=16 second=0',
                      'IOS_CAMERA_RENDER schema=1 first=0 second=15 root=17352704',

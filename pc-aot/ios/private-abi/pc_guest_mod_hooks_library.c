@@ -20,6 +20,9 @@ _Static_assert(((PC_GUEST_MOD_HOOKS_COMPILED) & (PC_GUEST_MOD_HOOK_SAFETY_LOAD |
 _Static_assert(!(PC_GUEST_MOD_HOOKS_COMPILED & PC_GUEST_MOD_HOOK_FRESH_LOAD) ||
                (PC_GUEST_MOD_HOOKS_COMPILED & PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED) == PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED,
                "Fresh Load requires the existing Save and VM stages");
+_Static_assert((PC_GUEST_MOD_HOOKS_COMPILED & (PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE | PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE))
+               != PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE,
+               "ECE nose observation requires the TRI read observation");
 
 static uint32_t selected;
 static uint32_t bound_bytes;
@@ -37,6 +40,8 @@ static PcGuestModCameraRenderHooks camera_render;
 static PcGuestModEceTriHooks ece_tri;
 static PcGuestModFreshLoadHooks fresh_load;
 static PcGuestModCameraCullHooks camera_cull;
+static PcGuestModEceNoseHooks ece_nose;
+bool skyrim_ece_nose_guest_selected;
 bool skyrim_camera_cull_guest_selected;
 unsigned skyrim_camera_cull_guest_frames;
 
@@ -58,6 +63,10 @@ static int select_hooks(const PcGuestModHooks *table) {
     if (table->groups & PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE) {
         camera_cull = table->camera_cull;
         skyrim_camera_cull_guest_selected = true;
+    }
+    if (table->groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) {
+        ece_nose = table->ece_nose;
+        skyrim_ece_nose_guest_selected = true;
     }
     selected = table->groups;
     selection_final = 1;
@@ -112,6 +121,12 @@ static const PcGuestModHooksGuest fresh_load_reply = {
     .table_bytes = PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES, .select = select_hooks
 };
 
+static const PcGuestModHooksGuest camera_cull_reply = {
+    .version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof(PcGuestModHooksGuest),
+    .compiled_groups = PC_GUEST_MOD_HOOKS_COMPILED & PC_GUEST_MOD_HOOKS_CAMERA_CULL,
+    .table_bytes = PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES, .select = select_hooks
+};
+
 __attribute__((visibility("default")))
 const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uint32_t table_bytes) {
     if (bound_bytes || version != PC_GUEST_MOD_HOOKS_ABI || !pc_guest_mod_hooks_groups_for_bytes(table_bytes)) return 0;
@@ -123,6 +138,7 @@ const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uin
     if (table_bytes == PC_GUEST_MOD_HOOKS_CAMERA_RENDER_BYTES) return &camera_render_reply;
     if (table_bytes == PC_GUEST_MOD_HOOKS_ECE_TRI_BYTES) return &ece_reply;
     if (table_bytes == PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES) return &fresh_load_reply;
+    if (table_bytes == PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES) return &camera_cull_reply;
     return &reply;
 }
 
@@ -216,6 +232,11 @@ uint64_t skyrim_ece_tri_begin(const struct CPU *cpu, uint32_t path, uint32_t str
 
 void skyrim_ece_tri_finish(const struct CPU *cpu, uint64_t ticket, uint8_t parsed) {
     if ((selected & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE) && ticket) ece_tri.finish(cpu, ticket, parsed);
+}
+
+uint64_t skyrim_ece_nose_guest_notify(const struct CPU *cpu, enum SkyrimEceNoseNotice site, uint32_t first,
+                                     uint32_t second, uint32_t third, uint32_t fourth, uint64_t receipt) {
+    return skyrim_ece_nose_guest_selected ? ece_nose.notify(cpu, site, first, second, third, fourth, receipt) : 0;
 }
 
 void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t event) {

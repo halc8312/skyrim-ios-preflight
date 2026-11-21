@@ -21,6 +21,7 @@ typedef void (*EceNoseReport)(void *context, EceNoseWitnessReport report);
 
 bool ece_nose_witness_arm(EceNoseRead read, EceNoseSourceBegin begin, EceNoseSourceFinish finish,
                          EceNoseReport report, void *context);
+void ece_nose_witness_disarm(void);
 bool ece_nose_menu(uint32_t caller, uint32_t menu);
 void ece_nose_menu_end(bool active);
 bool ece_nose_begin(uint32_t menu, uint32_t preview, uint32_t descriptor_race);

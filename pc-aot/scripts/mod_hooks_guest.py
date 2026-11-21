@@ -29,7 +29,7 @@ GROUPS = {
     "camera_observe": 16, "chargen_slider": 32, "save_lifecycle": 64,
     "loading_menu_observe": 128, "inventory_fit": 256, "safety_load": 512,
     "camera_render_observe": 1024, "ece_tri_observe": 2048, "fresh_load": 4096,
-    "camera_cull_observe": 8192,
+    "camera_cull_observe": 8192, "ece_nose_observe": 16384,
 }
 FRESH_LOAD_DEPS = GROUPS["save_lifecycle"] | GROUPS["vm_lifecycle"]
 # The interface header and the reviewed seam headers its tables use; the IPA
@@ -108,6 +108,8 @@ def parse_groups(text: str) -> int:
         raise ValueError("safety_load needs loading_menu_observe; list both")
     if mask & GROUPS["fresh_load"] and mask & FRESH_LOAD_DEPS != FRESH_LOAD_DEPS:
         raise ValueError("fresh_load needs save_lifecycle and vm_lifecycle; list both")
+    if mask & GROUPS["ece_nose_observe"] and not mask & GROUPS["ece_tri_observe"]:
+        raise ValueError("ece_nose_observe needs ece_tri_observe; list both")
     return mask
 
 
@@ -193,6 +195,20 @@ def stage_ece_tri_observe(root: Path) -> dict[str, bytes]:
     return {tri.UNIT: tri.stage((root / "gen" / tri.UNIT).read_bytes())}
 
 
+def stage_ece_nose_observe(root: Path, staged: dict[str, bytes]) -> dict[str, bytes]:
+    nose = load(EXPERIMENTS / "classic-racemenu-apply", "stage_ece_nose_witness")
+    earlier = {"exe_66.c": stage_ece_tri_observe, "exe_185.c": stage_chargen_slider,
+               "exe_186.c": stage_chargen_precache}
+    result = {}
+    for name in nose.DIGESTS:
+        original = (root / "gen" / name).read_bytes()
+        base = staged.get(name, original)
+        if base != original and (name not in earlier or earlier[name](root)[name] != base):
+            raise ValueError(f"{name}: unreviewed earlier stage overlaps the ECE nose observer")
+        result[name] = nose.stage(name, original, app_base=base, racemenu=name == "exe_185.c" and base != original)
+    return result
+
+
 def stage_loading_menu_observe(root: Path) -> dict[str, bytes]:
     loading_menu = load(EXPERIMENTS / "classic-loading-menu", "stage_loading_menu")
     return {LOADING_MENU_UNIT: loading_menu.stage_loading_menu((root / "gen" / LOADING_MENU_UNIT).read_bytes())}
@@ -258,6 +274,7 @@ STAGES = {
     "camera_render_observe": stage_camera_render_observe,
     "camera_cull_observe": stage_camera_cull_observe,
     "ece_tri_observe": stage_ece_tri_observe,
+    "ece_nose_observe": stage_ece_nose_observe,
     "loading_menu_observe": stage_loading_menu_observe,
     "inventory_fit": stage_inventory_fit,
     "safety_load": stage_safety_load,
@@ -273,8 +290,8 @@ def compose(root: Path, mask: int) -> dict[str, bytes]:
     for name in group_names(mask):
         if mask & GROUPS["fresh_load"] and name in ("save_lifecycle", "vm_lifecycle"):
             continue  # the verified combined stage includes both original edits
-        if name == "camera_cull_observe":
-            # These reviewed functions have to be unchanged by the earlier stages.
+        if name in ("camera_cull_observe", "ece_nose_observe"):
+            # Each observer checks the exact prior stages it can share a unit with.
             staged.update(STAGES[name](root, staged))
             continue
         if name not in STAGES:

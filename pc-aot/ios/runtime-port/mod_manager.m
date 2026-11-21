@@ -577,8 +577,12 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     if (!launchWithoutMods && !launchPluginListFailed && menuObserver && skyrim_mobile_verbose() &&
         (compiled & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE;
     if (!launchWithoutMods && !launchPluginListFailed && skyrim_mobile_verbose() &&
-        (compiled & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE) && PrepareEceTriObserver())
+        (compiled & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE) && PrepareEceTriObserver()) {
         plan->groups |= PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE;
+        // Observe the stock path only when no preset substitution was selected.
+        if (!(plan->groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER))
+            plan->groups |= compiled & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE;
+    }
     if (inventoryFit && (compiled & PC_GUEST_MOD_HOOK_INVENTORY_FIT))
         plan->groups |= PC_GUEST_MOD_HOOK_INVENTORY_FIT;
     if (saveProfile && (compiled & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) &&
@@ -613,6 +617,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     if (plan->groups & PC_GUEST_MOD_HOOK_SAFETY_LOAD) table.safety_load.bypass_reclamation = skyrim_safety_load_app_bypass;
     if (plan->groups & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE)
         table.ece_tri = (PcGuestModEceTriHooks){skyrim_ece_tri_app_begin, skyrim_ece_tri_app_finish};
+    if (plan->groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) table.ece_nose.notify = skyrim_ece_nose_app_observe;
     if (plan->groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) skyrim_save_app_fill(&table);
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
     /* Keep the original paths: select nothing. */

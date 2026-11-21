@@ -1,7 +1,7 @@
 """Hash-bound, read-only staging for the private Classic ECE nose witness."""
 import hashlib
 
-from stage_slider import DESCRIPTOR, OPEN, APPLY, PREVIEW, function_span
+from stage_slider import DESCRIPTOR, OPEN, APPLY, PREVIEW, SUBSTITUTE, function_span
 
 # Each entry is an original-body compilation unit from the owner generation.
 DIGESTS = {
@@ -12,6 +12,26 @@ DIGESTS = {
     "exe_186.c": "bf380ee42a2aaed3e1614e03051c99cc66cfea8eb122fa0eb2b3b6da5c271add",
 }
 DECLARATION = b'#include "ece_nose_witness.h"\n'
+# The private guest exports no observer state. All policy and provenance live
+# in the host behind one optional call returning zero before selection.
+APP_DECLARATION = b"""#include "PcGuestModHooksABI.h"
+#define ECE_NOSE_NOTIFY(notice, a, b, d, e, ticket) (skyrim_ece_nose_guest_selected ? skyrim_ece_nose_guest_notify(c, SkyrimEceNose##notice, a, b, d, e, ticket) : 0)
+#define ece_nose_menu(caller, menu) ECE_NOSE_NOTIFY(Menu, caller, menu, 0, 0, 0)
+#define ece_nose_menu_end(active) do { if (active) ECE_NOSE_NOTIFY(MenuEnd, 0, 0, 0, 0, 0); } while (0)
+#define ece_nose_begin(menu, preview, race) ECE_NOSE_NOTIFY(Begin, menu, preview, race, 0, 0)
+#define ece_nose_end(active) do { if (active) ECE_NOSE_NOTIFY(End, 0, 0, 0, 0, 0); } while (0)
+#define ece_nose_face(caller, menu, actor, base, face) ECE_NOSE_NOTIFY(Face, caller, menu, actor, base, face)
+#define ece_nose_head(caller, face, part, geometry) ECE_NOSE_NOTIFY(Head, caller, face, part, geometry, 0)
+#define ece_nose_head_end(active) do { if (active) ECE_NOSE_NOTIFY(HeadEnd, 0, 0, 0, 0, 0); } while (0)
+#define ece_nose_lookup(path) ECE_NOSE_NOTIFY(Lookup, path, 0, 0, 0, 0)
+#define ece_nose_lookup_end(active, result) do { if (active) ECE_NOSE_NOTIFY(LookupEnd, result, 0, 0, 0, 0); } while (0)
+#define ece_nose_parse(cpu, path, stream) ECE_NOSE_NOTIFY(Parse, path, stream, 0, 0, 0)
+#define ece_nose_parsed(cpu, ticket, parsed) ((ticket) && ECE_NOSE_NOTIFY(Parsed, parsed, 0, 0, 0, ticket))
+#define ece_nose_constructed(fresh, entry) do { if (fresh) ECE_NOSE_NOTIFY(Constructed, entry, 0, 0, 0, 0); } while (0)
+#define ece_nose_retiring(entry) ECE_NOSE_NOTIFY(Retiring, entry, 0, 0, 0, 0)
+#define ece_nose_morph(tri, geometry) ECE_NOSE_NOTIFY(Morph, tri, geometry, 0, 0, 0)
+#define ece_nose_morph_record(active, name, matched) do { if (active) ECE_NOSE_NOTIFY(MorphRecord, name, matched, 0, 0, 0); } while (0)
+"""
 
 
 def call(site, target):
@@ -46,21 +66,24 @@ def menu(function):
                   b"    ece_nose_menu_end(ece_menu);\n")
 
 
-def slider(function):
+def slider(function, *, racemenu=False, app=False):
     function = insert(function, b"L_882290:\n", before=b"    uint32_t ece_preview = 0, ece_race = 0;\n")
     function = insert(function, PREVIEW, after=b"    ece_preview = eax;\n")
+    name_load = DESCRIPTOR[len(DESCRIPTOR_LOAD):]
+    original = DESCRIPTOR_LOAD + (SUBSTITUTE if racemenu else b"") + name_load
+    active = b"skyrim_ece_nose_guest_selected && " if app else b""
     descriptor = DESCRIPTOR_LOAD + b"""    ece_race = 0;
-    if (M32(esp + 0x37Cu) == 0x8859B4u) {
+    if (""" + active + b"""M32(esp + 0x37Cu) == 0x8859B4u) {
         const uint32_t descriptor = edx + esi;
         const uint32_t label = TL32(0x1B18B94u);
         if (label && TL32(descriptor + 0x18u) == label &&
             TL32(descriptor + 0x14u) == 2u && TL32(descriptor + 0x120u) == 1u)
             ece_race = TL32(ecx + eax);
     }
-""" + DESCRIPTOR[len(DESCRIPTOR_LOAD):]
-    if function.count(DESCRIPTOR) != 1:
+""" + (SUBSTITUTE if racemenu else b"") + name_load
+    if function.count(original) != 1:
         raise ValueError("The reviewed ECE descriptor is missing or ambiguous")
-    function = function.replace(DESCRIPTOR, descriptor, 1)
+    function = function.replace(original, descriptor, 1)
     return insert(function, APPLY, b"    const bool ece_nose = ece_nose_begin(ebp, ece_preview, ece_race);\n",
                   b"    ece_nose_end(ece_nose);\n")
 
@@ -122,10 +145,17 @@ TRANSFORMS = {
 }
 
 
-def stage(unit, data):
-    if unit not in DIGESTS or hashlib.sha256(data).hexdigest() != DIGESTS[unit]:
+def stage(unit, original, *, app_base=None, racemenu=False):
+    if unit not in DIGESTS or hashlib.sha256(original).hexdigest() != DIGESTS[unit]:
         raise ValueError("ECE nose witness requires the reviewed original Classic lift")
+    app = app_base is not None
+    data = app_base if app else original
     for address, transform in TRANSFORMS[unit]:
         start, end = function_span(data, address)
-        data = data[:start] + transform(data[start:end]) + data[end:]
-    return DECLARATION + data
+        before, after = function_span(original, address)
+        if data[start:end] != original[before:after] and not (transform is slider and racemenu):
+            raise ValueError("A prior stage changed an ECE witness function")
+        body = (slider(data[start:end], racemenu=racemenu, app=app) if transform is slider
+                else transform(data[start:end]))
+        data = data[:start] + body + data[end:]
+    return (APP_DECLARATION if app else DECLARATION) + data

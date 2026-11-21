@@ -31,6 +31,7 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups("camera_render_observe"), 1024)
         self.assertEqual(hooks.parse_groups("camera_cull_observe"), 8192)
         self.assertEqual(hooks.parse_groups("ece_tri_observe"), 2048)
+        self.assertEqual(hooks.parse_groups("ece_tri_observe,ece_nose_observe"), 18432)
         self.assertEqual(hooks.parse_groups("save_lifecycle"), 64)
         self.assertEqual(hooks.parse_groups("fresh_load,save_lifecycle,vm_lifecycle"), 4164)
         self.assertEqual(hooks.parse_groups("loading_menu_observe"), 128)
@@ -42,7 +43,7 @@ class GroupTests(unittest.TestCase):
         for text, message in (("", "comma-separated"), ("fuz_menu,", "comma-separated"),
                               ("fuz_menu,fuz_menu", "twice"), ("fuz", "Unknown"),
                               ("fuz_world", "list both"), ("safety_load", "list both"),
-                              ("fresh_load,save_lifecycle", "needs")):
+                              ("fresh_load,save_lifecycle", "needs"), ("ece_nose_observe", "needs")):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
                 hooks.parse_groups(text)
 
@@ -220,7 +221,7 @@ class OwnedLiftTests(unittest.TestCase):
         classic.validate_generation(state)
         groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe,"
                                     "loading_menu_observe,inventory_fit,safety_load,camera_render_observe,"
-                                    "ece_tri_observe,save_lifecycle,fresh_load,camera_cull_observe")
+                                    "ece_tri_observe,save_lifecycle,fresh_load,camera_cull_observe,ece_nose_observe")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
@@ -235,10 +236,14 @@ class OwnedLiftTests(unittest.TestCase):
             self.assertEqual(frame.count(b"skyrim_camera_observe_render(edi, eax, edx)"), 1)
             tri = hooks.load(ROOT / "experiments/classic-racemenu-apply", "stage_ece_tri")
             tri_stage = (work / "mod-hook-sources" / tri.UNIT).read_bytes()
-            for inserted in (tri.DECLARATION, tri.CAPTURE, tri.BEGIN, tri.FINISH):
-                self.assertEqual(tri_stage.count(inserted), 1)
-                tri_stage = tri_stage.replace(inserted, b"", 1)
-            self.assertEqual(tri_stage, (root / "gen" / tri.UNIT).read_bytes())
+            tri_original = tri.stage((root / "gen" / tri.UNIT).read_bytes())
+            from_start = tri_original.index(b"void f_59F270(CPU *c) {")
+            from_end = tri_original.index(b"\n}\n", from_start) + len(b"\n}\n")
+            self.assertIn(tri_original[from_start:from_end], tri_stage)
+            self.assertEqual(tri_stage.count(b"ece_nose_parse(c,"), 1)
+            self.assertIn(b"skyrim_ece_nose_guest_selected &&", (work / "mod-hook-sources" / "exe_185.c").read_bytes())
+            with self.assertRaisesRegex(ValueError, "unreviewed earlier stage"):
+                hooks.stage_ece_nose_observe(root, {tri.UNIT: tri_original + b"// unrelated edit\n"})
             menu = (work / "mod-hook-sources" / "exe_262.c").read_bytes()
             self.assertEqual(menu.count(b"skyrim_inventory_fit_enabled()"), 1)
             self.assertEqual(menu.count(b"skyrim_loading_menu_observe(0x"), 2)

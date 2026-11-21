@@ -6,7 +6,12 @@
 
 enum { TEB_ADDRESS = 0x1000, STACK = 0x2000, NAME = 0x3000, BYTES_READ = 0x4000,
        BUFFER = 0x5000, CHUNK = 65536, ECE_PATH = 0x18000, ECE_STREAM = 0x19000 };
+#ifdef SKYRIM_IOS_MOD_HOOKS
+enum { ECE_PLAYER = 0x1B2E8E4 };
+static uint8_t memory[ECE_PLAYER + 4];
+#else
 static uint8_t memory[ECE_STREAM + 64];
+#endif
 uint8_t *MEM = memory;
 int g_log_level;
 char g_game_dir[1024];
@@ -30,10 +35,82 @@ static bool replay(int fd, size_t length, uint8_t digest[32]) {
     return length >= 32 && read(fd, digest, 32) == 32;
 }
 
+static void check_ece_nose(CPU *cpu, uint32_t handle, uint32_t other) {
+    enum { ACTOR = 0x20000, BASE = 0x22000, RACE = 0x24000, MENU = 0x26000, ROWS = 0x28000,
+           HEAD = 0x2A000, FACE = 0x2C000, GEOMETRY = 0x2E000, ENTRY = 0x34000, TRI = 0x35000,
+           NOSE_NAME = 0x37000, RELATIVE_PATH = 0x38000 };
+    M32(ECE_PLAYER) = ACTOR;
+    M32(ACTOR) = 0x10D201C;
+    M32(ACTOR + 0x24) = BASE;
+    M32(ACTOR + 0x130) = RACE;
+    M32(BASE + 0xC4) = RACE;
+    M8(BASE + 0x12) = 0x2B;
+    M8(BASE + 0x24) = 1;
+    M8(RACE + 0x12) = 0x0E;
+    M32(RACE + 0x0C) = 0x13746;
+    M32(MENU) = 0x10E7404;
+    M8(MENU + 0x10) = 0x40;
+    M32(MENU + 0xF4) = 1;
+    M32(MENU + 0xCC) = ROWS;
+    M32(MENU + 0xD4) = 1;
+    M32(ROWS) = RACE;
+    M8(HEAD + 0x12) = 0x0C;
+    M32(HEAD + 0x0C) = 0x51623;
+    M32(HEAD + 0x3C) = 1;
+    M32(ENTRY + 0x2C) = TRI;
+    M32(TRI) = 0x10BE9D4;
+    strcpy(GSTR(NOSE_NAME), "NoseUp");
+    strcpy(GSTR(RELATIVE_PATH), "Actors\\Character\\Character Assets\\FemaleHeadCharGen.tri");
+#define NOSE(event, a, b, c, d, receipt) \
+    skyrim_ece_nose_app_observe(cpu, SkyrimEceNose##event, a, b, c, d, receipt)
+
+    assert(!skyrim_ece_nose_app_observe(NULL, SkyrimEceNoseMenu, 0xA5CE2B, MENU, 0, 0, 0));
+    assert(!NOSE(Menu, 0xA5CE2C, MENU, 0, 0, 0));
+    for (int idle = 0; idle < 80; ++idle) {
+        assert(NOSE(Menu, 0xA5CE2B, MENU, 0, 0, 0));
+        assert(!NOSE(Begin, MENU, BASE, 0, 0, 0));
+        NOSE(MenuEnd, 0, 0, 0, 0, 0);
+    }
+    for (int test = 0; test < 5; ++test) {
+        assert(NOSE(Menu, 0xA5CE2B, MENU, 0, 0, 0));
+        assert(NOSE(Begin, MENU, BASE, RACE, 0, 0));
+        NOSE(Face, 0x885611, MENU, ACTOR, BASE, FACE);
+        assert(NOSE(Head, 0x5A48D2, FACE, HEAD, GEOMETRY, 0));
+        assert(NOSE(Lookup, RELATIVE_PATH, 0, 0, 0, 0));
+        if (test != 2) {
+            const uint32_t selected = test == 1 ? other : handle;
+            M32(ECE_STREAM + 0x1C) = selected;
+            const uint64_t legacy = test == 4 ? skyrim_ece_tri_app_begin(cpu, ECE_PATH, ECE_STREAM) : 0;
+            assert((legacy != 0) == (test == 4));
+            const uint64_t ticket = NOSE(Parse, RELATIVE_PATH, ECE_STREAM, 0, 0, 0);
+            assert((ticket != 0) == !legacy && skyrim_ece_tri_read_pending);
+            if (test == 3) {
+                assert(!NOSE(Menu, 0xA5CE2B, MENU, 0, 0, 0));
+                assert(!NOSE(Parse, ECE_PATH, ECE_STREAM, 0, 0, 0));
+            }
+            const uint32_t read_args[] = {selected, BUFFER, 32, BYTES_READ, BYTES_READ + 8};
+            M32(STACK) = 0xA58152;
+            assert(invoke(cpu, shim_ReadFile, 5, read_args) == 1 && M32(BYTES_READ) == 32);
+            const bool fresh = NOSE(Parsed, 1, 0, 0, 0, ticket);
+            assert(fresh == (test == 0) && !skyrim_ece_tri_read_pending);
+            if (legacy) skyrim_ece_tri_app_finish(cpu, legacy, 1);
+            if (fresh) NOSE(Constructed, ENTRY, 0, 0, 0, 0);
+        }
+        NOSE(LookupEnd, ENTRY, 0, 0, 0, 0);
+        assert(NOSE(Morph, TRI, GEOMETRY, 0, 0, 0));
+        NOSE(MorphRecord, NOSE_NAME, 1, 0, 0, 0);
+        NOSE(HeadEnd, 0, 0, 0, 0, 0);
+        NOSE(End, 0, 0, 0, 0, 0);
+        NOSE(MenuEnd, 0, 0, 0, 0, 0);
+    }
+#undef NOSE
+}
+
 static void check_ece_read(CPU *cpu, uint32_t handle) {
     int data = open("Data", O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
     assert(data >= 0);
     assert(!skyrim_ece_tri_configure(data, replay));
+    assert(!skyrim_ece_nose_app_observe(cpu, SkyrimEceNoseMenu, 0xA5CE2B, 0x26000, 0, 0, 0));
     skyrim_ece_tri_allow_input("d97eb0cc0ceef0923d2234d42b382c0d033853356528b271bc043542b1f5e605", true);
     assert(skyrim_ece_tri_configure(data, replay));
     close(data);
@@ -82,6 +159,7 @@ static void check_ece_read(CPU *cpu, uint32_t handle) {
     assert(repeated && invoke(cpu, shim_ReadFile, 5, other_read) == 1 && M32(BYTES_READ) == 32);
     assert(!skyrim_ece_tri_read_pending);
     skyrim_ece_tri_app_finish(cpu, repeated, 1);
+    check_ece_nose(cpu, handle, other);
     assert(invoke(cpu, shim_CloseHandle, 1, &other) == 1);
     skyrim_ece_tri_retire();
     t_cpu = NULL;

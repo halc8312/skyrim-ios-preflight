@@ -101,6 +101,9 @@ __attribute__((visibility("default"))) unsigned exercise_mod_hooks(unsigned expe
         assert(!skyrim_camera_cull_guest_notify(SkyrimCameraCullFinish, 0, 0, 0));
         assert(!skyrim_camera_cull_guest_frames);
     }
+    const uint64_t nose = skyrim_ece_nose_guest_notify(NULL, SkyrimEceNoseParse, 1, 2, 3, 4, 9);
+    assert((nose != 0) == skyrim_ece_nose_guest_selected);
+    if (nose) { assert(nose == 10); seen |= 1u << 14; }
     assert(seen == expected);
     return seen;
 }
@@ -129,7 +132,7 @@ void f_A60200(CPU *c) { (void)c; }
 void f_842140(CPU *c) { (void)c; }
 void f_873D70(CPU *c) { (void)c; }
 
-static unsigned calls[30];
+static unsigned calls[31];
 static void forget(uint32_t r) { assert(r == 7); ++calls[0]; }
 static void choose(const struct CPU *c, uint32_t slot, uint32_t r, SkyrimFuzLiftChoice *out) {
     assert(!c && slot == 0x1000 && r == 7);
@@ -231,6 +234,13 @@ static bool cull_notified(enum SkyrimCameraCullNotice site, uint32_t first, uint
     return false;
 }
 
+static uint64_t ece_nose_notified(const struct CPU *cpu, enum SkyrimEceNoseNotice site, uint32_t a,
+                                    uint32_t b, uint32_t c, uint32_t d, uint64_t ticket) {
+    assert(!cpu && site == SkyrimEceNoseParse && a == 1 && b == 2 && c == 3 && d == 4 && ticket == 9);
+    ++calls[30];
+    return 10;
+}
+
 static PcGuestModHooks full_table(uint32_t groups) {
     return (PcGuestModHooks){
         PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooks), groups, 0,
@@ -238,7 +248,7 @@ static PcGuestModHooks full_table(uint32_t groups) {
         {capture_world, admit, after_copy, release_title, general},
         {before_revert, after_load, form_deleted}, {skip_warm}, {slider_pending, slider_nose, slider_applied},
         {camera_observed}, {loading_observed}, {safety_bypass}, {save_begin, save_current, save_event},
-        {camera_render_observed}, {ece_tri_begin, ece_tri_finish}, {fresh_notify}, {cull_notified}};
+        {camera_render_observed}, {ece_tri_begin, ece_tri_finish}, {fresh_notify}, {cull_notified}, {ece_nose_notified}};
 }
 
 static unsigned expected_seen(uint32_t groups) {
@@ -253,6 +263,7 @@ static unsigned expected_seen(uint32_t groups) {
     if (groups & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE) seen |= 1u << 11;
     if (groups & PC_GUEST_MOD_HOOK_FRESH_LOAD) seen |= 1u << 12;
     if (groups & PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE) seen |= 1u << 13;
+    if (groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) seen |= 1u << 14;
     return seen;
 }
 
@@ -274,6 +285,7 @@ static void check_calls(uint32_t groups, unsigned rounds) {
     for (int n = 26; n < 28; ++n) assert(calls[n] == (groups & PC_GUEST_MOD_HOOK_FRESH_LOAD ? rounds : 0));
     for (int n = 24; n < 26; ++n) assert(calls[n] == (groups & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE ? rounds : 0));
     for (int n = 28; n < 30; ++n) assert(calls[n] == (groups & PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE ? rounds : 0));
+    assert(calls[30] == (groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE ? rounds : 0));
 }
 
 /* argv: hooked-guest compiled-groups select-groups no-hooks-guest bad-reply-guest */
@@ -317,13 +329,14 @@ int main(int argc, char **argv) {
 
     if (!strcmp(argv[3], "original-host") || !strcmp(argv[3], "observer-host") ||
         !strcmp(argv[3], "safety-host") || !strcmp(argv[3], "save-host") || !strcmp(argv[3], "camera-host") ||
-        !strcmp(argv[3], "ece-host") || !strcmp(argv[3], "fresh-host")) {
+        !strcmp(argv[3], "ece-host") || !strcmp(argv[3], "fresh-host") || !strcmp(argv[3], "cull-host")) {
         const uint32_t bytes = !strcmp(argv[3], "original-host") ? PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES
             : !strcmp(argv[3], "observer-host") ? PC_GUEST_MOD_HOOKS_OBSERVED_BYTES
             : !strcmp(argv[3], "safety-host") ? PC_GUEST_MOD_HOOKS_SAFETY_BYTES
             : !strcmp(argv[3], "save-host") ? PC_GUEST_MOD_HOOKS_SAVE_BYTES
             : !strcmp(argv[3], "camera-host") ? PC_GUEST_MOD_HOOKS_CAMERA_RENDER_BYTES
-            : !strcmp(argv[3], "ece-host") ? PC_GUEST_MOD_HOOKS_ECE_TRI_BYTES : PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES;
+            : !strcmp(argv[3], "ece-host") ? PC_GUEST_MOD_HOOKS_ECE_TRI_BYTES
+            : !strcmp(argv[3], "fresh-host") ? PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES : PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES;
         const uint32_t supported = pc_guest_mod_hooks_groups_for_bytes(bytes);
         const PcGuestModHooksGuest *reply = bind(PC_GUEST_MOD_HOOKS_ABI, bytes);
         assert(reply && reply->table_bytes == bytes);
@@ -331,7 +344,8 @@ int main(int argc, char **argv) {
         PcGuestModHooks table = full_table(PC_GUEST_MOD_HOOK_CAMERA_OBSERVE);
         assert(reply->select(&table) != 0); /* The agreed size is mandatory. */
         table.bytes = bytes;
-        table.groups |= supported & PC_GUEST_MOD_HOOK_FRESH_LOAD ? PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE
+        table.groups |= supported & PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE ? PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE | PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE
+            : supported & PC_GUEST_MOD_HOOK_FRESH_LOAD ? PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE
             : supported & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE ? PC_GUEST_MOD_HOOK_FRESH_LOAD | PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED
             : PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE;
         assert(reply->select(&table) != 0);
@@ -363,13 +377,15 @@ int main(int argc, char **argv) {
         PcGuestModHooks other = full_table(absent);
         assert(pc_guest_select_mod_hooks(absent, &other) != 0);
     }
-    const uint32_t unknown_group = 16384u;
+    const uint32_t unknown_group = 32768u;
     PcGuestModHooks unknown = full_table(unknown_group);
     assert(pc_guest_select_mod_hooks(unknown_group, &unknown) != 0);
     PcGuestModHooks world_only = full_table(PC_GUEST_MOD_HOOK_FUZ_WORLD);
     assert(pc_guest_select_mod_hooks(PC_GUEST_MOD_HOOK_FUZ_WORLD, &world_only) != 0);
     PcGuestModHooks safety_only = full_table(PC_GUEST_MOD_HOOK_SAFETY_LOAD);
     assert(pc_guest_select_mod_hooks(PC_GUEST_MOD_HOOK_SAFETY_LOAD, &safety_only) != 0);
+    PcGuestModHooks nose_only = full_table(PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE);
+    assert(pc_guest_select_mod_hooks(nose_only.groups, &nose_only) != 0);
     if (choice) {
         assert(pc_guest_select_mod_hooks(choice, NULL) != 0);
         PcGuestModHooks mismatch = full_table(choice);
@@ -404,6 +420,11 @@ int main(int argc, char **argv) {
             wrong.fresh_load.notify = NULL;
             assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
         }
+        if (choice & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) {
+            wrong = table;
+            wrong.ece_nose.notify = NULL;
+            assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
+        }
     } else {
         PcGuestModHooks nonempty = full_table(PC_GUEST_MOD_HOOK_FUZ_MENU);
         assert(pc_guest_select_mod_hooks(0, &nonempty) != 0);
@@ -424,6 +445,7 @@ int main(int argc, char **argv) {
     table.ece_tri.begin = NULL;
     table.fresh_load.notify = NULL;
     table.camera_cull.notify = NULL;
+    table.ece_nose.notify = NULL;
     assert(exercise(expected_seen(choice)) == expected_seen(choice));
     check_calls(choice, 1);
 
