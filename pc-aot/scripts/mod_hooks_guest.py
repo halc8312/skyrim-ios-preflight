@@ -27,7 +27,6 @@ GROUPS = {
 }
 # Groups without a reviewed stage in this tree, with the reason shown to the caller.
 UNSTAGED = {
-    "vm_lifecycle": "the VM generation stage (plan X4) is not written yet",
     "camera_observe": "experiments/classic-camera has no reviewed stage of the camera call",
     "chargen_slider": "the slider call and its arguments are not confirmed from the pinned lift",
     "save_lifecycle": "the save lifecycle stage (plan P3-5) is not written yet",
@@ -54,6 +53,35 @@ def header_hashes() -> dict[str, str]:
     return {name: digest(path.read_bytes()) for name, path in HEADERS.items()}
 
 
+# VM_LIFECYCLE (plan section 4.4). Sites, unit and hash from
+# experiments/classic-fresh-load/test_fresh_load.py. Each entry: unit, unit
+# SHA-256, containing function, the exact lifted call line, and the line added
+# before (b) or after (a) it.
+VM_HOOK_DECLARATIONS = (b"void skyrim_vm_host_before_revert(unsigned site);\n"
+                        b"void skyrim_vm_host_after_load(int succeeded);\n")
+VM_UNIT_SHA256 = "f550390f7023b2375da3746cfd6b99be32bfd4fecabff2ce5396b73e2e18bf3c"
+VM_SITES = [
+    ("exe_199.c", VM_UNIT_SHA256, "f_8D6990",  # 0x8D69A7 load revert
+     b"    esp -= 4; M32(esp) = 0x8D69ACu; SPILL(); f_8D5DF0(c); RELOAD();\n",
+     "b", b"    skyrim_vm_host_before_revert(1u);\n"),
+    ("exe_199.c", VM_UNIT_SHA256, "f_8D69C0",  # 0x8D6B79 VM load
+     b"    esp -= 4; M32(esp) = 0x8D6B7Eu; SPILL(); f_8D3DB0(c); RELOAD();\n",
+     "a", b"    skyrim_vm_host_after_load((uint8_t)c->r[0] != 0);\n"),
+]
+# The script-reload revert at 0x8D6E16 (return 0x8D6E1B, callee f_8D5DF0) has
+# no reviewed unit, function or hash in this tree. Without it a reload would
+# leave old scopes current, so the group cannot be built until the pinned lift
+# confirms the site (MOD_FIRST_WAVE_PLAN.md section 8.2).
+VM_SCRIPT_RELOAD_SITE = None
+
+
+def unstaged_reason(name: str) -> str | None:
+    if name == "vm_lifecycle" and VM_SCRIPT_RELOAD_SITE is None:
+        return ("the script-reload revert at 0x8D6E16 is not confirmed from the pinned lift; "
+                "plan X4 stops this site until then")
+    return UNSTAGED.get(name)
+
+
 def parse_groups(text: str) -> int:
     names = [part.strip() for part in text.split(",")]
     if not names or any(not name for name in names):
@@ -64,8 +92,9 @@ def parse_groups(text: str) -> int:
     for name in names:
         if name not in GROUPS:
             raise ValueError(f"Unknown MOD hook group {name!r}; known groups: {', '.join(GROUPS)}")
-        if name in UNSTAGED:
-            raise ValueError(f"MOD hook group {name} cannot be built: {UNSTAGED[name]}")
+        reason = unstaged_reason(name)
+        if reason:
+            raise ValueError(f"MOD hook group {name} cannot be built: {reason}")
         mask |= GROUPS[name]
     if mask & GROUPS["fuz_world"] and not mask & GROUPS["fuz_menu"]:
         raise ValueError("fuz_world reuses the fuz_menu response stage; list both")
@@ -121,7 +150,39 @@ def stage_chargen_precache(root: Path) -> dict[str, bytes]:
     return {name: precache.stage_open((root / "gen" / name).read_bytes())}
 
 
+def function_span(unit: bytes, function: str) -> tuple[int, int]:
+    marker = f"\nvoid {function}(CPU *c) {{\n".encode("ascii")
+    if unit.count(marker) != 1:
+        raise ValueError(f"Expected one original definition of {function}")
+    start = unit.index(marker) + 1
+    end = unit.index(b"\n}\n", start) + 3
+    return start, end
+
+
+def stage_vm_lifecycle(root: Path) -> dict[str, bytes]:
+    sites = list(VM_SITES)
+    if VM_SCRIPT_RELOAD_SITE is None:
+        raise ValueError(unstaged_reason("vm_lifecycle"))
+    sites.append(VM_SCRIPT_RELOAD_SITE)
+    staged: dict[str, bytes] = {}
+    for unit, sha256, function, anchor, where, line in sites:
+        data = staged.get(unit)
+        if data is None:
+            original = (root / "gen" / unit).read_bytes()
+            if digest(original) != sha256:
+                raise ValueError(f"{unit}: different from the reviewed Classic VM lift")
+            data = VM_HOOK_DECLARATIONS + original
+        if data.count(anchor) != 1:
+            raise ValueError(f"{unit}: expected one reviewed VM call {anchor.strip()!r}")
+        start, end = function_span(data, function)
+        if not start <= data.index(anchor) < end:
+            raise ValueError(f"{unit}: the reviewed VM call is not in {function}")
+        staged[unit] = data.replace(anchor, line + anchor if where == "b" else anchor + line, 1)
+    return staged
+
+
 STAGES = {
+    "vm_lifecycle": stage_vm_lifecycle,
     "fuz_menu": stage_fuz_menu,
     "fuz_world": stage_fuz_world,
     "chargen_precache": stage_chargen_precache,

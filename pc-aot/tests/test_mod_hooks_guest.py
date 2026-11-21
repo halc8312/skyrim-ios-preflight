@@ -32,7 +32,7 @@ class GroupTests(unittest.TestCase):
     def test_rejects_unknown_unstaged_duplicate_and_incomplete_lists(self):
         for text, message in (("", "comma-separated"), ("fuz_menu,", "comma-separated"),
                               ("fuz_menu,fuz_menu", "twice"), ("fuz", "Unknown"),
-                              ("vm_lifecycle", "X4"), ("camera_observe", "classic-camera"),
+                              ("vm_lifecycle", "0x8D6E16"), ("camera_observe", "classic-camera"),
                               ("chargen_slider", "not confirmed"), ("save_lifecycle", "P3-5"),
                               ("fuz_world", "list both")):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
@@ -127,6 +127,43 @@ class ComposeTests(unittest.TestCase):
             (self.root / "generation.json").write_text(json.dumps(dict(self.state, extra=1)))
             with self.assertRaisesRegex(ValueError, "changed while preparing"):
                 hooks.prepare_sources(self.sources, self.output, 1, self.state, self.root)
+
+    def test_vm_lifecycle_stage_with_an_authored_unit_and_pending_reload_site(self):
+        revert, load = (site[3] for site in hooks.VM_SITES)
+        reload_call = b"    esp -= 4; M32(esp) = 0x8D6E1Bu; SPILL(); f_8D5DF0(c); RELOAD();\n"
+        unit = (b'#include "funcs_exe.h"\n\nvoid f_8D6990(CPU *c) {\n' + revert + b"}\n"
+                b"\nvoid f_8D69C0(CPU *c) {\n    eax = 1;\n" + load + b"}\n"
+                b"\nvoid f_8D6DF0(CPU *c) {\n" + reload_call + b"}\n")
+        (self.gen / "exe_199.c").write_bytes(unit)
+        sources = [*self.sources, self.gen / "exe_199.c"]
+        authored = hashlib.sha256(unit).hexdigest()
+        # The reload site is not confirmed: the group is refused before staging.
+        with self.assertRaisesRegex(ValueError, "0x8D6E16"):
+            hooks.parse_groups("vm_lifecycle")
+        with self.assertRaisesRegex(ValueError, "0x8D6E16"):
+            hooks.prepare_sources(sources, self.output, 4, self.state, self.root)
+        site = ("exe_199.c", authored, "f_8D6DF0", reload_call, "b", b"    skyrim_vm_host_before_revert(2u);\n")
+        sites = [(u, authored, *rest) for u, _sha, *rest in hooks.VM_SITES]
+        with mock.patch.object(hooks, "VM_SCRIPT_RELOAD_SITE", site):
+            self.assertEqual(hooks.parse_groups("vm_lifecycle"), 4)
+            with self.assertRaisesRegex(ValueError, "reviewed Classic VM lift"):
+                hooks.prepare_sources(sources, self.output, 4, self.state, self.root)
+            with mock.patch.object(hooks, "VM_SITES", sites):
+                result, staged = hooks.prepare_sources(sources, self.output, 4, self.state, self.root)
+                data = result[-1].read_bytes()
+                self.assertTrue(data.startswith(hooks.VM_HOOK_DECLARATIONS))
+                self.assertIn(b"    skyrim_vm_host_before_revert(1u);\n" + revert, data)
+                self.assertIn(load + b"    skyrim_vm_host_after_load((uint8_t)c->r[0] != 0);\n", data)
+                self.assertIn(b"    skyrim_vm_host_before_revert(2u);\n" + reload_call, data)
+                # A call outside its reviewed function, or a repeated call, is refused.
+                for changed in (unit.replace(b"void f_8D6990", b"void f_8D6991"), unit + load):
+                    (self.gen / "exe_199.c").write_bytes(changed)
+                    moved = [(u, hashlib.sha256(changed).hexdigest(), *rest) for u, _sha, *rest in sites]
+                    moved_site = (site[0], moved[0][1], *site[2:])
+                    with self.subTest(changed=len(changed)), mock.patch.object(hooks, "VM_SITES", moved), \
+                            mock.patch.object(hooks, "VM_SCRIPT_RELOAD_SITE", moved_site), \
+                            self.assertRaises(ValueError):
+                        hooks.prepare_sources(sources, self.output, 4, self.state, self.root)
 
     def test_real_precache_stage_with_an_authored_unit(self):
         precache = hooks.load(ROOT / "experiments/classic-chargen-precache", "test_chargen_precache")

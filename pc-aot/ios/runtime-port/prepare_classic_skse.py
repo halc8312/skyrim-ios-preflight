@@ -177,6 +177,17 @@ def adapt_values_probe(text):
     return replace_once(text, publish, publish + "    classic_values_publish(c, registry, has);\n", name)
 
 
+def adapt_vm_epoch(text):
+    # Plan P3-1: report the registry to the VM generation (MOD hook builds only).
+    name = "skse_compat.c"
+    registration = "void skse_register_natives(CPU *c, uint32_t registry) {\n"
+    return replace_once(text, registration + "    unsigned count=0, passed=0;",
+                        '#ifdef SKYRIM_IOS_MOD_HOOKS\n#include "classic_vm_epoch.h"\n#endif\n'
+                        + registration + "#ifdef SKYRIM_IOS_MOD_HOOKS\n"
+                        "    skyrim_vm_epoch_registered(registry);\n#endif\n"
+                        "    unsigned count=0, passed=0;", name)
+
+
 def prepare(source, runtime):
     from classic_skse_extra import adapt as adapt_extra
     from classic_skse_translation import adapt as adapt_translation, adapt_profile_list
@@ -194,13 +205,22 @@ def prepare(source, runtime):
         input_queries = adapt_extra(name, before_input_queries)
         release_logged = adapt_skyui_release_log(input_queries) if name == "skse_compat.c" else input_queries
         int0 = adapt_int0_probe(release_logged) if name == "skse_compat.c" else release_logged
-        new = adapt_values_probe(int0) if name == "skse_compat.c" else int0
+        values = adapt_values_probe(int0) if name == "skse_compat.c" else int0
+        new = adapt_vm_epoch(values) if name == "skse_compat.c" else values
         target = runtime / name
         if target.is_symlink() or target.samefile(source / name):
             raise ValueError(f"{name}: expected an independent staged copy")
         old = target.read_text(encoding="utf-8")
         if old != new:
-            if old not in (original, previous, adapted, before_input_queries, input_queries, release_logged, int0):
+            stages = [original, previous, adapted, before_input_queries, input_queries, release_logged, int0, values]
+            if name == "skse_compat.c":
+                # Earlier stages that already carry the VM generation call.
+                for stage in stages[2:7]:
+                    try:
+                        stages.append(adapt_vm_epoch(stage))
+                    except ValueError:
+                        pass
+            if old not in stages:
                 raise ValueError(f"{name}: unrecognized contents in staged runtime")
             changes.append((target, new))
     # The ordinary runtime adapter already transforms the SDL implementation.
