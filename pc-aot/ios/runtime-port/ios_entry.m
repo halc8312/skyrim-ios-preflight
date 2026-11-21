@@ -19,12 +19,15 @@
 #include "device_policy.h"
 #include "diagnostic_upload.h"
 #include "PcGuestABI.h"
-#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
+#if defined(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE) || defined(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
+#define SKYRIM_IOS_CLASSIC_SETTINGS_INPUT 1
 #include "classic_settings.h"
 #include <time.h>
 
 static uint8_t classic_bootstrap[8];
 static bool classic_input_verified;
+#endif
+#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
 
 static void probe_classic_settings(void) {
     if (!classic_input_verified) return;
@@ -61,6 +64,55 @@ static void probe_classic_settings(void) {
         fprintf(stderr, "IOS_CLASSIC_SETTINGS_PROBE prepare_status=%u work=%u\n", (unsigned)status, trace.work);
     }
     skse_classic_settings_close(settings);
+}
+#endif
+
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+#include "x86.h"
+#include "classic_papyrusutil.h"
+#include "mod_features.h"
+/* Plan P3-2: one settings scope for the run, opened before the guest starts. */
+static SkyrimPapyrusUtilSettings papyrusutil_scope;
+
+static void publish_papyrusutil(void) {
+    if (!classic_input_verified || !skyrim_mods_feature_enabled(SKYRIM_FEATURE_PAPYRUSUTIL)) return;
+    SkyrimPapyrusInputs selected;
+    const int acquired = skyrim_mods_acquire_papyrus_inputs(&selected);
+    if (acquired) {
+        fprintf(stderr, "IOS_PAPYRUSUTIL_OPEN acquisition=%d\n", acquired);
+        return;
+    }
+    struct timespec now = {0};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    SkseSettingsInputs inputs = {
+        .dll = selected.dll, .pex = selected.pex, .dll_size = selected.dll_size, .pex_size = selected.pex_size,
+        .game_fd = selected.game_fd, .settings_fd = selected.settings_fd, .epoch = 1,
+        .uptime_ms = (uint32_t)((uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000)
+    };
+    memcpy(inputs.profile, selected.profile, sizeof inputs.profile);
+    memcpy(inputs.bootstrap, classic_bootstrap, sizeof inputs.bootstrap);
+    SkseClassicSettings *settings = NULL;
+    SkseSettingsStatus status = skse_classic_settings_open(&inputs, &settings);
+    skyrim_mods_release_papyrus_inputs(&selected);
+    if (status != SKSE_SETTINGS_OK) {
+        fprintf(stderr, "IOS_PAPYRUSUTIL_OPEN status=%u\n", (unsigned)status);
+        return;
+    }
+    papyrusutil_scope = (SkyrimPapyrusUtilSettings){settings, inputs.epoch, inputs.uptime_ms};
+    SkyrimPapyrusUtilBackend backend;
+    skyrim_papyrusutil_settings_backend(&papyrusutil_scope, &backend);
+    if (skyrim_papyrusutil_publish(&backend, 1) != 0) {
+        skse_classic_settings_close(settings);
+        papyrusutil_scope = (SkyrimPapyrusUtilSettings){0};
+    }
+}
+
+static void retire_papyrusutil(void) {
+    if (!papyrusutil_scope.settings) return;
+    skyrim_papyrusutil_report();
+    skse_classic_values_retire(1);
+    skse_classic_settings_close(papyrusutil_scope.settings);
+    papyrusutil_scope = (SkyrimPapyrusUtilSettings){0};
 }
 #endif
 
@@ -156,7 +208,7 @@ static void verify_guest_input(NSURL *game) {
         startup_failure(@"Cannot initialize guest-input SHA256 verification");
     }
     unsigned char buffer[64 * 1024];
-#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
+#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_INPUT
     SkseSettingsBootstrap settings_bootstrap = {0};
     uint64_t input_offset = 0;
 #endif
@@ -169,7 +221,7 @@ static void verify_guest_input(NSURL *game) {
             startup_failure([NSString stringWithFormat:@"Cannot read TESV_unpacked.exe for verification: %s", strerror(error)]);
         }
         if (count == 0) break;
-#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
+#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_INPUT
         skse_classic_settings_scan_bootstrap(&settings_bootstrap, input_offset, buffer, (size_t)count);
         input_offset += (size_t)count;
 #endif
@@ -186,7 +238,7 @@ static void verify_guest_input(NSURL *game) {
     for (size_t i = 0; i < sizeof actual; ++i) mismatch |= actual[i] ^ expected[i];
     if (mismatch)
         startup_failure(@"TESV_unpacked.exe SHA256 does not match this locally assembled app; guest was not loaded");
-#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
+#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_INPUT
     classic_input_verified = skse_classic_settings_copy_bootstrap(&settings_bootstrap, actual, classic_bootstrap);
 #endif
     skyrim_ios_stage("guest-input-sha256-verified");
@@ -239,6 +291,9 @@ int SDL_main(int argc, char **argv) {
 #ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
         probe_classic_settings();
 #endif
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+        publish_papyrusutil();
+#endif
         set_default("LB_LOG", skyrim_mobile_verbose() ? "1" : "0");
         set_default("DXVK_LOG_PATH", cache.fileSystemRepresentation);
         set_default("DXVK_STATE_CACHE_PATH", cache.fileSystemRepresentation);
@@ -251,6 +306,9 @@ int SDL_main(int argc, char **argv) {
         int result = skyrim_ios_runtime_main(3, runtime_argv);
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
         skyrim_mods_report_features_at_exit();
+#endif
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+        retire_papyrusutil();
 #endif
         fprintf(stderr, "Guest entry returned %d; no title success was inferred\n", result);
         fflush(stderr);

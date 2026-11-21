@@ -10,6 +10,11 @@
 #include <strings.h>
 #include <sys/stat.h>
 
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+#define PAPYRUSUTIL_IMPLEMENTED 1
+#else
+#define PAPYRUSUTIL_IMPLEMENTED 0
+#endif
 #ifdef SKYRIM_IOS_MOD_HOOKS
 #define MOD_HOOKS_IMPLEMENTED 1
 #else
@@ -28,7 +33,7 @@ typedef struct {
 static const FeatureRow rows[SKYRIM_FEATURE_COUNT] = {
     /* MOD hook builds carry the app half (mod_fuz_host.c); the guest half is checked at launch. */
     [SKYRIM_FEATURE_FUZ] = {"fuz", "fuz", NULL, MOD_HOOKS_IMPLEMENTED},
-    [SKYRIM_FEATURE_PAPYRUSUTIL] = {"papyrusutil", "storageutil", NULL, 0},
+    [SKYRIM_FEATURE_PAPYRUSUTIL] = {"papyrusutil", "storageutil", NULL, PAPYRUSUTIL_IMPLEMENTED},
     [SKYRIM_FEATURE_PRECACHE_KILLER] = {"precache", "precache", NULL, 0},
     [SKYRIM_FEATURE_RACEMENU] = {"racemenu", "chargen", NULL, 0},
     [SKYRIM_FEATURE_NIOVERRIDE] = {"nioverride", "nioverride", NULL, 0},
