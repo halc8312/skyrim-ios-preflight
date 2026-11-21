@@ -2,7 +2,7 @@
 #include "mod_hook_selection.h"
 #include <assert.h>
 
-enum { MENU = 1, WORLD = 2, VM = 4, CHARGEN = 8 };
+enum { MENU = 1, WORLD = 2, VM = 4, CHARGEN = 8, SLIDER = 32 };
 #define BIT(f) (1u << (f))
 
 int main(void) {
@@ -10,7 +10,8 @@ int main(void) {
     assert(skyrim_mod_hook_requirements(SKYRIM_FEATURE_FUZ) == (MENU | WORLD | VM));
     assert(skyrim_mod_hook_requirements(SKYRIM_FEATURE_PAPYRUSUTIL) == VM);
     assert(skyrim_mod_hook_requirements(SKYRIM_FEATURE_PRECACHE_KILLER) == CHARGEN);
-    assert(!skyrim_mod_hook_requirements(SKYRIM_FEATURE_RACEMENU) && !skyrim_mod_hook_requirements(99));
+    assert(skyrim_mod_hook_requirements(SKYRIM_FEATURE_RACEMENU) == SLIDER);
+    assert(!skyrim_mod_hook_requirements(99));
 
     /* Nothing requested: nothing selected. */
     skyrim_mod_hook_plan(0, 15, 15, &plan);
@@ -37,8 +38,10 @@ int main(void) {
     assert(plan.reason[SKYRIM_FEATURE_FUZ] == SKYRIM_HOOK_PLAN_HOST_UNAVAILABLE);
     assert(plan.groups == VM && plan.enabled == BIT(SKYRIM_FEATURE_PAPYRUSUTIL));
 
-    /* A feature without hook needs is never planned here. */
-    skyrim_mod_hook_plan(BIT(SKYRIM_FEATURE_RACEMENU), 15, 15, &plan);
-    assert(!plan.groups && plan.reason[SKYRIM_FEATURE_RACEMENU] == SKYRIM_HOOK_PLAN_NOT_REQUESTED);
+    /* The slider is available only with its stage and host callbacks. */
+    skyrim_mod_hook_plan(BIT(SKYRIM_FEATURE_RACEMENU), 15, SLIDER, &plan);
+    assert(!plan.groups && plan.reason[SKYRIM_FEATURE_RACEMENU] == SKYRIM_HOOK_PLAN_GUEST_HOOKS_MISSING);
+    skyrim_mod_hook_plan(BIT(SKYRIM_FEATURE_RACEMENU), SLIDER, SLIDER, &plan);
+    assert(plan.groups == SLIDER && plan.enabled == BIT(SKYRIM_FEATURE_RACEMENU));
     return 0;
 }

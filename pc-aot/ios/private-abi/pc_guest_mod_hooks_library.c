@@ -21,6 +21,7 @@ static PcGuestModFuzMenuHooks fuz_menu;
 static PcGuestModFuzWorldHooks fuz_world;
 static PcGuestModVmHooks vm_lifecycle;
 static PcGuestModChargenHooks chargen_precache;
+static PcGuestModChargenSliderHooks chargen_slider;
 
 static int select_hooks(const PcGuestModHooks *table) {
     if (!bound || selection_final || !pc_guest_mod_hooks_table_valid(table)
@@ -29,6 +30,7 @@ static int select_hooks(const PcGuestModHooks *table) {
     if (table->groups & PC_GUEST_MOD_HOOK_FUZ_WORLD) fuz_world = table->fuz_world;
     if (table->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE) vm_lifecycle = table->vm_lifecycle;
     if (table->groups & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE) chargen_precache = table->chargen_precache;
+    if (table->groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) chargen_slider = table->chargen_slider;
     selected = table->groups;
     selection_final = 1;
     return 0;
@@ -100,4 +102,16 @@ void skyrim_vm_host_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle) 
 /* CHARGEN_PRECACHE: false runs the original first-open warm call. */
 bool skyrim_chargen_probe_skip_open_warm(void) {
     return (selected & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE) && chargen_precache.skip_open_warm();
+}
+
+bool skyrim_racemenu_probe_pending(void) {
+    return (selected & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) && chargen_slider.pending();
+}
+bool skyrim_racemenu_probe_nose_height(uint32_t menu, uint32_t actor, uint32_t base,
+                                     float minimum, float maximum, float *value) {
+    return (selected & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) &&
+        chargen_slider.nose_height(menu, actor, base, minimum, maximum, value);
+}
+void skyrim_racemenu_probe_did_apply(void) {
+    if (selected & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) chargen_slider.did_apply();
 }

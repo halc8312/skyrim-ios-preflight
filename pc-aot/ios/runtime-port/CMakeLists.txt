@@ -188,7 +188,7 @@ if(SKYRIM_IOS_MOD_HOOKS)
     target_compile_options(skyrim_ios_fuz_host PRIVATE -O2 -fno-strict-aliasing -fwrapv -fsigned-char
         -include "${CMAKE_CURRENT_SOURCE_DIR}/ios_build_contract.h")
     target_sources(skyrim_ios_runtime PRIVATE $<TARGET_OBJECTS:skyrim_ios_fuz_host>
-        "${CMAKE_CURRENT_SOURCE_DIR}/mod_hook_selection.c")
+        "${CMAKE_CURRENT_SOURCE_DIR}/mod_hook_selection.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_racemenu_preset.c")
 endif()
 if(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
     # The staged value publication (classic_papyrus_values.c.in) is compiled into skse_compat.c.

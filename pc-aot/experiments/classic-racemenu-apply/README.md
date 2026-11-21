@@ -3,7 +3,7 @@
 RaceMenu LE 3.4.5 stores the stock facial slider values in
 `morphs.default.morphs`. Its source maps Nose Height to
 `kMorph_NoseDownUp`, stock morph index 1. The experiment applies that
-one value through Skyrim's existing continuous-slider path. [RaceMenu serializer](https://github.com/expired6978/SKSEPlugins/blob/ea858fd0716a60c45fd572b558edd67da97fd132/skse/chargen/MorphHandler.cpp) · [RaceMenu stock slider mapping](https://github.com/expired6978/SKSEPlugins/blob/ea858fd0716a60c45fd572b558edd67da97fd132/skse/chargen/ScaleformFunctions.cpp)
+one value through Skyrim's existing continuous-slider path. [RaceMenu serializer](https://github.com/expired6978/SKSEPlugins/blob/ea858fd0716a60c45fd572b558edd67da97fd132/skse/chargen/MorphHandler.cpp) ﾂｷ [RaceMenu stock slider mapping](https://github.com/expired6978/SKSEPlugins/blob/ea858fd0716a60c45fd572b558edd67da97fd132/skse/chargen/ScaleformFunctions.cpp)
 
 The pinned LE 1.9.32 lift calls the slider setup routine `f_882290` from
 the character menu update at return address `0x8859B4`, after its
@@ -37,14 +37,21 @@ through the original caller and descriptor conditions.
 
 ## App and iPhone verification
 
-The next app step is to bind the selection from the active profile to
-the menu's owner thread and a fresh menu generation. The callbacks need
-a `CHARGEN_SLIDER` guest ABI table, build and install checks, and a
-profile action that accepts a parsed RaceMenu preset. The iPhone test
-must show that a stock Nose Height value changes in the menu, follows
-the expected face animation, persists after saving and reloading a
-copied character, and remains unchanged in another profile. Other
-RaceMenu sliders and extension data still need their own review.
+A private guest built with `--mod-hooks chargen_slider` exposes the
+opt-in application callbacks. In its package detail screen, an enabled
+RaceMenu preset can be queued for the profile selected in Settings.
+The app validates and hashes the bounded file before saving a request
+and repeats this check against the running profile on launch. Only the
+guest's menu callback may claim the request. The stage verifies the
+current player's actor base again before the stock slider call and
+acknowledges the request after it returns. The app clears only that
+same request on the main thread.
+
+The iPhone test must show that a stock Nose Height value changes in
+the menu, follows the expected face animation, persists after saving
+and reloading a copied character, and remains unchanged in another
+profile. Other RaceMenu sliders and extension data still need their
+own review.
 
 Enhanced Character Edit's numbered slot is already imported into
 `CME_save`. A controlled pair of real ECE 1.59 slots from the same

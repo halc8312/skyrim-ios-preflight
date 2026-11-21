@@ -54,8 +54,7 @@ int pc_guest_select_mod_hooks(uint32_t groups, const PcGuestModHooks *implementa
         return -1;
     }
     if (guest) {
-        const PcGuestModHooks none = {PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooks), 0, 0,
-                                      {0}, {0}, {0}, {0}};
+        const PcGuestModHooks none = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof none};
         if (guest->select(groups ? implementations : &none) != 0) return -1;
     }
     selected = groups;

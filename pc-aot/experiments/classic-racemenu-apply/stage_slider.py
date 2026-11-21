@@ -18,8 +18,12 @@ APPLY = b"    esp -= 4; M32(esp) = 0x885611u; SPILL(); f_87F6E0(c); RELOAD();\n"
 DECLARATIONS = (b"#include <math.h>\n#include <stdbool.h>\n"
                 b"bool skyrim_racemenu_probe_pending(void);\n"
                 b"bool skyrim_racemenu_probe_nose_height(uint32_t menu, uint32_t actor, uint32_t base,\n"
-                b"                                     float min, float max, float *value);\n")
-SUBSTITUTE = b"""    if (skyrim_racemenu_probe_pending() && M32(esp + 0x37Cu) == 0x8859B4u) {
+                b"                                     float min, float max, float *value);\n"
+                b"void skyrim_racemenu_probe_did_apply(void);\n")
+LOCALS = (b"    uint32_t skyrim_racemenu_preview_base = 0, skyrim_racemenu_accepted_actor = 0;\n"
+          b"    float skyrim_racemenu_original_nose = 0.0f;\n")
+SUBSTITUTE = b"""    skyrim_racemenu_accepted_actor = 0;
+    if (skyrim_racemenu_probe_pending() && M32(esp + 0x37Cu) == 0x8859B4u) {
         // The stock creator initializes these fields for sRSMNoseHeight.
         const uint32_t descriptor = edx + esi;
         const uint32_t label = TL32(0x1B18B94u);
@@ -34,12 +38,24 @@ SUBSTITUTE = b"""    if (skyrim_racemenu_probe_pending() && M32(esp + 0x37Cu) ==
                 if (skyrim_racemenu_probe_nose_height(ebp, actor, skyrim_racemenu_preview_base,
                                                       min, max, &chosen) &&
                     isfinite(min) && isfinite(max) && min < max &&
-                    isfinite(chosen) && min <= chosen && chosen <= max)
+                    isfinite(chosen) && min <= chosen && chosen <= max) {
+                    skyrim_racemenu_original_nose = MF32(esp + 0x28u);
+                    skyrim_racemenu_accepted_actor = actor;
                     MF32(esp + 0x28u) = chosen;
+                }
             }
         }
     }
 """
+
+BEFORE_APPLY = b"""    if (skyrim_racemenu_accepted_actor &&
+        (TL32(0x1B2E8E4u) != skyrim_racemenu_accepted_actor ||
+         TL32(skyrim_racemenu_accepted_actor + 0x24u) != skyrim_racemenu_preview_base)) {
+        MF32(esp) = skyrim_racemenu_original_nose;
+        skyrim_racemenu_accepted_actor = 0;
+    }
+"""
+AFTER_APPLY = b"    if (skyrim_racemenu_accepted_actor) skyrim_racemenu_probe_did_apply();\n"
 
 
 def function_span(data: bytes, address: str) -> tuple[int, int]:
@@ -64,8 +80,9 @@ def stage_slider(slider: bytes, update: bytes) -> bytes:
     if not body.index(ENTRY) < body.index(PREVIEW) < body.index(DESCRIPTOR) < body.index(APPLY):
         raise ValueError("Stock slider sites are out of order.")
     prelude_end = slider.index(b'\n#include "lift_prelude.h"\n') + len(b'\n#include "lift_prelude.h"\n')
-    body = body.replace(ENTRY, b"    uint32_t skyrim_racemenu_preview_base = 0;\n" + ENTRY)
+    body = body.replace(ENTRY, LOCALS + ENTRY)
     body = body.replace(PREVIEW, PREVIEW + b"    skyrim_racemenu_preview_base = eax;\n")
     descriptor_load, name_load = DESCRIPTOR.split(b"\n", 1)
     body = body.replace(DESCRIPTOR, descriptor_load + b"\n" + SUBSTITUTE + name_load)
+    body = body.replace(APPLY, BEFORE_APPLY + APPLY + AFTER_APPLY)
     return slider[:prelude_end] + DECLARATIONS + slider[prelude_end:start] + body + slider[end:]

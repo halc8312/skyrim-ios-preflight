@@ -124,8 +124,8 @@ int main(void) {
     set_response(RESPONSE_B, TITLE_B);
     const CPU cpu = {.fs_base = TEB, .r = {[3] = 0x12345678}};
 
-    PcGuestModHooks table = {PC_GUEST_MOD_HOOKS_ABI, sizeof table,
-                             PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD, 0, {0}, {0}, {0}, {0}};
+    PcGuestModHooks table = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof table,
+                             .groups = PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD};
     skyrim_fuz_app_fill(&table);
     assert(pc_guest_mod_hooks_table_valid(&table));
     catalog.table = &table;

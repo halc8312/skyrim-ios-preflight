@@ -17,9 +17,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <math.h>
+#include <sys/stat.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include "mod_manager.h"
 #include "copy_pair.h"
@@ -34,6 +37,7 @@
 #include "mod_fuz.h"
 #include "mod_fuz_host.h"
 #include "mod_hook_selection.h"
+#include "mod_racemenu_preset.h"
 /* classic_skse_control.h, in the staged skse_system.c */
 void skyrim_classic_control_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle);
 #endif
@@ -345,11 +349,120 @@ int skyrim_mods_feature_enabled(unsigned feature) {
 }
 
 #ifdef SKYRIM_IOS_MOD_HOOKS
+static NSString *HexDigest(NSData *data);
+static NSArray<NSString *> *EnabledPackageIds(NSDictionary *profile);
+
+static NSString *RaceMenuPresetLeaf(NSDictionary *package) {
+    id name = package[@"archive"];
+    if (![name isKindOfClass:NSString.class] || ![[name pathExtension].lowercaseString isEqualToString:@"jslot"])
+        return nil;
+    const char *bytes = [name UTF8String];
+    char normalized[NAME_MAX + 2];
+    const size_t length = bytes ? strnlen(bytes, NAME_MAX + 1) : 0;
+    if (!length || length > NAME_MAX || length != [name lengthOfBytesUsingEncoding:NSUTF8StringEncoding] ||
+        strchr(bytes, '/') || strchr(bytes, '\\') ||
+        skyrim_zip_normalize(bytes, length, 1, normalized, sizeof normalized) != 1) return nil;
+    return [NSString stringWithUTF8String:normalized];
+}
+
+/* An app-owned package is immutable, but read and hash the same bounded
+ * descriptor so a stale or manually replaced import cannot be selected. */
+static BOOL ReadRaceMenuPreset(NSDictionary *package, SkyrimRaceMenuPreset *preset) {
+    NSString *leaf = RaceMenuPresetLeaf(package);
+    NSString *directory = PackageDir(package[@"id"]);
+    id digest = package[@"sha256"];
+    if (!leaf || !directory || ![digest isKindOfClass:NSString.class] || [digest length] != 64) return NO;
+    NSString *path = CanonicalSupportPath([[directory stringByAppendingPathComponent:@"Data/SKSE/Plugins/CharGen/Presets"]
+                                           stringByAppendingPathComponent:leaf]);
+    if (!path) return NO;
+    int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
+#ifdef O_NOFOLLOW_ANY
+    flags |= O_NOFOLLOW_ANY;
+#endif
+    int fd = open(path.fileSystemRepresentation, flags);
+    if (fd < 0) return NO;
+    struct stat st;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || st.st_size > SKYRIM_RACEMENU_PRESET_LIMIT) {
+        close(fd);
+        return NO;
+    }
+    NSMutableData *data = [NSMutableData dataWithLength:(NSUInteger)st.st_size];
+    size_t offset = 0;
+    while (offset < data.length) {
+        ssize_t n = read(fd, (char *)data.mutableBytes + offset, data.length - offset);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        offset += (size_t)n;
+    }
+    char excess;
+    ssize_t extra;
+    do { extra = read(fd, &excess, 1); } while (extra < 0 && errno == EINTR);
+    close(fd);
+    return offset == data.length && extra == 0 && [HexDigest(data) isEqual:digest] &&
+        skyrim_racemenu_preset_parse(data.bytes, data.length, preset) == SKYRIM_RACEMENU_PRESET_OK;
+}
+
+/* Read once on the startup thread. Guest menu callbacks only touch the
+ * numeric state. The main-thread acknowledgement clears the same request,
+ * even if the user navigated to another profile while the game was running. */
+enum { RaceMenuEmpty, RaceMenuPending, RaceMenuTaken, RaceMenuApplied };
+static atomic_uint raceMenuState;
+static float raceMenuNose;
+static NSDictionary *launchRaceMenuSelection;
+static NSString *launchRaceMenuProfile;
+
+static BOOL PrepareRaceMenuPreset(NSDictionary *profile) {
+    if (launchWithoutMods || launchPluginListFailed ||
+        !(pc_guest_mod_hooks_compiled() & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER)) return NO;
+    id selection = profile[@"pendingPreset"];
+    if (![selection isKindOfClass:NSDictionary.class] || !ValidId(selection[@"request"]) ||
+        !ValidId(selection[@"package"]) || ![launchPackageIds containsObject:selection[@"package"]]) return NO;
+    NSDictionary *package = LoadPackage(selection[@"package"]);
+    SkyrimRaceMenuPreset preset;
+    if (![selection[@"file"] isEqual:RaceMenuPresetLeaf(package)] ||
+        ![selection[@"sha256"] isEqual:package[@"sha256"]] || !ReadRaceMenuPreset(package, &preset)) return NO;
+    launchRaceMenuProfile = [profile[@"id"] copy];
+    launchRaceMenuSelection = [selection copy];
+    raceMenuNose = preset.morphs[SKYRIM_RACEMENU_NOSE_HEIGHT];
+    atomic_store_explicit(&raceMenuState, RaceMenuPending, memory_order_release);
+    return YES;
+}
+
+static bool RaceMenuPendingValue(void) {
+    return atomic_load_explicit(&raceMenuState, memory_order_acquire) == RaceMenuPending;
+}
+
+static bool TakeRaceMenuNoseHeight(uint32_t menu, uint32_t actor, uint32_t base, float min, float max, float *out) {
+    if (!menu || !actor || !base || !out || !RaceMenuPendingValue() ||
+        !isfinite(min) || !isfinite(max) || min >= max || raceMenuNose < min || raceMenuNose > max) return false;
+    unsigned expected = RaceMenuPending;
+    if (!atomic_compare_exchange_strong_explicit(&raceMenuState, &expected, RaceMenuTaken,
+                                                  memory_order_acq_rel, memory_order_relaxed)) return false;
+    *out = raceMenuNose;
+    return true;
+}
+
+static void RaceMenuDidApply(void) {
+    unsigned expected = RaceMenuTaken;
+    if (!atomic_compare_exchange_strong_explicit(&raceMenuState, &expected, RaceMenuApplied,
+                                                  memory_order_acq_rel, memory_order_relaxed)) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSMutableDictionary *profile = ProfileById(launchRaceMenuProfile);
+        if (![profile[@"pendingPreset"] isEqual:launchRaceMenuSelection]) return;
+        [profile removeObjectForKey:@"pendingPreset"];
+        if (!SaveState()) profile[@"pendingPreset"] = launchRaceMenuSelection;
+        skyrim_mobile_show_notice(T(@"Applied Nose Height from the selected RaceMenu preset.",
+                                    @"選んだRaceMenuプリセットから鼻の高さを反映しました。"));
+    });
+}
+#endif
+
+#ifdef SKYRIM_IOS_MOD_HOOKS
 /* Select the guest hook groups for the features allowed so far, before the
  * guest starts. Returns the features whose groups were selected. */
 static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
     const uint32_t fuzGroups = PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD;
-    const uint32_t host = fuzGroups | PC_GUEST_MOD_HOOK_VM_LIFECYCLE;
+    const uint32_t host = fuzGroups | PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER;
     const uint32_t compiled = pc_guest_mod_hooks_compiled();
     skyrim_mod_hook_plan(requested, compiled, host, plan);
     if (plan->groups & fuzGroups) {
@@ -362,11 +475,13 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
         free(paths);
         if (!ready) skyrim_mod_hook_plan(requested, compiled, host & ~fuzGroups, plan);
     }
-    PcGuestModHooks table = {PC_GUEST_MOD_HOOKS_ABI, sizeof table, plan->groups, 0, {0}, {0}, {0}, {0}};
+    PcGuestModHooks table = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof table, .groups = plan->groups};
     if (plan->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
         table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load,
                                                  skyrim_classic_control_form_deleted};
     if (plan->groups & fuzGroups) skyrim_fuz_app_fill(&table);
+    if (plan->groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER)
+        table.chargen_slider = (PcGuestModChargenSliderHooks){RaceMenuPendingValue, TakeRaceMenuNoseHeight, RaceMenuDidApply};
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
     /* Keep the original paths: select nothing. */
     if (pc_guest_select_mod_hooks(0, NULL) != 0) fputs("IOS_MOD_HOOKS selection failed\n", stderr);
@@ -394,6 +509,7 @@ static void FreezeFeatures(NSDictionary *profile) {
     }
 #ifdef SKYRIM_IOS_MOD_HOOKS
     SkyrimHookPlan plan;
+    if (PrepareRaceMenuPreset(profile)) hooked |= 1u << SKYRIM_FEATURE_RACEMENU;
     const uint32_t selected = SelectModHooks(hooked, &plan);
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
         if ((hooked >> f & 1u) && !(selected >> f & 1u))
@@ -1752,6 +1868,10 @@ static UITableViewCell *ReusableCell(UITableView *t) {
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
 @property(nonatomic, strong) NSURL *dllProbeFolder;
 #endif
+#ifdef SKYRIM_IOS_MOD_HOOKS
+@property(nonatomic, copy) NSString *raceMenuPackage;
+@property(nonatomic, copy) NSString *raceMenuProfile;
+#endif
 @end
 @implementation SKListController
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
@@ -1767,11 +1887,55 @@ static UITableViewCell *ReusableCell(UITableView *t) {
     [self.navigationController pushViewController:check animated:YES];
 }
 #endif
-- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { (void)t; (void)s; return (NSInteger)self.lines.count; }
+- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
+    (void)t; (void)s;
+#ifdef SKYRIM_IOS_MOD_HOOKS
+    if (self.raceMenuPackage) return (NSInteger)self.lines.count + 1;
+#endif
+    return (NSInteger)self.lines.count;
+}
+#ifdef SKYRIM_IOS_MOD_HOOKS
+- (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)p {
+    [t deselectRowAtIndexPath:p animated:YES];
+    if (!self.raceMenuPackage || (NSUInteger)p.row != self.lines.count) return;
+    NSMutableDictionary *profile = ProfileById(self.raceMenuProfile);
+    NSDictionary *package = LoadPackage(self.raceMenuPackage);
+    NSString *leaf = RaceMenuPresetLeaf(package);
+    if (!leaf || ![EnabledPackageIds(profile) containsObject:self.raceMenuPackage]) {
+        skyrim_mobile_show_notice(T(@"Enable this preset package in the profile first.",
+                                    @"先にこのプロファイルでプリセットのMODを有効にしてください。"));
+        return;
+    }
+    SkyrimRaceMenuPreset preset;
+    if (!ReadRaceMenuPreset(package, &preset)) {
+        skyrim_mobile_show_notice(T(@"This file is not a readable RaceMenu LE preset.",
+                                    @"読み取れるRaceMenu LEプリセットではありません。"));
+        return;
+    }
+    id previous = profile[@"pendingPreset"];
+    profile[@"pendingPreset"] = @{@"request":NSUUID.UUID.UUIDString, @"package":self.raceMenuPackage,
+                                   @"file":leaf, @"sha256":package[@"sha256"]};
+    if (!SaveState()) {
+        profile[@"pendingPreset"] = previous;
+        skyrim_mobile_show_notice(T(@"Could not save the pending preset.", @"プリセットの適用設定を保存できませんでした。"));
+        return;
+    }
+    skyrim_mobile_show_notice(T(@"After restarting, open character creation to apply only Nose Height.",
+                                @"アプリ再起動後にキャラクター作成を開くと、鼻の高さだけを反映します。"));
+}
+#endif
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s { (void)t; (void)s; return self.footer; }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)p {
     (void)t;
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+#ifdef SKYRIM_IOS_MOD_HOOKS
+    if (self.raceMenuPackage && (NSUInteger)p.row == self.lines.count) {
+        c.textLabel.text = T(@"Apply Nose Height on next launch", @"次回起動時に鼻の高さを反映");
+        c.textLabel.numberOfLines = 0;
+        c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        return c;
+    }
+#endif
     c.textLabel.text = self.lines[p.row]; c.textLabel.numberOfLines = 0;
     c.textLabel.font = [UIFont systemFontOfSize:14]; c.selectionStyle = UITableViewCellSelectionStyleNone;
     return c;
@@ -2394,6 +2558,12 @@ enum {
             }
 #endif
         detail.lines = lines; detail.title = pkg[@"name"];
+#ifdef SKYRIM_IOS_MOD_HOOKS
+        if ((pc_guest_mod_hooks_compiled() & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) && RaceMenuPresetLeaf(pkg)) {
+            detail.raceMenuPackage = pkg[@"id"];
+            detail.raceMenuProfile = SelectedProfile()[@"id"];
+        }
+#endif
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
         NSDictionary *analysis = pkg[@"report"];
         if ([analysis isKindOfClass:NSDictionary.class] && [analysis[@"skseDlls"] unsignedIntValue]) {

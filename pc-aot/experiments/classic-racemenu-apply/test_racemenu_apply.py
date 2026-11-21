@@ -6,8 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
-from stage_slider import (APPLY, DECLARATIONS, DESCRIPTOR, SLIDER_UNIT, SUBSTITUTE,
-                          UPDATE_UNIT, function_span, stage_slider)
+from stage_slider import (AFTER_APPLY, APPLY, BEFORE_APPLY, DECLARATIONS, DESCRIPTOR,
+                          LOCALS, SLIDER_UNIT, SUBSTITUTE, UPDATE_UNIT, function_span, stage_slider)
 
 HERE = Path(__file__).resolve().parent
 PORT = HERE.parents[1] / "ios/runtime-port"
@@ -36,6 +36,8 @@ class RaceMenuApplyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="racemenu-substitute-") as tmp:
             folder = Path(tmp)
             (folder / "substitute.inc").write_bytes(SUBSTITUTE)
+            (folder / "before.inc").write_bytes(BEFORE_APPLY)
+            (folder / "after.inc").write_bytes(AFTER_APPLY)
             binary = folder / ("substitute.exe" if os.name == "nt" else "substitute")
             subprocess.run([self.compiler, *flags, "-I", folder, HERE / "test_substitute.c",
                             "-o", binary], check=True, timeout=60)
@@ -58,9 +60,10 @@ class RaceMenuApplyTests(unittest.TestCase):
         self.assertLess(body.index(SUBSTITUTE), body.index(APPLY))
         self.assertIn(DESCRIPTOR, body.replace(SUBSTITUTE, b"", 1))
         self.assertEqual(staged.replace(DECLARATIONS, b"", 1)
-                         .replace(b"    uint32_t skyrim_racemenu_preview_base = 0;\n", b"", 1)
+                         .replace(LOCALS, b"", 1)
                          .replace(b"    skyrim_racemenu_preview_base = eax;\n", b"", 1)
-                         .replace(SUBSTITUTE, b"", 1), original)
+                         .replace(SUBSTITUTE, b"", 1).replace(BEFORE_APPLY, b"", 1)
+                         .replace(AFTER_APPLY, b"", 1), original)
         with tempfile.TemporaryDirectory(prefix="racemenu-stage-") as tmp:
             path = Path(tmp) / SLIDER_UNIT
             path.write_bytes(staged)

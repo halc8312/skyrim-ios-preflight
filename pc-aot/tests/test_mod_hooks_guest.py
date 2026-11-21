@@ -33,7 +33,7 @@ class GroupTests(unittest.TestCase):
         for text, message in (("", "comma-separated"), ("fuz_menu,", "comma-separated"),
                               ("fuz_menu,fuz_menu", "twice"), ("fuz", "Unknown"),
                               ("camera_observe", "classic-camera"),
-                              ("chargen_slider", "not confirmed"), ("save_lifecycle", "P3-5"),
+                              ("save_lifecycle", "P3-5"),
                               ("fuz_world", "list both")):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
                 hooks.parse_groups(text)
@@ -191,7 +191,7 @@ class OwnedLiftTests(unittest.TestCase):
         root = Path(generation).resolve()
         state = json.loads((root / "generation.json").read_text(encoding="utf-8"))
         classic.validate_generation(state)
-        groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache")
+        groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
@@ -199,7 +199,7 @@ class OwnedLiftTests(unittest.TestCase):
             sources = classic.prepare_sources(originals, work / "classic-sources")
             result, staged = hooks.prepare_sources(sources, work / "mod-hook-sources", groups, state, root)
             self.assertTrue({"exe_100.c", "exe_101.c", "exe_189.c", "exe_35.c", "exe_188.c",
-                             "exe_106.c", "exe_186.c", "exe_199.c"} <= set(staged))
+                             "exe_106.c", "exe_185.c", "exe_186.c", "exe_199.c"} <= set(staged))
             runtime = root / "source/runtime"
             for path in (p for p in result if p.name in staged):
                 with self.subTest(unit=path.name):

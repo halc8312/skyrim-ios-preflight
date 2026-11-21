@@ -50,6 +50,13 @@ __attribute__((visibility("default"))) unsigned exercise_mod_hooks(unsigned expe
     skyrim_vm_host_after_load(1);
     skyrim_vm_host_form_deleted(NULL, 0x900, 0x1234567890ull);
     if (skyrim_chargen_probe_skip_open_warm()) seen |= 1u << 6;
+    float value = 0.0f;
+    const bool pending = skyrim_racemenu_probe_pending();
+    const bool accepted = skyrim_racemenu_probe_nose_height(1, 2, 3, -1.0f, 1.0f, &value);
+    assert(pending == accepted);
+    if (accepted) { assert(value == 0.5f); seen |= 1u << 7; }
+    else assert(value == 0.0f);
+    skyrim_racemenu_probe_did_apply();
     assert(seen == expected);
     return seen;
 }
@@ -78,7 +85,7 @@ void f_A60200(CPU *c) { (void)c; }
 void f_842140(CPU *c) { (void)c; }
 void f_873D70(CPU *c) { (void)c; }
 
-static unsigned calls[16];
+static unsigned calls[17];
 static void forget(uint32_t r) { assert(r == 7); ++calls[0]; }
 static void choose(const struct CPU *c, uint32_t slot, uint32_t r, SkyrimFuzLiftChoice *out) {
     assert(!c && slot == 0x1000 && r == 7);
@@ -112,12 +119,21 @@ static void form_deleted(struct CPU *c, uint32_t vm, uint64_t handle) {
 }
 static bool skip_warm(void) { ++calls[12]; return true; }
 
+static bool slider_pending(void) { ++calls[14]; return true; }
+static bool slider_nose(uint32_t m, uint32_t a, uint32_t b, float min, float max, float *value) {
+    assert(m == 1 && a == 2 && b == 3 && min == -1.0f && max == 1.0f);
+    ++calls[15];
+    *value = 0.5f;
+    return true;
+}
+static void slider_applied(void) { ++calls[16]; }
+
 static PcGuestModHooks full_table(uint32_t groups) {
     return (PcGuestModHooks){
         PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooks), groups, 0,
         {forget, choose, note, capture, force},
         {capture_world, admit, after_copy, release_title, general},
-        {before_revert, after_load, form_deleted}, {skip_warm}};
+        {before_revert, after_load, form_deleted}, {skip_warm}, {slider_pending, slider_nose, slider_applied}};
 }
 
 static unsigned expected_seen(uint32_t groups) {
@@ -125,6 +141,7 @@ static unsigned expected_seen(uint32_t groups) {
     if (groups & PC_GUEST_MOD_HOOK_FUZ_MENU) seen |= 7u;
     if (groups & PC_GUEST_MOD_HOOK_FUZ_WORLD) seen |= 7u << 3;
     if (groups & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE) seen |= 1u << 6;
+    if (groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) seen |= 1u << 7;
     return seen;
 }
 
@@ -136,6 +153,8 @@ static void check_calls(uint32_t groups, unsigned rounds) {
     for (int n = 0; n < 5; ++n) assert(calls[n] == menu);
     for (int n = 5; n < 10; ++n) assert(calls[n] == world);
     assert(calls[10] == vm && calls[11] == vm && calls[13] == vm && calls[12] == chargen);
+    const unsigned slider = groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER ? rounds : 0;
+    assert(calls[14] == slider && calls[15] == slider && calls[16] == slider);
 }
 
 /* argv: hooked-guest compiled-groups select-groups no-hooks-guest bad-reply-guest */
@@ -212,7 +231,8 @@ int main(int argc, char **argv) {
         wrong = table;
         if (choice & PC_GUEST_MOD_HOOK_FUZ_MENU) wrong.fuz_menu.force_menu = NULL;
         else if (choice & PC_GUEST_MOD_HOOK_VM_LIFECYCLE) wrong.vm_lifecycle.form_deleted = NULL;
-        else wrong.chargen_precache.skip_open_warm = NULL;
+        else if (choice & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE) wrong.chargen_precache.skip_open_warm = NULL;
+        else wrong.chargen_slider.did_apply = NULL;
         assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
     } else {
         PcGuestModHooks nonempty = full_table(PC_GUEST_MOD_HOOK_FUZ_MENU);

@@ -28,7 +28,6 @@ GROUPS = {
 # Groups without a reviewed stage in this tree, with the reason shown to the caller.
 UNSTAGED = {
     "camera_observe": "experiments/classic-camera has no reviewed stage of the camera call",
-    "chargen_slider": "the slider call and its arguments are not confirmed from the pinned lift",
     "save_lifecycle": "the save lifecycle stage (plan P3-5) is not written yet",
 }
 # The interface header and the reviewed seam headers its tables use; the IPA
@@ -158,6 +157,13 @@ def stage_chargen_precache(root: Path) -> dict[str, bytes]:
     return {name: precache.stage_open((root / "gen" / name).read_bytes())}
 
 
+def stage_chargen_slider(root: Path) -> dict[str, bytes]:
+    slider = load(EXPERIMENTS / "classic-racemenu-apply", "stage_slider")
+    gen = root / "gen"
+    return {slider.SLIDER_UNIT: slider.stage_slider((gen / slider.SLIDER_UNIT).read_bytes(),
+                                                  (gen / slider.UPDATE_UNIT).read_bytes())}
+
+
 def function_span(unit: bytes, function: str) -> tuple[int, int]:
     marker = f"\nvoid {function}(CPU *c) {{\n".encode("ascii")
     if unit.count(marker) != 1:
@@ -192,6 +198,7 @@ STAGES = {
     "fuz_menu": stage_fuz_menu,
     "fuz_world": stage_fuz_world,
     "chargen_precache": stage_chargen_precache,
+    "chargen_slider": stage_chargen_slider,
 }
 
 

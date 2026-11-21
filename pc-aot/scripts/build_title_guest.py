@@ -150,7 +150,7 @@ def main(argv=None):
                    help="Build the opt-in experimental Classic VM/menu guest in its own directory")
     p.add_argument("--mod-hooks", metavar="GROUPS",
                    help="With --classic-skse: comma-separated reviewed MOD hook groups to stage "
-                        "(fuz_menu, fuz_world, vm_lifecycle, chargen_precache)")
+                        "(fuz_menu, fuz_world, vm_lifecycle, chargen_precache, chargen_slider)")
     p.add_argument("--llvm-bin",type=Path,help="Windows LLVM bin directory; defaults to SKYRIM_LLVM_BIN, PATH, or Program Files/LLVM/bin")
     p.add_argument("--darwin-headers",type=Path,help="Windows public any-darwin-any include directory; alternatively set SKYRIM_DARWIN_HEADERS")
     a=p.parse_args(argv)

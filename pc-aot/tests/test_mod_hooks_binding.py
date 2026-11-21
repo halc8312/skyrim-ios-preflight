@@ -68,7 +68,7 @@ class NativeBinding(unittest.TestCase):
             guest = [*flags, "-fPIC", "-fvisibility=hidden", "-dynamiclib" if mac else "-shared",
                      "-DMOD_FIXTURE_GUEST", FIXTURE, ABI / "pc_guest_library.c", ABI / "pc_guest_skse_library.c"]
             guests = {}
-            for groups in (15, 3, 8, 4):
+            for groups in (15, 3, 8, 4, 32, 47):
                 guests[groups] = stage / f"guest-{groups}"
                 subprocess.run([*guest, ABI / "pc_guest_mod_hooks_library.c",
                                 f"-DPC_GUEST_MOD_HOOKS_COMPILED={groups}u", "-o", guests[groups]], check=True)
@@ -88,7 +88,7 @@ class NativeBinding(unittest.TestCase):
             subprocess.run([*flags, "-DSKYRIM_IOS_MOD_HOOKS=1", "-pthread", FIXTURE, ABI / "pc_guest_host.c",
                             ABI / "pc_guest_skse_host.c", ABI / "pc_guest_mod_hooks_host.c",
                             *([] if mac else ["-ldl"]), "-o", host], check=True)
-            for compiled, choice in ((15, 0), (15, 15), (15, 1), (15, 4), (3, 3), (3, 1), (8, 8), (4, 4)):
+            for compiled, choice in ((15, 0), (15, 15), (15, 1), (15, 4), (3, 3), (3, 1), (8, 8), (4, 4), (32, 0), (32, 32), (47, 47)):
                 with self.subTest(compiled=compiled, choice=choice):
                     run = subprocess.run([host, guests[compiled], str(compiled), str(choice), plain, bad],
                                          capture_output=True, text=True)

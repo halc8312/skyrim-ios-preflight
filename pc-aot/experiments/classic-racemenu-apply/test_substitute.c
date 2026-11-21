@@ -7,7 +7,7 @@
 enum { FRAME_STACK = 0x100, SLIDERS = 0x200, SLIDER_OFFSET = 0x134,
        ACTOR = 0x500, NPC = 0x600, MENU = 0x700 };
 
-static unsigned reads, calls;
+static unsigned reads, calls, acknowledgements;
 static uint32_t return_address = 0x8859B4u, label = 0x800, descriptor_label = 0x800;
 static uint32_t kind = 2, morph = 1, actor = ACTOR, current_base = NPC;
 static float minimum = -1, maximum = 1, argument = -0.25f, desired = 0.75f;
@@ -32,6 +32,7 @@ static float *floating(uint32_t address) {
     switch (address) {
     case SLIDERS + SLIDER_OFFSET: return &minimum;
     case SLIDERS + SLIDER_OFFSET + 4: return &maximum;
+    case FRAME_STACK:
     case FRAME_STACK + 0x28: return &argument;
     default: assert(!"unexpected float offset"); return &argument;
     }
@@ -53,10 +54,19 @@ static bool skyrim_racemenu_probe_nose_height(uint32_t menu, uint32_t live_actor
     return true;
 }
 
-static void preview(uint32_t skyrim_racemenu_preview_base) {
+static void skyrim_racemenu_probe_did_apply(void) { ++acknowledgements; }
+
+static void preview_then_apply(uint32_t skyrim_racemenu_preview_base, bool actor_changes) {
+    uint32_t skyrim_racemenu_accepted_actor = 0;
+    float skyrim_racemenu_original_nose = 0;
     const uint32_t esp = FRAME_STACK, edx = SLIDERS, esi = SLIDER_OFFSET, ebp = MENU;
 #include "substitute.inc"
+    if (actor_changes) current_base = NPC + 1;
+#include "before.inc"
+#include "after.inc"
 }
+
+static void preview(uint32_t base) { preview_then_apply(base, false); }
 
 int main(void) {
     pending = false;
@@ -95,6 +105,10 @@ int main(void) {
     desired = 0.75f;
     preview(NPC);
     preview(NPC);
-    assert(calls == 3 && argument == 0.75f);
+    assert(calls == 3 && acknowledgements == 1 && argument == 0.75f);
+    pending = true;
+    argument = -0.25f;
+    preview_then_apply(NPC, true);
+    assert(calls == 4 && acknowledgements == 1 && argument == -0.25f);
     return 0;
 }
