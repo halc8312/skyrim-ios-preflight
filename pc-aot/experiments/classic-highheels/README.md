@@ -12,6 +12,10 @@ The private task-queue fixture uses one of the two call sites reviewed in Classi
 
 The private item-delivery fixture observes the primary item-specific VM call in 0x8C9910 after return at 0x8C9B6A. On the exercised path the game has borrowed the actor reference before calling the VM and releases it afterwards. The observer records the phase captured before the call. The fixture compares equip and unequip with the original path and exercises an actor-only delivery with no matching item. It preserves the actor reference count, TLS word, registers, flags, and stack. The alternate item delivery and real VM execution still require a game trace. A notification by itself supplies neither a durable actor identifier nor the effect instance or magnitude. The owned scripts obtain those through their active magic effect and use KeepUpdate/StopUpdate after entering the effect. That edge has no witnessed runtime call because the owned DLL probe stops before SKSE registration. The item observer therefore cannot activate a height change.
 
+The optional owner PEX check pins the actual LE beta 0.5 effect bytecode. It verifies the unqualified native state and types, including the instance getter GetMagnitude returning Float, global KeepUpdate taking ObjectReference and Float, and global StopUpdate taking ObjectReference. The parser verifies the two encoded KeepUpdate sites and one StopUpdate site. It also rejects a truncated copy in memory. Runtime values, actual native registration, and the retention of the effect or actor across a queue boundary are still unverified.
+
+In the pinned LE lift, the attach blocker BSFixedString constructor calls the string hash/length helper and enters the game's intern pool before publishing a reference. The pool path uses the guest's shared initialization, lock and entry lifetime. The existing scalar frame helper is enabled only during an already-registered VM invoke. This fixture leaves both the attach path and pool untouched.
+
 Run locally with a C11 compiler:
 
 ~~~sh
@@ -21,3 +25,4 @@ SKYRIM_TEST_SANITIZERS=1 python3 -B -m unittest -v test_highheel_height
 ~~~
 
 Set SKYRIM_TEST_OWNED_CLASSIC_LIFT to the reviewed private LE generation to include the task-queue and item-delivery ABI tests on a POSIX host.
+Set SKYRIM_TEST_OWNED_HDT_EFFECT_PEX to the owner's unchanged data/scripts/hdtHighHeelEffect.pex from beta 0.5 to verify the effect declarations.
