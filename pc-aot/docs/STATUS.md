@@ -24,6 +24,8 @@ DLLファイル診断のMac試験で、通常ファイルを開けない問題�
 
 Safety Loadが参照するのは、ロード画面の開閉通知を持つ `MenuManager`。固定版の開閉通知2か所を読み取り専用で観測する試作を追加した。Clang 18とGCCのASan/UBSanで各2件が合格し、元の呼び出し、スタック、レジスタとフラグを検査した。観測はiPhoneアプリに未接続で、実機の通知順序とローダーの待ち動作は未確認。 [開閉通知の試作](../experiments/classic-loading-menu/README.md)
 
+HDT Physics Extensions 14.28の同梱DLLを実行せず、インポート表を照合した。診断で最初に出た `PathAppendA` のほか、`PathRemoveFileSpecA`、Windowsのウィンドウフック、スレッド停止とコンテキスト操作も含まれる。物理対応では、これらが実際に使われる条件と、固定版ゲームの物理・描画処理への接続を確認する必要がある。 [パス結合のWindows API](https://learn.microsoft.com/en-us/windows/win32/api/shlwapi/nf-shlwapi-pathappenda) · [HDTの作者プロジェクト](https://code.google.com/archive/p/hdt-pe/)
+
 通常版の画面試験では、ZIPの取り込み、英語と日本語の詳細、別プロファイルでの同じZIPの再利用まで到達した。再利用直後のスイッチがナビゲーションバーに隠れたため、表示位置を確認してから操作するよう試験を直した。コピーしたセーブは再起動後の対象プロファイルに表示され、MOD構成だけを取り込んだ別プロファイルには複製されないことを検査する。 [画面試験の記録](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44901583151)
 
 スイッチを修正した試験では、フォルダ追加、プロファイルの名前変更・選択、セーブのコピー、FOMODの説明全文と選択画面に到達した。試験全体は15分の実行上限で止まった。各操作の個別待機は維持し、全体の実行上限を25分にした回で再検査する。 [15分の画面試験](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44903471606) · [25分の画面試験](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44905043134)
