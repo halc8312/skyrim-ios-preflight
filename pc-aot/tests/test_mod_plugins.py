@@ -25,7 +25,7 @@ class ModPluginTests(unittest.TestCase):
             result = subprocess.run([str(binary), tmp], check=True, text=True, capture_output=True, timeout=30)
             for line in ("header parsing PASS", "names PASS", "ordering PASS",
                          "plugins.txt PASS", "case-insensitive paths PASS", "profile restore PASS",
-                         "profile DLC inheritance PASS"):
+                         "profile DLC inheritance PASS", "usleep dlc masters PASS"):
                 self.assertIn(line, result.stdout)
 
     def test_guest_reads_plugins_txt_from_the_profile_documents_folder(self):

@@ -177,6 +177,45 @@ class ModArchiveTests(unittest.TestCase):
         self.assertEqual(files_in(other_view), second_base)
         self.assertEqual(files_in(game), {})
 
+    def test_skeleton_winners_follow_each_profile_and_never_reach_the_game(self):
+        # Authored bytes; XPMS and Realistic Ragdolls and Force both place skeleton.nif.
+        path = "meshes/actors/character/character assets/skeleton.nif"
+        female = "meshes/actors/character/character assets female/skeleton_female.nif"
+        game = self.dir / "skeleton-game"
+        (game / "Data/Meshes").mkdir(parents=True)
+        packages = {}
+        for name, files in {
+            "xpms": {path: b"xpms skeleton", female: b"xpms female"},
+            "rrf": {path: b"rrf skeleton"},
+            "other": {path: b"other profile skeleton"},
+        }.items():
+            root = self.dir / ("skeleton-" + name)
+            for relative, content in files.items():
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_bytes(content)
+            packages[name] = root
+        before = sorted(p.relative_to(game).as_posix() for p in game.rglob("*"))
+
+        def view_files(view):
+            root = view / "Data"
+            return {p.relative_to(root).as_posix().lower(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+        first, first_conflicts = self.dir / "skeleton-view-a", self.dir / "skeleton-a.tsv"
+        second, second_conflicts = self.dir / "skeleton-view-b", self.dir / "skeleton-b.tsv"
+        self.assertIn("deploy 0", self.run_driver("deploy", game, first, first_conflicts, "a",
+                                                  packages["xpms"], packages["rrf"]))
+        self.assertIn("deploy 0", self.run_driver("deploy", game, second, second_conflicts, "b", packages["other"]))
+        self.assertEqual(view_files(first), {path: b"rrf skeleton", female: b"xpms female"})
+        self.assertIn(f"{path}\t0\t1", first_conflicts.read_text().lower().splitlines())
+        self.assertNotIn(female, first_conflicts.read_text().lower())
+        self.assertEqual(view_files(second), {path: b"other profile skeleton"})
+        # Rebuilding the first profile in the opposite order flips only that winner.
+        self.assertIn("deploy 0", self.run_driver("deploy", game, first, first_conflicts, "a2",
+                                                  packages["rrf"], packages["xpms"]))
+        self.assertEqual(view_files(first)[path], b"xpms skeleton")
+        self.assertEqual(view_files(second), {path: b"other profile skeleton"})
+        self.assertEqual(sorted(p.relative_to(game).as_posix() for p in game.rglob("*")), before)
+
     def test_game_assets_at_root_stay_with_their_tools(self):
         bundle = self.make_zip("game-assets-and-tools.zip", {
             "Bundle/meshes/body.nif": b"body",

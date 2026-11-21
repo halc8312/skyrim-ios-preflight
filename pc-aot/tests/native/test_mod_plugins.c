@@ -196,6 +196,56 @@ static void ordering(void) {
     puts("ordering PASS");
 }
 
+/* USLEEP 3.0.16 is an ESP whose masters are the base game and the three official DLC. */
+static void usleep_dlc_masters(void) {
+    const char *usleep[] = {"Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm", NULL};
+    const char *shouting[] = {"SKYRIM.ESM", "update.esm", "DAWNGUARD.ESM", "hearthfires.esm", "DRAGONBORN.ESM", NULL};
+    const char *base[] = {"Skyrim.esm", NULL};
+    const char *needs_usleep[] = {"Unofficial Skyrim Legendary Edition Patch.esp", NULL};
+    size_t n;
+
+    /* All three DLC enabled, listed after the patch: the DLC move above it. */
+    reset();
+    add("Unofficial Skyrim Legendary Edition Patch.esp", 1, 0, usleep);
+    add("Dragonborn.esm", 1, 1, base);
+    add("Dawnguard.esm", 1, 1, base);
+    add("HearthFires.esm", 1, 1, base);
+    add("Dependent.esp", 1, 0, needs_usleep);
+    n = run();
+    EXPECT_ORDER(n, "Dragonborn.esm,Dawnguard.esm,HearthFires.esm,Unofficial Skyrim Legendary Edition Patch.esp,Dependent.esp");
+
+    /* Master names match without regard to case. */
+    reset();
+    add("Unofficial Skyrim Legendary Edition Patch.esp", 1, 0, shouting);
+    add("Dragonborn.esm", 1, 1, base);
+    add("Dawnguard.esm", 1, 1, base);
+    add("HearthFires.esm", 1, 1, base);
+    n = run(); assert(n == 4 && state[0] == SKYRIM_PLUGIN_LOAD);
+
+    /* One DLC switched off blocks the patch and its dependent; the others load. */
+    reset();
+    add("Dawnguard.esm", 1, 1, base);
+    add("HearthFires.esm", 1, 1, base);
+    add("Dragonborn.esm", 0, 1, base);
+    add("Unofficial Skyrim Legendary Edition Patch.esp", 1, 0, usleep);
+    add("Dependent.esp", 1, 0, needs_usleep);
+    n = run();
+    EXPECT_ORDER(n, "Dawnguard.esm,HearthFires.esm");
+    assert(state[2] == SKYRIM_PLUGIN_OFF && state[3] == SKYRIM_PLUGIN_MISSING_MASTER && problem[3] == 4);
+    assert(state[4] == SKYRIM_PLUGIN_MISSING_MASTER && problem[4] == 0);
+
+    /* A DLC that is not installed at all is also a missing master. */
+    reset();
+    add("Dawnguard.esm", 1, 1, base);
+    add("Dragonborn.esm", 1, 1, base);
+    add("Unofficial Skyrim Legendary Edition Patch.esp", 1, 0, usleep);
+    n = run();
+    EXPECT_ORDER(n, "Dawnguard.esm,Dragonborn.esm");
+    assert(state[2] == SKYRIM_PLUGIN_MISSING_MASTER && problem[2] == 3);
+    reset();
+    puts("usleep dlc masters PASS");
+}
+
 static void list_text(void) {
     const char *base[] = {"Skyrim.esm", NULL};
     reset();
@@ -356,7 +406,7 @@ static void profile_dlc_inheritance(const char *root) {
 
 int main(int argc, char **argv) {
     assert(argc == 2);
-    parsing(); names(); ordering(); list_text(); paths(argv[1]); profile_list(argv[1]);
+    parsing(); names(); ordering(); usleep_dlc_masters(); list_text(); paths(argv[1]); profile_list(argv[1]);
     profile_dlc_inheritance(argv[1]);
     return 0;
 }
