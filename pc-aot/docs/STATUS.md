@@ -18,6 +18,8 @@ HDT HighHeelsの同梱DLLが参照する骨格の `NPC` ノードを対象に、
 
 公開ソースだけで行ったApple SDKの検査では、通常のiPhoneOSアプリ本体のリンクまで成功した。MOD画面のシミュレーター試験はテスト用起動コードの変数名が重複してコンパイルできなかったため修正した。 [Apple SDKの検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44892853301)
 
+DLLファイル診断のMac試験で、通常ファイルを開けない問題を再現した。Appleのカーネルが併用を拒否する `O_NOFOLLOW_ANY` と `O_NOFOLLOW` を、利用可能な一方だけ指定するように変更した。Precache KillerとRaceMenuの照合用ファイル読み取りにも同じ修正を入れた。修正後はiPhoneOS SDKのコンパイルと、日本語・英語のDLL診断シミュレーター試験が合格した。 [Apple XNUの実装](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/vfs/vfs_vnops.c) · [DLL診断の検査結果](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44896596227)
+
 **2026-11-21　第一弾の追加素材4本を確認しFuzの音声検索を修正**
 
 TaildropでEnhanced Character Edit LE 1.59、チャット添付でFuz Ro D-oh LE 6.1、ShowRaceMenu Precache Killer 1.3、HDT Physics Extensions 14.28を受領。4アーカイブの整合性を検査し、私用の確認フォルダに保持した。単独DLLの診断では、Fuzは `GetPrivateProfileSectionA`、HDT Physicsは `PathAppendA`、ECEは `FindFirstFileA` のインポートが未対応。Precache Killerは初期化中の `HeapCreate` で停止した。
