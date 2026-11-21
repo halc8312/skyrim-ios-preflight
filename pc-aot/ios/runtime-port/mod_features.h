@@ -37,6 +37,10 @@ typedef struct {
  * overwrite order. Links are not followed. Returns 0, or EINVAL. */
 int skyrim_features_scan(const char *const *roots, size_t count, SkyrimFeatureScan *out);
 
+/* Locate the reviewed package's DLL under one already selected Data view.
+ * Returns 1 when found, 0 when absent, -1 for ambiguous names or unsafe files. */
+int skyrim_precache_killer_path(const char *data, char *path, size_t capacity);
+
 /* Stable ASCII key used in saved profile state and accessibility identifiers. */
 const char *skyrim_feature_key(unsigned feature);
 /* Index for a key, or -1. */

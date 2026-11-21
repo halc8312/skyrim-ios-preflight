@@ -80,6 +80,18 @@ class FeatureTests(unittest.TestCase):
         unreadable, found = self.scan(linked, alias, dll_link)
         self.assertEqual((unreadable, found), (2, {}))
 
+    def test_precache_launch_path_requires_the_original_dll_name(self):
+        selected = "skse/Plugins/ShowRacemenu_PrecacheKiller.DLL"
+        a = self.root("selected", [selected, "skse/Plugins/another-precache.dll"])
+        b = self.root("generic", ["SKSE/Plugins/another-precache.dll"])
+        c = self.root("ambiguous", [selected, selected.lower().replace("/plugins/", "/Plugins/")])
+        d = self.root("link", ["SKSE/Plugins/unrelated.dll"])
+        (d / "SKSE/Plugins/showRaceMenu_preCacheKiller.dll").symlink_to(a / selected)
+        for root, expected in ((a, ["1", str(a / selected)]), (b, ["0"]), (c, ["-1"]), (d, ["-1"])):
+            with self.subTest(root=root):
+                self.assertEqual(subprocess.check_output([self.binary, "--precache-path", root], text=True,
+                                                         timeout=10).splitlines(), expected)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -34,7 +34,7 @@ static const FeatureRow rows[SKYRIM_FEATURE_COUNT] = {
     /* MOD hook builds carry the app half (mod_fuz_host.c); the guest half is checked at launch. */
     [SKYRIM_FEATURE_FUZ] = {"fuz", "fuz", NULL, MOD_HOOKS_IMPLEMENTED},
     [SKYRIM_FEATURE_PAPYRUSUTIL] = {"papyrusutil", "storageutil", NULL, PAPYRUSUTIL_IMPLEMENTED},
-    [SKYRIM_FEATURE_PRECACHE_KILLER] = {"precache", "precache", NULL, 0},
+    [SKYRIM_FEATURE_PRECACHE_KILLER] = {"precache", "precache", NULL, MOD_HOOKS_IMPLEMENTED},
     [SKYRIM_FEATURE_RACEMENU] = {"racemenu", "chargen", NULL, 0},
     [SKYRIM_FEATURE_NIOVERRIDE] = {"nioverride", "nioverride", NULL, 0},
     [SKYRIM_FEATURE_ECE] = {"ece", NULL, "EnhancedCharacterEdit.esp", 0},
@@ -61,6 +61,18 @@ static int child_directory(const char *parent, const char *name, char *out, size
     struct stat st;
     if (lstat(out, &st)) return errno == ENOENT ? 0 : -1;
     return S_ISDIR(st.st_mode) ? 1 : -1;
+}
+
+int skyrim_precache_killer_path(const char *data, char *path, size_t capacity) {
+    if (!data || !path || !capacity) return -1;
+    char skse[4096], plugins[4096];
+    int found = child_directory(data, "SKSE", skse, sizeof skse);
+    if (found > 0) found = child_directory(skse, "Plugins", plugins, sizeof plugins);
+    if (found > 0)
+        found = skyrim_plugin_child_path(plugins, "showRaceMenu_preCacheKiller.dll", path, capacity);
+    if (found <= 0) return found;
+    struct stat info;
+    return !lstat(path, &info) && S_ISREG(info.st_mode) ? 1 : -1;
 }
 
 static int scan_root(const char *root, unsigned *mask) {

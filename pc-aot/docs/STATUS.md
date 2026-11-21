@@ -1,5 +1,13 @@
 # 開発状況
 
+**2026-11-21　先読みの実物照合と追加セーブの保存側を前進**
+
+ShowRaceMenu Precache Killer LE 1.3は、実物DLLが先読みルーチンの入口から戻すことを確認し、同じ動作を固定版で試験した。3つの呼び出し元で、既定の動作とオン時のスキップ、元のレジスタとフラグを確認。アプリは有効なプロファイルの起動ビューでDLLをSHA-256照合し、選択済みで対応ゲストがある時だけフックを有効にする。PCでのパス選択5件と固定版のGCC ASan/UBSan試験2件が合格。Apple SDKと実機での髪型表示・所要時間は未確認。
+
+ECEは鼻の高さID 12を読む処理を追加した。同梱プリセット10件を確認し、鼻の高さだけが違う比較用コピーを含む6件がClang 18、GCC、GCCのASan/UBSanで合格。実ゲームからの書き出しと反映は未確認。
+
+追加セーブでは、保存側の通知と実ファイル操作の結果を結び付け、VM保存と同じ `.ess` の公開が成功した場合にだけ、読み取り専用のファイルと記録を知らせる処理を追加した。通知を与えた実ファイル操作の6ケースと、固定版の保存末尾を含む既存の常用・失敗試験がGCCのASan/UBSan付きで合格。ゲーム起動からの認証、追加セーブの公開・復元への接続は残る。
+
 **2026-11-21　第一弾の追加素材4本を確認しFuzの音声検索を修正**
 
 TaildropでEnhanced Character Edit LE 1.59、チャット添付でFuz Ro D-oh LE 6.1、ShowRaceMenu Precache Killer 1.3、HDT Physics Extensions 14.28を受領。4アーカイブの整合性を検査し、私用の確認フォルダに保持した。単独DLLの診断では、Fuzは `GetPrivateProfileSectionA`、HDT Physicsは `PathAppendA`、ECEは `FindFirstFileA` のインポートが未対応。Precache Killerは初期化中の `HeapCreate` で停止した。

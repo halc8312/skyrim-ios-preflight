@@ -79,7 +79,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_GAME_LANGUAGE", "^IOS_GAME_LANGUAGE requested_text=[01] text=[01] text_reason=[0-3] requested_voices=[01] voices=[01] voices_reason=[0-3]$") \
     X("IOS_OVERLAY_LAYOUT", "^IOS_OVERLAY_LAYOUT schema=1 view_pt=[0-9]{1,5}x[0-9]{1,5} safe=[0-9]{1,5},[0-9]{1,5},[0-9]{1,5},[0-9]{1,5} top_controls_max_y=[0-9]{1,5} scale=[0-9]{1,4}$") \
     X("IOS_CLASSIC_SKYUI", "^IOS_CLASSIC_SKYUI (?:requested=0 enabled=0|requested=1 enabled=[01])$") \
-    X("IOS_MOD_FEATURE", "^IOS_MOD_FEATURE id=[0-9]{1,2} requested=1 available=[01] enabled=[01] reason=[0-4]$") \
+    X("IOS_MOD_FEATURE", "^IOS_MOD_FEATURE id=[0-9]{1,2} requested=1 available=[01] enabled=[01] reason=[0-5]$") \
     X("IOS_PAPYRUSUTIL", "^IOS_PAPYRUSUTIL schema=1 published=[0-9]{1,2} calls=[0-9]{1,20} refused_stale=[0-9]{1,20} commits=[0-9]{1,20} discards=[0-9]{1,20} errors=[0-9]{1,20}$") \
     X("IOS_PAPYRUSUTIL_OPEN", "^IOS_PAPYRUSUTIL_OPEN (acquisition=-?[0-9]{1,5}|status=[0-9]{1,2})$") \
     X("IOS_FUZ", "^IOS_FUZ schema=1 enabled=[01] substituted=[0-9]{1,20} kept=[0-9]{1,20} missing=[0-9]{1,20} errors=[0-9]{1,20}$") \

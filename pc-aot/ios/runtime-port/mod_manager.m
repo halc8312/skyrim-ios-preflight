@@ -352,6 +352,50 @@ int skyrim_mods_feature_enabled(unsigned feature) {
 static NSString *HexDigest(NSData *data);
 static NSArray<NSString *> *EnabledPackageIds(NSDictionary *profile);
 
+static NSData *ReadBoundedRegularFile(NSString *path, size_t limit) {
+    if (!path) return nil;
+    int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
+#ifdef O_NOFOLLOW_ANY
+    flags |= O_NOFOLLOW_ANY;
+#endif
+    int fd = open(path.fileSystemRepresentation, flags);
+    if (fd < 0) return nil;
+    struct stat st;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || (uint64_t)st.st_size > limit) {
+        close(fd);
+        return nil;
+    }
+    NSMutableData *data = [NSMutableData dataWithLength:(NSUInteger)st.st_size];
+    size_t offset = 0;
+    while (offset < data.length) {
+        ssize_t n = read(fd, (char *)data.mutableBytes + offset, data.length - offset);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        offset += (size_t)n;
+    }
+    char excess;
+    ssize_t extra;
+    do { extra = read(fd, &excess, 1); } while (extra < 0 && errno == EINTR);
+    close(fd);
+    return offset == data.length && extra == 0 && data.length ? data : nil;
+}
+
+static BOOL VerifiedPrecacheKiller(NSDictionary *profile) {
+    NSString *profileID = profile[@"id"];
+    if (!launchPackageIds.count || !ValidId(profileID)) return NO;
+    NSString *view = CanonicalSupportPath([[Base() stringByAppendingPathComponent:@"Views"]
+                                          stringByAppendingPathComponent:profileID]);
+    char data[4096], path[4096];
+    if (!view || skyrim_plugin_child_path(view.fileSystemRepresentation, "Data", data, sizeof data) != 1 ||
+        skyrim_precache_killer_path(data, path, sizeof path) != 1) return NO;
+    NSString *dllPath = [NSFileManager.defaultManager stringWithFileSystemRepresentation:path length:strlen(path)];
+    NSData *dll = ReadBoundedRegularFile(dllPath, 108032);
+    return dll.length == 108032 &&
+        [HexDigest(dll) isEqualToString:@"cec5d2b00f46867405e138702ab7fadcac949d5dded054a12f6d8ec2e70ba2e4"];
+}
+
+static bool SkipChargenPrecache(void) { return true; }  /* Only selected for the verified LE DLL. */
+
 static NSString *RaceMenuPresetLeaf(NSDictionary *package) {
     id name = package[@"archive"];
     if (![name isKindOfClass:NSString.class] || ![[name pathExtension].lowercaseString isEqualToString:@"jslot"])
@@ -374,31 +418,8 @@ static BOOL ReadRaceMenuPreset(NSDictionary *package, SkyrimRaceMenuPreset *pres
     if (!leaf || !directory || ![digest isKindOfClass:NSString.class] || [digest length] != 64) return NO;
     NSString *path = CanonicalSupportPath([[directory stringByAppendingPathComponent:@"Data/SKSE/Plugins/CharGen/Presets"]
                                            stringByAppendingPathComponent:leaf]);
-    if (!path) return NO;
-    int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
-#ifdef O_NOFOLLOW_ANY
-    flags |= O_NOFOLLOW_ANY;
-#endif
-    int fd = open(path.fileSystemRepresentation, flags);
-    if (fd < 0) return NO;
-    struct stat st;
-    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || st.st_size > SKYRIM_RACEMENU_PRESET_LIMIT) {
-        close(fd);
-        return NO;
-    }
-    NSMutableData *data = [NSMutableData dataWithLength:(NSUInteger)st.st_size];
-    size_t offset = 0;
-    while (offset < data.length) {
-        ssize_t n = read(fd, (char *)data.mutableBytes + offset, data.length - offset);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) break;
-        offset += (size_t)n;
-    }
-    char excess;
-    ssize_t extra;
-    do { extra = read(fd, &excess, 1); } while (extra < 0 && errno == EINTR);
-    close(fd);
-    return offset == data.length && extra == 0 && [HexDigest(data) isEqual:digest] &&
+    NSData *data = ReadBoundedRegularFile(path, SKYRIM_RACEMENU_PRESET_LIMIT);
+    return data && [HexDigest(data) isEqual:digest] &&
         skyrim_racemenu_preset_parse(data.bytes, data.length, preset) == SKYRIM_RACEMENU_PRESET_OK;
 }
 
@@ -462,7 +483,8 @@ static void RaceMenuDidApply(void) {
  * guest starts. Returns the features whose groups were selected. */
 static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
     const uint32_t fuzGroups = PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD;
-    const uint32_t host = fuzGroups | PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER;
+    const uint32_t host = fuzGroups | PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER |
+                          PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE;
     const uint32_t compiled = pc_guest_mod_hooks_compiled();
     skyrim_mod_hook_plan(requested, compiled, host, plan);
     if (plan->groups & fuzGroups) {
@@ -480,6 +502,8 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
         table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load,
                                                  skyrim_classic_control_form_deleted};
     if (plan->groups & fuzGroups) skyrim_fuz_app_fill(&table);
+    if (plan->groups & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE)
+        table.chargen_precache = (PcGuestModChargenHooks){SkipChargenPrecache};
     if (plan->groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER)
         table.chargen_slider = (PcGuestModChargenSliderHooks){RaceMenuPendingValue, TakeRaceMenuNoseHeight, RaceMenuDidApply};
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
@@ -493,7 +517,7 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
 #endif
 
 /* Reasons: 0 enabled, 1 host implementation unavailable, 2 MOD not in the active packages, 3 safe mode or plugin list
- * failure, 4 the guest lacks the needed hook groups (rebuild it). */
+ * failure, 4 the guest lacks the needed hook groups (rebuild it), 5 the MOD version could not be verified. */
 static void FreezeFeatures(NSDictionary *profile) {
     NSMutableDictionary *enabledKeys = [NSMutableDictionary dictionary];
     SkyrimFeatureScan scan = FeatureScanFor(launchWithoutMods ? @[] : launchPackageIds);
@@ -504,6 +528,8 @@ static void FreezeFeatures(NSDictionary *profile) {
         reasons[f] = launchWithoutMods || launchPluginListFailed ? 3 : !skyrim_feature_implemented(f) ? 1
                    : !scan.features[f].providers ? 2 : 0;
 #ifdef SKYRIM_IOS_MOD_HOOKS
+        if (f == SKYRIM_FEATURE_PRECACHE_KILLER && FeatureSelected(profile, f) &&
+            !reasons[f] && !VerifiedPrecacheKiller(profile)) reasons[f] = 5;
         if (FeatureSelected(profile, f) && !reasons[f] && skyrim_mod_hook_requirements(f)) hooked |= 1u << f;
 #endif
     }
@@ -2129,7 +2155,7 @@ static NSString *FeatureName(unsigned feature) {
     switch (feature) {
     case SKYRIM_FEATURE_FUZ: return T(@"Fuz Ro D-oh 6.1 (subtitles and lip sync for unvoiced lines)", @"Fuz Ro D-oh 6.1（無音声の台詞に字幕と口の動き）");
     case SKYRIM_FEATURE_PAPYRUSUTIL: return T(@"PapyrusUtil (settings and saved values)", @"PapyrusUtil（設定と保存値）");
-    case SKYRIM_FEATURE_PRECACHE_KILLER: return @"ShowRaceMenu Precache Killer";
+    case SKYRIM_FEATURE_PRECACHE_KILLER: return @"ShowRaceMenu Precache Killer 1.3";
     case SKYRIM_FEATURE_RACEMENU: return @"RaceMenu";
     case SKYRIM_FEATURE_NIOVERRIDE: return @"NetImmerse Override";
     case SKYRIM_FEATURE_ECE: return @"Enhanced Character Edit";

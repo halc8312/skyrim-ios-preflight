@@ -370,7 +370,7 @@ python3 scripts/build_title_guest.py private/<stage> --classic-skse --mod-hooks 
 
 | 作業 | 内容 | Webで行うこと | 止まる条件・Codex |
 | --- | --- | --- | --- |
-| P6-1 ShowRaceMenu Precache Killer 1.3 | DLLを認識したら、ゲスト群 `CHARGEN_PRECACHE` で初回の先読み（`0x886AD0` の呼び出し）を省く。`experiments/classic-chargen-precache` の段階化をX3に組み込む | ゲスト側の既定値（元の呼び出しを実行）、ホストの判定、組み合わせの試験 | DLL自身のコード変更要求（X5）が `0x886AD0` 以外を含む場合は、残りを記録して停止する |
+| P6-1 ShowRaceMenu Precache Killer 1.3 | 有効なプロファイルにあるLE 1.3のDLLを照合したら、ゲスト群 `CHARGEN_PRECACHE` で元版と同じ先読みルーチン入口から戻る。`experiments/classic-chargen-precache` の段階化をX3に組み込む | ゲスト側の既定値、3つの呼び出し元とレジスタを維持すること、ホストの版とセットアップの判定 | 同じ髪型を選んで、表示と初回の所要時間を実機で比較する |
 | P6-2 KS Hairdos 1.10とApachii Sky Hair 1.6 Full | データだけ。マスター、LEのBSA、ヘッドパーツを含むプラグインの読み込み | プラグインとBSAの判定の試験 | 実機で髪の切り替え（標準の先読みとP6-1の両方） |
 | P6-3 Enhanced Camera 1.4 | DLLはフレームごとの描画処理を変更するため、代替処理なしでは動かない | X5で要求の一覧を表示する。ゲスト群 `CAMERA_OBSERVE` で `SetCameraState` の後に `experiments/classic-camera` の読み取りを呼び、`IOS_CAMERA_STATE slot=<n>` を出力する（状態が変わったときだけ） | 一覧と作者の説明から代替処理を設計するまで機能は「未対応」とする |
 | P6-4 Safety Load 1.2 | ロード中の待ちを変更するDLL | X5で要求の一覧を表示する | 要求とロードの経路を固定版生成物で照合してから判断する |
