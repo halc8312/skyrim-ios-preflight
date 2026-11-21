@@ -22,7 +22,7 @@ class MobileCoreTests(unittest.TestCase):
                 str(ROOT/"tests/native/test_mobile_core.c"),str(ROOT/"ios/runtime-port/mobile_core.c"),
                 "-lm","-o",str(binary)],check=True,timeout=60)
             result=subprocess.run([str(binary)],check=True,text=True,capture_output=True,timeout=15)
-            self.assertIn("concurrent snapshots PASS",result.stdout)
+            self.assertIn("menu overlay mode, concurrent snapshots PASS",result.stdout)
 
 
 if __name__=="__main__": unittest.main()

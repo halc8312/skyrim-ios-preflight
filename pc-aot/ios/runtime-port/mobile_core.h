@@ -39,6 +39,11 @@ void skyrim_mobile_camera(float dx, float dy, float seconds, float height,
  * A fresh sample is unchanged; a lift/cancel still clears immediately. */
 void skyrim_mobile_camera_age(int16_t x, int16_t y, uint64_t age_ns,
                               uint64_t sample_ns, int16_t *ox, int16_t *oy);
+/* Whether the on-screen game controls, HUD and top buttons are hidden because
+ * a full-screen game menu (inventory, magic, journal...) is open. Only the
+ * settings button stays. The layout editor always keeps the controls visible so
+ * that they can be moved. Pure; the caller supplies the observed menu state. */
+int skyrim_mobile_overlay_menu_mode(int menu_open, int editing);
 #ifdef __cplusplus
 }
 #endif

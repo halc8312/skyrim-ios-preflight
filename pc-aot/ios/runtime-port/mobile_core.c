@@ -173,3 +173,6 @@ uint64_t skyrim_mobile_frame_deadline(SkyrimFrameClock *clock, uint64_t now, uns
     clock->next = deadline + period;
     return deadline;
 }
+int skyrim_mobile_overlay_menu_mode(int menu_open, int editing) {
+    return menu_open && !editing;
+}

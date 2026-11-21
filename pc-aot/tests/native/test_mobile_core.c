@@ -163,5 +163,8 @@ int main(void) {
     for(unsigned i=0;i<30000;i++) {p=skyrim_mobile_pad();assert(p.rt==0||p.rt==255);(void)skyrim_mobile_f5_down();}
     assert(pthread_join(thread,NULL)==0);skyrim_mobile_clear();
     both_hands();
-    puts("MOBILE_CORE input, multitouch composition, tap/expiry, F5, thermal policy, pacing, both hands/cancel, concurrent snapshots PASS");
+    assert(!skyrim_mobile_overlay_menu_mode(0,0)&&!skyrim_mobile_overlay_menu_mode(0,1));
+    assert(skyrim_mobile_overlay_menu_mode(1,0)&&!skyrim_mobile_overlay_menu_mode(1,1)); /* editing keeps controls */
+    assert(skyrim_mobile_overlay_menu_mode(2,0)==1); /* any nonzero menu state, normalized */
+    puts("MOBILE_CORE input, multitouch composition, tap/expiry, F5, thermal policy, pacing, both hands/cancel, menu overlay mode, concurrent snapshots PASS");
 }
