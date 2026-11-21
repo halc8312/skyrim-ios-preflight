@@ -879,7 +879,44 @@ static void check_read_only_views(void) {
     assert(run(read, sizeof read, 10, services).status == SKSE_X86_BAD_ARGUMENT);
 }
 
+static void check_win32_guest_flags(void) {
+    uint8_t initial[] = {0x9c, 0x58, 0xc3}; // PUSHFD; POP EAX; RET
+    SkseX86Result result = ARRAY_RUN(initial);
+    assert(result.status == SKSE_X86_OK && result.eax == 0x202);
+
+    uint8_t set_all[] = {0x6a, 0xff, 0x9d, 0x9c, 0x58, 0xfc, 0xc3};
+    result = ARRAY_RUN(set_all);
+    assert(result.status == SKSE_X86_OK && result.eax == 0xed7);
+
+    uint8_t clear_all[] = {0x6a, 0xff, 0x9d, 0x6a, 0, 0x9d, 0x9c, 0x58, 0xc3};
+    result = ARRAY_RUN(clear_all);
+    assert(result.status == SKSE_X86_OK && result.eax == 0x202);
+
+    uint8_t carry_and_add[] = {0xb0, 0x0f, 0xf9, 0x14, 0, 0x9c, 0x58, 0xc3};
+    result = ARRAY_RUN(carry_and_add);
+    assert(result.status == SKSE_X86_OK && result.eax == 0x212);
+
+    uint8_t borrow_and_subtract[] = {0xb0, 0x10, 0xf9, 0x1c, 0, 0x9c, 0x58, 0xc3};
+    result = ARRAY_RUN(borrow_and_subtract);
+    assert(result.status == SKSE_X86_OK && result.eax == 0x216);
+
+    uint8_t identify[] = {
+        0x9c, 0x58, 0x89, 0xc1,             // Read and save EFLAGS.
+        0x35, 0, 0, 0x20, 0, 0x50, 0x9d,    // Try to change ID.
+        0x9c, 0x5a, 0x29, 0xca, 0x74, 2,    // Compare and branch past CPUID if unchanged.
+        0x0f, 0xa2, 0xc3
+    };
+    result = ARRAY_RUN(identify);
+    assert(result.status == SKSE_X86_OK && result.instructions == 11);
+    uint8_t cpuid[] = {0x0f, 0xa2, 0xc3};
+    result = ARRAY_RUN(cpuid);
+    assert(result.status == SKSE_X86_UNSUPPORTED_INSTRUCTION && result.instruction_va == image_base);
+    for (uint32_t feature = 0; feature < 64; ++feature)
+        assert(skse_win_processor_feature(feature) == (feature == 12));
+}
+
 int main(void) {
+    check_win32_guest_flags();
     // CALL forwards to another x86 region and that callee returns into the caller.
     uint8_t nested[] = {0xe8, 1, 0, 0, 0, 0xc3, 0xb8, 42, 0, 0, 0, 0xc3};
     SkseX86Result result = ARRAY_RUN(nested);

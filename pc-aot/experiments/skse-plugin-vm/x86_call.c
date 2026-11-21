@@ -6,7 +6,8 @@
 #include <string.h>
 
 enum { EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI };
-enum { CF = 1, PF = 4, ZF = 0x40, SF = 0x80, DF = 0x400, OF = 0x800 };
+enum { CF = 1, PF = 4, AF = 0x10, ZF = 0x40, SF = 0x80, DF = 0x400, OF = 0x800 };
+enum { USER_FLAGS = CF | PF | AF | ZF | SF | DF | OF, WIN32_FIXED_FLAGS = 0x202 };
 enum { ADD, OR, ADC, SBB, AND, SUB, XOR, CMP };
 enum { MAX_SCRATCH = 256 * 1024, MAX_ARGUMENTS = 16, MAX_STEPS = 1000000 };
 /* One approved LE .text view plus the small data snapshots read during init. */
@@ -411,6 +412,7 @@ static uint32_t alu(Vm *vm, unsigned op, unsigned width, uint32_t a, uint32_t b)
     uint32_t operand_signs = subtract ? a ^ b : ~(a ^ b);
     bool overflow = ((a ^ (uint32_t)wide) & operand_signs & sign_mask(width)) != 0;
     set_flags(vm, (uint32_t)wide, width, subtract ? a < right : wide > width_mask(width), overflow);
+    vm->flags |= (a ^ b ^ (uint32_t)wide) & AF;
     return (uint32_t)wide;
 }
 
@@ -2764,6 +2766,15 @@ static void step(Vm *vm) {
         write_operand(vm, reg(EDX), word, (a & sign_mask(word)) ? UINT32_MAX : 0);
         return;
     }
+    case 0x9c: // PUSHFD
+        if (word != 4) break;
+        push(vm, vm->flags | WIN32_FIXED_FLAGS);
+        return;
+    case 0x9d: // POPFD
+        if (word != 4) break;
+        // The guest only changes modeled user flags. ID stays clear: CPUID is unsupported.
+        vm->flags = pop(vm) & USER_FLAGS;
+        return;
     case 0xa0:
     case 0xa1:
     case 0xa2:
