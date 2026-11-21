@@ -113,6 +113,21 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [[title coordinateWithNormalizedOffset:CGVectorMake(.5, .5)] tap];
     XCTAssertTrue([self.app.navigationBars[name] waitForExistenceWithTimeout:8]);
 }
+- (void)setMod:(NSString *)name enabled:(BOOL)enabled {
+    XCUIElement *toggle = [self findRow:name].switches.firstMatch;
+    NSString *desired = enabled ? @"1" : @"0";
+    NSString *previous = enabled ? @"0" : @"1";
+    XCTAssertEqualObjects(toggle.value, previous);
+    CGRect frame = elementFrame(toggle);
+    CGRect navigation = elementFrame(self.app.navigationBars[@"MOD"]);
+    XCTAssertFalse(CGRectIsNull(frame));
+    XCTAssertFalse(CGRectIsNull(navigation));
+    XCTAssertGreaterThan(CGRectGetMidY(frame), CGRectGetMaxY(navigation));
+    [[toggle coordinateWithNormalizedOffset:CGVectorMake(.5, .5)] tap];
+    NSPredicate *value = [NSPredicate predicateWithFormat:@"value == %@", desired];
+    XCTNSPredicateExpectation *changed = [[XCTNSPredicateExpectation alloc] initWithPredicate:value object:toggle];
+    XCTAssertEqual([XCTWaiter waitForExpectations:@[changed] timeout:6], XCTWaiterResultCompleted);
+}
 - (void)goBackFrom:(NSString *)title {
     XCUIElement *bar = self.app.navigationBars[title];
     XCTAssertTrue([bar waitForExistenceWithTimeout:8], @"Missing navigation bar %@", title);
@@ -517,8 +532,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     NSPredicate *packageEnabled = [NSPredicate predicateWithFormat:@"value == %@", @"1"];
     XCTNSPredicateExpectation *assigned = [[XCTNSPredicateExpectation alloc] initWithPredicate:packageEnabled object:reused];
     XCTAssertEqual([XCTWaiter waitForExpectations:@[assigned] timeout:10], XCTWaiterResultCompleted);
-    [reused tap];
-    XCTAssertEqualObjects(reused.value, @"0");
+    [self setMod:@"AuthoredZip" enabled:NO];
     [[self findRow:@"Add an archive or character preset"] tap];
     [self pick:@"AuthoredZip.zip" folder:NO];
 
@@ -572,11 +586,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 
     // The disabled package's plugin row stays on in the selected profile.
     // The installer must use its effective state, with Default still running.
-    XCUIElement *prerequisite = [self findRow:@"AuthoredZip"].switches.firstMatch;
-    XCTAssertTrue(prerequisite.exists);
-    XCTAssertEqualObjects(prerequisite.value, @"1");
-    [prerequisite tap];
-    XCTAssertEqualObjects(prerequisite.value, @"0");
+    [self setMod:@"AuthoredZip" enabled:NO];
 
     [[self findRow:@"Add an archive or character preset"] tap];
     [self pick:@"AuthoredDlcConditions.zip" folder:NO];
@@ -648,10 +658,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
         XCTAssertFalse(self.app.staticTexts[name.stringByDeletingPathExtension].exists);
     }
 
-    prerequisite = [self findRow:@"AuthoredZip"].switches.firstMatch;
-    XCTAssertEqualObjects(prerequisite.value, @"0");
-    [prerequisite tap];
-    XCTAssertEqualObjects(prerequisite.value, @"1");
+    [self setMod:@"AuthoredZip" enabled:YES];
     [[self findRow:@"Find on Nexus Mods"] tap];
     XCTAssertTrue([self.app.navigationBars[@"Nexus Mods"] waitForExistenceWithTimeout:10]);
     XCTAssertTrue([self.app.webViews.firstMatch waitForExistenceWithTimeout:12]);
@@ -693,15 +700,14 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self goBackFrom:@"Profiles"];
     [[self findRow:@"Add BodySlide or FNIS output folder"] tap];
     [self pick:@"AuthoredGenerated" folder:YES];
-    [[self findRow:@"AuthoredGenerated"] tap];
+    [self openModDetails:@"AuthoredGenerated"];
     [self findRow:@"Added as generated output for this MOD setup."];
     [self goBackFrom:@"AuthoredGenerated"];
-    XCUIElement *basePackage = [self findRow:@"AuthoredFolder"].switches.firstMatch;
-    [basePackage tap];
-    [[self findRow:@"AuthoredGenerated"] tap];
+    [self setMod:@"AuthoredFolder" enabled:NO];
+    [self openModDetails:@"AuthoredGenerated"];
     [self findRow:@"These generated files were added with a different MOD setup. Regenerate for this profile."];
     [self goBackFrom:@"AuthoredGenerated"];
-    [[self findRow:@"AuthoredFolder"].switches.firstMatch tap];
+    [self setMod:@"AuthoredFolder" enabled:YES];
     [[self findRow:@"Default"] tap];
     [[self findRow:@"Trial Two"] tap];
     [self goBackFrom:@"Profiles"];
