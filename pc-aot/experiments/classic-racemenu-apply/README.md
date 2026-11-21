@@ -54,6 +54,28 @@ profile. Other RaceMenu sliders and extension data still need their
 own review.
 
 Enhanced Character Edit's numbered slot is already imported into
-`CME_save`. A controlled pair of real ECE 1.59 slots from the same
-character with one stock slider changed is needed to verify the
-format used for applying its contents. [ECE author documentation](https://skyrimshot.blogspot.com/2017/06/enhanced-character-edit.html)
+`CME_save`. In the owned ECE 1.59 archive, the human-race INI specifies ID
+12, type 200 and the left/right NoseDown and NoseUp morphs. Its LE DLL
+normalizes the INI type to continuous morph type 0 with option flags
+3. The default descriptor is -1 to +1. The slot writer formats its
+stored binary64 value directly as decimal, and the slot reader passes
+its stored value directly to the Scaleform position result. ECE's optional
+SliderScale changes the active bounds. The author describes retention
+of saved values and clamping when loading in an environment with a
+narrower range. [ECE author documentation](https://tktk1.net/skyrim/mymod/enhancedcharacteredit/)
+
+The pinned stock descriptor also starts at -1 to +1. Its FaceGen
+option 1 selects NoseDown for negative values and NoseUp for positive
+values. The ECE configuration can select and merge multiple TRI
+sources for the same named morph. The matched names, default bounds
+and decimal transport leave the ECE UI-to-output sign and magnitude
+and the resulting FaceGen effect under the selected race and setup
+unverified. Use a pair of actual exports with one known directed
+change on the same character, and compare the accepted stock input
+and face effect before connecting ECE to the stock apply path.
+
+The optional host audit in `tests/test_mod_ece_slot.py` checks the exact
+owner DLL's descriptor, writer and reader without executing it. Set
+`SKYRIM_TEST_ECE_CME_LIBRARY` to that unmodified LE DLL and use GNU
+objdump. The provided author preset and its altered test copy still
+exercise decimal parsing only.
