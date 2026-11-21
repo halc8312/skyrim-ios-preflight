@@ -20,6 +20,66 @@ static SkseGameEvent event = {
 static int held = -1, scratch = -1;
 static struct stat at_publication;
 static bool finish_seen;
+static SkyrimLifecycleScope lifecycle;
+
+static void *try_foreign_return(void *argument) {
+    const SkyrimLifecycleCall *foreign = argument;
+    SkyrimLifecycleScope other;
+    SkyrimLifecycleRow rows[2];
+    assert(skyrim_lifecycle_scope_open(&other));
+    SkyrimLifecycleCall slot = skyrim_lifecycle_begin(SkyrimSaveSlot);
+    assert(slot.ticket == foreign->ticket);
+    skyrim_lifecycle_end(*foreign, SkyrimNoResult);
+    skyrim_lifecycle_end(slot, SkyrimNoResult);
+    assert(skyrim_lifecycle_snapshot(rows, 2, NULL) == 2 && rows[1].returning && rows[1].ticket == slot.ticket);
+    assert(skyrim_lifecycle_scope_close(&other));
+    return NULL;
+}
+
+static void verify_scoped_lifecycle(void) {
+    /* Exhaust the passive diagnostic prefix, then run more fresh attempts
+     * than it could have witnessed. A delayed return cannot close a current
+     * attempt, even when both local tickets have the same value. */
+    for (unsigned i = 0; i < SkyrimLifecycleCapacity; ++i) {
+        SkyrimLifecycleCall call = skyrim_lifecycle_begin(SkyrimRegisterPapyrus);
+        skyrim_lifecycle_end(call, SkyrimNoResult);
+    }
+    assert(skyrim_lifecycle_scope_open(&lifecycle));
+    SkyrimLifecycleCall slot = skyrim_lifecycle_begin(SkyrimSaveSlot);
+    pthread_t worker;
+    assert(!pthread_create(&worker, NULL, try_foreign_return, &slot));
+    assert(!pthread_join(worker, NULL));
+    skyrim_lifecycle_end(slot, SkyrimNoResult);
+    assert(skyrim_lifecycle_scope_close(&lifecycle));
+    assert(skyrim_lifecycle_scope_open(&lifecycle));
+    SkyrimLifecycleCall cancelled = skyrim_lifecycle_begin(SkyrimSaveSlot);
+    assert(!skyrim_lifecycle_scope_close(&lifecycle));
+    for (unsigned i = 0; i < SkyrimLifecycleCapacity; ++i) {
+        SkyrimLifecycleRow rows[4];
+        uint64_t dropped;
+        assert(skyrim_lifecycle_scope_open(&lifecycle));
+        assert(!skyrim_lifecycle_scope_open(&lifecycle));
+        SkyrimLifecycleCall slot = skyrim_lifecycle_begin(SkyrimSaveSlot);
+        assert(slot.ticket == cancelled.ticket);
+        skyrim_lifecycle_end(cancelled, SkyrimNoResult);
+        SkyrimLifecycleCall vm = skyrim_lifecycle_begin(SkyrimSaveVM);
+        skyrim_lifecycle_end(vm, SkyrimReturnedTrue);
+        skyrim_lifecycle_end(slot, SkyrimNoResult);
+        assert(skyrim_lifecycle_snapshot(rows, 4, &dropped) == 4 && !dropped);
+        assert(rows[1].parent == slot.ticket && rows[2].outcome == SkyrimReturnedTrue &&
+               rows[3].returning && rows[3].ticket == slot.ticket);
+        assert(skyrim_lifecycle_scope_close(&lifecycle));
+    }
+    assert(skyrim_lifecycle_scope_open(&lifecycle));
+    for (unsigned i = 0; i < SkyrimLifecycleCapacity / 2; ++i) {
+        SkyrimLifecycleCall call = skyrim_lifecycle_begin(SkyrimRegisterPapyrus);
+        skyrim_lifecycle_end(call, SkyrimNoResult);
+    }
+    assert(!skyrim_lifecycle_begin(SkyrimRegisterPapyrus).ticket);
+    uint64_t dropped = 0;
+    skyrim_lifecycle_snapshot(NULL, 0, &dropped);
+    assert(dropped && !skyrim_lifecycle_scope_close(&lifecycle));
+}
 
 void save_roundtrip_configure(const char *name) {
     if (!strcmp(name, "committed")) mode = COMMIT;
@@ -41,6 +101,8 @@ void save_composition_open(const char *root) {
     assert(scratch >= 0);
     SksePairResult detail;
     assert(skse_bridge_open(root, &event.scope, &bridge, &detail) == SKSE_BRIDGE_OK);
+    verify_scoped_lifecycle();
+    assert(skyrim_lifecycle_scope_open(&lifecycle));
 }
 
 static SkseEventTrace save_trace(SkyrimLifecycleRow rows[SkyrimLifecycleCapacity]) {
@@ -114,6 +176,7 @@ void save_composition_close(void) {
     assert(bridge && pending && finish_seen && roundtrip_digest_bytes() == 0);
     SkyrimLifecycleRow rows[SkyrimLifecycleCapacity];
     const SkseEventTrace trace = save_trace(rows);
+    assert(skyrim_lifecycle_scope_close(&lifecycle));
     if (mode == STALE_INPUT) replace_saved_path(ROUNDTRIP_ORIGINAL);
     bool matched = false;
     if (held >= 0) {

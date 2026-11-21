@@ -6,6 +6,8 @@ The save callback retains the runtime observer's exact published read-only descr
 
 The loader opens the published `.ess` at the reviewed fresh-open site. The existing load bridge hands it a distinct sealed read-only descriptor at offset zero. It reads the authored preflight byte and the first slot byte from that descriptor, verifies the recorded VM revert and true VM return, and checks the same descriptor during completion. On success, it validates the exported Classic `.skse` image and the original owner record through the existing record parser.
 
+Each attempt opens an owner-thread lifecycle scope before the first observed call and closes it before handing storage work to a worker. The scope has its own bounded trace and can record a new attempt after the process-wide diagnostic prefix fills. The save fixture exhausts that prefix, records 256 subsequent save attempts, and checks that delayed returns from a cancelled attempt cannot complete a later attempt with the same local ticket. A full or unfinished attempt is rejected.
+
 | Case | Expected persisted result |
 | --- | --- |
 | Published save and successful VM save | Fresh load returns the exact owner record. |

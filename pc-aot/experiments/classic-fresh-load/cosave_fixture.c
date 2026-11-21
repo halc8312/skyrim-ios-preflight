@@ -40,6 +40,7 @@ static size_t before_count, read_count;
 static enum ClassicCosaveCase test_case;
 static unsigned vm_reverts, vm_loads;
 static uint32_t vm_stream, vm_frame;
+static SkyrimLifecycleScope lifecycle;
 
 void f_8D6990(CPU *);
 void f_8D69C0(CPU *);
@@ -122,6 +123,7 @@ void classic_cosave_fixture_init(const char *directory, const char *selected) {
 
 void classic_cosave_fixture_begin(enum ClassicCosaveCase mode) {
     assert(!pending && loader < 0);
+    assert(skyrim_lifecycle_scope_open(&lifecycle));
     test_case = mode;
     vm_reverts = vm_loads = 0;
     read_count = 0;
@@ -242,6 +244,7 @@ void classic_cosave_fixture_finish(ClassicFreshReport report, const char *other)
         assert(report.result == CLASSIC_FRESH_CACHED && report.slot_ok && report.outer_ok);
         assert(!pending && loader < 0 && !read_count && roundtrip_digest_bytes() == 0);
         assert(vm_reverts == 1 && vm_loads == 1);
+        assert(skyrim_lifecycle_scope_close(&lifecycle));
         return;
     }
 #endif
@@ -251,6 +254,7 @@ void classic_cosave_fixture_finish(ClassicFreshReport report, const char *other)
     SkseEventTrace trace = {.rows = rows};
     memcpy(trace.launch, event.scope.launch, sizeof trace.launch);
     trace.count = skyrim_lifecycle_snapshot(rows, SkyrimLifecycleCapacity, &trace.dropped);
+    assert(skyrim_lifecycle_scope_close(&lifecycle));
     uint32_t actual_ticket = 0;
     bool returned = false;
     for (size_t i = before_count; i < trace.count; ++i) {
