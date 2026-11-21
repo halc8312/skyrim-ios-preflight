@@ -10,6 +10,8 @@ The test uses an authored actor and node. The experiment is unlinked. Connecting
 
 The private task-queue fixture uses one of the two call sites reviewed in Classic SKSE 1.7.3 Hooks_Threads.cpp. It observes the original ProcessTaskQueue return at 0x69110B in the reviewed lift, then executes the original tail. The host test substitutes authored queue operations, compares the resulting guest registers, flags, stack, memory word and call order, and checks that only the opted-in invoking owner receives the notification. This host evidence covers the call boundary. An actual game trace still needs to establish scene ownership, reference lifetime, and the equip/effect request path.
 
+The private item-delivery fixture observes the primary item-specific VM call in 0x8C9910 after return at 0x8C9B6A. On the exercised path the game has borrowed the actor reference before calling the VM and releases it afterwards. The observer records the phase captured before the call. The fixture compares equip and unequip with the original path and exercises an actor-only delivery with no matching item. It preserves the actor reference count, TLS word, registers, flags, and stack. The alternate item delivery and real VM execution still require a game trace. A notification by itself supplies neither a durable actor identifier nor the effect instance or magnitude. The owned scripts obtain those through their active magic effect and use KeepUpdate/StopUpdate after entering the effect. That edge has no witnessed runtime call because the owned DLL probe stops before SKSE registration. The item observer therefore cannot activate a height change.
+
 Run locally with a C11 compiler:
 
 ~~~sh
@@ -18,4 +20,4 @@ python3 -B -m unittest -v test_highheel_height
 SKYRIM_TEST_SANITIZERS=1 python3 -B -m unittest -v test_highheel_height
 ~~~
 
-Set SKYRIM_TEST_OWNED_CLASSIC_LIFT to the reviewed private LE generation to include the task-queue ABI test on a POSIX host.
+Set SKYRIM_TEST_OWNED_CLASSIC_LIFT to the reviewed private LE generation to include the task-queue and item-delivery ABI tests on a POSIX host.

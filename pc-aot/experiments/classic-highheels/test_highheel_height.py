@@ -10,7 +10,8 @@ import sys
 import tempfile
 import unittest
 
-from stage_task_queue import UNIT, private_fixture
+import stage_item_delivery
+import stage_task_queue
 
 
 HERE = Path(__file__).resolve().parent
@@ -43,11 +44,25 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             result = subprocess.check_output([binary], text=True, timeout=10)
             self.assertEqual(result.strip(), "6 Classic HighHeels host scenarios passed")
 
-    def test_unreviewed_queue_caller_is_refused(self):
-        with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
-            private_fixture(b"authored task queue stand-in")
+    def test_unreviewed_lift_is_refused(self):
+        for stage in (stage_task_queue, stage_item_delivery):
+            with self.subTest(unit=stage.UNIT):
+                with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
+                    stage.private_fixture(b"authored stand-in")
 
     def test_reviewed_task_queue_owner_and_original_state(self):
+        self.run_reviewed_fixture(
+            stage_task_queue, "test_task_queue_lift.c",
+            "Classic task queue observation preserved the original guest state and owner",
+        )
+
+    def test_primary_item_delivery_preserves_borrowed_actor_and_state(self):
+        self.run_reviewed_fixture(
+            stage_item_delivery, "test_item_delivery_lift.c",
+            "Classic primary item equip and unequip delivery preserves the borrowed reference and guest state",
+        )
+
+    def run_reviewed_fixture(self, stage, test, expected_output):
         supplied_generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
         cc = shutil.which(os.environ.get("CC", "cc"))
         if not (supplied_generation and cc and os.name == "posix"):
@@ -61,7 +76,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         runtime = generation / "source/runtime"
         for name, digest in RUNTIME_HEADERS.items():
             self.assertEqual(sha256((runtime / name).read_bytes()).hexdigest(), digest, name)
-        source = generation / "gen" / UNIT
+        source = generation / "gen" / stage.UNIT
         original = source.read_bytes()
         flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O2", "-pthread"]
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
@@ -75,16 +90,16 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         private.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="classic-highheel-queue-", dir=private) as directory:
             scratch = Path(directory)
-            staged = scratch / "lifted_task_queue.c"
-            staged.write_bytes(private_fixture(original))
-            binary = scratch / "task_queue"
+            staged = scratch / "lifted.c"
+            staged.write_bytes(stage.private_fixture(original))
+            binary = scratch / "classic_fixture"
             subprocess.run(
                 [cc, *flags, "-isystem", generation / "gen", "-isystem", runtime, "-I", native,
-                 staged, HERE / "test_task_queue_lift.c", native / "guest_memory.c", "-o", binary],
+                 staged, HERE / test, native / "guest_memory.c", "-o", binary],
                 check=True, timeout=60,
             )
             result = subprocess.check_output([binary], text=True, timeout=10)
-            self.assertEqual(result.strip(), "Classic task queue observation preserved the original guest state and owner")
+            self.assertEqual(result.strip(), expected_output)
         self.assertEqual(source.read_bytes(), original)
 
 
