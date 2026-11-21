@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 
-from stage_allocator import BYPASS, DECLARATION, UNIT, allocator_region, stage_allocator
+from stage_allocator import BYPASS, DECLARATION, ONE_SHOT, UNIT, allocator_region, stage_allocator
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -35,14 +35,17 @@ class AllocatorTests(unittest.TestCase):
         original = source.read_bytes()
         staged = stage_allocator(original)
         self.assertEqual(staged.count(BYPASS), 1)
-        self.assertEqual(staged.removeprefix(DECLARATION).replace(BYPASS, b"", 1), original)
+        self.assertEqual(staged.removeprefix(DECLARATION).replace(BYPASS, b"", 1).replace(ONE_SHOT, b"", 1),
+                         original)
 
         def fixture(variant, body):
             start, end = allocator_region(body)
+            finish = body.index(b"L_A48F0F:\n", end)
             return (f"void {variant}_allocator(CPU *c) {{\n".encode() +
+                    (ONE_SHOT if variant == "staged" else b"") +
                     b"    uint32_t eax, ecx, edx, ebx, esp, ebp, esi, edi; Flags f;\n"
-                    b"    RELOAD();\n    goto L_A48E9C;\n" + body[start:end] +
-                    b"L_A48EDB:\n    SPILL();\n}\n")
+                    b"    RELOAD();\n    goto L_A48E9C;\n" + body[start:finish] +
+                    b"L_A48DD2:\n    goto L_A48E9C;\nL_A48F0F:\n    SPILL();\n}\n")
 
         flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O2"]
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":

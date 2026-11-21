@@ -4,12 +4,13 @@
 
 #include <assert.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 
-enum { STACK = 0x12F00, ALLOCATION_SIZE = 1238, ORIGINAL_RESULT = 0x73100,
+enum { STACK = 0x12F00, HEAP_OWNER = 0x12400, ALLOCATION_SIZE = 1238, ORIGINAL_RESULT = 0x73100,
        PLAIN_RESULT = 0x74100, ALIGNED_RESULT = 0x75100, ALIGNMENT = 32 };
 uint8_t *MEM;
-static bool enabled, loading, chargen, original_allows_fallback;
+static bool enabled, loading, chargen, original_allows_fallback, refuse_next_allocation;
 static unsigned checks, reclaims, plain, aligned;
 static uint32_t expected_mode, expected_size;
 
@@ -19,6 +20,9 @@ bool skyrim_safety_load_bypass_reclamation(void);
 void f_A48C80(CPU *c);
 void f_F568FA(CPU *c);
 void f_F587F5(CPU *c);
+void f_A4EE00(CPU *c);
+
+void f_A4EE00(CPU *c) { (void)c; abort(); } /* Fixture disables the separate small pool. */
 
 bool skyrim_safety_load_bypass_reclamation(void) {
     ++checks;
@@ -37,7 +41,8 @@ void f_A48C80(CPU *c) {
 
 void f_F568FA(CPU *c) {
     assert(M32(c->r[4]) == 0xA48ED6 && M32(c->r[4] + 4) == expected_size);
-    c->r[0] = PLAIN_RESULT;
+    c->r[0] = refuse_next_allocation ? 0 : PLAIN_RESULT;
+    refuse_next_allocation = false;
     c->r[4] += 4;
     ++plain;
 }
@@ -45,7 +50,8 @@ void f_F568FA(CPU *c) {
 void f_F587F5(CPU *c) {
     assert(M32(c->r[4]) == 0xA48ECB && M32(c->r[4] + 4) == expected_size);
     assert(M32(c->r[4] + 8) == ALIGNMENT);
-    c->r[0] = ALIGNED_RESULT;
+    c->r[0] = refuse_next_allocation ? 0 : ALIGNED_RESULT;
+    refuse_next_allocation = false;
     c->r[4] += 4;
     ++aligned;
 }
@@ -58,7 +64,7 @@ static CPU run(void (*entry)(CPU *), uint32_t mode, uint32_t size, bool uses_ali
     c.r[1] = 0x2345;
     c.r[3] = 0x3456;
     c.r[4] = STACK;
-    c.r[5] = 0x4567;
+    c.r[5] = HEAP_OWNER;
     c.r[6] = size;
     M32(STACK + 0x1C) = mode;
     M32(STACK + 0x28) = 0;
@@ -86,6 +92,7 @@ int main(void) {
     assert(gm_reserve(&space, NULL));
     assert(gm_commit_page(&space, (uint64_t)STACK / space.page_size * space.page_size, NULL));
     MEM = space.base;
+    M8(HEAP_OWNER + 0x221) = 1;
 
     expect_unchanged(0, ALLOCATION_SIZE, false, true);
     enabled = true;
@@ -107,6 +114,17 @@ int main(void) {
     CPU direct_aligned = run(staged_allocator, 0, ALLOCATION_SIZE, true);
     assert(!reclaims && plain == 1 && aligned == 1 && checks == 2);
     assert(direct_aligned.r[3] == ALIGNED_RESULT && M32(STACK + 0x1C) == 0);
+
+    for (unsigned uses_alignment = 0; uses_alignment < 2; ++uses_alignment) {
+        checks = reclaims = plain = aligned = 0;
+        refuse_next_allocation = true;
+        original_allows_fallback = true;
+        const CPU retried = run(staged_allocator, 0, ALLOCATION_SIZE, uses_alignment);
+        assert(checks == 1 && reclaims == 1 && !refuse_next_allocation);
+        assert(plain == 2 * !uses_alignment && aligned == 2 * uses_alignment);
+        assert(retried.r[3] == (uses_alignment ? ALIGNED_RESULT : PLAIN_RESULT));
+        assert(M32(STACK + 0x1C) == ORIGINAL_RESULT);
+    }
 
     loading = false;
     expect_unchanged(0, ALLOCATION_SIZE, false, true);

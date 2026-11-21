@@ -11,10 +11,13 @@ START = b"L_A48E9C:\n"
 END = b"L_A48EDB:\n"
 ENTRY = b"\nvoid f_A48D60(CPU *c) {\n"
 ANCHOR = b"    ecx = (uint32_t)((uint32_t)(esp + 0x28u));\n"
+ONE_SHOT = b"    bool skyrim_safety_load_bypassed = false;\n"
 
 # This stage models only the small-allocation branch of the original 1.2 DLL.
 # The guest retains both original fallback allocators and their cleanup.
-BYPASS = (b"    if (edx == 0 && esi != 0 && esi < 0x10000000u && skyrim_safety_load_bypass_reclamation()) {\n"
+BYPASS = (b"    if (!skyrim_safety_load_bypassed && edx == 0 && esi != 0 && esi < 0x10000000u\n"
+          b"            && skyrim_safety_load_bypass_reclamation()) {\n"
+          b"        skyrim_safety_load_bypassed = true;\n"
           b"        M32(esp + 0x1Cu) = 0;\n"
           b"        ecx = ebp;\n"
           b"        goto L_A48EB9;\n"
@@ -39,4 +42,5 @@ def stage_allocator(unit: bytes) -> bytes:
     region = unit[start:end]
     if sha256(region).hexdigest() != REGION_HASH or region.count(ANCHOR) != 1:
         raise ValueError("Allocator branch differs from the reviewed Classic lift")
-    return DECLARATION + unit[:start] + region.replace(ANCHOR, BYPASS + ANCHOR, 1) + unit[end:]
+    return (DECLARATION + unit[:start].replace(ENTRY, ENTRY + ONE_SHOT, 1)
+            + region.replace(ANCHOR, BYPASS + ANCHOR, 1) + unit[end:])
