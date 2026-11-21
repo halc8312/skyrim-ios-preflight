@@ -30,7 +30,7 @@ GROUPS = {
     "loading_menu_observe": 128, "inventory_fit": 256, "safety_load": 512,
     "camera_render_observe": 1024, "ece_tri_observe": 2048, "fresh_load": 4096,
     "camera_cull_observe": 8192, "ece_nose_observe": 16384,
-    "highheel_pex_observe": 32768,
+    "highheel_pex_observe": 32768, "highheel_scene_observe": 65536,
 }
 FRESH_LOAD_DEPS = GROUPS["save_lifecycle"] | GROUPS["vm_lifecycle"]
 # The interface header and the reviewed seam headers its tables use; the IPA
@@ -272,6 +272,20 @@ def stage_highheel_pex_observe(root: Path) -> dict[str, bytes]:
     return {unit: b'#include "PcGuestModHooksABI.h"\n' + source[:start] + b"".join(lines) + source[end:]}
 
 
+def stage_highheel_scene_observe(root: Path, staged: dict[str, bytes]) -> dict[str, bytes]:
+    stage = load(EXPERIMENTS / "classic-highheels", "stage_scene_app")
+    result = {}
+    for name in stage.DIGESTS:
+        original = (root / "gen" / name).read_bytes()
+        base = staged.get(name, original)
+        if base != original:
+            cull = load(EXPERIMENTS / "classic-camera", "stage_camera_cull_trial")
+            if name != "exe_275.c" or base != cull.stage_camera_cull_trial(name, original, runtime_base=original):
+                raise ValueError(f"{name}: unreviewed earlier stage overlaps the HighHeels scene witness")
+        result[name] = stage.apply(name, original, base)
+    return result
+
+
 def stage_vm_lifecycle(root: Path) -> dict[str, bytes]:
     sites = [*VM_SITES, VM_SCRIPT_RELOAD_SITE]
     staged: dict[str, bytes] = {}
@@ -309,6 +323,7 @@ STAGES = {
     "save_lifecycle": stage_save_lifecycle,
     "fresh_load": stage_fresh_load,
     "highheel_pex_observe": stage_highheel_pex_observe,
+    "highheel_scene_observe": stage_highheel_scene_observe,
 }
 
 
@@ -319,7 +334,7 @@ def compose(root: Path, mask: int) -> dict[str, bytes]:
     for name in group_names(mask):
         if mask & GROUPS["fresh_load"] and name in ("save_lifecycle", "vm_lifecycle"):
             continue  # the verified combined stage includes both original edits
-        if name in ("camera_cull_observe", "ece_nose_observe"):
+        if name in ("camera_cull_observe", "ece_nose_observe", "highheel_scene_observe"):
             # Each observer checks the exact prior stages it can share a unit with.
             staged.update(STAGES[name](root, staged))
             continue

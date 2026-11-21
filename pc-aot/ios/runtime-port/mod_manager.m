@@ -44,6 +44,7 @@
 #include "mod_racemenu_preset.h"
 #include "mod_save_host.h"
 #include "mod_highheel_pex_host.h"
+#include "mod_highheel_scene_host.h"
 /* classic_skse_control.h, in the staged skse_system.c */
 void skyrim_classic_control_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle);
 #endif
@@ -607,11 +608,16 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
 #endif
     }
     const uint32_t heelGroups = PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE;
-    if (!launchWithoutMods && !launchPluginListFailed && skyrim_mobile_verbose() && (compiled & heelGroups) == heelGroups) {
+    const BOOL heelPex = (compiled & heelGroups) == heelGroups;
+    const BOOL heelScene = (compiled & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) && skyrim_camera_app_ready();
+    if (!launchWithoutMods && !launchPluginListFailed && skyrim_mobile_verbose() && (heelPex || heelScene)) {
         for (NSString *name in skyrim_mobile_loaded_plugins()) {
             if ([name caseInsensitiveCompare:@"hdtHighHeel.esm"] == NSOrderedSame) {
-                skyrim_highheel_pex_configure(DigestHighHeelPex);
-                plan->groups |= heelGroups;
+                if (heelPex) {
+                    skyrim_highheel_pex_configure(DigestHighHeelPex);
+                    plan->groups |= heelGroups;
+                }
+                if (heelScene) plan->groups |= PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE;
                 break;
             }
         }
@@ -634,6 +640,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
         table.ece_tri = (PcGuestModEceTriHooks){skyrim_ece_tri_app_begin, skyrim_ece_tri_app_finish};
     if (plan->groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) table.ece_nose.notify = skyrim_ece_nose_app_observe;
     if (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE) skyrim_highheel_pex_fill(&table);
+    if (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) skyrim_highheel_scene_fill(&table);
     if (plan->groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) skyrim_save_app_fill(&table);
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
     /* Keep the original paths: select nothing. */

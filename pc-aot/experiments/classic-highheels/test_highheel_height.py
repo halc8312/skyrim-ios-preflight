@@ -16,6 +16,7 @@ import stage_effect_event
 import stage_effect_magnitude
 import stage_item_delivery
 import stage_pex_proof
+import stage_scene_app
 import stage_scene_refresh
 import stage_scene_witness
 import stage_task_queue
@@ -55,7 +56,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
     def test_unreviewed_lift_is_refused(self):
         for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude,
                       stage_effect_call, stage_effect_event, stage_scene_refresh, stage_pex_proof,
-                      stage_scene_witness):
+                      stage_scene_witness, stage_scene_app):
             with self.subTest(unit=stage.UNIT):
                 with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
                     unit_count = 1 + len(getattr(stage, "DEPENDENCIES", ()))
@@ -119,7 +120,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.run_reviewed_fixture(
             stage_pex_proof, "test_pex_proof_lift.c",
             "Classic HighHeels PEX witness joins fresh Store reads, successful parsing and linked class state",
-            arguments=(pex,),
+            runs=(((pex,), None),),
         )
         self.assertEqual(pex.read_bytes(), contents)
 
@@ -168,6 +169,21 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.run_reviewed_fixture(
             stage_scene_witness, "test_scene_witness_lift.c",
             "Classic third-person traversal witnesses five actual named nodes without changing the scene",
+        )
+
+    def test_reviewed_app_scene_diagnostics_are_passive_and_one_shot(self):
+        port = ROOT / "ios/runtime-port"
+        abi = ROOT / "ios/private-abi"
+        ordinary = "IOS_CLASSIC_HIGHHEEL_SCENE schema=1 root={} names={} duplicate={} limited={}\n"
+        cases = ((1, 31, 0, 0), (2, 31, 0, 0), (1, 15, 0, 0), (2, 15, 0, 0),
+                 (1, 15, 0, 1), (1, 15, 1, 0), (1, 31, 0, 1), None, None)
+        self.run_reviewed_fixture(
+            stage_scene_app, "test_scene_witness_lift.c",
+            "Classic third-person traversal witnesses five actual named nodes without changing the scene",
+            extra_sources=(port / "mod_highheel_scene_host.c", abi / "pc_guest_mod_hooks_library.c"),
+            extra_flags=("-I", port, "-I", abi, "-I", ROOT / "experiments/fuz-voice",
+                         "-DSKYRIM_TEST_SCENE_RUNTIME=1", "-DPC_GUEST_MOD_HOOKS_COMPILED=65536u"),
+            runs=tuple(((str(i),), ordinary.format(*fields) if fields else "") for i, fields in enumerate(cases)),
         )
 
     def test_owned_effect_native_argument_boundaries(self):
@@ -255,7 +271,8 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.assertEqual(library.read_bytes(), contents)
 
 
-    def run_reviewed_fixture(self, stage, test, expected_output, *, extra_sources=(), arguments=()):
+    def run_reviewed_fixture(self, stage, test, expected_output, *, extra_sources=(), extra_flags=(),
+                             runs=(((), None),)):
         supplied_generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
         cc = shutil.which(os.environ.get("CC", "cc"))
         if not (supplied_generation and cc and os.name == "posix"):
@@ -287,12 +304,16 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             staged.write_bytes(stage.private_fixture(*originals))
             binary = scratch / "classic_fixture"
             subprocess.run(
-                [cc, *flags, "-isystem", generation / "gen", "-isystem", runtime, "-I", native,
+                [cc, *flags, *extra_flags, "-isystem", generation / "gen", "-isystem", runtime, "-I", native,
                  staged, HERE / test, *extra_sources, native / "guest_memory.c", "-lm", "-o", binary],
                 check=True, timeout=60,
             )
-            result = subprocess.check_output([binary, *arguments], text=True, timeout=10)
-            self.assertEqual(result.strip(), expected_output)
+            for arguments, expected_stderr in runs:
+                result = subprocess.run([binary, *arguments], capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected_output)
+                if expected_stderr is not None:
+                    self.assertEqual(result.stderr, expected_stderr)
         for source, original in zip(sources, originals):
             self.assertEqual(source.read_bytes(), original)
 

@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "funcs_exe.h"
 #include "lift_prelude.h"
+#ifdef SKYRIM_TEST_SCENE_RUNTIME
+#include "mod_highheel_scene_host.h"
+#endif
 
 #include <assert.h>
 #include <stdbool.h>
@@ -9,15 +12,15 @@
 #include <string.h>
 
 enum {
-    TLS = 0x1000, TLS_TABLE = 0x1100, TLS_DATA = 0x1200, PLAYER = 0x2000,
-    LOADED = 0x2700, ROOT = 0x2800, OTHER_ROOT = 0x2900, CHILD = 0x2a00,
-    ROOT_CHILDREN = 0x3000, BONE_CHILDREN = 0x3100, FLAT_RECORD = 0x3200, EXTRA_NODES = 0x4000, STACK = 0x6000,
+    TLS = 0x11000, TLS_TABLE = 0x11100, TLS_DATA = 0x11200, PLAYER = 0x12000,
+    LOADED = 0x12700, ROOT = 0x12800, OTHER_ROOT = 0x12900, CHILD = 0x12a00,
+    ROOT_CHILDREN = 0x13000, BONE_CHILDREN = 0x13100, FLAT_RECORD = 0x13400, EXTRA_NODES = 0x14000, STACK = 0x1d000,
     ACTOR_TABLE = 0x10d201c, NODE_TABLE = 0x11171a4, FLAT_TABLE = 0x11186a4,
     STOCK_NAMES = 0x12e2fc0, DELTA = 0x12e355c, TLS_INDEX = 0x1bbeb54,
     GET_ROOT = 0x735080, UPDATE = 0xaad9a0, UPDATE_FLAT = 0xabdf60, REFRESH = 0xab53e0,
     ROOT_CALL = 0xaaf336, CHILD_FIRST = 0xaada3f, CHILD_OTHER = 0xaadabf,
     WORLD_DATA_CALL = 0xaad9e1, FULL_MASK = 31, RIGHT_CALF = 16, LAST_NODE = 4,
-    BONE_VISIT_CAP = 24, SNAPSHOT_SIZE = 0x6040, IMAGE_LIMIT = 0x1bc0000
+    BONE_VISIT_CAP = 128, SNAPSHOT_SIZE = 0x1d040, IMAGE_LIMIT = 0x1bc0000
 };
 
 static const uint32_t name_slots[] = {4, 0x1c, 0x20, 0x24, 0x28};
@@ -37,6 +40,12 @@ uint8_t *MEM;
 static _Thread_local Witness *witness;
 
 void fixture_update_third_person(CPU *cpu);
+
+#ifdef SKYRIM_TEST_SCENE_RUNTIME
+const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uint32_t table_bytes);
+static CPU *runtime_cpu;
+struct CPU *rt_current_cpu(void) { return runtime_cpu; }
+#endif
 
 static unsigned named_bit(uint32_t name)
 {
@@ -180,7 +189,13 @@ static Result run(Scenario mode, bool observe)
     CPU cpu = {.r = {1, PLAYER, 3, 4, STACK, 6, PLAYER, 8}, .fs_base = TLS};
     Witness sample = {.owner = &cpu};
     witness = observe ? &sample : NULL;
+#ifdef SKYRIM_TEST_SCENE_RUNTIME
+    runtime_cpu = &cpu;
+#endif
     fixture_update_third_person(&cpu);
+#ifdef SKYRIM_TEST_SCENE_RUNTIME
+    runtime_cpu = NULL;
+#endif
     witness = NULL;
     assert(cpu.r[4] == STACK && !sample.receiver && !sample.member);
     const bool complete = sample.named == FULL_MASK && !sample.ambiguous && sample.visits <= BONE_VISIT_CAP;
@@ -203,7 +218,15 @@ static Result run(Scenario mode, bool observe)
     return final;
 }
 
-int main(void)
+static void equal_results(const Result *ordinary, const Result *observed)
+{
+    assert(!memcmp(ordinary->cpu.r, observed->cpu.r, sizeof ordinary->cpu.r));
+    assert(!memcmp(&ordinary->cpu.flags, &observed->cpu.flags, sizeof ordinary->cpu.flags));
+    assert(ordinary->cpu.top == observed->cpu.top && ordinary->cpu.fs_base == observed->cpu.fs_base);
+    assert(!memcmp(ordinary->memory, observed->memory, sizeof ordinary->memory));
+}
+
+int main(int argc, char **argv)
 {
     MEM = calloc(IMAGE_LIMIT, 1);
     assert(MEM && !M32(TLS_INDEX));
@@ -213,14 +236,30 @@ int main(void)
     M32(NODE_TABLE + 0xb4) = M32(FLAT_TABLE + 0xb4) = REFRESH;
     M32(DELTA) = 0x3c888889;
     for (unsigned i = 0; i <= LAST_NODE; ++i)
-        M32(STOCK_NAMES + name_slots[i]) = 0x3800 + i * 8;
+        M32(STOCK_NAMES + name_slots[i]) = 0x13800 + i * 8;
+#ifdef SKYRIM_TEST_SCENE_RUNTIME
+    assert(argc == 2 && strlen(argv[1]) == 1);
+    const int mode = argv[1][0] - '0';
+    assert(mode >= COMPLETE && mode <= UNLOADED);
+    const Result ordinary = run((Scenario)mode, false);
+    PcGuestModHooks host = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof host,
+                            .groups = PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE};
+    const PcGuestModHooksGuest *guest = skyrim_guest_bind_mod_hooks_v1(PC_GUEST_MOD_HOOKS_ABI, sizeof host);
+    skyrim_highheel_scene_fill(&host);
+    assert(guest && guest->compiled_groups == host.groups && guest->select(&host) == 0);
+    const Result observed = run((Scenario)mode, true);
+    equal_results(&ordinary, &observed);
+    /* A completed stock update gets only one line across the launch. */
+    const Result repeated = run((Scenario)mode, true);
+    equal_results(&ordinary, &repeated);
+#else
+    assert(argc == 1);
+    (void)argv;
     for (Scenario mode = COMPLETE; mode <= UNLOADED; ++mode) {
         const Result ordinary = run(mode, false), observed = run(mode, true);
-        assert(!memcmp(ordinary.cpu.r, observed.cpu.r, sizeof ordinary.cpu.r));
-        assert(!memcmp(&ordinary.cpu.flags, &observed.cpu.flags, sizeof ordinary.cpu.flags));
-        assert(ordinary.cpu.top == observed.cpu.top && ordinary.cpu.fs_base == observed.cpu.fs_base);
-        assert(!memcmp(ordinary.memory, observed.memory, sizeof ordinary.memory));
+        equal_results(&ordinary, &observed);
     }
+#endif
     free(MEM);
     puts("Classic third-person traversal witnesses five actual named nodes without changing the scene");
 }

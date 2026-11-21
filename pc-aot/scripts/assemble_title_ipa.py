@@ -18,7 +18,7 @@ MOD_HOOK_HEADERS = {
     "lift_voice_seam.h": "experiments/fuz-voice",
     "voice_fallback.h": "experiments/fuz-voice",
 }
-MOD_HOOK_GROUPS_DEFINED = 63 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 | 32768  # Version 1
+MOD_HOOK_GROUPS_DEFINED = 63 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 | 32768 | 65536  # Version 1
 
 
 def load_diagnostics_pairing(path):

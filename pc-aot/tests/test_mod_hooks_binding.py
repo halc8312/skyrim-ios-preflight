@@ -51,7 +51,8 @@ class GroupRules(unittest.TestCase):
                             ("CAMERA_OBSERVE", 16), ("CHARGEN_SLIDER", 32), ("SAVE_LIFECYCLE", 64),
                             ("LOADING_MENU_OBSERVE", 128), ("INVENTORY_FIT", 256), ("SAFETY_LOAD", 512),
                             ("CAMERA_RENDER_OBSERVE", 1024), ("ECE_TRI_OBSERVE", 2048), ("FRESH_LOAD", 4096),
-                            ("CAMERA_CULL_OBSERVE", 8192), ("ECE_NOSE_OBSERVE", 16384), ("HIGHHEEL_PEX_OBSERVE", 32768)):
+                            ("CAMERA_CULL_OBSERVE", 8192), ("ECE_NOSE_OBSERVE", 16384), ("HIGHHEEL_PEX_OBSERVE", 32768),
+                            ("HIGHHEEL_SCENE_OBSERVE", 65536)):
             self.assertIn(f"PC_GUEST_MOD_HOOK_{name} = {value}u", text)
         self.assertIn('"skyrim_guest_bind_mod_hooks_v1"', text)
 
@@ -72,7 +73,7 @@ class NativeBinding(unittest.TestCase):
                      "-DMOD_FIXTURE_GUEST", FIXTURE, ABI / "pc_guest_library.c", ABI / "pc_guest_skse_library.c"]
             guests = {}
             for groups in (15, 3, 8, 4, 16, 32, 64, 128, 256, 640, 1024, 2048, 4095, 4164, 8191, 8192,
-                           16383, 18432, 32767, 32772, 65535):
+                           16383, 18432, 32767, 32772, 65535, 65536, 131071):
                 guests[groups] = stage / f"guest-{groups}"
                 subprocess.run([*guest, ABI / "pc_guest_mod_hooks_library.c",
                                 f"-DPC_GUEST_MOD_HOOKS_COMPILED={groups}u", "-o", guests[groups]], check=True)
@@ -82,6 +83,8 @@ class NativeBinding(unittest.TestCase):
             subprocess.run([*guest, "-DMOD_FIXTURE_NO_HOOKS", "-DMOD_FIXTURE_BAD_REPLY", "-o", bad], check=True)
             original = stage / "guest-original-table"
             subprocess.run([*guest, "-DMOD_FIXTURE_NO_HOOKS", "-DMOD_FIXTURE_ORIGINAL_TABLE", "-o", original], check=True)
+            pex = stage / "guest-pex-table"
+            subprocess.run([*guest, "-DMOD_FIXTURE_NO_HOOKS", "-DMOD_FIXTURE_PEX_TABLE", "-o", pex], check=True)
             # Unknown groups and dependencies that aren't built are rejected.
             for groups in (512, 4096, 16384, 32768, 2):
                 with self.subTest(compiled=groups):
@@ -100,7 +103,8 @@ class NativeBinding(unittest.TestCase):
                                      (1024, 0), (1024, 1024), (2048, 0), (2048, 2048), (4095, 4095),
                                      (4164, 68), (4164, 4164), (8191, 8191), (8192, 0), (8192, 8192), (16383, 16383),
                                      (18432, 0), (18432, 2048), (18432, 18432), (32767, 32767),
-                                     (32772, 0), (32772, 32772), (65535, 65535)):
+                                     (32772, 0), (32772, 32772), (65535, 65535),
+                                     (65536, 0), (65536, 65536), (131071, 131071)):
                 with self.subTest(compiled=compiled, choice=choice):
                     run = subprocess.run([host, guests[compiled], str(compiled), str(choice), plain, bad],
                                          capture_output=True, text=True)
@@ -110,11 +114,13 @@ class NativeBinding(unittest.TestCase):
             run = subprocess.run([host, guests[15], "15", "no-hooks", plain, bad], capture_output=True, text=True)
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertNotIn("MOD hook groups", run.stderr)
-            for binary, groups, mode in ((original, 16, "original-guest"), (guests[4095], 4095, "original-host"),
+            for binary, groups, mode in ((original, 16, "original-guest"), (pex, 16, "original-guest"),
+                                         (guests[4095], 4095, "original-host"),
                                          (guests[4095], 4095, "observer-host"), (guests[4095], 4095, "safety-host"),
                                          (guests[4095], 4095, "save-host"), (guests[4095], 4095, "camera-host"),
                                          (guests[8191], 8191, "ece-host"), (guests[16383], 16383, "fresh-host"),
-                                         (guests[32767], 32767, "cull-host"), (guests[65535], 65535, "nose-host")):
+                                         (guests[32767], 32767, "cull-host"), (guests[65535], 65535, "nose-host"),
+                                         (guests[131071], 131071, "heel-host")):
                 with self.subTest(mode=mode):
                     run = subprocess.run([host, binary, str(groups), mode, plain, bad], capture_output=True, text=True)
                     self.assertEqual(run.returncode, 0, run.stderr)

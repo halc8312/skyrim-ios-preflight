@@ -102,6 +102,7 @@ class ReceiverTests(unittest.TestCase):
             self.schema.line(f'IOS_CAMERA_BODY schema=1 slot={slot} arms={arms} body={body}')
         self.schema.line('IOS_CAMERA_RENDER schema=1 first=0 second=15')
         self.schema.line('IOS_CAMERA_CULL schema=1 stages=7 producer=129,128,0 first=1,0,1 second=0,0,0')
+        self.schema.line('IOS_CLASSIC_HIGHHEEL_SCENE schema=1 root=2 names=31 duplicate=0 limited=0')
         self.schema.line('IOS_ECE_TRI schema=1 source=1 parsed=1')
         self.schema.line('IOS_ECE_NOSE schema=1 female_nord=1 head=1 geometry=1 path=1 fresh=1 record=1')
         self.schema.line('IOS_LOADING_MENU opening=1 ts_ns=123456')
@@ -225,6 +226,8 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_CAMERA_RENDER schema=1 first=0 second=15 root=17352704',
                      'IOS_CAMERA_CULL schema=1 stages=7 producer=130,0,0 first=0,0,0 second=0,0,0',
                      'IOS_CAMERA_CULL schema=1 stages=7 producer=129,129,0 first=0,0,0 second=0,0,0',
+                     'IOS_CLASSIC_HIGHHEEL_SCENE schema=1 root=2 names=32 duplicate=0 limited=0',
+                     'IOS_CLASSIC_HIGHHEEL_SCENE schema=1 root=2 names=31 duplicate=0 limited=0 node=123456',
                      'IOS_CAMERA_BODY schema=1 slot=12 arms=4 body=4',
                      'IOS_CAMERA_BODY schema=1 slot=0 arms=6 body=4',
                      'IOS_CAMERA_BODY schema=1 slot=0 arms=4 body=4 actor=17352704',

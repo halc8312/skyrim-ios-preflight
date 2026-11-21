@@ -45,6 +45,8 @@ static PcGuestModFreshLoadHooks fresh_load;
 static PcGuestModCameraCullHooks camera_cull;
 static PcGuestModEceNoseHooks ece_nose;
 static PcGuestModHighHeelPexHooks highheel_pex;
+static PcGuestModHighHeelSceneHooks highheel_scene;
+unsigned skyrim_highheel_scene_guest_state;
 bool skyrim_highheel_pex_guest_selected;
 bool skyrim_ece_nose_guest_selected;
 bool skyrim_camera_cull_guest_selected;
@@ -76,6 +78,10 @@ static int select_hooks(const PcGuestModHooks *table) {
     if (table->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE) {
         highheel_pex = table->highheel_pex;
         skyrim_highheel_pex_guest_selected = true;
+    }
+    if (table->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) {
+        highheel_scene = table->highheel_scene;
+        skyrim_highheel_scene_guest_state = SkyrimHighHeelSceneReady;
     }
     selected = table->groups;
     selection_final = 1;
@@ -142,6 +148,12 @@ static const PcGuestModHooksGuest ece_nose_reply = {
     .table_bytes = PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES, .select = select_hooks
 };
 
+static const PcGuestModHooksGuest highheel_pex_reply = {
+    .version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof(PcGuestModHooksGuest),
+    .compiled_groups = PC_GUEST_MOD_HOOKS_COMPILED & PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX,
+    .table_bytes = PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX_BYTES, .select = select_hooks
+};
+
 __attribute__((visibility("default")))
 const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uint32_t table_bytes) {
     if (bound_bytes || version != PC_GUEST_MOD_HOOKS_ABI || !pc_guest_mod_hooks_groups_for_bytes(table_bytes)) return 0;
@@ -155,6 +167,7 @@ const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uin
     if (table_bytes == PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES) return &fresh_load_reply;
     if (table_bytes == PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES) return &camera_cull_reply;
     if (table_bytes == PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES) return &ece_nose_reply;
+    if (table_bytes == PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX_BYTES) return &highheel_pex_reply;
     return &reply;
 }
 
@@ -168,6 +181,24 @@ uint64_t skyrim_highheel_pex_end(const struct CPU *cpu, bool parsed) {
 
 void skyrim_highheel_pex_linked(const struct CPU *cpu, uint64_t epoch, bool linked) {
     if (skyrim_highheel_pex_guest_selected) highheel_pex.linked(cpu, epoch, linked);
+}
+
+bool skyrim_highheel_scene_guest_notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice site,
+                                        uint32_t first, uint32_t second, uint32_t third) {
+    if (site == SkyrimHighHeelSceneArm) {
+        unsigned ready = SkyrimHighHeelSceneReady;
+        if (!__atomic_compare_exchange_n(&skyrim_highheel_scene_guest_state, &ready, SkyrimHighHeelSceneActive,
+                                         false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) return false;
+        if (highheel_scene.notify(cpu, site, first, second, third)) return true;
+        __atomic_store_n(&skyrim_highheel_scene_guest_state, SkyrimHighHeelSceneReady, __ATOMIC_RELAXED);
+        return false;
+    }
+    if (__atomic_load_n(&skyrim_highheel_scene_guest_state, __ATOMIC_RELAXED) != SkyrimHighHeelSceneActive)
+        return false;
+    const bool accepted = highheel_scene.notify(cpu, site, first, second, third);
+    if (site == SkyrimHighHeelSceneFinish && accepted)
+        __atomic_store_n(&skyrim_highheel_scene_guest_state, 0, __ATOMIC_RELAXED);
+    return accepted;
 }
 
 /* FUZ_MENU */

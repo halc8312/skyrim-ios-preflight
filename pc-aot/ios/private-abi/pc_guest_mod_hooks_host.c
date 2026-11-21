@@ -21,7 +21,8 @@ int pc_guest_bind_mod_hooks(void *library) {
         bind_attempted = 1;
         return 0;
     }
-    const uint32_t sizes[] = {sizeof(PcGuestModHooks), PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES, PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES,
+    const uint32_t sizes[] = {sizeof(PcGuestModHooks), PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX_BYTES,
+                             PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES, PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES,
                              PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES, PC_GUEST_MOD_HOOKS_ECE_TRI_BYTES,
                              PC_GUEST_MOD_HOOKS_CAMERA_RENDER_BYTES, PC_GUEST_MOD_HOOKS_SAVE_BYTES,
                              PC_GUEST_MOD_HOOKS_SAFETY_BYTES, PC_GUEST_MOD_HOOKS_OBSERVED_BYTES,

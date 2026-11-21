@@ -279,6 +279,21 @@ compares CPU state, scene memory and reference counts to the same original
 execution with the observer disabled. It uses authored hierarchies and
 does not establish serialization with renderer or animation workers.
 
+With the optional `highheel_scene_observe` guest group compiled, the normal
+app enables this diagnostic on the reviewed image when detailed diagnostics
+are on and the active plugin list includes `hdtHighHeel.esm`. It samples
+one stock player update. The selector path supplies the ordinary root;
+preview and absent roots are skipped. The child callbacks supply the path,
+and the original world update supplies the current node and its native
+parent. The diagnostic copies only that current receiver's name token.
+`IOS_CLASSIC_HIGHHEEL_SCENE` reports root update kind `0` unknown, `1` NiNode,
+or `2` flattened. The `names` and `duplicate` masks use bits `1`, `2`, `4`,
+`8`, and `16` for NPC, left and right Foot, and left and right Calf in that
+order. `limited=1` marks a skipped or inconsistent branch or a visit limit.
+The report contains no positions, object addresses, or file names. It only
+counts actual path members visited by the reviewed world update and does
+not establish that the effect applied or that later scene writes are safe.
+
 The official 1.7.3 `SKSETaskUpdateWorldData` takes a NiAVObject
 reference in Create, calls the world refresh in Run and releases
 the reference in Dispose. The queue's lock protects the delegate

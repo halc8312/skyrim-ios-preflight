@@ -28,9 +28,14 @@ const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uin
 }
 #endif
 
-#ifdef MOD_FIXTURE_ORIGINAL_TABLE
+#if defined(MOD_FIXTURE_ORIGINAL_TABLE) || defined(MOD_FIXTURE_PEX_TABLE)
+#ifdef MOD_FIXTURE_PEX_TABLE
+#define FIXTURE_LEGACY_TABLE_BYTES PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX_BYTES
+#else
+#define FIXTURE_LEGACY_TABLE_BYTES PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES
+#endif
 static int original_select(const PcGuestModHooks *t) {
-    assert(t->version == PC_GUEST_MOD_HOOKS_ABI && t->bytes == PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES);
+    assert(t->version == PC_GUEST_MOD_HOOKS_ABI && t->bytes == FIXTURE_LEGACY_TABLE_BYTES);
     assert(t->groups == PC_GUEST_MOD_HOOK_CAMERA_OBSERVE && t->camera.observe_return);
     t->camera.observe_return(0x123456);
     return 0;
@@ -39,9 +44,9 @@ __attribute__((visibility("default")))
 const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uint32_t table_bytes) {
     static const PcGuestModHooksGuest reply = {
         PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooksGuest), PC_GUEST_MOD_HOOK_CAMERA_OBSERVE,
-        PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES, original_select
+        FIXTURE_LEGACY_TABLE_BYTES, original_select
     };
-    return version == PC_GUEST_MOD_HOOKS_ABI && table_bytes == PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES ? &reply : NULL;
+    return version == PC_GUEST_MOD_HOOKS_ABI && table_bytes == FIXTURE_LEGACY_TABLE_BYTES ? &reply : NULL;
 }
 #endif
 
@@ -110,6 +115,15 @@ __attribute__((visibility("default"))) unsigned exercise_mod_hooks(unsigned expe
     assert(epoch == (heel ? 11 : 0));
     skyrim_highheel_pex_linked(NULL, epoch, true);
     if (heel) seen |= 1u << 15;
+    static bool scene_seen;
+    if (skyrim_highheel_scene_guest_notify(NULL, SkyrimHighHeelSceneArm, 0x64000, 0, 0)) {
+        assert(!scene_seen && skyrim_highheel_scene_guest_state == SkyrimHighHeelSceneActive);
+        assert(!skyrim_highheel_scene_guest_notify(NULL, SkyrimHighHeelSceneArm, 0x64000, 0, 0));
+        assert(skyrim_highheel_scene_guest_notify(NULL, SkyrimHighHeelSceneFinish, 0x64000, 0, 0));
+        assert(!skyrim_highheel_scene_guest_state);
+        scene_seen = true;
+    }
+    if (scene_seen) seen |= 1u << 16;
     assert(seen == expected);
     return seen;
 }
@@ -138,7 +152,7 @@ void f_A60200(CPU *c) { (void)c; }
 void f_842140(CPU *c) { (void)c; }
 void f_873D70(CPU *c) { (void)c; }
 
-static unsigned calls[34];
+static unsigned calls[36];
 static void forget(uint32_t r) { assert(r == 7); ++calls[0]; }
 static void choose(const struct CPU *c, uint32_t slot, uint32_t r, SkyrimFuzLiftChoice *out) {
     assert(!c && slot == 0x1000 && r == 7);
@@ -261,6 +275,13 @@ static void heel_linked(const struct CPU *cpu, uint64_t epoch, bool linked) {
     assert(!cpu && epoch == 11 && linked);
     ++calls[33];
 }
+static bool heel_scene(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, uint32_t first,
+                       uint32_t second, uint32_t third) {
+    assert(!cpu && first == 0x64000 && !second && !third);
+    assert(event == SkyrimHighHeelSceneArm || event == SkyrimHighHeelSceneFinish);
+    ++calls[event == SkyrimHighHeelSceneArm ? 34 : 35];
+    return true;
+}
 static PcGuestModHooks full_table(uint32_t groups) {
     return (PcGuestModHooks){
         PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooks), groups, 0,
@@ -269,7 +290,7 @@ static PcGuestModHooks full_table(uint32_t groups) {
         {before_revert, after_load, form_deleted}, {skip_warm}, {slider_pending, slider_nose, slider_applied},
         {camera_observed}, {loading_observed}, {safety_bypass}, {save_begin, save_current, save_event},
         {camera_render_observed}, {ece_tri_begin, ece_tri_finish}, {fresh_notify}, {cull_notified}, {ece_nose_notified},
-        {heel_begin, heel_end, heel_linked}};
+        {heel_begin, heel_end, heel_linked}, {heel_scene}};
 }
 
 static unsigned expected_seen(uint32_t groups) {
@@ -286,6 +307,7 @@ static unsigned expected_seen(uint32_t groups) {
     if (groups & PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE) seen |= 1u << 13;
     if (groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) seen |= 1u << 14;
     if (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE) seen |= 1u << 15;
+    if (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) seen |= 1u << 16;
     return seen;
 }
 
@@ -309,6 +331,7 @@ static void check_calls(uint32_t groups, unsigned rounds) {
     for (int n = 28; n < 30; ++n) assert(calls[n] == (groups & PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE ? rounds : 0));
     assert(calls[30] == (groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE ? rounds : 0));
     for (int n = 31; n < 34; ++n) assert(calls[n] == (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE ? rounds : 0));
+    for (int n = 34; n < 36; ++n) assert(calls[n] == (rounds && (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) ? 1u : 0u));
 }
 
 /* argv: hooked-guest compiled-groups select-groups no-hooks-guest bad-reply-guest */
@@ -353,7 +376,7 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[3], "original-host") || !strcmp(argv[3], "observer-host") ||
         !strcmp(argv[3], "safety-host") || !strcmp(argv[3], "save-host") || !strcmp(argv[3], "camera-host") ||
         !strcmp(argv[3], "ece-host") || !strcmp(argv[3], "fresh-host") ||
-        !strcmp(argv[3], "cull-host") || !strcmp(argv[3], "nose-host")) {
+        !strcmp(argv[3], "cull-host") || !strcmp(argv[3], "nose-host") || !strcmp(argv[3], "heel-host")) {
         const uint32_t bytes = !strcmp(argv[3], "original-host") ? PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES
             : !strcmp(argv[3], "observer-host") ? PC_GUEST_MOD_HOOKS_OBSERVED_BYTES
             : !strcmp(argv[3], "safety-host") ? PC_GUEST_MOD_HOOKS_SAFETY_BYTES
@@ -361,7 +384,8 @@ int main(int argc, char **argv) {
             : !strcmp(argv[3], "camera-host") ? PC_GUEST_MOD_HOOKS_CAMERA_RENDER_BYTES
             : !strcmp(argv[3], "ece-host") ? PC_GUEST_MOD_HOOKS_ECE_TRI_BYTES
             : !strcmp(argv[3], "fresh-host") ? PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES
-            : !strcmp(argv[3], "cull-host") ? PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES : PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES;
+            : !strcmp(argv[3], "cull-host") ? PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES
+            : !strcmp(argv[3], "nose-host") ? PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES : PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX_BYTES;
         const uint32_t supported = pc_guest_mod_hooks_groups_for_bytes(bytes);
         const PcGuestModHooksGuest *reply = bind(PC_GUEST_MOD_HOOKS_ABI, bytes);
         assert(reply && reply->table_bytes == bytes);
@@ -369,7 +393,8 @@ int main(int argc, char **argv) {
         PcGuestModHooks table = full_table(PC_GUEST_MOD_HOOK_CAMERA_OBSERVE);
         assert(reply->select(&table) != 0); /* The agreed size is mandatory. */
         table.bytes = bytes;
-        table.groups |= supported & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE ? PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE
+        table.groups |= supported & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE ? PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE
+            : supported & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE ? PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE
             : supported & PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE ? PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE | PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE
             : supported & PC_GUEST_MOD_HOOK_FRESH_LOAD ? PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE
             : supported & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE ? PC_GUEST_MOD_HOOK_FRESH_LOAD | PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED
@@ -403,7 +428,7 @@ int main(int argc, char **argv) {
         PcGuestModHooks other = full_table(absent);
         assert(pc_guest_select_mod_hooks(absent, &other) != 0);
     }
-    const uint32_t unknown_group = 65536u;
+    const uint32_t unknown_group = 131072u;
     PcGuestModHooks unknown = full_table(unknown_group);
     assert(pc_guest_select_mod_hooks(unknown_group, &unknown) != 0);
     PcGuestModHooks world_only = full_table(PC_GUEST_MOD_HOOK_FUZ_WORLD);
@@ -438,6 +463,7 @@ int main(int argc, char **argv) {
         else if (choice & PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE) wrong.camera_render.observe = NULL;
         else if (choice & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE) wrong.ece_tri.finish = NULL;
         else if (choice & PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE) wrong.camera_cull.notify = NULL;
+        else if (choice & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) wrong.highheel_scene.notify = NULL;
         /* Inventory fit is a guest-only capability with no host callback. */
         if (choice != PC_GUEST_MOD_HOOK_INVENTORY_FIT)
             assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
@@ -477,6 +503,7 @@ int main(int argc, char **argv) {
     table.fresh_load.notify = NULL;
     table.camera_cull.notify = NULL;
     table.ece_nose.notify = NULL;
+    table.highheel_scene.notify = NULL;
     assert(exercise(expected_seen(choice)) == expected_seen(choice));
     check_calls(choice, 1);
 

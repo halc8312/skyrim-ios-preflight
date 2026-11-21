@@ -34,6 +34,7 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups("ece_tri_observe"), 2048)
         self.assertEqual(hooks.parse_groups("ece_tri_observe,ece_nose_observe"), 18432)
         self.assertEqual(hooks.parse_groups("vm_lifecycle,highheel_pex_observe"), 32772)
+        self.assertEqual(hooks.parse_groups("highheel_scene_observe"), 65536)
         self.assertEqual(hooks.parse_groups("save_lifecycle"), 64)
         self.assertEqual(hooks.parse_groups("fresh_load,save_lifecycle,vm_lifecycle"), 4164)
         self.assertEqual(hooks.parse_groups("loading_menu_observe"), 128)
@@ -225,7 +226,7 @@ class OwnedLiftTests(unittest.TestCase):
         groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe,"
                                     "loading_menu_observe,inventory_fit,safety_load,camera_render_observe,"
                                     "ece_tri_observe,save_lifecycle,fresh_load,camera_cull_observe,ece_nose_observe,"
-                                    "highheel_pex_observe")
+                                    "highheel_pex_observe,highheel_scene_observe")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
@@ -252,6 +253,12 @@ class OwnedLiftTests(unittest.TestCase):
             calls = re.findall(rb"0x106B284u\)\); esp -= 4; M32\(esp\) = (0x[0-9A-F]+)u", reader[start:end])
             self.assertEqual(calls, [caller])
             self.assertIn(b"skyrim_ece_nose_guest_selected &&", (work / "mod-hook-sources" / "exe_185.c").read_bytes())
+            scene = (work / "mod-hook-sources" / "exe_275.c").read_bytes()
+            self.assertEqual(scene.count(b"skyrim_highheel_scene_guest_notify(c, SkyrimHighHeelSceneEnter,"), 2)
+            self.assertEqual(scene.count(b"skyrim_highheel_scene_guest_notify(c, SkyrimHighHeelSceneFinish,"), 1)
+            self.assertIn(b"skyrim_camera_cull_guest_notify(", scene)
+            with self.assertRaisesRegex(ValueError, "unreviewed earlier stage"):
+                hooks.stage_highheel_scene_observe(root, {"exe_275.c": scene + b"// unrelated edit\n"})
             with self.assertRaisesRegex(ValueError, "unreviewed earlier stage"):
                 hooks.stage_ece_nose_observe(root, {tri.UNIT: tri_original + b"// unrelated edit\n"})
             menu = (work / "mod-hook-sources" / "exe_262.c").read_bytes()

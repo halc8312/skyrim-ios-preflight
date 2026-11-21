@@ -17,7 +17,7 @@ UNIT = UNITS[0][0]
 DEPENDENCIES = tuple(name for name, _, _ in UNITS[1:])
 
 
-def private_fixture(*units):
+def private_fixture(*units, runtime=False):
     if len(units) != len(UNITS) or any(
         sha256(body).hexdigest() != digest for body, (_, digest, _) in zip(units, UNITS)
     ):
@@ -32,7 +32,11 @@ def private_fixture(*units):
     if flat.count(entry) != 1:
         raise ValueError("Expected the fixed existing-node transform branch")
     observed = flat.replace(entry, entry + b"    fixture_existing_flat_bone(c, ebp, esi, eax);\n")
-    return PRELUDE + b"""
+    if runtime:
+        from stage_scene_app import DIGESTS, HEADER, apply
+        units = tuple(apply(name, unit, unit) if name in DIGESTS else unit
+                      for unit, (name, _, _) in zip(units, UNITS))
+    return (HEADER if runtime else b"") + PRELUDE + b"""
 void fixture_existing_flat_bone(const CPU *, uint32_t, uint32_t, uint32_t);
 
 void fixture_update_third_person(CPU *c) {
