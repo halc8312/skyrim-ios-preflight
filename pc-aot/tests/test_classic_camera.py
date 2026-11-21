@@ -16,6 +16,12 @@ sys.path[:0] = [str(CAMERA), str(ROOT / "scripts")]
 import stage_camera as camera
 from classic_skse_guest import validate_generation
 
+LIFT_HEADERS = {
+    "x86.h": "dcc654965668c5cbe3f8aaa74cd1f8fd0bb53312e8de1747e6938ffc6cd03793",
+    "lift_prelude.h": "59cd9f85d2a5905c0c04dd1b5c71de0443e51dad06d19c09fc69259e6637a746",
+    "rt_table.h": "eba5a14664b66a8eccfa901f289d80e6155dac0df5e72a84f24a5f641656a612",
+}
+
 
 class CameraStageTests(unittest.TestCase):
     def test_patch_is_local_and_hash_bound(self):
@@ -59,29 +65,10 @@ class CameraStageTests(unittest.TestCase):
         ])
 
     def test_reviewed_transition_and_original_callbacks(self):
-        generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
-        compiler = shutil.which(os.environ.get("CC", "cc"))
-        if not generation or not compiler:
-            self.skipTest("Set SKYRIM_TEST_OWNED_CLASSIC_LIFT and use a C compiler")
-        generation = Path(generation)
-        state = json.loads((generation / "generation.json").read_text(encoding="utf-8"))
-        validate_generation(state)
-        if (state.get("mode") != "original-guest-bodies" or state.get("fixed_native_replacements") is not False
-                or state.get("generation_finished") is not True or state.get("inputs_unchanged") is not True):
-            raise ValueError("The camera probe requires the reviewed unmodified original-body generation")
-        runtime = generation / "source/runtime"
-        pinned_headers = {
-            "x86.h": "dcc654965668c5cbe3f8aaa74cd1f8fd0bb53312e8de1747e6938ffc6cd03793",
-            "lift_prelude.h": "59cd9f85d2a5905c0c04dd1b5c71de0443e51dad06d19c09fc69259e6637a746",
-            "rt_table.h": "eba5a14664b66a8eccfa901f289d80e6155dac0df5e72a84f24a5f641656a612",
-        }
-        for name, expected in pinned_headers.items():
-            self.assertEqual(sha256((runtime / name).read_bytes()).hexdigest(), expected, name)
+        generation, headers, compiler = self.owned_lift()
         source = generation / "gen" / camera.CAMERA_UNIT
         original = source.read_bytes()
         staged = camera.stage_camera(original)
-        headers = ["-isystem", str(generation / "gen"),
-                   "-isystem", str(runtime), "-I", str(ROOT / "native")]
         with tempfile.TemporaryDirectory(prefix="classic-camera-") as d:
             directory = Path(d)
             unit = directory / camera.CAMERA_UNIT
@@ -95,6 +82,58 @@ class CameraStageTests(unittest.TestCase):
             self.compile_and_run(directory, compiler,
                                  [fixture, CAMERA / "test_camera_lift.c", ROOT / "native/guest_memory.c"], headers)
         self.assertEqual(source.read_bytes(), original)
+
+    def owned_lift(self):
+        generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
+        compiler = shutil.which(os.environ.get("CC", "cc"))
+        if not generation or not compiler:
+            self.skipTest("Set SKYRIM_TEST_OWNED_CLASSIC_LIFT and use a C compiler")
+        generation = Path(generation)
+        state = json.loads((generation / "generation.json").read_text(encoding="utf-8"))
+        validate_generation(state)
+        if (state.get("mode") != "original-guest-bodies" or state.get("fixed_native_replacements") is not False
+                or state.get("generation_finished") is not True or state.get("inputs_unchanged") is not True):
+            raise ValueError("The camera probe requires the reviewed unmodified original-body generation")
+        runtime = generation / "source/runtime"
+        for name, expected in LIFT_HEADERS.items():
+            self.assertEqual(sha256((runtime / name).read_bytes()).hexdigest(), expected, name)
+        return generation, ["-isystem", str(generation / "gen"),
+                            "-isystem", str(runtime), "-I", str(ROOT / "native")], compiler
+
+    def test_reviewed_visibility_and_arm_root_release_blocks(self):
+        generation, headers, compiler = self.owned_lift()
+        visibility_source = generation / "gen/exe_135.c"
+        release_source = generation / "gen/exe_133.c"
+        visibility, release = visibility_source.read_bytes(), release_source.read_bytes()
+        self.assertEqual(sha256(visibility).hexdigest(),
+                         "ce9edc51a226cc1279efaaf7380a649b3be9db8672625f34f9fff3df86f70a6e")
+        self.assertEqual(sha256(release).hexdigest(),
+                         "7390b8e9b03ec4bbc8b1040b5ecb31149389ee3084547876a569ef69e9557142")
+
+        # Run the reviewed blocks against authored roots. Exits stop before
+        # unrelated transforms or teardown work and never run the game.
+        visibility_start = visibility.index(b"\nL_748835:\n", visibility.index(b"\nvoid f_7487B0(")) + 1
+        visibility_end = visibility.index(b"\nL_7488AE:\n", visibility_start)
+        release_start = release.index(b"    edi = ", release.index(b"\nL_73A689:\n"))
+        release_end = release.index(b"\nL_73A6BB:\n", release_start)
+        registers = (b"    uint32_t eax = c->r[0], ecx = c->r[1], edx = c->r[2], ebx = c->r[3], "
+                     b"esp = c->r[4], ebp = c->r[5], esi = c->r[6], edi = c->r[7];\n"
+                     b"    Flags f = c->flags;\n")
+        with tempfile.TemporaryDirectory(prefix="classic-camera-roots-") as d:
+            directory = Path(d)
+            fixture = directory / "root_blocks.c"
+            fixture.write_bytes(
+                b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n'
+                b"int classic_camera_visibility_block(CPU *c) {\n" + registers +
+                b"    goto L_748835;\n" + visibility[visibility_start:visibility_end] +
+                b"\nL_7488AE: return 1;\nL_7489B6: return 0;\n}\n"
+                b"void classic_camera_release_block(CPU *c) {\n" + registers +
+                release[release_start:release_end] +
+                b"\nL_73A6BB: SPILL(); return;\n}\n"
+            )
+            self.compile_and_run(directory, compiler, [fixture, CAMERA / "test_camera_root_lift.c"], headers)
+        self.assertEqual(visibility_source.read_bytes(), visibility)
+        self.assertEqual(release_source.read_bytes(), release)
 
     def compile_and_run(self, root, compiler, files, headers=()):
         binary = root / "test_camera"

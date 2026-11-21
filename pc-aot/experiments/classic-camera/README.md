@@ -59,10 +59,30 @@ alone do not establish which geometry was drawn.
 
 ## Enhanced Camera verification
 
-The isolated diagnostic on the owner's LE 1.4 package stops at `HeapCreate`
-during DLL initialization. The app still reports Enhanced Camera as unsupported
-and the observer leaves the original renderer and camera behavior intact.
-Keep the archive and captured traces private. [Original MOD release](https://www.nexusmods.com/skyrim/mods/57859)
+An isolated diagnostic against the owner's LE 1.4 package and pinned image
+recorded 49 proposed stores using a private initialization budget of 200,000
+work units. The probe preserved the input hashes and issued no guest game-code
+stores. The normal app budget remains 100,000. The app reports Enhanced Camera
+as unsupported. Keep the archive and detailed diagnostic private.
+[Original MOD release](https://www.nexusmods.com/skyrim/mods/57859)
+
+The proposed sites at `0x748835` and `0x74883B` identify the vanilla
+paired visibility update in `f_7487B0`. After a TLS-dependent deferral check,
+the direct path borrows both roots via the actor virtual `GetNiRootNode`, with
+selectors 1 and 0, and changes their culling bits in opposite directions. A
+change updates the actor's view flag and scene transforms and continues through
+`f_73D0A0`. The diagnostic also found proposed changes at the mode branch
+`0x74889D` and the post-update call `0x74899B`. This is the vanilla
+visibility switch. Its borrowed pointers do not extend through a draw.
+
+The unload branch of `f_73A5A0` releases the prior arms root at
+`0x73A69E`, calls its virtual destruction operation if the count reaches zero
+and then clears the actor's stored pointer. A pointer from the visibility switch
+can therefore become invalid before the slot records its absence. The optional
+pinned-generation test runs these two original blocks against authored memory.
+It checks complementary bits, preservation of the other flag bits, and the
+release, destruction and clear order with a missing, singly held or multiply
+held reference. It does not exercise a render pass.
 
 Use the same game version, save copy and ordinary on-foot scene for a Windows
 reference run with the MOD off and on. Inspect the player camera slot and
@@ -71,8 +91,8 @@ back to third person and verify that turning the MOD off restores the baseline.
 Mounted and forced camera modes need their own comparisons before those
 options can be enabled.
 
-The transition has no retained scene-root reference or render-pass lifetime
-guarantee. A body override needs a verified update point that owns a live
-root from the visibility change through draw or restore, including a return
-to third person and replacement of the root on reload. Visibility changes
-may also require excluding duplicate third-person hands and head geometry.
+A body override needs a render-pass handoff with a live root reference and a
+verified completion boundary before restoring visibility. Returning to third
+person or replacing the root on reload must preserve the engine's final
+visibility. The ordinary first-person test also needs to distinguish body
+geometry from duplicate third-person hands, head geometry and shadows.
