@@ -164,3 +164,20 @@ static bool ext_multiply(Extended left, Extended right, Extended *value, uint16_
     return ext_round(ext_shift_right(product, 60 + carry), left.exponent + right.exponent + carry,
                      negative, value, status);
 }
+
+static bool ext_divide(Extended left, Extended right, Extended *value, uint16_t *status) {
+    if (left.exponent == EXTENDED_INFINITY || right.exponent == EXTENDED_INFINITY || !right.mantissa)
+        return false;
+    const bool negative = left.negative != right.negative;
+    if (!left.mantissa) {
+        *value = (Extended){.negative = negative};
+        return true;
+    }
+    const bool normalize = left.mantissa < right.mantissa;
+    const __uint128_t numerator = (__uint128_t)left.mantissa << (63 + normalize);
+    const uint64_t quotient = (uint64_t)(numerator / right.mantissa);
+    const __uint128_t remainder = (numerator % right.mantissa) << 3;
+    const unsigned guard = (unsigned)(remainder / right.mantissa) | (remainder % right.mantissa != 0);
+    return ext_round((__uint128_t)quotient << 3 | guard, left.exponent - right.exponent - normalize,
+                     negative, value, status);
+}

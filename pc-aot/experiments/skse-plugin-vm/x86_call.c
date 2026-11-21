@@ -2215,7 +2215,7 @@ static void x87_instruction(Vm *vm, uint32_t opcode) {
     const bool arithmetic = opcode == 0xdc;
     const bool transfer = opcode == 0xd9 || opcode == 0xdd;
     const bool integer_load = opcode == 0xdb && group == 0; // FILD m32
-    const bool supported = integer_load || (arithmetic && (group == 0 || group == 1 || group == 4 || group == 5)) ||
+    const bool supported = integer_load || (arithmetic && (group <= 1 || group >= 4)) ||
                            (transfer && (group == 0 || group == 2 || group == 3));
     if (modrm >= 0xc0 || !supported) {
         fail(vm, SKSE_X86_UNSUPPORTED_INSTRUCTION);
@@ -2256,6 +2256,10 @@ static void x87_instruction(Vm *vm, uint32_t opcode) {
         Extended subtrahend = *top;
         subtrahend.negative = !subtrahend.negative;
         ok = ext_add(source, subtrahend, top, &vm->x87_status);
+    } else if (group == 6) {
+        ok = ext_divide(*top, source, top, &vm->x87_status);
+    } else if (group == 7) {
+        ok = ext_divide(source, *top, top, &vm->x87_status);
     } else {
         if (group == 4) source.negative = !source.negative;
         ok = ext_add(*top, source, top, &vm->x87_status);

@@ -60,6 +60,8 @@ static void status_and_precision(void) {
     word(cancel + 20, 4, Scratch);
     const uint64_t one = UINT64_C(0x3ff0000000000000), big = UINT64_C(0x43e0000000000000);
     assert(guest_binary(0, one, one) == UINT64_C(0x4000000000000000));
+    assert(guest_binary(6, one, UINT64_C(0x4008000000000000)) == UINT64_C(0x3fd5555555555555));
+    assert(guest_binary(7, one, UINT64_C(0x4008000000000000)) == UINT64_C(0x4008000000000000));
     assert(run(cancel, sizeof cancel, big, one).status == SKSE_X86_OK && quad(scratch) == one);
 
     uint8_t compare[] = {0xdd, 0x05, 0, 0, 0, 0, 0xdd, 0x05, 0, 0, 0, 0, 0xda, 0xe9, 0xdf, 0xe0, 0xc3};
@@ -93,6 +95,8 @@ static uint64_t native_binary(unsigned group, uint64_t left, uint64_t right) {
     case 1: COMPARE("fmull");
     case 4: COMPARE("fsubl");
     case 5: COMPARE("fsubrl");
+    case 6: COMPARE("fdivl");
+    case 7: COMPARE("fdivrl");
     default: assert(0); return 0;
     }
 #undef COMPARE
@@ -116,12 +120,14 @@ static void compare_with_native(void) {
         UINT64_C(0x3ff0000000000000), UINT64_C(0xbff0000000000001), UINT64_C(0x3fefffffffffffff),
         UINT64_C(0x7fefffffffffffff), UINT64_C(0xffefffffffffffff)
     };
-    static const unsigned groups[] = {0, 1, 4, 5};
+    static const unsigned groups[] = {0, 1, 4, 5, 6, 7};
     uint64_t rng = UINT64_C(0x77b11234f00dcafe);
     for (unsigned k = 0; k < sizeof groups / sizeof groups[0]; ++k) {
         for (size_t i = 0; i < sizeof edges / sizeof edges[0]; ++i)
-            for (size_t j = 0; j < sizeof edges / sizeof edges[0]; ++j)
+            for (size_t j = 0; j < sizeof edges / sizeof edges[0]; ++j) {
+                if ((groups[k] == 6 && j < 2) || (groups[k] == 7 && i < 2)) continue;
                 same(groups[k], edges[i], edges[j]);
+            }
         for (unsigned i = 0; i < 8192; ++i) {
             rng = rng * UINT64_C(6364136223846793005) + 1;
             uint64_t left = rng & ~UINT64_C(0x0010000000000000); // Keep arithmetic finite.
