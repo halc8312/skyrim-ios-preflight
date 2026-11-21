@@ -107,6 +107,7 @@ class ReceiverTests(unittest.TestCase):
         self.schema.line('IOS_INVENTORY_FIT armed=1')
         self.schema.line('IOS_SAFETY_LOAD accepted=2')
         self.schema.line('IOS_CLASSIC_FRESH_SAVE published=1')
+        self.schema.line('IOS_CLASSIC_SAVE_RECORDS captured=1 mods=255 records=16')
 
     def test_same_id_replay_idempotent_and_conflicting_content_never_overwritten(self):
         _, first = self.receive()
@@ -217,6 +218,8 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_INVENTORY_FIT armed=1 path=/private/address',
                      'IOS_SAFETY_LOAD accepted=2 path=/private/address',
                      'IOS_CLASSIC_FRESH_SAVE published=1 path=/private/save.ess',
+                     'IOS_CLASSIC_SAVE_RECORDS captured=0 mods=256 records=0',
+                     'IOS_CLASSIC_SAVE_RECORDS captured=1 mods=3 records=17',
                      timing().replace('samples=1', 'samples=2'),
                      self.bundle['sessions'][0]['lines'][-1].replace('result=-1', 'result=2147483648')]
         for line in bad_lines:

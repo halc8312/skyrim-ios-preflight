@@ -58,3 +58,7 @@ typedef struct {
  * Calls are serialized: a Run that finds another call in progress returns 0. */
 bool skse_classic_values_request(const ClassicValueRequest *request);
 bool skse_classic_values_retire(uint64_t epoch);
+/* Nonblocking serialized access for the registered provider's save/load
+ * records. The operation must return without entering a Papyrus native. */
+bool skse_classic_values_with_provider(uint64_t epoch, uint32_t registry,
+                                       bool (*operation)(void *), void *context);

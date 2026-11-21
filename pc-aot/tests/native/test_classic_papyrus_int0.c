@@ -371,6 +371,14 @@ static uint32_t run_values(uint32_t thunk, uint32_t self, uint32_t registry, uin
     return run_thunk(&cpu, thunk, self, BASE, registry, result);
 }
 
+static bool observe_provider(void *context) {
+    unsigned *calls = context;
+    ++*calls;
+    assert(!skse_classic_values_retire(FIXTURE_EPOCH));
+    assert(!skse_classic_values_with_provider(FIXTURE_EPOCH, REGISTRY, observe_provider, context));
+    return true;
+}
+
 static void test_string_result(void) {
     ValueProvider provider = {.result_live = true};
     const ClassicValueFunction method = {"JsonUtil", "ProbeProfileName", 8, CLASSIC_VALUES_STRING, 0, {0}};
@@ -380,8 +388,14 @@ static void test_string_result(void) {
         .discard = discard_value_result, .context = &provider
     };
     assert(skse_classic_values_request(&request));
+    unsigned snapshots = 0;
+    assert(!skse_classic_values_with_provider(FIXTURE_EPOCH, REGISTRY, observe_provider, &snapshots));
     register_functions();
     check_builtin();
+    assert(!skse_classic_values_with_provider(FIXTURE_EPOCH + 1, REGISTRY, observe_provider, &snapshots));
+    assert(!skse_classic_values_with_provider(FIXTURE_EPOCH, REGISTRY + 4, observe_provider, &snapshots));
+    assert(skse_classic_values_with_provider(FIXTURE_EPOCH, REGISTRY, observe_provider, &snapshots));
+    assert(snapshots == 1);
     const uint32_t object = objects[1], run = M32(M32(object) + RUN_SLOT * 4);
     const unsigned destroyed = result_deletions;
     M32(RESULT) = CLASSIC_VALUES_INT;
@@ -429,6 +443,8 @@ static void test_string_result(void) {
     assert(provider.commits == 3 && scratch_deletions == 3 && string_refs[0] == 1 && !string_refs[1]);
     frame_available = true;
     assert(skse_classic_values_retire(FIXTURE_EPOCH));
+    assert(!skse_classic_values_with_provider(FIXTURE_EPOCH, REGISTRY, observe_provider, &snapshots));
+    assert(snapshots == 1);
     assert(!values_publication.request.owns_frame && !values_publication.request.commit);
     assert(!run_values(run, object, REGISTRY, RESULT) && provider.calls == 7 && provider.discards == 6 &&
            result_deletions == destroyed + 1);

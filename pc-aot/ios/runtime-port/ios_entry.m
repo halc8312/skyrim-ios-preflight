@@ -117,7 +117,7 @@ static void publish_papyrusutil(void) {
 static void retire_papyrusutil(void) {
     if (!papyrusutil_scope.settings) return;
     skyrim_papyrusutil_report();
-    skse_classic_values_retire(1);
+    if (!skse_classic_values_retire(1)) return;
     skse_classic_settings_close(papyrusutil_scope.settings);
     papyrusutil_scope = (SkyrimPapyrusUtilSettings){0};
 }

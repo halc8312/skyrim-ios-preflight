@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 /* Types: 2 string, 3 int, 4 float, 5 bool (classic_settings signatures). */
 static const ClassicValueFunction functions[SKYRIM_PAPYRUSUTIL_FUNCTIONS] = {
@@ -20,6 +21,9 @@ static const ClassicValueFunction functions[SKYRIM_PAPYRUSUTIL_FUNCTIONS] = {
 
 static SkyrimPapyrusUtilBackend backend;
 static atomic_ullong published, calls, refused_stale, commits, discards, errors;
+#ifdef SKYRIM_CLASSIC_SETTINGS_BACKEND
+static uint64_t provider_epoch;
+#endif
 
 /* One call at a time: the staged Run holds its busy flag for the whole call,
  * so this state needs no lock. A revert on another thread only changes the
@@ -132,6 +136,9 @@ int skyrim_papyrusutil_publish(const SkyrimPapyrusUtilBackend *source, uint64_t 
         atomic_fetch_add_explicit(&errors, 1, memory_order_relaxed);
         return -1;
     }
+#ifdef SKYRIM_CLASSIC_SETTINGS_BACKEND
+    provider_epoch = values_epoch;
+#endif
     atomic_store(&published, SKYRIM_PAPYRUSUTIL_FUNCTIONS);
     return 0;
 }
@@ -212,5 +219,44 @@ static bool settings_copy_string(void *context, CPU *c, uint32_t address, char *
 void skyrim_papyrusutil_settings_backend(SkyrimPapyrusUtilSettings *scope, SkyrimPapyrusUtilBackend *out) {
     *out = (SkyrimPapyrusUtilBackend){settings_invoke, settings_commit, settings_discard, settings_read,
                                       settings_copy_string, scope};
+}
+
+typedef struct {
+    SkyrimVmScope expected;
+    const SkseLoadedMod *mods;
+    size_t count;
+    SksePluginRecordSet **out;
+} StorageCapture;
+
+static bool current_capture(const StorageCapture *capture) {
+    SkyrimVmScope current;
+    return skyrim_vm_scope_current(&current) && current.epoch == capture->expected.epoch &&
+           current.registry == capture->expected.registry;
+}
+
+static bool capture_storage(void *context) {
+    StorageCapture *capture = context;
+    if (!current_capture(capture)) return false;
+    SkyrimPapyrusUtilSettings *scope = backend.context;
+    struct timespec now = {0};
+    if (clock_gettime(CLOCK_MONOTONIC, &now)) return false;
+    const uint32_t uptime = (uint32_t)((uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000);
+    SksePluginRecordSet *records = NULL;
+    if (skse_classic_storage_capture(scope->settings, scope->epoch, capture->mods, capture->count,
+                                     uptime, &records) != SKSE_SETTINGS_OK)
+        return false;
+    if (!current_capture(capture)) {
+        skse_plugin_record_set_close(records);
+        return false;
+    }
+    *capture->out = records;
+    return true;
+}
+
+bool skyrim_papyrusutil_capture_storage(const SkyrimVmScope *scope, const SkseLoadedMod *mods,
+                                       size_t count, SksePluginRecordSet **out) {
+    if (!scope || !out || *out || backend.invoke != settings_invoke) return false;
+    StorageCapture capture = {*scope, mods, count, out};
+    return skse_classic_values_with_provider(provider_epoch, scope->registry, capture_storage, &capture);
 }
 #endif

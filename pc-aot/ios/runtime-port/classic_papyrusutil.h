@@ -46,6 +46,7 @@ void skyrim_papyrusutil_report(void); /* IOS_PAPYRUSUTIL */
 
 #ifdef SKYRIM_CLASSIC_SETTINGS_BACKEND
 #include "classic_settings.h"
+#include "classic_vm_epoch.h"
 /* Production backend: one open settings scope, its epoch, the launch uptime. */
 typedef struct {
     SkseClassicSettings *settings;
@@ -53,6 +54,8 @@ typedef struct {
     uint32_t uptime_ms;
 } SkyrimPapyrusUtilSettings;
 void skyrim_papyrusutil_settings_backend(SkyrimPapyrusUtilSettings *, SkyrimPapyrusUtilBackend *out);
+bool skyrim_papyrusutil_capture_storage(const SkyrimVmScope *, const SkseLoadedMod *, size_t count,
+                                        SksePluginRecordSet **out);
 #endif
 
 #ifdef __cplusplus

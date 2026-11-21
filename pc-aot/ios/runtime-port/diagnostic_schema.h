@@ -91,6 +91,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_INVENTORY_FIT", "^IOS_INVENTORY_FIT armed=[01]$") \
     X("IOS_SAFETY_LOAD", "^IOS_SAFETY_LOAD accepted=[0-9]{1,20}$") \
     X("IOS_CLASSIC_FRESH_SAVE", "^IOS_CLASSIC_FRESH_SAVE published=1$") \
+    X("IOS_CLASSIC_SAVE_RECORDS", "^IOS_CLASSIC_SAVE_RECORDS captured=[01] mods=(?:[1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]) records=(?:[0-9]|1[0-6])$") \
     X("IOS_CLASSIC_SKYUI_INPUTS", "^IOS_CLASSIC_SKYUI_INPUTS skyui=[01] skse_pex=[01] support=[0-4]$") \
     X("IOS_CLASSIC_VM", "^IOS_CLASSIC_VM registered=[0-9]{1,10} primitive_passed=[0-9]{1,10}$") \
     X("IOS_CLASSIC_RELEASE", "^IOS_CLASSIC_RELEASE value=[0-9]{1,10}$") \

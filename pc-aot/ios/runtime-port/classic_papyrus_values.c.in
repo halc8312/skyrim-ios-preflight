@@ -91,6 +91,16 @@ bool skse_classic_values_retire(uint64_t epoch) {
     return retired;
 }
 
+bool skse_classic_values_with_provider(uint64_t epoch, uint32_t registry,
+                                      bool (*operation)(void *), void *context) {
+    if (!epoch || !registry || !operation || !int0_enter()) return false;
+    const ClassicValueRequest *request = &values_publication.request;
+    const bool completed = request->epoch == epoch && request->invoke &&
+                           values_publication.registry == registry && operation(context);
+    int0_leave();
+    return completed;
+}
+
 static bool value_read_frame(CPU *c, const ClassicValueFunction *fn, ClassicValueFrame *frame) {
     const ClassicValueRequest *request = &values_publication.request;
     const uint32_t sp = c->r[4];

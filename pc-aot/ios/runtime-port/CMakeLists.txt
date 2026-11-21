@@ -209,7 +209,8 @@ if(SKYRIM_IOS_MOD_HOOKS)
 endif()
 if(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
     # The staged value publication (classic_papyrus_values.c.in) is compiled into skse_compat.c.
-    target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/classic_papyrusutil.c")
+    target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/classic_papyrusutil.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/classic_mod_catalog.c")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_INT0_PROBE=1 SKYRIM_IOS_CLASSIC_PAPYRUSUTIL=1)
 endif()
 if(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE OR SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
