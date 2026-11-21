@@ -51,7 +51,12 @@ class CameraStageTests(unittest.TestCase):
             result = self.compile_and_run(Path(d), compiler,
                                           [runtime / "mod_camera_host.c", ROOT / "tests/native/test_mod_camera_host.c"],
                                           ["-I", str(runtime)])
-        self.assertEqual(result.stderr.splitlines(), ["IOS_CAMERA_STATE slot=0", "IOS_CAMERA_STATE slot=12"])
+        self.assertEqual(result.stderr.splitlines(), [
+            "IOS_CAMERA_STATE slot=0",
+            "IOS_CAMERA_BODY schema=1 slot=0 arms=4 body=5",
+            "IOS_CAMERA_BODY schema=1 slot=0 arms=4 body=4",
+            "IOS_CAMERA_STATE slot=12",
+        ])
 
     def test_reviewed_transition_and_original_callbacks(self):
         generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")

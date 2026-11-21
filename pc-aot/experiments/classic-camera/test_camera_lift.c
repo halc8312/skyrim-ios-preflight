@@ -11,6 +11,8 @@ enum {
     ADD_REF_IMPORT = 0x106B150, RELEASE_IMPORT = 0x106B154,
     CAMERA = 0x2100, OTHER_CAMERA = 0x2200, FIRST = 0x2400, THIRD = 0x2500,
     STATE_VTABLE = 0x2600, STACK = 0x2FC0,
+    ACTOR_SINGLETON = 0x01B2E8E4, ACTOR = 0x20000, LOADED = 0x21000,
+    ARMS = 0x22000, BODY = 0x23000, SCENE = 0x24000,
     ON_END = 1, ADD_REF, RELEASE, ON_DISPOSE, ON_START
 };
 
@@ -19,7 +21,7 @@ static gm_space memory;
 static const char pinned_image[] = "d97eb0cc0ceef0923d2234d42b382c0d033853356528b271bc043542b1f5e605";
 static CPU *active_cpu;
 static uint32_t expected_receiver, expected_state;
-static int last_slot;
+static ClassicCameraSample last_sample;
 static unsigned observations, events[5], event_count;
 
 void f_6533D0(CPU *cpu);
@@ -36,7 +38,8 @@ void skyrim_camera_observe_return(uint32_t receiver) {
     assert(receiver == expected_receiver);
     assert(active_cpu->r[4] == STACK + 8);
     assert(M32(receiver + 0x20) == expected_state);
-    last_slot = classic_camera_state_after_return(pinned_image, CAMERA_ENTRY, receiver, read_word, &memory);
+    if (!classic_camera_sample_after_return(pinned_image, CAMERA_ENTRY, receiver, read_word, &memory, &last_sample))
+        last_sample = (ClassicCameraSample){.slot = -1};
     ++observations;
 }
 
@@ -63,6 +66,11 @@ void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache) {
         break;
     case ON_START:
         assert(cpu->r[1] == M32(expected_receiver + 0x20));
+        if (expected_receiver == CAMERA) {
+            // Authored callback emulates the root-state change for the new camera slot.
+            M32(ARMS + 0x98) = expected_state == THIRD;
+            M32(BODY + 0x98) = expected_state == FIRST;
+        }
         break;
     default: assert(false);
     }
@@ -71,7 +79,7 @@ void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache) {
 }
 
 struct Result {
-    uint32_t r[8], current, refs[2];
+    uint32_t r[8], current, refs[2], scene_flags[2];
     unsigned calls[5], count;
 };
 
@@ -86,6 +94,7 @@ static struct Result run(void (*fn)(CPU *), uint32_t receiver, uint32_t before, 
     M32(receiver + 0x20) = before;
     M32(FIRST + 4) = before == FIRST;
     M32(THIRD + 4) = before == THIRD;
+    M32(ARMS + 0x98) = M32(BODY + 0x98) = 0x200;
     M32(STACK) = 0x100;
     M32(STACK + 4) = after;
     active_cpu = &cpu;
@@ -93,12 +102,13 @@ static struct Result run(void (*fn)(CPU *), uint32_t receiver, uint32_t before, 
     expected_state = after;
     event_count = 0;
     observations = 0;
-    last_slot = -2;
+    last_sample = (ClassicCameraSample){.slot = -2};
     fn(&cpu);
     active_cpu = NULL;
     assert(cpu.r[4] == STACK + 8 && cpu.r[3] == 3 && cpu.r[5] == 5 && cpu.r[6] == 6 && cpu.r[7] == 7);
     struct Result result = {.current = M32(receiver + 0x20),
-                            .refs = {M32(FIRST + 4), M32(THIRD + 4)}, .count = event_count};
+                            .refs = {M32(FIRST + 4), M32(THIRD + 4)},
+                            .scene_flags = {M32(ARMS + 0x98), M32(BODY + 0x98)}, .count = event_count};
     memcpy(result.r, cpu.r, sizeof result.r);
     memcpy(result.calls, events, event_count * sizeof *events);
     return result;
@@ -106,7 +116,7 @@ static struct Result run(void (*fn)(CPU *), uint32_t receiver, uint32_t before, 
 
 int main(void) {
     assert(gm_reserve(&memory, NULL));
-    const uint32_t pages[] = {CAMERA, STACK, SINGLETON, ADD_REF_IMPORT};
+    const uint32_t pages[] = {CAMERA, STACK, SINGLETON, ADD_REF_IMPORT, ACTOR_SINGLETON, ACTOR, LOADED, ARMS, BODY};
     for (unsigned i = 0; i < sizeof pages / sizeof *pages; ++i)
         if (!gm_pointer(&memory, pages[i], 4))
             assert(gm_commit_page(&memory, pages[i] / memory.page_size * memory.page_size, NULL));
@@ -120,6 +130,11 @@ int main(void) {
     M32(STATE_VTABLE + 8) = ON_END;
     M32(ADD_REF_IMPORT) = ADD_REF;
     M32(RELEASE_IMPORT) = RELEASE;
+    M32(ACTOR_SINGLETON) = ACTOR;
+    M32(ACTOR + 0x44) = LOADED;
+    M32(ACTOR + 0x58C) = ARMS;
+    M32(LOADED + 0x20) = BODY;
+    M32(ARMS + 0x18) = M32(BODY + 0x18) = SCENE;
 
     const struct {
         uint32_t receiver, from, to;
@@ -132,9 +147,17 @@ int main(void) {
         struct Result base = run(unobserved_camera_transition, cases[i].receiver, cases[i].from, cases[i].to);
         assert(!observations && base.current == cases[i].to);
         struct Result observed = run(f_6533D0, cases[i].receiver, cases[i].from, cases[i].to);
-        assert(observations == 1 && last_slot == cases[i].slot);
+        assert(observations == 1 && last_sample.slot == cases[i].slot);
         assert(base.count == observed.count && base.current == observed.current);
         assert(!memcmp(base.r, observed.r, sizeof base.r) && !memcmp(base.refs, observed.refs, sizeof base.refs));
+        assert(!memcmp(base.scene_flags, observed.scene_flags, sizeof base.scene_flags));
+        assert(last_sample.sampled_roots == (cases[i].slot >= 0));
+        if (last_sample.sampled_roots) {
+            assert(last_sample.arms == (cases[i].slot == 0 ? CLASSIC_CAMERA_ROOT_ATTACHED_CLEAR
+                                                          : CLASSIC_CAMERA_ROOT_ATTACHED_CULL));
+            assert(last_sample.body == (cases[i].slot == 0 ? CLASSIC_CAMERA_ROOT_ATTACHED_CULL
+                                                          : CLASSIC_CAMERA_ROOT_ATTACHED_CLEAR));
+        }
         assert(!memcmp(base.calls, observed.calls, base.count * sizeof *base.calls));
         if (i == 1) {
             const unsigned transition[] = {ON_END, ADD_REF, RELEASE, ON_DISPOSE, ON_START};
@@ -143,6 +166,6 @@ int main(void) {
         }
     }
     assert(gm_release(&memory, NULL));
-    puts("Camera observer preserved the reviewed transition and stack");
+    puts("Camera observer preserved the reviewed transition, stack and authored visibility flags");
     return 0;
 }

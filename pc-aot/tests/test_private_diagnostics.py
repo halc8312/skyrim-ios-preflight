@@ -98,6 +98,8 @@ class ReceiverTests(unittest.TestCase):
             self.schema.line('IOS_STAGE ' + stage + ' monotonic=1.000000000')
         for slot in (0, 9, 12):
             self.schema.line(f'IOS_CAMERA_STATE slot={slot}')
+        for slot, arms, body in ((0, 4, 5), (8, 1, 4), (9, 0, 2)):
+            self.schema.line(f'IOS_CAMERA_BODY schema=1 slot={slot} arms={arms} body={body}')
         self.schema.line('IOS_LOADING_MENU opening=1 ts_ns=123456')
         self.schema.line('IOS_LOADING_MENU opening=0 ts_ns=234567')
 
@@ -199,6 +201,9 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_DIAG_ERROR code=0', 'IOS_DIAG_ERROR code=1\nGame input: private',
                      'IOS_STAGE private-directory monotonic=1.000000000', 'IOS_CAMERA_STATE slot=13',
                      'IOS_CAMERA_STATE slot=12 camera=/private/address',
+                     'IOS_CAMERA_BODY schema=1 slot=12 arms=4 body=4',
+                     'IOS_CAMERA_BODY schema=1 slot=0 arms=6 body=4',
+                     'IOS_CAMERA_BODY schema=1 slot=0 arms=4 body=4 actor=17352704',
                      'IOS_LOADING_MENU opening=2 ts_ns=123456',
                      'IOS_LOADING_MENU opening=1 ts_ns=123456 event=/private/address',
                      timing().replace('samples=1', 'samples=2'),
