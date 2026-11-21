@@ -6,8 +6,14 @@ if [[ "$(uname -s)" != Darwin || $# -lt 3 || $# -gt 4 ]]; then
     exit 2
 fi
 mode="${4:-screens}"
+allowance=900
 case "$mode" in
-    screens) method=testActualSettingsModScreens ;;
+    screens)
+        method=testActualSettingsModScreens
+        # The full flow showed eight minutes for the first three system picker
+        # visits on CI. Keep the individual waits bounded and allow the full flow.
+        allowance=1500
+        ;;
     nexus-live) method=testLiveNexusListing ;;
     dll-probe) method=testInstalledModDllDiagnostics; export SKYRIM_IOS_SKSE_DLL_PROBE=1 ;;
     *) echo "Unknown simulator test mode: $mode" >&2; exit 2 ;;
@@ -43,7 +49,7 @@ xcodebuild -project "$RUN/work/ModScreens.xcodeproj" -scheme ModScreens \
     -derivedDataPath "$RUN/DerivedData" -resultBundlePath "$result" \
     -parallel-testing-enabled NO -test-timeouts-enabled YES \
     "-only-testing:ModScreensUITests/ModScreensTests/$method" \
-    -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900 \
+    -default-test-execution-time-allowance "$allowance" -maximum-test-execution-time-allowance "$allowance" \
     test || status=$?
 echo "xcodebuild test exited with status $status."
 if [[ -d "$result" ]]; then

@@ -74,11 +74,16 @@ asset placement, and both Fuz subtitle routes. The pinned actor-reference
 experiment proves a retained reference at the crosshair call site. The original
 DLL record test uses authored forms and a separate Classic companion. Most
 native MODs still need their game callbacks and the iPhone checks in this table.
-The isolated DLL file probe reaches initialization for the original Enhanced
-Camera 1.4, Safety Load 1.2 and HDT HighHeels beta 0.5. The first two stop on
-`HeapCreate`. HighHeels stops on a guest memory access during initialization.
-The diagnostic import entries stop on first use and do not provide Win32
-behavior or change the resident loader.
+The isolated DLL file probe completes ShowRaceMenu Precache Killer 1.3
+initialization. The startup-view check recognizes the exact DLL and enables
+the verified guest precache return only for the selected profile. Enhanced
+Camera 1.4 completes isolated PC initialization when the diagnostic work
+limit is raised for that run. It records 49 requests to change game code, with
+none applied. Safety Load 1.2 reaches a read of live game state after reading
+its bundled INI. HDT HighHeels beta 0.5 has host tests for applying and removing
+the node offset and for observing the original task queue on its caller. Its
+equipment and node lifetime have yet to be verified in game. The resident DLL
+loader and the app's diagnostic work limit are unchanged.
 [Progress](STATUS.md)
 
 ## RaceMenu LE appearance editing
