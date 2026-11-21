@@ -239,6 +239,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
         // Inspect the grid once after every move, including the last one.
         // A drag and its accessibility queries can consume the remaining time.
         if (deadline.timeIntervalSinceNow <= 0) break;
+        const BOOL openedSamples = stage == SKPickerSamples;
         if (stage < SKPickerSamples && bar.staticTexts[@"UI Samples"].exists) {
             stage = SKPickerSamples;
             ready = [NSDate dateWithTimeIntervalSinceNow:3];
@@ -273,6 +274,10 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
                 }
             }
         }
+        // A fresh launch can take most of the navigation budget just to reach
+        // the samples directory. Give the grid its own bounded scroll budget.
+        if (!openedSamples && stage == SKPickerSamples)
+            deadline = [NSDate dateWithTimeIntervalSinceNow:45];
         [NSThread sleepForTimeInterval:.15];
     }
     XCTFail(@"Files could not locate %@ at stage %lu. %@", name, (unsigned long)stage, self.app.debugDescription);
