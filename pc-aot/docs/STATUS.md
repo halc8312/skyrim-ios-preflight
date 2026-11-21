@@ -34,6 +34,8 @@ HDT Physics Extensions 14.28の同梱DLLを実行せず、インポート表を�
 
 25分の試験は、FilesでZIPを表示する最後のスクロールが終わった時点で個別の期限に達した。最後の操作後にもグリッドを確認するよう改め、ファイル選択には最大60秒の単一の期限を設けた。 [修正後の画面試験](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44906877707)
 
+次の回では、ZIPとフォルダのFOMOD、欠落ファイルの表示、Nexusブラウザ、構成の書き出しと競合表示を確認した。再起動後にコピー先のプロファイルでセーブが表示された。書き出したJSONはFilesに存在したが、再起動後のフォルダ移動で時間を使い、選択する前に個別の期限に達した。フォルダを開く時間と、中のファイルをスクロールして選ぶ時間をそれぞれ制限して再検査する。 [再起動を含む画面試験](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44906877707) · [フォルダ内の選択を再検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44909543699)
+
 **2026-11-21　第一弾の追加素材4本を確認しFuzの音声検索を修正**
 
 TaildropでEnhanced Character Edit LE 1.59、チャット添付でFuz Ro D-oh LE 6.1、ShowRaceMenu Precache Killer 1.3、HDT Physics Extensions 14.28を受領。4アーカイブの整合性を検査し、私用の確認フォルダに保持した。単独DLLの診断では、Fuzは `GetPrivateProfileSectionA`、HDT Physicsは `PathAppendA`、ECEは `FindFirstFileA` のインポートが未対応。Precache Killerは初期化中の `HeapCreate` で停止した。
