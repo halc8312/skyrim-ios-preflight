@@ -28,6 +28,13 @@
 #include "inspect.h"
 #include "mod_requirements.h"
 #include "mod_features.h"
+#ifdef SKYRIM_IOS_MOD_HOOKS
+#include "PcGuestModHooksABI.h"
+#include "classic_vm_epoch.h"
+#include "mod_fuz.h"
+#include "mod_fuz_host.h"
+#include "mod_hook_selection.h"
+#endif
 #endif
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
 #include "mod_dll_probe.h"
@@ -311,21 +318,72 @@ int skyrim_mods_feature_enabled(unsigned feature) {
     return feature < SKYRIM_FEATURE_COUNT && (__atomic_load_n(&launchFeatureMask, __ATOMIC_RELAXED) >> feature & 1u);
 }
 
-/* Reasons: 0 enabled, 1 no implementation yet, 2 MOD not in the active packages, 3 safe mode or plugin list failure. */
+#ifdef SKYRIM_IOS_MOD_HOOKS
+/* Select the guest hook groups for the features allowed so far, before the
+ * guest starts. Returns the features whose groups were selected. */
+static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
+    const uint32_t host = PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD | PC_GUEST_MOD_HOOK_VM_LIFECYCLE;
+    skyrim_mod_hook_plan(requested, pc_guest_mod_hooks_compiled(), host, plan);
+    PcGuestModHooks table = {PC_GUEST_MOD_HOOKS_ABI, sizeof table, plan->groups, 0, {0}, {0}, {0}, {0}};
+    if (plan->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
+        table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load};
+    BOOL ready = YES;
+    if (plan->groups & PC_GUEST_MOD_HOOK_FUZ_MENU) {
+        NSArray<NSString *> *roots = DataRootsFor(launchPackageIds);
+        const char **paths = calloc(roots.count + 1, sizeof *paths);
+        SkyrimFuzSettings settings;
+        for (NSUInteger i = 0; paths && i < roots.count; ++i) paths[i] = roots[i].fileSystemRepresentation;
+        ready = paths && !skyrim_fuz_read_settings(paths, roots.count, &settings)
+            && !skyrim_fuz_app_configure(&settings) && skyrim_vm_epoch_subscribe(skyrim_fuz_app_retire, NULL);
+        free(paths);
+        skyrim_fuz_app_fill(&table);
+    }
+    if (ready && pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
+    /* Keep the original paths: select nothing. */
+    if (pc_guest_select_mod_hooks(0, NULL) != 0) fputs("IOS_MOD_HOOKS selection failed\n", stderr);
+    for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f)
+        if (plan->enabled >> f & 1u) plan->reason[f] = SKYRIM_HOOK_PLAN_HOST_UNAVAILABLE;
+    plan->enabled = plan->groups = 0;
+    return 0;
+}
+#endif
+
+/* Reasons: 0 enabled, 1 no implementation yet, 2 MOD not in the active packages, 3 safe mode or plugin list
+ * failure, 4 the guest lacks the needed hook groups (rebuild it). */
 static void FreezeFeatures(NSDictionary *profile) {
     NSMutableDictionary *enabledKeys = [NSMutableDictionary dictionary];
     SkyrimFeatureScan scan = FeatureScanFor(launchWithoutMods ? @[] : launchPackageIds);
     uint32_t mask = 0;
+    unsigned reasons[SKYRIM_FEATURE_COUNT];
+    uint32_t hooked = 0;
+    for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
+        reasons[f] = launchWithoutMods || launchPluginListFailed ? 3 : !skyrim_feature_implemented(f) ? 1
+                   : !scan.features[f].providers ? 2 : 0;
+#ifdef SKYRIM_IOS_MOD_HOOKS
+        if (FeatureSelected(profile, f) && !reasons[f] && skyrim_mod_hook_requirements(f)) hooked |= 1u << f;
+#endif
+    }
+#ifdef SKYRIM_IOS_MOD_HOOKS
+    SkyrimHookPlan plan;
+    const uint32_t selected = SelectModHooks(hooked, &plan);
+    for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f)
+        if ((hooked >> f & 1u) && !(selected >> f & 1u)) reasons[f] = 4;
+#endif
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
         if (!FeatureSelected(profile, f)) continue;
-        unsigned reason = launchWithoutMods || launchPluginListFailed ? 3 : !skyrim_feature_implemented(f) ? 1
-                        : !scan.features[f].providers ? 2 : 0;
+        const unsigned reason = reasons[f];
         if (!reason) { mask |= 1u << f; enabledKeys[@(skyrim_feature_key(f))] = @YES; }
         fprintf(stderr, "IOS_MOD_FEATURE id=%u requested=1 available=%u enabled=%u reason=%u\n", f,
                 scan.features[f].providers ? 1u : 0u, reason ? 0u : 1u, reason);
     }
     if (enabledKeys.count) launchSetup[@"features"] = enabledKeys;
     __atomic_store_n(&launchFeatureMask, mask, __ATOMIC_RELAXED);
+}
+
+void skyrim_mods_report_features_at_exit(void) {
+#ifdef SKYRIM_IOS_MOD_HOOKS
+    if (skyrim_mods_feature_enabled(SKYRIM_FEATURE_FUZ)) skyrim_fuz_app_report(1);
+#endif
 }
 
 static BOOL SkyUITrialSelected(NSDictionary *profile) {
@@ -1828,7 +1886,7 @@ static NSArray<NSString *> *ReportLines(NSDictionary *package) {
  * switch applies at the next launch. Detection is by file name only. */
 static NSString *FeatureName(unsigned feature) {
     switch (feature) {
-    case SKYRIM_FEATURE_FUZ: return T(@"Fuz Ro D-oh (subtitles and lip sync for unvoiced lines)", @"Fuz Ro D-oh（無音声の台詞に字幕と口の動き）");
+    case SKYRIM_FEATURE_FUZ: return T(@"Fuz Ro D-oh 6.1 (subtitles and lip sync for unvoiced lines)", @"Fuz Ro D-oh 6.1（無音声の台詞に字幕と口の動き）");
     case SKYRIM_FEATURE_PAPYRUSUTIL: return T(@"PapyrusUtil (settings and saved values)", @"PapyrusUtil（設定と保存値）");
     case SKYRIM_FEATURE_PRECACHE_KILLER: return @"ShowRaceMenu Precache Killer";
     case SKYRIM_FEATURE_RACEMENU: return @"RaceMenu";
@@ -1878,6 +1936,15 @@ static NSString *FeatureName(unsigned feature) {
     BOOL implemented = skyrim_feature_implemented(f) != 0;
     NSString *status = implemented ? T(@"Found by file name (version not checked).", @"ファイル名で検出しました（版は未確認）。")
                                    : T(@"Found. Not supported on iPhone yet.", @"検出しました。iPhoneではまだ対応していません。");
+#ifdef SKYRIM_IOS_MOD_HOOKS
+    /* The opened guest must carry the hook groups the feature needs. */
+    const uint32_t needed = skyrim_mod_hook_requirements(f);
+    if (implemented && (needed & ~pc_guest_mod_hooks_compiled())) {
+        status = T(@"Found. The game build in this app lacks the needed hooks; rebuild the guest with them.",
+                   @"検出しました。このアプリのゲーム部分に必要なフックがありません。ゲストの再ビルドが必要です。");
+        implemented = NO;
+    }
+#endif
     unsigned providers = self.scan.features[f].providers;
     if (providers > 1)
         status = [status stringByAppendingFormat:T(@" %u packages provide it; the later one in the list is used.", @" %u個のパッケージが含みます。一覧で後のものが使われます。"), providers];

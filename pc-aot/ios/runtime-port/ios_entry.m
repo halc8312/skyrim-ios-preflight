@@ -249,6 +249,9 @@ int SDL_main(int argc, char **argv) {
         char *runtime_argv[] = {"SkyrimIOS", (char *)runtimeGame.fileSystemRepresentation,
                                 (char *)profile.fileSystemRepresentation, NULL};
         int result = skyrim_ios_runtime_main(3, runtime_argv);
+#ifdef SKYRIM_IOS_CLASSIC_SKSE
+        skyrim_mods_report_features_at_exit();
+#endif
         fprintf(stderr, "Guest entry returned %d; no title success was inferred\n", result);
         fflush(stderr);
         return result;

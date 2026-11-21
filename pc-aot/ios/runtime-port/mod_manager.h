@@ -25,6 +25,8 @@ int skyrim_mods_acquire_papyrus_inputs(SkyrimPapyrusInputs *inputs);
 /* 1 when the feature (a SkyrimFeature value) was chosen in the running profile
  * and passed its launch checks. Fixed after startup; any thread. */
 int skyrim_mods_feature_enabled(unsigned feature);
+/* Final numeric MOD feature diagnostics, after the guest returns (Classic builds). */
+void skyrim_mods_report_features_at_exit(void);
 #endif
 /* Text for the overlay after startup (nil when nothing to say). */
 NSString *skyrim_mods_launch_notice(void);

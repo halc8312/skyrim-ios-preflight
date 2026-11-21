@@ -160,6 +160,28 @@ if(SKYRIM_IOS_SKSE_DLL_PROBE)
         target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/mod_papyrus_inputs.c")
     endif()
 endif()
+if(SKYRIM_IOS_MOD_HOOKS)
+    # App half of the Fuz hooks. The reviewed experiment sources compile unchanged;
+    # their funcs_exe.h and lift_prelude.h come from fuz-runtime-abi (rt_call and
+    # the runtime's x86.h), so this library keeps its own include order.
+    set(fuz_seams "${SKYRIM_IOS_MOD_HOOK_SEAMS}")
+    set(fuz_host_sources "${CMAKE_CURRENT_SOURCE_DIR}/mod_fuz_host.c"
+        "${fuz_seams}/voice_fallback.c" "${fuz_seams}/lift_voice_seam.c" "${fuz_seams}/lift_menu_seam.c"
+        "${fuz_seams}/lift_world_seam.c" "${fuz_seams}/lift_resource_lookup.c")
+    if(NOT SKYRIM_IOS_SKSE_DLL_PROBE)
+        list(APPEND fuz_host_sources "${SKYRIM_IOS_ROOT}/experiments/skse-plugin-vm/x86_winfile.c")
+    endif()
+    add_library(skyrim_ios_fuz_host OBJECT ${fuz_host_sources})
+    target_include_directories(skyrim_ios_fuz_host BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/fuz-runtime-abi"
+        "${SKYRIM_IOS_RUNTIME_OVERLAY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${SKYRIM_IOS_BINDING_INCLUDE_DIR}"
+        "${fuz_seams}" "${SKYRIM_IOS_ROOT}/experiments/skse-plugin-vm")
+    target_compile_definitions(skyrim_ios_fuz_host PRIVATE GAME_SKYRIM SKYRIM_IOS=1 SKYDREAM_MOBILE=1
+        SKYRIM_IOS_GUEST_DIAGNOSTIC=1 SKYRIM_IOS_CLASSIC_SKSE=1 SKYDREAM_SKSE=1 SKYRIM_IOS_MOD_HOOKS=1)
+    target_compile_options(skyrim_ios_fuz_host PRIVATE -O2 -fno-strict-aliasing -fwrapv -fsigned-char
+        -include "${CMAKE_CURRENT_SOURCE_DIR}/ios_build_contract.h")
+    target_sources(skyrim_ios_runtime PRIVATE $<TARGET_OBJECTS:skyrim_ios_fuz_host>
+        "${CMAKE_CURRENT_SOURCE_DIR}/mod_hook_selection.c")
+endif()
 if(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE)
     set(profile_json_source "${SKYRIM_IOS_ROOT}/experiments/skse-profile-json")
     target_sources(skyrim_ios_runtime PRIVATE

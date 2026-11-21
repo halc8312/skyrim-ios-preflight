@@ -10,6 +10,12 @@
 #include <strings.h>
 #include <sys/stat.h>
 
+#ifdef SKYRIM_IOS_MOD_HOOKS
+#define MOD_HOOKS_IMPLEMENTED 1
+#else
+#define MOD_HOOKS_IMPLEMENTED 0
+#endif
+
 typedef struct {
     const char *key;
     const char *dll_keyword; /* case-insensitive part of a DLL name in SKSE/Plugins, or NULL */
@@ -20,7 +26,8 @@ typedef struct {
 /* Names follow each author's LE package. A keyword keeps the match tolerant of
  * spacing and capitalization. None of them is a statement about a version. */
 static const FeatureRow rows[SKYRIM_FEATURE_COUNT] = {
-    [SKYRIM_FEATURE_FUZ] = {"fuz", "fuz", NULL, 0},
+    /* MOD hook builds carry the app half (mod_fuz_host.c); the guest half is checked at launch. */
+    [SKYRIM_FEATURE_FUZ] = {"fuz", "fuz", NULL, MOD_HOOKS_IMPLEMENTED},
     [SKYRIM_FEATURE_PAPYRUSUTIL] = {"papyrusutil", "storageutil", NULL, 0},
     [SKYRIM_FEATURE_PRECACHE_KILLER] = {"precache", "precache", NULL, 0},
     [SKYRIM_FEATURE_RACEMENU] = {"racemenu", "chargen", NULL, 0},
