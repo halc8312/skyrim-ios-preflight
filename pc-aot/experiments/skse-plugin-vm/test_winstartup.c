@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <string.h>
 
+static const uint32_t handle_count_requests[] = {0, 1, 15, 20, 256, 2048, UINT32_MAX};
+
 #if defined(SKSE_WIN_STARTUP_NATIVE_CHILD)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -158,6 +160,15 @@ int WINAPI WinMain(HINSTANCE module, HINSTANCE previous, LPSTR arguments, int sh
     SetLastError(sentinel);
     if ((uint32_t)!!IsProcessorFeaturePresent(UINT32_MAX) != skse_win_processor_feature(UINT32_MAX) ||
         GetLastError() != sentinel) return 13;
+    for (size_t i = 0; i < sizeof handle_count_requests / sizeof handle_count_requests[0]; ++i) {
+        const uint32_t request = handle_count_requests[i];
+        SetLastError(sentinel);
+        const UINT returned = SetHandleCount(request);
+        const DWORD error = GetLastError();
+        thread.last_error = sentinel;
+        if (returned != skse_win_thread_call(&thread, SKSE_WIN_SET_HANDLE_COUNT, request, 0) ||
+            error != thread.last_error) return 25;
+    }
     return test_detached_console(&thread);
 }
 #else
@@ -173,6 +184,12 @@ int main(void) {
     for (unsigned i = 56; i < sizeof bytes; ++i) assert(bytes[i] == 0xa5);
 
     SkseWinThread thread = {.last_error = 777};
+    assert(skse_win_thread_argument_count(SKSE_WIN_SET_HANDLE_COUNT) == 1);
+    for (size_t i = 0; i < sizeof handle_count_requests / sizeof handle_count_requests[0]; ++i) {
+        const uint32_t request = handle_count_requests[i];
+        assert(skse_win_thread_call(&thread, SKSE_WIN_SET_HANDLE_COUNT, request, 0) == request &&
+               thread.last_error == 777);
+    }
     assert(!skse_win_std_handle(&thread, (uint32_t)-10) && thread.last_error == 777);
     assert(!skse_win_std_handle(&thread, (uint32_t)-11) && thread.last_error == 777);
     assert(!skse_win_std_handle(&thread, (uint32_t)-12) && thread.last_error == 777);

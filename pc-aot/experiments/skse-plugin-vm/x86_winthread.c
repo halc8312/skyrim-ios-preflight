@@ -24,6 +24,7 @@ enum { WIN_INVALID_HANDLE = 6, OUT_OF_MEMORY = 8, INVALID_PARAMETER = 87 };
 unsigned skse_win_thread_argument_count(SkseWinThreadOperation operation) {
     static const unsigned argument_counts[] = {
         0, 1, 1, 2, 0, 1, 0, 0, // TLS, thread-local error state and identity.
+        1,                      // Historical file handle count.
         1, 2, 1, 1, 1, 1, 3,   // Critical section operations.
         1, 1, 1,                // UTC, counter and frequency.
         1, 1,                   // Process-local pointer coding.
@@ -231,6 +232,9 @@ uint32_t skse_win_thread_call(SkseWinThread *thread, SkseWinThreadOperation oper
     case SKSE_WIN_SET_LAST_ERROR: thread->last_error = index; return 0;
     case SKSE_WIN_CURRENT_THREAD_ID: return thread->id;
     case SKSE_WIN_CURRENT_PROCESS_ID: return 4096; // Each isolated VM has one process.
+    case SKSE_WIN_SET_HANDLE_COUNT:
+        // Win32 returns the request and leaves the handle table and last error intact.
+        return index;
     default: break;
     }
 
