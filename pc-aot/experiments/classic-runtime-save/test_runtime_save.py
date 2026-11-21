@@ -54,7 +54,7 @@ def main() -> None:
         if args.sanitizers:
             flags += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer"]
         variants = [("runtime-save", [], [HERE / "test_runtime_save.c", HERE / "save_attempt.c",
-                                         COSAVE / "observer" / "lifecycle.c"])]
+                                         COSAVE / "event_trace.c", COSAVE / "observer" / "lifecycle.c"])]
         header_runtime = runtime
         if args.generation is not None:
             sys.path.insert(0, str(SAVE_PUBLISH))

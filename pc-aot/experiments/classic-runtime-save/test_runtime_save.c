@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #define _GNU_SOURCE 1
+#include "event_bridge.h"
 #include "rt.h"
 #include "runtime_save.h"
 #include "save_attempt.h"
@@ -220,6 +221,11 @@ static void report_attempt(void *context, int dir, const char *leaf, int ess,
     CHECK(trace->rows[1].site == SkyrimSaveVM && trace->rows[1].parent == slot_ticket);
     CHECK(trace->rows[2].returning && trace->rows[2].outcome == SkyrimReturnedTrue);
     CHECK(trace->rows[3].returning && trace->rows[3].ticket == slot_ticket);
+    const SkseGameEvent event = {.scope = {.launch = {1}}, .ticket = slot_ticket};
+    SkseEventTrace observed = {.launch = {1}, .rows = trace->rows, .count = trace->count};
+    CHECK(skse_bridge_check_call(&event, SkyrimSaveSlot, &observed) == SKSE_BRIDGE_OK);
+    observed.launch[0] = 2;
+    CHECK(skse_bridge_check_call(&event, SkyrimSaveSlot, &observed) == SKSE_BRIDGE_EVENT);
     report->reader = ess;
     ++report->count;
 }
