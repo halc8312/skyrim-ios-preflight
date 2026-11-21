@@ -192,7 +192,7 @@ static SkseSettingsStatus settings_start(SkseClassicSettings *settings, const Sk
     };
     const SkseTrialDependency source = {runtime.module_file_name, inputs->dll, inputs->dll_size};
     initialize_session(session, source, options, &runtime, NULL, 0, NO_CATALOG);
-    if (is_traceable_import(&session->result)) {
+    if (is_traceable_import(&session->result, false)) {
         destroy_session_state(session);
         *session = (SksePluginSession){.trace_windows_imports = true};
         initialize_session(session, source, options, &runtime, NULL, 0, NO_CATALOG);

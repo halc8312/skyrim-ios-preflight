@@ -460,6 +460,14 @@ class LocalFileProbeTest(unittest.TestCase):
             code = bytes.fromhex("ff 15") + struct.pack("<I", BASE + 0x3060) + bytes.fromhex("b8 01 00 00 00 c3")
             called[0x200:0x200 + len(code)] = code
             called_path.write_bytes(called)
+            shell_path, wrong_library_path = root / "shell.dll", root / "wrong-library.dll"
+            shell = called.copy()
+            zero_string(shell, DATA + 0x40, b"shell32.DLL")
+            zero_string(shell, DATA + 0xa2, b"SHGetFolderPathA")
+            shell_path.write_bytes(shell)
+            wrong_library = shell.copy()
+            zero_string(wrong_library, DATA + 0x40, b"kernel32.DLL")
+            wrong_library_path.write_bytes(wrong_library)
             mixed = uncalled.copy()
             directory(mixed, 12, 0x3060, 12)
             for table in (0x60, 0x80):
@@ -500,6 +508,9 @@ class LocalFileProbeTest(unittest.TestCase):
                                       "stopped,1,truncated headers,0", "2", "3", "1", "2", "1", "2"])
             self.assertEqual(good.read_bytes(), fixture)
             self.assertEqual(unknown.read_bytes(), with_import)
+            result = subprocess.check_output([binary, shell_path, wrong_library_path], text=True, timeout=3).splitlines()
+            self.assertEqual(result, ["stopped,8,ok,0,load=6,partial,SHGetFolderPathA",
+                                      "stopped,1,import absent from the service list,1,kernel32.DLL,SHGetFolderPathA"])
             resident = subprocess.check_output([binary, "--session", tasks], text=True, timeout=3)
             self.assertEqual(resident.strip(), "resident tasks=3/1 independent-lifetime=ok budget-refusal=ok")
             resident_worker = subprocess.check_output([binary, "--session-worker", closed], text=True, timeout=3)

@@ -1,5 +1,33 @@
 # 開発状況
 
+**2026-11-21　第一弾の配布前確認**
+
+添付のDLLを1本ずつ選ぶ診断で、既知のWindowsインポートを関数名とDLL名の組で照合し、呼び出された時点で停止するようにした。3本とも初期化の実行まで進んだ。Enhanced CameraとSafety Loadは `HeapCreate`、HDT HighHeelsはゲストメモリへのアクセスで停止。既存の常駐ローダーとフォルダ診断は同じ条件を維持する。
+
+WSLでは `python3 -B -m unittest -v test_probe_local_file test_probe_directory test_skse_plugin_vm` をGCCのASan/UBSan付きで実行し、15件が合格、14件が実行環境・入力条件によりスキップ。同じうち単独DLLとフォルダ診断をClang 18で実行し、13件が合格、3件がスキップ。所有者のPapyrusUtilと固定版LEを指定した `python3 -B -m unittest -v test_probe_local_file` はClang 18で4件合格。`python3 -B -m unittest discover -s tests -p 'test_mod_*.py'` はClang 18で78件が合格、2件がスキップ。添付3本の診断はGCCのASan/UBSan付きで実行した。
+
+| 項目 | 実装の範囲 | 確認した試験 | iPhoneで残る確認・制約 |
+| --- | --- | --- | --- |
+| SKSE / SkyUI | Classic互換の一部とSkyUI 5.1 | 既配布版で実物のインベントリとMCM | 第一弾ビルドで再確認 |
+| Fuz Ro D-oh | 音声選択と会話字幕の接続 | 固定版の資源検索と字幕の試験 | LE 6.1の実物の代替音声で口パクと長さを比較 |
+| PapyrusUtil / Wearable Lanterns | 設定の保存と入力・メーターの経路 | 実物StorageUtilの値の保存と復元、入力とイベントのホスト試験 | 実物MODの点灯、操作、MCMからの設定復元 |
+| 追加セーブ | 固定版フックの単体試作 | 同じ `.ess` の照合と保存・復元時の通知 | 配布用ゲストへの接続と実際のセーブの復元 |
+| RaceMenu / ECE / NiOverride | 標準の鼻の高さの反映、ECEの配置、NiOverride重複の検出 | RaceMenuの単体4件と固定版への接続、配置のホスト試験 | ECEは実物 `.slot` の比較が必要。拡張スライダーとNiOverrideの反映は未実装 |
+| ShowRaceMenu Precache Killer / KS Hairdos / Apachii | 初回先読みの切り替えと髪型素材の配置 | 固定版の先読み経路、LEヘッドパーツの配置 | 実物1.3で差し込み位置を照合し、髪型表示と時間を比較 |
+| HDT Physics Extensions / HDT HighHeels | 対象素材の配置とDLLの診断 | 物理の作者ソースを確認、HighHeelsの実物DLLとスクリプトを検査 | 物理14.28の実物と接続の検証、ハイヒール装備時と解除時の補正 |
+| XPMSE / XPMS / Realistic Ragdolls and Force | 骨格の選択と依存の確認 | プロファイルごとの配置 | 実物でアニメーションと切り替えを確認 |
+| CBBE / UNP / BodySlide / FNIS | 体型の優先順、生成物の取り込みと構成の照合 | 自作素材を用いたCBBEとUNPの競合、生成物の配置 | 実物の体型と生成済みメッシュ・アニメーションの表示 |
+| USLEEP / DLC | 必須マスターと読み込み順の検証 | テスト用マスターでの依存判定 | 3 DLCとUSLEEPで変更レコードを確認 |
+| Enhanced Camera / Safety Load | カメラ状態の観測試作とDLLの診断 | 固定版のカメラ観測、実物2本の初期化停止箇所 | カメラ観測の配布用ゲスト接続、一人称の描画とロード時処理の実装 |
+
+既存のTailscaleは非公開で稼働している。署名プロファイルは有効。前回のインストールページの期限が切れているため、完成版のビルドと署名後に新しい配布ページを検証する。 [実機比較手順](MOD_FIRST_WAVE_PLAN.md#84-実機での比較同じipamod無効のプロファイルとの比較)
+
+**2026-11-21　Enhanced Camera、Safety Load、HDT HighHeelsの実物を確認**
+
+提供されたEnhanced Camera 1.4、Safety Load 1.2、HDT HighHeels beta 0.5のアーカイブに、LE用の32ビットSKSE DLLが入っていることを確認した。固定版LEを照合した上で読み取り専用の診断にかけたところ、3本とも未対応のWindowsインポートで停止し、SKSEの初期化処理には到達しなかった。HDT HighHeelsにはプラグインと装備時のスクリプトが含まれる。高さ補正の確認には対応するLE用装備を使う。
+
+NiNode Transform ToolsとDumpTransformはPC用の補助資料として確認した。ECEの顔スライダーを照合するには、同じキャラクターで値を一つだけ変えて保存したLE用の `.slot` が2つ必要。HDT Physics Extensions 14.28の配布物も別途必要。ゲームと元のMODアーカイブは読み取り専用で扱った。iPhone用のビルドと配布は未実施。
+
 **2026-11-21　RaceMenuの標準スライダーと追加セーブの照合を前進**
 
 RaceMenuの標準プリセットから鼻の高さを選び、同じプロファイルの次回起動後、キャラクター作成画面で一度だけ既存のスライダー処理へ渡す。固定版で新旧処理の接続を検査し、単体試験4件、統合後のMOD関連80件、IPA組み立てのホスト試験11件が合格。Apple SDK、実機の外見表示と保存後の復元、ECEの外見反映、RaceMenuの残りのスライダーは未確認または未実装。

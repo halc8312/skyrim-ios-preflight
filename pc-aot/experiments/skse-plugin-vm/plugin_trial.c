@@ -143,7 +143,7 @@ static const struct {
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 
-/* A temporary diagnostic can get past linking these known CRT dependencies.
+/* A temporary diagnostic can link these known Windows imports.
  * A call to any of them stops the trial immediately. No substitute behavior
  * or host function resolution is provided. */
 #define HALT_IMPORT_BASE UINT32_C(0xe0002000)
@@ -156,9 +156,28 @@ static const char *const halt_kernel32[] = {
     "RtlUnwind", "SetStdHandle", "SetUnhandledExceptionFilter", "Sleep", "TerminateProcess",
     "UnhandledExceptionFilter"
 };
-enum { HALT_IMPORT_COUNT = sizeof halt_kernel32 / sizeof halt_kernel32[0] };
-_Static_assert(WINDOWS_SERVICE_COUNT + HALT_IMPORT_COUNT + 7 + SKSE_SERIAL_METHOD_COUNT + SKSE_X86_TASK_TYPES <=
-               SKSE_X86_MAX_SERVICES, "trial service count");
+static const struct { const char *library, *symbol; } extra_halt_imports[] = {
+    {"KERNEL32.dll", "GetPrivateProfileStringA"}, {"KERNEL32.dll", "GetPrivateProfileIntA"},
+    {"KERNEL32.dll", "WritePrivateProfileStringA"}, {"KERNEL32.dll", "CreateDirectoryA"},
+    {"KERNEL32.dll", "SetHandleCount"}, {"KERNEL32.dll", "GetStartupInfoA"},
+    {"KERNEL32.dll", "FreeEnvironmentStringsA"}, {"KERNEL32.dll", "GetEnvironmentStrings"},
+    {"KERNEL32.dll", "HeapCreate"}, {"KERNEL32.dll", "HeapDestroy"},
+    {"KERNEL32.dll", "VirtualFree"}, {"KERNEL32.dll", "VirtualAlloc"},
+    {"KERNEL32.dll", "LCMapStringA"}, {"KERNEL32.dll", "GetStringTypeA"},
+    {"KERNEL32.dll", "GetLocaleInfoA"}, {"KERNEL32.dll", "LoadLibraryA"},
+    {"KERNEL32.dll", "LoadLibraryW"}, {"KERNEL32.dll", "WriteConsoleA"},
+    {"KERNEL32.dll", "GetConsoleOutputCP"}, {"KERNEL32.dll", "GetCurrentThread"},
+    {"KERNEL32.dll", "DisableThreadLibraryCalls"}, {"KERNEL32.dll", "SetThreadPriority"},
+    {"KERNEL32.dll", "VirtualQuery"}, {"KERNEL32.dll", "SuspendThread"},
+    {"KERNEL32.dll", "GetThreadContext"}, {"KERNEL32.dll", "SetThreadContext"},
+    {"KERNEL32.dll", "FlushInstructionCache"}, {"KERNEL32.dll", "ExitThread"},
+    {"COMDLG32.dll", "GetOpenFileNameA"}, {"COMDLG32.dll", "GetSaveFileNameA"},
+    {"SHELL32.dll", "SHGetFolderPathA"},
+};
+enum { HALT_IMPORT_COUNT = sizeof halt_kernel32 / sizeof halt_kernel32[0],
+       EXTRA_HALT_COUNT = sizeof extra_halt_imports / sizeof extra_halt_imports[0],
+       MAX_TRIAL_IMPORTS = SKSE_X86_MAX_SERVICES - 7 - SKSE_SERIAL_METHOD_COUNT - SKSE_X86_TASK_TYPES };
+_Static_assert(WINDOWS_SERVICE_COUNT + HALT_IMPORT_COUNT <= MAX_TRIAL_IMPORTS, "trial service count");
 _Static_assert(COMMAND_LINE_OFFSET + sizeof virtual_command_line <= INFO_OFFSET &&
                INFO_OFFSET + 12 <= PAPYRUS_INTERFACE_OFFSET &&
                PAPYRUS_INTERFACE_OFFSET + SKSE_CLASSIC_PAPYRUS_TABLE_BYTES <= PAPYRUS_PROBE_REGISTRY_OFFSET &&
@@ -176,6 +195,7 @@ const char *skse_trial_windows_service_name(uint32_t token) {
     if (token >= HALT_IMPORT_BASE && (token - HALT_IMPORT_BASE) % 4 == 0) {
         const size_t i = (token - HALT_IMPORT_BASE) / 4;
         if (i < HALT_IMPORT_COUNT) return halt_kernel32[i];
+        if (i - HALT_IMPORT_COUNT < EXTRA_HALT_COUNT) return extra_halt_imports[i - HALT_IMPORT_COUNT].symbol;
     }
     return NULL;
 }
@@ -313,7 +333,7 @@ struct SksePluginSession {
     char module_names[SKSE_DEPENDENCY_MAX_MODULES][SKSE_PE_MAX_IMPORT_NAME];
     SkseTrialResult result;
     SkseDependencySpace space;
-    SksePeImportBinding imports[WINDOWS_SERVICE_COUNT + HALT_IMPORT_COUNT];
+    SksePeImportBinding imports[MAX_TRIAL_IMPORTS];
     size_t import_count;
     bool trace_windows_imports, resident;
     SkseX86Service entries[SKSE_X86_MAX_SERVICES];
@@ -488,6 +508,53 @@ static void identify_unavailable_import(SkseTrialDependency primary, SkseDepende
     free(report);
 }
 
+static size_t halt_import_index(const char *library, const char *symbol, bool include_extra) {
+    if (skse_pe_library_name_equal(library, "KERNEL32.dll")) {
+        for (size_t i = 0; i < HALT_IMPORT_COUNT; ++i)
+            if (!strcmp(symbol, halt_kernel32[i])) return i;
+    }
+    if (include_extra) {
+        for (size_t i = 0; i < EXTRA_HALT_COUNT; ++i)
+            if (!strcmp(symbol, extra_halt_imports[i].symbol) &&
+                skse_pe_library_name_equal(library, extra_halt_imports[i].library)) return HALT_IMPORT_COUNT + i;
+    }
+    return HALT_IMPORT_COUNT + EXTRA_HALT_COUNT;
+}
+
+static void add_halt_imports(SksePluginSession *session, SkseTrialDependency primary, bool include_extra) {
+    bool declared[HALT_IMPORT_COUNT + EXTRA_HALT_COUNT] = {0};
+    bool has_extra = false;
+    if (include_extra) {
+        SksePeReport *report = malloc(sizeof *report);
+        if (report) {
+            skse_pe_inspect(primary.bytes, primary.length, report);
+            for (size_t i = 0; i < report->symbol_count; ++i) {
+                const SksePeImportSymbol *symbol = &report->symbols[i];
+                if (symbol->by_ordinal || symbol->library_index >= report->library_count) continue;
+                size_t index = halt_import_index(report->libraries[symbol->library_index], symbol->name, true);
+                if (index >= HALT_IMPORT_COUNT + EXTRA_HALT_COUNT) continue;
+                declared[index] = true;
+                if (index >= HALT_IMPORT_COUNT) has_extra = true;
+            }
+            free(report);
+        }
+    }
+
+    /* Keep the legacy diagnostic bindings unless the single DLL needs the
+     * expanded list. In that case bind only its declared names. */
+    for (size_t i = 0; i < HALT_IMPORT_COUNT + EXTRA_HALT_COUNT && session->import_count < MAX_TRIAL_IMPORTS; ++i) {
+        if (has_extra ? !declared[i] : i >= HALT_IMPORT_COUNT) continue;
+        const char *library = "KERNEL32.dll";
+        const char *symbol;
+        if (i < HALT_IMPORT_COUNT) symbol = halt_kernel32[i];
+        else {
+            library = extra_halt_imports[i - HALT_IMPORT_COUNT].library;
+            symbol = extra_halt_imports[i - HALT_IMPORT_COUNT].symbol;
+        }
+        session->imports[session->import_count++] = (SksePeImportBinding){library, symbol, HALT_IMPORT_BASE + 4 * i};
+    }
+}
+
 static bool map_session(SksePluginSession *session, SkseTrialDependency primary, const SkseTrialRuntime *runtime,
                         const SkseTrialDependency *catalog, size_t count, CatalogPolicy policy) {
     SkseTrialResult *result = &session->result;
@@ -497,11 +564,7 @@ static bool map_session(SksePluginSession *session, SkseTrialDependency primary,
     if (runtime) {
         for (size_t i = 0; i < WINDOWS_SERVICE_COUNT; ++i) imports[i] = windows_services[i].binding;
         session->import_count = WINDOWS_SERVICE_COUNT;
-        if (session->trace_windows_imports) {
-            for (uint32_t i = 0; i < HALT_IMPORT_COUNT; ++i)
-                imports[session->import_count++] = (SksePeImportBinding){"KERNEL32.dll", halt_kernel32[i],
-                                                                        HALT_IMPORT_BASE + 4 * i};
-        }
+        if (session->trace_windows_imports) add_halt_imports(session, primary, policy == NO_CATALOG);
         if (policy != NO_CATALOG) {
             if (policy == EXPLICIT_HELPER) {
                 bool too_large = primary.length > SKSE_PE_MAX_FILE_BYTES || catalog[0].length > SKSE_PE_MAX_FILE_BYTES - primary.length;
@@ -964,15 +1027,12 @@ static bool destroy_session_state(SksePluginSession *session) {
     return clean;
 }
 
-static bool is_traceable_import(const SkseTrialResult *result) {
+static bool is_traceable_import(const SkseTrialResult *result, bool include_extra) {
     const SkseDependencyTrace *trace = &result->dependencies;
     if ((result->status != SKSE_TRIAL_IMAGE_REFUSED || result->image_status != SKSE_PE_UNAPPROVED_IMPORT) &&
         (result->status != SKSE_TRIAL_DEPENDENCY_REFUSED || result->dependency_status != SKSE_PE_UNAPPROVED_IMPORT))
         return false;
-    if (!skse_pe_library_name_equal(trace->requested, "KERNEL32.dll")) return false;
-    for (size_t i = 0; i < HALT_IMPORT_COUNT; ++i)
-        if (!strcmp(trace->import_symbol, halt_kernel32[i])) return true;
-    return false;
+    return halt_import_index(trace->requested, trace->import_symbol, include_extra) < HALT_IMPORT_COUNT + EXTRA_HALT_COUNT;
 }
 
 static void probe_serialization(SksePluginSession *session, SkseTrialRecordProbe *probe) {
@@ -1005,7 +1065,7 @@ static SkseTrialResult run_trial(SkseTrialDependency primary, SkseTrialOptions o
     }
     SksePluginSession session = {0};
     initialize_session(&session, primary, options, runtime, catalog, count, policy);
-    if (runtime && runtime->trace_known_windows_imports && is_traceable_import(&session.result)) {
+    if (runtime && runtime->trace_known_windows_imports && is_traceable_import(&session.result, policy == NO_CATALOG)) {
         destroy_session_state(&session);
         memset(&session, 0, sizeof session);
         session.trace_windows_imports = true;

@@ -896,7 +896,7 @@ static bool run_json_trial(const uint8_t library[OwnedDllBytes], uint8_t initial
     // The ordinary trial retries only known stop-only imports, and never binds
     // truly unknown symbols. Mirror that gate for this optional test.
     initialize_session(&session, source, options, &runtime, NULL, 0, NO_CATALOG);
-    if (is_traceable_import(&session.result)) {
+    if (is_traceable_import(&session.result, false)) {
         destroy_session_state(&session);
         session = (SksePluginSession){.trace_windows_imports = true};
         initialize_session(&session, source, options, &runtime, NULL, 0, NO_CATALOG);
