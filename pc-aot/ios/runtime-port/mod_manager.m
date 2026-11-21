@@ -324,24 +324,26 @@ int skyrim_mods_feature_enabled(unsigned feature) {
 /* Select the guest hook groups for the features allowed so far, before the
  * guest starts. Returns the features whose groups were selected. */
 static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
-    const uint32_t host = PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD | PC_GUEST_MOD_HOOK_VM_LIFECYCLE;
-    skyrim_mod_hook_plan(requested, pc_guest_mod_hooks_compiled(), host, plan);
-    PcGuestModHooks table = {PC_GUEST_MOD_HOOKS_ABI, sizeof table, plan->groups, 0, {0}, {0}, {0}, {0}};
-    if (plan->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
-        table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load,
-                                                 skyrim_classic_control_form_deleted};
-    BOOL ready = YES;
-    if (plan->groups & PC_GUEST_MOD_HOOK_FUZ_MENU) {
+    const uint32_t fuzGroups = PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD;
+    const uint32_t host = fuzGroups | PC_GUEST_MOD_HOOK_VM_LIFECYCLE;
+    const uint32_t compiled = pc_guest_mod_hooks_compiled();
+    skyrim_mod_hook_plan(requested, compiled, host, plan);
+    if (plan->groups & fuzGroups) {
         NSArray<NSString *> *roots = DataRootsFor(launchPackageIds);
         const char **paths = calloc(roots.count + 1, sizeof *paths);
         SkyrimFuzSettings settings;
         for (NSUInteger i = 0; paths && i < roots.count; ++i) paths[i] = roots[i].fileSystemRepresentation;
-        ready = paths && !skyrim_fuz_read_settings(paths, roots.count, &settings)
+        const BOOL ready = paths && !skyrim_fuz_read_settings(paths, roots.count, &settings)
             && !skyrim_fuz_app_configure(&settings) && skyrim_vm_epoch_subscribe(skyrim_fuz_app_retire, NULL);
         free(paths);
-        skyrim_fuz_app_fill(&table);
+        if (!ready) skyrim_mod_hook_plan(requested, compiled, host & ~fuzGroups, plan);
     }
-    if (ready && pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
+    PcGuestModHooks table = {PC_GUEST_MOD_HOOKS_ABI, sizeof table, plan->groups, 0, {0}, {0}, {0}, {0}};
+    if (plan->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
+        table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load,
+                                                 skyrim_classic_control_form_deleted};
+    if (plan->groups & fuzGroups) skyrim_fuz_app_fill(&table);
+    if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
     /* Keep the original paths: select nothing. */
     if (pc_guest_select_mod_hooks(0, NULL) != 0) fputs("IOS_MOD_HOOKS selection failed\n", stderr);
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f)
@@ -351,7 +353,7 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
 }
 #endif
 
-/* Reasons: 0 enabled, 1 no implementation yet, 2 MOD not in the active packages, 3 safe mode or plugin list
+/* Reasons: 0 enabled, 1 host implementation unavailable, 2 MOD not in the active packages, 3 safe mode or plugin list
  * failure, 4 the guest lacks the needed hook groups (rebuild it). */
 static void FreezeFeatures(NSDictionary *profile) {
     NSMutableDictionary *enabledKeys = [NSMutableDictionary dictionary];
@@ -369,8 +371,10 @@ static void FreezeFeatures(NSDictionary *profile) {
 #ifdef SKYRIM_IOS_MOD_HOOKS
     SkyrimHookPlan plan;
     const uint32_t selected = SelectModHooks(hooked, &plan);
-    for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f)
-        if ((hooked >> f & 1u) && !(selected >> f & 1u)) reasons[f] = 4;
+    for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
+        if ((hooked >> f & 1u) && !(selected >> f & 1u))
+            reasons[f] = plan.reason[f] == SKYRIM_HOOK_PLAN_GUEST_HOOKS_MISSING ? 4 : 1;
+    }
 #endif
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
         if (!FeatureSelected(profile, f)) continue;

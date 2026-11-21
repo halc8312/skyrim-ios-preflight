@@ -20,7 +20,7 @@ int main(void) {
     skyrim_mod_hook_plan(BIT(SKYRIM_FEATURE_FUZ), MENU | WORLD | VM, MENU | WORLD | VM, &plan);
     assert(plan.groups == (MENU | WORLD | VM) && plan.enabled == BIT(SKYRIM_FEATURE_FUZ));
 
-    /* A guest without the VM group (today's only buildable guest): Fuz stays off. */
+    /* A guest without the VM group: Fuz stays off. */
     skyrim_mod_hook_plan(BIT(SKYRIM_FEATURE_FUZ), MENU | WORLD, MENU | WORLD | VM, &plan);
     assert(!plan.groups && !plan.enabled);
     assert(plan.reason[SKYRIM_FEATURE_FUZ] == SKYRIM_HOOK_PLAN_GUEST_HOOKS_MISSING && plan.missing[SKYRIM_FEATURE_FUZ] == VM);
@@ -29,6 +29,12 @@ int main(void) {
     skyrim_mod_hook_plan(BIT(SKYRIM_FEATURE_PRECACHE_KILLER) | BIT(SKYRIM_FEATURE_PAPYRUSUTIL), 15,
                          MENU | WORLD | VM, &plan);
     assert(plan.reason[SKYRIM_FEATURE_PRECACHE_KILLER] == SKYRIM_HOOK_PLAN_HOST_UNAVAILABLE);
+    assert(plan.groups == VM && plan.enabled == BIT(SKYRIM_FEATURE_PAPYRUSUTIL));
+
+    /* Failed preparation removes only Fuz's groups, not the shared VM group. */
+    skyrim_mod_hook_plan(BIT(SKYRIM_FEATURE_FUZ) | BIT(SKYRIM_FEATURE_PAPYRUSUTIL),
+                         MENU | WORLD | VM, VM, &plan);
+    assert(plan.reason[SKYRIM_FEATURE_FUZ] == SKYRIM_HOOK_PLAN_HOST_UNAVAILABLE);
     assert(plan.groups == VM && plan.enabled == BIT(SKYRIM_FEATURE_PAPYRUSUTIL));
 
     /* A feature without hook needs is never planned here. */
