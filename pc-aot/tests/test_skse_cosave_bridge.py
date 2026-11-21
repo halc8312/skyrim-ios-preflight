@@ -153,12 +153,19 @@ class BridgeHarness(gen.GenerationHarness):
         super().setUpClass()
         cls.bridge_api = Binding(cls.library)
         cls.guest = cls.library.parent / "authored-guest.so"
+        if sys.platform != "darwin":
+            cls.compile_guest(cls.guest)
+
+    @staticmethod
+    def compile_guest(guest):
+        mac = sys.platform == "darwin"
         subprocess.run([os.environ.get("CC", "cc"), "-std=c11", "-O2", "-pedantic", "-Wall", "-Wextra", "-Werror",
                         *shlex.split(os.environ.get("CFLAGS", "")), "-fPIC",
-                        "-dynamiclib" if sys.platform == "darwin" else "-shared",
+                        "-dynamiclib" if mac else "-shared",
+                        *(["-Xlinker", "-install_name", "-Xlinker", guest] if mac else []),
                         "-DSKYRIM_EXPERIMENT_CLASSIC_LIFECYCLE=1", gen.SOURCE / "fixtures/guest.c",
                         gen.SOURCE / "observer/lifecycle.c", *shlex.split(os.environ.get("LDFLAGS", "")),
-                        "-o", cls.guest], check=True)
+                        "-o", guest], check=True)
 
     def setUp(self):
         super().setUp()
@@ -166,6 +173,11 @@ class BridgeHarness(gen.GenerationHarness):
         self.running = scope()
         self.private = self.root / "bridge-private"
         self.private.mkdir(mode=0o700)
+        if sys.platform == "darwin":
+            # dyld may keep the old library and its thread-local state alive
+            # after dlclose. Give each case its own one-shot binding.
+            self.guest = self.root / "authored-guest.dylib"
+            self.compile_guest(self.guest)
         self.assertFalse(self.api.fixture_host_open(os.fsencode(self.guest), 2, self.running.launch))
         self.host = self.api.fixture_host_open(os.fsencode(self.guest), 1, self.running.launch)
         self.assertTrue(self.host)

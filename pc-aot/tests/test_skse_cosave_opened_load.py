@@ -27,6 +27,15 @@ class OpenedLoadHarness(sn.DeferredHarness):
         self.discard = self.api.lib.skse_bridge_drop_load_input
         self.discard.argtypes, self.discard.restype = [br.PTR], None
 
+    @contextlib.contextmanager
+    def immutable_test_source(self):
+        if hasattr(os, "memfd_create"):
+            with self.sealed_input() as (source, _):
+                yield source
+        else:
+            with self.ess.open("rb") as source:
+                yield source
+
     def guest_load(self, source, *, n=10, flags=0, outcome=br.LOADED, before_vm=None):
         action = self.action(n, br.LOAD, flags, outcome, source)
         token, view, reason, obs = br.PTR(), C.c_int(-1), C.c_int(-1), br.Observation()
@@ -78,11 +87,7 @@ class OpenedLoadHarness(sn.DeferredHarness):
 class NativeOpenedLoadTests(OpenedLoadHarness):
     def test_real_immutable_file_has_independent_cursor_and_one_verified_result(self):
         self.saved()
-        with contextlib.ExitStack() as opened:
-            if hasattr(os, "memfd_create"):
-                source, _ = opened.enter_context(self.sealed_input())
-            else:
-                source = opened.enter_context(self.ess.open("rb"))
+        with self.immutable_test_source() as source:
             source.seek(17)
             reads = []
 

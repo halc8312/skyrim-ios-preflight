@@ -394,7 +394,7 @@ class DeferredActivationTests(opened.OpenedLoadHarness):
         self.assertEqual((rc, detail), (br.OK, gen.OK))
         original, self.bridge = self.bridge, bridge
         try:
-            with self.sealed_input() as (source, _):
+            with self.immutable_test_source() as source:
                 start, pending, observed = self.guest_load(source.fileno(), flags=flags)
                 self.assertEqual(start, (br.OK, gen.OK))
             mods = (hist.Loaded * 2)(hist.Loaded(b"Skyrim.esm", 10, 0, 0), hist.Loaded(b"Owner.esp", 9, 5, 0))
