@@ -11,13 +11,14 @@ enum {
     STACK = 0x2f00, POLICY = 0x2100, POLICY_TABLE = 0x2180, ACTOR = 0x2200,
     TARGET_TABLE = 0x2300, FIRST_NODE = 0x2380, SECOND_NODE = 0x2390,
     DECOY = 0x2400, EFFECT = 0x2480, VALUE = 0x2500, IDENTIFIER = 0x2520,
-    TARGET_CALL_STACK = 0x2800, EFFECT_CLASS = 0x2a00,
+    ACTOR_PROCESS = 0x2600, PROCESS_DATA = 0x2700, EFFECT_CLASS = 0x2a00,
     OTHER_ACTOR = 0x2b00,
+    TARGET_CALL_STACK = 0x2c00,
     ACTIVE_EFFECT_TYPE = 0x8b, ACTOR_FORM_ID = 0x17345, EFFECT_NUMBER = 0x42,
     FIND_EFFECT_TABLE = 0x10ea224, VISITOR_ADDRESS = 0x8b3b00, IS_TYPE_ADDRESS = 0x8b3b20,
     POLICY_GLOBAL = 0x1ba7008, VALUE_INITIALIZED = 0x1ba7024, SLEEP_IMPORT = 0x106b148,
     CAS_IMPORT = 0x106b14c, INVALID_HANDLE = 0x8b4300, IS_VALID = 0x8b3d60, RESOLVE = 0x8b3e30,
-    HOST_GET_EFFECT_LIST = 1, HOST_SLEEP = 2, HOST_CAS = 3, HOST_IS_ACTOR_TARGET = 4,
+    GET_EFFECT_LIST = 0x6e9180, HOST_SLEEP = 2, HOST_CAS = 3, HOST_IS_ACTOR_TARGET = 4,
     MAGNITUDE_BITS = 0x40b00000
 };
 
@@ -29,7 +30,11 @@ static uint32_t magnitude;
 static const CPU *invoker;
 static bool verify_owner, keep_call, admitted;
 static uint32_t supplied_actor, supplied_magnitude;
+static bool observe_identifier, replace_before_second_snapshot;
+static uint64_t handle_snapshots[2];
+static unsigned snapshot_count;
 
+void f_6E9180(CPU *);
 void f_8B39F0(CPU *);
 void f_8B3B00(CPU *);
 void f_8B3B20(CPU *);
@@ -79,6 +84,8 @@ void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache)
         break;
     case IS_TYPE_ADDRESS:
         f_8B3B20(cpu);
+        if (M32(sp) == 0x8d86af && replace_before_second_snapshot)
+            M32(IDENTIFIER + 0x14) = 0x20000 | EFFECT_NUMBER;
         break;
     case IS_VALID:
         f_8B3D60(cpu);
@@ -109,11 +116,10 @@ void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache)
         cpu->r[0] = 1;
         cpu->r[4] += 4;
         break;
-    case HOST_GET_EFFECT_LIST:
+    case GET_EFFECT_LIST:
         assert(M32(sp) == 0x663418 && cpu->r[1] == ACTOR + 0x54);
         ++list_reads;
-        cpu->r[0] = FIRST_NODE;
-        cpu->r[4] += 4;
+        f_6E9180(cpu);
         break;
     case VISITOR_ADDRESS:
         assert(M32(sp) == 0x663446 && (M32(sp + 4) == DECOY || M32(sp + 4) == EFFECT));
@@ -124,6 +130,16 @@ void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache)
     default:
         unreachable();
     }
+}
+
+void highheels_observe_identifier(const CPU *cpu, uint32_t site, uint32_t low, uint32_t high)
+{
+    if (!observe_identifier)
+        return;
+    assert(cpu == invoker && snapshot_count < 2);
+    assert(site == (snapshot_count ? 0x8d8f47u : 0x8d869du));
+    assert(M32(IDENTIFIER + 0x18) == UINT32_C(0x80000002));
+    handle_snapshots[snapshot_count++] = (uint64_t)high << 32 | low;
 }
 
 void highheels_observe_matching_effect(const CPU *cpu, uint32_t effect, uint16_t number)
@@ -140,8 +156,10 @@ void highheels_observe_matching_effect(const CPU *cpu, uint32_t effect, uint16_t
         M32(TARGET_CALL_STACK + 12) = effect;
         f_8D8500(&target_cpu);
         uint32_t target = target_cpu.r[0];
+        bool consistent = !observe_identifier ||
+                          (snapshot_count == 2 && handle_snapshots[0] == handle_snapshots[1]);
         admitted = target && target == supplied_actor &&
-                   (!keep_call || magnitude == supplied_magnitude);
+                   (!keep_call || magnitude == supplied_magnitude) && consistent;
     }
     ++samples;
 }
@@ -198,10 +216,11 @@ static Result run(uint32_t type, bool loaded_actor, uint8_t actor_type, bool pre
 typedef struct OwnerScenario {
     const char *description;
     uint32_t type, identifier, handle_hi, effect_target, actor, magnitude;
-    bool actor_missing, actor_deleted, effect_missing, lock_busy, keep, found, admitted;
+    bool actor_missing, actor_deleted, effect_missing, load_process_missing;
+    bool lock_busy, keep, found, admitted, replace_between_reads;
 } OwnerScenario;
 
-static void check_owner(const OwnerScenario *s)
+static void check_owner(const OwnerScenario *s, bool probe)
 {
     assert(s->description);
     CPU cpu = {.r = {1, 2, 3, 4, STACK, 5, 6, 7}};
@@ -216,8 +235,12 @@ static void check_owner(const OwnerScenario *s)
     M32(EFFECT + 0x38) = s->effect_target;
     M8(ACTOR + 0x12) = 0x3e;
     M32(ACTOR + 0x8) = s->actor_deleted ? UINT32_C(1) << 21 : 0;
+    M32(ACTOR + 0x88) = s->load_process_missing ? 0 : ACTOR_PROCESS;
     M32(FIRST_NODE + 4) = s->effect_missing ? 0 : SECOND_NODE;
     observe = verify_owner = true;
+    observe_identifier = probe;
+    replace_before_second_snapshot = s->replace_between_reads;
+    snapshot_count = 0;
     have_actor = !s->actor_missing;
     include_effect = !s->effect_missing;
     keep_call = s->keep;
@@ -229,18 +252,25 @@ static void check_owner(const OwnerScenario *s)
     invoker = &cpu;
     f_8D8F10(&cpu);
     invoker = NULL;
-    if (samples != (unsigned)s->found || admitted != s->admitted)
+    bool expected_admitted = s->admitted && (!probe || !s->replace_between_reads);
+    if (samples != (unsigned)s->found || admitted != expected_admitted)
         fprintf(stderr, "unexpected owner result: %s\n", s->description);
     assert(cpu.r[4] == STACK + 4 && cpu.r[0] == (s->found ? EFFECT : 0));
-    assert(samples == (unsigned)s->found && admitted == s->admitted);
+    assert(samples == (unsigned)s->found && admitted == expected_admitted);
     unsigned expected_cas = 0;
     if (s->identifier && s->type == EFFECT_CLASS)
         expected_cas = s->handle_hi == 0xffff ? 1u : 2u;
     assert(cas_calls == expected_cas);
+    assert(snapshot_count == (probe ? expected_cas : 0));
     assert(validity_lookups == (unsigned)(expected_cas == 2));
     assert(sleeps == (unsigned)s->lock_busy && M32(IDENTIFIER + 0x18) == 2);
     assert(M32(VALUE) == s->type && M32(VALUE + 4) == s->identifier);
-    assert(M32(IDENTIFIER + 0x10) == handle_low && M32(IDENTIFIER + 0x14) == s->handle_hi);
+    uint32_t final_handle_hi = s->replace_between_reads ? (0x20000 | EFFECT_NUMBER) : s->handle_hi;
+    assert(M32(IDENTIFIER + 0x10) == handle_low && M32(IDENTIFIER + 0x14) == final_handle_hi);
+    if (snapshot_count)
+        assert(handle_snapshots[0] == ((uint64_t)s->handle_hi << 32 | handle_low));
+    if (snapshot_count == 2)
+        assert(handle_snapshots[1] == ((uint64_t)final_handle_hi << 32 | handle_low));
     assert(M32(EFFECT + 0x38) == s->effect_target);
 }
 
@@ -265,8 +295,11 @@ int main(void)
     M32(CAS_IMPORT) = HOST_CAS;
     M32(SLEEP_IMPORT) = HOST_SLEEP;
     M32(ACTOR + 0x54) = TARGET_TABLE;
-    M32(TARGET_TABLE + 0x1c) = HOST_GET_EFFECT_LIST;
+    M32(TARGET_TABLE + 0x1c) = GET_EFFECT_LIST;
     M32(TARGET_TABLE + 0xc) = HOST_IS_ACTOR_TARGET;
+    M32(ACTOR + 0x88) = ACTOR_PROCESS;
+    M32(ACTOR_PROCESS + 0x4) = PROCESS_DATA;
+    M32(PROCESS_DATA + 0xf8) = FIRST_NODE;
     M32(FIRST_NODE) = DECOY;
     M32(SECOND_NODE) = EFFECT;
     M32(FIND_EFFECT_TABLE + 4) = VISITOR_ADDRESS;
@@ -300,53 +333,64 @@ int main(void)
         .handle_hi = 0x20000 | EFFECT_NUMBER, .effect_target = ACTOR + 0x54, .actor = ACTOR,
         .magnitude = MAGNITUDE_BITS, .found = true, .admitted = true,
     };
-    check_owner(&live);
+    check_owner(&live, false);
+    check_owner(&live, true);
     OwnerScenario keep = live;
     keep.description = "live keep while the identifier lock is contended once";
     keep.keep = keep.lock_busy = true;
-    check_owner(&keep);
+    check_owner(&keep, true);
     keep.description = "wrong actor";
     keep.lock_busy = keep.admitted = false;
     keep.actor = OTHER_ACTOR;
-    check_owner(&keep);
+    check_owner(&keep, true);
     keep.description = "changed magnitude";
     keep.actor = ACTOR;
     keep.magnitude++;
-    check_owner(&keep);
+    check_owner(&keep, true);
+    keep = live;
+    keep.description = "changed identifier between the two stock snapshots";
+    keep.keep = keep.replace_between_reads = true;
+    keep.handle_hi++;
+    check_owner(&keep, false);
+    check_owner(&keep, true);
     OwnerScenario stale = live;
     stale.description = "no associated magic target";
     stale.effect_target = 0;
     stale.admitted = false;
-    check_owner(&stale);
+    check_owner(&stale, true);
     stale.description = "old effect number on a still-loaded actor";
     stale.effect_target = live.effect_target;
     stale.handle_hi++;
     stale.found = false;
-    check_owner(&stale);
-    stale.description = "effect removed";
+    check_owner(&stale, true);
+    stale.description = "actor process absent";
     stale.handle_hi = live.handle_hi;
+    stale.load_process_missing = true;
+    check_owner(&stale, true);
+    stale.description = "effect removed";
+    stale.load_process_missing = false;
     stale.effect_missing = true;
-    check_owner(&stale);
+    check_owner(&stale, true);
     stale.description = "actor no longer loaded";
     stale.actor_missing = true;
-    check_owner(&stale);
+    check_owner(&stale, true);
     stale.description = "deleted actor rejected by the handle policy";
     stale.actor_missing = stale.effect_missing = false;
     stale.actor_deleted = true;
-    check_owner(&stale);
+    check_owner(&stale, true);
     stale = live;
     stale.description = "engine invalid handle";
     stale.handle_hi = 0xffff;
     stale.found = stale.admitted = false;
-    check_owner(&stale);
+    check_owner(&stale, true);
     stale.description = "array of script instances";
     stale.handle_hi = live.handle_hi;
     stale.type |= 1u;
-    check_owner(&stale);
+    check_owner(&stale, true);
     stale.description = "null identifier";
     stale.type = EFFECT_CLASS;
     stale.identifier = 0;
-    check_owner(&stale);
+    check_owner(&stale, true);
     assert(gm_release(&space, NULL));
     puts("Classic typed effect lookup captures magnitude only in the matching visitor");
     return 0;

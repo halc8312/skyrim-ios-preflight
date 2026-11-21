@@ -97,11 +97,52 @@ actor, an invalid handle, an array and a null identifier. The checks sample
 the effect while the visitor sees it and retain no effect pointer.
 
 The stock lock can sleep and retry without a deadline. The fixture's
-simulated contended owner releases it deterministically. A bounded
-production observer still needs a proven call site where the engine
-already made the snapshot, or a supported way to use the same guest lock
-without waiting. The two stock snapshots do not prove lifetime across
-those reads or callbacks. If OnEffectFinish arrives after the entry is
-removed, live resolution can fail. A future cleanup needs a previously
-authenticated instance and its world generation and equip lifetime.
-No played PEX dispatch, guest hook, scene change or delay is installed.
+simulated contended owner releases it deterministically. Its private
+`f_C307C0` probe captures only the already-loaded handle halves immediately
+before the original unlock. It takes no additional lock. An authored
+handle change between the two stock reads leaves the guest result intact
+and prevents the observer from accepting the pair. The stock Actor,
+Character and PlayerCharacter MagicTarget slot for the effect list is
+`f_6E9180`. It reads the process and its optional data before returning
+the list. The fixture executes this getter, including the missing-process
+case. Neither it nor the visitor acquires an effect-list lock or retains
+the effect. The identifier lock therefore cannot establish effect
+lifetime on another thread or across callbacks.
+
+The owned PEX calls stock GetTargetActor in scheduled OnUpdate and certain
+other handlers. Effect start and finish can receive the actor directly.
+The snapshot observer consequently does not cover every Keep or Stop
+through a preceding GetTargetActor call. If OnEffectFinish arrives after
+the entry is removed, live resolution can fail. Cleanup needs a
+previously authenticated instance and its world generation and equip
+lifetime.
+
+### Refresh the same named node after applying or removing the offset
+
+In the exact owned DLL, refresh and undo each resolve the current
+third-person loaded scene root, use its virtual name lookup for NPC,
+and update that node's local Z. Apply adds the difference between the
+desired and previous offsets. Undo subtracts the previously owned offset.
+Both paths use the selected node's world-data slot at +0xB4. The fixed
+NiNode and BSFlattenedBoneTree vtables point that slot to `f_AB53E0`.
+Its direct path recomposes the world transform from local data and the
+parent's world transform. Another path uses an auxiliary object and
+dispatches separately.
+
+The private scene fixture connects the height model to the original
+NiNode name search and direct world-data path. It uses two authored
+hierarchies with a named child and a scaled parent. It checks apply, undo,
+an independent change to the local baseline, rejection when the root
+changes between read and commit, and a missing NPC name. The fixture's
+scene is single-threaded and its nodes have fixed lifetimes. The exact
+DLL instructions for local Z and refresh are also checked by disassembly.
+Classic SKSE's separate NetImmerse queue takes a node reference for its
+refresh task and releases it when the task is disposed. This is evidence
+for the refresh lifetime of that task, while the task's reference cannot
+prove that the node is still part of the actor's current root.
+[Classic SKSE task implementation](https://github.com/Amelinyaa/SKSE/blob/master/src/skse/skse/GameThreads.cpp)
+
+Played PEX identity, live third-person root ownership and serialization
+with animation or rendering still need verification. The alternate
+world-data dispatch is outside this fixture. The app's task queue,
+runtime, and scene are untouched.

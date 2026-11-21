@@ -13,6 +13,7 @@ import unittest
 import stage_effect_call
 import stage_effect_magnitude
 import stage_item_delivery
+import stage_scene_refresh
 import stage_task_queue
 
 
@@ -48,7 +49,8 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             self.assertEqual(result.strip(), "6 Classic HighHeels host scenarios passed")
 
     def test_unreviewed_lift_is_refused(self):
-        for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude, stage_effect_call):
+        for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude,
+                      stage_effect_call, stage_scene_refresh):
             with self.subTest(unit=stage.UNIT):
                 with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
                     unit_count = 1 + len(getattr(stage, "DEPENDENCIES", ()))
@@ -106,6 +108,13 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             "Classic ordinary native invocation lends the nearest typed script self",
         )
 
+    def test_reviewed_scene_refresh_recomposes_owned_adjustment_and_undo(self):
+        self.run_reviewed_fixture(
+            stage_scene_refresh, "test_scene_refresh_lift.c",
+            "Classic scene recomposes owned local height and undo in the authored NiNode hierarchy",
+            extra_sources=(HERE / "highheel_height.c",),
+        )
+
     def test_owned_effect_native_argument_boundaries(self):
         supplied = os.environ.get("SKYRIM_TEST_OWNED_HDT_EFFECT_DLL")
         objdump = shutil.which("objdump")
@@ -143,10 +152,22 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.assertEqual(stop[0x1000B3D1], "mov edx,0x3d")
         self.assertEqual(stop[0x1000B3DD], "push eax")
         self.assertEqual(stop[0x1000B3E1], "push 0x0")
+        find_node = instruction_at(0x1000A27B, 0x1000A2AA)
+        self.assertEqual(find_node[0x1000A28F], "mov ecx,dword ptr [ecx+0x20]")
+        self.assertEqual(find_node[0x1000A2A0], "mov eax,dword ptr [eax+0x9c]")
+        update = instruction_at(0x1000A568, 0x1000A58E)
+        self.assertEqual(update[0x1000A56B], "subss xmm0,dword ptr [edi+0xc]")
+        self.assertEqual(update[0x1000A577], "addss xmm0,dword ptr [edx+0x4c]")
+        self.assertEqual(update[0x1000A57C], "movss dword ptr [edx+0x4c],xmm0")
+        self.assertEqual(update[0x1000A588], "call dword ptr [eax+0xb4]")
+        undo = instruction_at(0x1000A70F, 0x1000A72A)
+        self.assertEqual(undo[0x1000A714], "subss xmm0,dword ptr [esi+0xc]")
+        self.assertEqual(undo[0x1000A71F], "movss dword ptr [ecx+0x4c],xmm0")
+        self.assertEqual(undo[0x1000A724], "call dword ptr [eax+0xb4]")
         self.assertEqual(library.read_bytes(), contents)
 
 
-    def run_reviewed_fixture(self, stage, test, expected_output):
+    def run_reviewed_fixture(self, stage, test, expected_output, *, extra_sources=()):
         supplied_generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
         cc = shutil.which(os.environ.get("CC", "cc"))
         if not (supplied_generation and cc and os.name == "posix"):
@@ -179,7 +200,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             binary = scratch / "classic_fixture"
             subprocess.run(
                 [cc, *flags, "-isystem", generation / "gen", "-isystem", runtime, "-I", native,
-                 staged, HERE / test, native / "guest_memory.c", "-o", binary],
+                 staged, HERE / test, *extra_sources, native / "guest_memory.c", "-o", binary],
                 check=True, timeout=60,
             )
             result = subprocess.check_output([binary], text=True, timeout=10)
