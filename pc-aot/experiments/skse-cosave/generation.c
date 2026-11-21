@@ -5,13 +5,16 @@
 #include "digest.h"
 #include "immutable_ess.h"
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <sqlite3.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
-struct SksePairStore { sqlite3 *db; };
+#define STORE_FILE "classic-generations.sqlite3"
+enum { APPLICATION_ID = 0x53435031, SCHEMA_VERSION = 1 };
+struct SksePairStore { sqlite3 *db; int readonly; };
 struct SksePairStage {
     SksePairKey target;
     SksePairImage image;
@@ -47,7 +50,6 @@ static int integer(sqlite3 *db, const char *sql, int *out) {
     return rc;
 }
 static SksePairResult initialize(sqlite3 *db) {
-    enum { APPLICATION_ID = 0x53435031 };
     int rc = execute(db, "PRAGMA synchronous=FULL; PRAGMA fullfsync=ON; BEGIN IMMEDIATE");
     if (rc != SQLITE_OK) return db_result(rc);
     int id = 0, version = 0, objects = 0;
@@ -64,7 +66,7 @@ static SksePairResult initialize(sqlite3 *db) {
             "ess_hash BLOB NOT NULL CHECK(length(ess_hash)=32),pair_hash BLOB NOT NULL CHECK(length(pair_hash)=32),"
             "companion BLOB NOT NULL) WITHOUT ROWID;"
             "PRAGMA application_id=0x53435031; PRAGMA user_version=1"));
-    } else if (result == SKSE_PAIR_OK && (id != APPLICATION_ID || version != 1)) {
+    } else if (result == SKSE_PAIR_OK && (id != APPLICATION_ID || version != SCHEMA_VERSION)) {
         result = SKSE_PAIR_UNSUPPORTED;
     }
     if (result == SKSE_PAIR_OK) result = db_result(execute(db, "COMMIT"));
@@ -72,20 +74,31 @@ static SksePairResult initialize(sqlite3 *db) {
     return result;
 }
 
-SksePairResult skse_pair_open(const char *directory, SksePairStore **out) {
-    if (!out) return SKSE_PAIR_ARGUMENT;
-    *out = NULL;
-    struct stat info, resolved;
+static int same_file(const struct stat *first, const struct stat *second) {
+    return first->st_dev == second->st_dev && first->st_ino == second->st_ino;
+}
+
+static SksePairResult canonical_directory(const char *directory, char canonical[PATH_MAX], struct stat *checked) {
+    struct stat info;
     if (!directory || !*directory || lstat(directory, &info) || !S_ISDIR(info.st_mode)) return SKSE_PAIR_ARGUMENT;
     /* `/var` can legitimately alias an Apple container's ancestors. Give
      * SQLite the same checked directory under its canonical spelling so
      * SQLITE_OPEN_NOFOLLOW still rejects any alias of the database itself. */
-    char canonical[PATH_MAX];
-    if (!realpath(directory, canonical) || lstat(canonical, &resolved) ||
-        !S_ISDIR(resolved.st_mode) || info.st_dev != resolved.st_dev || info.st_ino != resolved.st_ino)
+    if (!realpath(directory, canonical) || lstat(canonical, checked) ||
+        !S_ISDIR(checked->st_mode) || !same_file(&info, checked))
         return SKSE_PAIR_STORAGE;
+    return SKSE_PAIR_OK;
+}
+
+SksePairResult skse_pair_open(const char *directory, SksePairStore **out) {
+    if (!out) return SKSE_PAIR_ARGUMENT;
+    *out = NULL;
+    char canonical[PATH_MAX];
+    struct stat info;
+    SksePairResult result = canonical_directory(directory, canonical, &info);
+    if (result != SKSE_PAIR_OK) return result;
     SksePairStore *store = calloc(1, sizeof *store);
-    char *path = sqlite3_mprintf("%s/classic-generations.sqlite3", canonical);
+    char *path = sqlite3_mprintf("%s/" STORE_FILE, canonical);
     if (!path || !store) { free(store); sqlite3_free(path); return SKSE_PAIR_STORAGE; }
     /* A private store may not be an alias of another file. The directory is
      * owned by the caller and must be protected from concurrent path changes. */
@@ -99,7 +112,7 @@ SksePairResult skse_pair_open(const char *directory, SksePairStore **out) {
     int rc = sqlite3_open_v2(path, &store->db,
         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOFOLLOW, NULL);
     sqlite3_free(path);
-    SksePairResult result = db_result(rc);
+    result = db_result(rc);
     if (result == SKSE_PAIR_OK) {
         sqlite3_limit(store->db, SQLITE_LIMIT_LENGTH, SKSE_PAIR_MAX_COMPANION + 4096);
         rc = sqlite3_busy_timeout(store->db, 2000);
@@ -109,6 +122,103 @@ SksePairResult skse_pair_open(const char *directory, SksePairStore **out) {
     else skse_pair_close(store);
     return result;
 }
+
+static SksePairResult check_sidecars(int directory) {
+    static const char *const names[] = {STORE_FILE "-journal", STORE_FILE "-wal", STORE_FILE "-shm"};
+    for (size_t i = 0; i < sizeof names / sizeof *names; ++i) {
+        struct stat info;
+        if (fstatat(directory, names[i], &info, AT_SYMLINK_NOFOLLOW)) {
+            if (errno != ENOENT) return SKSE_PAIR_STORAGE;
+        } else if (!S_ISREG(info.st_mode) || info.st_nlink != 1) {
+            return SKSE_PAIR_STORAGE;
+        } else if (i != 0) {
+            return SKSE_PAIR_UNSUPPORTED;
+        }
+    }
+    return SKSE_PAIR_OK;
+}
+
+static SksePairResult inspect_existing(int directory, struct stat *named) {
+    SksePairResult result = check_sidecars(directory);
+    if (result != SKSE_PAIR_OK) return result;
+    if (fstatat(directory, STORE_FILE, named, AT_SYMLINK_NOFOLLOW))
+        return errno == ENOENT ? SKSE_PAIR_MISSING : SKSE_PAIR_STORAGE;
+    return S_ISREG(named->st_mode) && named->st_nlink == 1 ? SKSE_PAIR_OK : SKSE_PAIR_STORAGE;
+}
+
+static SksePairResult check_readonly_header(sqlite3 *db) {
+    /* A read-only WAL connection can still try to create shared memory.
+     * Read through SQLite's own file before the first SQL access. Opening
+     * and closing a separate POSIX descriptor can drop the writer's locks. */
+    sqlite3_file *file = NULL;
+    const int control = sqlite3_file_control(db, "main", SQLITE_FCNTL_FILE_POINTER, &file);
+    if (control != SQLITE_OK || !file || !file->pMethods) return SKSE_PAIR_STORAGE;
+    unsigned char header[100];
+    const int rc = file->pMethods->xRead(file, header, sizeof header, 0);
+    if (rc == SQLITE_IOERR_SHORT_READ) return SKSE_PAIR_DAMAGED;
+    if (rc != SQLITE_OK) return db_result(rc);
+    if (memcmp(header, "SQLite format 3", 16)) return SKSE_PAIR_DAMAGED;
+    if (header[18] == 2 || header[19] == 2) return SKSE_PAIR_UNSUPPORTED;
+    return header[18] == 1 && header[19] == 1 ? SKSE_PAIR_OK : SKSE_PAIR_DAMAGED;
+}
+
+static SksePairResult prepare_readonly(sqlite3 *db) {
+    SksePairResult result = check_readonly_header(db);
+    if (result != SKSE_PAIR_OK) return result;
+    sqlite3_limit(db, SQLITE_LIMIT_LENGTH, SKSE_PAIR_MAX_COMPANION + 4096);
+    int rc = execute(db, "PRAGMA temp_store=MEMORY");
+    int id = 0, version = 0;
+    if (rc == SQLITE_OK) rc = integer(db, "PRAGMA application_id", &id);
+    if (rc == SQLITE_OK) rc = integer(db, "PRAGMA user_version", &version);
+    if (rc != SQLITE_OK) return db_result(rc);
+    if (id != APPLICATION_ID || version != SCHEMA_VERSION) return SKSE_PAIR_UNSUPPORTED;
+    sqlite3_stmt *query = NULL;
+    rc = sqlite3_prepare_v3(db, "SELECT identity,ess_size,ess_hash,pair_hash,companion FROM generations LIMIT 0",
+                            -1, SQLITE_PREPARE_NO_VTAB, &query, NULL);
+    sqlite3_finalize(query);
+    return rc == SQLITE_ERROR ? SKSE_PAIR_DAMAGED : db_result(rc);
+}
+
+SksePairResult skse_pair_open_readonly(const char *directory, int directory_fd, SksePairStore **out) {
+    if (!out) return SKSE_PAIR_ARGUMENT;
+    *out = NULL;
+    char canonical[PATH_MAX];
+    struct stat checked, held, named, current;
+    SksePairResult result = canonical_directory(directory, canonical, &checked);
+    if (result != SKSE_PAIR_OK) return result;
+    if (fstat(directory_fd, &held) || !S_ISDIR(held.st_mode) || !same_file(&held, &checked))
+        return SKSE_PAIR_STORAGE;
+
+    result = inspect_existing(directory_fd, &named);
+    SksePairStore *store = NULL;
+    if (result == SKSE_PAIR_OK || result == SKSE_PAIR_MISSING) {
+        store = calloc(1, sizeof *store);
+        if (!store) result = SKSE_PAIR_STORAGE;
+        else store->readonly = 1;
+    }
+    if (result == SKSE_PAIR_OK) {
+        char *path = sqlite3_mprintf("%s/" STORE_FILE, canonical);
+        if (!path) result = SKSE_PAIR_STORAGE;
+        else {
+            const int rc = sqlite3_open_v2(path, &store->db,
+                SQLITE_OPEN_READONLY | SQLITE_OPEN_NOFOLLOW | SQLITE_OPEN_PRIVATECACHE, NULL);
+            result = db_result(rc);
+            sqlite3_free(path);
+        }
+        if (result == SKSE_PAIR_OK &&
+            (lstat(canonical, &current) || !same_file(&checked, &current) ||
+             fstatat(directory_fd, STORE_FILE, &current, AT_SYMLINK_NOFOLLOW) ||
+             !S_ISREG(current.st_mode) || current.st_nlink != 1 || !same_file(&named, &current)))
+            result = SKSE_PAIR_STORAGE;
+        if (result == SKSE_PAIR_OK) result = prepare_readonly(store->db);
+    } else if (result == SKSE_PAIR_MISSING) {
+        result = SKSE_PAIR_OK;
+    }
+    if (result == SKSE_PAIR_OK) *out = store;
+    else skse_pair_close(store);
+    return result;
+}
+
 void skse_pair_close(SksePairStore *store) {
     if (store) { sqlite3_close(store->db); free(store); }
 }
@@ -145,6 +255,7 @@ static SksePairResult expected_ess(sqlite3 *db, const SksePairKey *key, SkseEssD
 }
 static SksePairResult read_image(sqlite3 *db, const SksePairGeneration *g, SksePairImage *out) {
     if (!g || !valid_key(&g->key) || g->ess_fd < 0) return SKSE_PAIR_ARGUMENT;
+    if (!db) return SKSE_PAIR_MISSING;
     /* A generation with no companion costs one small lookup, with no ESS read.
      * Release the metadata statement before streaming the .ess. */
     SkseEssDigest expected, ess;
@@ -194,7 +305,7 @@ SksePairResult skse_pair_begin(SksePairStore *store, const SksePairKey *target,
                                const SksePairGeneration *base, SksePairStage **out) {
     if (!out) return SKSE_PAIR_ARGUMENT;
     *out = NULL;
-    if (!store || !valid_key(target)) return SKSE_PAIR_ARGUMENT;
+    if (!store || store->readonly || !valid_key(target)) return SKSE_PAIR_ARGUMENT;
     if (base && memcmp(base->key.profile, target->profile, sizeof target->profile)) return SKSE_PAIR_WRONG_GENERATION;
     return begin_stage(store, target, base, out);
 }
@@ -323,7 +434,7 @@ static SksePairResult commit_image(SksePairStore *store, SksePairStage *stage, c
 }
 
 SksePairResult skse_pair_commit(SksePairStore *store, SksePairStage *stage, const SksePairGeneration *completed) {
-    if (!store || !stage || !completed) return SKSE_PAIR_ARGUMENT;
+    if (!store || store->readonly || !stage || !completed) return SKSE_PAIR_ARGUMENT;
     if (stage->editing) return SKSE_PAIR_BUSY;
     if (stage->failure != SKSE_PAIR_OK) return stage->failure;
     if (!stage->pinned) return SKSE_PAIR_UNPINNED;
@@ -334,7 +445,7 @@ SksePairResult skse_pair_commit(SksePairStore *store, SksePairStage *stage, cons
 
 SksePairResult skse_pair_commit_immutable(SksePairStore *store, SksePairStage *stage,
                                          const SksePairKey *expected, SkseImmutableEss *snapshot) {
-    if (!store || !stage || !expected || !snapshot) return SKSE_PAIR_ARGUMENT;
+    if (!store || store->readonly || !stage || !expected || !snapshot) return SKSE_PAIR_ARGUMENT;
     if (stage->editing) return SKSE_PAIR_BUSY;
     if (stage->failure != SKSE_PAIR_OK) return stage->failure;
     if (memcmp(&stage->target, expected, sizeof *expected)) return SKSE_PAIR_WRONG_GENERATION;

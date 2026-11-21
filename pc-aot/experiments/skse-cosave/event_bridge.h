@@ -62,6 +62,11 @@ SkseBridgeResult skse_bridge_check_call(const SkseGameEvent *requested, uint32_t
  * Children and their bridge are confined to one thread; drop children first. */
 SkseBridgeResult skse_bridge_open(const char *private_root, const SkseGameScope *running,
                                  SkseEventBridge **out, SksePairResult *detail);
+/* Open the provisioned language-specific directory for a load attempt. The
+ * directory and database are never created or modified. An absent database
+ * is reported only after verifying the actual load and consumed input. */
+SkseBridgeResult skse_bridge_open_readonly(const char *private_root, const SkseGameScope *running,
+                                          SkseEventBridge **out, SksePairResult *detail);
 void skse_bridge_close(SkseEventBridge *bridge);
 /* Derive a stable key for the exact named file version in an authorized saves
  * directory, from an independently witnessed descriptor. The caller passes

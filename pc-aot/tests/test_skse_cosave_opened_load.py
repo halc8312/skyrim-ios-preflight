@@ -4,9 +4,11 @@ import ctypes as C
 import fcntl
 import os
 from pathlib import Path
+import sqlite3
 import stat
 import sys
 import tempfile
+import time
 
 import test_skse_cosave_bridge as br
 import test_skse_cosave_generation as gen
@@ -124,6 +126,92 @@ class NamedOpenedLoadTests(OpenedLoadHarness):
         implementation.write_text(sn.NAMED_FIXTURE)
         cls.extra_sources = (*br.BridgeHarness.extra_sources, "-DSKSE_TEST_NAMED_CLONE", implementation)
         super().setUpClass()
+
+    def open_readonly(self, directory):
+        open_reader = self.api.lib.skse_bridge_open_readonly
+        open_reader.argtypes, open_reader.restype = self.api.open.argtypes, self.api.open.restype
+        reader, detail = br.PTR(), C.c_int(-1)
+        status = open_reader(os.fsencode(directory), C.byref(self.running), C.byref(reader), C.byref(detail))
+        if reader:
+            self.addCleanup(self.api.close, reader)
+        return status, detail.value, reader
+
+    def test_empty_readonly_store_only_reports_missing_after_authenticated_read(self):
+        private = self.root / "readonly-empty"
+        directory = private / "text-en-voice-en"
+        directory.mkdir(parents=True)
+        status, detail, self.bridge = self.open_readonly(private)
+        self.assertEqual((status, detail, bool(self.bridge)), (br.OK, gen.OK, True))
+        rc, detail, pending, _ = self.api.stage(self.host, self.bridge, self.action(), b"write forbidden")
+        self.assertEqual((rc, detail, bool(pending)), (br.STATE, gen.OK, False))
+        start, token, obs = self.guest_load(self.fd, flags=br.NO_REVERT)
+        self.assertEqual(start, (br.OK, gen.OK))
+        self.assertEqual(self.complete(token, obs), (br.TRACE, gen.OK, None))
+        _, token, obs = self.guest_load(self.fd)
+        os.dup2(self.fd, obs.base.ess_fd)
+        self.assertEqual(self.complete(token, obs), (br.PAIR, gen.WRONG, None))
+        _, token, obs = self.guest_load(self.fd)
+        self.assertEqual(self.complete(token, obs), (br.PAIR, gen.MISSING, None))
+        self.assertEqual(list(directory.iterdir()), [])
+
+    def test_readonly_existing_db_has_no_writes_and_returns_busy_immediately(self):
+        self.saved()
+        directory = self.private / "text-en-voice-en"
+        database = directory / self.db.name
+        before = (database.read_bytes(), database.stat().st_mtime_ns)
+        status, detail, self.bridge = self.open_readonly(self.private)
+        self.assertEqual((status, detail, bool(self.bridge)), (br.OK, gen.OK, True))
+        start, token, obs = self.guest_load(self.fd)
+        self.assertEqual(start, (br.OK, gen.OK))
+        self.assertEqual(self.complete(token, obs),
+                         (br.OK, gen.OK, gen.image(gen.section(gen.UID, [(11, 2, b"new state")]))))
+        with contextlib.closing(sqlite3.connect(database, timeout=0)) as lock:
+            lock.execute("BEGIN EXCLUSIVE")
+            started = time.monotonic()
+            status, detail, blocked = self.open_readonly(self.private)
+            self.assertLess(time.monotonic() - started, 1.5)
+            self.assertEqual((status, detail, bool(blocked)), (br.PAIR, gen.BUSY, False))
+            _, token, obs = self.guest_load(self.fd)
+            self.assertEqual(self.complete(token, obs), (br.PAIR, gen.BUSY, None))
+        self.assertEqual((database.read_bytes(), database.stat().st_mtime_ns), before)
+        self.assertEqual(list(directory.iterdir()), [database])
+
+    def test_readonly_open_rejects_corrupt_linked_and_wal_stores(self):
+        private = self.root / "readonly-unsafe"
+        directory = private / "text-en-voice-en"
+        directory.mkdir(parents=True)
+        database = directory / self.db.name
+
+        def rejected(detail):
+            rc, outcome, bridge = self.open_readonly(private)
+            self.assertEqual((rc, outcome, bool(bridge)), (br.PAIR, detail, False))
+
+        database.write_bytes(b"damaged original")
+        rejected(gen.DAMAGED)
+        self.assertEqual(database.read_bytes(), b"damaged original")
+        database.unlink()
+        database.symlink_to(self.db)
+        rejected(gen.STORAGE)
+        database.unlink()
+        os.link(self.db, database)
+        rejected(gen.STORAGE)
+        database.unlink()
+        database.write_bytes(self.db.read_bytes())
+        with contextlib.closing(sqlite3.connect(database)) as connection:
+            self.assertEqual(connection.execute("PRAGMA journal_mode=WAL").fetchone(), ("wal",))
+        self.assertEqual(list(directory.iterdir()), [database])
+        rejected(gen.UNSUPPORTED)
+        self.assertEqual(list(directory.iterdir()), [database])
+
+    def test_readonly_open_requires_provisioned_unlinked_language_directory(self):
+        private = self.root / "readonly-missing-directory"
+        private.mkdir()
+        rc, _, reader = self.open_readonly(private)
+        self.assertEqual((rc, bool(reader), list(private.iterdir())), (br.IO, False, []))
+        language = private / "text-en-voice-en"
+        language.symlink_to(self.private / language.name, target_is_directory=True)
+        rc, _, reader = self.open_readonly(private)
+        self.assertEqual((rc, bool(reader)), (br.IO, False))
 
     def test_guest_read_is_stable_while_original_is_overwritten_and_path_replaced(self):
         self.saved()

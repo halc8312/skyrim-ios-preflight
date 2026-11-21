@@ -16,7 +16,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-struct SkseEventBridge { SkseGameScope running; SksePairStore *store; int directory; };
+struct SkseEventBridge { SkseGameScope running; SksePairStore *store; int directory; bool readonly; };
 struct SksePendingSave {
     SkseEventBridge *bridge;
     SksePairStage *stage;
@@ -63,8 +63,8 @@ static SkseBridgeResult request_matches(SkseEventBridge *bridge, const SkseGameE
     return SKSE_BRIDGE_OK;
 }
 
-SkseBridgeResult skse_bridge_open(const char *root, const SkseGameScope *running,
-                                 SkseEventBridge **out, SksePairResult *detail) {
+static SkseBridgeResult bridge_open(const char *root, const SkseGameScope *running,
+                                    SkseEventBridge **out, SksePairResult *detail, bool readonly) {
     if (detail) *detail = SKSE_PAIR_OK;
     if (!out) return SKSE_BRIDGE_ARGUMENT;
     *out = NULL;
@@ -75,15 +75,28 @@ SkseBridgeResult skse_bridge_open(const char *root, const SkseGameScope *running
     char path[PATH_MAX];
     int length = snprintf(path, sizeof path, "%s/text-%s-voice-%s", root,
                           running->text ? "ja" : "en", running->voices ? "ja" : "en");
-    if (length < 0 || (size_t)length >= sizeof path || (mkdir(path, 0700) && errno != EEXIST)) return SKSE_BRIDGE_IO;
+    if (length < 0 || (size_t)length >= sizeof path ||
+        (!readonly && mkdir(path, 0700) && errno != EEXIST)) return SKSE_BRIDGE_IO;
     SkseEventBridge *bridge = calloc(1, sizeof *bridge);
     if (!bridge) return SKSE_BRIDGE_IO;
     bridge->directory = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (bridge->directory < 0) { free(bridge); return SKSE_BRIDGE_IO; }
-    SkseBridgeResult status = from_pair(skse_pair_open(path, &bridge->store), detail);
-    if (status == SKSE_BRIDGE_OK) { bridge->running = *running; *out = bridge; }
+    SksePairResult pair = readonly ? skse_pair_open_readonly(path, bridge->directory, &bridge->store)
+                                   : skse_pair_open(path, &bridge->store);
+    SkseBridgeResult status = from_pair(pair, detail);
+    if (status == SKSE_BRIDGE_OK) { bridge->running = *running; bridge->readonly = readonly; *out = bridge; }
     else skse_bridge_close(bridge);
     return status;
+}
+
+SkseBridgeResult skse_bridge_open(const char *root, const SkseGameScope *running,
+                                 SkseEventBridge **out, SksePairResult *detail) {
+    return bridge_open(root, running, out, detail, false);
+}
+
+SkseBridgeResult skse_bridge_open_readonly(const char *root, const SkseGameScope *running,
+                                          SkseEventBridge **out, SksePairResult *detail) {
+    return bridge_open(root, running, out, detail, true);
 }
 
 void skse_bridge_close(SkseEventBridge *bridge) {
@@ -145,6 +158,7 @@ SkseBridgeResult skse_bridge_begin_save(SkseEventBridge *bridge, const SkseGameE
     *out = NULL;
     SkseBridgeResult result = request_matches(bridge, requested);
     if (result != SKSE_BRIDGE_OK) return result;
+    if (bridge->readonly) return SKSE_BRIDGE_STATE;
     SksePendingSave *save = calloc(1, sizeof *save);
     if (!save) return SKSE_BRIDGE_IO;
     save->held_fd = -1;
@@ -331,6 +345,7 @@ SkseBridgeResult skse_bridge_publish_deferred(SkseEventBridge *worker, SkseDefer
                                              SksePairResult *detail) {
     if (detail) *detail = SKSE_PAIR_OK;
     if (!worker || !job) return SKSE_BRIDGE_ARGUMENT;
+    if (worker->readonly) return SKSE_BRIDGE_STATE;
     if (!same_scope(&worker->running, &job->event.scope)) return SKSE_BRIDGE_SCOPE;
     struct stat here, origin;
     if (fstat(worker->directory, &here) || fstat(job->directory, &origin)) return SKSE_BRIDGE_IO;

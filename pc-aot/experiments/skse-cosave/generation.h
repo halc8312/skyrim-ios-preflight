@@ -36,6 +36,10 @@ enum {
  * Each store and stage is confined to its calling thread; independent stores
  * on the same directory may be used concurrently. */
 SksePairResult skse_pair_open(const char *directory, SksePairStore **out);
+/* Open a dedicated read-only connection under the checked directory. The
+ * borrowed descriptor must identify directory. An absent database is an
+ * empty store. As with the writer, the caller protects this private path. */
+SksePairResult skse_pair_open_readonly(const char *directory, int directory_fd, SksePairStore **out);
 void skse_pair_close(SksePairStore *store);
 
 /* An explicit NULL base starts empty. A supplied base must be verifiable in
