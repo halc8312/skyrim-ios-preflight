@@ -93,6 +93,34 @@ class ClassicModEventTests(unittest.TestCase):
                         str(PORT / "classic_vm_epoch.c"), "-o", str(binary)], check=True, timeout=60)
         subprocess.run([str(binary)], check=True, timeout=30)
 
+    @unittest.skipUnless(os.name == "posix", "uses a POSIX C compiler")
+    def test_staged_skyui_registrations_rebind_once_and_survive_revert(self):
+        # Compile the whole staged dispatcher. Only the unrelated SDL event
+        # dependencies and guest VM boundaries are supplied by the fixture.
+        runtime = self.vendor / "runtime"
+        shutil.copyfile(runtime / "skse_runtime.h", self.stage / "skse_runtime.h")
+        sdl = self.stage / "SDL2"
+        sdl.mkdir()
+        (sdl / "SDL.h").write_text(
+            "#include <stdint.h>\ntypedef uint8_t Uint8;\n"
+            "enum { SDL_NUM_SCANCODES = 512 };\nuint32_t SDL_GetTicks(void);\n", encoding="utf-8")
+        binary = self.stage.parent / "skyui_registration"
+        sanitizers = []
+        if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
+            sanitizers += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
+            if sys.platform.startswith("linux"):
+                sanitizers += ["-fno-pie", "-no-pie"]
+        events = ROOT / "experiments/classic-mod-events"
+        controls = ROOT / "experiments/classic-control-events"
+        subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-pthread",
+                        *sanitizers, "-DSKYDREAM_SKSE=1", "-DSKYRIM_IOS_MOD_HOOKS=1", "-I", str(self.stage),
+                        "-I", str(PORT), "-I", str(events), "-I", str(controls), "-isystem", str(runtime),
+                        str(ROOT / "tests/native/test_classic_skyui_registration.c"),
+                        str(self.stage / "skse_system.c"), str(self.stage / "skse_compat_values.c"),
+                        str(events / "mod_event.c"), str(controls / "control_bridge.c"),
+                        str(PORT / "classic_vm_epoch.c"), "-lm", "-o", str(binary)], check=True, timeout=60)
+        subprocess.run([str(binary)], check=True, timeout=15)
+
 
 class ClassicControlEventTests(unittest.TestCase):
     def setUp(self):
