@@ -33,7 +33,8 @@ typedef struct {
 } Witness;
 
 typedef enum {
-    COMPLETE, FLAT_ATTACHED, MISSING, FLAT_ONLY, WRONG_PARENT, DUPLICATE, OVER_BUDGET, PREVIEW_ROOT, UNLOADED
+    COMPLETE, FLAT_ATTACHED, MISSING, FLAT_ONLY, WRONG_PARENT, DUPLICATE, OVER_BUDGET, PREVIEW_ROOT, UNLOADED,
+    DEGENERATE_POSE
 } Scenario;
 
 uint8_t *MEM;
@@ -158,6 +159,7 @@ static Result run(Scenario mode, bool observe)
         const uint32_t node = CHILD + i * 0x100;
         const uint32_t name = M32(STOCK_NAMES + name_slots[i]);
         make_node(node, name, i ? CHILD : ROOT);
+        if (i >= 3 && mode != DEGENERATE_POSE) MF32(node + 0x4c) = 30.0f;
         if (i) M32(BONE_CHILDREN + (i - 1) * 4) = node;
     }
     M32(CHILD + 0xac) = BONE_CHILDREN;
@@ -199,7 +201,7 @@ static Result run(Scenario mode, bool observe)
     witness = NULL;
     assert(cpu.r[4] == STACK && !sample.receiver && !sample.member);
     const bool complete = sample.named == FULL_MASK && !sample.ambiguous && sample.visits <= BONE_VISIT_CAP;
-    const bool all_nodes_present = mode == COMPLETE || mode == FLAT_ATTACHED;
+    const bool all_nodes_present = mode == COMPLETE || mode == FLAT_ATTACHED || mode == DEGENERATE_POSE;
     assert(complete == (observe && all_nodes_present));
     if (observe) {
         const unsigned expected = all_nodes_present || mode == OVER_BUDGET ? FULL_MASK :
@@ -240,7 +242,7 @@ int main(int argc, char **argv)
 #ifdef SKYRIM_TEST_SCENE_RUNTIME
     assert(argc == 2 && strlen(argv[1]) == 1);
     const int mode = argv[1][0] - '0';
-    assert(mode >= COMPLETE && mode <= UNLOADED);
+    assert(mode >= COMPLETE && mode <= DEGENERATE_POSE);
     const Result ordinary = run((Scenario)mode, false);
     PcGuestModHooks host = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof host,
                             .groups = PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE};
@@ -255,7 +257,7 @@ int main(int argc, char **argv)
 #else
     assert(argc == 1);
     (void)argv;
-    for (Scenario mode = COMPLETE; mode <= UNLOADED; ++mode) {
+    for (Scenario mode = COMPLETE; mode <= DEGENERATE_POSE; ++mode) {
         const Result ordinary = run(mode, false), observed = run(mode, true);
         equal_results(&ordinary, &observed);
     }

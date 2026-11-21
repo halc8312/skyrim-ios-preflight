@@ -175,15 +175,19 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         port = ROOT / "ios/runtime-port"
         abi = ROOT / "ios/private-abi"
         ordinary = "IOS_CLASSIC_HIGHHEEL_SCENE schema=1 root={} names={} duplicate={} limited={}\n"
-        cases = ((1, 31, 0, 0), (2, 31, 0, 0), (1, 15, 0, 0), (2, 15, 0, 0),
-                 (1, 15, 0, 1), (1, 15, 1, 0), (1, 31, 0, 1), None, None)
+        pose = "IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured={} valid={}\n"
+        cases = ((1, 31, 0, 0, 1), (2, 31, 0, 0, 1), (1, 15, 0, 0, 0), (2, 15, 0, 0, 0),
+                 (1, 15, 0, 1, 0), (1, 15, 1, 0, 0), (1, 31, 0, 1, 0), None, None,
+                 (1, 31, 0, 0, 0))
         self.run_reviewed_fixture(
             stage_scene_app, "test_scene_witness_lift.c",
             "Classic third-person traversal witnesses five actual named nodes without changing the scene",
-            extra_sources=(port / "mod_highheel_scene_host.c", abi / "pc_guest_mod_hooks_library.c"),
-            extra_flags=("-I", port, "-I", abi, "-I", ROOT / "experiments/fuz-voice",
+            extra_sources=(port / "mod_highheel_scene_host.c", abi / "pc_guest_mod_hooks_library.c",
+                           HERE / "highheel_height.c"),
+            extra_flags=("-I", HERE, "-I", port, "-I", abi, "-I", ROOT / "experiments/fuz-voice",
                          "-DSKYRIM_TEST_SCENE_RUNTIME=1", "-DPC_GUEST_MOD_HOOKS_COMPILED=65536u"),
-            runs=tuple(((str(i),), ordinary.format(*fields) if fields else "") for i, fields in enumerate(cases)),
+            runs=tuple(((str(i),), ordinary.format(*fields[:4]) + pose.format(fields[1], fields[4]) if fields else "")
+                       for i, fields in enumerate(cases)),
         )
 
     def test_owned_effect_native_argument_boundaries(self):

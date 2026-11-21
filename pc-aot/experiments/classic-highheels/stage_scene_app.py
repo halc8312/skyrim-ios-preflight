@@ -53,11 +53,17 @@ def children(body):
 
 def receiver(body):
     native = b"    eax = (uint32_t)(TL32((uint32_t)(esi + 0x18u)));\n"
-    # Read after the stock parent pointer load, inside the node's own update.
-    hook = (b"    if (" + ACTIVE + b" &&\n"
-            b"        M32(esp + 0x38u) == 0xAB53F8u && M32(esp + 0x3Cu) == 0xAAD9E1u)\n"
-            b"        " + NOTIFY + b"Member, esi, eax, 0);\n")
-    return once(body, native, native + hook)
+    # The original helper repurposes esi and eax for its copy. Save the
+    # receiver and parent only on the reviewed downward path, then observe
+    # the receiver's transform immediately after the last original store.
+    start = (b"    const bool skyrim_heel_sample = " + ACTIVE + b" &&\n"
+             b"        M32(esp + 0x38u) == 0xAB53F8u && M32(esp + 0x3Cu) == 0xAAD9E1u;\n"
+             b"    const uint32_t skyrim_heel_node = skyrim_heel_sample ? esi : 0;\n"
+             b"    const uint32_t skyrim_heel_parent = skyrim_heel_sample ? eax : 0;\n")
+    last_store = b"    MF32((uint32_t)(edx + 0x30u)) = (float)ST(0); fpop(c);\n"
+    sample = (b"    if (skyrim_heel_sample) " + NOTIFY +
+              b"Member, skyrim_heel_node, skyrim_heel_parent, SkyrimHighHeelScenePose);\n")
+    return once(once(body, native, native + start), last_store, last_store + sample)
 
 
 def apply(name, original, base):

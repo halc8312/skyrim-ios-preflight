@@ -294,6 +294,17 @@ The report contains no positions, object addresses, or file names. It only
 counts actual path members visited by the reviewed world update and does
 not establish that the effect applied or that later scene writes are safe.
 
+A guest with the post-transform callback samples the local and world scales
+from NPC and the world positions from the four leg nodes after the original
+direct refresh stores. Each value is copied from the callback's own receiver
+in the same traversal. The app evaluates the existing beta 0.5 formula with
+a unit magnitude and no smoothing. The accompanying
+`IOS_CLASSIC_HIGHHEEL_POSE` line reports which of the five inputs were
+captured and whether the calculation accepted them. A missing or duplicated
+node, an incomplete traversal, or a degenerate or nonfinite pose cannot
+produce `valid=1`. Neither coordinates nor the computed offset are logged.
+A names-only guest still reports the original scene diagnostic.
+
 The official 1.7.3 `SKSETaskUpdateWorldData` takes a NiAVObject
 reference in Create, calls the world refresh in Run and releases
 the reference in Dispose. The queue's lock protects the delegate

@@ -178,6 +178,8 @@ enum SkyrimHighHeelSceneNotice {
     SkyrimHighHeelSceneLeave, SkyrimHighHeelSceneMember, SkyrimHighHeelSceneFinish
 };
 enum { SkyrimHighHeelSceneReady = 1, SkyrimHighHeelSceneActive };
+/* Member's third argument is zero for names-only or this value after world-transform writes. */
+enum { SkyrimHighHeelScenePose = 1 };
 typedef struct {
     bool (*notify)(const struct CPU *, enum SkyrimHighHeelSceneNotice, uint32_t first, uint32_t second, uint32_t third);
 } PcGuestModHighHeelSceneHooks;
