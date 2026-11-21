@@ -9,6 +9,7 @@ CLASSIC_SKSE="${SKYRIM_IOS_CLASSIC_SKSE-0}"
 DLL_PROBE="${SKYRIM_IOS_SKSE_DLL_PROBE-0}"
 SETTINGS_PROBE="${SKYRIM_IOS_CLASSIC_SETTINGS_PROBE-0}"
 MOD_HOOKS="${SKYRIM_IOS_MOD_HOOKS-0}"
+PAPYRUSUTIL="${SKYRIM_IOS_CLASSIC_PAPYRUSUTIL-0}"
 case "$CLASSIC_SKSE" in
   0|1) ;;
   *) echo 'SKYRIM_IOS_CLASSIC_SKSE must be 0 or 1' >&2; exit 2 ;;
@@ -25,6 +26,12 @@ case "$MOD_HOOKS" in
   0) ;;
   1) [[ "$CLASSIC_SKSE" == 1 ]] || { echo 'SKYRIM_IOS_MOD_HOOKS requires SKYRIM_IOS_CLASSIC_SKSE=1' >&2; exit 2; } ;;
   *) echo 'SKYRIM_IOS_MOD_HOOKS must be 0 or 1' >&2; exit 2 ;;
+esac
+case "$PAPYRUSUTIL" in
+  0) ;;
+  1) [[ "$CLASSIC_SKSE" == 1 && "$DLL_PROBE" == 1 && "$MOD_HOOKS" == 1 ]] ||
+       { echo 'PapyrusUtil during play requires Classic SKSE, the DLL probe and the MOD hook interface' >&2; exit 2; } ;;
+  *) echo 'SKYRIM_IOS_CLASSIC_PAPYRUSUTIL must be 0 or 1' >&2; exit 2 ;;
 esac
 # The MOD hook interface and the reviewed seam headers it reuses.
 MOD_HOOK_HEADERS=(ios/private-abi/PcGuestModHooksABI.h experiments/fuz-voice/lift_menu_seam.h
@@ -215,6 +222,7 @@ cmake -S ios/runtime-port -B "$RUN/build" -G 'Unix Makefiles' \
   "-DSKYRIM_IOS_SKSE_DLL_PROBE=$DLL_PROBE" \
   "-DSKYRIM_IOS_CLASSIC_SETTINGS_PROBE=$SETTINGS_PROBE" \
   "-DSKYRIM_IOS_MOD_HOOKS=$MOD_HOOKS" \
+  "-DSKYRIM_IOS_CLASSIC_PAPYRUSUTIL=$PAPYRUSUTIL" \
   "-DSKYDREAM_SOURCE_DIR=$RUN/source" \
   "-DSKYRIM_IOS_RUNTIME_OVERLAY_DIR=$RUN/overlay/runtime" \
   "-DSKYRIM_IOS_BINDING_SOURCES=$ROOT/ios/private-abi/pc_guest_host.c" \
@@ -318,7 +326,7 @@ if [[ "$MOD_HOOKS" == 1 ]]; then
   cp "${MOD_HOOK_HEADERS[@]}" "$RUN/artifacts/"
 fi
 ditto -c -k --keepParent "$APP" "$RUN/artifacts/SkyrimIOS-public-host.zip"
-python3 - "$RUN/artifacts" "$APP/Info.plist" "$CLASSIC_SKSE" "$DLL_PROBE" "$MOD_HOOKS" <<'PY'
+python3 - "$RUN/artifacts" "$APP/Info.plist" "$CLASSIC_SKSE" "$DLL_PROBE" "$MOD_HOOKS" "$PAPYRUSUTIL" <<'PY'
 from pathlib import Path
 import hashlib, json, os, plistlib, sys
 out=Path(sys.argv[1]); app=out/'SkyrimIOS-public-host.zip'
@@ -344,6 +352,8 @@ if classic:
     result['classic_skse_experiment'] = True
 if hooks:
     result['mod_hooks_abi'] = 1
+if sys.argv[6] == '1':
+    result['classic_papyrusutil'] = True
 (out/'result.json').write_text(json.dumps(result,indent=2)+'\n')
 PY
 echo 'Public host built; local private-framework assembly and signing still required.'
