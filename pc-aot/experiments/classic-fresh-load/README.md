@@ -13,6 +13,8 @@ The hosted fixture runs the original lifted `f_6821C0` selected-load function ar
 
 The file witness accepts the resolved `.ess` path, stream, read-only descriptor, positive read, and per-open identity from the same attempt. The successful report borrows a retained descriptor during the callback. Cached `manager + 0x30` input, metadata-only reads, changed or substituted descriptors, failed loads and reentrancy cannot yield a ready report. Original engine returns and cleanup still run.
 
+For the normal loose-file route, the mode-zero construction before the first selected open performs a metadata query. The selected-open call at `0x682220` reaches the real `CreateFileA` through `f_677540` and the original `rb` CRT path. The return token is `0xF6BF24`, with `GENERIC_READ`, `FILE_SHARE_READ`, and `OPEN_EXISTING`. The stock slot call has a logical stream read at `0x67B870` returning at `0x67B875`. The CRT can fill its buffer before the slot begins, so a positive `ReadFile` during the slot is insufficient as the sole acceptance condition. The app binding must connect the scoped native file handle's generation to the same stream and CRT file across a positive logical read, before the existing immutable handoff. The hosted fixtures do not establish that live identity chain.
+
 ## Native selected path resolver
 
 The fresh branch of the pinned PE uses the same 260-byte stack path for the name builder at 0x6821FC and the stream constructor at 0x68220C. After the first open pushes return 0x682225, the path is at ESP + 0x14 and the selected stream is in both ECX and ESI. The original caller allocates 0x20C bytes for its local frame. The later check call at 0x682246 has a different return address.
