@@ -65,6 +65,39 @@ SHIMS = (
 )
 
 
+LOAD_CLONE_OPEN = """    f->classic_load_source_fd = -1;
+    if (load) {
+        const int snapshot = classic_runtime_loaded_prepare_clone(c, load, f->fd, &f->classic_load_source);
+        if (snapshot >= 0) {
+            f->classic_load_source_fd = f->fd;
+            f->fd = snapshot;
+        }
+    }
+"""
+LOAD_CLONE_CLOSE = """        if (f->classic_load_source_fd >= 0) {
+            const int saved_errno = errno;
+            close(f->classic_load_source_fd);
+            errno = saved_errno;
+        }
+"""
+FILE_INFO = """SHIM(GetFileInformationByHandle) {
+    GFile *f = h_get(ARG(0), H_FILE);
+    struct stat st;
+    if (!f || fstat(f->fd, &st)) RET(0, 2);
+"""
+LOAD_FILE_FIXTURE = """
+void classic_runtime_load_file_call(CPU *c, enum ClassicLoadFileCall operation) {
+    switch (operation) {
+    case ClassicLoadRead: shim_ReadFile(c); return;
+    case ClassicLoadSeek: shim_SetFilePointer(c); return;
+    case ClassicLoadSize: shim_GetFileSize(c); return;
+    case ClassicLoadInformation: shim_GetFileInformationByHandle(c); return;
+    }
+    abort();
+}
+"""
+
+
 def verified_source(raw: bytes) -> str:
     # The vendor checkout may use Git's Windows line-ending conversion.
     source = raw.replace(b"\r\n", b"\n")
@@ -73,7 +106,9 @@ def verified_source(raw: bytes) -> str:
     return source.decode("utf-8")
 
 
-def transform(source: str, load_witness: bool = False) -> str:
+def transform(source: str, load_witness: bool = False, load_clone: bool = False) -> str:
+    if load_clone and not load_witness:
+        raise ValueError("Cloned load staging requires the read-only witness")
     load_header = '#include "runtime_load.h"\n' if load_witness else ""
     load_field = " uint64_t classic_load_generation;" if load_witness else ""
     observed_open = OPEN_OBSERVED
@@ -87,6 +122,12 @@ def transform(source: str, load_witness: bool = False) -> str:
 """, 1)
         observed_close = ("        if (f->classic_load_generation) classic_runtime_loaded_closed(f->classic_load_generation);\n"
                           + observed_close)
+    if load_clone:
+        load_field += " int classic_load_source_fd; struct stat classic_load_source;"
+        observed_open = observed_open.replace("    errno = original_errno;\n",
+                                             LOAD_CLONE_OPEN + "    errno = original_errno;\n", 1)
+        observed_close = observed_close.replace("        if (!f->shared) {\n",
+                                                LOAD_CLONE_CLOSE + "        if (!f->shared) {\n", 1)
     patches = (
         ('#include "rt.h"\n', '#include "rt.h"\n#include "runtime_save.h"\n' + load_header),
         (GFILE, GFILE + " uint64_t classic_save_token;" + load_field),
@@ -98,11 +139,13 @@ def transform(source: str, load_witness: bool = False) -> str:
          "SHIM(FlushFileBuffers) { classic_runtime_saved_flush_stub(c); RET(1, 1); }\n"),
         (MOVE_CALL, MOVE_OBSERVED),
     )
+    if load_clone:
+        patches += ((FILE_INFO, FILE_INFO + "    if (f->classic_load_source_fd >= 0) st = f->classic_load_source;\n"),)
     for before, after in patches:
         if source.count(before) != 1:
             raise ValueError("Expected one reviewed runtime file observation site")
         source = source.replace(before, after, 1)
 
     cases = "".join(f"    case {kind}: shim_{name}(c); return;\n" for kind, name in SHIMS)
-    return (source + "\nvoid classic_runtime_file_call(CPU *c, enum ClassicFileCall operation) {\n"
+    return (source + (LOAD_FILE_FIXTURE if load_clone else "") + "\nvoid classic_runtime_file_call(CPU *c, enum ClassicFileCall operation) {\n"
             "    switch (operation) {\n" + cases + "    }\n    abort();\n}\n")

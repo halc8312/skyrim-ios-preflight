@@ -50,12 +50,72 @@ static bool same_selection(const ClassicRuntimeLoad *load) {
            selected_entry(load, &named) && skse_save_same_version(&opened, &named);
 }
 
+#if defined(SKYRIM_EXPERIMENT_CLONE_LOAD)
+static bool clone_version(int fd, struct stat *out) {
+    const int flags = fcntl(fd, F_GETFL), descriptors = fcntl(fd, F_GETFD);
+    return flags >= 0 && (flags & O_ACCMODE) == O_RDONLY && descriptors >= 0 &&
+           (descriptors & FD_CLOEXEC) && !fstat(fd, out) &&
+           S_ISREG(out->st_mode) && out->st_nlink == 0;
+}
+
+bool classic_runtime_load_enable_capture(ClassicRuntimeLoad *load, SkseEventBridge *bridge, int scratch) {
+    if (!load || load != owned(rt_current_cpu()) || !load->opening || load->fd >= 0 ||
+        !bridge || load->bridge || scratch < 0) return false;
+    load->bridge = bridge;
+    load->scratch = scratch;
+    return true;
+}
+
+int classic_runtime_loaded_prepare_clone(const struct CPU *cpu, uint64_t generation,
+                                         int source, struct stat *named_metadata) {
+    ClassicRuntimeLoad *load = owned(cpu);
+    if (!load || load->generation != generation || !load->opening || load->handle ||
+        load->fd != source || !load->bridge || load->pending_input || !named_metadata) return -1;
+    const int saved_errno = errno;
+    int fd = -1;
+    SkseLoadInput *input = NULL;
+    struct stat snapshot;
+    if (skse_bridge_capture_named_load(load->bridge, skyrim_lifecycle_scope_current, load->directory,
+                                     load->path + load->leaf_offset, source, load->scratch,
+                                     &input, &fd, NULL) != SKSE_BRIDGE_OK ||
+        !clone_version(fd, &snapshot) || skse_save_same_file(&snapshot, &load->selected) ||
+        snapshot.st_size != load->selected.st_size || lseek(fd, 0, SEEK_CUR) != 0 ||
+        !same_selection(load)) {
+        if (fd >= 0) close(fd);
+        skse_bridge_drop_load_input(input);
+        errno = saved_errno;
+        return -1;
+    }
+    load->snapshot = snapshot;
+    load->source_fd = source;
+    load->fd = fd;
+    load->pending_input = input;
+    *named_metadata = load->selected;
+    errno = saved_errno;
+    return fd;
+}
+#endif
+
+static bool same_input(const ClassicRuntimeLoad *load) {
+#if defined(SKYRIM_EXPERIMENT_CLONE_LOAD)
+    if (load->source_fd >= 0) {
+        struct stat snapshot;
+        return clone_version(load->fd, &snapshot) && skse_save_same_version(&snapshot, &load->snapshot);
+    }
+#endif
+    return same_selection(load);
+}
+
+
 bool classic_runtime_load_begin(ClassicRuntimeLoad *load, const struct CPU *cpu, uint32_t stream,
     uint32_t guest_path, int directory, const char *mapped_directory) {
     if (!load || local_load || !cpu || cpu != rt_current_cpu() || !stream ||
         stream != cpu->r[1] || directory < 0) return false;
     const int previous_errno = errno;
     ClassicRuntimeLoad next = {.owner = cpu, .stream = stream, .fd = -1, .opening = true};
+#if defined(SKYRIM_EXPERIMENT_CLONE_LOAD)
+    next.source_fd = -1;
+#endif
     if (!classic_fresh_resolve_selected_guest_path(cpu, guest_path, mapped_directory, next.path)) return false;
     const size_t prefix = strlen(mapped_directory);
     next.leaf_offset = prefix + 1;
@@ -101,7 +161,7 @@ void classic_runtime_loaded_bound(const struct CPU *cpu, uint64_t generation, ui
     ClassicRuntimeLoad *load = owned(cpu);
     const int previous_errno = errno;
     if (load && load->generation == generation && load->opening && !load->handle &&
-        handle && handle != UINT32_MAX && same_selection(load)) load->handle = handle;
+        handle && handle != UINT32_MAX && same_input(load)) load->handle = handle;
     else invalidate(generation);
     errno = previous_errno;
 }
@@ -118,7 +178,7 @@ uint64_t classic_runtime_load_generation(const struct CPU *cpu, uint32_t stream,
     ClassicRuntimeLoad *load = owned(cpu);
     if (!load || load->opening || load->stream != stream || !handle || handle != load->handle) return 0;
     const int previous_errno = errno;
-    if (!same_selection(load)) invalidate(load->generation);
+    if (!same_input(load)) invalidate(load->generation);
     errno = previous_errno;
     return owned(cpu) ? load->generation : 0;
 }
@@ -242,6 +302,9 @@ void classic_runtime_load_end(ClassicRuntimeLoad *load) {
     if (!load || load != local_load || load->owner != rt_current_cpu()) return;
     const int previous_errno = errno;
     local_load = NULL;
+#if defined(SKYRIM_EXPERIMENT_CLONE_LOAD)
+    skse_bridge_drop_load_input(load->pending_input);
+#endif
     close(load->directory);
     *load = (ClassicRuntimeLoad){0};
     atomic_store_explicit(&active_generation, 0, memory_order_release);

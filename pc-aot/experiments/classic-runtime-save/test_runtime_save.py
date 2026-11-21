@@ -80,7 +80,9 @@ def main() -> None:
     parser.add_argument("--prepared", action="store_true", help="Also apply the existing iOS runtime preparation")
     parser.add_argument("--generation", type=Path, help="Also compose the independent pinned lifted save fixture")
     parser.add_argument("--load-witness", action="store_true", help="Also stage the read-only selected-file witness")
+    parser.add_argument("--load-clone", action="store_true", help="Also run the opt-in immutable GFile fixture")
     args = parser.parse_args()
+    args.load_witness |= args.load_clone
     if not sys.platform.startswith("linux"):
         parser.error("This hosted fixture uses Linux file limits and section collection")
     runtime = args.runtime.resolve()
@@ -151,6 +153,24 @@ def main() -> None:
                             *common, *sources, *extra_sources, "-Wl,--gc-sections", "-o", binary],
                            check=True, timeout=60)
             with tempfile.TemporaryDirectory(prefix="classic-runtime-save-data-") as data:
+                subprocess.run([binary, data], check=True, timeout=20)
+        if args.load_clone:
+            cloned_kernel = out / "kernel32-clone.c"
+            cloned_kernel.write_text(feature_prefix + transform(source_text, load_witness=True, load_clone=True),
+                                     encoding="utf-8")
+            definition = "-DSKYRIM_EXPERIMENT_CLONE_LOAD"
+            clone_object = out / "kernel32-clone.o"
+            subprocess.run([args.cc, *flags, definition, *includes, "-c", cloned_kernel, "-o", clone_object],
+                           check=True, timeout=60)
+            bridge_sources = [COSAVE / name for name in (
+                "event_bridge.c", "generation.c", "digest.c", "immutable_ess.c", "records.c", "observer/lifecycle.c",
+            )]
+            binary = out / "selected-load-clone"
+            subprocess.run([args.cc, *flags, definition, "-DSKSE_TEST_NAMED_CLONE", "-Wall", "-Wextra", "-Werror",
+                            *includes, clone_object, *common[1:], HERE / "test_runtime_load_clone.c",
+                            *bridge_sources, *extra_sources, "-Wl,--gc-sections", "-lsqlite3", "-lcrypto", "-o", binary],
+                           check=True, timeout=60)
+            with tempfile.TemporaryDirectory(prefix="classic-runtime-clone-data-") as data:
                 subprocess.run([binary, data], check=True, timeout=20)
     if source.read_bytes() != original:
         raise AssertionError("Original runtime source changed")

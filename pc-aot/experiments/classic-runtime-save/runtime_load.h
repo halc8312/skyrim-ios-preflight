@@ -7,6 +7,10 @@
 
 #include "fresh_load.h"
 
+#if defined(SKYRIM_EXPERIMENT_CLONE_LOAD)
+#include "event_bridge.h"
+#endif
+
 typedef struct {
     uint32_t bsfile, callback, file, file_slot, fileno, descriptor, handle;
 } ClassicRuntimeCrtFile;
@@ -22,6 +26,12 @@ typedef struct {
     char directory_path[CLASSIC_FRESH_PATH_BYTES];
     char path[CLASSIC_FRESH_PATH_BYTES];
     struct stat selected;
+#if defined(SKYRIM_EXPERIMENT_CLONE_LOAD)
+    SkseEventBridge *bridge;
+    SkseLoadInput *pending_input;
+    int scratch, source_fd;
+    struct stat snapshot;
+#endif
 } ClassicRuntimeLoad;
 
 /* The caller keeps the state alive on the current guest owner thread.
@@ -50,3 +60,19 @@ uint64_t classic_runtime_loaded_opened(const struct CPU *, const char *mapped, i
     uint32_t access, uint32_t share, uint32_t disposition);
 void classic_runtime_loaded_bound(const struct CPU *, uint64_t generation, uint32_t handle);
 void classic_runtime_loaded_closed(uint64_t generation);
+
+#if defined(SKYRIM_EXPERIMENT_CLONE_LOAD)
+/* Bridge and scratch directory are borrowed for the owner load scope. This
+ * hosted stage drops any unused pending input when the scope ends. */
+bool classic_runtime_load_enable_capture(ClassicRuntimeLoad *, SkseEventBridge *, int scratch);
+
+/* Called between the checked original open and native handle publication.
+ * On success the wrapper owns both returned and original descriptors. */
+int classic_runtime_loaded_prepare_clone(const struct CPU *, uint64_t generation,
+                                         int source, struct stat *named_metadata);
+
+enum ClassicLoadFileCall {
+    ClassicLoadRead, ClassicLoadSeek, ClassicLoadSize, ClassicLoadInformation,
+};
+void classic_runtime_load_file_call(struct CPU *, enum ClassicLoadFileCall);
+#endif
