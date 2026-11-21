@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "mobile_ui.h"
 #include "mod_manager.h"
 #include "copy_pair.h"
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
