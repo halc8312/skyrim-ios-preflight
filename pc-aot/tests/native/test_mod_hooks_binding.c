@@ -57,6 +57,7 @@ __attribute__((visibility("default"))) unsigned exercise_mod_hooks(unsigned expe
     if (accepted) { assert(value == 0.5f); seen |= 1u << 7; }
     else assert(value == 0.0f);
     skyrim_racemenu_probe_did_apply();
+    skyrim_camera_observe_return(0x123456);
     assert(seen == expected);
     return seen;
 }
@@ -85,7 +86,7 @@ void f_A60200(CPU *c) { (void)c; }
 void f_842140(CPU *c) { (void)c; }
 void f_873D70(CPU *c) { (void)c; }
 
-static unsigned calls[17];
+static unsigned calls[18];
 static void forget(uint32_t r) { assert(r == 7); ++calls[0]; }
 static void choose(const struct CPU *c, uint32_t slot, uint32_t r, SkyrimFuzLiftChoice *out) {
     assert(!c && slot == 0x1000 && r == 7);
@@ -127,13 +128,15 @@ static bool slider_nose(uint32_t m, uint32_t a, uint32_t b, float min, float max
     return true;
 }
 static void slider_applied(void) { ++calls[16]; }
+static void camera_observed(uint32_t receiver) { assert(receiver == 0x123456); ++calls[17]; }
 
 static PcGuestModHooks full_table(uint32_t groups) {
     return (PcGuestModHooks){
         PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooks), groups, 0,
         {forget, choose, note, capture, force},
         {capture_world, admit, after_copy, release_title, general},
-        {before_revert, after_load, form_deleted}, {skip_warm}, {slider_pending, slider_nose, slider_applied}};
+        {before_revert, after_load, form_deleted}, {skip_warm}, {slider_pending, slider_nose, slider_applied},
+        {camera_observed}};
 }
 
 static unsigned expected_seen(uint32_t groups) {
@@ -155,6 +158,7 @@ static void check_calls(uint32_t groups, unsigned rounds) {
     assert(calls[10] == vm && calls[11] == vm && calls[13] == vm && calls[12] == chargen);
     const unsigned slider = groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER ? rounds : 0;
     assert(calls[14] == slider && calls[15] == slider && calls[16] == slider);
+    assert(calls[17] == (groups & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE ? rounds : 0));
 }
 
 /* argv: hooked-guest compiled-groups select-groups no-hooks-guest bad-reply-guest */
@@ -210,8 +214,9 @@ int main(int argc, char **argv) {
         PcGuestModHooks other = full_table(absent);
         assert(pc_guest_select_mod_hooks(absent, &other) != 0);
     }
-    PcGuestModHooks reserved = full_table(PC_GUEST_MOD_HOOK_CAMERA_OBSERVE);
-    assert(pc_guest_select_mod_hooks(PC_GUEST_MOD_HOOK_CAMERA_OBSERVE, &reserved) != 0);
+    const uint32_t unknown_group = 128u;
+    PcGuestModHooks unknown = full_table(unknown_group);
+    assert(pc_guest_select_mod_hooks(unknown_group, &unknown) != 0);
     PcGuestModHooks world_only = full_table(PC_GUEST_MOD_HOOK_FUZ_WORLD);
     assert(pc_guest_select_mod_hooks(PC_GUEST_MOD_HOOK_FUZ_WORLD, &world_only) != 0);
     if (choice) {
@@ -232,6 +237,7 @@ int main(int argc, char **argv) {
         if (choice & PC_GUEST_MOD_HOOK_FUZ_MENU) wrong.fuz_menu.force_menu = NULL;
         else if (choice & PC_GUEST_MOD_HOOK_VM_LIFECYCLE) wrong.vm_lifecycle.form_deleted = NULL;
         else if (choice & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE) wrong.chargen_precache.skip_open_warm = NULL;
+        else if (choice & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) wrong.camera.observe_return = NULL;
         else wrong.chargen_slider.did_apply = NULL;
         assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
     } else {
@@ -246,6 +252,7 @@ int main(int argc, char **argv) {
     assert(pc_guest_mod_hooks_selected() == choice);
     /* The guest copied the table; later changes to the host copy do not apply. */
     table.fuz_menu.force_menu = NULL;
+    table.camera.observe_return = NULL;
     assert(exercise(expected_seen(choice)) == expected_seen(choice));
     check_calls(choice, 1);
 

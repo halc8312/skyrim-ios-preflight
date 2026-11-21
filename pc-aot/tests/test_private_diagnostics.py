@@ -96,6 +96,8 @@ class ReceiverTests(unittest.TestCase):
         self.assertFalse(list(self.config.storage.glob('.incoming-*')))
         for stage in ('runtime-start', 'guest-memory-bound', 'guest-entry', 'vulkan-window-ready'):
             self.schema.line('IOS_STAGE ' + stage + ' monotonic=1.000000000')
+        for slot in (0, 9, 12):
+            self.schema.line(f'IOS_CAMERA_STATE slot={slot}')
 
     def test_same_id_replay_idempotent_and_conflicting_content_never_overwritten(self):
         _, first = self.receive()
@@ -193,7 +195,8 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_PRESENT failure=0x88760868 extra=secret', 'IOS_DIAG_SETTING key=19 value=1',
                      'IOS_DIAG_SETTING key=1 value=1000000001', 'IOS_DIAG_SETTING key=1 value=nan',
                      'IOS_DIAG_ERROR code=0', 'IOS_DIAG_ERROR code=1\nGame input: private',
-                     'IOS_STAGE private-directory monotonic=1.000000000',
+                     'IOS_STAGE private-directory monotonic=1.000000000', 'IOS_CAMERA_STATE slot=13',
+                     'IOS_CAMERA_STATE slot=12 camera=/private/address',
                      timing().replace('samples=1', 'samples=2'),
                      self.bundle['sessions'][0]['lines'][-1].replace('result=-1', 'result=2147483648')]
         for line in bad_lines:

@@ -229,38 +229,43 @@ class BuildTests(unittest.TestCase):
             (gen / "exe_table.c").write_bytes(b"\n".join(
                 b"{0x" + name + b"u, f_" + name + b"}," for name in classic.ENTRIES))
             (gen / "exe_7.c").write_bytes(b"/* authored unit */")
+            (gen / "exe_95.c").write_bytes(b"/* authored camera */")
             for name in ("PcGuestSkseABI.h", "pc_guest_skse_library.c", "pc_guest_mod_hooks_library.c"):
                 (self.abi / name).write_bytes(b"/* test */")
             with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
                 builder.main([str(self.stage), "--jobs", "1", "--mod-hooks", "fuz_menu"])
-            for groups, message in (("camera_observe", "classic-camera"), ("fuz_world", "list both"), ("bogus", "Unknown")):
+            for groups, message in (("fuz_world", "list both"), ("bogus", "Unknown")):
                 stderr = io.StringIO()
                 with self.subTest(groups=groups), self.assertRaises(SystemExit), contextlib.redirect_stderr(stderr):
                     builder.main([str(self.stage), "--jobs", "1", "--classic-skse", "--mod-hooks", groups])
                 self.assertIn(message, stderr.getvalue())
             self.assertEqual(self.calls, [])
             stages = {"fuz_menu": lambda root: {"exe_7.c": b"/* staged menu */"},
-                      "fuz_world": lambda root: {"exe_7.c": b"/* staged menu */"}}
+                      "fuz_world": lambda root: {"exe_7.c": b"/* staged menu */"},
+                      "camera_observe": lambda root: {"exe_95.c": b"/* staged camera */"}}
+            args = [str(self.stage), "--jobs", "1", "--classic-skse", "--mod-hooks", "fuz_menu,fuz_world,camera_observe"]
             with mock.patch.dict(hooks.STAGES, stages, clear=True):
-                builder.main([str(self.stage), "--jobs", "1", "--classic-skse", "--mod-hooks", "fuz_menu,fuz_world"])
+                builder.main(args)
                 self.calls.clear()
-                builder.main([str(self.stage), "--jobs", "1", "--classic-skse", "--mod-hooks", "fuz_menu,fuz_world"])
+                builder.main(args)
                 self.assertFalse(any("-c" in cmd for cmd in self.calls))
                 self.calls.clear()
-                builder.main([str(self.stage), "--jobs", "1", "--classic-skse", "--mod-hooks", "fuz_menu,fuz_world"])
-        build = self.stage / "arm64-ios-classic-skse-hooks-3"
+                builder.main(args)
+        build = self.stage / "arm64-ios-classic-skse-hooks-19"
         self.assertFalse((self.stage / "arm64-ios-classic-skse").exists())
         self.assertEqual((gen / "exe_7.c").read_bytes(), b"/* authored unit */")
         self.assertEqual((build / "mod-hook-sources/exe_7.c").read_bytes(), b"/* staged menu */")
+        self.assertEqual((gen / "exe_95.c").read_bytes(), b"/* authored camera */")
+        self.assertEqual((build / "mod-hook-sources/exe_95.c").read_bytes(), b"/* staged camera */")
         result = json.loads((build / "result.json").read_text())
         contract = json.loads((build / "compile-contract.json").read_text())
         self.assertIs(result["classic_skse_experiment"], True)
-        self.assertEqual(result["mod_hook_groups"], 3)
-        self.assertEqual(contract["mod_hook_groups"], 3)
-        self.assertEqual(contract["mod_hook_group_names"], ["fuz_menu", "fuz_world"])
+        self.assertEqual(result["mod_hook_groups"], 19)
+        self.assertEqual(contract["mod_hook_groups"], 19)
+        self.assertEqual(contract["mod_hook_group_names"], ["fuz_menu", "fuz_world", "camera_observe"])
         self.assertEqual(contract["mod_hooks_header_sha256"], hooks.header_hashes())
-        self.assertEqual(set(contract["mod_hook_staged_units"]), {"exe_7.c"})
-        self.assertEqual(plistlib.loads((build / "SkyrimGuest.framework/Info.plist").read_bytes())["PcGuestModHooks"], 3)
+        self.assertEqual(set(contract["mod_hook_staged_units"]), {"exe_7.c", "exe_95.c"})
+        self.assertEqual(plistlib.loads((build / "SkyrimGuest.framework/Info.plist").read_bytes())["PcGuestModHooks"], 19)
         self.assertEqual(set((build / "exports.txt").read_text().splitlines()),
                          {"_skyrim_guest_classic_api_v1", "_skyrim_guest_bind_classic_v1",
                           "_skyrim_guest_bind_mod_hooks_v1"})

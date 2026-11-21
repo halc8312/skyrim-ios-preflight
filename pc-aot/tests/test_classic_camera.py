@@ -42,6 +42,17 @@ class CameraStageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.compile_and_run(Path(d), compiler, [CAMERA / "test_camera_state.c"])
 
+    def test_app_reports_only_valid_changes(self):
+        compiler = shutil.which(os.environ.get("CC", "cc"))
+        if not compiler:
+            self.skipTest("C compiler unavailable")
+        runtime = ROOT / "ios/runtime-port"
+        with tempfile.TemporaryDirectory() as d:
+            result = self.compile_and_run(Path(d), compiler,
+                                          [runtime / "mod_camera_host.c", ROOT / "tests/native/test_mod_camera_host.c"],
+                                          ["-I", str(runtime)])
+        self.assertEqual(result.stderr.splitlines(), ["IOS_CAMERA_STATE slot=0", "IOS_CAMERA_STATE slot=12"])
+
     def test_reviewed_transition_and_original_callbacks(self):
         generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
         compiler = shutil.which(os.environ.get("CC", "cc"))
@@ -87,7 +98,7 @@ class CameraStageTests(unittest.TestCase):
             flags.extend(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
         subprocess.run([compiler, *flags, *headers, CAMERA / "camera_state.c", *files, "-o", binary],
                        check=True, timeout=60)
-        subprocess.run([binary], check=True, timeout=30)
+        return subprocess.run([binary], check=True, timeout=30, capture_output=True, text=True)
 
 
 if __name__ == "__main__":

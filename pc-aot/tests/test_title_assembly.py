@@ -178,7 +178,7 @@ class ArtifactBindingTests(unittest.TestCase):
             self.check()
         contract["mod_hooks_header_sha256"] = hashes
         path.write_text(json.dumps(contract))
-        for invalid in (True, "3", 16, 2, -1):
+        for invalid in (True, "3", 128, 2, -1):
             self.result.write_text(json.dumps(dict(guest, mod_hook_groups=invalid)))
             with self.subTest(groups=invalid), self.assertRaisesRegex(ValueError, "Invalid MOD hook groups"):
                 self.check()
@@ -208,7 +208,7 @@ class ArtifactBindingTests(unittest.TestCase):
             source.write_bytes(b"authored " + name.encode() + b"\n")
             (self.host / name).write_bytes(source.read_bytes())
             hashes[name] = assembly.sha(source)
-        contract.update(mod_hook_groups=15, mod_hooks_header_sha256=hashes)
+        contract.update(mod_hook_groups=31, mod_hooks_header_sha256=hashes)
         path.write_text(json.dumps(contract))
         framework = self.build / "SkyrimGuest.framework"
         framework.mkdir()
@@ -218,13 +218,13 @@ class ArtifactBindingTests(unittest.TestCase):
         game.write_bytes(b"synthetic game input")
         self.result.write_text(json.dumps({"candidate_sha256": self.input_hash, "sha256": assembly.sha(guest),
             "strict_link_succeeded": True, "signed": False, "framework": str(framework),
-            "classic_skse_experiment": True, "mod_hook_groups": 15}))
+            "classic_skse_experiment": True, "mod_hook_groups": 31}))
         self.host_result.update(classic_skse_experiment=True, mod_hooks_abi=1)
         archive = self.host / "SkyrimIOS-public-host.zip"
         current = plistlib.loads((ROOT / "ios/runtime-port/Info.plist.in").read_bytes())["CFBundleVersion"]
         for index, (host_abi, guest_groups, error) in enumerate((
-                (1, 15, None), (None, 15, "lacks the MOD hook ABI"), (1, 3, "framework MOD hook groups"),
-                (1, None, "framework MOD hook groups"), (True, 15, "Invalid MOD hook ABI"))):
+                (1, 31, None), (None, 31, "lacks the MOD hook ABI"), (1, 15, "framework MOD hook groups"),
+                (1, None, "framework MOD hook groups"), (True, 31, "Invalid MOD hook ABI"))):
             with self.subTest(host=host_abi, guest=guest_groups):
                 info = dict(CFBundleIdentifier="org.skyrimios.pc2011", CFBundleVersion=current,
                             CFBundleExecutable="SkyrimIOS", PcGuestClassicSkseExperiment=True)

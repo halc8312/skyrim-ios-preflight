@@ -28,13 +28,14 @@ enum {
     PC_GUEST_MOD_HOOK_FUZ_WORLD = 2u,
     PC_GUEST_MOD_HOOK_VM_LIFECYCLE = 4u,
     PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE = 8u,
+    PC_GUEST_MOD_HOOK_CAMERA_OBSERVE = 16u,
     PC_GUEST_MOD_HOOK_CHARGEN_SLIDER = 32u,
     /* Reserved: no reviewed stage or call contract exists. */
-    PC_GUEST_MOD_HOOK_CAMERA_OBSERVE = 16u,
     PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE = 64u
 };
 #define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD | \
-    PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER)
+    PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER | \
+    PC_GUEST_MOD_HOOK_CAMERA_OBSERVE)
 
 /* Function types come from the reviewed experiment headers. */
 typedef struct {
@@ -76,6 +77,11 @@ typedef struct {
     void (*did_apply)(void);
 } PcGuestModChargenSliderHooks;
 
+/* Runs after the original Classic camera transition on its calling thread. */
+typedef struct {
+    void (*observe_return)(uint32_t receiver);
+} PcGuestModCameraHooks;
+
 /* Host implementations. groups names the selection; only the tables of the
  * selected groups are read, and each of their entries must be set. */
 typedef struct {
@@ -86,6 +92,7 @@ typedef struct {
     PcGuestModVmHooks vm_lifecycle;
     PcGuestModChargenHooks chargen_precache;
     PcGuestModChargenSliderHooks chargen_slider;
+    PcGuestModCameraHooks camera;
 } PcGuestModHooks;
 
 /* Guest reply. select copies the selected tables and succeeds at most once. */
@@ -120,6 +127,7 @@ static inline int pc_guest_mod_hooks_table_valid(const PcGuestModHooks *t) {
     if ((g & PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE) && !t->chargen_precache.skip_open_warm) return 0;
     if ((g & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) &&
         (!t->chargen_slider.pending || !t->chargen_slider.nose_height || !t->chargen_slider.did_apply)) return 0;
+    if ((g & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) && !t->camera.observe_return) return 0;
     return 1;
 }
 
@@ -133,6 +141,7 @@ bool skyrim_racemenu_probe_pending(void);
 bool skyrim_racemenu_probe_nose_height(uint32_t menu, uint32_t actor, uint32_t base,
                                      float minimum, float maximum, float *value);
 void skyrim_racemenu_probe_did_apply(void);
+void skyrim_camera_observe_return(uint32_t receiver);
 
 /* Host side (pc_guest_mod_hooks_host.c). */
 int pc_guest_bind_mod_hooks(void *library);  /* from pc_guest_open; a missing symbol is not an error */

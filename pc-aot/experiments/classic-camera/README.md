@@ -30,11 +30,24 @@ SKYRIM_TEST_OWNED_CLASSIC_LIFT=/path/to/reviewed-generation \
   python3 -B -m unittest discover -s tests -p test_classic_camera.py
 ```
 
-The stage runs in the hosted probe. The Windows MOD and iPhone rendering
-remain unverified.
+The `camera_observe` MOD hook group uses this stage in the private guest
+build. For an app assembled with that group, turn on **Detailed diagnostics**
+and relaunch normally. Only a verified compatible guest image enables the
+observer. It records `IOS_CAMERA_STATE slot=<n>` for the first observed slot
+and subsequent changes, with no camera addresses or game text. The diagnostic
+remains off in a startup that disables MODs. Camera behavior on iPhone remains
+to be verified.
 
 ## Enhanced Camera verification
 
-The reported `VirtualProtect` diagnostic identifies the stop in the Windows compatibility run. An initialization trace is needed to identify the DLL's requested address and whether it falls within the diagnostic's supported data-page operation. The needed input is LogicDragon's original LE 1.4 archive from the owner, including `SKSE_EnhancedCamera.dll` and `SKSE_EnhancedCamera.ini`, or attributable source for that exact release. Keep the archive and any captured traces private. [Original MOD release](https://www.nexusmods.com/skyrim/mods/57859).
+The isolated diagnostic on the owner's LE 1.4 package stops at `HeapCreate`
+during DLL initialization. The app still reports Enhanced Camera as unsupported
+and the observer leaves the original renderer and camera behavior intact.
+Keep the archive and captured traces private. [Original MOD release](https://www.nexusmods.com/skyrim/mods/57859)
 
-With that input, fingerprint the archive and DLL, then verify the PE32 and SKSE entry points. Record the first unsupported call in initialization and check its requested span against the known module or guest image. Use the same game version, save copy and ordinary on-foot scene for a Windows reference run with the MOD off and on. Inspect the player camera slot and record the first-person arms, torso and legs separately. Compare the transition back to third person and verify that turning the MOD off restores the baseline. Mounted and forced camera modes need their own comparisons before those options can be enabled.
+Use the same game version, save copy and ordinary on-foot scene for a Windows
+reference run with the MOD off and on. Inspect the player camera slot and
+record the first-person arms, torso and legs separately. Compare the transition
+back to third person and verify that turning the MOD off restores the baseline.
+Mounted and forced camera modes need their own comparisons before those
+options can be enabled.

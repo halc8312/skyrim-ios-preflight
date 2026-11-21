@@ -19,6 +19,9 @@
 #include "device_policy.h"
 #include "diagnostic_upload.h"
 #include "PcGuestABI.h"
+#ifdef SKYRIM_IOS_MOD_HOOKS
+#include "mod_camera_host.h"
+#endif
 #if defined(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE) || defined(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
 #define SKYRIM_IOS_CLASSIC_SETTINGS_INPUT 1
 #include "classic_settings.h"
@@ -241,6 +244,9 @@ static void verify_guest_input(NSURL *game) {
     for (size_t i = 0; i < sizeof actual; ++i) mismatch |= actual[i] ^ expected[i];
     if (mismatch)
         startup_failure(@"TESV_unpacked.exe SHA256 does not match this locally assembled app; guest was not loaded");
+#ifdef SKYRIM_IOS_MOD_HOOKS
+    if (skyrim_mobile_verbose()) skyrim_camera_app_configure(hex);
+#endif
 #ifdef SKYRIM_IOS_CLASSIC_SETTINGS_INPUT
     classic_input_verified = skse_classic_settings_copy_bootstrap(&settings_bootstrap, actual, classic_bootstrap);
 #endif

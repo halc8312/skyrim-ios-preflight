@@ -27,12 +27,12 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups("fuz_menu"), 1)
         self.assertEqual(hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle"), 7)
         self.assertEqual(hooks.parse_groups(" chargen_precache , fuz_menu "), 9)
+        self.assertEqual(hooks.parse_groups("camera_observe"), 16)
         self.assertEqual(hooks.group_names(11), ["fuz_menu", "fuz_world", "chargen_precache"])
 
     def test_rejects_unknown_unstaged_duplicate_and_incomplete_lists(self):
         for text, message in (("", "comma-separated"), ("fuz_menu,", "comma-separated"),
                               ("fuz_menu,fuz_menu", "twice"), ("fuz", "Unknown"),
-                              ("camera_observe", "classic-camera"),
                               ("save_lifecycle", "P3-5"),
                               ("fuz_world", "list both")):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
@@ -192,14 +192,14 @@ class OwnedLiftTests(unittest.TestCase):
         root = Path(generation).resolve()
         state = json.loads((root / "generation.json").read_text(encoding="utf-8"))
         classic.validate_generation(state)
-        groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider")
+        groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
             work = Path(scratch)
             sources = classic.prepare_sources(originals, work / "classic-sources")
             result, staged = hooks.prepare_sources(sources, work / "mod-hook-sources", groups, state, root)
-            self.assertTrue({"exe_100.c", "exe_101.c", "exe_189.c", "exe_35.c", "exe_188.c",
+            self.assertTrue({"exe_95.c", "exe_100.c", "exe_101.c", "exe_189.c", "exe_35.c", "exe_188.c",
                              "exe_106.c", "exe_185.c", "exe_186.c", "exe_199.c"} <= set(staged))
             runtime = root / "source/runtime"
             for path in (p for p in result if p.name in staged):

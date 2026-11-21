@@ -34,6 +34,7 @@
 #ifdef SKYRIM_IOS_MOD_HOOKS
 #include "PcGuestModHooksABI.h"
 #include "classic_vm_epoch.h"
+#include "mod_camera_host.h"
 #include "mod_fuz.h"
 #include "mod_fuz_host.h"
 #include "mod_hook_selection.h"
@@ -497,6 +498,10 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
         free(paths);
         if (!ready) skyrim_mod_hook_plan(requested, compiled, host & ~fuzGroups, plan);
     }
+    /* Camera logging is a diagnostic group, independent of the unsupported
+     * Enhanced Camera rendering feature. */
+    if (!launchWithoutMods && !launchPluginListFailed && skyrim_camera_app_ready() &&
+        (compiled & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_CAMERA_OBSERVE;
     PcGuestModHooks table = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof table, .groups = plan->groups};
     if (plan->groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
         table.vm_lifecycle = (PcGuestModVmHooks){skyrim_vm_epoch_before_revert, skyrim_vm_epoch_after_load,
@@ -506,6 +511,7 @@ static uint32_t SelectModHooks(uint32_t requested, SkyrimHookPlan *plan) {
         table.chargen_precache = (PcGuestModChargenHooks){SkipChargenPrecache};
     if (plan->groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER)
         table.chargen_slider = (PcGuestModChargenSliderHooks){RaceMenuPendingValue, TakeRaceMenuNoseHeight, RaceMenuDidApply};
+    if (plan->groups & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) table.camera.observe_return = skyrim_camera_app_observe;
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
     /* Keep the original paths: select nothing. */
     if (pc_guest_select_mod_hooks(0, NULL) != 0) fputs("IOS_MOD_HOOKS selection failed\n", stderr);

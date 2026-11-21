@@ -6,6 +6,9 @@
 
 typedef bool (*ClassicCameraReadWord)(void *guest, uint32_t address, uint32_t *value);
 
+enum { CLASSIC_CAMERA_SET_STATE = 0x006533D0 };
+bool classic_camera_image_supported(const char *image_sha256);
+
 /* Inspect camera state after the original guest function returns on the camera
  * thread. The caller supplies the verified guest image hash and a bounded
  * reader for little-endian guest words. Read failures, an unmatched camera or
