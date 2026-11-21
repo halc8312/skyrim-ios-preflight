@@ -56,6 +56,16 @@ The owned test's shadow registry captures the DLL's actual native declarations. 
 
 The same opt-in suite runs the original `JsonUtil` integer, float and text getters and setters and verifies the results through the prepared Classic VM source with an authored VM registry. It matches each selected native against the selected `JsonUtil.pex` before preparing or publishing the methods. Supplying another valid script in its place leaves the stored profiles intact. Strings returned by the DLL are copied before its temporary JSON memory is freed. The VM receives its own fixed string reference. The host refuses stale result scopes and unterminated text before destroying the old result. An interpreted execution failure seals the registered trial and invalidates pending profile output.
 
+The isolated settings backend can also grant `StorageUtil.GetIntValue` and
+`SetIntValue` for the Wearable Lanterns datastore Keyword from the verified
+`Chesko_WearableLantern.esp`. Its active index comes from the caller's
+Classic catalogue. The exact PapyrusUtil 3.3 `StorageUtil.pex` and registered
+DLL methods must agree. The native sees a temporary copy of the Keyword
+identity and a bounded text key. Both calls use the existing commit ticket.
+During co-save load, the form lookup service exposes only that Keyword.
+The owner trial checks default values, independent keys, scope retirement,
+and restoration after the plugin's active index changes.
+
 The original DLL also stores separate integers and a Japanese string for projected forms. The save process writes its real records to a temporary Classic companion using the existing codec. A fresh process maps the DLL at a different address, changes the authored mod order and restores the values for the same form. A different form keeps its original default. A truncated companion and a valid companion with the wrong owner are refused without invoking the load callback. The test uses authored form projections and a temporary companion. The game-file and save-generation checks run separately. [Form lifetime experiment](../classic-form-projection/README.md) · [Verified save generation](../classic-save-roundtrip/README.md)
 
 In a host trial with a 1,060-byte authored settings file, the first getter parsed the file once at about 1.20 million guest instructions. The original cold `JsonUtil.Load` parsed it twice, at about 2.15 million instructions. The Wearable Lanterns startup fixture checks the original `common.json` selection of profile 1, writes both files on first use and reads the common file in a later read-only preparation call. Disabling automatic load leaves the profile file unopened. With automatic load enabled, preparation warms the profile once. All 39 subsequent getters completed under 30,000 work units each without reopening either file. The measured maximum on the direct hosted path was 25,559. The 2 million ceiling and the separate aggregate allowance apply to the hosted fixture. [Wearable Lanterns startup script](https://github.com/chesko256/WearableLanterns/blob/ebf678e6a17c5f3ee0723e851e1ff4497e77fe19/Scripts/Source/_WL_SkyUIConfigPanelScript.psc) · [Storage scope](../skse-profile-json/README.md)

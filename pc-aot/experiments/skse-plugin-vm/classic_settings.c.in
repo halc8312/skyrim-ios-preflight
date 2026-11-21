@@ -17,7 +17,8 @@
 #endif
 
 #define SETTINGS_ROOT "Data/SKSE/Plugins/WearableLanternsData"
-enum { SETTINGS_DLL_BYTES = 978944, SETTINGS_PEX_BYTES = 8182, SETTINGS_CALL_WORK = 500000 };
+enum { SETTINGS_DLL_BYTES = 978944, SETTINGS_PEX_BYTES = 8182, STORAGE_PEX_BYTES = 19558,
+       SETTINGS_CALL_WORK = 500000, LANTERN_KEYWORD_LOCAL = 0x01d9a9, LANTERN_KEYWORD_TYPE = 4 };
 static const uint8_t settings_executable_hash[32] = {
     0xd9, 0x7e, 0xb0, 0xcc, 0x0c, 0xee, 0xf0, 0x92,
     0x3d, 0x22, 0x34, 0xd4, 0x2b, 0x38, 0x2c, 0x0d,
@@ -36,11 +37,18 @@ static const uint8_t settings_pex_hash[32] = {
     0x46, 0x40, 0xcd, 0x5a, 0x0d, 0x03, 0xc5, 0x94,
     0x17, 0x81, 0xbf, 0x50, 0x64, 0xc9, 0x40, 0xd0
 };
-static const struct {
+static const uint8_t storage_pex_hash[32] = {
+    0xbd, 0xb7, 0xa7, 0xde, 0xbb, 0xbb, 0x46, 0x23,
+    0x20, 0xec, 0xfb, 0x1c, 0x3f, 0x31, 0x7a, 0xb7,
+    0x53, 0xa4, 0x88, 0xbc, 0xb5, 0xee, 0x1a, 0xe6,
+    0x4f, 0x71, 0x45, 0xf4, 0x9d, 0x18, 0x55, 0x13
+};
+typedef struct {
     const char *name;
     uint32_t result, count;
     uint32_t arguments[4];
-} settings_signatures[] = {
+} SettingsSignature;
+static const SettingsSignature settings_signatures[] = {
     [SKSE_SETTINGS_GET_INT] = {"GetIntValue", 3, 3, {2, 2, 3}},
     [SKSE_SETTINGS_GET_FLOAT] = {"GetFloatValue", 4, 3, {2, 2, 4}},
     [SKSE_SETTINGS_GET_STRING] = {"GetStringValue", 2, 3, {2, 2, 2}},
@@ -54,11 +62,17 @@ static const struct {
     [SKSE_SETTINGS_INT_LIST_RESIZE] = {"IntListResize", 3, 4, {2, 2, 3, 3}},
     [SKSE_SETTINGS_INT_LIST_SET] = {"IntListSet", 3, 4, {2, 2, 3, 3}}
 };
+static const SettingsSignature storage_keyword_signatures[] = {
+    [SKSE_STORAGE_KEYWORD_GET_INT] = {"GetIntValue", 3, 3, {SKSE_CLASSIC_CATALOG_FORM, 2, 3}},
+    [SKSE_STORAGE_KEYWORD_SET_INT] = {"SetIntValue", 3, 3, {SKSE_CLASSIC_CATALOG_FORM, 2, 3}}
+};
 
 struct SkseClassicSettings {
     SksePluginSession session;
     SkseClassicCatalog catalog;
     const SkseClassicDeclaration *methods[SKSE_SETTINGS_METHOD_LIMIT];
+    const SkseClassicDeclaration *storage_keyword[SKSE_STORAGE_KEYWORD_METHOD_LIMIT];
+    uint32_t storage_keyword_id;
     SkseProfileJsonStore *store;
     SkseProfileJsonOverlay *overlay;
     SkseProfileJsonBatch batch;
@@ -152,29 +166,30 @@ static bool settings_target(const SkseClassicScalar *input, char path[SKSE_WIN_P
     return true;
 }
 
-static SkseSettingsStatus settings_check_signatures(SkseClassicSettings *settings, const SkseSettingsInputs *inputs) {
+static SkseSettingsStatus settings_check_signatures(const SkseClassicCatalog *catalog, const uint8_t *pex,
+    size_t pex_size, const char *script, const SettingsSignature *signatures, size_t first, size_t limit,
+    const SkseClassicDeclaration **methods) {
     SksePexNative *natives = calloc(SKSE_PEX_MAX_ROWS, sizeof *natives);
     if (!natives) return SKSE_SETTINGS_MEMORY;
     SksePexInventory inventory = {.natives = natives, .native_capacity = SKSE_PEX_MAX_ROWS};
-    SkseSettingsStatus status = skse_pex_inspect(inputs->pex, inputs->pex_size, &inventory) == SKSE_PEX_OK
+    SkseSettingsStatus status = skse_pex_inspect(pex, pex_size, &inventory) == SKSE_PEX_OK
         ? SKSE_SETTINGS_OK : SKSE_SETTINGS_SIGNATURE;
-    for (SkseSettingsMethod method = SKSE_SETTINGS_GET_INT; status == SKSE_SETTINGS_OK && method < SKSE_SETTINGS_METHOD_LIMIT;
-         ++method) {
-        static const uint8_t script[] = "JsonUtil";
-        const char *name = settings_signatures[method].name;
+    for (size_t method = first; status == SKSE_SETTINGS_OK && method < limit; ++method) {
+        const SettingsSignature *signature = &signatures[method];
+        const char *name = signature->name;
         const SksePexStaticCall call = {
-            .script = {script, sizeof script - 1}, .name = {(const uint8_t *)name, (uint16_t)strlen(name)},
-            .count = (uint16_t)settings_signatures[method].count
+            .script = {(const uint8_t *)script, (uint16_t)strlen(script)},
+            .name = {(const uint8_t *)name, (uint16_t)strlen(name)}, .count = (uint16_t)signature->count
         };
         const SkseClassicDeclaration *row = NULL;
-        if (skse_pex_match_call(&call, natives, inventory.native_count, &settings->catalog, &row) != SKSE_PEX_MATCH ||
-            !row || row->owner || !row->is_static || row->result != settings_signatures[method].result ||
-            row->count != call.count || memcmp(row->arguments, settings_signatures[method].arguments,
+        if (skse_pex_match_call(&call, natives, inventory.native_count, catalog, &row) != SKSE_PEX_MATCH ||
+            !row || row->owner || !row->is_static || row->result != signature->result ||
+            row->count != call.count || memcmp(row->arguments, signature->arguments,
                                              call.count * sizeof row->arguments[0])) {
             status = SKSE_SETTINGS_SIGNATURE;
             break;
         }
-        settings->methods[method] = row;
+        methods[method] = row;
     }
     free(natives);
     return status;
@@ -207,7 +222,8 @@ static SkseSettingsStatus settings_start(SkseClassicSettings *settings, const Sk
         session->result.load.hook_count != runtime.hook_probe_count) return SKSE_SETTINGS_STARTUP;
 
     if (!capture_classic_registry(session, &settings->catalog, NULL)) return SKSE_SETTINGS_SIGNATURE;
-    return settings_check_signatures(settings, inputs);
+    return settings_check_signatures(&settings->catalog, inputs->pex, inputs->pex_size, "JsonUtil",
+        settings_signatures, SKSE_SETTINGS_GET_INT, SKSE_SETTINGS_METHOD_LIMIT, settings->methods);
 }
 
 SkseSettingsStatus skse_classic_settings_open(const SkseSettingsInputs *inputs, SkseClassicSettings **out) {
@@ -285,34 +301,30 @@ static SkseSettingsStatus settings_retire(SkseClassicSettings *settings, SkseSet
     return status;
 }
 
-static SkseSettingsStatus settings_call(SkseClassicSettings *settings, uint64_t epoch, SkseSettingsMethod method,
-    const SkseClassicScalar *arguments, size_t count, uint32_t uptime_ms, bool preparing,
+static SkseSettingsStatus settings_execute(SkseClassicSettings *settings, const SkseClassicDeclaration *method,
+    const SkseClassicScalar *arguments, size_t count, uint32_t uptime_ms, bool preparing, const char *save_target,
+    const SkseClassicFormSnapshot *first_form,
     SkseClassicScalarResult *output, uint64_t *ticket, SkseX86Result *trace) {
-    if (trace) *trace = (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
-    char target[SKSE_WIN_PATH_UNITS];
-    if (!settings || settings->epoch != epoch || method < SKSE_SETTINGS_GET_INT || method >= SKSE_SETTINGS_METHOD_LIMIT ||
-        !arguments || !output || (!preparing && !ticket) || count != settings_signatures[method].count ||
-        settings->pending || !settings_target(arguments, target)) return SKSE_SETTINGS_ARGUMENT;
     if (settings->retired) return SKSE_SETTINGS_RETIRED;
     if (!preparing && settings->last_ticket == UINT64_MAX) return settings_retire(settings, SKSE_SETTINGS_RETIRED);
 
     SksePluginSession *session = &settings->session;
-    if (method == SKSE_SETTINGS_SAVE) {
+    if (save_target) {
         uint32_t attributes;
-        uint32_t found = settings_asset_attributes(&settings->game_fd, target, &attributes);
+        uint32_t found = settings_asset_attributes(&settings->game_fd, save_target, &attributes);
         if (found != 2 && found != 3) return SKSE_SETTINGS_STORAGE;
     }
-    session->files.read_only = method != SKSE_SETTINGS_SAVE;
+    session->files.read_only = save_target == NULL;
     const uint32_t budget = preparing ? SKSE_CLASSIC_PREPARE_MAX_WORK : SETTINGS_CALL_WORK;
     const SkseClassicScalarScope scope = {
-        .catalog = &settings->catalog, .prepare_method = preparing ? settings->methods[method] : NULL,
+        .catalog = &settings->catalog, .prepare_method = preparing ? method : NULL,
         .images = session->vm.images, .image_count = session->vm.count, .scratch = session->vm.scratch,
         .services = &session->vm.services, .epoch = settings->catalog.epoch, .stack_id = PAPYRUS_FIXTURE_STACK_ID,
-        .arguments_base = 0x1400c000, .text_base = 0x1400a000
+        .arguments_base = 0x1400c000, .text_base = 0x1400a000, .first_form = first_form
     };
     session_begin_work(session, budget, uptime_ms);
     SkseClassicScalarResult value;
-    const SkseClassicScalarStatus ran = skse_classic_scalar_call(&scope, settings->methods[method], arguments,
+    const SkseClassicScalarStatus ran = skse_classic_scalar_call(&scope, method, arguments,
         count, budget, preparing, &value, trace);
     session->files.read_only = true;
     if (ran == SKSE_SCALAR_ARGUMENT) return SKSE_SETTINGS_ARGUMENT;
@@ -321,8 +333,8 @@ static SkseSettingsStatus settings_call(SkseClassicSettings *settings, uint64_t 
 
     SkseWinProfileOutputs closed;
     if (skse_win_profile_closed_outputs(&session->files, true, &closed) || closed.count > 1 ||
-        (closed.count && (method != SKSE_SETTINGS_SAVE || !value.bits ||
-                          !skse_win_asset_name_equal(target, closed.entries[0]->path))))
+        (closed.count && (!save_target || !value.bits ||
+                          !skse_win_asset_name_equal(save_target, closed.entries[0]->path))))
         return settings_retire(settings, SKSE_SETTINGS_STORAGE);
     if (closed.count) {
         const SkseProfileJsonCaptureResult result = skse_profile_json_overlay_capture(settings->overlay,
@@ -338,6 +350,18 @@ static SkseSettingsStatus settings_call(SkseClassicSettings *settings, uint64_t 
         *ticket = settings->pending;
     }
     return SKSE_SETTINGS_OK;
+}
+
+static SkseSettingsStatus settings_call(SkseClassicSettings *settings, uint64_t epoch, SkseSettingsMethod method,
+    const SkseClassicScalar *arguments, size_t count, uint32_t uptime_ms, bool preparing,
+    SkseClassicScalarResult *output, uint64_t *ticket, SkseX86Result *trace) {
+    if (trace) *trace = (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
+    char target[SKSE_WIN_PATH_UNITS];
+    if (!settings || settings->epoch != epoch || method < SKSE_SETTINGS_GET_INT || method >= SKSE_SETTINGS_METHOD_LIMIT ||
+        !arguments || !output || (!preparing && !ticket) || count != settings_signatures[method].count ||
+        settings->pending || !settings_target(arguments, target)) return SKSE_SETTINGS_ARGUMENT;
+    return settings_execute(settings, settings->methods[method], arguments, count, uptime_ms, preparing,
+        method == SKSE_SETTINGS_SAVE ? target : NULL, NULL, output, ticket, trace);
 }
 
 SkseSettingsStatus skse_classic_settings_prepare(SkseClassicSettings *settings, uint64_t epoch,
@@ -374,6 +398,48 @@ void skse_classic_settings_discard(SkseClassicSettings *settings, uint64_t epoch
         settings_retire(settings, SKSE_SETTINGS_RETIRED);
 }
 
+static bool lantern_owner(const SkseLoadedMod *owner) {
+    static const uint8_t name[] = "Chesko_WearableLantern.esp";
+    return owner && owner->kind == SKSE_LOADED_CLASSIC && owner->index && owner->index < SKSE_CLASSIC_MOD_LIMIT &&
+           owner->name && owner->length == sizeof name - 1 &&
+           !skse_classic_mod_name_compare(owner->name, owner->length, name, sizeof name - 1);
+}
+
+SkseSettingsStatus skse_classic_storage_enable_keyword(SkseClassicSettings *settings, uint64_t epoch,
+    const uint8_t *storage_pex, size_t pex_size, const SkseLoadedMod *owner) {
+    if (!settings || settings->epoch != epoch || settings->pending || !storage_pex || !lantern_owner(owner))
+        return SKSE_SETTINGS_ARGUMENT;
+    if (settings->retired) return SKSE_SETTINGS_RETIRED;
+    uint32_t form_id = (uint32_t)owner->index << 24 | LANTERN_KEYWORD_LOCAL;
+    if (settings->storage_keyword_id && settings->storage_keyword_id != form_id) return SKSE_SETTINGS_ARGUMENT;
+    if (pex_size != STORAGE_PEX_BYTES || !settings_digest_matches(storage_pex, pex_size, storage_pex_hash))
+        return SKSE_SETTINGS_VERSION;
+    if (settings->storage_keyword_id) return SKSE_SETTINGS_OK;
+    const SkseClassicDeclaration *methods[SKSE_STORAGE_KEYWORD_METHOD_LIMIT];
+    SkseSettingsStatus status = settings_check_signatures(&settings->catalog, storage_pex, pex_size, "StorageUtil",
+        storage_keyword_signatures, 0, SKSE_STORAGE_KEYWORD_METHOD_LIMIT, methods);
+    if (status == SKSE_SETTINGS_OK) {
+        memcpy(settings->storage_keyword, methods, sizeof methods);
+        settings->storage_keyword_id = form_id;
+    }
+    return status;
+}
+
+SkseSettingsStatus skse_classic_storage_invoke_keyword(SkseClassicSettings *settings, uint64_t epoch,
+    SkseStorageKeywordMethod method, const SkseClassicFormSnapshot *keyword, const char *key, size_t key_size,
+    uint32_t bits, uint32_t uptime_ms, SkseClassicScalarResult *output, uint64_t *ticket, SkseX86Result *trace) {
+    if (trace) *trace = (SkseX86Result){.status = SKSE_X86_BAD_ARGUMENT};
+    if (!settings || settings->epoch != epoch || settings->pending || !settings->storage_keyword_id ||
+        (unsigned)method >= SKSE_STORAGE_KEYWORD_METHOD_LIMIT || !keyword || !key || key_size < 2 ||
+        key_size > SKSE_CLASSIC_FRAME_STRING_BYTES || !output || !ticket ||
+        keyword->type != LANTERN_KEYWORD_TYPE || keyword->id != settings->storage_keyword_id ||
+        keyword->handle != (UINT64_C(0xffff00000000) | keyword->id)) return SKSE_SETTINGS_ARGUMENT;
+    const SkseClassicScalar arguments[] = {{.type = SKSE_CLASSIC_CATALOG_FORM},
+        {.type = 2, .text = key, .text_size = key_size}, {.type = 3, .bits = bits}};
+    return settings_execute(settings, settings->storage_keyword[method], arguments, 3, uptime_ms, false,
+                            NULL, keyword, output, ticket, trace);
+}
+
 enum { ClassicStorageWork = 250000 };
 
 static SkseSettingsStatus storage_views(SkseClassicSettings *settings, uint64_t epoch,
@@ -386,6 +452,10 @@ static SkseSettingsStatus storage_views(SkseClassicSettings *settings, uint64_t 
     if (session->result.status != SKSE_TRIAL_ENGINE_HOOKS_OBSERVED ||
         !session->vm.services.serialization || session->serial.uid != SKSE_CLASSIC_STORAGE_UID)
         return SKSE_SETTINGS_STARTUP;
+    if (settings->storage_keyword_id) {
+        const size_t owner = settings->storage_keyword_id >> 24;
+        if (owner >= count || !lantern_owner(&mods[owner])) return SKSE_SETTINGS_ARGUMENT;
+    }
     for (size_t i = 0; i < count; ++i) {
         const SkseLoadedMod *mod = &mods[i];
         if (mod->kind != SKSE_LOADED_CLASSIC || mod->index != i ||
@@ -418,15 +488,45 @@ static SkseSettingsStatus storage_views(SkseClassicSettings *settings, uint64_t 
     return SKSE_SETTINGS_OK;
 }
 
+static SkseSessionResult load_keyword_storage(SksePluginSession *session, uint32_t uptime_ms, uint32_t form_id) {
+    enum { KeywordView = 0x14009000, LookupFormByID = 0x00451a30, CatalogViewCount = 4 };
+    SkseX86Services *services = &session->vm.services;
+    const SkseX86ReadView *prior_views = services->read_views;
+    const size_t prior_services = services->count;
+    if (services->read_view_count != CatalogViewCount || services->entries != session->entries ||
+        prior_services >= SKSE_X86_MAX_SERVICES || services->classic_load_forms) return SKSE_SESSION_UNAVAILABLE;
+
+    uint8_t body[SKSE_CLASSIC_FORM_VIEW_BYTES] = {0};
+    write_word(body + 0x0c, form_id);
+    body[0x12] = LANTERN_KEYWORD_TYPE;
+    SkseX86ReadView views[CatalogViewCount + 1];
+    memcpy(views, prior_views, CatalogViewCount * sizeof views[0]);
+    views[CatalogViewCount] = (SkseX86ReadView){KeywordView, body, sizeof body};
+    const SkseClassicLoadForm keyword = {form_id, KeywordView, LANTERN_KEYWORD_TYPE};
+    const SkseClassicLoadForms forms = {.owner = 0, .forms = &keyword, .count = 1};
+    services->read_views = views;
+    services->read_view_count = CatalogViewCount + 1;
+    services->classic_load_forms = &forms;
+    session->entries[services->count++] = (SkseX86Service){LookupFormByID, 0, SKSE_X86_CLASSIC_LOOKUP_FORM};
+    const SkseSessionResult result = session_serialization(session, SKSE_SERIAL_LOAD, ClassicStorageWork, uptime_ms);
+    services->classic_load_forms = NULL;
+    services->read_views = prior_views;
+    services->read_view_count = CatalogViewCount;
+    services->count = prior_services;
+    return result;
+}
+
 static SkseSessionResult restore_storage(SksePluginSession *session, const SksePluginRecordSet *input,
-                                         const SkseSerialResolvers *resolvers, uint32_t uptime_ms) {
+                                         const SkseSerialResolvers *resolvers, uint32_t uptime_ms,
+                                         uint32_t storage_keyword_id) {
     if (!session->serial.callbacks[SKSE_SERIAL_REVERT - SKSE_SERIAL_REVERT] ||
         !session->serial.callbacks[SKSE_SERIAL_LOAD - SKSE_SERIAL_REVERT]) return SKSE_SESSION_UNAVAILABLE;
     if (!skse_x86_records_copy(&session->serial.records, &input->records)) return SKSE_SESSION_NO_MEMORY;
     SkseSessionResult result = session_serialization(session, SKSE_SERIAL_REVERT, ClassicStorageWork, uptime_ms);
     if (result == SKSE_SESSION_OK) {
         session->serial.resolvers = resolvers;
-        result = session_serialization(session, SKSE_SERIAL_LOAD, ClassicStorageWork, uptime_ms);
+        result = storage_keyword_id ? load_keyword_storage(session, uptime_ms, storage_keyword_id)
+                                    : session_serialization(session, SKSE_SERIAL_LOAD, ClassicStorageWork, uptime_ms);
         session->serial.resolvers = NULL;
     }
     skse_x86_records_close(&session->serial.records);
@@ -448,7 +548,7 @@ static SkseSettingsStatus storage_run(SkseClassicSettings *settings, uint64_t ep
     services->read_views = views;
     services->read_view_count = sizeof views / sizeof views[0];
     SkseSessionResult result = SKSE_SESSION_UNAVAILABLE;
-    if (input) result = restore_storage(session, input, resolvers, uptime_ms);
+    if (input) result = restore_storage(session, input, resolvers, uptime_ms, settings->storage_keyword_id);
     else if (!out) result = session_serialization(session, SKSE_SERIAL_REVERT, ClassicStorageWork, uptime_ms);
     else if (session->serial.callbacks[SKSE_SERIAL_SAVE - SKSE_SERIAL_REVERT])
         result = collect_session_records(session, ClassicStorageWork, uptime_ms, out);

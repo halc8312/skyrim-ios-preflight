@@ -59,6 +59,23 @@ SkseSettingsStatus skse_classic_settings_invoke(SkseClassicSettings *, uint64_t 
 SkseSettingsStatus skse_classic_settings_commit(SkseClassicSettings *, uint64_t epoch, uint64_t ticket);
 void skse_classic_settings_discard(SkseClassicSettings *, uint64_t epoch, uint64_t ticket);
 
+typedef enum {
+    SKSE_STORAGE_KEYWORD_GET_INT, SKSE_STORAGE_KEYWORD_SET_INT, SKSE_STORAGE_KEYWORD_METHOD_LIMIT
+} SkseStorageKeywordMethod;
+
+/* Opt in for the verified Wearable Lanterns static Keyword for this scope.
+ * The caller attests the current loaded owner and the original local Keyword.
+ * The exact StorageUtil.pex bytes and the owner's name are borrowed only for
+ * this call. An already enabled scope cannot change its owner index. */
+SkseSettingsStatus skse_classic_storage_enable_keyword(SkseClassicSettings *, uint64_t epoch,
+    const uint8_t *storage_pex, size_t pex_size, const SkseLoadedMod *owner);
+/* The caller verifies the live Keyword and copies only its identity. The key
+ * length includes NUL. int_bits is the GET default or SET value. Use the
+ * same commit and discard calls as JsonUtil; neither native can write files. */
+SkseSettingsStatus skse_classic_storage_invoke_keyword(SkseClassicSettings *, uint64_t epoch,
+    SkseStorageKeywordMethod, const SkseClassicFormSnapshot *, const char *key, size_t key_size,
+    uint32_t int_bits, uint32_t uptime_ms, SkseClassicScalarResult *, uint64_t *ticket, SkseX86Result *);
+
 /* Exact PapyrusUtil 3.3 record callbacks in the same isolated session as its
  * natives. The owner serializes calls and supplies the current, frozen
  * Classic catalog for the verified game save or load. The callback sees

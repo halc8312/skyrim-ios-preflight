@@ -106,6 +106,104 @@ static void check_storage_records(const SkseSettingsInputs *inputs) {
     skse_classic_settings_close(settings);
 }
 
+static uint32_t keyword_call(SkseClassicSettings *settings, uint64_t epoch, SkseStorageKeywordMethod method,
+                             const SkseClassicFormSnapshot *keyword, const char *key, uint32_t bits) {
+    SkseClassicScalarResult value;
+    SkseX86Result trace;
+    uint64_t ticket = 0;
+    SkseSettingsStatus status = skse_classic_storage_invoke_keyword(settings, epoch, method, keyword,
+        key, strlen(key) + 1, bits, 4560, &value, &ticket, &trace);
+    if (status) fprintf(stderr, "StorageUtil keyword call failed: status=%u vm=%u\n", status, trace.status);
+    assert(status == SKSE_SETTINGS_OK && trace.work && ticket && value.type == 3);
+    assert(skse_classic_settings_commit(settings, epoch, ticket) == SKSE_SETTINGS_OK);
+    return value.bits;
+}
+
+static void check_storage_keyword(SkseSettingsInputs inputs, uint8_t *storage_pex, size_t pex_size) {
+    static const SkseLoadedMod active[] = {
+        {(const uint8_t *)"Skyrim.esm", sizeof "Skyrim.esm" - 1, 0, SKSE_LOADED_CLASSIC},
+        {(const uint8_t *)"Chesko_WearableLantern.esp", sizeof "Chesko_WearableLantern.esp" - 1, 1, SKSE_LOADED_CLASSIC},
+        {(const uint8_t *)"Other.esp", sizeof "Other.esp" - 1, 2, SKSE_LOADED_CLASSIC}
+    };
+    SkseLoadedMod reordered[] = {active[0], active[2], active[1]};
+    reordered[1].index = 1;
+    reordered[2].index = 2;
+    const SkseClassicFormSnapshot original = {0x0101d9a9, 4, UINT64_C(0xffff0101d9a9)};
+    const SkseClassicFormSnapshot moved = {0x0201d9a9, 4, UINT64_C(0xffff0201d9a9)};
+    static const char first[] = "4660___Skyrim.esm", second[] = "5921___Other.esp", absent[] = "88___Other.esp";
+    const uint32_t fallback = UINT32_MAX;
+    SkseClassicSettings *settings = open_settings(&inputs);
+    uint64_t ticket = 567;
+    SkseClassicScalarResult value = {.type = 3, .bits = 73};
+    assert(skse_classic_storage_invoke_keyword(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_GET_INT,
+        &original, first, sizeof first, fallback, 4560, &value, &ticket, NULL) == SKSE_SETTINGS_ARGUMENT);
+    assert(skse_classic_storage_enable_keyword(settings, inputs.epoch, storage_pex, pex_size, &active[2]) ==
+        SKSE_SETTINGS_ARGUMENT);
+    storage_pex[10] ^= 1;
+    assert(skse_classic_storage_enable_keyword(settings, inputs.epoch, storage_pex, pex_size, &active[1]) ==
+        SKSE_SETTINGS_VERSION);
+    storage_pex[10] ^= 1;
+    assert(skse_classic_storage_enable_keyword(settings, inputs.epoch, storage_pex, pex_size, &active[1]) ==
+        SKSE_SETTINGS_OK);
+    assert(skse_classic_storage_enable_keyword(settings, inputs.epoch, storage_pex, pex_size, &reordered[2]) ==
+        SKSE_SETTINGS_ARGUMENT);
+    SkseClassicFormSnapshot wrong = original;
+    wrong.type = 0x3e;
+    assert(skse_classic_storage_invoke_keyword(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_SET_INT,
+        &wrong, first, sizeof first, 3, 4560, &value, &ticket, NULL) == SKSE_SETTINGS_ARGUMENT);
+    wrong = original;
+    wrong.handle ^= 1;
+    assert(skse_classic_storage_invoke_keyword(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_SET_INT,
+        &wrong, first, sizeof first, 3, 4560, &value, &ticket, NULL) == SKSE_SETTINGS_ARGUMENT);
+    wrong = original;
+    wrong.id ^= 1;
+    wrong.handle ^= 1;
+    assert(skse_classic_storage_invoke_keyword(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_SET_INT,
+        &wrong, first, sizeof first, 3, 4560, &value, &ticket, NULL) == SKSE_SETTINGS_ARGUMENT);
+    assert(skse_classic_storage_invoke_keyword(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_SET_INT,
+        &moved, first, sizeof first, 3, 4560, &value, &ticket, NULL) == SKSE_SETTINGS_ARGUMENT);
+    assert(ticket == 567 && value.type == 3 && value.bits == 73);
+    assert(keyword_call(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_GET_INT, &original, first, fallback) == fallback);
+    assert(skse_classic_storage_invoke_keyword(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_SET_INT,
+        &original, first, sizeof first, 1, 4560, &value, &ticket, NULL) == SKSE_SETTINGS_OK && value.bits == 1);
+    SksePluginRecordSet *records = NULL;
+    assert(skse_classic_storage_capture(settings, inputs.epoch, active, 3, 4560, &records) ==
+           SKSE_SETTINGS_ARGUMENT && !records);
+    const SkseClassicScalar json_test[] = {string(profile_path), string("brightness"), scalar(3, 13)};
+    uint64_t unused_ticket;
+    assert(skse_classic_settings_invoke(settings, inputs.epoch, SKSE_SETTINGS_GET_INT,
+        json_test, 3, 4560, &value, &unused_ticket, NULL) == SKSE_SETTINGS_ARGUMENT);
+    assert(skse_classic_settings_commit(settings, inputs.epoch, ticket) == SKSE_SETTINGS_OK);
+    assert(keyword_call(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_GET_INT, &original, second, 33) == 33);
+    assert(keyword_call(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_SET_INT, &original, second, 3) == 3);
+    assert(keyword_call(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_GET_INT, &original, first, fallback) == 1);
+    assert(keyword_call(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_GET_INT, &original, second, fallback) == 3);
+    assert(skse_classic_storage_capture(settings, inputs.epoch, reordered, 3, 4560, &records) ==
+           SKSE_SETTINGS_ARGUMENT && !records);
+    assert(skse_classic_storage_capture(settings, inputs.epoch, active, 3, 4560, &records) == SKSE_SETTINGS_OK);
+    assert(skse_plugin_record_set_uid(records) == SKSE_CLASSIC_STORAGE_UID);
+    assert(skse_classic_storage_reset(settings, inputs.epoch, active, 3, 4560) == SKSE_SETTINGS_OK);
+    assert(keyword_call(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_GET_INT, &original, first, fallback) == fallback);
+    skse_classic_settings_close(settings);
+
+    ++inputs.epoch;
+    settings = open_settings(&inputs);
+    assert(skse_classic_storage_enable_keyword(settings, inputs.epoch, storage_pex, pex_size, &reordered[2]) ==
+        SKSE_SETTINGS_OK);
+    assert(skse_classic_storage_restore(settings, inputs.epoch, reordered, 3, 4560, records, NULL) == SKSE_SETTINGS_OK);
+    assert(keyword_call(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_GET_INT, &moved, first, fallback) == 1);
+    assert(keyword_call(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_GET_INT, &moved, second, fallback) == 3);
+    assert(keyword_call(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_GET_INT, &moved, absent, fallback) == fallback);
+    assert(call(settings, inputs.epoch, SKSE_SETTINGS_GET_INT, json_test, 3).bits == 39);
+    assert(skse_classic_storage_invoke_keyword(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_SET_INT,
+        &moved, first, sizeof first, 2, 4560, &value, &ticket, NULL) == SKSE_SETTINGS_OK);
+    skse_classic_settings_discard(settings, inputs.epoch, ticket);
+    assert(skse_classic_storage_invoke_keyword(settings, inputs.epoch, SKSE_STORAGE_KEYWORD_GET_INT,
+        &moved, first, sizeof first, fallback, 4560, &value, &ticket, NULL) == SKSE_SETTINGS_RETIRED);
+    skse_classic_settings_close(settings);
+    skse_plugin_record_set_close(records);
+}
+
 static void check_startup_compatibility_list(const SkseSettingsInputs *inputs) {
     static const uint32_t values[] = {0, 1, 100, 1000, 5555, UINT32_MAX, 123456};
     const char file[] = "../WearableLanternsData/startup_test_file";
@@ -317,7 +415,7 @@ static void check_bootstrap(const char *path, const char *sha, const uint8_t exp
 }
 
 int main(int argc, char **argv) {
-    assert(argc == 9);
+    assert(argc == 9 || (argc == 10 && !strcmp(argv[6], "keyword")));
     SkseSettingsInputs inputs = {.epoch = 1, .profile = {1}, .uptime_ms = 4300};
     uint8_t *dll = read_file(argv[1], &inputs.dll_size);
     uint8_t *pex = read_file(argv[2], &inputs.pex_size);
@@ -349,6 +447,11 @@ int main(int argc, char **argv) {
         read_check(inputs);
     } else if (!strcmp(argv[6], "records")) {
         check_storage_records(&inputs);
+    } else if (!strcmp(argv[6], "keyword")) {
+        assert(argc == 10);
+        uint8_t *storage_pex = read_file(argv[9], &size);
+        check_storage_keyword(inputs, storage_pex, size);
+        free(storage_pex);
     } else if (!strcmp(argv[6], "startup-list")) {
         check_startup_compatibility_list(&inputs);
     } else if (!strcmp(argv[6], "view")) {

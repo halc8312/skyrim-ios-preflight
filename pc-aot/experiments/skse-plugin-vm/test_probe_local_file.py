@@ -313,13 +313,14 @@ def check_owned_settings_sequence(test, binary, dll, bootstrap, root, scripts, e
     owner_digest = hashlib.sha256(Path(executable).read_bytes()).hexdigest()
     base_file = game / "Data/SKSE/Plugins/WearableLanternsData/profile1.json"
     base_bytes = b'{"int":{"brightness":208}}'
-    for phase in ("write", "records", "startup-list", "read", "base"):
+    for phase in ("write", "records", "startup-list", "read", "keyword", "base"):
         if phase == "base":
             test.assertEqual(list(game.iterdir()), [])
             base_file.parent.mkdir(parents=True)
             base_file.write_bytes(base_bytes)
+        extra = [scripts / "StorageUtil.pex"] if phase == "keyword" else []
         result = subprocess.run([binary, dll, scripts / "JsonUtil.pex", bootstrap, game, store,
-                                 phase, executable, owner_digest],
+                                 phase, executable, owner_digest, *extra],
                                 capture_output=True, text=True, timeout=30)
         test.assertEqual(result.returncode, 0, result.stderr)
     test.assertEqual(base_file.read_bytes(), base_bytes)
