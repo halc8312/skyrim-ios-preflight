@@ -56,13 +56,15 @@ static SksePairGeneration seed_core(const char *root, int source) {
 }
 
 static void publish(SkseEventBridge *bridge, const SkseGameScope *scope, uint8_t event, int source,
-    const SksePairGeneration *base, const SksePluginRecordSet *records, const SksePairRecord *rows, size_t count) {
+    const SksePairGeneration *base, const SksePluginRecordSet *records, const SksePairRecord *rows, size_t count,
+    const SkseLoadedMod *mods, size_t mod_count) {
     SkyrimLifecycleCall slot = skyrim_lifecycle_begin(SkyrimSaveSlot);
     SkseGameEvent request = {*scope, key(event), slot.ticket};
     SksePendingSave *save = NULL;
     SksePairResult detail;
     assert(skse_bridge_begin_save(bridge, &request, base, &save, &detail) == SKSE_BRIDGE_OK);
     SkyrimLifecycleCall vm = skyrim_lifecycle_begin(SkyrimSaveVM);
+    if (mods) assert(skse_bridge_write_mod_history(save, mods, mod_count) == SKSE_PAIR_OK);
     if (records) assert(skse_bridge_write_interpreted(save, records) == SKSE_PAIR_OK);
     if (count)
         assert(skse_bridge_write_owner(save, records ? Otherwise : Owner, rows, count) == SKSE_PAIR_OK);
@@ -73,6 +75,7 @@ static void publish(SkseEventBridge *bridge, const SkseGameScope *scope, uint8_t
     SkseBaseEvidence proof = {request, SKSE_BASE_SAVED, source};
     assert(skse_bridge_capture_save(save, &trace, &proof, &detail) == SKSE_BRIDGE_OK && detail == SKSE_PAIR_OK);
     if (records) assert(skse_bridge_write_interpreted(save, records) == SKSE_PAIR_SEALED);
+    if (mods) assert(skse_bridge_write_mod_history(save, mods, mod_count) == SKSE_PAIR_SEALED);
     assert(skse_bridge_publish(save, scope, &detail) == SKSE_BRIDGE_OK && detail == SKSE_PAIR_OK);
     skse_bridge_drop(save);
 }
@@ -167,7 +170,12 @@ static int restore_owned_storage(const char *dll, const char *root, const char *
     owned_storage_probe(dll, initializers, false, &probe);
     owned_storage_expect(probe.output, false, true);
     uint32_t uid = skse_plugin_record_set_uid(probe.output);
-    publish(bridge, &scope, 1, original, NULL, probe.output, NULL, 0);
+    static const SkseLoadedMod save_order[] = {
+        {(const uint8_t *)"Skyrim.esm", sizeof "Skyrim.esm" - 1, 0, SKSE_LOADED_CLASSIC},
+        {(const uint8_t *)"OwnedFixture.esp", sizeof "OwnedFixture.esp" - 1, 1, SKSE_LOADED_CLASSIC}
+    };
+    publish(bridge, &scope, 1, original, NULL, probe.output, NULL, 0,
+            save_order, sizeof save_order / sizeof save_order[0]);
     skse_plugin_record_set_close(probe.output);
     skse_plugin_record_set_close(input);
     skse_bridge_close(bridge);
@@ -179,7 +187,15 @@ static int restore_owned_storage(const char *dll, const char *root, const char *
     if (supported) {
         assert(!saved);
         const Load correct = {original, -1, 1, uid, SkyrimReturnedTrue, SKSE_BRIDGE_OK, SKSE_PAIR_OK};
-        assert(restore(bridge, &scope, scratch, correct, &saved, NULL));
+        static const SkseLoadedMod new_order[] = {
+            {(const uint8_t *)"OwnedFixture.esp", sizeof "OwnedFixture.esp" - 1, 0, SKSE_LOADED_CLASSIC},
+            {(const uint8_t *)"Skyrim.esm", sizeof "Skyrim.esm" - 1, 1, SKSE_LOADED_CLASSIC}
+        };
+        SkseInterpretedModMap catalog = {.current = new_order, .current_count = sizeof new_order / sizeof new_order[0]};
+        assert(restore(bridge, &scope, scratch, correct, &saved, &catalog));
+        assert(catalog.status == SKSE_MAP_OK && catalog.map.ready && catalog.map.saved_count == 2);
+        uint32_t mapped = 0;
+        assert(skse_mod_resolve_form(&catalog.map, 0x01001234, &mapped) == SKSE_MOD_RESOLVED && mapped == 0x00001234);
         owned_storage_expect(saved, false, true);
         probe = (SkseTrialRecordProbe){.input = saved, .callback_work_limit = 250000};
         owned_storage_probe(dll, initializers, true, &probe);
@@ -217,20 +233,20 @@ int main(int argc, char **argv) {
     assert(skse_plugin_session_save(vm, WorkLimit, 130, &newer) == SKSE_SESSION_OK);
     skse_plugin_session_close(vm, NULL);
     const SksePairRecord foreign = {0x1234, 8, sizeof opaque, opaque};
-    publish(bridge, &scope, 1, a, &initial, older, &foreign, 1);
+    publish(bridge, &scope, 1, a, &initial, older, &foreign, 1, NULL, 0);
     SksePairGeneration first = {key(1), a}, second = {key(2), b};
-    publish(bridge, &scope, 2, b, &first, newer, NULL, 0);
+    publish(bridge, &scope, 2, b, &first, newer, NULL, 0, NULL, 0);
     assert(skse_plugin_record_set_create(Owner, NULL, 0, &empty) == SKSE_SESSION_OK);
-    publish(bridge, &scope, 3, b, &second, empty, NULL, 0);
+    publish(bridge, &scope, 3, b, &second, empty, NULL, 0, NULL, 0);
     skse_plugin_record_set_close(empty);
     skse_plugin_record_set_close(older);
     skse_plugin_record_set_close(newer);
     const char big[SKSE_X86_RECORD_BYTES + 1] = {0};
     const SksePairRecord oversized = {1, 1, sizeof big, big};
-    publish(bridge, &scope, 4, a, NULL, NULL, &oversized, 1);
+    publish(bridge, &scope, 4, a, NULL, NULL, &oversized, 1, NULL, 0);
     SksePairRecord too_many[SKSE_X86_RECORD_LIMIT + 1] = {{0}};
-    publish(bridge, &scope, 5, a, NULL, NULL, too_many, SKSE_X86_RECORD_LIMIT + 1);
-    publish(bridge, &scope, 6, a, NULL, NULL, &foreign, 1);
+    publish(bridge, &scope, 5, a, NULL, NULL, too_many, SKSE_X86_RECORD_LIMIT + 1, NULL, 0);
+    publish(bridge, &scope, 6, a, NULL, NULL, &foreign, 1, NULL, 0);
     skse_bridge_close(bridge);
 
     assert(skse_bridge_open(argv[2], &scope, &bridge, NULL) == SKSE_BRIDGE_OK);

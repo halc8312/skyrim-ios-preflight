@@ -80,6 +80,8 @@ SkseBridgeResult skse_bridge_begin_published_save(SkseEventBridge *bridge, const
     SksePendingSave **out, SkseBaseEvidence *proof, SksePairResult *detail);
 SksePairResult skse_bridge_write_owner(SksePendingSave *pending, uint32_t uid,
                                       const SksePairRecord *records, size_t count);
+/* Only the Classic host supplies the actual active catalog for this save. */
+SksePairResult skse_bridge_write_mod_history(SksePendingSave *, const SkseLoadedMod *, size_t count);
 SksePairResult skse_bridge_write_plugins(SksePendingSave *pending, SksePluginRegistry *plugins,
                                         size_t *participants);
 SkseBridgeResult skse_bridge_capture_save(SksePendingSave *pending, const SkseEventTrace *trace,

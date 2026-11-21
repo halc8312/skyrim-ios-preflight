@@ -186,6 +186,14 @@ SksePairResult skse_bridge_write_owner(SksePendingSave *save, uint32_t uid,
     return save->edit_result;
 }
 
+SksePairResult skse_bridge_write_mod_history(SksePendingSave *save, const SkseLoadedMod *mods, size_t count) {
+    if (!save) return SKSE_PAIR_ARGUMENT;
+    if (!save->stage || save->rejected || save->held_fd >= 0) return SKSE_PAIR_SEALED;
+    save->edit_result = skse_pair_write_mod_history(save->stage, mods, count);
+    if (save->edit_result == SKSE_PAIR_OK) save->edited = 1;
+    return save->edit_result;
+}
+
 SksePairResult skse_bridge_write_plugins(SksePendingSave *save, SksePluginRegistry *plugins,
                                         size_t *participants) {
     if (participants) *participants = 0;
