@@ -1,5 +1,11 @@
 # 開発状況
 
+**2026-11-21　MOD第一弾の実装（第1段：設定・検出・解析・依存の試験）**
+
+作業ブランチ `claude/skyrim-ios-mod-first-wave-17hieg` で、計画の「Sonnet向け」範囲を実装した。SkyUIの取り込み時と起動時の必要ファイル確認（SkyUI.esp、LE用のSkyUI.bsa、SKSEのコンパイル済み `SKSE.pex` の `GetVersionRelease`）、プロファイル単位で既定オフのMOD機能の検出と選択画面（Fuz、PapyrusUtil、Precache Killer、RaceMenu、NiOverride重複、ECE、Enhanced Camera、Safety Load、HDT）、Fuz Ro D-oh LE 6.1のINI設定の読み取り（作者のソースで確認した `Fuz Ro D'oh.ini` の `WordsPerSecondSilence`、`SkipEmptyResponses`、`Sound/Voice/Fuz Ro Doh/Stock_N.xwm`）、RaceMenuの `.jslot` の標準スライダー（鼻の高さを含む19個）の解析、USLEEPと3つのDLCのマスター順、骨格の勝者のプロファイル別確認、上端見切れの原因判別用の `IOS_OVERLAY_LAYOUT` 診断を追加した。MOD関連の新規・追加試験は通常実行とASan/UBSanで合格した。
+
+どの機能のスイッチも、まだ実装の裏づけがないため有効にできない（画面には「iPhoneではまだ対応していません」と表示）。検出はファイル名だけで、版は未確認。画面（Objective-C）の変更はLinuxで構文確認できず、Mac側のビルドで確認が必要。MCMと版番号の既存試験は `test_classic_skse_ini.py` が固定しており、重複する試験は足していない。ゲスト側のフック、VM世代管理、Fuz・PapyrusUtil・追加セーブ・プリセット反映のゲーム内接続は未着手。 [実装計画](MOD_FIRST_WAVE_PLAN.md)
+
 **2026-11-21　MOD第一弾の残り作業の計画を作成**
 
 `c23cf1e` の実装と試作を項目ごとに調べ、残りの実装、試験、Codex側の確認を計画にまとめた。Web環境（Linux、Clang 18）で固定版のSkydreamを取得し、MOD関連36件が通常実行とASan/UBSanで合格し、Fuzは自作の4件が合格して固定版生成物を使う4件はスキップした。追加セーブ系の4件は、このPythonに `F_ADD_SEALS` がないこととSQLiteの競合時の結果により失敗しており、実装前からの環境依存として扱う。コードの変更はまだ行っていない。 [MOD第一弾の実装計画](MOD_FIRST_WAVE_PLAN.md)
