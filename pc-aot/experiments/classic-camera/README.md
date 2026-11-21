@@ -118,6 +118,39 @@ That reference covers list cleanup. The DLL's pre-render hook at
 vanilla arms window. The test does not establish third-person root
 ownership through the renderer's submission.
 
+### Retained entries in the render lists
+
+On the `f_69B810` frame path, `f_698800` calls `f_694FD0` before
+`f_69A9F0`. The list builder walks scene-node child arrays and checks the
+application-cull bit before appending eligible nodes. `f_7BB370` stores each
+chosen pointer and increments that exact object's reference count. The frame
+owns these list entries until its cleanup after `f_69A9F0`, where
+`f_45F5E0` releases each entry and the caller zeros the list count.
+
+The `f_69A9F0` branch at `0x69AB0C` passes frame lists at `+0xC8` and
+`+0xD4` into `f_CB9E20`. Its `f_C8D8D0` calls read scene-list entries and,
+on the flag-filtered path, test each entry's culling bit before dispatching
+it. The synchronous `f_B080C0` path obtains a separate reference from the
+culling context at `+0x168`, calls `f_B07F40` with the node argument, then
+releases the context reference. That reference is to the context object.
+The body node is held by this frame list only if its pointer is the
+actual stored entry.
+
+The link from `GetNiRootNode(0)` to those entries depends on the live scene
+hierarchy. The pinned route shows selection of scene nodes, whose
+descendants can include the player. A retained parent can outlive the
+detach or replacement of the player root. An entry skipped by the earlier
+`f_694FD0` filter also cannot enter the submitted list when a bit changes
+during `f_69A9F0`. The owned 1.4 request at `0x69B96A` runs after that list
+construction and has no matched restore on return.
+
+An idle-body override needs live evidence of the exact root in the relevant
+first-person pass, a retained reference to that root before its first
+culling read, and a completion point after its final scene consumer.
+Returning to third person or replacing the scene root must still restore
+only the state owned by the override. The current app supplies the
+transition and root observations while retaining the game's original rendering.
+
 Use the same game version, save copy and ordinary on-foot scene for a Windows
 reference run with the MOD off and on. Inspect the player camera slot and
 record the first-person arms, torso and legs separately. Compare the transition
