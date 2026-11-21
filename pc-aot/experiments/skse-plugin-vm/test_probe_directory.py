@@ -173,6 +173,18 @@ class DirectoryProbeTests(unittest.TestCase):
         self.assertEqual(self.scan()[1]["AssetProbe.dll"][6], "no")
         self.assertEqual(outside.read_bytes(), b"Authored settings")
 
+    def test_paths_use_the_data_root_of_the_discovered_plugin(self):
+        wrapped = self.selected / "Data/SKSE/Plugins"
+        direct = self.selected / "sKSe/Plugins"
+        for path in (wrapped, direct):
+            path.mkdir(parents=True)
+            (path / "AssetProbe.dll").write_bytes(file_asset_fixture())
+        (wrapped / "Settings.ini").write_bytes(b"Expected wrapped contents")
+        (direct / "Settings.ini").write_bytes(b"Authored direct contents")
+        _, records = self.scan()
+        self.assertEqual(records["Data/SKSE/Plugins/AssetProbe.dll"][6], "no")
+        self.assertEqual(records["sKSe/Plugins/AssetProbe.dll"][6], "yes")
+
     def test_pair_across_approved_paths_is_sorted_and_read_only(self):
         deep = self.selected / "dAtA/sKse/pLuGIns"
         deep.mkdir(parents=True)

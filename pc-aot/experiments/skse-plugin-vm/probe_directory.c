@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -299,8 +300,24 @@ static unsigned external_names(const Source *source, SksePeReport *imports, char
     return count;
 }
 
+typedef struct { int root; bool data_at_root; } DiagnosticAssets;
+
+static const char *diagnostic_asset_path(const DiagnosticAssets *assets, const char *path) {
+    return assets->data_at_root && !strncasecmp(path, "Data/", 5) ? path + 5 : path;
+}
+
+static uint32_t diagnostic_read(void *context, const char *path, size_t limit, uint8_t **bytes, size_t *length) {
+    DiagnosticAssets *assets = context;
+    return skse_probe_asset_read(&assets->root, diagnostic_asset_path(assets, path), limit, bytes, length);
+}
+
+static uint32_t diagnostic_attributes(void *context, const char *path, uint32_t *attributes) {
+    DiagnosticAssets *assets = context;
+    return skse_probe_asset_attributes(&assets->root, diagnostic_asset_path(assets, path), attributes);
+}
+
 static void diagnose(const DirectoryScan *scan, const Source *source, uint32_t uptime_ms, SksePeReport *manifest,
-                     SkseWinAssets assets, SkseProbeDirectoryFile *file) {
+                     int root, SkseProbeDirectoryFile *file) {
     memcpy(file->relative_path, source->relative, strlen(source->relative) + 1);
     file->status = source->status;
     file->export_status = SKSE_PE_BAD_ARGUMENT;
@@ -310,9 +327,11 @@ static void diagnose(const DirectoryScan *scan, const Source *source, uint32_t u
     file->is_plugin = 1;
     file->external_library_count = external_names(source, manifest, file->dependency_name, file->other_dependency_name);
     const SkseTrialOptions options = {0x01070030, 0x09200000, 0, 48, 1, 1, 1};
+    DiagnosticAssets assets = {.root = root, .data_at_root = !strncasecmp(source->relative, "SKSE/Plugins/", 13)};
     const SkseTrialRuntime runtime = {
         .uptime_ms = uptime_ms, .core_messages = 1, .static_tls = 1, .serialization = 1, .worker_thread = 1,
-        .task_interface = 1, .trace_known_windows_imports = true, .assets = assets, .module_file_name = base_name(source)
+        .task_interface = 1, .trace_known_windows_imports = true, .module_file_name = base_name(source),
+        .assets = {diagnostic_read, diagnostic_attributes, &assets}
     };
     if (!file->external_library_count) {
         file->status = SKSE_PROBE_DLL_STANDALONE;
@@ -373,9 +392,8 @@ SkseProbeDirectoryStatus skse_probe_local_directory(const char *path, uint32_t u
         if (!manifest) status = SKSE_PROBE_DIRECTORY_NO_MEMORY;
     }
     if (status == SKSE_PROBE_DIRECTORY_CHECKED) {
-        SkseWinAssets assets = {.read = skse_probe_asset_read, .attributes = skse_probe_asset_attributes, .context = &root};
         for (unsigned i = 0; i < scan.count; ++i) {
-            diagnose(&scan, &scan.files[i], uptime_ms, manifest, assets, &out->files[i]);
+            diagnose(&scan, &scan.files[i], uptime_ms, manifest, root, &out->files[i]);
             out->plugin_count += out->files[i].is_plugin;
         }
         out->file_count = scan.count;
