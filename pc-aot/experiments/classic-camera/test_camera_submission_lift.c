@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "funcs_exe.h"
 #include "lift_prelude.h"
+#ifdef SKYRIM_CLASSIC_CAMERA_CULL_TRIAL
+#include "camera_cull_trial.h"
+#endif
 
 #include <assert.h>
 #include <stdbool.h>
@@ -9,7 +12,7 @@
 enum {
     INCREMENT_IMPORT = 0x0106B150, DECREMENT_IMPORT = 0x0106B154,
     RENDER_READY = 0x01B913F0, WORLD_ROOT = 0x01BA7680,
-    FRAME = 0x2000, STACK = 0x4000, BODY = 0x5000, PARENT = 0x6000,
+    FRAME = 0x20000, STACK = 0x4000, BODY = 0x24000, PARENT = 0x25000,
     CHILDREN = 0x7000, WORLD = 0x8000, WORLD_CHILDREN = 0x9000,
     CONTEXT = 0xA000, CONTEXT_VTABLE = 0xB000, WRAPPER = 0xC000,
     WRAPPER_VTABLE = 0xD000, RESOURCE = 0xE000, CAMERA = 0xF000,
@@ -91,6 +94,7 @@ static void collect_first_root(void) {
     CPU cpu = {0};
     cpu.r[3] = FIRST_LIST;
     cpu.r[4] = STACK;
+    M32(STACK) = 0x698866;
     classic_camera_collect_first_root(&cpu);
     assert(cpu.r[4] == STACK);
 }
@@ -119,6 +123,7 @@ static void check_handoff(uint32_t list, uint32_t entry, unsigned expected_first
     CPU cpu = {0};
     cpu.r[1] = WRAPPER;
     cpu.r[4] = STACK;
+    M32(STACK) = 0x69AB11;
     M32(STACK + 4) = 0;
     M32(STACK + 8) = FIRST_LIST;
     M32(STACK + 12) = SECOND_LIST;
@@ -135,6 +140,131 @@ static void check_handoff(uint32_t list, uint32_t entry, unsigned expected_first
     release(list);
     assert(M32(BODY + 4) == 1 && M32(PARENT + 4) == 1);
 }
+
+#ifdef SKYRIM_CLASSIC_CAMERA_CULL_TRIAL
+enum {
+    PLAYER_CAMERA_SINGLETON = 0x012E7288,
+    PLAYER_ACTOR_SINGLETON = 0x01B2E8E4,
+    PLAYER_CAMERA = 0x26000, FIRST_STATE = 0x27000, ACTOR = 0x28000, LOADED = 0x29000
+};
+
+static ClassicCameraCullTrialReport latest_report;
+static unsigned reports;
+
+static bool trial_read(void *guest, uint32_t address, uint32_t *value) {
+    assert(guest == MEM && address >= 0x10000 && address <= WORLD_ROOT);
+    // The app-cull flags are read by the stock paths. The observer itself
+    // must not read any field of a candidate node.
+    assert(!(address >= BODY && address < BODY + 0x100));
+    assert(!(address >= PARENT && address < PARENT + 0x100));
+    *value = M32(address);
+    return true;
+}
+
+static void trial_report(void *context, const ClassicCameraCullTrialReport *report) {
+    assert(context == MEM);
+    ++reports;
+    latest_report = *report;
+}
+
+static void begin_trial(void) {
+    const char *image = "d97eb0cc0ceef0923d2234d42b382c0d033853356528b271bc043542b1f5e605";
+    reports = 0;
+    assert(classic_camera_cull_arm(image, trial_read, MEM, trial_report, MEM));
+    assert(skyrim_camera_cull_prepare(FRAME));
+}
+
+static void check_counts(unsigned phase, unsigned checked, unsigned clear, unsigned culled) {
+    assert(latest_report.stages & (1u << phase));
+    const ClassicCameraCullCounts got = latest_report.gates[phase];
+    assert(got.checked == checked && got.clear == clear && got.culled == culled);
+}
+
+static void check_cull_trial(void) {
+    M32(PLAYER_CAMERA_SINGLETON) = PLAYER_CAMERA;
+    M32(PLAYER_CAMERA + 0x20) = M32(PLAYER_CAMERA + 0x6C) = FIRST_STATE;
+    M32(PLAYER_ACTOR_SINGLETON) = ACTOR;
+    M32(ACTOR + 0x44) = LOADED;
+    M32(LOADED + 0x20) = BODY;
+
+    M32(WORLD_CHILDREN) = BODY;
+    M32(BODY + 0x98) = CULLED;
+    begin_trial();
+    collect_first_root();
+    skyrim_camera_cull_prepared(true);
+    check_handoff(FIRST_LIST, 0, 0, 0);
+    skyrim_camera_cull_finish(true);
+    assert(reports == 1 && latest_report.stages == 7);
+    check_counts(CLASSIC_CULL_PRODUCER, 1, 0, 1);
+    check_counts(CLASSIC_CULL_FIRST, 0, 0, 0);
+
+    M32(BODY + 0x98) = UNCULLED;
+    begin_trial();
+    collect_first_root();
+    skyrim_camera_cull_prepared(true);
+    M32(BODY + 0x98) = CULLED;
+    check_handoff(FIRST_LIST, BODY, 1, 0);
+    skyrim_camera_cull_finish(true);
+    assert(reports == 1);
+    check_counts(CLASSIC_CULL_PRODUCER, 1, 1, 0);
+    check_counts(CLASSIC_CULL_FIRST, 1, 0, 1);
+    check_counts(CLASSIC_CULL_SECOND, 0, 0, 0);
+
+    M32(WORLD_CHILDREN) = PARENT;
+    begin_trial();
+    collect_first_root();
+    skyrim_camera_cull_prepared(true);
+    check_handoff(FIRST_LIST, PARENT, 1, 0);
+    skyrim_camera_cull_finish(true);
+    assert(reports == 1);
+    check_counts(CLASSIC_CULL_PRODUCER, 1, 0, 0);
+    check_counts(CLASSIC_CULL_FIRST, 2, 0, 1);
+
+    begin_trial();
+    skyrim_camera_cull_prepared(true);
+    retain(SECOND_LIST, BODY);
+    check_handoff(SECOND_LIST, BODY, 1, 0);
+    skyrim_camera_cull_finish(true);
+    assert(reports == 1);
+    check_counts(CLASSIC_CULL_FIRST, 0, 0, 0);
+    check_counts(CLASSIC_CULL_SECOND, 1, 0, 1);
+
+    M32(BODY + 0x98) = UNCULLED;
+    begin_trial();
+    skyrim_camera_cull_prepared(true);
+    retain(THIRD_LIST, BODY);
+    check_handoff(THIRD_LIST, BODY, 1, 1);
+    skyrim_camera_cull_finish(true);
+    assert(reports == 1);
+    check_counts(CLASSIC_CULL_FIRST, 0, 0, 0);
+    check_counts(CLASSIC_CULL_SECOND, 0, 0, 0);
+
+    begin_trial();
+    skyrim_camera_cull_producer(0, BODY, true);
+    for (unsigned i = 0; i < CLASSIC_CULL_PROBE_LIMIT + 20; ++i)
+        skyrim_camera_cull_producer(0x698866, BODY, true);
+    skyrim_camera_cull_prepared(true);
+    assert(!skyrim_camera_cull_dispatch(0, FIRST_LIST, CLASSIC_CULL_FIRST));
+    assert(!skyrim_camera_cull_dispatch(0x69AB11, THIRD_LIST, CLASSIC_CULL_FIRST));
+    skyrim_camera_cull_finish(true);
+    assert(reports == 1 && latest_report.stages == 1);
+    check_counts(CLASSIC_CULL_PRODUCER, CLASSIC_CULL_PROBE_LIMIT + 1, CLASSIC_CULL_PROBE_LIMIT, 0);
+
+    begin_trial();
+    skyrim_camera_cull_prepared(true);
+    M32(LOADED + 0x20) = PARENT;
+    skyrim_camera_cull_finish(true);
+    assert(reports == 0);
+    M32(LOADED + 0x20) = BODY;
+
+    begin_trial();
+    skyrim_camera_cull_prepared(true);
+    assert(!skyrim_camera_cull_prepare(FRAME));
+    skyrim_camera_cull_finish(true);
+    assert(reports == 0);
+    assert(!skyrim_camera_cull_prepare(FRAME));
+}
+#endif
 
 int main(void) {
     MEM = calloc(1, WORLD_ROOT + 4);
@@ -202,6 +332,9 @@ int main(void) {
         check_handoff(FIRST_LIST, PARENT, 1, app_cull == 0);
     }
 
+#ifdef SKYRIM_CLASSIC_CAMERA_CULL_TRIAL
+    check_cull_trial();
+#endif
     free(MEM);
     return 0;
 }

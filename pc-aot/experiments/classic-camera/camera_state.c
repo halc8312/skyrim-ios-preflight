@@ -197,3 +197,21 @@ bool classic_camera_sample_render(const char *image_sha256, uint32_t frame, uint
     *sample = (ClassicCameraRenderSample){lists[0].mask, lists[1].mask};
     return true;
 }
+
+#ifdef SKYRIM_CLASSIC_CAMERA_CULL_TRIAL
+#include "camera_cull_trial.h"
+
+bool classic_camera_cull_identity(ClassicCameraReadWord read_word, void *guest, ClassicCameraCullIdentity *identity) {
+    uint32_t current, arms;
+    return read_word(guest, PLAYER_CAMERA_SINGLETON, &identity->camera) &&
+           read_field(read_word, guest, identity->camera, CURRENT_STATE_OFFSET, &current) && current &&
+           read_field(read_word, guest, identity->camera, PLAYER_STATE_TABLE_OFFSET, &identity->first_state) &&
+           current == identity->first_state &&
+           read_word(guest, PLAYER_ACTOR_SINGLETON, &identity->actor) &&
+           read_field(read_word, guest, identity->actor, ACTOR_LOADED_STATE, &identity->loaded) &&
+           read_field(read_word, guest, identity->loaded, LOADED_STATE_ROOT, &identity->body) &&
+           valid_object_address(identity->body) &&
+           read_field(read_word, guest, identity->actor, ACTOR_FIRST_PERSON_ROOT, &arms) &&
+           arms != identity->body;
+}
+#endif

@@ -15,6 +15,7 @@ CAMERA = ROOT / "experiments/classic-camera"
 sys.path[:0] = [str(CAMERA), str(ROOT / "scripts")]
 import stage_camera as camera
 import stage_camera_render as render
+import stage_camera_cull_trial as cull_trial
 from classic_skse_guest import validate_generation
 
 LIFT_HEADERS = {
@@ -207,7 +208,34 @@ class CameraStageTests(unittest.TestCase):
             fixture.write_bytes(wrapper)
             self.compile_and_run(directory, compiler, [fixture, CAMERA / "test_camera_update_lift.c"], headers)
 
+    def test_camera_cull_trial_rejects_unreviewed_objects(self):
+        for unit in (*cull_trial.UNITS, "exe_unknown.c"):
+            with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
+                cull_trial.stage_camera_cull_trial(unit, b"unreviewed")
+
+    def test_reviewed_camera_cull_trial_staging(self):
+        generation, headers, compiler = self.owned_lift()
+        with self.camera_cull_private_directory() as d:
+            for unit in cull_trial.UNITS:
+                original = (generation / "gen" / unit).read_bytes()
+                staged = cull_trial.stage_camera_cull_trial(unit, original)
+                recovered = b"".join(
+                    line for line in staged.removeprefix(cull_trial.DECLARATION).splitlines(keepends=True)
+                    if b"skyrim_camera_cull_" not in line and b"skyrim_cull_caller" not in line
+                )
+                self.assertEqual(recovered, original, unit)
+                source = Path(d) / unit
+                source.write_bytes(staged)
+                subprocess.run([compiler, "-std=gnu11", "-w", "-fsyntax-only", "-I", str(CAMERA),
+                                *headers, source], check=True, timeout=60)
+
     def test_reviewed_producer_and_render_filters(self):
+        self.check_reviewed_producer_and_render_filters(False)
+
+    def test_reviewed_camera_cull_trial_counts(self):
+        self.check_reviewed_producer_and_render_filters(True)
+
+    def check_reviewed_producer_and_render_filters(self, trial):
         generation, headers, compiler = self.owned_lift()
         units = {
             15: ("01a21e3d8ff149dc7481645136cb88907eb05e47e094042951041e504743bbe6", "45F5E0"),
@@ -221,10 +249,14 @@ class CameraStageTests(unittest.TestCase):
         }
 
         source = b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n'
+        if trial:
+            source += cull_trial.DECLARATION
         for unit, (digest, *functions) in units.items():
             name = f"exe_{unit}.c"
             original = (generation / "gen" / name).read_bytes()
             self.assertEqual(sha256(original).hexdigest(), digest, name)
+            if trial and name in cull_trial.UNITS:
+                original = cull_trial.stage_camera_cull_trial(name, original)
             for function in functions:
                 start = original.index(f"\nvoid f_{function}(CPU *c) {{\n".encode())
                 end = original.index(b"\n}\n", start) + len(b"\n}\n")
@@ -234,14 +266,12 @@ class CameraStageTests(unittest.TestCase):
                 start = original.index(b"    edi = (uint32_t)(TL32((uint32_t)(0x1BA7680u)));",
                                        original.index(b"\nL_694FD0:\n"))
                 end = original.index(b"\nL_695041:\n", start)
-                source += (b"\nvoid classic_camera_collect_first_root(CPU *c) {\n" + LIFT_REGISTERS +
-                           original[start:end] + b"\nL_695041: SPILL(); return;\n}\n")
+                source += b"\nvoid classic_camera_collect_first_root(CPU *c) {\n" + LIFT_REGISTERS
+                if trial:
+                    source += cull_trial.CALLER
+                source += original[start:end] + b"\nL_695041: SPILL(); return;\n}\n"
 
-        private = ROOT / "private"
-        if private.resolve() != private:
-            raise ValueError("Generated sources must stay in private/")
-        private.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="classic-camera-submission-", dir=private) as d:
+        with self.camera_cull_private_directory() as d:
             directory = Path(d)
             fixture = directory / "submission_blocks.c"
             # Include the lift as a system header to suppress labels and registers
@@ -249,8 +279,19 @@ class CameraStageTests(unittest.TestCase):
             fixture.write_bytes(source)
             entry = directory / "submission.c"
             entry.write_text('#include <submission_blocks.c>\n', encoding="ascii")
-            self.compile_and_run(directory, compiler, [entry, CAMERA / "test_camera_submission_lift.c"],
-                                 [*headers, "-isystem", str(directory)])
+            files = [entry, CAMERA / "test_camera_submission_lift.c"]
+            flags = [*headers, "-isystem", str(directory)]
+            if trial:
+                flags.append("-DSKYRIM_CLASSIC_CAMERA_CULL_TRIAL")
+                files.append(CAMERA / "camera_cull_trial.c")
+            self.compile_and_run(directory, compiler, files, flags)
+
+    def camera_cull_private_directory(self):
+        private = ROOT / "private"
+        if private.resolve() != private:
+            raise ValueError("Generated sources must stay in private/")
+        private.mkdir(exist_ok=True)
+        return tempfile.TemporaryDirectory(prefix="classic-camera-submission-", dir=private)
 
     def compile_and_run(self, root, compiler, files, headers=()):
         binary = root / "test_camera"

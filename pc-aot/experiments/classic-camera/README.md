@@ -208,3 +208,39 @@ The first value is the frame's earlier list argument and the second is
 its later list argument. Use the transition diagnostics to confirm first
 person, then remain in the relevant view for several seconds. The log
 contains only the two masks.
+
+### Hosted cull decision witness
+
+The retained-list observer runs before dispatch. The private cull trial
+instead samples first-person camera and body identity immediately before the
+original `f_698800` call and again after `f_69A9F0` returns. A missing or
+changed identity or a reentrant frame discards the sample. The trial arms
+one frame per call, uses the existing bounded guest-word reader for the
+identity check, and never reads the fields of a candidate node.
+
+The trial counts the original application-cull decisions at the reviewed
+gates in `f_694FD0` and at `f_AAF430` in the two retained-list dispatches.
+Reports contain one stage bit and three counts per stage. The counts are
+checks examined, matching body accepted by the bit test, and matching body
+rejected by the bit test. The checks examined count saturates at 129 to
+report truncation after 128 checks. The third list and work outside the
+reviewed dispatch are excluded. The observer compares the exact
+pointer supplied to each original test and exports only the numeric
+counts.
+
+A producer rejection identifies an app-cull gate before retention. A body
+rejection in the first or second dispatch identifies a later gate, including
+the case where a retained parent reaches the body in child traversal. An
+accepted check can still be followed by other producer or draw gates.
+An exact body entry can also reach `BSCullingProcess +0x48` directly without
+going through the observed root-level `f_AAF430` gate. A zero match is
+evidence about the observed gates, with the stage marker and truncation
+count defining coverage.
+
+The hosted fixture uses the pinned original body and reports both forms of
+cull rejection without modifying the stock decision. The adapter remains
+outside the app. Live evidence would pair the retained-list report with
+these gate counts for an idle first-person frame, then exercise a camera
+round trip and a cell reload with a newly sampled identity. The counts
+identify where to look for ownership. They do not establish a retained
+body or the last scene consumer needed for a visibility change.
