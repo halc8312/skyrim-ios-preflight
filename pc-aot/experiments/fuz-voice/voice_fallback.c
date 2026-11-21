@@ -76,6 +76,16 @@ SkyrimFuzVoice skyrim_fuz_choose_voice(const SkyrimFuzPolicy *policy, const char
 
     const char *stock = policy->stock_paths[seconds - 1];
     SkyrimFuzAvailability found = stock && *stock ? policy->lookup(policy->context, stock) : SKYRIM_FUZ_ABSENT;
+    if (found == SKYRIM_FUZ_ABSENT && stock && policy->allow_packed_stock) {
+        size_t stock_length = 0;
+        while (stock_length < sizeof candidate && stock[stock_length]) ++stock_length;
+        if (stock_length >= 4 && stock_length < sizeof candidate && !memcmp(stock + stock_length - 4, ".xwm", 4)) {
+            // LE 6.1 ships FUZE containers, but assigns the .xwm name to the game.
+            memcpy(candidate, stock, stock_length - 3);
+            memcpy(candidate + stock_length - 3, "fuz", sizeof "fuz");
+            found = policy->lookup(policy->context, candidate);
+        }
+    }
     if (found != SKYRIM_FUZ_PRESENT) {
         result.decision = found == SKYRIM_FUZ_ABSENT ? SKYRIM_FUZ_STOCK_UNAVAILABLE : SKYRIM_FUZ_RESOURCE_FAILURE;
         return result;

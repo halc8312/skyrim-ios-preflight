@@ -45,7 +45,8 @@ static const SkyrimFuzLiftMemory memory = {read_guest, replace_guest, NULL};
 int skyrim_fuz_app_configure(const SkyrimFuzSettings *settings) {
     if (!settings || configured || settings->words_per_second < 1) return -1;
     SkyrimFuzPolicy next = {.words_per_second = settings->words_per_second,
-                            .skip_empty_responses = settings->skip_empty_responses != 0};
+                            .skip_empty_responses = settings->skip_empty_responses != 0,
+                            .allow_packed_stock = true};
     for (unsigned n = 0; n < SKYRIM_FUZ_STOCK_COUNT; ++n) {
         next.stock_paths[n] = skyrim_fuz_stock_path(n + 1);
         if (!next.stock_paths[n]) return -1;

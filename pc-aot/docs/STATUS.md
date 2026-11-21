@@ -1,5 +1,15 @@
 # 開発状況
 
+**2026-11-21　第一弾の追加素材4本を確認しFuzの音声検索を修正**
+
+TaildropでEnhanced Character Edit LE 1.59、チャット添付でFuz Ro D-oh LE 6.1、ShowRaceMenu Precache Killer 1.3、HDT Physics Extensions 14.28を受領。4アーカイブの整合性を検査し、私用の確認フォルダに保持した。単独DLLの診断では、Fuzは `GetPrivateProfileSectionA`、HDT Physicsは `PathAppendA`、ECEは `FindFirstFileA` のインポートが未対応。Precache Killerは初期化中の `HeapCreate` で停止した。
+
+Fuzの同梱DLLが指定する音声名は `.xwm` だが、同梱の10本は口パク用データ付きの `.fuz`。移植版では、`.xwm` が見つからなければ同名の `.fuz` の存在を確認し、代入するパスをLE版と同じ `.xwm` にする。検索エラー時は元の経路を使う。実機での音声再生と口パクは未確認。
+
+固定版生成物を指定した `python3 -B -m unittest -v test_voice_fallback` はClang 18で8件合格。固定版のリソース検索の追加ケースはGCCのASan/UBSan付きで再実行して合格。アプリ側の `python3 -B -m unittest discover -s tests -p 'test_mod_fuz*.py'` は固定Skydreamを指定し、GCCのASan/UBSan付きで8件合格。
+
+ECEの同梱設定とNordのプリセットで、鼻の高さがID 12に対応することを確認し、その一行だけ変えた私用の比較データを作った。Windowsのキャラ作成画面から書き出した比較データと反映の検証は残る。ゲーム本体・元のMOD・セーブは読み取り専用で扱った。
+
 **2026-11-21　第一弾の配布前確認**
 
 添付のDLLを1本ずつ選ぶ診断で、既知のWindowsインポートを関数名とDLL名の組で照合し、呼び出された時点で停止するようにした。3本とも初期化の実行まで進んだ。Enhanced CameraとSafety Loadは `HeapCreate`、HDT HighHeelsはゲストメモリへのアクセスで停止。既存の常駐ローダーとフォルダ診断は同じ条件を維持する。

@@ -18,6 +18,7 @@ typedef struct {
     const char *stock_paths[SKYRIM_FUZ_STOCK_COUNT]; // One through ten seconds.
     int words_per_second;
     bool skip_empty_responses;
+    bool allow_packed_stock; // A .fuz sibling can back the original .xwm assignment.
 } SkyrimFuzPolicy;
 
 typedef enum {

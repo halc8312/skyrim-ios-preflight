@@ -137,6 +137,8 @@ int main(void) {
     /* Not configured: nothing is looked up or written. */
     static const char *const stock_and_voiced[] = {"Sound/Voice/Fuz Ro Doh/Stock_4.xwm",
                                                    "Sound/Voice/Fixture.esp/Narrator/Voiced.fuz", NULL};
+    static const char *const packed_and_voiced[] = {"Sound/Voice/Fuz Ro Doh/Stock_4.fuz",
+                                                    "Sound/Voice/Fixture.esp/Narrator/Voiced.fuz", NULL};
     catalog.present = stock_and_voiced;
     assert(!assign(&table, &cpu, RESPONSE_B, silent, VOICE_B) && !catalog.calls);
     assert(!strcmp((const char *)MEM + VOICE_B, silent));
@@ -147,12 +149,14 @@ int main(void) {
     assert(skyrim_vm_epoch_subscribe(skyrim_fuz_app_retire, NULL));
     skyrim_vm_epoch_registered(0x7000);
 
-    /* An original voice is kept; a missing one uses the stock clip. Same text, separate marks. */
+    /* The 6.1 package only has a .fuz file. Assignment still uses the .xwm name. */
+    catalog.present = packed_and_voiced;
     assert(!assign(&table, &cpu, RESPONSE_A, voiced, VOICE_A));
     assert(!strcmp((const char *)MEM + VOICE_A, voiced));
     expect_counts(0, 1, 0, 0);
     assert(assign(&table, &cpu, RESPONSE_B, silent, VOICE_B));
     assert(!strcmp((const char *)MEM + VOICE_B, game_stock));
+    assert(catalog.probes == 5);
     expect_counts(1, 1, 0, 0);
     select_response(RESPONSE_A);
     SkyrimFuzMenuScope scope = table.fuz_menu.capture_menu(MANAGER, NODE, TITLE_A);
@@ -172,7 +176,9 @@ int main(void) {
     scope = table.fuz_menu.capture_menu(MANAGER, NODE, TITLE_B);
     assert(!scope.serial && !table.fuz_menu.force_menu(&scope, 0x00675caa, TITLE_B));
     assert(!table.fuz_world.capture_world(RESPONSE_B, VOICE_B).serial);
+    catalog.present = stock_and_voiced;
     assert(assign(&table, &cpu, RESPONSE_B, silent, VOICE_B));
+    assert(catalog.probes == 4);
     assert(table.fuz_menu.capture_menu(MANAGER, NODE, TITLE_B).serial == 2);
     table.fuz_menu.forget_response(RESPONSE_B);
     assert(!table.fuz_menu.capture_menu(MANAGER, NODE, TITLE_B).serial);
@@ -187,6 +193,7 @@ int main(void) {
     catalog.present = stock_and_voiced;
     catalog.unreadable = stock_and_voiced[0];
     assert(!assign(&table, &cpu, RESPONSE_B, silent, VOICE_B));
+    assert(catalog.probes == 4);
     expect_counts(2, 1, 1, 1);
     catalog.unreadable = NULL;
 

@@ -324,6 +324,18 @@ int main(void) {
     voice = skyrim_fuz_choose_voice(&policy, original[0], response, false);
     assert(voice.decision == SKYRIM_FUZ_STOCK_UNAVAILABLE && !voice.force_subtitle);
     check_lifetime(&fixture, 4, 0);
+    policy.allow_packed_stock = true;
+    begin(&fixture, &resource, 1);
+    voice = skyrim_fuz_choose_voice(&policy, original[0], response, false);
+    assert(voice.decision == SKYRIM_FUZ_USE_STOCK && voice.stock_path == stock && voice.force_subtitle);
+    check_lifetime(&fixture, 5, 1);
+    resource.open_status = FIXTURE_OPEN_FAILURE;
+    begin(&fixture, &resource, 1);
+    voice = skyrim_fuz_choose_voice(&policy, original[0], response, false);
+    assert(voice.decision == SKYRIM_FUZ_RESOURCE_FAILURE && !voice.force_subtitle);
+    check_lifetime(&fixture, 5, 1);
+    resource.open_status = 0;
+    policy.allow_packed_stock = false;
     begin(&fixture, &resource, 1);
     policy.stock_paths[3] = packed;
     voice = skyrim_fuz_choose_voice(&policy, original[0], response, false);
