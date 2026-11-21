@@ -27,6 +27,14 @@ The direct test covers real short `write` and `pwrite` results with file limits,
 
 ## Integration conditions
 
+The optional fresh-save notification stager preserves each reviewed engine call and forwards the original argument at the factory boundary, after the original return address has been placed on the guest stack. It brackets the save slot and final close, reports the true VM save, flush and CRT returns, and ends the attempt on all ordinary returns from the fresh-save routine. Nested calls capture the already-authorized attempt before calling the engine and report their result with that same token. These notices carry no descriptor by themselves. The app still needs to bind the factory's path to the selected profile's saves directory, and observe the exact native handle at the real file wrapper before any bytes are written or read.
+
+Only the four reviewed output units are staged. The pinned stage test compiles those units and reverses the insertions byte-for-byte. No game-derived C is published. Run on Linux or WSL with `SKYRIM_TEST_OWNED_CLASSIC_LIFT` pointing at the completed private generation.
+
+```sh
+python3 -B -m unittest discover -s tests -p test_stage_save_notifications.py -v
+```
+
 The observer tracks one owned fresh save at a time. A tagged operation from another thread invalidates that observation without dereferencing the owner's state. A late operation from an old token leaves the newer observation alone. The inherited handle table still requires normal guest handle ownership. The observer cannot repair a race between file lookup and close. The active save/profile must supply the authorized directory and per-attempt lifetime explicitly, including cleanup on nonlocal exits and before shutdown. Concurrent writers using independent handles require separate coverage and serialization evidence.
 
 The staged hot paths snapshot primitive values before blocking operations. They take no new locks around the syscalls and call the observer on writes only for a tagged file. The reader and file identity checks are limited to the owned save. Before dispatch to a background worker, the caller still needs an immutable snapshot and an authenticated event handoff. The experiment leaves actual iOS scheduling, APFS capture, cached streams and physical durability for separate verification.

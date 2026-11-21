@@ -13,24 +13,12 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 COSAVE = HERE.parent / "skse-cosave"
-sys.path.insert(0, str(HERE.parent / "classic-fresh-load"))
+sys.path[:0] = [str(HERE.parent / name) for name in ("classic-fresh-load", "classic-runtime-save")]
 from test_fresh_load import HEADERS, BOOL_RESULT, at_site, instrument_lifecycle
 from stage import check_unit, function_span, validate_generation
+from stage_save_notifications import CLOSE_CALL, FLUSH_CALL, MOVE, SLOT_CALL, UNITS, VM_CALL
 
 
-UNITS = {
-    "exe_101.c": "8ec90cddea6c81f16123a5f9fbc7ae7f9059295712fac1383565ce2abdeb697b",
-    "exe_103.c": "f6e3c6c49403e7a00b5da4f30f436123c943254ae39eae4288885f75313c4fd7",
-    "exe_102.c": "51c73b53b9acd3a11be7e1994272d45dcac547c8aebe0dcd2dd8cfd6bea47e43",
-    "exe_467.c": "e40f124913665af49895b591147fbaa3cc11cae5b5534aa5b6c0b89d33253769",
-    "exe_198.c": "4038b313752d58d5e4273fe01f79f71f21a4b1d6b283bacbc3685bf91826d62b",
-    "exe_261.c": "1f4ea50599764ad19c3bf5752598ab2036fb4b6fd8d7802774a288ab903331b5",
-}
-SLOT_CALL = b"    esp -= 4; M32(esp) = 0x6816B7u; SPILL(); f_679200(c); RELOAD();\n"
-VM_CALL = b"    esp -= 4; M32(esp) = 0x8D3856u; SPILL(); f_8CD8F0(c); RELOAD();\n"
-FLUSH_CALL = b"    esp -= 4; M32(esp) = 0xA579CAu; SPILL(); f_B29850(c); RELOAD();\n"
-CLOSE_CALL = b"    esp -= 4; M32(esp) = 0xA579D3u; SPILL(); f_F56351(c); RELOAD();\n"
-MOVE = b"    esp -= 4; M32(esp) = 0x68031Cu; SPILL(); f_F53F06(c); RELOAD();\n"
 MOVED = (b"    esp -= 4; M32(esp) = 0x68031Cu; SPILL();\n"
          b"    fixture_final_move_enter(c);\n"
          b"    f_F53F06(c);\n"
