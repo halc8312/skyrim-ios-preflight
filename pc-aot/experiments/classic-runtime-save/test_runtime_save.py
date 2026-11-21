@@ -50,11 +50,21 @@ def crt_fixture(generation: Path, *, native: bool = False) -> bytes:
     units = (
         (READER_UNIT, READER_SHA, ("f_677990", "f_677540") if native else ("f_677990",)),
         ("exe_261.c", "1f4ea50599764ad19c3bf5752598ab2036fb4b6fd8d7802774a288ab903331b5",
-         ("f_A57260", "f_A57E70")),
-        ("exe_295.c", "0efcfed401f53e7f1a6e05d69664975e95949895a0795094d063a03cba865404", ("f_B29A10",)),
-        ("exe_470.c", "f9498a5a82f02b1886e638c867eac04f83501f340f4fe13a52511c95eff0a3f7", ("f_F680D9",)),
+         ("f_A57260", "f_A57E70", "f_A57460", "f_A58020") if native else ("f_A57260", "f_A57E70")),
+        ("exe_295.c", "0efcfed401f53e7f1a6e05d69664975e95949895a0795094d063a03cba865404",
+         ("f_B29A10", "f_B29820", "f_B29850") if native else ("f_B29A10",)),
+        ("exe_470.c", "f9498a5a82f02b1886e638c867eac04f83501f340f4fe13a52511c95eff0a3f7",
+         ("f_F680D9", "f_F6B1B0", "f_F6ABEE", "f_F6B2A3") if native else ("f_F680D9",)),
     )
-    _, read_block, _ = stage_slot_read((root / SLOT_UNIT).read_bytes())
+    if native:
+        units += (
+            ("exe_467.c", "e40f124913665af49895b591147fbaa3cc11cae5b5534aa5b6c0b89d33253769",
+             ("f_F584BE", "f_F58428", "f_F5821E", "f_F584B4")),
+            ("exe_468.c", "ccacf292f9bbd1a8a4f40761da5bc5c3ba341be69ef669484dfa97d101fb8b4b",
+             ("f_F5D120", "f_F5D165")),
+        )
+    slot_unit = (root / SLOT_UNIT).read_bytes()
+    _, read_block, _ = stage_slot_read(slot_unit)
     wrapped = read_block.replace(READ_CALL, b"""{
         const uint32_t stream = c->r[1];
         const uint32_t frame = classic_runtime_load_slot_read_begin(c, stream);
@@ -78,6 +88,17 @@ def crt_fixture(generation: Path, *, native: bool = False) -> bytes:
             begin, end = function_span(data, function)
             sources.append(data[begin:end])
     sources.append(fixture_function("classic_runtime_fixture_crt_read", wrapped))
+    if native:
+        # The pinned frame below enters after the header destination was cleared.
+        # Keep the lifted strlen and selected f_677990 call intact.
+        start, end = function_span(slot_unit, "f_67DD20")
+        header = slot_unit[start:end]
+        start_line = b"    eax = (uint32_t)(TL32((uint32_t)(0x12723E0u)));\n"
+        first_call = b"    esp -= 4; M32(esp) = 0x67DD98u; SPILL(); f_677990(c); RELOAD();\n"
+        if header.count(first_call) != 1 or header.count(start_line) != 1:
+            raise ValueError("Missing reviewed selected header read")
+        end = header.index(first_call) + len(first_call)
+        sources.append(fixture_function("classic_runtime_fixture_header_read", header[header.index(start_line):end]))
     return b"\n".join(sources)
 
 
