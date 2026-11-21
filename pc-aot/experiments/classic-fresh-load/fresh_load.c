@@ -150,3 +150,9 @@ void classic_fresh_leave(uint64_t ticket, const struct CPU *cpu, bool success) {
     classic_fresh_report(report);
     if (held >= 0) close(held);
 }
+
+void classic_fresh_cancel(uint64_t ticket, const struct CPU *cpu) {
+    if (!current(ticket, cpu)) return;
+    if (attempt.held_fd >= 0) close(attempt.held_fd);
+    attempt = (Attempt){0};
+}

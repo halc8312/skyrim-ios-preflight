@@ -21,7 +21,7 @@ COSAVE = HERE.parent / "skse-cosave"
 IOS_RUNTIME = ROOT / "ios" / "runtime-port"
 
 
-def crt_fixture(generation: Path) -> bytes:
+def crt_fixture(generation: Path, *, native: bool = False) -> bytes:
     sys.path.insert(0, str(FRESH_LOAD))
     from test_slot_read import (
         READ_CALL, READER_SHA, READER_UNIT, SLOT_UNIT, check_unit, fixture_function,
@@ -40,13 +40,15 @@ def crt_fixture(generation: Path) -> bytes:
         _, rva, raw_size, offset = struct.unpack_from("<4I", image, entry + 8)
         slot = 0x110DBEC - (rva + 0x400000)
         if 0 <= slot <= raw_size - 4 and struct.unpack_from("<I", image, offset + slot) == (0xA57E70,):
+            if native and (slot < 0x24 or struct.unpack_from("<I", image, offset + slot - 0x24) != (0xA57700,)):
+                raise ValueError("Pinned BSFile open slot differs from the reviewed input")
             break
     else:
         raise ValueError("Pinned BSFile read slot differs from the reviewed input")
 
     root = generation / "gen"
     units = (
-        (READER_UNIT, READER_SHA, ("f_677990",)),
+        (READER_UNIT, READER_SHA, ("f_677990", "f_677540") if native else ("f_677990",)),
         ("exe_261.c", "1f4ea50599764ad19c3bf5752598ab2036fb4b6fd8d7802774a288ab903331b5",
          ("f_A57260", "f_A57E70")),
         ("exe_295.c", "0efcfed401f53e7f1a6e05d69664975e95949895a0795094d063a03cba865404", ("f_B29A10",)),
@@ -59,8 +61,16 @@ def crt_fixture(generation: Path) -> bytes:
         f_677990(c);
         classic_runtime_fixture_slot_result(classic_runtime_load_slot_read_end(c, stream, frame, c->r[0]));
     }""", 1)
-    sources = [b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n#include "runtime_load.h"\n'
-               b'void classic_runtime_fixture_slot_result(uint64_t);\n']
+    includes = b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n#include "runtime_load.h"\n'
+    if native:
+        includes += b'#include "native_load.h"\n'
+        original = b"classic_runtime_fixture_slot_result(classic_runtime_load_slot_read_end(c, stream, frame, c->r[0]));"
+        if wrapped.count(original) != 1:
+            raise ValueError("Expected the reviewed native slot notification")
+        wrapped = wrapped.replace(original, b"classic_native_load_read_observed(c, stream, frame, c->r[0]);", 1)
+    else:
+        includes += b'void classic_runtime_fixture_slot_result(uint64_t);\n'
+    sources = [includes]
     for name, digest, functions in units:
         data = (root / name).read_bytes()
         check_unit(data, digest)

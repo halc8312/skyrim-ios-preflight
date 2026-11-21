@@ -38,7 +38,15 @@ After the selected open, the observer checks CRT stream registration, read-only 
 Pass --load-witness to the prepared runtime fixture to exercise this stage. The fixture uses disposable authored .ess files and checks that ordinary and save wrapper results stay intact.
 `--load-clone` runs a separate staged runtime and enables the same read-only witness tests. In an opted-in owner scope, the exact selected CreateFileA passes its verified named descriptor to `skse_bridge_capture_named_load` immediately before GFile publication. A successful anonymous snapshot becomes the handle's data descriptor. GFile retains the original descriptor and reports its captured metadata through GetFileInformationByHandle. Once published, the handle uses the snapshot until CloseHandle. An unsupported or failed capture retains the original descriptor and preserves the normal return and error values.
 
-The fixture tests real runtime ReadFile, SetFilePointer, GetFileSize, GetFileInformationByHandle and CloseHandle. After deliberately changing and replacing the authored source, the caller still reads the captured bytes and sees the original file index. Both GFile descriptors close with the guest handle. The Linux fixture emulates the Darwin clone operation using disposable test files. Actual iPhone APFS behavior, load-slot completion and companion restoration remain separate checks.
+The fixture tests real runtime ReadFile, SetFilePointer, GetFileSize, GetFileInformationByHandle and CloseHandle. After deliberately changing and replacing the authored source, the caller still reads the captured bytes and sees the original file index. Both GFile descriptors close with the guest handle. The Linux fixture emulates the Darwin clone operation using disposable test files. Actual iPhone APFS behavior and app integration still need verification.
+
+## Hosted selected load through the companion bridge
+
+Run `python3 -B experiments/classic-runtime-save/test_native_load.py --generation <private generation>` with the SQLite and OpenSSL development libraries. Add `--sanitizers` to verify with ASan and UBSan.
+
+The fixture runs the pinned selected-load body and its original file-open dispatch. An authored CRT transport prefills the BSFile buffer through the prepared runtime's real CreateFileA and ReadFile. The slot fixture runs the original logical read block and buffered reader. It forwards the actual read result to the same native descriptor witness. The slot and VM fixtures use the reviewed lifecycle calls from the original lift. The coordinator keeps the witnessed clone through CloseHandle and exports the matching companion after the guest call returns. A separate earlier lifecycle call shifts the ticket and the bridge binds the actual root slot. Refused capture, reentry, a changed CRT descriptor, a missing VM call, a false VM return, and owner abort leave the companion unavailable.
+
+The fixture uses authored engine services, the reviewed body fragments, and a local clone substitute. iPhone APFS behavior, full guest lock ownership, cached-stream association and activation in a running VM require separate verification. Aborting the observer releases its resources while the game retains any snapshot already assigned to its GFile.
 
 ## Integration conditions
 

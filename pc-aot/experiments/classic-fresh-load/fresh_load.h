@@ -62,5 +62,6 @@ void classic_fresh_slot_leave(uint64_t, const struct CPU *, bool success);
 enum { CLASSIC_FRESH_SLOT_READ_BYTES = 100 };
 void classic_fresh_slot_read_observed(const struct CPU *, uint32_t stream, uint32_t bytes);
 void classic_fresh_leave(uint64_t, const struct CPU *, bool success);
+void classic_fresh_cancel(uint64_t, const struct CPU *);
 
 #endif

@@ -120,7 +120,9 @@ def check_stage(source: Path, before: bytes, after: bytes) -> None:
         raise AssertionError("Changed generation was accepted")
 
 
-def lifted_fixture(generation: Path, compose: bool) -> tuple[bytes, bytes]:
+def lifted_fixture(generation: Path, compose: bool, *, native: bool = False) -> tuple[bytes, bytes]:
+    if native and not compose:
+        raise ValueError("The native fixture requires lifecycle composition")
     state = json.loads((generation / "generation.json").read_bytes())
     validate_generation(state)
     if (state.get("mode") != "original-guest-bodies" or
@@ -139,9 +141,22 @@ def lifted_fixture(generation: Path, compose: bool) -> tuple[bytes, bytes]:
     callees = CALLEES
     appended = b""
     if compose:
-        selected = at_site(selected, SLOT_INVOKE, lifecycle_call(b"SkyrimLoadSlot", b"f_67B720(c)", BOOL_RESULT))
-        updated = LIFECYCLE_INCLUDE + updated[:start] + selected + updated[end:]
-        includes += LIFECYCLE_INCLUDE
+        extra_include = LIFECYCLE_INCLUDE
+        slot = lifecycle_call(b"SkyrimLoadSlot", b"f_67B720(c)", BOOL_RESULT)
+        if native:
+            extra_include += b'#include "native_load.h"\n'
+            for hook in (b"enter", b"open_enter", b"open_leave"):
+                old_hook = b"classic_fresh_" + hook + b"("
+                new_hook = b"classic_native_load_" + hook + b"("
+                selected = at_site(selected, old_hook, new_hook)
+            slot = (b"    const SkyrimLifecycleCall slot = ticket ? skyrim_lifecycle_begin(SkyrimLoadSlot)"
+                    b" : (SkyrimLifecycleCall){0};\n"
+                    b"    classic_native_load_slot_bind(ticket, c, esi);\n"
+                    b"    f_67B720(c);\n"
+                    b"    if (slot.ticket) skyrim_lifecycle_end(slot, " + BOOL_RESULT + b");\n")
+        selected = at_site(selected, SLOT_INVOKE, slot)
+        updated = extra_include + updated[:start] + selected + updated[end:]
+        includes += extra_include
         callees += VM_CALLEES
         appended = vm_fixture((generation / "gen" / VM_UNIT).read_bytes())
     prototypes = b"".join(f"void {name}(CPU *);\n".encode("ascii") for name in callees)
