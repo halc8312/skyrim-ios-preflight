@@ -17,6 +17,7 @@ import stage_effect_magnitude
 import stage_item_delivery
 import stage_pex_proof
 import stage_scene_refresh
+import stage_scene_witness
 import stage_task_queue
 
 
@@ -53,7 +54,8 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
 
     def test_unreviewed_lift_is_refused(self):
         for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude,
-                      stage_effect_call, stage_effect_event, stage_scene_refresh, stage_pex_proof):
+                      stage_effect_call, stage_effect_event, stage_scene_refresh, stage_pex_proof,
+                      stage_scene_witness):
             with self.subTest(unit=stage.UNIT):
                 with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
                     unit_count = 1 + len(getattr(stage, "DEPENDENCIES", ()))
@@ -160,6 +162,12 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             stage_scene_refresh, "test_scene_refresh_lift.c",
             "Classic scene recomposes owned local height and undo in the authored NiNode hierarchy",
             extra_sources=(HERE / "highheel_height.c",),
+        )
+
+    def test_reviewed_third_person_scene_witness_follows_original_edges(self):
+        self.run_reviewed_fixture(
+            stage_scene_witness, "test_scene_witness_lift.c",
+            "Classic third-person traversal witnesses five actual named nodes without changing the scene",
         )
 
     def test_owned_effect_native_argument_boundaries(self):

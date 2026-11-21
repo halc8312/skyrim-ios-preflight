@@ -264,6 +264,21 @@ the root changes between read and commit, and a missing NPC name. The fixture's
 scene is single-threaded and its nodes have fixed lifetimes. The exact
 DLL instructions for local Z and refresh are also checked by disassembly.
 
+The separate hosted traversal witness runs the pinned selector-0 block
+in `f_734F50`, the original root getter and update, and the actual
+NiNode child callbacks. It matches the stock interned NPC, Foot, and Calf
+names only on receivers whose original parent callback and backlink both
+belong to the current third-person root. A missing or preview root, missing
+node, different parent, duplicate name, or exhausted visit budget prevents
+the result. Under `BSFlattenedBoneTree`, the observer also distinguishes an
+existing node consumed by the transform table from a node reached by
+the child callbacks. It accepts the latter, including when the table also
+uses it. It does not call the virtual name search, which can allocate and
+attach a node when a flattened bone exists only as a record. The test
+compares CPU state, scene memory and reference counts to the same original
+execution with the observer disabled. It uses authored hierarchies and
+does not establish serialization with renderer or animation workers.
+
 The official 1.7.3 `SKSETaskUpdateWorldData` takes a NiAVObject
 reference in Create, calls the world refresh in Run and releases
 the reference in Dispose. The queue's lock protects the delegate
