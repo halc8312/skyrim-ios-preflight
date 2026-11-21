@@ -216,6 +216,36 @@ class ModArchiveTests(unittest.TestCase):
         self.assertEqual(view_files(second), {path: b"other profile skeleton"})
         self.assertEqual(sorted(p.relative_to(game).as_posix() for p in game.rglob("*")), before)
 
+    def test_body_replacers_win_per_profile_with_classic_meshes(self):
+        # Plan P5-3: authored CBBE- and UNP-style packages place the same body meshes.
+        body = "meshes/actors/character/character assets/femalebody_0.nif"
+        heavy = "meshes/actors/character/character assets/femalebody_1.nif"
+        game = self.dir / "body-game"
+        (game / "Data/Meshes").mkdir(parents=True)
+        nif = lambda tag: (b"Gamebryo File Format, Version 20.2.0.7\n" + bytes([7, 0, 2, 20, 1, 12, 0, 0, 0])
+                           + (83).to_bytes(4, "little") + tag)  # noqa: E731
+        packages = {}
+        for name, files in {"cbbe": {body: nif(b"cbbe"), heavy: nif(b"cbbe heavy")},
+                            "unp": {body: nif(b"unp"), heavy: nif(b"unp heavy")}}.items():
+            root = self.dir / ("body-" + name)
+            for relative, content in files.items():
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_bytes(content)
+            packages[name] = root
+        before = sorted(p.relative_to(game).as_posix() for p in game.rglob("*"))
+
+        def body_of(view):
+            root = view / "Data"
+            return {p.relative_to(root).as_posix().lower(): p.read_bytes()[-12:] for p in root.rglob("*")
+                    if p.is_file()}
+
+        a, b = self.dir / "body-view-cbbe", self.dir / "body-view-unp"
+        self.assertIn("deploy 0", self.run_driver("deploy", game, a, self.dir / "body-a.tsv", "a", packages["cbbe"]))
+        self.assertIn("deploy 0", self.run_driver("deploy", game, b, self.dir / "body-b.tsv", "b", packages["unp"]))
+        self.assertTrue(body_of(a)[body].endswith(b"cbbe") and body_of(b)[body].endswith(b"unp"))
+        self.assertTrue(body_of(a)[heavy].endswith(b"cbbe heavy") and body_of(b)[heavy].endswith(b"unp heavy"))
+        self.assertEqual(sorted(p.relative_to(game).as_posix() for p in game.rglob("*")), before)
+
     def test_game_assets_at_root_stay_with_their_tools(self):
         bundle = self.make_zip("game-assets-and-tools.zip", {
             "Bundle/meshes/body.nif": b"body",
