@@ -118,6 +118,25 @@ class EceProfileTests(unittest.TestCase):
         other.write_bytes(b"conflicting loose file")
         self.assertEqual(self.checked(), (UNREADABLE, 0))
 
+    def test_prepared_skydream_reads_the_qualified_tri(self):
+        from test_directory_index import kernel_file_fixture
+        with tempfile.TemporaryDirectory(prefix="ece-tri-read-") as folder:
+            root = Path(folder)
+            data = root / "Data"
+            shutil.copytree(self.data, data)
+            shutil.copyfile(data / FACE, data / "other.tri")
+            binary = kernel_file_fixture(root, ece_witness=True)
+            entry = r"Data\meshes\Actors\Character\Character Assets\FemaleHeadCharGen.tri"
+            completed = subprocess.run([binary, root, entry], capture_output=True, check=True, timeout=30)
+            self.assertEqual(completed.stdout, (self.data / FACE).read_bytes())
+            lines = [line for line in completed.stderr.decode().splitlines() if line.startswith("IOS_ECE_TRI")]
+            self.assertEqual(lines, [
+                "IOS_ECE_TRI schema=1 source=1 parsed=1",
+                "IOS_ECE_TRI schema=1 source=2 parsed=1",
+                "IOS_ECE_TRI schema=1 source=0 parsed=0",
+                "IOS_ECE_TRI schema=1 source=0 parsed=1",
+            ])
+
     def test_private_owned_default_and_modified_effective_tri(self):
         private = os.environ.get("SKYRIM_TEST_ECE_DEFAULT_DATA")
         if not private:

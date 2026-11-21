@@ -36,6 +36,7 @@
 #include "PcGuestModHooksABI.h"
 #include "classic_vm_epoch.h"
 #include "mod_camera_host.h"
+#include "mod_ece_tri_host.h"
 #include "mod_fuz.h"
 #include "mod_fuz_host.h"
 #include "mod_hook_selection.h"
@@ -502,6 +503,50 @@ static void RaceMenuDidApply(void) {
 #endif
 
 #ifdef SKYRIM_IOS_MOD_HOOKS
+static bool DigestEceInput(int fd, size_t length, uint8_t result[32]) {
+    CC_SHA256_CTX hash;
+    if (CC_SHA256_Init(&hash) != 1) return false;
+    unsigned char buffer[16384];
+    while (length) {
+        size_t count = length < sizeof buffer ? length : sizeof buffer;
+        ssize_t n = read(fd, buffer, count);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0 || CC_SHA256_Update(&hash, buffer, (CC_LONG)n) != 1) return false;
+        length -= (size_t)n;
+    }
+    ssize_t tail;
+    do { tail = read(fd, buffer, 1); } while (tail < 0 && errno == EINTR);
+    return tail == 0 && CC_SHA256_Final(result, &hash) == 1;
+}
+
+static bool PrepareEceTriObserver(void) {
+    if (!launchPackageIds.count || !ValidId(activeProfile)) return false;
+    BOOL plugin = NO;
+    for (NSString *name in skyrim_mobile_loaded_plugins()) {
+        if ([name caseInsensitiveCompare:@"CharacterMakingExtender.esp"] == NSOrderedSame ||
+            [name caseInsensitiveCompare:@"EnhancedCharacterEdit.esp"] == NSOrderedSame) {
+            plugin = YES;
+            break;
+        }
+    }
+    if (!plugin) return false;
+    NSString *view = CanonicalSupportPath([[Base() stringByAppendingPathComponent:@"Views"]
+                                          stringByAppendingPathComponent:activeProfile]);
+    char data[4096];
+    if (!view || skyrim_plugin_child_path(view.fileSystemRepresentation, "Data", data, sizeof data) != 1) return false;
+    int flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
+#ifdef O_NOFOLLOW_ANY
+    flags |= O_NOFOLLOW_ANY;
+#else
+    flags |= O_NOFOLLOW;
+#endif
+    int fd = open(data, flags);
+    if (fd < 0) return false;
+    const bool ready = skyrim_ece_tri_configure(fd, DigestEceInput);
+    close(fd);
+    return ready;
+}
+
 /* Select the guest hook groups for the features allowed so far, before the
  * guest starts. Returns the features whose groups were selected. */
 static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *saveProfile, SkyrimHookPlan *plan) {
@@ -527,6 +572,9 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
         plan->groups |= compiled & (PC_GUEST_MOD_HOOK_CAMERA_OBSERVE | PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE);
     if (!launchWithoutMods && !launchPluginListFailed && menuObserver && skyrim_mobile_verbose() &&
         (compiled & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE;
+    if (!launchWithoutMods && !launchPluginListFailed && skyrim_mobile_verbose() &&
+        (compiled & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE) && PrepareEceTriObserver())
+        plan->groups |= PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE;
     if (inventoryFit && (compiled & PC_GUEST_MOD_HOOK_INVENTORY_FIT))
         plan->groups |= PC_GUEST_MOD_HOOK_INVENTORY_FIT;
     if (saveProfile && (compiled & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) &&
@@ -555,6 +603,8 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     if (plan->groups & PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE) table.camera_render.observe = skyrim_camera_app_observe_render;
     if (plan->groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) table.loading_menu.observe = skyrim_loading_menu_app_observe;
     if (plan->groups & PC_GUEST_MOD_HOOK_SAFETY_LOAD) table.safety_load.bypass_reclamation = skyrim_safety_load_app_bypass;
+    if (plan->groups & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE)
+        table.ece_tri = (PcGuestModEceTriHooks){skyrim_ece_tri_app_begin, skyrim_ece_tri_app_finish};
     if (plan->groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) skyrim_save_app_fill(&table);
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
     /* Keep the original paths: select nothing. */

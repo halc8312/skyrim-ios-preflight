@@ -21,6 +21,7 @@
 #include "PcGuestABI.h"
 #ifdef SKYRIM_IOS_MOD_HOOKS
 #include "mod_camera_host.h"
+#include "mod_ece_tri_host.h"
 #include "mod_loading_menu_host.h"
 #endif
 #if defined(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE) || defined(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
@@ -248,6 +249,7 @@ static void verify_guest_input(NSURL *game) {
 #ifdef SKYRIM_IOS_MOD_HOOKS
     const bool diagnose = skyrim_mobile_verbose() != 0;
     if (diagnose) skyrim_camera_app_configure(hex);
+    skyrim_ece_tri_allow_input(hex, diagnose);
     skyrim_loading_menu_app_configure(hex, diagnose);
 #endif
 #ifdef SKYRIM_IOS_CLASSIC_SETTINGS_INPUT
@@ -323,6 +325,9 @@ int SDL_main(int argc, char **argv) {
         char *runtime_argv[] = {"SkyrimIOS", (char *)runtimeGame.fileSystemRepresentation,
                                 (char *)profile.fileSystemRepresentation, NULL};
         int result = skyrim_ios_runtime_main(3, runtime_argv);
+#ifdef SKYRIM_IOS_MOD_HOOKS
+        skyrim_ece_tri_retire();
+#endif
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
         skyrim_mods_report_features_at_exit();
 #endif

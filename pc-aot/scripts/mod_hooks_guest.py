@@ -28,7 +28,7 @@ GROUPS = {
     "fuz_menu": 1, "fuz_world": 2, "vm_lifecycle": 4, "chargen_precache": 8,
     "camera_observe": 16, "chargen_slider": 32, "save_lifecycle": 64,
     "loading_menu_observe": 128, "inventory_fit": 256, "safety_load": 512,
-    "camera_render_observe": 1024,
+    "camera_render_observe": 1024, "ece_tri_observe": 2048,
 }
 # The interface header and the reviewed seam headers its tables use; the IPA
 # assembly checks the same five (scripts/assemble_title_ipa.py).
@@ -175,6 +175,11 @@ def stage_camera_render_observe(root: Path) -> dict[str, bytes]:
     return {name: camera.stage_camera_render((root / "gen" / name).read_bytes())}
 
 
+def stage_ece_tri_observe(root: Path) -> dict[str, bytes]:
+    tri = load(EXPERIMENTS / "classic-racemenu-apply", "stage_ece_tri")
+    return {tri.UNIT: tri.stage((root / "gen" / tri.UNIT).read_bytes())}
+
+
 def stage_loading_menu_observe(root: Path) -> dict[str, bytes]:
     loading_menu = load(EXPERIMENTS / "classic-loading-menu", "stage_loading_menu")
     return {LOADING_MENU_UNIT: loading_menu.stage_loading_menu((root / "gen" / LOADING_MENU_UNIT).read_bytes())}
@@ -233,6 +238,7 @@ STAGES = {
     "chargen_slider": stage_chargen_slider,
     "camera_observe": stage_camera_observe,
     "camera_render_observe": stage_camera_render_observe,
+    "ece_tri_observe": stage_ece_tri_observe,
     "loading_menu_observe": stage_loading_menu_observe,
     "inventory_fit": stage_inventory_fit,
     "safety_load": stage_safety_load,

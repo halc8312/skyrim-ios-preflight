@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/stat.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +27,10 @@ typedef bool (*SkyrimEceProfileDigest)(int fd, size_t length, uint8_t result[32]
  * The guest receiver and its selected FaceGen resource must be verified
  * independently before any application. */
 SkyrimEceProfileStatus skyrim_ece_profile_check_female_nord(int data_fd, SkyrimEceProfileDigest digest);
+
+/* On MATCH, returns the same open file that passed the winning loose TRI digest check. */
+SkyrimEceProfileStatus skyrim_ece_profile_open_female_nord(int data_fd, SkyrimEceProfileDigest digest,
+                                                            int *face_fd, struct stat *identity);
 
 #ifdef __cplusplus
 }

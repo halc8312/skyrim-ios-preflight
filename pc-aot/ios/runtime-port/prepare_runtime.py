@@ -325,7 +325,18 @@ def patch_native_textures(s: str) -> str:
 
 
 def patch_kernel(s: str) -> str:
-    return patch_main_pump(patch_file_writes(patch_asset_reads(patch_apc_queue(patch_directory_index(patch_waiter_membership(s))))))
+    s = patch_file_writes(patch_asset_reads(patch_apc_queue(patch_directory_index(patch_waiter_membership(s)))))
+    return patch_main_pump(patch_ece_read_witness(s))
+
+
+def patch_ece_read_witness(s: str) -> str:
+    old = '    skyrim_perf_end(SKYRIM_PERF_READ_FILE, ios_started, r < 0);'
+    s = ('#ifdef SKYRIM_IOS_MOD_HOOKS\n#include "mod_ece_tri_host.h"\n#endif\n' + s)
+    return replace_once(s, old, old + '''
+#ifdef SKYRIM_IOS_MOD_HOOKS
+    if (skyrim_ece_tri_read_pending)
+        skyrim_ece_tri_app_read(c, M32(c->r[4]), ARG(0), f->fd, r);
+#endif''', 'read-only FaceGen TRI input witness')
 
 
 def patch_file_writes(s: str) -> str:

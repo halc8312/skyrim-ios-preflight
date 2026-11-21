@@ -109,7 +109,8 @@ static bool same_digest(const uint8_t actual[32], const char *expected) {
     return true;
 }
 
-static SkyrimEceProfileStatus check_file(int directory, const FileIdentity *file, SkyrimEceProfileDigest digest) {
+static SkyrimEceProfileStatus check_file(int directory, const FileIdentity *file, SkyrimEceProfileDigest digest,
+                                         int *retain, struct stat *identity) {
     int fd;
     SkyrimEceProfileStatus result = open_child(directory, file->name, O_NONBLOCK, &fd);
     if (result != SKYRIM_ECE_PROFILE_MATCH) return result;
@@ -124,18 +125,23 @@ static SkyrimEceProfileStatus check_file(int directory, const FileIdentity *file
     } else if (!same_digest(actual, file->sha256)) {
         result = SKYRIM_ECE_PROFILE_NONDEFAULT;
     }
-    close(fd);
+    if (result == SKYRIM_ECE_PROFILE_MATCH && retain) {
+        // Record the metadata from before the digest to validate the retained file.
+        *identity = st;
+        *retain = fd;
+    } else close(fd);
     return result;
 }
 
-SkyrimEceProfileStatus skyrim_ece_profile_check_female_nord(int data, SkyrimEceProfileDigest digest) {
+static SkyrimEceProfileStatus check_profile(int data, SkyrimEceProfileDigest digest,
+                                            int *face_fd, struct stat *identity) {
     static const char *const character_assets[] = {"Meshes", "actors", "character", "character assets"};
     static const char *const cme_path[] = {"Meshes", "CharacterMakingExtender"};
     if (data < 0 || !digest) return SKYRIM_ECE_PROFILE_UNREADABLE;
     int directory;
     SkyrimEceProfileStatus result = open_directory(data, character_assets, 4, &directory);
     if (result != SKYRIM_ECE_PROFILE_MATCH) return result;
-    result = check_file(directory, &female_head, digest);
+    result = check_file(directory, &female_head, digest, face_fd, identity);
     close(directory);
     if (result != SKYRIM_ECE_PROFILE_MATCH) return result;
 
@@ -143,13 +149,29 @@ SkyrimEceProfileStatus skyrim_ece_profile_check_female_nord(int data, SkyrimEceP
     result = open_directory(data, cme_path, 2, &cme);
     if (result != SKYRIM_ECE_PROFILE_MATCH) return result;
     result = check_default_ini_set(cme);
-    if (result == SKYRIM_ECE_PROFILE_MATCH) result = check_file(cme, &races, digest);
+    if (result == SKYRIM_ECE_PROFILE_MATCH) result = check_file(cme, &races, digest, NULL, NULL);
     if (result == SKYRIM_ECE_PROFILE_MATCH) result = open_child(cme, "commonTriRaces", O_DIRECTORY, &directory);
     close(cme);
     if (result != SKYRIM_ECE_PROFILE_MATCH) return result;
     for (size_t i = 0; i < sizeof common / sizeof common[0] && result == SKYRIM_ECE_PROFILE_MATCH; ++i) {
-        result = check_file(directory, &common[i], digest);
+        result = check_file(directory, &common[i], digest, NULL, NULL);
     }
     close(directory);
+    return result;
+}
+
+SkyrimEceProfileStatus skyrim_ece_profile_check_female_nord(int data, SkyrimEceProfileDigest digest) {
+    return check_profile(data, digest, NULL, NULL);
+}
+
+SkyrimEceProfileStatus skyrim_ece_profile_open_female_nord(int data, SkyrimEceProfileDigest digest, int *face_fd, struct stat *identity) {
+    if (!face_fd || !identity) return SKYRIM_ECE_PROFILE_UNREADABLE;
+    int retained = -1;
+    const SkyrimEceProfileStatus result = check_profile(data, digest, &retained, identity);
+    if (result != SKYRIM_ECE_PROFILE_MATCH && retained >= 0) {
+        close(retained);
+        retained = -1;
+    }
+    *face_fd = retained;
     return result;
 }

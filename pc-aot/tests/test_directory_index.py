@@ -25,7 +25,7 @@ def pinned_kernel():
     return runtime, original
 
 
-def kernel_file_fixture(folder):
+def kernel_file_fixture(folder, ece_witness=False):
     """Stage the normal iOS file shims with authored CPU/guest memory."""
     compiler = shutil.which(os.environ.get("CC", "cc"))
     if not compiler:
@@ -43,6 +43,9 @@ def kernel_file_fixture(folder):
     if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
         flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
     sources = [ROOT / "tests/native/test_mod_kernel_file.c", port / "performance_metrics.c"]
+    if ece_witness:
+        flags += ["-DSKYRIM_IOS_MOD_HOOKS=1"]
+        sources += [port / "mod_ece_profile.c", port / "mod_ece_tri_host.c"]
     subprocess.run([compiler, *flags, "-I", folder, "-I", runtime, "-I", port,
                     *sources, "-lm", "-o", binary], check=True, timeout=90)
     return binary

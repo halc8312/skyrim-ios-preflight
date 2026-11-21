@@ -37,7 +37,8 @@ enum {
     /* Selection enables the pinned guest-side mode change. */
     PC_GUEST_MOD_HOOK_INVENTORY_FIT = 256u,
     PC_GUEST_MOD_HOOK_SAFETY_LOAD = 512u,
-    PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE = 1024u
+    PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE = 1024u,
+    PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE = 2048u
 };
 #define PC_GUEST_MOD_HOOKS_ORIGINAL (PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD | \
     PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER | \
@@ -46,7 +47,8 @@ enum {
     PC_GUEST_MOD_HOOK_INVENTORY_FIT)
 #define PC_GUEST_MOD_HOOKS_SAFETY (PC_GUEST_MOD_HOOKS_OBSERVED | PC_GUEST_MOD_HOOK_SAFETY_LOAD)
 #define PC_GUEST_MOD_HOOKS_SAVE (PC_GUEST_MOD_HOOKS_SAFETY | PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE)
-#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOKS_SAVE | PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE)
+#define PC_GUEST_MOD_HOOKS_CAMERA_RENDER (PC_GUEST_MOD_HOOKS_SAVE | PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE)
+#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOKS_CAMERA_RENDER | PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE)
 
 /* Function types come from the reviewed experiment headers. */
 typedef struct {
@@ -107,6 +109,12 @@ typedef struct {
     void (*observe)(uint32_t frame, uint32_t first, uint32_t second);
 } PcGuestModCameraRenderHooks;
 
+/* A synchronous, exact-path observation around the original FaceGen TRI parser. */
+typedef struct {
+    uint64_t (*begin)(const struct CPU *cpu, uint32_t path, uint32_t stream);
+    void (*finish)(const struct CPU *cpu, uint64_t ticket, uint8_t parsed);
+} PcGuestModEceTriHooks;
+
 typedef struct {
     uint64_t (*begin)(const struct CPU *, uint32_t stack, uint32_t temporary_path);
     uint64_t (*current)(const struct CPU *, unsigned phase);
@@ -128,6 +136,7 @@ typedef struct {
     PcGuestModSafetyLoadHooks safety_load;
     PcGuestModSaveHooks save;
     PcGuestModCameraRenderHooks camera_render;
+    PcGuestModEceTriHooks ece_tri;
 } PcGuestModHooks;
 
 /* Hosts and guests built with the original v1 table still use this prefix. */
@@ -135,6 +144,7 @@ typedef struct {
 #define PC_GUEST_MOD_HOOKS_OBSERVED_BYTES offsetof(PcGuestModHooks, safety_load)
 #define PC_GUEST_MOD_HOOKS_SAFETY_BYTES offsetof(PcGuestModHooks, save)
 #define PC_GUEST_MOD_HOOKS_SAVE_BYTES offsetof(PcGuestModHooks, camera_render)
+#define PC_GUEST_MOD_HOOKS_CAMERA_RENDER_BYTES offsetof(PcGuestModHooks, ece_tri)
 
 /* Guest reply. select copies the selected tables and succeeds at most once. */
 typedef struct {
@@ -154,6 +164,7 @@ static inline int pc_guest_mod_hooks_groups_valid(uint32_t groups) {
 
 static inline uint32_t pc_guest_mod_hooks_groups_for_bytes(uint32_t bytes) {
     if (bytes == sizeof(PcGuestModHooks)) return PC_GUEST_MOD_HOOKS_DEFINED;
+    if (bytes == PC_GUEST_MOD_HOOKS_CAMERA_RENDER_BYTES) return PC_GUEST_MOD_HOOKS_CAMERA_RENDER;
     if (bytes == PC_GUEST_MOD_HOOKS_SAVE_BYTES) return PC_GUEST_MOD_HOOKS_SAVE;
     if (bytes == PC_GUEST_MOD_HOOKS_SAFETY_BYTES) return PC_GUEST_MOD_HOOKS_SAFETY;
     if (bytes == PC_GUEST_MOD_HOOKS_OBSERVED_BYTES) return PC_GUEST_MOD_HOOKS_OBSERVED;
@@ -185,6 +196,7 @@ static inline int pc_guest_mod_hooks_table_valid(const PcGuestModHooks *t) {
     if ((g & PC_GUEST_MOD_HOOK_SAFETY_LOAD) && !t->safety_load.bypass_reclamation) return 0;
     if ((g & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) && (!t->save.begin || !t->save.current || !t->save.event)) return 0;
     if ((g & PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE) && !t->camera_render.observe) return 0;
+    if ((g & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE) && (!t->ece_tri.begin || !t->ece_tri.finish)) return 0;
     return 1;
 }
 
@@ -200,6 +212,8 @@ bool skyrim_racemenu_probe_nose_height(uint32_t menu, uint32_t actor, uint32_t b
 void skyrim_racemenu_probe_did_apply(void);
 void skyrim_camera_observe_return(uint32_t receiver);
 void skyrim_camera_observe_render(uint32_t frame, uint32_t first, uint32_t second);
+uint64_t skyrim_ece_tri_begin(const struct CPU *, uint32_t path, uint32_t stream);
+void skyrim_ece_tri_finish(const struct CPU *, uint64_t ticket, uint8_t parsed);
 void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t event);
 bool skyrim_inventory_fit_enabled(void);
 bool skyrim_safety_load_bypass_reclamation(void);

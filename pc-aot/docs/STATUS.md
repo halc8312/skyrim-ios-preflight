@@ -10,7 +10,7 @@
 | Fuz Ro D-oh | 固定版の会話経路を接続。実物の代替音声10本のPCMと長さをPCで照合 | 通常音声、無音声の台詞、字幕と口の動きを比較 |
 | PapyrusUtil / Wearable Lanterns | 実物StorageUtilのホスト試験と、入力・メーター・設定の試験が合格 | 点灯、長押し、設定と再起動後の復元 |
 | 追加セーブ | 固定版の読み書きとVM通知でPC往復試験8条件。通常版の試験構成に、固定したプロファイルから新規セーブの完了を観測する処理を接続 | Appleでの複製、ライブのStorageUtilとVMへの接続、iPhoneでの復元 |
-| RaceMenu / ECE / NiOverride | RaceMenuの標準の鼻の高さを接続。プロファイルの優先順位に従って実物のECEの顔TRIが読まれることをPCで確認。NiOverrideの提供元と版を表示 | ECEで鼻の高さだけを変えた同一キャラクターの書き出しと、ゲーム内の顔データの選択を照合 |
+| RaceMenu / ECE / NiOverride | RaceMenuの標準の鼻の高さを接続。ECEの顔TRIをゲームがどこから読んだかを詳細診断で記録。NiOverrideの提供元と版を表示 | ECEで鼻の高さだけを変えた同一キャラクターの書き出しと、実機での顔データの選択を照合 |
 | XPMSE / XPMS / Realistic Ragdolls and Force | プロファイルごとの骨格の選択と前提ファイルを検査 | 実物の骨格とアニメーションを別プロファイルで確認 |
 | CBBE / UNP / BodySlide / FNIS | 体型の優先順と生成時の構成を試験 | 実物の体型、対象プロファイルで生成した出力の表示 |
 | USLEEP / DLC | 必須マスターと並びをPCで検証 | 3つのDLCとUSLEEPの変更レコードを確認 |

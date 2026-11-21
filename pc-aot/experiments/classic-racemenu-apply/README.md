@@ -109,3 +109,34 @@ digest. Reversing package priority changes the returned bytes without
 altering the original game directory. The fixture runs beneath the game's
 resource layer. The in-game choice between the loose file and BSA remains
 to be observed.
+
+### FaceGen source diagnostics
+
+A private Classic guest can include `ece_tri_observe` in its
+`--mod-hooks` list. On a pinned detailed-diagnostics launch, the app
+requires the published active profile to list the ECE plugin and the
+deployed Data to pass the default ECE 1.59 winner check. The check holds
+the same read-only loose file descriptor that passed the digest check.
+
+The pinned `BSResourceFaceGenBinaryFile` vtable maps the loader to
+`f_59F270`. The observer takes the exact path passed to the original
+`f_A3F810` call and uses the stream from that call's output slot. It
+scopes the stock `f_59EF90` parser and observes its original return.
+For the loose resource stream, a positive read must come from the
+reviewed `f_A58110` import and use the same stream's Win32 handle.
+The prepared Skydream shim checks the descriptor against the audited
+loose winner's inode and metadata after the original read. Archive
+member streams constructed by `f_A3B2D0` and `f_A3B700` are classified
+from their own type, independent of whether an archive was opened in
+this frame. Other stream types or missing backing read evidence are
+classified as unknown.
+
+The numeric record is `IOS_ECE_TRI schema=1 source=N parsed=N`. Source 1
+is the audited loose winner, 2 is a reviewed archive stream, and 0 is
+unknown. Parsed 1 is success from the original parser. Each combination
+is logged once per launch. A failed parse uses source 0. No file names,
+addresses or character details are exported. An already cached resource
+may bypass this parser, so use a fresh launch for a device check.
+The test exercises the exact staged code and the prepared file wrappers
+against authored guest objects. A first real-device observation and an
+ECE-to-stock morph comparison still need to be made.

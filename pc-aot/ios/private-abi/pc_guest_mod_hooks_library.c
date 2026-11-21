@@ -31,6 +31,7 @@ static PcGuestModLoadingMenuHooks loading_menu;
 static PcGuestModSafetyLoadHooks safety_load;
 static PcGuestModSaveHooks save;
 static PcGuestModCameraRenderHooks camera_render;
+static PcGuestModEceTriHooks ece_tri;
 
 static int select_hooks(const PcGuestModHooks *table) {
     if (!bound_bytes || selection_final || !pc_guest_mod_hooks_table_valid(table) || table->bytes != bound_bytes
@@ -45,6 +46,7 @@ static int select_hooks(const PcGuestModHooks *table) {
     if (table->groups & PC_GUEST_MOD_HOOK_SAFETY_LOAD) safety_load = table->safety_load;
     if (table->groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) save = table->save;
     if (table->groups & PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE) camera_render = table->camera_render;
+    if (table->groups & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE) ece_tri = table->ece_tri;
     selected = table->groups;
     selection_final = 1;
     return 0;
@@ -80,6 +82,12 @@ static const PcGuestModHooksGuest save_reply = {
     .table_bytes = PC_GUEST_MOD_HOOKS_SAVE_BYTES, .select = select_hooks
 };
 
+static const PcGuestModHooksGuest camera_render_reply = {
+    .version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof(PcGuestModHooksGuest),
+    .compiled_groups = PC_GUEST_MOD_HOOKS_COMPILED & PC_GUEST_MOD_HOOKS_CAMERA_RENDER,
+    .table_bytes = PC_GUEST_MOD_HOOKS_CAMERA_RENDER_BYTES, .select = select_hooks
+};
+
 __attribute__((visibility("default")))
 const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uint32_t table_bytes) {
     if (bound_bytes || version != PC_GUEST_MOD_HOOKS_ABI || !pc_guest_mod_hooks_groups_for_bytes(table_bytes)) return 0;
@@ -88,6 +96,7 @@ const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uin
     if (table_bytes == PC_GUEST_MOD_HOOKS_OBSERVED_BYTES) return &observed_reply;
     if (table_bytes == PC_GUEST_MOD_HOOKS_SAFETY_BYTES) return &safety_reply;
     if (table_bytes == PC_GUEST_MOD_HOOKS_SAVE_BYTES) return &save_reply;
+    if (table_bytes == PC_GUEST_MOD_HOOKS_CAMERA_RENDER_BYTES) return &camera_render_reply;
     return &reply;
 }
 
@@ -164,6 +173,14 @@ void skyrim_camera_observe_return(uint32_t receiver) {
 
 void skyrim_camera_observe_render(uint32_t frame, uint32_t first, uint32_t second) {
     if (selected & PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE) camera_render.observe(frame, first, second);
+}
+
+uint64_t skyrim_ece_tri_begin(const struct CPU *cpu, uint32_t path, uint32_t stream) {
+    return selected & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE ? ece_tri.begin(cpu, path, stream) : 0;
+}
+
+void skyrim_ece_tri_finish(const struct CPU *cpu, uint64_t ticket, uint8_t parsed) {
+    if ((selected & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE) && ticket) ece_tri.finish(cpu, ticket, parsed);
 }
 
 void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t event) {

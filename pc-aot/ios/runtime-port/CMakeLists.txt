@@ -150,6 +150,7 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
             "${SKYRIM_IOS_ROOT}/experiments/classic-control-events/control_bridge.c"
             "${camera_sources}/camera_state.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_camera_host.c"
             "${loading_menu_sources}/loading_menu.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_loading_menu_host.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/mod_ece_profile.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_ece_tri_host.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_save_host.c"
             "${SKYRIM_IOS_SAVE_WITNESS}/save_attempt.c" "${SKYRIM_IOS_SAVE_WITNESS}/runtime_save.c"
             "${save_publication}/save_publish.c" "${cosave_source}/observer/lifecycle.c")
