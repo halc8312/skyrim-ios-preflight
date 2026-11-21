@@ -153,10 +153,11 @@ static void copyFixture(NSURL *source, NSURL *destination) {
 #if defined(SKYRIM_IOS_CLASSIC_SKSE) && defined(SKYRIM_IOS_SKSE_DLL_PROBE)
     // These authored profiles have not enabled the Classic trial. The
     // acquisition gate must refuse before preparing a private settings store.
-    SkyrimPapyrusInputs inputs;
-    int acquisition = skyrim_mods_acquire_papyrus_inputs(&inputs);
-    BOOL hasInputs = inputs.settings_fd >= 0 || inputs.game_fd >= 0 || inputs.dll || inputs.pex;
-    skyrim_mods_release_papyrus_inputs(&inputs);
+    SkyrimPapyrusInputs papyrusInputs;
+    int acquisition = skyrim_mods_acquire_papyrus_inputs(&papyrusInputs);
+    BOOL hasInputs = papyrusInputs.settings_fd >= 0 || papyrusInputs.game_fd >= 0 ||
+                     papyrusInputs.dll || papyrusInputs.pex;
+    skyrim_mods_release_papyrus_inputs(&papyrusInputs);
     if (acquisition != ENOENT || hasInputs)
         [NSException raise:NSInternalInconsistencyException format:@"An ordinary launch obtained Papyrus settings inputs"];
 #endif
