@@ -10,7 +10,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_SAVE = ROOT / "experiments" / "classic-runtime-save"
 sys.path.insert(0, str(RUNTIME_SAVE))
+sys.path.insert(0, str(ROOT / "scripts"))
 from stage_save_notifications import HEADER, PRELUDE, SAVE_SITES, stage_save_notifications
+import mod_hooks_guest
 
 
 class SaveNotificationStageTests(unittest.TestCase):
@@ -34,6 +36,8 @@ class SaveNotificationStageTests(unittest.TestCase):
         self.assertTrue(original.is_dir())
         staged = stage_save_notifications(original)
         self.assertEqual(set(staged), set(SAVE_SITES))
+        live = mod_hooks_guest.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,camera_observe,chargen_slider")
+        self.assertFalse(staged.keys() & mod_hooks_guest.compose(original, live).keys())
         private = ROOT / "private"
         if private.resolve() != private:
             raise ValueError("Generated sources must stay in private/")
