@@ -2,7 +2,7 @@
 
 **2026-11-22　MOD第一弾の配布前確認**
 
-固定版LEの生成物、所有者のECEとHighHeelsの素材、固定版libarchiveとliblzmaを使ったMOD関連のPC試験はGCCのASan/UBSanで116件すべて合格した。三人称の診断追加後、フックの統合、旧版との接続、梱包、診断の検査もClangで39件合格した。ゲストは診断を含む17種類のフックを組み込み、Windows上のLLVMでiPhoneOS向けの516ファイルを非署名でリンクした。変更のあるファイルを再コンパイルし、残りはハッシュを照合して再利用した。元のゲーム、MOD、セーブは読み取り専用で扱った。Wearable Lanternsの保存対応まで含む先行版はApple SDKでのiPhoneアプリのリンクと、生成物の取り込みを含むMOD画面のシミュレーター試験が合格した。 [先行版の検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44952205564) [骨格診断を含む版の検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44957754632)
+固定版LEの生成物、所有者のECEとHighHeelsの素材、固定版libarchiveとliblzmaを使ったMOD関連のPC試験はGCCのASan/UBSanで116件すべて合格した。三人称の診断追加後、フックの統合、旧版との接続、梱包、診断の検査もClangで39件合格した。ゲストは診断を含む17種類のフックを組み込み、Windows上のLLVMでiPhoneOS向けの516ファイルを非署名でリンクした。変更のあるファイルを再コンパイルし、残りはハッシュを照合して再利用した。元のゲーム、MOD、セーブは読み取り専用で扱った。Wearable Lanternsの保存対応まで含む先行版はApple SDKでのiPhoneアプリのリンクと、生成物の取り込みを含むMOD画面のシミュレーター試験が合格した。 [先行版の検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44952205564) [骨格診断を含む版のiPhoneOSビルド、MOD画面とDLL診断のシミュレーター試験も合格](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44957754632)
 
 | 対象 | 現在までの確認 | 配布前の確認 |
 | --- | --- | --- |
@@ -19,7 +19,7 @@
 | Safety Load | 実物1.2を照合し、ロード中だけ試せる設定を接続。元のヒープと復帰を試験 | ロード時間、メモリと安定性を実機で比較 |
 | HDT Physics Extensions / HDT HighHeels | 実物の物理設定3件の展開と配置を照合。HighHeelsは両足とふくらはぎから補正量を計算して反映・解除をホスト試験した。実物スクリプトの読込とクラスのリンクを確かめる詳細診断を接続 | 物理は静止表示まで。高さ補正は実際の効果インスタンスと、同じ更新中に保持できる描画ノードの照合が必要 |
 
-第一弾の配布版は未作成。非公開のTailscaleサービスと既存の署名用プロファイルの有効性は確認した。PCで3つのDLCと一部の骨格、髪型、体型、生成済みデータの実物を確認できていない。実機テストは本編とDLCを必要としないMODから進める。DLCが必要な組み合わせは該当する実物がそろった環境で照合する。 [第一弾の計画と実機手順](MOD_FIRST_WAVE_PLAN.md)
+Classic Labビルド18を実機検証用に作成した。対応する署名済み実行ファイル2本、登録端末向けプロファイル、非公開Tailscaleのインストール情報、配信したIPA全体のSHA-256を確認した。実機でのインストールと通常版の第一弾配布は未確認。PCで3つのDLCと一部の骨格、髪型、体型、生成済みデータの実物を確認できていない。実機テストは本編とDLCを必要としないMODから進める。DLCが必要な組み合わせは該当する実物がそろった環境で照合する。 [第一弾の計画と実機手順](MOD_FIRST_WAVE_PLAN.md)
 
 **2026-11-22　HighHeelsのスクリプト読込とリンクの詳細診断**
 
