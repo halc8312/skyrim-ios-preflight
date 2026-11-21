@@ -84,6 +84,13 @@ SksePeStatus skse_pe_inspect(const uint8_t *file, size_t length, SksePeReport *r
 /* Identify the two Classic plugin entry points without mapping or resolving
  * imports. Success only describes the exports and their executable ranges. */
 SksePeStatus skse_pe_classic_exports(const uint8_t *file, size_t length);
+typedef struct {
+    uint32_t address, file_offset, length;
+} SksePeFileRegion;
+
+/* Locate a unique bounded RX .text in an already authenticated PE32 EXE.
+ * No image is mapped or modified. */
+SksePeStatus skse_pe_executable_code(const uint8_t *file, size_t length, SksePeFileRegion *out);
 /* Map a preferred-base, import-free i386 PE32 DLL with two cdecl exports and
  * no loader entry point. Only initialized RX/X bytes may supply instructions.
  * Does not resolve imports, apply relocations, run code or change host memory

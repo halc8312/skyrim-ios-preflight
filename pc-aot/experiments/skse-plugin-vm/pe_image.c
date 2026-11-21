@@ -187,7 +187,7 @@ static SksePeStatus read_sections(PeFile *pe, const uint8_t *table,
     return SKSE_PE_OK;
 }
 
-static SksePeStatus read_headers(PeFile *pe) {
+static SksePeStatus read_headers(PeFile *pe, uint16_t image_kind) {
     if (pe->file_length > SKSE_PE_MAX_FILE_BYTES) return SKSE_PE_SIZE_LIMIT;
     if (pe->file_length < 64) return SKSE_PE_TRUNCATED;
     if (memcmp(pe->file, "MZ", 2)) return SKSE_PE_BAD_FORMAT;
@@ -197,7 +197,7 @@ static SksePeStatus read_headers(PeFile *pe) {
     const uint8_t *nt = pe->file + nt_offset;
     if (memcmp(nt, "PE\0\0", 4)) return SKSE_PE_BAD_FORMAT;
     if (u16(nt + 4) != 0x014c) return SKSE_PE_WRONG_MACHINE;
-    if ((u16(nt + 22) & 0x2002) != 0x2002) return SKSE_PE_BAD_FORMAT;
+    if ((u16(nt + 22) & 0x2002) != image_kind) return SKSE_PE_BAD_FORMAT;
     pe->relocs_stripped = u16(nt + 22) & 1u;
     pe->image.section_count = u16(nt + 6);
     if (!pe->image.section_count || pe->image.section_count > SKSE_PE_MAX_SECTIONS)
@@ -232,6 +232,9 @@ static SksePeStatus read_headers(PeFile *pe) {
         return SKSE_PE_BAD_FORMAT;
     SksePeStatus status = read_sections(pe, pe->file + table_offset, section_align, file_align);
     if (status != SKSE_PE_OK) return status;
+    /* A read-only executable snapshot needs the checked file-backed section
+     * layout. It never maps the executable's loaders or data directories. */
+    if (image_kind == 0x0002) return SKSE_PE_OK;
     for (unsigned i = 0; i < dirs; i++) {
         PeSpan dir = {u32(opt + 96 + i * 8), u32(opt + 100 + i * 8)};
         if (!dir.address && !dir.length) continue;
@@ -250,6 +253,29 @@ static SksePeStatus read_headers(PeFile *pe) {
             return SKSE_PE_BAD_FORMAT;
         pe->image.entry_va = pe->image.base + pe->entry_rva;
     }
+    return SKSE_PE_OK;
+}
+
+SksePeStatus skse_pe_executable_code(const uint8_t *file, size_t length, SksePeFileRegion *out) {
+    if (!out) return SKSE_PE_BAD_ARGUMENT;
+    *out = (SksePeFileRegion){0};
+    if (!file) return SKSE_PE_BAD_ARGUMENT;
+    PeFile pe = {.file = file, .file_length = length};
+    SksePeStatus status = read_headers(&pe, 0x0002);
+    if (status != SKSE_PE_OK) return status;
+    const uint8_t *nt = file + u32(file + 60);
+    const uint8_t *table = nt + 24 + u16(nt + 20);
+    unsigned index = pe.image.section_count;
+    for (unsigned i = 0; i < pe.image.section_count; ++i) {
+        if (memcmp(table + 40 * i, ".text\0\0", 8)) continue;
+        if (index != pe.image.section_count) return SKSE_PE_BAD_FORMAT;
+        index = i;
+    }
+    if (index == pe.image.section_count) return SKSE_PE_UNSUPPORTED_LAYOUT;
+    const SksePeSection section = pe.image.sections[index];
+    if (section.permissions != (SKSE_PE_READ | SKSE_PE_EXEC) || section.length > 16u * 1024u * 1024u)
+        return SKSE_PE_UNSUPPORTED_LAYOUT;
+    *out = (SksePeFileRegion){pe.image.base + section.rva, pe.raw[index].address, section.length};
     return SKSE_PE_OK;
 }
 
@@ -720,7 +746,7 @@ static SksePeStatus read_exports(PeFile *pe, ExportPlan *requested) {
 
 static SksePeStatus parse(PeFile *pe, SksePeReport *report, ImportPlan *plan, ExportPlan *requested,
                           uint32_t guest_base, RelocationWords *move, TlsPlan *tls) {
-    SksePeStatus status = read_headers(pe);
+    SksePeStatus status = read_headers(pe, 0x2002);
     if (status != SKSE_PE_OK) return status;
     if (guest_base) {
         if ((guest_base & 0xffffu) || (uint64_t)guest_base + pe->image.size > (UINT64_C(1) << 32))
@@ -787,7 +813,7 @@ SksePeStatus skse_pe_inspect(const uint8_t *file, size_t length, SksePeReport *r
 SksePeStatus skse_pe_classic_exports(const uint8_t *file, size_t length) {
     if (!file) return SKSE_PE_BAD_ARGUMENT;
     PeFile pe = {.file = file, .file_length = length};
-    SksePeStatus status = read_headers(&pe);
+    SksePeStatus status = read_headers(&pe, 0x2002);
     return status == SKSE_PE_OK ? read_exports(&pe, NULL) : status;
 }
 

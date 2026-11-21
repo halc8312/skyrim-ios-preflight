@@ -27,6 +27,9 @@
 static uint8_t classic_bootstrap[8];
 static bool classic_input_verified;
 #endif
+#if defined(SKYRIM_IOS_MOD_HOOKS) && defined(SKYRIM_IOS_SKSE_DLL_PROBE)
+#include "mod_dll_probe.h"
+#endif
 #ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE
 
 static void probe_classic_settings(void) {
@@ -240,6 +243,13 @@ static void verify_guest_input(NSURL *game) {
         startup_failure(@"TESV_unpacked.exe SHA256 does not match this locally assembled app; guest was not loaded");
 #ifdef SKYRIM_IOS_CLASSIC_SETTINGS_INPUT
     classic_input_verified = skse_classic_settings_copy_bootstrap(&settings_bootstrap, actual, classic_bootstrap);
+#endif
+#if defined(SKYRIM_IOS_MOD_HOOKS) && defined(SKYRIM_IOS_SKSE_DLL_PROBE)
+#ifdef SKYRIM_IOS_CLASSIC_SETTINGS_INPUT
+    skyrim_mod_dll_probe_set_game_input(input, actual, classic_input_verified ? classic_bootstrap : NULL);
+#else
+    skyrim_mod_dll_probe_set_game_input(input, actual, NULL);
+#endif
 #endif
     skyrim_ios_stage("guest-input-sha256-verified");
 }

@@ -34,6 +34,10 @@ typedef struct {
 SkseProbeFileStatus skse_probe_local_dll_with_setup(const char *path, uint32_t uptime_ms,
                                                     const SkseLocalProbeSetup *setup, SkseLocalDllReport *out);
 
+/* Return a private bounded copy of a regular file. The caller frees it.
+ * Failure leaves bytes NULL and length 0. */
+SkseProbeFileStatus skse_probe_snapshot_file(const char *path, uint8_t **bytes, size_t *length);
+
 /* Read one user-selected, coordinated source file. The result lives in memory.
  * Never follow links, write to the source or load host code from it. */
 SkseProbeFileStatus skse_probe_local_dll(const char *path, uint32_t uptime_ms, SkseLocalDllReport *out);

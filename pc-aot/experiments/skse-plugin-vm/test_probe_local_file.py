@@ -177,7 +177,7 @@ def compile_local_probe(cc, binary, *, json_trial=False, settings_backend=False,
                     *extra_sources, *libraries, "-o", binary], check=True, timeout=60)
 
 
-def owner_bootstrap_words(executable, code_view=None):
+def owner_bootstrap_words(executable):
     # Verify the same exact supported PE as the ordinary title generator.
     pin_file = HERE.parents[1] / "scripts/prepare_title_guest.py"
     pin = next(line for line in pin_file.read_text(encoding="utf-8").splitlines()
@@ -204,12 +204,6 @@ def owner_bootstrap_words(executable, code_view=None):
         flags = struct.unpack_from("<I", game, section + 36)[0]
         virtual_size, rva, file_size, raw_offset = struct.unpack_from("<IIII", game, section + 8)
         if name == b".text" and flags & 0x20000000:
-            if code_view is not None:
-                length = min(virtual_size, file_size)
-                if not flags & 0x40000000 or not 0 < length <= 16 * 1024 * 1024 or raw_offset + length > len(game):
-                    raise ValueError("Invalid file-backed code view")
-                code_start = image_base + rva
-                code = game[raw_offset:raw_offset + length]
             for address, target in call_sites.items():
                 offset = address - image_base - rva
                 if 0 <= offset and offset + 5 <= min(virtual_size, file_size):
@@ -232,8 +226,6 @@ def owner_bootstrap_words(executable, code_view=None):
         raise ValueError("The approved initializers are missing from the file-backed PE data")
     if verified_hooks != {*call_sites, animation_site}:
         raise ValueError("The experimental hook sites do not match the pinned input")
-    if code_view is not None:
-        code_view.write_bytes(struct.pack("<I", code_start) + code)
     return b"".join(result[address] for address in addresses)
 
 
@@ -539,8 +531,8 @@ class LocalFileProbeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="owned-papyrus-local-probe-") as temporary:
             root = Path(temporary)
             dll, words, binary = root / "StorageUtil.dll", root / "boot.bin", root / "probe"
-            code_view = root / "code-view.bin"
-            words.write_bytes(owner_bootstrap_words(Path(executable_path), code_view))
+            code_view = Path(executable_path)
+            words.write_bytes(owner_bootstrap_words(code_view))
             with zipfile.ZipFile(archive_path) as archive:
                 members = [entry for entry in archive.infolist() if entry.filename == "SKSE/Plugins/StorageUtil.dll"]
                 self.assertEqual(len(members), 1)

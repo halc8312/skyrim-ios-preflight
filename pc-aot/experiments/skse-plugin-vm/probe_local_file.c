@@ -39,6 +39,27 @@ static SkseProbeFileStatus read_source(int fd, uint8_t **out, size_t *length) {
     return read_piece(fd, &extra, 1) == 0 ? SKSE_PROBE_FILE_CHECKED : SKSE_PROBE_FILE_INCOMPLETE;
 }
 
+SkseProbeFileStatus skse_probe_snapshot_file(const char *path, uint8_t **bytes, size_t *length) {
+    if (!bytes || !length) return SKSE_PROBE_FILE_UNAVAILABLE;
+    *bytes = NULL;
+    *length = 0;
+    if (!path || !*path) return SKSE_PROBE_FILE_UNAVAILABLE;
+    int flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC;
+#ifdef O_NOFOLLOW_ANY
+    flags |= O_NOFOLLOW_ANY;
+#endif
+    int fd = open(path, flags);
+    if (fd < 0) return SKSE_PROBE_FILE_UNAVAILABLE;
+    SkseProbeFileStatus status = read_source(fd, bytes, length);
+    close(fd);
+    if (status != SKSE_PROBE_FILE_CHECKED) {
+        free(*bytes);
+        *bytes = NULL;
+        *length = 0;
+    }
+    return status;
+}
+
 SkseProbeFileStatus skse_probe_local_dll_with_setup(const char *path, uint32_t uptime_ms,
                                                     const SkseLocalProbeSetup *setup, SkseLocalDllReport *out) {
     if (setup && setup->record_probe) setup->record_probe->status = SKSE_SESSION_OUT_OF_ORDER;
@@ -48,13 +69,9 @@ SkseProbeFileStatus skse_probe_local_dll_with_setup(const char *path, uint32_t u
     }
     if (!out) return SKSE_PROBE_FILE_UNAVAILABLE;
     memset(out, 0, sizeof *out);
-    if (!path || !*path) return SKSE_PROBE_FILE_UNAVAILABLE;
-    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
-    if (fd < 0) return SKSE_PROBE_FILE_UNAVAILABLE;
-    uint8_t *bytes = NULL;
-    size_t length = 0;
-    SkseProbeFileStatus status = read_source(fd, &bytes, &length);
-    close(fd);
+    uint8_t *bytes;
+    size_t length;
+    SkseProbeFileStatus status = skse_probe_snapshot_file(path, &bytes, &length);
     if (status == SKSE_PROBE_FILE_CHECKED) {
         // Classic 1.7.3 API as presented to one isolated, temporary plugin.
         const char *slash = strrchr(path, '/');

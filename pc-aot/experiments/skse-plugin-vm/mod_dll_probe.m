@@ -3,6 +3,20 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include "probe_directory.h"
 #include "probe_local_file.h"
+#include <CommonCrypto/CommonDigest.h>
+#include <stdlib.h>
+#include <string.h>
+
+static NSString *gameInputPath;
+static NSData *gameInputDigest;
+static NSData *gameInputBootstrap;
+
+void skyrim_mod_dll_probe_set_game_input(NSURL *input, const uint8_t digest[32], const uint8_t *bootstrap) {
+    if (!input.isFileURL || !digest || gameInputPath) return;
+    gameInputPath = [input.path copy];
+    gameInputDigest = [NSData dataWithBytes:digest length:32];
+    gameInputBootstrap = bootstrap ? [NSData dataWithBytes:bootstrap length:8] : nil;
+}
 
 static NSString *Text(BOOL japanese, NSString *en, NSString *ja) {
     return japanese ? ja : en;
@@ -192,6 +206,59 @@ static NSArray<NSString *> *ReportLines(BOOL japanese, SkseProbeFileStatus statu
         return @[Text(japanese, @"The entire file could not be read.", @"ファイル全体を読み込めませんでした。")];
     }
     return @[Text(japanese, @"The file could not be checked.", @"ファイルを診断できませんでした。")];
+}
+
+static NSArray<NSString *> *DiagnoseSingleDLL(BOOL japanese, const char *path, uint32_t ticks) {
+    uint8_t *input = NULL;
+    size_t length = 0;
+    uint8_t digest[32], bootstrap[8];
+    SksePeFileRegion text;
+    SkseX86ReadView views[3];
+    SkseX86CodeAudit audit = {0};
+    SkseLocalProbeSetup setup = {0};
+    BOOL requestAudit = gameInputPath != nil;
+    BOOL verified = requestAudit &&
+        skse_probe_snapshot_file(gameInputPath.fileSystemRepresentation, &input, &length) == SKSE_PROBE_FILE_CHECKED &&
+        CC_SHA256(input, (CC_LONG)length, digest) &&
+        [gameInputDigest isEqual:[NSData dataWithBytes:digest length:sizeof digest]] &&
+        skse_pe_executable_code(input, length, &text) == SKSE_PE_OK;
+    if (verified) {
+        views[0] = (SkseX86ReadView){text.address, input + text.file_offset, text.length};
+        size_t count = 1;
+        if (gameInputBootstrap.length == sizeof bootstrap) {
+            [gameInputBootstrap getBytes:bootstrap length:sizeof bootstrap];
+            views[count++] = (SkseX86ReadView){0x0124166c, bootstrap, 4};
+            views[count++] = (SkseX86ReadView){0x012b5b80, bootstrap + 4, 4};
+        }
+        setup = (SkseLocalProbeSetup){.read_views = views, .read_view_count = count,
+                                      .capture_papyrus_startup = true, .code_audit = &audit};
+    }
+    SkseLocalDllReport report;
+    SkseProbeFileStatus status = skse_probe_local_dll_with_setup(path, ticks, verified ? &setup : NULL, &report);
+    free(input);
+    NSMutableArray<NSString *> *lines = [ReportLines(japanese, status, &report) mutableCopy];
+    if (requestAudit && !verified)
+        [lines addObject:Text(japanese, @"The verified game input is unavailable for code request observation.",
+                                      @"コード変更要求の観測に必要なゲームファイルを確認できませんでした。")];
+    if (audit.count)
+        [lines addObject:Text(japanese, @"Code write requests observed in isolation",
+                                      @"分離した診断で観測したコード変更要求")];
+    for (size_t i = 0; i < audit.count; ++i) {
+        const SkseX86CodeWrite *write = &audit.writes[i];
+        if (write->width == 1 && (write->value == 0xe8 || write->value == 0xe9) && i + 1 < audit.count &&
+            audit.writes[i + 1].address == write->address + 1 && audit.writes[i + 1].width == 4) {
+            uint32_t target = write->address + 5 + audit.writes[++i].value;
+            [lines addObject:[NSString stringWithFormat:Text(japanese, @"0x%08x · %u bytes · %@ to 0x%08x",
+                @"0x%08x · %uバイト · %@ 0x%08x"), write->address, 5u,
+                write->value == 0xe8 ? @"CALL" : @"JMP", target]];
+        } else {
+            [lines addObject:[NSString stringWithFormat:Text(japanese, @"0x%08x · %u-byte write",
+                @"0x%08x · %uバイトの書き込み"), write->address, write->width]];
+        }
+    }
+    if (audit.truncated) [lines addObject:Text(japanese, @"The observation limit was reached.",
+                                                       @"観測の上限に達しました。")];
+    return lines;
 }
 
 static NSString *FolderFileResult(BOOL japanese, const SkseProbeDirectoryFile *file) {
@@ -390,9 +457,7 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
                     SkseProbeDirectoryStatus status = skse_probe_local_directory(accessibleURL.fileSystemRepresentation, (uint32_t)ticks, &report);
                     lines = FolderReportLines(japanese, status, &report);
                 } else if ([accessibleURL.pathExtension.lowercaseString isEqualToString:@"dll"]) {
-                    SkseLocalDllReport report;
-                    SkseProbeFileStatus status = skse_probe_local_dll(accessibleURL.fileSystemRepresentation, (uint32_t)ticks, &report);
-                    lines = ReportLines(japanese, status, &report);
+                    lines = DiagnoseSingleDLL(japanese, accessibleURL.fileSystemRepresentation, (uint32_t)ticks);
                 } else {
                     lines = ReportLines(japanese, SKSE_PROBE_FILE_UNSUPPORTED, NULL);
                 }

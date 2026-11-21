@@ -126,19 +126,19 @@ static int trace_owned_papyrus(const char *dll, const char *snapshot, bool obser
 }
 
 static int audit_owned_papyrus(const char *dll, const char *snapshot, const char *code_path) {
-    uint8_t words[8], header[4];
-    if (!owned_storage_read_initializers(snapshot, words)) return 2;
-    FILE *input = fopen(code_path, "rb");
-    const size_t cap = 16 * 1024 * 1024;
-    uint8_t *code = malloc(cap);
-    assert(input && code);
-    assert(fread(header, 1, sizeof header, input) == sizeof header);
-    size_t length = fread(code, 1, cap, input);
-    assert(length && fgetc(input) == EOF && !ferror(input) && fclose(input) == 0);
-    uint32_t base = (uint32_t)header[0] | (uint32_t)header[1] << 8 |
-                    (uint32_t)header[2] << 16 | (uint32_t)header[3] << 24;
+    uint8_t words[8], *code;
+    size_t length;
+    if (!owned_storage_read_initializers(snapshot, words) ||
+        skse_probe_snapshot_file(code_path, &code, &length) != SKSE_PROBE_FILE_CHECKED) return 2;
+    SksePeFileRegion text;
+    SksePeStatus admitted = skse_pe_executable_code(code, length, &text);
+    if (admitted != SKSE_PE_OK) {
+        printf("code view eligibility=%u\n", (unsigned)admitted);
+        free(code);
+        return 2;
+    }
     const SkseX86ReadView views[] = {
-        {0x0124166c, words, 4}, {0x012b5b80, words + 4, 4}, {base, code, length}
+        {0x0124166c, words, 4}, {0x012b5b80, words + 4, 4}, {text.address, code + text.file_offset, text.length}
     };
     SkseX86CodeAudit audit = {.read_view_index = 2};
     const SkseLocalProbeSetup setup = {
