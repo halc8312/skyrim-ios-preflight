@@ -246,10 +246,9 @@ static void verify_guest_input(NSURL *game) {
     if (mismatch)
         startup_failure(@"TESV_unpacked.exe SHA256 does not match this locally assembled app; guest was not loaded");
 #ifdef SKYRIM_IOS_MOD_HOOKS
-    if (skyrim_mobile_verbose()) {
-        skyrim_camera_app_configure(hex);
-        skyrim_loading_menu_app_configure(hex);
-    }
+    const bool diagnose = skyrim_mobile_verbose() != 0;
+    if (diagnose) skyrim_camera_app_configure(hex);
+    skyrim_loading_menu_app_configure(hex, diagnose);
 #endif
 #ifdef SKYRIM_IOS_CLASSIC_SETTINGS_INPUT
     classic_input_verified = skse_classic_settings_copy_bootstrap(&settings_bootstrap, actual, classic_bootstrap);

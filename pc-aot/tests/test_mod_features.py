@@ -172,23 +172,26 @@ class FeatureTests(unittest.TestCase):
             alternate.write_bytes(b"x")
             self.assertEqual(self.scan(alias), (1, {}))
 
-    def test_precache_launch_path_requires_the_original_dll_name(self):
-        selected = "skse/Plugins/ShowRacemenu_PrecacheKiller.DLL"
-        a = self.root("selected", [selected, "skse/Plugins/another-precache.dll"])
-        b = self.root("generic", ["SKSE/Plugins/another-precache.dll"])
-        c = self.root("ambiguous", [selected])
-        alternate = c / Path(selected).with_name(Path(selected).name.lower())
-        if alternate.exists():
-            c_result = ["1", str(c / selected)]
-        else:
-            alternate.write_bytes(b"x")
-            c_result = ["-1"]
-        d = self.root("link", ["SKSE/Plugins/unrelated.dll"])
-        (d / "SKSE/Plugins/showRaceMenu_preCacheKiller.dll").symlink_to(a / selected)
-        for root, expected in ((a, ["1", str(a / selected)]), (b, ["0"]), (c, c_result), (d, ["-1"])):
-            with self.subTest(root=root):
-                self.assertEqual(subprocess.check_output([self.binary, "--precache-path", root], text=True,
-                                                         timeout=10).splitlines(), expected)
+    def test_verified_dll_features_require_the_original_file_name(self):
+        for option, name in (("precache", "ShowRacemenu_PrecacheKiller.DLL"),
+                             ("safety", "SaFeTyLoAd.DLL")):
+            selected = f"skse/Plugins/{name}"
+            unrelated = f"SKSE/Plugins/alternate-{name}"
+            a = self.root(f"{option}-selected", [selected])
+            b = self.root(f"{option}-generic", [unrelated])
+            c = self.root(f"{option}-ambiguous", [selected])
+            alternate = c / Path(selected).with_name(name.lower())
+            if alternate.exists():
+                c_result = ["1", str(c / selected)]
+            else:
+                alternate.write_bytes(b"x")
+                c_result = ["-1"]
+            d = self.root(f"{option}-link", [unrelated])
+            (d / "SKSE/Plugins" / name).symlink_to(a / selected)
+            for root, expected in ((a, ["1", str(a / selected)]), (b, ["0"]), (c, c_result), (d, ["-1"])):
+                with self.subTest(option=option, root=root.name):
+                    self.assertEqual(subprocess.check_output([self.binary, f"--{option}-path", root], text=True,
+                                                             timeout=10).splitlines(), expected)
 
 
 if __name__ == "__main__":

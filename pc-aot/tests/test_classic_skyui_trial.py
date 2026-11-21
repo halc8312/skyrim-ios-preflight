@@ -81,8 +81,12 @@ static NSString *T(NSString *english, NSString *japanese) { (void)japanese; retu
 static NSString *StatePath(void) { return [profilePath stringByAppendingPathComponent:@"state.json"]; }
 static NSString *LaunchPath(void) { return [profilePath stringByAppendingPathComponent:@"launch.json"]; }
 static NSString *PackageDir(NSString *pid) { return [packagesPath stringByAppendingPathComponent:pid]; }
+static NSDictionary *LoadPackage(NSString *pid) { (void)pid; return nil; }
 /* Other MOD features have their own tests. Observe the startup handoff here. */
-static void FreezeFeatures(NSDictionary *profile) { frozenFeaturesProfile = profile; }
+static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady) {
+    (void)skyuiAssetsReady;
+    frozenFeaturesProfile = profile;
+}
 #define L T
 ''' + between(manager, "static id MutableJSON(", "static NSString *ProfileName(")
     + function(manager, "static BOOL AnyOn(")
@@ -101,12 +105,17 @@ static void FreezeFeatures(NSDictionary *profile) { frozenFeaturesProfile = prof
 @implementation TrialSwitch @end
 #define UISwitch TrialSwitch
 @interface TrialHub : NSObject
+@property(nonatomic, readonly) TrialHub *tableView;
+- (void)reloadData;
 - (void)skyuiTrialToggled:(UISwitch *)toggle;
 @end
 static NSString *shownNotice;
 static void skyrim_mobile_show_notice(NSString *message) { shownNotice = message; }
+''' + function(manager, "static BOOL SaveProfileToggle(") + r'''
 @implementation TrialHub
-''' + between(manager, "- (void)skyuiTrialToggled:", "#endif") + r'''
+- (TrialHub *)tableView { return self; }
+- (void)reloadData {}
+''' + function(manager, "- (void)skyuiTrialToggled:") + r'''
 @end
 
 static void start(NSString *game, int expected) {

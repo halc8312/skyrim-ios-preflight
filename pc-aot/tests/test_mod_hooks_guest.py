@@ -30,13 +30,14 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups("camera_observe"), 16)
         self.assertEqual(hooks.parse_groups("loading_menu_observe"), 128)
         self.assertEqual(hooks.parse_groups("inventory_fit"), 256)
+        self.assertEqual(hooks.parse_groups("loading_menu_observe,safety_load"), 640)
         self.assertEqual(hooks.group_names(11), ["fuz_menu", "fuz_world", "chargen_precache"])
 
     def test_rejects_unknown_unstaged_duplicate_and_incomplete_lists(self):
         for text, message in (("", "comma-separated"), ("fuz_menu,", "comma-separated"),
                               ("fuz_menu,fuz_menu", "twice"), ("fuz", "Unknown"),
                               ("save_lifecycle", "P3-5"),
-                              ("fuz_world", "list both")):
+                              ("fuz_world", "list both"), ("safety_load", "list both")):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
                 hooks.parse_groups(text)
 
@@ -213,7 +214,7 @@ class OwnedLiftTests(unittest.TestCase):
         state = json.loads((root / "generation.json").read_text(encoding="utf-8"))
         classic.validate_generation(state)
         groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe,"
-                                    "loading_menu_observe,inventory_fit")
+                                    "loading_menu_observe,inventory_fit,safety_load")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
@@ -221,7 +222,7 @@ class OwnedLiftTests(unittest.TestCase):
             sources = classic.prepare_sources(originals, work / "classic-sources")
             result, staged = hooks.prepare_sources(sources, work / "mod-hook-sources", groups, state, root)
             self.assertTrue({"exe_95.c", "exe_100.c", "exe_101.c", "exe_189.c", "exe_35.c", "exe_188.c",
-                             "exe_106.c", "exe_185.c", "exe_186.c", "exe_199.c", "exe_262.c"} <= set(staged))
+                             "exe_106.c", "exe_185.c", "exe_186.c", "exe_199.c", "exe_259.c", "exe_262.c"} <= set(staged))
             menu = (work / "mod-hook-sources" / "exe_262.c").read_bytes()
             self.assertEqual(menu.count(b"skyrim_inventory_fit_enabled()"), 1)
             self.assertEqual(menu.count(b"skyrim_loading_menu_observe(0x"), 2)

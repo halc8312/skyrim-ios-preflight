@@ -19,9 +19,10 @@ int main(int argc, char **argv) {
         puts("");
         return 0;
     }
-    if (argc == 3 && !strcmp(argv[1], "--precache-path")) {
+    if (argc == 3 && (!strcmp(argv[1], "--precache-path") || !strcmp(argv[1], "--safety-path"))) {
         char path[4096];
-        int found = skyrim_precache_killer_path(argv[2], path, sizeof path);
+        int found = !strcmp(argv[1], "--precache-path") ? skyrim_precache_killer_path(argv[2], path, sizeof path)
+                                                       : skyrim_safety_load_path(argv[2], path, sizeof path);
         printf("%d\n", found);
         if (found > 0) puts(path);
         return 0;

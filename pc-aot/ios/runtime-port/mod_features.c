@@ -42,7 +42,7 @@ static const FeatureRow rows[SKYRIM_FEATURE_COUNT] = {
     [SKYRIM_FEATURE_NIOVERRIDE] = {"nioverride", NULL, NULL, 0},
     [SKYRIM_FEATURE_ECE] = {"ece", NULL, "EnhancedCharacterEdit.esp", 0},
     [SKYRIM_FEATURE_ENHANCED_CAMERA] = {"enhancedcamera", "enhancedcamera", NULL, 0},
-    [SKYRIM_FEATURE_SAFETY_LOAD] = {"safetyload", "safetyload", NULL, 0},
+    [SKYRIM_FEATURE_SAFETY_LOAD] = {"safetyload", "safetyload", NULL, 1},
     [SKYRIM_FEATURE_HDT_PHYSICS] = {"hdtphysics", "hdtphysics", NULL, 0},
     [SKYRIM_FEATURE_HDT_HIGHHEELS] = {"hdthighheels", "highheel", NULL, 0},
 };
@@ -73,12 +73,20 @@ static int regular_file(const char *root, const char *name, char *path, size_t c
     return !lstat(path, &st) && S_ISREG(st.st_mode) ? 1 : -1;
 }
 
-int skyrim_precache_killer_path(const char *data, char *path, size_t capacity) {
+static int skse_dll_path(const char *data, const char *name, char *path, size_t capacity) {
     if (!data || !path || !capacity) return -1;
     char skse[4096], plugins[4096];
     int found = child_directory(data, "SKSE", skse, sizeof skse);
     if (found > 0) found = child_directory(skse, "Plugins", plugins, sizeof plugins);
-    return found > 0 ? regular_file(plugins, "showRaceMenu_preCacheKiller.dll", path, capacity) : found;
+    return found > 0 ? regular_file(plugins, name, path, capacity) : found;
+}
+
+int skyrim_precache_killer_path(const char *data, char *path, size_t capacity) {
+    return skse_dll_path(data, "showRaceMenu_preCacheKiller.dll", path, capacity);
+}
+
+int skyrim_safety_load_path(const char *data, char *path, size_t capacity) {
+    return skse_dll_path(data, "SafetyLoad.dll", path, capacity);
 }
 
 static uint32_t read_u16(const uint8_t *p) {

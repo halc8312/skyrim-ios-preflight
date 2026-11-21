@@ -2,7 +2,7 @@
 #include "mod_hook_selection.h"
 #include <assert.h>
 
-enum { MENU = 1, WORLD = 2, VM = 4, CHARGEN = 8, SLIDER = 32 };
+enum { MENU = 1, WORLD = 2, VM = 4, CHARGEN = 8, SLIDER = 32, LOADING = 128, SAFETY = 512 };
 #define BIT(f) (1u << (f))
 
 int main(void) {
@@ -43,5 +43,12 @@ int main(void) {
     assert(!plan.groups && plan.reason[SKYRIM_FEATURE_RACEMENU] == SKYRIM_HOOK_PLAN_GUEST_HOOKS_MISSING);
     skyrim_mod_hook_plan(BIT(SKYRIM_FEATURE_RACEMENU), SLIDER, SLIDER, &plan);
     assert(plan.groups == SLIDER && plan.enabled == BIT(SKYRIM_FEATURE_RACEMENU));
+
+    skyrim_mod_hook_plan(BIT(SKYRIM_FEATURE_SAFETY_LOAD), SAFETY, LOADING | SAFETY, &plan);
+    assert(!plan.groups && !plan.enabled && plan.missing[SKYRIM_FEATURE_SAFETY_LOAD] == LOADING);
+    skyrim_mod_hook_plan(BIT(SKYRIM_FEATURE_SAFETY_LOAD), LOADING | SAFETY, 0, &plan);
+    assert(!plan.groups && plan.reason[SKYRIM_FEATURE_SAFETY_LOAD] == SKYRIM_HOOK_PLAN_HOST_UNAVAILABLE);
+    skyrim_mod_hook_plan(BIT(SKYRIM_FEATURE_SAFETY_LOAD), LOADING | SAFETY, LOADING | SAFETY, &plan);
+    assert(plan.groups == (LOADING | SAFETY) && plan.enabled == BIT(SKYRIM_FEATURE_SAFETY_LOAD));
     return 0;
 }

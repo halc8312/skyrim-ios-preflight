@@ -26,7 +26,7 @@ class HookSelectionTests(unittest.TestCase):
         header = (ROOT / "ios/private-abi/PcGuestModHooksABI.h").read_text()
         source = (PORT / "mod_hook_selection.c").read_text()
         for name, value in (("FUZ_MENU", 1), ("FUZ_WORLD", 2), ("VM_LIFECYCLE", 4), ("CHARGEN_PRECACHE", 8),
-                            ("CHARGEN_SLIDER", 32)):
+                            ("CHARGEN_SLIDER", 32), ("LOADING_MENU_OBSERVE", 128), ("SAFETY_LOAD", 512)):
             self.assertIn(f"PC_GUEST_MOD_HOOK_{name} = {value}u", header)
             self.assertIn(f"{name} = {value}u", source)
 

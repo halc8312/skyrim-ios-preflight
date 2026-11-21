@@ -26,7 +26,7 @@ SEAMS = EXPERIMENTS / "fuz-voice"
 GROUPS = {
     "fuz_menu": 1, "fuz_world": 2, "vm_lifecycle": 4, "chargen_precache": 8,
     "camera_observe": 16, "chargen_slider": 32, "save_lifecycle": 64,
-    "loading_menu_observe": 128, "inventory_fit": 256,
+    "loading_menu_observe": 128, "inventory_fit": 256, "safety_load": 512,
 }
 # Groups without a production binding, with the reason shown to the caller.
 UNSTAGED = {
@@ -107,6 +107,8 @@ def parse_groups(text: str) -> int:
         mask |= GROUPS[name]
     if mask & GROUPS["fuz_world"] and not mask & GROUPS["fuz_menu"]:
         raise ValueError("fuz_world reuses the fuz_menu response stage; list both")
+    if mask & GROUPS["safety_load"] and not mask & GROUPS["loading_menu_observe"]:
+        raise ValueError("safety_load needs loading_menu_observe; list both")
     return mask
 
 
@@ -183,6 +185,11 @@ def stage_inventory_fit(root: Path) -> dict[str, bytes]:
                                                          (root / "gen" / inventory.INVENTORY_UNIT).read_bytes())}
 
 
+def stage_safety_load(root: Path) -> dict[str, bytes]:
+    safety = load(EXPERIMENTS / "classic-safety-load", "stage_allocator")
+    return {safety.UNIT: safety.stage_allocator((root / "gen" / safety.UNIT).read_bytes())}
+
+
 def function_span(unit: bytes, function: str) -> tuple[int, int]:
     marker = f"\nvoid {function}(CPU *c) {{\n".encode("ascii")
     if unit.count(marker) != 1:
@@ -221,6 +228,7 @@ STAGES = {
     "camera_observe": stage_camera_observe,
     "loading_menu_observe": stage_loading_menu_observe,
     "inventory_fit": stage_inventory_fit,
+    "safety_load": stage_safety_load,
 }
 
 

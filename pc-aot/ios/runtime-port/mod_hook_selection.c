@@ -2,7 +2,8 @@
 #include "mod_hook_selection.h"
 
 /* PcGuestModHooksABI.h bits, repeated so this file has no seam headers. */
-enum { FUZ_MENU = 1u, FUZ_WORLD = 2u, VM_LIFECYCLE = 4u, CHARGEN_PRECACHE = 8u, CHARGEN_SLIDER = 32u };
+enum { FUZ_MENU = 1u, FUZ_WORLD = 2u, VM_LIFECYCLE = 4u, CHARGEN_PRECACHE = 8u, CHARGEN_SLIDER = 32u,
+       LOADING_MENU_OBSERVE = 128u, SAFETY_LOAD = 512u };
 
 uint32_t skyrim_mod_hook_requirements(unsigned feature) {
     switch (feature) {
@@ -12,6 +13,7 @@ uint32_t skyrim_mod_hook_requirements(unsigned feature) {
     case SKYRIM_FEATURE_PAPYRUSUTIL: return VM_LIFECYCLE;
     case SKYRIM_FEATURE_PRECACHE_KILLER: return CHARGEN_PRECACHE;
     case SKYRIM_FEATURE_RACEMENU: return CHARGEN_SLIDER;
+    case SKYRIM_FEATURE_SAFETY_LOAD: return LOADING_MENU_OBSERVE | SAFETY_LOAD;
     default: return 0;
     }
 }

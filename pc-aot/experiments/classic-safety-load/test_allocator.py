@@ -23,6 +23,42 @@ class AllocatorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "differs from the reviewed"):
             stage_allocator(b"authored input")
 
+    def test_real_crt_fallback_with_skydream_heap(self):
+        generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
+        compiler = shutil.which(os.environ.get("CC", "cc"))
+        if not generation or not compiler:
+            self.skipTest("A fixed-version Classic lift and a native C compiler are required")
+        lift = Path(generation).resolve()
+        state = json.loads((lift / "generation.json").read_text(encoding="utf-8"))
+        validate_generation(state, lift)
+        crt = (lift / "gen/exe_467.c").read_bytes()
+        runtime = lift / "source/runtime"
+        heap = runtime / "heap.c"
+        self.assertEqual(sha256(crt).hexdigest(), "e40f124913665af49895b591147fbaa3cc11cae5b5534aa5b6c0b89d33253769")
+        self.assertEqual(sha256(heap.read_bytes().replace(b"\r\n", b"\n")).hexdigest(),
+                         "6b913b89b09846adfe86338dfe1e6f576db7f33c0ada2b6afbb44fe8a878bc92")
+        bodies = []
+        for function in ("f_F568FA", "f_F5872D", "f_F587F5"):
+            anchor = f"\nvoid {function}(CPU *c) {{\n".encode()
+            self.assertEqual(crt.count(anchor), 1)
+            start = crt.index(anchor)
+            end = crt.index(b"\n}\n", start) + 3
+            bodies.append(crt[start:end])
+        flags = ["-std=gnu11", "-O2", "-pthread"]
+        if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
+            flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+            if sys.platform.startswith("linux"):
+                flags += ["-fno-pie", "-no-pie"]
+        with tempfile.TemporaryDirectory(prefix="classic-crt-fallback-") as directory:
+            directory = Path(directory)
+            fixture = directory / "crt.c"
+            fixture.write_bytes(b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n' + b"".join(bodies))
+            binary = directory / "crt-test"
+            subprocess.run([compiler, *flags, "-isystem", str(runtime), "-isystem", str(lift / "gen"),
+                            "-I", str(ROOT / "native"), fixture, HERE / "test_crt_fallback.c", heap,
+                            ROOT / "native/guest_memory.c", "-o", binary], check=True, timeout=90)
+            subprocess.run([binary], check=True, timeout=30)
+
     def test_owned_allocator_continuation(self):
         lift = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
         compiler = shutil.which(os.environ.get("CC", "cc"))

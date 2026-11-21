@@ -45,6 +45,7 @@ int skyrim_nioverride_file_version(const char *root, uint16_t version[4]);
 /* Locate the reviewed package's DLL under one already selected Data view.
  * Returns 1 when found, 0 when absent, -1 for ambiguous names or unsafe files. */
 int skyrim_precache_killer_path(const char *data, char *path, size_t capacity);
+int skyrim_safety_load_path(const char *data, char *path, size_t capacity);
 
 /* Stable ASCII key used in saved profile state and accessibility identifiers. */
 const char *skyrim_feature_key(unsigned feature);

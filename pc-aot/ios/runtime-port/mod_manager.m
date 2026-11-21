@@ -355,6 +355,13 @@ static BOOL FeatureSelected(NSDictionary *profile, unsigned feature) {
     NSDictionary *chosen = profile[@"features"];
     return [chosen isKindOfClass:NSDictionary.class] && [chosen[@(skyrim_feature_key(feature) ?: "")] isEqual:@YES];
 }
+
+static BOOL FeatureImplementedInApp(unsigned feature) {
+#ifndef SKYRIM_IOS_MOD_HOOKS
+    if (feature == SKYRIM_FEATURE_SAFETY_LOAD) return NO;
+#endif
+    return skyrim_feature_implemented(feature) != 0;
+}
 static uint32_t launchFeatureMask; /* set once on the startup thread before the guest runs */
 int skyrim_mods_feature_enabled(unsigned feature) {
     return feature < SKYRIM_FEATURE_COUNT && (__atomic_load_n(&launchFeatureMask, __ATOMIC_RELAXED) >> feature & 1u);
@@ -394,18 +401,18 @@ static NSData *ReadBoundedRegularFile(NSString *path, size_t limit) {
     return offset == data.length && extra == 0 && data.length ? data : nil;
 }
 
-static BOOL VerifiedPrecacheKiller(NSDictionary *profile) {
+static BOOL VerifiedViewDLL(NSDictionary *profile, int (*find)(const char *, char *, size_t),
+                            size_t size, NSString *sha256) {
     NSString *profileID = profile[@"id"];
     if (!launchPackageIds.count || !ValidId(profileID)) return NO;
     NSString *view = CanonicalSupportPath([[Base() stringByAppendingPathComponent:@"Views"]
                                           stringByAppendingPathComponent:profileID]);
     char data[4096], path[4096];
     if (!view || skyrim_plugin_child_path(view.fileSystemRepresentation, "Data", data, sizeof data) != 1 ||
-        skyrim_precache_killer_path(data, path, sizeof path) != 1) return NO;
+        find(data, path, sizeof path) != 1) return NO;
     NSString *dllPath = [NSFileManager.defaultManager stringWithFileSystemRepresentation:path length:strlen(path)];
-    NSData *dll = ReadBoundedRegularFile(dllPath, 108032);
-    return dll.length == 108032 &&
-        [HexDigest(dll) isEqualToString:@"cec5d2b00f46867405e138702ab7fadcac949d5dded054a12f6d8ec2e70ba2e4"];
+    NSData *dll = ReadBoundedRegularFile(dllPath, size);
+    return dll.length == size && [HexDigest(dll) isEqualToString:sha256];
 }
 
 static bool SkipChargenPrecache(void) { return true; }  /* Only selected for the verified LE DLL. */
@@ -497,8 +504,10 @@ static void RaceMenuDidApply(void) {
  * guest starts. Returns the features whose groups were selected. */
 static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, SkyrimHookPlan *plan) {
     const uint32_t fuzGroups = PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD;
+    const BOOL menuObserver = skyrim_loading_menu_app_ready();
     const uint32_t host = fuzGroups | PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER |
-                          PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE;
+                          PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE |
+                          (menuObserver ? PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE | PC_GUEST_MOD_HOOK_SAFETY_LOAD : 0);
     const uint32_t compiled = pc_guest_mod_hooks_compiled();
     skyrim_mod_hook_plan(requested, compiled, host, plan);
     if (plan->groups & fuzGroups) {
@@ -515,7 +524,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, SkyrimHook
      * Enhanced Camera rendering feature. */
     if (!launchWithoutMods && !launchPluginListFailed && skyrim_camera_app_ready() &&
         (compiled & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_CAMERA_OBSERVE;
-    if (!launchWithoutMods && !launchPluginListFailed && skyrim_loading_menu_app_ready() &&
+    if (!launchWithoutMods && !launchPluginListFailed && menuObserver && skyrim_mobile_verbose() &&
         (compiled & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE;
     if (inventoryFit && (compiled & PC_GUEST_MOD_HOOK_INVENTORY_FIT))
         plan->groups |= PC_GUEST_MOD_HOOK_INVENTORY_FIT;
@@ -530,6 +539,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, SkyrimHook
         table.chargen_slider = (PcGuestModChargenSliderHooks){RaceMenuPendingValue, TakeRaceMenuNoseHeight, RaceMenuDidApply};
     if (plan->groups & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) table.camera.observe_return = skyrim_camera_app_observe;
     if (plan->groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) table.loading_menu.observe = skyrim_loading_menu_app_observe;
+    if (plan->groups & PC_GUEST_MOD_HOOK_SAFETY_LOAD) table.safety_load.bypass_reclamation = skyrim_safety_load_app_bypass;
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
     /* Keep the original paths: select nothing. */
     if (pc_guest_select_mod_hooks(0, NULL) != 0) fputs("IOS_MOD_HOOKS selection failed\n", stderr);
@@ -549,11 +559,15 @@ static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady) {
     unsigned reasons[SKYRIM_FEATURE_COUNT];
     uint32_t hooked = 0;
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
-        reasons[f] = launchWithoutMods || launchPluginListFailed ? 3 : !skyrim_feature_implemented(f) ? 1
+        reasons[f] = launchWithoutMods || launchPluginListFailed ? 3 : !FeatureImplementedInApp(f) ? 1
                    : !scan.features[f].providers ? 2 : 0;
 #ifdef SKYRIM_IOS_MOD_HOOKS
-        if (f == SKYRIM_FEATURE_PRECACHE_KILLER && FeatureSelected(profile, f) &&
-            !reasons[f] && !VerifiedPrecacheKiller(profile)) reasons[f] = 5;
+        if (f == SKYRIM_FEATURE_PRECACHE_KILLER && FeatureSelected(profile, f) && !reasons[f] &&
+            !VerifiedViewDLL(profile, skyrim_precache_killer_path, 108032,
+                @"cec5d2b00f46867405e138702ab7fadcac949d5dded054a12f6d8ec2e70ba2e4")) reasons[f] = 5;
+        if (f == SKYRIM_FEATURE_SAFETY_LOAD && FeatureSelected(profile, f) && !reasons[f] &&
+            !VerifiedViewDLL(profile, skyrim_safety_load_path, 108032,
+                @"5a6eb517ed331892f43f9f4516e89781a39150fe5f9564f1f9143324884892a9")) reasons[f] = 5;
         if (FeatureSelected(profile, f) && !reasons[f] && skyrim_mod_hook_requirements(f)) hooked |= 1u << f;
 #endif
     }
@@ -2198,7 +2212,7 @@ static NSString *FeatureName(unsigned feature) {
     case SKYRIM_FEATURE_NIOVERRIDE: return @"NetImmerse Override";
     case SKYRIM_FEATURE_ECE: return @"Enhanced Character Edit";
     case SKYRIM_FEATURE_ENHANCED_CAMERA: return @"Enhanced Camera";
-    case SKYRIM_FEATURE_SAFETY_LOAD: return @"Safety Load";
+    case SKYRIM_FEATURE_SAFETY_LOAD: return T(@"Safety Load 1.2 (loading screens, trial)", @"Safety Load 1.2（ロード中・試験）");
     case SKYRIM_FEATURE_HDT_PHYSICS: return @"HDT Physics Extensions";
     case SKYRIM_FEATURE_HDT_HIGHHEELS: return @"HDT High Heels";
     }
@@ -2261,7 +2275,7 @@ static NSString *FeatureName(unsigned feature) {
     }
     unsigned f = self.found[p.row].unsignedIntValue;
     c.textLabel.text = FeatureName(f);
-    BOOL implemented = skyrim_feature_implemented(f) != 0;
+    BOOL implemented = FeatureImplementedInApp(f);
     NSString *status = implemented ? T(@"Found by file name (version not checked).", @"ファイル名で検出しました（版は未確認）。")
                                    : T(@"Found. Not supported on iPhone yet.", @"検出しました。iPhoneではまだ対応していません。");
 #ifdef SKYRIM_IOS_MOD_HOOKS

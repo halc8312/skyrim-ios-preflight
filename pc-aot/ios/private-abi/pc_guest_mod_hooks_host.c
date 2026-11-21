@@ -21,17 +21,18 @@ int pc_guest_bind_mod_hooks(void *library) {
         bind_attempted = 1;
         return 0;
     }
-    uint32_t table_bytes = sizeof(PcGuestModHooks);
-    const PcGuestModHooksGuest *reply = bind(PC_GUEST_MOD_HOOKS_ABI, table_bytes);
-    if (!reply) {
-        table_bytes = PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES;
+    const uint32_t sizes[] = {sizeof(PcGuestModHooks), PC_GUEST_MOD_HOOKS_OBSERVED_BYTES,
+                             PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES};
+    const PcGuestModHooksGuest *reply = NULL;
+    uint32_t table_bytes = 0;
+    for (unsigned i = 0; !reply && i < sizeof sizes / sizeof sizes[0]; ++i) {
+        table_bytes = sizes[i];
         reply = bind(PC_GUEST_MOD_HOOKS_ABI, table_bytes);
     }
     if (!reply || reply->version != PC_GUEST_MOD_HOOKS_ABI || reply->bytes != sizeof(*reply)
             || reply->table_bytes != table_bytes || !reply->select
             || !pc_guest_mod_hooks_groups_valid(reply->compiled_groups)
-            || (table_bytes == PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES &&
-                (reply->compiled_groups & ~PC_GUEST_MOD_HOOKS_ORIGINAL))) {
+            || (reply->compiled_groups & ~pc_guest_mod_hooks_groups_for_bytes(table_bytes))) {
         fputs("PRIVATE_GUEST incompatible MOD hook interface\n", stderr);
         return -1;
     }

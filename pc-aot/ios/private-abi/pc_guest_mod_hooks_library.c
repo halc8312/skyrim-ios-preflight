@@ -14,6 +14,9 @@ _Static_assert(((PC_GUEST_MOD_HOOKS_COMPILED) & ~PC_GUEST_MOD_HOOKS_DEFINED) == 
 _Static_assert(!((PC_GUEST_MOD_HOOKS_COMPILED) & PC_GUEST_MOD_HOOK_FUZ_WORLD)
                || ((PC_GUEST_MOD_HOOKS_COMPILED) & PC_GUEST_MOD_HOOK_FUZ_MENU),
                "The world stage reuses the menu stage's response assignment");
+_Static_assert(((PC_GUEST_MOD_HOOKS_COMPILED) & (PC_GUEST_MOD_HOOK_SAFETY_LOAD | PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE))
+               != PC_GUEST_MOD_HOOK_SAFETY_LOAD,
+               "Safety Load requires the original menu transitions");
 
 static uint32_t selected;
 static uint32_t bound_bytes;
@@ -25,6 +28,7 @@ static PcGuestModChargenHooks chargen_precache;
 static PcGuestModChargenSliderHooks chargen_slider;
 static PcGuestModCameraHooks camera;
 static PcGuestModLoadingMenuHooks loading_menu;
+static PcGuestModSafetyLoadHooks safety_load;
 
 static int select_hooks(const PcGuestModHooks *table) {
     if (!bound_bytes || selection_final || !pc_guest_mod_hooks_table_valid(table) || table->bytes != bound_bytes
@@ -36,6 +40,7 @@ static int select_hooks(const PcGuestModHooks *table) {
     if (table->groups & PC_GUEST_MOD_HOOK_CHARGEN_SLIDER) chargen_slider = table->chargen_slider;
     if (table->groups & PC_GUEST_MOD_HOOK_CAMERA_OBSERVE) camera = table->camera;
     if (table->groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) loading_menu = table->loading_menu;
+    if (table->groups & PC_GUEST_MOD_HOOK_SAFETY_LOAD) safety_load = table->safety_load;
     selected = table->groups;
     selection_final = 1;
     return 0;
@@ -53,12 +58,19 @@ static const PcGuestModHooksGuest original_reply = {
     .table_bytes = PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES, .select = select_hooks
 };
 
+static const PcGuestModHooksGuest observed_reply = {
+    .version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof(PcGuestModHooksGuest),
+    .compiled_groups = PC_GUEST_MOD_HOOKS_COMPILED & PC_GUEST_MOD_HOOKS_OBSERVED,
+    .table_bytes = PC_GUEST_MOD_HOOKS_OBSERVED_BYTES, .select = select_hooks
+};
+
 __attribute__((visibility("default")))
 const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uint32_t table_bytes) {
-    if (bound_bytes || version != PC_GUEST_MOD_HOOKS_ABI
-            || (table_bytes != sizeof(PcGuestModHooks) && table_bytes != PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES)) return 0;
+    if (bound_bytes || version != PC_GUEST_MOD_HOOKS_ABI || !pc_guest_mod_hooks_groups_for_bytes(table_bytes)) return 0;
     bound_bytes = table_bytes;
-    return table_bytes == PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES ? &original_reply : &reply;
+    if (table_bytes == PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES) return &original_reply;
+    if (table_bytes == PC_GUEST_MOD_HOOKS_OBSERVED_BYTES) return &observed_reply;
+    return &reply;
 }
 
 /* FUZ_MENU */
@@ -137,3 +149,7 @@ void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t ev
 }
 
 bool skyrim_inventory_fit_enabled(void) { return (selected & PC_GUEST_MOD_HOOK_INVENTORY_FIT) != 0; }
+
+bool skyrim_safety_load_bypass_reclamation(void) {
+    return (selected & PC_GUEST_MOD_HOOK_SAFETY_LOAD) && safety_load.bypass_reclamation();
+}

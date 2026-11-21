@@ -14,8 +14,11 @@ enum {
 };
 
 uint8_t *MEM;
+static bool memory_warning;
 uint64_t skyrim_perf_now_ns(void);
 uint64_t skyrim_perf_now_ns(void) { return 1234567; }
+int skyrim_device_memory_pressure(uint64_t now);
+int skyrim_device_memory_pressure(uint64_t now) { assert(now == skyrim_perf_now_ns()); return memory_warning; }
 static gm_space guest;
 static uint32_t expected_event, expected_dispatcher, expected_return;
 static unsigned dispatch_count, observations;
@@ -80,10 +83,12 @@ int main(void) {
     M32(EVENT) = LOADING_NAME;
     M32(EVENT + 4) = 0xababab01;
     run_case(true, MANAGER + 4, EVENT, CLASSIC_LOADING_MENU_OPEN);
-    skyrim_loading_menu_app_configure("different input");
+    skyrim_loading_menu_app_configure("different input", true);
     assert(!skyrim_loading_menu_app_ready());
     skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, EVENT);
-    skyrim_loading_menu_app_configure("d97eb0cc0ceef0923d2234d42b382c0d033853356528b271bc043542b1f5e605");
+    assert(!skyrim_safety_load_app_bypass());
+    const char *verified = "d97eb0cc0ceef0923d2234d42b382c0d033853356528b271bc043542b1f5e605";
+    skyrim_loading_menu_app_configure(verified, true);
     assert(skyrim_loading_menu_app_ready());
     skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, EVENT);
     skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, 0x500);
@@ -112,5 +117,24 @@ int main(void) {
     M32(MANAGER_SLOT) = 0;
     run_case(false, MANAGER + 4, EVENT, CLASSIC_MENU_NONE);
     assert(classic_observed_menu_transition(0, MANAGER + 4, EVENT, read_word, &guest) == CLASSIC_MENU_NONE);
+
+    skyrim_loading_menu_app_configure(verified, false);
+    M32(MANAGER_SLOT) = MANAGER;
+    M32(EVENT + 4) = 1;
+    assert(!skyrim_safety_load_app_bypass());
+    skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, EVENT);
+    assert(skyrim_safety_load_app_bypass());
+    memory_warning = true;
+    assert(!skyrim_safety_load_app_bypass());
+    memory_warning = false;
+    M32(EVENT) = CHARGEN_NAME;
+    skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, EVENT);
+    assert(!skyrim_safety_load_app_bypass());
+    M32(EVENT + 4) = 0;
+    skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_CLOSE_SITE, MANAGER + 4, EVENT);
+    assert(skyrim_safety_load_app_bypass());
+    M32(EVENT) = LOADING_NAME;
+    skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_CLOSE_SITE, MANAGER + 4, EVENT);
+    assert(!skyrim_safety_load_app_bypass());
     return gm_release(&guest, NULL) ? 0 : EXIT_FAILURE;
 }

@@ -8,7 +8,7 @@ Fuz Ro D-oh LE 6.1の実物の代替音声10件を、アプリで使うxWMAデ�
 
 **2026-11-22　Safety Loadと追加セーブのPC試験を進行**
 
-Safety Load LE 1.2の実物DLLから、固定版のメモリ確保で再利用処理を飛ばし、既存の通常確保または境界をそろえた確保へ進む箇所を特定した。ロード中・キャラ作成画面の外・通常サイズの要求に限る試作を作り、固定版生成物の分岐と元の動作をClang 18とGCCのASan/UBSanで各2件検査した。実物のアロケータとiPhone上のメモリ圧迫は未確認で、アプリの動作は変更していない。 [Safety Loadの試作](../experiments/classic-safety-load/README.md)
+Safety Load LE 1.2の実物DLLから、固定版のメモリ確保で再利用処理を飛ばす分岐を特定した。プロファイルで明示的に選び、実物のDLLを照合できた場合に、ロード画面中だけ試せる。キャラ作成中、メモリ警告直後、確保失敗後の再試行は元の処理へ戻る。固定版の通常確保・境界をそろえた確保とSkydreamのヒープを使った試験をClang 18とGCCのASan/UBSanで各3件確認した。実機でのロード時間、メモリと安定性の比較は残る。 [Safety Loadの試作](../experiments/classic-safety-load/README.md)
 
 追加セーブの試作は、実際のSkydreamファイル処理、固定版の選択ロードとVMの呼び出し、対応する追加セーブの取り出しを1回のPC試験にまとめ、Clang 18とGCCのASan/UBSanで各8条件が合格した。一部のファイル・VM処理は試験用で、実行時の読み取り経路を引き続き照合する。 [選択ロードの統合試験](../experiments/classic-runtime-save/README.md)
 
