@@ -33,6 +33,14 @@ bool classic_fresh_resolve_path(const struct CPU *, uint32_t path,
                                 char canonical[CLASSIC_FRESH_PATH_BYTES]);
 void classic_fresh_report(ClassicFreshReport);
 
+/* Read-only resolver for the staged first selected-save open. The caller
+ * supplies the canonical authorized profile directory and retains its
+ * lifetime. Pass a separate output buffer. It holds the mapped path for
+ * an existing regular .ess directly below that directory, or an empty
+ * string on refusal. The ordinary file open still owns descriptor identity. */
+bool classic_fresh_resolve_selected_guest_path(const struct CPU *, uint32_t path,
+    const char *mapped_directory, char canonical[CLASSIC_FRESH_PATH_BYTES]);
+
 /* File events come from the trusted engine adapter, with a handle generation
  * assigned at real open and retained for every read through that handle. */
 void classic_fresh_observe_open(const struct CPU *, uint32_t stream, const char *canonical,

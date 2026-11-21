@@ -14,6 +14,7 @@ from stage_runtime import transform, verified_source
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SAVE_PUBLISH = HERE.parent / "classic-save-publish"
+FRESH_LOAD = HERE.parent / "classic-fresh-load"
 COSAVE = HERE.parent / "skse-cosave"
 IOS_RUNTIME = ROOT / "ios" / "runtime-port"
 
@@ -54,7 +55,9 @@ def main() -> None:
         if args.sanitizers:
             flags += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer"]
         variants = [("runtime-save", [], [HERE / "test_runtime_save.c", HERE / "save_attempt.c",
-                                         COSAVE / "event_trace.c", COSAVE / "observer" / "lifecycle.c"])]
+                                         COSAVE / "event_trace.c", COSAVE / "observer" / "lifecycle.c"]),
+                    ("selected-load-path", [], [FRESH_LOAD / "test_selected_path.c",
+                                                 FRESH_LOAD / "selected_path.c"])]
         header_runtime = runtime
         if args.generation is not None:
             sys.path.insert(0, str(SAVE_PUBLISH))

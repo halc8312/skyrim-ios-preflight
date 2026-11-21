@@ -13,6 +13,14 @@ The hosted fixture runs the original lifted `f_6821C0` selected-load function ar
 
 The file witness accepts the resolved `.ess` path, stream, read-only descriptor, positive read, and per-open identity from the same attempt. The successful report borrows a retained descriptor during the callback. Cached `manager + 0x30` input, metadata-only reads, changed or substituted descriptors, failed loads and reentrancy cannot yield a ready report. Original engine returns and cleanup still run.
 
+## Native selected path resolver
+
+The fresh branch of the pinned PE uses the same 260-byte stack path for the name builder at 0x6821FC and the stream constructor at 0x68220C. After the first open pushes return 0x682225, the path is at ESP + 0x14 and the selected stream is in both ECX and ESI. The original caller allocates 0x20C bytes for its local frame. The later check call at 0x682246 has a different return address.
+
+The read-only resolver checks the current runtime CPU and its TEB stack bounds before reading that frame. It uses the real Skydream path mapper to preserve the spelling on disk and accepts a regular .ess directly in the caller-authorized profile directory. It clears the result on refusal and does not open the file. The selected-load witness must still authenticate the actual normal open and stream identity.
+
+The prepared classic-runtime-save fixture runs the resolver with the real mapper and thread setup against authored files in a temporary profile. It checks missing paths, foreign or malformed frames, traversal, a sibling directory, a nested file, a directory and a symlink. The original selected-load lift fixture remains independent. The normal app has no resolver binding.
+
 ## Preloaded stream
 
 The pinned Classic PC executable identifies the reviewed producer as `CopySaveGamesFromHost`. Its two direct calls are in the `ForceSave` command handler `f_51D390`. It enumerates `Saves/` and opens each candidate `.ess` via `0x6808F3 → f_A58870` and the `CreateFileA` call at `0xA58514`. The path comes from that enumeration. The consumer at `0x6821EC` adopts the current `manager + 0x30` stream before it can run the selected-name open. The dedicated `SysUtilLoadCompleteCallback` wrapper `f_682390` passes the stream itself as the name at `0x6823AA`, then destroys the stream and clears the field at `0x6823E4`. The callback installed by the producer, `f_67FEA0`, can also destroy the stream and clears the field at `0x67FF00`.
