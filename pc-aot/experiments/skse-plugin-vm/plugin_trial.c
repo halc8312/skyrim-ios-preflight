@@ -139,7 +139,9 @@ static const struct {
     {{"KERNEL32.dll", "AreFileApisANSI", 0xe0001180}, SKSE_X86_SCALAR_RETURN, 1},
     {{"KERNEL32.dll", "GetConsoleMode", 0xe0001184}, SKSE_X86_WIN_THREAD, SKSE_WIN_GET_CONSOLE_MODE},
     {{"KERNEL32.dll", "ReadConsoleW", 0xe0001188}, SKSE_X86_WIN_THREAD, SKSE_WIN_READ_CONSOLE_W},
-    {{"KERNEL32.dll", "WriteConsoleW", 0xe000118c}, SKSE_X86_WIN_THREAD, SKSE_WIN_WRITE_CONSOLE_W}
+    {{"KERNEL32.dll", "WriteConsoleW", 0xe000118c}, SKSE_X86_WIN_THREAD, SKSE_WIN_WRITE_CONSOLE_W},
+    {{"KERNEL32.dll", "HeapCreate", 0xe0001190}, SKSE_X86_HEAP_CREATE, 0},
+    {{"KERNEL32.dll", "HeapDestroy", 0xe0001194}, SKSE_X86_HEAP_DESTROY, 0}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 
@@ -161,7 +163,6 @@ static const struct { const char *library, *symbol; } extra_halt_imports[] = {
     {"KERNEL32.dll", "WritePrivateProfileStringA"}, {"KERNEL32.dll", "CreateDirectoryA"},
     {"KERNEL32.dll", "SetHandleCount"}, {"KERNEL32.dll", "GetStartupInfoA"},
     {"KERNEL32.dll", "FreeEnvironmentStringsA"}, {"KERNEL32.dll", "GetEnvironmentStrings"},
-    {"KERNEL32.dll", "HeapCreate"}, {"KERNEL32.dll", "HeapDestroy"},
     {"KERNEL32.dll", "VirtualFree"}, {"KERNEL32.dll", "VirtualAlloc"},
     {"KERNEL32.dll", "LCMapStringA"}, {"KERNEL32.dll", "GetStringTypeA"},
     {"KERNEL32.dll", "GetLocaleInfoA"}, {"KERNEL32.dll", "LoadLibraryA"},

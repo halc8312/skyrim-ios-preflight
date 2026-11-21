@@ -983,30 +983,55 @@ static uint32_t crt_heap_service(Vm *vm, SkseX86ServiceKind kind) {
 }
 
 static uint32_t win_heap_service(Vm *vm, SkseX86ServiceKind kind) {
-    enum { NO_SERIALIZE = 1, ZERO_MEMORY = 8, IN_PLACE_ONLY = 0x10 };
-    bool resizing = kind == SKSE_X86_HEAP_REALLOC;
-    bool sizing = kind == SKSE_X86_HEAP_SIZE;
-    size_t bytes = resizing ? 16u : 12u;
+    enum { NO_SERIALIZE = 1, ZERO_MEMORY = 8, IN_PLACE_ONLY = 0x10,
+           INVALID_HANDLE = 6, NO_MEMORY = 8 };
+    const bool resizing = kind == SKSE_X86_HEAP_REALLOC;
+    const bool sizing = kind == SKSE_X86_HEAP_SIZE;
+    const size_t bytes = resizing ? 16u : kind == SKSE_X86_HEAP_DESTROY ? 4u : 12u;
     const uint8_t *parameters = service_parameters(vm, bytes);
     if (!parameters) return 0;
     // CALL to an emulated stdcall service returns here instead of pushing
     // a return address. Remove the arguments that the callee owns.
     vm->registers[ESP] += (uint32_t)bytes;
-    if (little_endian(parameters, 4) != SKSE_X86_PROCESS_HEAP) return sizing ? UINT32_MAX : 0;
+    SkseX86Heap *heap = vm->services.heap;
+    SkseWinThread *thread = vm->services.thread;
+    const uint32_t first = little_endian(parameters, 4);
+    if (kind == SKSE_X86_HEAP_CREATE) {
+        // The guest arena grows lazily within its fixed shared memory budget.
+        if ((first & ~NO_SERIALIZE) || little_endian(parameters + 8, 4)) {
+            fail(vm, SKSE_X86_UNSUPPORTED_API);
+            return 0;
+        }
+        const uint32_t handle = little_endian(parameters + 4, 4) <= SKSE_X86_HEAP_BYTES
+            ? skse_x86_heap_create_private(heap) : 0;
+        if (!handle && thread) thread->last_error = NO_MEMORY;
+        return handle;
+    }
+    const bool private_heap = skse_x86_heap_private_live(heap, first);
+    if (kind == SKSE_X86_HEAP_DESTROY) {
+        if (!private_heap) {
+            if (thread) thread->last_error = INVALID_HANDLE;
+            return 0;
+        }
+        if (!reserve_bulk(vm, (heap->count * sizeof(heap->blocks[0]) + 63u) / 64u)) return 0;
+        return skse_x86_heap_destroy_private(heap, first);
+    }
+    if (!private_heap && first != SKSE_X86_PROCESS_HEAP) return sizing ? UINT32_MAX : 0;
     const uint32_t flags = little_endian(parameters + 4, 4), value = little_endian(parameters + 8, 4);
-    const uint32_t allowed = sizing ? NO_SERIALIZE : kind == SKSE_X86_HEAP_FREE ? 0u :
-        ZERO_MEMORY | (resizing ? IN_PLACE_ONLY : 0u);
+    const uint32_t owner = private_heap ? first : SKSE_X86_HEAP_GENERAL;
+    const uint32_t allowed = (private_heap || sizing ? NO_SERIALIZE : 0u) |
+        (sizing || kind == SKSE_X86_HEAP_FREE ? 0u : ZERO_MEMORY) | (resizing ? IN_PLACE_ONLY : 0u);
     if (flags & ~allowed) {
         fail(vm, SKSE_X86_UNSUPPORTED_API);
         return 0;
     }
-    SkseX86Heap *heap = vm->services.heap;
-    if (sizing) return skse_x86_heap_size(heap, value);
-    if (kind == SKSE_X86_HEAP_FREE) return skse_x86_heap_release(heap, value);
+    if (sizing) return skse_x86_heap_size_owned(heap, value, owner);
+    if (kind == SKSE_X86_HEAP_FREE) return skse_x86_heap_release_owned(heap, value, owner);
     uint32_t requested = resizing ? little_endian(parameters + 12, 4) : value;
     if (!reserve_heap_work(vm, requested, resizing)) return 0;
-    return resizing ? skse_x86_heap_resize(heap, value, requested, (flags & ZERO_MEMORY) != 0, (flags & IN_PLACE_ONLY) != 0)
-                    : skse_x86_heap_allocate(heap, requested, (flags & ZERO_MEMORY) != 0);
+    const bool clear = (flags & ZERO_MEMORY) != 0;
+    return resizing ? skse_x86_heap_resize_owned(heap, value, requested, clear, (flags & IN_PLACE_ONLY) != 0, owner)
+                    : skse_x86_heap_allocate_owned(heap, requested, clear, owner);
 }
 
 static uint32_t win_thread_service(Vm *vm, SkseWinThreadOperation operation) {
@@ -1887,6 +1912,8 @@ static void invoke_service(Vm *vm, unsigned i, bool tail) {
     case SKSE_X86_HEAP_REALLOC:
     case SKSE_X86_HEAP_FREE:
     case SKSE_X86_HEAP_SIZE:
+    case SKSE_X86_HEAP_CREATE:
+    case SKSE_X86_HEAP_DESTROY:
         vm->registers[EAX] = win_heap_service(vm, service->kind);
         break;
     case SKSE_X86_WIN_THREAD:
@@ -2976,7 +3003,7 @@ static SkseX86Result call_in_space(SksePeImage *const *images, size_t image_coun
     for (size_t i = 0; i < services.count; ++i) {
         uint32_t address = services.entries[i].address;
         SkseX86ServiceKind kind = services.entries[i].kind;
-        if ((unsigned)kind > SKSE_X86_CLASSIC_LOOKUP_FORM || !address ||
+        if ((unsigned)kind > SKSE_X86_HEAP_DESTROY || !address ||
             (kind == SKSE_X86_CLASSIC_LOOKUP_FORM && !services.classic_load_forms) ||
             (kind == SKSE_X86_CLASSIC_FRAME &&
              (!frame || services.entries[i].value >= SKSE_CLASSIC_FRAME_OPERATIONS)) ||
@@ -2984,7 +3011,8 @@ static SkseX86Result call_in_space(SksePeImage *const *images, size_t image_coun
              (!catalog || services.entries[i].value >= SKSE_CLASSIC_CATALOG_OPERATIONS)) ||
             (kind == SKSE_X86_PROTECT_IMAGE_DATA && !services.thread) ||
             (!services.heap && ((kind >= SKSE_X86_MALLOC && kind <= SKSE_X86_HEAP_FREE) ||
-                               kind == SKSE_X86_HEAP_SIZE)) ||
+                               kind == SKSE_X86_HEAP_SIZE || kind == SKSE_X86_HEAP_CREATE ||
+                               kind == SKSE_X86_HEAP_DESTROY)) ||
             (kind == SKSE_X86_WIN_THREAD &&
              (!services.thread || !services.thread->process || !services.thread->id ||
               services.entries[i].value >= SKSE_WIN_THREAD_OPERATION_COUNT)) ||

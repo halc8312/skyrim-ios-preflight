@@ -338,6 +338,90 @@ static void check_heap_metadata_growth(void) {
     assert(!heap.bytes && !heap.blocks && !heap.capacity && !heap.count);
 }
 
+static SkseX86Result private_heap_call(SkseX86Heap *heap, SkseWinThread *thread, SkseX86ServiceKind kind,
+                                     const uint32_t *args, size_t count, unsigned budget) {
+    uint8_t thunk[] = {0xb8, 0, 0, 0x40, 0, 0xff, 0xe0};  /* mov eax, token; jmp eax */
+    const SkseX86Service service = {0x00400000, 0, kind};
+    SksePeImage image = {
+        .base = image_base, .size = sizeof thunk, .bytes = thunk, .section_count = 1,
+        .sections = {{0, sizeof thunk, SKSE_PE_READ | SKSE_PE_EXEC}}
+    };
+    const SkseX86Services services = {.entries = &service, .count = 1, .heap = heap, .thread = thread};
+    memset(scratch, 0, sizeof scratch);
+    return skse_x86_call(&image, image_base, (SkseX86Scratch){scratch_base, scratch, sizeof scratch},
+                         args, count, budget, services, SKSE_X86_STDCALL);
+}
+
+static uint32_t heap_value(SkseX86Heap *heap, SkseWinThread *thread, SkseX86ServiceKind kind,
+                           const uint32_t *args, size_t count) {
+    const SkseX86Result result = private_heap_call(heap, thread, kind, args, count, 65535);
+    assert(result.status == SKSE_X86_OK && result.service_calls[0] == 1);
+    return result.eax;
+}
+
+static void check_private_heaps(void) {
+    SkseX86Heap heap = {.base = 0x00300000};
+    SkseWinThread thread = {.id = 1};
+    const uint32_t create[] = {0, 0x1000, 0}, create_unserialized[] = {1, 0x1000, 0};
+    const uint32_t a = heap_value(&heap, &thread, SKSE_X86_HEAP_CREATE, create, 3);
+    const uint32_t b = heap_value(&heap, &thread, SKSE_X86_HEAP_CREATE, create_unserialized, 3);
+    assert(a && b && a != b && a != SKSE_X86_PROCESS_HEAP && b != SKSE_X86_PROCESS_HEAP && !heap.bytes);
+
+    uint32_t blank[] = {a, 9, 12};
+    const uint32_t first = heap_value(&heap, &thread, SKSE_X86_HEAP_ALLOC, blank, 3);
+    const uint32_t other = heap_value(&heap, &thread, SKSE_X86_HEAP_ALLOC, (uint32_t[]){b, 0, 16}, 3);
+    const uint32_t process = skse_x86_heap_allocate(&heap, 16, false);
+    const uint32_t env = skse_x86_heap_allocate_owned(&heap, 16, false, SKSE_X86_HEAP_ENVIRONMENT);
+    assert(first && other && process && env);
+    uint8_t *bytes = skse_x86_heap_memory(&heap, first, 12, true);
+    assert(bytes);
+    for (unsigned i = 0; i < 12; ++i) assert(!bytes[i]);
+    memcpy(bytes, "test", 4);
+    assert(heap_value(&heap, &thread, SKSE_X86_HEAP_SIZE, (uint32_t[]){a, 1, first}, 3) == 12);
+    assert(heap_value(&heap, &thread, SKSE_X86_HEAP_SIZE, (uint32_t[]){b, 0, first}, 3) == UINT32_MAX);
+    assert(heap_value(&heap, &thread, SKSE_X86_HEAP_SIZE,
+                      (uint32_t[]){SKSE_X86_PROCESS_HEAP, 0, first}, 3) == UINT32_MAX);
+    assert(!heap_value(&heap, &thread, SKSE_X86_HEAP_FREE, (uint32_t[]){a, 1, env}, 3));
+    assert(!heap_value(&heap, &thread, SKSE_X86_HEAP_FREE, (uint32_t[]){b, 0, first}, 3));
+    assert(!skse_x86_heap_release(&heap, first));
+    assert(!heap_value(&heap, &thread, SKSE_X86_HEAP_REALLOC, (uint32_t[]){b, 0, first, 48}, 4));
+    assert(!heap_value(&heap, &thread, SKSE_X86_HEAP_REALLOC, (uint32_t[]){a, 0x10, first, 48}, 4));
+
+    const uint32_t resized = heap_value(&heap, &thread, SKSE_X86_HEAP_REALLOC, (uint32_t[]){a, 8, first, 48}, 4);
+    assert(resized && resized != first && !skse_x86_heap_memory(&heap, first, 1, false));
+    bytes = skse_x86_heap_memory(&heap, resized, 48, true);
+    assert(bytes && !memcmp(bytes, "test", 4));
+    for (unsigned i = 4; i < 48; ++i) assert(!bytes[i]);
+    const uint32_t second = heap_value(&heap, &thread, SKSE_X86_HEAP_ALLOC, (uint32_t[]){a, 0, 1}, 3);
+    assert(second && second != resized);
+    assert(!heap_value(&heap, &thread, SKSE_X86_HEAP_DESTROY, (uint32_t[]){SKSE_X86_PROCESS_HEAP}, 1) &&
+           thread.last_error == 6 && skse_x86_heap_size(&heap, process) == 16);
+    assert(heap_value(&heap, &thread, SKSE_X86_HEAP_DESTROY, &a, 1));
+    assert(!skse_x86_heap_memory(&heap, resized, 1, false) && !skse_x86_heap_memory(&heap, second, 1, false));
+    assert(heap_value(&heap, &thread, SKSE_X86_HEAP_SIZE, (uint32_t[]){b, 0, other}, 3) == 16);
+    assert(skse_x86_heap_size(&heap, process) == 16 && skse_x86_heap_memory(&heap, env, 1, false) &&
+           !skse_x86_heap_memory(&heap, env, 1, true));
+    assert(!heap_value(&heap, &thread, SKSE_X86_HEAP_DESTROY, &a, 1));
+
+    const uint32_t c = heap_value(&heap, &thread, SKSE_X86_HEAP_CREATE, create, 3);
+    assert(c && c != a && c != b);
+    blank[0] = c;
+    const uint32_t fresh = heap_value(&heap, &thread, SKSE_X86_HEAP_ALLOC, blank, 3);
+    assert(fresh && !heap_value(&heap, &thread, SKSE_X86_HEAP_FREE, (uint32_t[]){a, 0, fresh}, 3));
+    assert(heap_value(&heap, &thread, SKSE_X86_HEAP_FREE, (uint32_t[]){c, 1, fresh}, 3));
+    assert(!heap_value(&heap, &thread, SKSE_X86_HEAP_ALLOC, (uint32_t[]){c, 0, SKSE_X86_HEAP_BYTES}, 3));
+
+    for (unsigned i = 2; i < SKSE_X86_PRIVATE_HEAPS; ++i)
+        assert(heap_value(&heap, &thread, SKSE_X86_HEAP_CREATE, create, 3));
+    assert(!heap_value(&heap, &thread, SKSE_X86_HEAP_CREATE, create, 3) && thread.last_error == 8);
+    assert(private_heap_call(&heap, &thread, SKSE_X86_HEAP_CREATE,
+                             (uint32_t[]){0x40000, 0x1000, 0}, 3, 100).status == SKSE_X86_UNSUPPORTED_API);
+    assert(private_heap_call(&heap, &thread, SKSE_X86_HEAP_CREATE,
+                             (uint32_t[]){0, 0x1000, 0x2000}, 3, 100).status == SKSE_X86_UNSUPPORTED_API);
+    skse_x86_heap_close(&heap);
+    assert(!heap.bytes && !heap.count && !skse_x86_heap_private_live(&heap, c));
+}
+
 static SkseX86Result protect_worker(void *context, uint32_t id, uint32_t entry, uint32_t parameter, uint32_t budget) {
     SksePeImage *image = context;
     uint8_t worker_bytes[4096] = {0};
@@ -983,6 +1067,7 @@ int main(void) {
     check_double_shift_left();
     check_bounded_heap();
     check_heap_metadata_growth();
+    check_private_heaps();
     check_read_only_views();
     check_hook_observations();
     check_code_write_audit();
