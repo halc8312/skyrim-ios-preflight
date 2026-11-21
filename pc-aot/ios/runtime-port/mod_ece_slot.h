@@ -17,7 +17,9 @@ typedef enum {
 
 /* Read the raw signed NoseUpDown value (ID 12) of an ECE LE face slot.
  * The caller retains the source. The output is written only on success.
- * The target character's slider limits must be checked before applying. */
+ * The optional race comment is a display name. The slot does not identify a
+ * race FormID, sex, or active guest receiver. Check those and the slider
+ * limits independently before applying. */
 SkyrimEceSlotStatus skyrim_ece_slot_read_nose_height(const char *slot, size_t length, float *out);
 
 #ifdef __cplusplus

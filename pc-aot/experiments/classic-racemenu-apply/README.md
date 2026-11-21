@@ -79,3 +79,25 @@ owner DLL's descriptor, writer and reader without executing it. Set
 `SKYRIM_TEST_ECE_CME_LIBRARY` to that unmodified LE DLL and use GNU
 objdump. The provided author preset and its altered test copy still
 exercise decimal parsing only.
+
+The profile check verifies the actual loose winners in a held, already-deployed
+Data view. It checks the exact default `FemaleHeadCharGen.tri`, the two
+race and slider INIs, and all five referenced female TRI inputs. An alternate
+winner, an extra top-level CME INI (such as `SliderScale.ini`), an ambiguous
+path or a symlink makes the check fail. Only the file digests and sizes are
+committed. Set `SKYRIM_TEST_ECE_DEFAULT_DATA` to private Data contents from
+the released `00 Main` package to run the hosted test against actual bytes.
+
+The owned LE base game associates `NordRace` with `FemaleHeadNord` and the
+`Actors/Character/Character Assets/FemaleHeadCharGen.tri` chargen path. The
+standard ECE plugin retains that head part and the default package replaces
+the same loose path. Its NoseDown and NoseUp records equal those in the
+ECE base female TRI. They differ slightly from the stock LE records in
+606 and 902 components, respectively, with a maximum difference below
+2.35e-5 TRI units. Exact matches require the selected ECE asset.
+
+The `# character race: …` slot line is display text. It has no authenticated
+race FormID or sex. The slot parser returns the raw value, and the file check
+does not inspect the running character or resolve the engine's resource
+winner. Application still requires validation of that receiver and resource,
+and a comparison using two actual exports.
