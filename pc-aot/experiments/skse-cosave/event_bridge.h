@@ -63,6 +63,12 @@ SkseBridgeResult skse_bridge_check_call(const SkseGameEvent *requested, uint32_t
 SkseBridgeResult skse_bridge_open(const char *private_root, const SkseGameScope *running,
                                  SkseEventBridge **out, SksePairResult *detail);
 void skse_bridge_close(SkseEventBridge *bridge);
+/* Derive a stable key for the exact named file version in an authorized saves
+ * directory, from an independently witnessed descriptor. The caller passes
+ * the canonical leaf selected by the game and borrows both descriptors. The
+ * database still verifies the full base digest before handing out records. */
+SkseBridgeResult skse_bridge_bind_named_ess(SkseEventBridge *bridge, uint32_t ticket,
+    int saves, const char *leaf, int source, SkseGameEvent *event, SksePairResult *detail);
 SkseBridgeResult skse_bridge_begin_save(SkseEventBridge *bridge, const SkseGameEvent *requested,
                                        const SksePairGeneration *verified_base,
                                        SksePendingSave **out, SksePairResult *detail);
@@ -85,6 +91,11 @@ void skse_bridge_drop(SksePendingSave *pending);
 SkseBridgeResult skse_bridge_defer_save(SksePendingSave *pending, const SkseEventTrace *trace,
                                        const SkseBaseEvidence *base, int private_scratch,
                                        SkseDeferredSave **job, SksePairResult *detail);
+/* Named variant: verify the original descriptor and directory entry before
+ * and after immutable capture. A post-capture mismatch drops the consumed job. */
+SkseBridgeResult skse_bridge_defer_named_save(SksePendingSave *pending, const SkseEventTrace *trace,
+    const SkseBaseEvidence *base, int saves, const char *leaf, int private_scratch,
+    SkseDeferredSave **job, SksePairResult *detail);
 /* A worker opens its own bridge to the same protected store directory and
  * running scope. The first publish hashes the immutable file. Retries share
  * that digest. A job never shares a SQLite connection with the submitting
@@ -100,6 +111,11 @@ void skse_bridge_drop_deferred(SkseDeferredSave *job);
  * skse_bridge_defer_save(). Keep the bridge alive on the owner thread. */
 SkseBridgeResult skse_bridge_prepare_load_input(SkseEventBridge *bridge, const SkseGameEvent *requested,
     int source, int private_scratch, SkseLoadInput **pending, int *loader_fd, SksePairResult *detail);
+/* Prepare the exact selected named file before its first read. If identity is
+ * lost when capturing it, return an empty pending input and keep source open. */
+SkseBridgeResult skse_bridge_prepare_named_load(SkseEventBridge *bridge, uint32_t ticket,
+    int saves, const char *leaf, int source, int private_scratch, SkseGameEvent *event,
+    SkseLoadInput **pending, int *loader_fd, SksePairResult *detail);
 /* One completion attempt consumes *pending. After the game and VM have
  * accepted the same immutable input and the stored generation digest agrees,
  * returns an owned Classic image for inspection. Caller frees it with free().

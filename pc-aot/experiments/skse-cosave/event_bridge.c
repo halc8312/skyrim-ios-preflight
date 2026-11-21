@@ -6,6 +6,7 @@
 #endif
 #include "event_bridge.h"
 #include "immutable_ess.h"
+#include "save_paths.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -85,6 +86,41 @@ SkseBridgeResult skse_bridge_open(const char *root, const SkseGameScope *running
 
 void skse_bridge_close(SkseEventBridge *bridge) {
     if (bridge) { skse_pair_close(bridge->store); close(bridge->directory); free(bridge); }
+}
+
+SkseBridgeResult skse_bridge_bind_named_ess(SkseEventBridge *bridge, uint32_t ticket,
+    int saves, const char *leaf, int source, SkseGameEvent *event, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!event) return SKSE_BRIDGE_ARGUMENT;
+    *event = (SkseGameEvent){0};
+    const size_t stem = skse_save_stem(leaf);
+    if (!bridge || !ticket || ticket > SkyrimLifecycleCapacity || !stem) return SKSE_BRIDGE_ARGUMENT;
+    const int flags = fcntl(source, F_GETFL);
+    struct stat directory, original, named, checked;
+    if (flags < 0 || (flags & O_ACCMODE) != O_RDONLY || fstat(saves, &directory) ||
+        !S_ISDIR(directory.st_mode) || fstat(source, &original) || !S_ISREG(original.st_mode) ||
+        original.st_size <= 0) return SKSE_BRIDGE_ARGUMENT;
+    if ((uint64_t)original.st_size > SKSE_PAIR_MAX_ESS) return from_pair(SKSE_PAIR_LIMIT, detail);
+    if (fstatat(saves, leaf, &named, AT_SYMLINK_NOFOLLOW))
+        return from_pair(errno == ENOENT ? SKSE_PAIR_ESS_CHANGED : SKSE_PAIR_STORAGE, detail);
+    if (named.st_nlink != 1 || !skse_save_same_version(&original, &named) ||
+        fstat(source, &checked) || !skse_save_same_version(&original, &checked))
+        return from_pair(SKSE_PAIR_ESS_CHANGED, detail);
+    SkseGameEvent bound = {.scope = bridge->running, .ticket = ticket};
+    if (!skse_pair_named_key(bound.scope.profile, leaf, stem + 4, &original, &bound.saved))
+        return from_pair(SKSE_PAIR_STORAGE, detail);
+    *event = bound;
+    return SKSE_BRIDGE_OK;
+}
+
+static SkseBridgeResult confirm_named_ess(SkseEventBridge *bridge, const SkseGameEvent *requested,
+    int saves, const char *leaf, int source, SksePairResult *detail) {
+    SkseGameEvent actual;
+    SkseBridgeResult result = skse_bridge_bind_named_ess(bridge, requested->ticket, saves, leaf, source, &actual, detail);
+    if (result != SKSE_BRIDGE_OK) return result;
+    if (memcmp(&actual.saved, &requested->saved, sizeof actual.saved))
+        return from_pair(SKSE_PAIR_ESS_CHANGED, detail);
+    return SKSE_BRIDGE_OK;
 }
 
 SkseBridgeResult skse_bridge_begin_save(SkseEventBridge *bridge, const SkseGameEvent *requested,
@@ -168,6 +204,21 @@ SkseBridgeResult skse_bridge_capture_save(SksePendingSave *save, const SkseEvent
     return status;
 }
 
+static SkseBridgeResult defer_ready_save(SksePendingSave *save, int source, int scratch,
+                                        SkseDeferredSave **out, SksePairResult *detail) {
+    SkseDeferredSave *job = calloc(1, sizeof *job);
+    if (!job) return SKSE_BRIDGE_IO;
+    job->directory = fcntl(save->bridge->directory, F_DUPFD_CLOEXEC, 0);
+    if (job->directory < 0) { free(job); return SKSE_BRIDGE_IO; }
+    SkseBridgeResult status = from_pair(skse_ess_capture_immutable(source, scratch, &job->snapshot), detail);
+    if (status != SKSE_BRIDGE_OK) { skse_bridge_drop_deferred(job); return status; }
+    job->event = save->requested;
+    job->stage = save->stage;
+    save->stage = NULL;
+    *out = job;
+    return SKSE_BRIDGE_OK;
+}
+
 SkseBridgeResult skse_bridge_defer_save(SksePendingSave *save, const SkseEventTrace *trace,
                                        const SkseBaseEvidence *base, int scratch,
                                        SkseDeferredSave **out, SksePairResult *detail) {
@@ -175,18 +226,26 @@ SkseBridgeResult skse_bridge_defer_save(SksePendingSave *save, const SkseEventTr
     if (!out) return SKSE_BRIDGE_ARGUMENT;
     *out = NULL;
     SkseBridgeResult status = capture_ready(save, trace, base, detail);
+    return status == SKSE_BRIDGE_OK ? defer_ready_save(save, base->ess_fd, scratch, out, detail) : status;
+}
+
+SkseBridgeResult skse_bridge_defer_named_save(SksePendingSave *save, const SkseEventTrace *trace,
+    const SkseBaseEvidence *base, int saves, const char *leaf, int scratch,
+    SkseDeferredSave **out, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!out) return SKSE_BRIDGE_ARGUMENT;
+    *out = NULL;
+    SkseBridgeResult status = capture_ready(save, trace, base, detail);
     if (status != SKSE_BRIDGE_OK) return status;
-    SkseDeferredSave *job = calloc(1, sizeof *job);
-    if (!job) return SKSE_BRIDGE_IO;
-    job->directory = fcntl(save->bridge->directory, F_DUPFD_CLOEXEC, 0);
-    if (job->directory < 0) { free(job); return SKSE_BRIDGE_IO; }
-    status = from_pair(skse_ess_capture_immutable(base->ess_fd, scratch, &job->snapshot), detail);
-    if (status != SKSE_BRIDGE_OK) { skse_bridge_drop_deferred(job); return status; }
-    job->event = save->requested;
-    job->stage = save->stage;
-    save->stage = NULL;
-    *out = job;
-    return SKSE_BRIDGE_OK;
+    status = confirm_named_ess(save->bridge, &save->requested, saves, leaf, base->ess_fd, detail);
+    if (status != SKSE_BRIDGE_OK) return status;
+    SkseDeferredSave *job = NULL;
+    status = defer_ready_save(save, base->ess_fd, scratch, &job, detail);
+    if (status != SKSE_BRIDGE_OK) return status;
+    status = confirm_named_ess(save->bridge, &save->requested, saves, leaf, base->ess_fd, detail);
+    if (status == SKSE_BRIDGE_OK) *out = job;
+    else skse_bridge_drop_deferred(job);
+    return status;
 }
 SkseBridgeResult skse_bridge_publish_deferred(SkseEventBridge *worker, SkseDeferredSave *job,
                                              SksePairResult *detail) {
@@ -247,6 +306,33 @@ SkseBridgeResult skse_bridge_prepare_load_input(SkseEventBridge *bridge, const S
     *out = input;
     *loader_fd = guest_fd;
     return SKSE_BRIDGE_OK;
+}
+
+SkseBridgeResult skse_bridge_prepare_named_load(SkseEventBridge *bridge, uint32_t ticket,
+    int saves, const char *leaf, int source, int scratch, SkseGameEvent *event,
+    SkseLoadInput **out, int *loader_fd, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (event) *event = (SkseGameEvent){0};
+    if (out) *out = NULL;
+    if (loader_fd) *loader_fd = -1;
+    if (!event || !out || !loader_fd) return SKSE_BRIDGE_ARGUMENT;
+    SkseGameEvent bound;
+    SkseBridgeResult status = skse_bridge_bind_named_ess(bridge, ticket, saves, leaf, source, &bound, detail);
+    if (status != SKSE_BRIDGE_OK) return status;
+    SkseLoadInput *input = NULL;
+    int fd = -1;
+    status = skse_bridge_prepare_load_input(bridge, &bound, source, scratch, &input, &fd, detail);
+    if (status != SKSE_BRIDGE_OK) return status;
+    status = confirm_named_ess(bridge, &bound, saves, leaf, source, detail);
+    if (status == SKSE_BRIDGE_OK) {
+        *event = bound;
+        *out = input;
+        *loader_fd = fd;
+    } else {
+        close(fd);
+        skse_bridge_drop_load_input(input);
+    }
+    return status;
 }
 
 void skse_bridge_drop_load_input(SkseLoadInput *input) {

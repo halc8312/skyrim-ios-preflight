@@ -143,9 +143,13 @@ int classic_cosave_fixture_load_fd(int original) {
 #if defined(SKYRIM_TEST_LOAD_ROUNDTRIP)
     assert(load_mode != PRELOADED && roundtrip_digest_bytes() == 0);
     roundtrip_expect_clone(original, false);
-#endif
+    assert(skse_bridge_prepare_named_load(bridge, event.ticket, scratch, "Fixture.ess", original, scratch,
+                                          &event, &pending, &loader, &detail)
+           == SKSE_BRIDGE_OK && detail == SKSE_PAIR_OK && pending && loader >= 0);
+#else
     assert(skse_bridge_prepare_load_input(bridge, &event, original, scratch, &pending, &loader, &detail)
            == SKSE_BRIDGE_OK && detail == SKSE_PAIR_OK && pending && loader >= 0);
+#endif
 #if defined(SKYRIM_TEST_LOAD_ROUNDTRIP)
     roundtrip_finish_clone(true);
     assert(!fstat(loader, &opened_input));
@@ -308,7 +312,7 @@ void classic_cosave_fixture_finish(ClassicFreshReport report, const char *other)
         assert(roundtrip_digest_bytes() == sizeof ROUNDTRIP_ORIGINAL - 1);
     } else {
         assert(result == SKSE_BRIDGE_PAIR && !bytes && !size);
-        assert(detail == (load_mode == REPLACED ? SKSE_PAIR_WRONG_GENERATION : SKSE_PAIR_MISSING));
+        assert(detail == SKSE_PAIR_MISSING);
     }
 #if defined(SKYRIM_TEST_PROJECT_FORM)
     classic_test_projection_after_load(&proof.event, &trace, result);

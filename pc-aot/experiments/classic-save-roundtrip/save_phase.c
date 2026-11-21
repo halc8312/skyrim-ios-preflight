@@ -15,11 +15,10 @@ static SkseEventBridge *bridge;
 static SksePendingSave *pending;
 static SkseGameEvent event = {
     .scope = {.launch = {1}, .profile = {2}},
-    .saved = {.profile = {2}, .slot = {3}, .event = {4}},
 };
 static int held = -1, scratch = -1;
 static struct stat at_publication;
-static bool finish_seen;
+static bool record_seen, finish_seen;
 static SkyrimLifecycleScope lifecycle;
 
 static void *try_foreign_return(void *argument) {
@@ -119,20 +118,15 @@ void save_composition_begin(void) {
     const SkyrimLifecycleRow *entry = &rows[trace.count - 1];
     assert(entry->site == SkyrimSaveSlot && !entry->parent && !entry->returning);
     event.ticket = entry->ticket;
-    SksePairResult detail;
-    assert(skse_bridge_begin_save(bridge, &event, NULL, &pending, &detail) == SKSE_BRIDGE_OK);
 }
 
 void save_composition_record(void) {
-    const SksePairRecord record = {ROUNDTRIP_RECORD, ROUNDTRIP_RECORD_VERSION,
-                                   sizeof ROUNDTRIP_RECORD_DATA, ROUNDTRIP_RECORD_DATA};
-    const bool bad = mode == RECORD_FAILURE;
-    const SksePairResult result = skse_bridge_write_owner(pending, ROUNDTRIP_OWNER, bad ? NULL : &record, 1);
-    assert(result == (bad ? SKSE_PAIR_ARGUMENT : SKSE_PAIR_OK));
+    assert(event.ticket && !record_seen);
+    record_seen = true;
 }
 
 void save_composition_finish(int published_fd, bool vm_saved) {
-    assert(pending && !finish_seen && held < 0 && roundtrip_digest_bytes() == 0);
+    assert(event.ticket && record_seen && !finish_seen && held < 0 && roundtrip_digest_bytes() == 0);
     assert(vm_saved == (mode != SKIP_VM));
     assert((published_fd < 0) == (mode == FILE_FAILURE));
     finish_seen = true;
@@ -173,7 +167,7 @@ static void *publish_on_worker(void *arg) {
 }
 
 void save_composition_close(void) {
-    assert(bridge && pending && finish_seen && roundtrip_digest_bytes() == 0);
+    assert(bridge && finish_seen && roundtrip_digest_bytes() == 0);
     SkyrimLifecycleRow rows[SkyrimLifecycleCapacity];
     const SkseEventTrace trace = save_trace(rows);
     assert(skyrim_lifecycle_scope_close(&lifecycle));
@@ -185,18 +179,37 @@ void save_composition_close(void) {
                   skse_save_same_version(&at_publication, &still_open) && skse_save_same_version(&still_open, &published);
     }
     assert(matched == (mode != FILE_FAILURE && mode != STALE_INPUT));
-    const SkseBaseEvidence base = {event, matched ? SKSE_BASE_SAVED : SKSE_BASE_FAILED, matched ? held : -1};
     const bool clones = mode == COMMIT || mode == INTERRUPT || mode == REPLACE || mode == CLONE_FAILURE;
-    if (clones) roundtrip_expect_clone(held, mode == CLONE_FAILURE);
     SkseDeferredSave *job = NULL;
     SksePairResult detail;
-    const SkseBridgeResult result = skse_bridge_defer_save(pending, &trace, &base, scratch, &job, &detail);
+    SkseGameEvent bound;
+    const SkseBridgeResult binding = skse_bridge_bind_named_ess(bridge, event.ticket, scratch, "Fixture.ess", held,
+                                                               &bound, &detail);
+    if (matched) {
+        assert(binding == SKSE_BRIDGE_OK);
+        event = bound;
+        assert(skse_bridge_begin_save(bridge, &event, NULL, &pending, &detail) == SKSE_BRIDGE_OK);
+        const SksePairRecord record = {ROUNDTRIP_RECORD, ROUNDTRIP_RECORD_VERSION,
+                                       sizeof ROUNDTRIP_RECORD_DATA, ROUNDTRIP_RECORD_DATA};
+        const bool bad_record = mode == RECORD_FAILURE;
+        assert(skse_bridge_write_owner(pending, ROUNDTRIP_OWNER, bad_record ? NULL : &record, 1) ==
+               (bad_record ? SKSE_PAIR_ARGUMENT : SKSE_PAIR_OK));
+        const SkseBaseEvidence base = {event, SKSE_BASE_SAVED, held};
+        if (clones) roundtrip_expect_clone(held, mode == CLONE_FAILURE);
+        const SkseBridgeResult result = skse_bridge_defer_named_save(pending, &trace, &base, scratch, "Fixture.ess",
+                                                                     scratch, &job, &detail);
+        if (mode == RECORD_FAILURE) assert(result == SKSE_BRIDGE_PAIR && detail == SKSE_PAIR_ARGUMENT);
+        else if (mode == CLONE_FAILURE) assert(result == SKSE_BRIDGE_PAIR && detail == SKSE_PAIR_UNSUPPORTED);
+        else if (mode == SKIP_VM) assert(result == SKSE_BRIDGE_REJECTED);
+        else assert(result == SKSE_BRIDGE_OK && detail == SKSE_PAIR_OK);
+        assert((job != NULL) == (result == SKSE_BRIDGE_OK));
+    } else if (held >= 0) {
+        assert(binding == SKSE_BRIDGE_PAIR && detail == SKSE_PAIR_ESS_CHANGED);
+    } else {
+        assert(binding == SKSE_BRIDGE_ARGUMENT);
+    }
     roundtrip_finish_clone(clones);
-    if (mode == RECORD_FAILURE) assert(result == SKSE_BRIDGE_PAIR && detail == SKSE_PAIR_ARGUMENT);
-    else if (mode == CLONE_FAILURE) assert(result == SKSE_BRIDGE_PAIR && detail == SKSE_PAIR_UNSUPPORTED);
-    else if (!clones) assert(result == SKSE_BRIDGE_REJECTED);
-    else assert(result == SKSE_BRIDGE_OK && detail == SKSE_PAIR_OK);
-    assert((job != NULL) == (result == SKSE_BRIDGE_OK) && roundtrip_digest_bytes() == 0);
+    assert(roundtrip_digest_bytes() == 0);
 
     if (held >= 0) assert(!close(held));
     if (mode == REPLACE) replace_saved_path(ROUNDTRIP_REPLACEMENT);

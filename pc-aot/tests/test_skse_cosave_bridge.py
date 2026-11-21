@@ -65,6 +65,8 @@ class Binding:
         table = {
             "skse_bridge_open": ([C.c_char_p, P(Scope), P(PTR), P(C.c_int)], C.c_int),
             "skse_bridge_close": ([PTR], None),
+            "skse_bridge_bind_named_ess": ([PTR, C.c_uint32, C.c_int, C.c_char_p, C.c_int, P(Event),
+                                           P(C.c_int)], C.c_int),
             "skse_bridge_drop": ([PTR], None),
             "skse_bridge_check_call": ([P(Event), C.c_uint32, P(Trace)], C.c_int),
             "skse_bridge_capture_save": ([PTR, P(Trace), P(Evidence), P(C.c_int)], C.c_int),
@@ -205,6 +207,50 @@ class BridgeHarness(gen.GenerationHarness):
 
 
 class BridgeTests(BridgeHarness):
+    def test_named_file_binding_survives_a_new_launch_and_rejects_replacement(self):
+        game = self.root / "named-saves"
+        game.mkdir()
+        path = game / "QuickSave.ess"
+        path.write_bytes(b"same base bytes")
+        folder = os.open(game, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, folder)
+        next_launch = self.session(scope(launch=222))
+        other_profile = self.session(scope(launch=333, profile=2))
+
+        def bind(bridge, fd, leaf=b"QuickSave.ess"):
+            event, detail = Event(), C.c_int(-1)
+            result = self.api.bind_named_ess(bridge, 3, folder, leaf, fd, C.byref(event), C.byref(detail))
+            if result != OK:
+                self.assertEqual(bytes(event), bytes(Event()))
+            return result, detail.value, event
+
+        with path.open("rb") as known:
+            initial = bind(self.bridge, known.fileno())
+            relaunched = bind(next_launch, known.fileno())
+            different = bind(other_profile, known.fileno())
+            self.assertEqual(initial[:2], (OK, gen.OK))
+            self.assertEqual(relaunched[:2], (OK, gen.OK))
+            self.assertEqual(different[:2], (OK, gen.OK))
+            self.assertEqual(bytes(initial[2].saved), bytes(relaunched[2].saved))
+            self.assertNotEqual(bytes(initial[2].scope.launch), bytes(relaunched[2].scope.launch))
+            self.assertNotEqual(bytes(initial[2].saved.slot), bytes(different[2].saved.slot))
+            self.assertEqual(bind(self.bridge, known.fileno(), b"../QuickSave.ess")[0], ARG)
+            with path.open("r+b") as writable:
+                self.assertEqual(bind(self.bridge, writable.fileno())[0], ARG)
+            alias = game / "Alias.ess"
+            alias.symlink_to(path.name)
+            self.assertEqual(bind(self.bridge, known.fileno(), b"Alias.ess")[:2], (PAIR, gen.CHANGED))
+            fresh = game / "Replacement.ess"
+            fresh.write_bytes(path.read_bytes())
+            fresh.replace(path)
+            self.assertEqual(bind(next_launch, known.fileno())[:2], (PAIR, gen.CHANGED))
+
+        with path.open("rb") as replaced:
+            current = bind(next_launch, replaced.fileno())
+            self.assertEqual(current[:2], (OK, gen.OK))
+            self.assertEqual(bytes(initial[2].saved.slot), bytes(current[2].saved.slot))
+            self.assertNotEqual(bytes(initial[2].saved.event), bytes(current[2].saved.event))
+
     def test_nested_guest_callback_and_unknown_owner_survive(self):
         foreign = gen.section(gen.FOREIGN, [(1240, 9, b"arbitrary foreign bytes\xff")])
         wire = gen.image(foreign, gen.section(gen.UID, [(11, 2, b"previous")]))

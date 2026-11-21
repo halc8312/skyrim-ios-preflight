@@ -7,3 +7,5 @@ int skse_ess_same_version(const struct stat *a, const struct stat *b);
 SksePairResult skse_ess_digest(int fd, SkseEssDigest *out);
 int skse_pair_digest(const SksePairKey *key, const SkseEssDigest *ess,
                      const void *data, size_t size, uint8_t hash[32]);
+int skse_pair_named_key(const uint8_t profile[16], const char *leaf, size_t length,
+                        const struct stat *version, SksePairKey *out);
