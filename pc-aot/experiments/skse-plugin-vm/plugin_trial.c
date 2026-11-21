@@ -143,7 +143,9 @@ static const struct {
     {{"KERNEL32.dll", "HeapCreate", 0xe0001190}, SKSE_X86_HEAP_CREATE, 0},
     {{"KERNEL32.dll", "HeapDestroy", 0xe0001194}, SKSE_X86_HEAP_DESTROY, 0},
     {{"KERNEL32.dll", "GetStartupInfoA", 0xe0001198}, SKSE_X86_WIN_THREAD, SKSE_WIN_GET_STARTUP_INFO},
-    {{"KERNEL32.dll", "SetHandleCount", 0xe000119c}, SKSE_X86_WIN_THREAD, SKSE_WIN_SET_HANDLE_COUNT}
+    {{"KERNEL32.dll", "SetHandleCount", 0xe000119c}, SKSE_X86_WIN_THREAD, SKSE_WIN_SET_HANDLE_COUNT},
+    {{"KERNEL32.dll", "GetPrivateProfileStringA", 0xe00011a0}, SKSE_X86_WIN_FILES, SKSE_WIN_GET_PROFILE_STRING_A},
+    {{"KERNEL32.dll", "GetPrivateProfileIntA", 0xe00011a4}, SKSE_X86_WIN_FILES, SKSE_WIN_GET_PROFILE_INT_A}
 };
 enum { WINDOWS_SERVICE_COUNT = sizeof windows_services / sizeof windows_services[0] };
 
@@ -161,7 +163,6 @@ static const char *const halt_kernel32[] = {
     "UnhandledExceptionFilter"
 };
 static const struct { const char *library, *symbol; } extra_halt_imports[] = {
-    {"KERNEL32.dll", "GetPrivateProfileStringA"}, {"KERNEL32.dll", "GetPrivateProfileIntA"},
     {"KERNEL32.dll", "WritePrivateProfileStringA"}, {"KERNEL32.dll", "CreateDirectoryA"},
     {"KERNEL32.dll", "FreeEnvironmentStringsA"}, {"KERNEL32.dll", "GetEnvironmentStrings"},
     {"KERNEL32.dll", "VirtualFree"}, {"KERNEL32.dll", "VirtualAlloc"},

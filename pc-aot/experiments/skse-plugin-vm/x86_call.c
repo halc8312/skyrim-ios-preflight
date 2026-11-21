@@ -1680,8 +1680,84 @@ static uint32_t win_seek_asset(Vm *vm, SkseWinFile *file, const uint32_t args[])
     return low;
 }
 
+/* The diagnostic reads ordinary named values in plugin INIs from the same
+ * source as CreateFile. No registry, OS directories, or file writes. */
+static bool plugin_ini_path(const char *path) {
+    static const char prefix[] = "data/skse/plugins/";
+    for (size_t i = 0; i < sizeof prefix - 1; ++i)
+        if (skse_win_ascii_lower((uint8_t)path[i]) != (uint8_t)prefix[i]) return false;
+    const char *leaf = path + sizeof prefix - 1;
+    const size_t length = strlen(leaf);
+    return length > 4 && !strchr(leaf, '/') && skse_win_asset_name_equal(leaf + length - 4, ".ini");
+}
+
+static const char *ini_argument(Vm *vm, uint32_t address, size_t limit) {
+    if (!address) return NULL;
+    const size_t length = win_nul_length(vm, address, 1, limit);
+    if (!length) return NULL;
+    return (const char *)memory(vm, address, length, SKSE_PE_READ);
+}
+
+static uint32_t win_file_profile(Vm *vm, const uint32_t args[], bool integer) {
+    const char *section = ini_argument(vm, args[0], SKSE_WIN_PATH_UNITS);
+    const char *key = ini_argument(vm, args[1], SKSE_WIN_PATH_UNITS);
+    if (vm->status != SKSE_X86_OK) return 0;
+    if (!section || !*section || !key || !*key)
+        return win_text_error(vm, SKSE_WIN_TEXT_NOT_SUPPORTED);
+    char path[SKSE_WIN_PATH_BYTES];
+    if (!read_asset_path(vm, args[integer ? 3 : 5], false, path)) return integer ? args[2] : 0;
+    if (!plugin_ini_path(path)) {
+        win_text_error(vm, SKSE_WIN_TEXT_NOT_SUPPORTED);
+        return integer ? args[2] : 0;
+    }
+
+    SkseWinFiles *files = vm->services.files;
+    uint32_t error = 0;
+    uint32_t token = skse_win_file_open(files, path, SKSE_WIN_FILE_READ, 7, SKSE_WIN_OPEN_EXISTING, &error);
+    SkseWinFile *file = token == UINT32_MAX ? NULL : skse_win_file_lookup(files, token);
+    SkseWinIniValue value = {0};
+    if (file) {
+        if (!reserve_bulk(vm, (file->data->length + 31) / 32)) {
+            skse_win_file_close(file);
+            return 0;
+        }
+        value = skse_win_ini_lookup(file->data, section, key);
+        if (!value.bytes) error = 2; // ERROR_FILE_NOT_FOUND also represents an absent key.
+    }
+
+    uint32_t result = args[2];
+    if (integer) {
+        if (value.length) result = skse_win_ini_integer(value);
+    } else {
+        if (!value.bytes) {
+            const char *fallback = args[2] ? ini_argument(vm, args[2], SKSE_WIN_PATH_BYTES) : "";
+            if (!fallback) {
+                if (file) skse_win_file_close(file);
+                return vm->status == SKSE_X86_OK ? win_text_error(vm, SKSE_WIN_TEXT_NOT_SUPPORTED) : 0;
+            }
+            value = (SkseWinIniValue){(const uint8_t *)fallback, strlen(fallback)};
+            while (value.length && value.bytes[value.length - 1] == ' ') --value.length;
+        }
+        const size_t capacity = args[4];
+        if (!error && capacity <= value.length + 1) error = 234; // ERROR_MORE_DATA.
+        result = 0;
+        if (capacity) {
+            if (value.length >= capacity) value.length = capacity - 1;
+            uint8_t *output = memory(vm, args[3], value.length + 1, SKSE_PE_WRITE);
+            if (output) {
+                memmove(output, value.bytes, value.length);
+                output[value.length] = 0;
+                result = (uint32_t)value.length;
+            }
+        }
+    }
+    if (file) skse_win_file_close(file);
+    if (vm->status == SKSE_X86_OK) vm->services.thread->last_error = error;
+    return result;
+}
+
 static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
-    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1, 5, 1, 1, 1, 4, 5, 1, 2};
+    static const unsigned argument_counts[] = {7, 7, 5, 2, 2, 1, 5, 1, 1, 1, 4, 5, 1, 2, 6, 4};
     _Static_assert(sizeof argument_counts / sizeof argument_counts[0] == SKSE_WIN_FILE_OPERATION_COUNT, "file ABI");
     unsigned count = argument_counts[operation];
     const uint8_t *parameters = service_parameters(vm, count * 4);
@@ -1694,6 +1770,8 @@ static uint32_t win_file_service(Vm *vm, SkseWinFileOperation operation) {
         return open_asset(vm, args, operation == SKSE_WIN_OPEN_FILE_W);
     if (operation == SKSE_WIN_ATTRIBUTES_A || operation == SKSE_WIN_ATTRIBUTES_W)
         return win_asset_attributes(vm, args[0], operation == SKSE_WIN_ATTRIBUTES_W);
+    if (operation == SKSE_WIN_GET_PROFILE_STRING_A || operation == SKSE_WIN_GET_PROFILE_INT_A)
+        return win_file_profile(vm, args, operation == SKSE_WIN_GET_PROFILE_INT_A);
     if (vm->services.files->read_only &&
         (operation == SKSE_WIN_WRITE_FILE || operation == SKSE_WIN_SET_END_OF_FILE))
         return win_text_error(vm, 5); // ERROR_ACCESS_DENIED.

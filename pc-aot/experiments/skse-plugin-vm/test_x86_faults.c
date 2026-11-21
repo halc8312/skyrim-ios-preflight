@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "x86_call.h"
+#include "x86_wintext.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -233,6 +234,78 @@ static void check_default_file_security_attributes(void) {
     result = skse_x86_call(&image, image.base, memory, arguments, 7, 100, services, SKSE_X86_STDCALL);
     assert(result.status == SKSE_X86_OK && skse_win_file_lookup(&files, result.eax));
     assert(skse_win_output_exists(&files, (const char *)name));
+    skse_win_files_close(&files);
+}
+
+static uint32_t read_test_ini(void *context, const char *path, size_t limit, uint8_t **bytes, size_t *length) {
+    unsigned *reads = context;
+    ++*reads;
+    if (!skse_win_asset_name_equal(path, "Data/SKSE/Plugins/Test.ini")) return 2;
+    static const char input[] = " [ MAIN ] \r\n ;Name=Ignored\r\n Name = \"Value\" \r\nName=Second\r\n"
+                                "number = -0x2a suffix\nEmpty=''\n [Main]\nMissing=Duplicate section\n";
+    *length = sizeof input - 1;
+    assert(*length <= limit);
+    *bytes = malloc(*length);
+    assert(*bytes);
+    memcpy(*bytes, input, *length);
+    return 0;
+}
+
+static void check_plugin_ini(void) {
+    enum { SECTION, NAME, NUMBER, EMPTY, MISSING, DEFAULT, PATH, FILE_MISSING, FOREIGN };
+    char input[][64] = {"main", "name", "number", "Empty", "Missing", " keep ",
+        "C:\\Skyrim\\Data\\SKSE\\Plugins\\Test.ini", "data\\SKSE\\Plugins\\Missing.ini",
+        "data\\outside.ini"};
+    const SkseX86ReadView view = {0x400000, (uint8_t *)input, sizeof input};
+    uint32_t addresses[sizeof input / sizeof input[0]];
+    for (size_t i = 0; i < sizeof addresses / sizeof addresses[0]; ++i)
+        addresses[i] = view.base + (uint32_t)(sizeof input[0] * i);
+    uint8_t thunk[] = {0xb8, 0, 0, 0x30, 0, 0xff, 0xe0};
+    SksePeImage image = {
+        .base = image_base, .size = sizeof thunk, .bytes = thunk, .section_count = 1,
+        .sections = {{0, sizeof thunk, SKSE_PE_READ | SKSE_PE_EXEC}}
+    };
+    unsigned reads = 0;
+    SkseWinFiles files = {.source = {.read = read_test_ini, .context = &reads}, .read_only = true};
+    SkseWinThread thread = {.last_error = 999};
+    SkseX86Service service = {0x00300000, SKSE_WIN_GET_PROFILE_STRING_A, SKSE_X86_WIN_FILES};
+    const SkseX86Services services = {.entries = &service, .count = 1, .files = &files, .thread = &thread,
+        .read_views = &view, .read_view_count = 1};
+    const SkseX86Scratch memory = {scratch_base, scratch, sizeof scratch};
+    static const struct {
+        unsigned key, path, capacity, last_error;
+        const char *expected;
+    } cases[] = {
+        {NAME, PATH, 12, 0, "Value"}, {NAME, PATH, 6, 234, "Value"}, {NAME, PATH, 3, 234, "Va"},
+        {NAME, PATH, 0, 234, NULL}, {EMPTY, PATH, 12, 0, ""}, {MISSING, PATH, 12, 2, " keep"},
+        {NAME, FILE_MISSING, 2, 2, " "}, {NAME, FOREIGN, 12, SKSE_WIN_TEXT_NOT_SUPPORTED, NULL}
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+        memset(scratch, 0x5a, sizeof scratch);
+        thread.last_error = 999;
+        const uint32_t args[] = {addresses[SECTION], addresses[cases[i].key], addresses[DEFAULT],
+                                 scratch_base, cases[i].capacity, addresses[cases[i].path]};
+        const SkseX86Result result = skse_x86_call(&image, image.base, memory, args, 6, 1000, services, SKSE_X86_STDCALL);
+        assert(result.status == SKSE_X86_OK && thread.last_error == cases[i].last_error);
+        const char *expected = cases[i].expected;
+        if (expected) {
+            assert(result.eax == strlen(expected) && !memcmp(scratch, expected, result.eax + 1));
+            assert(scratch[result.eax + 1] == 0x5a);
+        } else {
+            assert(!result.eax && scratch[0] == 0x5a);
+        }
+    }
+    service.value = SKSE_WIN_GET_PROFILE_INT_A;
+    const unsigned keys[] = {NUMBER, MISSING, EMPTY};
+    const uint32_t integers[] = {UINT32_C(0xffffffd6), 19, 19};
+    for (size_t i = 0; i < sizeof keys / sizeof keys[0]; ++i) {
+        thread.last_error = 999;
+        const uint32_t args[] = {addresses[SECTION], addresses[keys[i]], 19, addresses[PATH]};
+        const SkseX86Result result = skse_x86_call(&image, image.base, memory, args, 4, 1000, services, SKSE_X86_STDCALL);
+        assert(result.status == SKSE_X86_OK && result.eax == integers[i] && thread.last_error == (i == 1 ? 2 : 0));
+    }
+    assert(reads == 10);
+    for (size_t i = 0; i < SKSE_WIN_OPEN_FILES; ++i) assert(!files.files[i].token);
     skse_win_files_close(&files);
 }
 
@@ -1171,6 +1244,7 @@ int main(void) {
     check_environment_block_ownership();
     check_virtual_file_limits();
     check_default_file_security_attributes();
+    check_plugin_ini();
     check_data_page_protection();
     check_virtual_tls();
     check_virtual_critical_sections();

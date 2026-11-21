@@ -97,6 +97,82 @@ static char *copy_path(const char *path) {
     return copy;
 }
 
+static bool ini_space(unsigned c) {
+    return c == ' ' || c == '\t' || c == '\r';
+}
+
+static SkseWinIniValue trim_ini(SkseWinIniValue value) {
+    while (value.length && ini_space(*value.bytes)) { ++value.bytes; --value.length; }
+    while (value.length && ini_space(value.bytes[value.length - 1])) --value.length;
+    return value;
+}
+
+static bool ini_name_equal(SkseWinIniValue name, const char *expected, size_t length) {
+    if (name.length != length) return false;
+    for (size_t i = 0; i < length; ++i)
+        if (skse_win_ascii_lower(name.bytes[i]) != skse_win_ascii_lower((uint8_t)expected[i])) return false;
+    return true;
+}
+
+SkseWinIniValue skse_win_ini_lookup(const SkseWinFileData *file, const char *section, const char *key) {
+    const SkseWinIniValue missing = {0};
+    if (!file->length || memchr(file->bytes, 0, file->length)) return missing;
+    const uint8_t *cursor = file->bytes, *end = cursor + file->length;
+    const size_t section_length = strlen(section), key_length = strlen(key);
+    bool selected = false;
+    while (cursor < end) {
+        const uint8_t *newline = memchr(cursor, '\n', (size_t)(end - cursor));
+        const uint8_t *line_end = newline ? newline : end;
+        SkseWinIniValue line = trim_ini((SkseWinIniValue){cursor, (size_t)(line_end - cursor)});
+        cursor = newline ? newline + 1 : end;
+        if (!line.length || *line.bytes == ';') continue;
+        if (*line.bytes == '[') {
+            if (selected) break;
+            const uint8_t *close = memchr(line.bytes + 1, ']', line.length - 1);
+            if (!close) continue;
+            const SkseWinIniValue name = trim_ini((SkseWinIniValue){line.bytes + 1, (size_t)(close - line.bytes - 1)});
+            selected = ini_name_equal(name, section, section_length);
+            continue;
+        }
+        if (!selected) continue;
+        const uint8_t *equals = memchr(line.bytes, '=', line.length);
+        if (!equals) continue;
+        const SkseWinIniValue name = trim_ini((SkseWinIniValue){line.bytes, (size_t)(equals - line.bytes)});
+        if (!ini_name_equal(name, key, key_length)) continue;
+        SkseWinIniValue value = trim_ini((SkseWinIniValue){equals + 1, (size_t)(line.bytes + line.length - equals - 1)});
+        if (value.length >= 2 && (*value.bytes == '\'' || *value.bytes == '"') &&
+            *value.bytes == value.bytes[value.length - 1]) {
+            ++value.bytes;
+            value.length -= 2;
+        }
+        return value;
+    }
+    return missing;
+}
+
+uint32_t skse_win_ini_integer(SkseWinIniValue value) {
+    value = trim_ini(value);
+    const uint8_t *p = value.bytes;
+    size_t left = value.length;
+    const bool negative = left && *p == '-';
+    if (left && (negative || *p == '+')) { ++p; --left; }
+    unsigned base = 10;
+    if (left >= 2 && p[0] == '0') {
+        if (p[1] == 'x') base = 16;
+        if (p[1] == 'o') base = 8;
+        if (p[1] == 'b') base = 2;
+        if (base != 10) { p += 2; left -= 2; }
+    }
+    uint32_t number = 0;
+    while (left--) {
+        const unsigned c = skse_win_ascii_lower(*p++);
+        const unsigned digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : 16;
+        if (digit >= base) break;
+        number = number * base + digit;
+    }
+    return negative ? 0u - number : number;
+}
+
 static uint32_t read_asset(SkseWinFiles *files, const SkseWinAssets *source, const char *path, SkseWinFileData *data) {
     if (!source->read) return ACCESS_DENIED;
     size_t limit = MAX_OPENED_BYTES - files->opened_bytes;

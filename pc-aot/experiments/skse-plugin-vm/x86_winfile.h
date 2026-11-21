@@ -18,7 +18,8 @@ typedef enum {
     SKSE_WIN_OPEN_FILE_A, SKSE_WIN_OPEN_FILE_W, SKSE_WIN_READ_FILE, SKSE_WIN_FILE_SIZE,
     SKSE_WIN_FILE_SIZE_EX, SKSE_WIN_CLOSE_FILE, SKSE_WIN_SEEK_FILE_EX, SKSE_WIN_FILE_TYPE,
     SKSE_WIN_ATTRIBUTES_A, SKSE_WIN_ATTRIBUTES_W, SKSE_WIN_SEEK_FILE, SKSE_WIN_WRITE_FILE,
-    SKSE_WIN_SET_END_OF_FILE, SKSE_WIN_CREATE_DIRECTORY_W, SKSE_WIN_FILE_OPERATION_COUNT
+    SKSE_WIN_SET_END_OF_FILE, SKSE_WIN_CREATE_DIRECTORY_W, SKSE_WIN_GET_PROFILE_STRING_A,
+    SKSE_WIN_GET_PROFILE_INT_A, SKSE_WIN_FILE_OPERATION_COUNT
 } SkseWinFileOperation;
 
 enum { SKSE_WIN_ATTRIBUTE_DIRECTORY = 0x10, SKSE_WIN_ATTRIBUTE_NORMAL = 0x80 };
@@ -67,6 +68,12 @@ typedef struct {
     uint32_t profile_error;
     bool profile, profile_dirty;
 } SkseWinFileData;
+
+typedef struct { const uint8_t *bytes; size_t length; } SkseWinIniValue;
+/* The returned byte span borrows the immutable ANSI file snapshot. A
+ * configured empty value has a non-NULL pointer and a length of zero. */
+SkseWinIniValue skse_win_ini_lookup(const SkseWinFileData *, const char *section, const char *key);
+uint32_t skse_win_ini_integer(SkseWinIniValue);
 
 typedef struct {
     uint32_t token;
