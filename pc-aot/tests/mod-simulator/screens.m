@@ -105,6 +105,14 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCTFail(@"Could not bring the row %@ onscreen. %@", label, table.debugDescription);
     return row;
 }
+- (void)openModDetails:(NSString *)name {
+    XCUIElement *title = [self findRow:name].staticTexts[name];
+    XCTAssertFalse(CGRectIsNull(elementFrame(title)));
+    // A tap on the accessibility cell can be delivered to its accessory
+    // switch. Tap the title itself and verify the detail navigation.
+    [[title coordinateWithNormalizedOffset:CGVectorMake(.5, .5)] tap];
+    XCTAssertTrue([self.app.navigationBars[name] waitForExistenceWithTimeout:8]);
+}
 - (void)goBackFrom:(NSString *)title {
     XCUIElement *bar = self.app.navigationBars[title];
     XCTAssertTrue([bar waitForExistenceWithTimeout:8], @"Missing navigation bar %@", title);
@@ -395,7 +403,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self openHub];
     [[self findRow:@"Add an archive or character preset"] tap];
     [self pick:@"AuthoredDLL.zip" folder:NO];
-    [[self findRow:@"AuthoredDLL"] tap];
+    [self openModDetails:@"AuthoredDLL"];
     XCUIElement *check = self.app.navigationBars[@"AuthoredDLL"].buttons[@"Check DLLs"];
     XCTAssertTrue([check waitForExistenceWithTimeout:8]);
     [check tap];
@@ -484,14 +492,14 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self pick:@"AuthoredZip.zip" folder:NO];
     [self findRow:@"AuthoredZip"];
     [self capture:@"zip-imported"];
-    [[self findRow:@"AuthoredZip"] tap];
+    [self openModDetails:@"AuthoredZip"];
     [self findRow:@"⚠️ Incompatible 64-bit HKX detected (1). Use Skyrim LE files."];
     [self goBackFrom:@"AuthoredZip"];
     [self goBackFrom:@"MOD"];
     [[self findRow:@"App language"] tap];
     [self.app.buttons[@"日本語"] tap];
     [[self findRow:@"MODの管理"] tap];
-    [[self findRow:@"AuthoredZip"] tap];
+    [self openModDetails:@"AuthoredZip"];
     [self findRow:@"⚠️ LE非対応の64ビットHKXが1件あります。LE用のファイルを使ってください。"];
     [self goBackFrom:@"AuthoredZip"];
     [self goBackFrom:@"MOD"];

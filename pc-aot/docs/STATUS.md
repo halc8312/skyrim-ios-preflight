@@ -18,6 +18,8 @@ HDT HighHeelsの同梱DLLが参照する骨格の `NPC` ノードを対象に、
 
 公開ソースだけで行ったApple SDKの検査では、通常のiPhoneOSアプリ本体のリンクまで成功した。MOD画面のシミュレーター試験はテスト用起動コードの変数名が重複してコンパイルできなかったため修正した。 [Apple SDKの検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44892853301)
 
+次のApple SDK検査でも通常のiPhoneOSアプリ本体がビルドでき、MOD画面の試験は実行まで進んだ。横画面のFilesに表示されたテスト用ZIPを操作できず、添付の抽出にも失敗した。画面に表示された範囲からファイルを選択する方式を加え、スクリーンショットの抽出も修正した。端末用アプリの再ビルドを省き、同じUIKitの試験だけを再実行する経路を追加した。 [通常版の試験ログ](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44894994913)
+
 DLLファイル診断のMac試験で、通常ファイルを開けない問題を再現した。Appleのカーネルが併用を拒否する `O_NOFOLLOW_ANY` と `O_NOFOLLOW` を、利用可能な一方だけ指定するように変更した。Precache KillerとRaceMenuの照合用ファイル読み取りにも同じ修正を入れた。修正後はiPhoneOS SDKのコンパイルと、日本語・英語のDLL診断シミュレーター試験が合格した。 [Apple XNUの実装](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/vfs/vfs_vnops.c) · [DLL診断の検査結果](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44896596227)
 
 **2026-11-21　第一弾の追加素材4本を確認しFuzの音声検索を修正**
