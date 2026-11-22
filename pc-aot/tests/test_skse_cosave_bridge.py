@@ -68,8 +68,9 @@ class Binding:
             "skse_bridge_close": ([PTR], None),
             "skse_bridge_bind_named_ess": ([PTR, C.c_uint32, C.c_int, C.c_char_p, C.c_int, P(Event),
                                            P(C.c_int)], C.c_int),
-            "skse_bridge_rebind_named_copy": ([PTR, C.c_int, C.c_int, PTR, C.c_int, C.c_int, C.c_char_p,
-                                               P(C.c_int)], C.c_int),
+            "skse_bridge_check_copy_source": ([PTR, C.c_int, C.c_int, C.c_char_p, P(C.c_int)], C.c_int),
+            "skse_bridge_prepare_copied_ess": ([PTR, C.c_int, C.c_int, PTR, C.c_int, C.c_char_p,
+                                                P(C.c_int)], C.c_int),
             "skse_bridge_drop": ([PTR], None),
             "skse_bridge_check_call": ([P(Event), C.c_uint32, P(Trace)], C.c_int),
             "skse_bridge_capture_save": ([PTR, P(Trace), P(Evidence), P(C.c_int)], C.c_int),
@@ -267,7 +268,7 @@ class BridgeTests(BridgeHarness):
             self.assertEqual(bytes(initial[2].saved.slot), bytes(current[2].saved.slot))
             self.assertNotEqual(bytes(initial[2].saved.event), bytes(current[2].saved.event))
 
-    def test_named_profile_copy_rebinds_only_exact_finalized_save_in_the_same_language(self):
+    def test_named_profile_copy_prepares_exact_save_in_the_same_language(self):
         target = self.root / "target-saves"
         target.mkdir()
         into = self.root / "target-private"
@@ -302,37 +303,49 @@ class BridgeTests(BridgeHarness):
         self.assertEqual(self.native.commit(source_store, stage, C.byref(old_generation)), gen.OK)
         source = start_bridge(self.private, scope(launch=20), readonly=True)
         destination = start_bridge(into, scope(launch=21, profile=2))
-
         path = target / self.ess.name
-        wrong = bytes([self.original[0] ^ 1]) + self.original[1:]
-        path.write_bytes(wrong)
-
-        def rebind(to, fd, from_bridge=source):
-            detail = C.c_int(-1)
-            status = self.api.rebind_named_copy(from_bridge, old_folder, self.fd, to, new_folder, fd, leaf,
-                                                C.byref(detail))
-            return status, detail.value
-
-        with path.open("rb") as bad:
-            self.assertEqual(rebind(destination, bad.fileno()), (PAIR, gen.WRONG))
-            staged = target / "staged"
-            staged.write_bytes(self.original)
-            staged.replace(path)
-            self.assertEqual(rebind(destination, bad.fileno()), (PAIR, gen.CHANGED))
-        with path.open("rb") as copied:
+        detail = C.c_int(-1)
+        staged = target / "private-stage"
+        staged.write_bytes(bytes([self.original[0] ^ 1]) + self.original[1:])
+        staged.chmod(0o600)
+        with staged.open("rb") as wrong:
+            result = self.api.prepare_copied_ess(source, old_folder, self.fd, destination, wrong.fileno(), leaf,
+                                                 C.byref(detail))
+            self.assertEqual((result, detail.value), (PAIR, gen.WRONG))
+        staged.unlink()
+        staged.write_bytes(self.original)
+        staged.chmod(0o600)
+        with staged.open("rb") as pending:
             other_language = start_bridge(into, scope(launch=22, profile=2, voices=1))
-            self.assertEqual(rebind(other_language, copied.fileno()), (SCOPE, gen.OK))
-            self.assertEqual(rebind(destination, copied.fileno(), self.bridge), (ARG, gen.OK))
-            self.assertEqual(rebind(destination, copied.fileno()), (OK, gen.OK))
-            self.assertEqual(rebind(destination, copied.fileno()), (OK, gen.ALREADY))
-            relaunched = start_bridge(into, scope(launch=23, profile=2), readonly=True)
-            target_key = bind(relaunched, new_folder, copied.fileno())
-            self.assertNotEqual(bytes(original_key), bytes(target_key))
-            status, target_store = self.native.store(into / "text-en-voice-en")
-            self.assertEqual(status, gen.OK)
-            self.addCleanup(self.native.close, target_store)
-            self.assertEqual(self.native.data(target_store, gen.Generation(target_key, copied.fileno())), (gen.OK, wire))
-            self.assertEqual(self.native.data(target_store, old_generation), (gen.MISSING, None))
+            result = self.api.prepare_copied_ess(source, old_folder, self.fd, other_language, pending.fileno(), leaf,
+                                                 C.byref(detail))
+            self.assertEqual((result, detail.value), (SCOPE, gen.OK))
+            for expected in (gen.OK, gen.ALREADY):
+                result = self.api.prepare_copied_ess(source, old_folder, self.fd, destination, pending.fileno(), leaf,
+                                                     C.byref(detail))
+                self.assertEqual((result, detail.value), (OK, expected))
+                self.assertFalse(path.exists())
+            staged.rename(path)
+        restarted = start_bridge(into, scope(launch=24, profile=2), readonly=True)
+        with path.open("rb") as copied:
+            result = self.api.check_copy_source(restarted, new_folder, copied.fileno(), leaf, C.byref(detail))
+            self.assertEqual((result, detail.value), (OK, gen.OK))
+            # A second copy requires authenticating all the previous companion bytes.
+            onward = start_bridge(into, scope(launch=25, profile=3))
+            again = target / "next-private-stage"
+            again.write_bytes(self.original)
+            again.chmod(0o600)
+            with again.open("rb") as pending:
+                result = self.api.prepare_copied_ess(restarted, new_folder, copied.fileno(), onward, pending.fileno(),
+                                                     leaf, C.byref(detail))
+                self.assertEqual((result, detail.value), (OK, gen.OK))
+
+        replacement = target / "replacement"
+        replacement.write_bytes(self.original)
+        replacement.replace(path)
+        with path.open("rb") as replaced:
+            result = self.api.check_copy_source(restarted, new_folder, replaced.fileno(), leaf, C.byref(detail))
+            self.assertEqual((result, detail.value), (PAIR, gen.MISSING))
         self.assertEqual(self.native.data(source_store, old_generation), (gen.OK, wire))
         self.assertEqual(self.ess.read_bytes(), self.original)
 

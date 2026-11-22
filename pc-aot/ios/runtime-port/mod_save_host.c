@@ -14,6 +14,7 @@
 #include "rt.h"
 #include "classic_mod_catalog.h"
 #include "classic_papyrusutil.h"
+#include "copy_pair.h"
 #include "event_bridge.h"
 #include "interpreted_records.h"
 #include "native_load.h"
@@ -104,6 +105,79 @@ bool skyrim_save_app_configure_storage(const char *profile, const uint8_t profil
     storage.store_directory = store;
     storage.queue = queue;
     return true;
+}
+
+typedef struct {
+    const char *profile;
+    const uint8_t *id;
+    SkseEventBridge *source;
+    bool copied;
+} SaveCopyStorage;
+
+static int copy_store_error(SkseBridgeResult result, SksePairResult detail) {
+    if (result == SKSE_BRIDGE_OK) return 0;
+    if (detail == SKSE_PAIR_BUSY) return EBUSY;
+    if (detail == SKSE_PAIR_ESS_CHANGED || detail == SKSE_PAIR_WRONG_GENERATION) return ESTALE;
+    if (detail == SKSE_PAIR_CONFLICT) return EEXIST;
+    return EIO;
+}
+
+static int prepare_copy_storage(void *opaque, int source_dir, int original, const char *leaf, int staged) {
+    SaveCopyStorage *copy = opaque;
+    SksePairResult detail;
+    SkseBridgeResult result = skse_bridge_check_copy_source(copy->source, source_dir, original, leaf, &detail);
+    if (result != SKSE_BRIDGE_OK)
+        return detail == SKSE_PAIR_MISSING ? 0 : copy_store_error(result, detail);
+    if (!copy->id || !copy->profile) return ENOTSUP;
+    char path[CLASSIC_RUNTIME_PATH_BYTES];
+    int length = snprintf(path, sizeof path, "%s/ClassicCoSave", copy->profile);
+    if (length < 0 || (size_t)length >= sizeof path) return ENAMETOOLONG;
+    int profile = open(copy->profile, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (profile < 0) return errno;
+    int root = open_private_child(profile, "ClassicCoSave");
+    close(profile);
+    if (root < 0) return EIO;
+    SkseGameScope destination = storage.game;
+    memcpy(destination.profile, copy->id, sizeof destination.profile);
+    arc4random_buf(destination.launch, sizeof destination.launch);
+    SkseEventBridge *bridge = NULL;
+    result = skse_bridge_open(path, &destination, &bridge, &detail);
+    if (result == SKSE_BRIDGE_OK)
+        result = skse_bridge_prepare_copied_ess(copy->source, source_dir, original, bridge, staged, leaf, &detail);
+    skse_bridge_close(bridge);
+    close(root);
+    copy->copied = result == SKSE_BRIDGE_OK;
+    return copy_store_error(result, detail);
+}
+
+typedef struct {
+    int root, error, copied;
+    const char *source, *target, *leaf;
+    SaveCopyStorage storage;
+} SaveCopyTask;
+
+static void copy_on_storage_queue(void *opaque) {
+    SaveCopyTask *task = opaque;
+    if (atomic_load_explicit(&storage.pending, memory_order_relaxed)) { task->error = EBUSY; return; }
+    SaveCopyStorage *copy = &task->storage;
+    SksePairResult detail;
+    SkseBridgeResult result = skse_bridge_open_readonly(storage.root, &storage.game, &copy->source, &detail);
+    task->error = copy_store_error(result, detail);
+    if (!task->error) task->error = skse_copy_named_save_prepared(task->root, task->source, task->target,
+        task->leaf, prepare_copy_storage, copy, &task->copied);
+    if (!task->error && copy->copied) task->copied |= 2;
+    skse_bridge_close(copy->source);
+}
+
+int skyrim_save_app_copy_selected(int root, const char *source, const char *target,
+    const char *target_profile, const uint8_t target_id[16], const char *leaf, int *copied) {
+    if (!storage.queue) return skse_copy_named_save(root, source, target, leaf, copied);
+    if (!copied) return EINVAL;
+    SaveCopyTask task = {.root = root, .source = source, .target = target, .leaf = leaf,
+                         .storage = {.profile = target_profile, .id = target_id}};
+    dispatch_sync_f(storage.queue, &task, copy_on_storage_queue);
+    *copied = task.copied;
+    return task.error;
 }
 
 static int open_scratch(char leaf[32]) {

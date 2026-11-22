@@ -46,10 +46,11 @@ int skse_pair_digest(const SksePairKey *key, const SkseEssDigest *ess,
     return ok;
 }
 
-int skse_pair_named_key(const uint8_t profile[16], const char *leaf, size_t length,
-                        const struct stat *version, SksePairKey *out) {
+static int named_key(const uint8_t profile[16], const char *leaf, size_t length,
+                     const struct stat *version, const uint8_t *copy_token, SksePairKey *out) {
     static const char slot_domain[] = "Classic named save slot v1";
     static const char event_domain[] = "Classic named save event v1";
+    static const char copied_domain[] = "Classic copied save event v1";
 #if defined(__APPLE__)
     const struct timespec changed = version->st_ctimespec, modified = version->st_mtimespec;
 #else
@@ -57,7 +58,8 @@ int skse_pair_named_key(const uint8_t profile[16], const char *leaf, size_t leng
 #endif
     const uint64_t fields[] = {
         (uint64_t)version->st_dev, (uint64_t)version->st_ino, (uint64_t)version->st_size,
-        (uint64_t)changed.tv_sec, (uint64_t)changed.tv_nsec, (uint64_t)modified.tv_sec, (uint64_t)modified.tv_nsec,
+        copy_token ? 0 : (uint64_t)changed.tv_sec, copy_token ? 0 : (uint64_t)changed.tv_nsec,
+        (uint64_t)modified.tv_sec, (uint64_t)modified.tv_nsec,
     };
     uint8_t wire[sizeof fields], hash[32];
     for (size_t n = 0; n < sizeof fields / sizeof *fields; ++n)
@@ -72,13 +74,25 @@ int skse_pair_named_key(const uint8_t profile[16], const char *leaf, size_t leng
     release(&ctx);
     if (!ok) return 0;
     memcpy(key.slot, hash, sizeof key.slot);
-    ok = start(&ctx) && update(&ctx, event_domain, sizeof event_domain) &&
-         update(&ctx, key.slot, sizeof key.slot) && update(&ctx, wire, sizeof wire) && finish(&ctx, hash);
+    ok = start(&ctx) && (copy_token ? update(&ctx, copied_domain, sizeof copied_domain) :
+                                       update(&ctx, event_domain, sizeof event_domain)) &&
+         update(&ctx, key.slot, sizeof key.slot) && update(&ctx, wire, sizeof wire) &&
+         (!copy_token || update(&ctx, copy_token, 16)) && finish(&ctx, hash);
     release(&ctx);
     if (!ok) return 0;
     memcpy(key.event, hash, sizeof key.event);
     *out = key;
     return 1;
+}
+
+int skse_pair_named_key(const uint8_t profile[16], const char *leaf, size_t length,
+                        const struct stat *version, SksePairKey *out) {
+    return named_key(profile, leaf, length, version, NULL, out);
+}
+
+int skse_pair_copied_key(const uint8_t profile[16], const char *leaf, size_t length,
+                         const struct stat *version, const uint8_t token[16], SksePairKey *out) {
+    return named_key(profile, leaf, length, version, token, out);
 }
 
 int skse_ess_same_version(const struct stat *a, const struct stat *b) {

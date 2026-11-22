@@ -9,3 +9,5 @@ int skse_pair_digest(const SksePairKey *key, const SkseEssDigest *ess,
                      const void *data, size_t size, uint8_t hash[32]);
 int skse_pair_named_key(const uint8_t profile[16], const char *leaf, size_t length,
                         const struct stat *version, SksePairKey *out);
+int skse_pair_copied_key(const uint8_t profile[16], const char *leaf, size_t length,
+                         const struct stat *version, const uint8_t token[16], SksePairKey *out);

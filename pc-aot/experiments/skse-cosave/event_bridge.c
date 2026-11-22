@@ -14,6 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/xattr.h>
+#endif
 #include <unistd.h>
 
 struct SkseEventBridge { SkseGameScope running; SksePairStore *store; int directory; bool readonly; };
@@ -128,6 +131,65 @@ static SkseBridgeResult bind_named_ess(const SkseGameScope *scope,
     return SKSE_BRIDGE_OK;
 }
 
+#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__)
+static const char copy_attribute[] = "org.skyrimios.cosave-copy.v1";
+#else
+static const char copy_attribute[] = "user.org.skyrimios.cosave-copy.v1";
+#endif
+#endif
+
+static int read_copy_token(int fd, uint8_t token[16]) {
+#if defined(__APPLE__)
+    ssize_t size = fgetxattr(fd, copy_attribute, token, 16, 0, 0);
+    if (size < 0 && (errno == ENOATTR || errno == ENOTSUP)) return 0;
+#elif defined(__linux__)
+    ssize_t size = fgetxattr(fd, copy_attribute, token, 16);
+    if (size < 0 && (errno == ENODATA || errno == ENOTSUP)) return 0;
+#else
+    (void)fd; (void)token;
+    return 0;
+#endif
+#if defined(__APPLE__) || defined(__linux__)
+    return size == 16 && has_id(token) ? 1 : -1;
+#endif
+}
+
+static bool mark_copy(int fd, const uint8_t suggested[16], uint8_t token[16]) {
+    int marked = read_copy_token(fd, token);
+    if (marked) return marked > 0;
+#if defined(__APPLE__)
+    if (fsetxattr(fd, copy_attribute, suggested, 16, 0, XATTR_CREATE)) return false;
+#elif defined(__linux__)
+    if (fsetxattr(fd, copy_attribute, suggested, 16, XATTR_CREATE)) return false;
+#else
+    (void)suggested;
+    return false;
+#endif
+    memcpy(token, suggested, 16);
+    return fsync(fd) == 0;
+}
+
+/* A current ordinary save takes precedence even if an in-place writer kept
+ * older file attributes. A copied key still needs the full database proof. */
+static SkseBridgeResult bind_named_read(SkseEventBridge *bridge, int saves, const char *leaf,
+    int source, SkseGameEvent *event, SksePairResult *detail) {
+    SkseBridgeResult result = bind_named_ess(bridge ? &bridge->running : NULL, saves, leaf, source, event, detail);
+    if (result != SKSE_BRIDGE_OK) return result;
+    uint8_t token[16];
+    int marked = read_copy_token(source, token);
+    if (!marked) return SKSE_BRIDGE_OK;
+    SksePairResult row = skse_pair_contains(bridge->store, &event->saved);
+    if (row == SKSE_PAIR_OK) return SKSE_BRIDGE_OK;
+    if (row != SKSE_PAIR_MISSING) return from_pair(row, detail);
+    if (marked < 0) return from_pair(SKSE_PAIR_DAMAGED, detail);
+    struct stat version;
+    if (fstat(source, &version) || !skse_pair_copied_key(bridge->running.profile, leaf, strlen(leaf),
+                                                       &version, token, &event->saved))
+        return from_pair(SKSE_PAIR_STORAGE, detail);
+    return SKSE_BRIDGE_OK;
+}
+
 SkseBridgeResult skse_bridge_bind_named_ess(SkseEventBridge *bridge, uint32_t ticket,
     int saves, const char *leaf, int source, SkseGameEvent *event, SksePairResult *detail) {
     if (!ticket || ticket > SkyrimLifecycleCapacity) {
@@ -140,25 +202,46 @@ SkseBridgeResult skse_bridge_bind_named_ess(SkseEventBridge *bridge, uint32_t ti
     return status;
 }
 
-SkseBridgeResult skse_bridge_rebind_named_copy(SkseEventBridge *source, int source_dir, int original,
-    SkseEventBridge *destination, int destination_dir, int copy, const char *leaf, SksePairResult *detail) {
+SkseBridgeResult skse_bridge_check_copy_source(SkseEventBridge *source, int source_dir, int original,
+    const char *leaf, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!source || !source->readonly) return SKSE_BRIDGE_ARGUMENT;
+    SkseGameEvent bound;
+    SkseBridgeResult result = bind_named_read(source, source_dir, leaf, original, &bound, detail);
+    return result == SKSE_BRIDGE_OK ? from_pair(skse_pair_contains(source->store, &bound.saved), detail) : result;
+}
+
+SkseBridgeResult skse_bridge_prepare_copied_ess(SkseEventBridge *source, int source_dir, int original,
+    SkseEventBridge *destination, int staged, const char *leaf, SksePairResult *detail) {
     if (detail) *detail = SKSE_PAIR_OK;
     if (!source || !source->readonly || !destination || destination->readonly) return SKSE_BRIDGE_ARGUMENT;
     const SkseGameScope *from = &source->running, *to = &destination->running;
     if (!memcmp(from->profile, to->profile, sizeof from->profile) ||
         from->text != to->text || from->voices != to->voices) return SKSE_BRIDGE_SCOPE;
-    struct stat first, second;
-    if (fstat(source_dir, &first) || fstat(destination_dir, &second)) return SKSE_BRIDGE_IO;
-    if (skse_save_same_file(&first, &second)) return SKSE_BRIDGE_ARGUMENT;
-    SkseGameEvent source_event, destination_event;
-    SkseBridgeResult result = bind_named_ess(from, source_dir, leaf, original, &source_event, detail);
-    if (result == SKSE_BRIDGE_OK)
-        result = bind_named_ess(to, destination_dir, leaf, copy, &destination_event, detail);
-    if (result != SKSE_BRIDGE_OK) return result;
-    const SksePairGeneration original_generation = {source_event.saved, original};
-    const SksePairGeneration copied_generation = {destination_event.saved, copy};
-    return from_pair(skse_pair_rebind_copy(source->store, &original_generation,
-                     destination->store, &copied_generation), detail);
+    SkseGameEvent bound;
+    SkseBridgeResult status = bind_named_read(source, source_dir, leaf, original, &bound, detail);
+    if (status != SKSE_BRIDGE_OK) return status;
+    SksePairResult row = skse_pair_contains(source->store, &bound.saved);
+    if (row != SKSE_PAIR_OK) return from_pair(row, detail);
+    struct stat before, after, original_info;
+    const int flags = fcntl(staged, F_GETFL);
+    if (flags < 0 || (flags & O_ACCMODE) != O_RDONLY || fstat(original, &original_info) || fstat(staged, &before) ||
+        !S_ISREG(before.st_mode) || before.st_uid != geteuid() || (before.st_mode & 0077) || before.st_nlink != 1 ||
+        skse_save_same_file(&original_info, &before)) return SKSE_BRIDGE_ARGUMENT;
+    uint8_t token[16];
+    if (!mark_copy(staged, to->launch, token) || fstat(staged, &before)) return from_pair(SKSE_PAIR_STORAGE, detail);
+    const SksePairGeneration original_generation = {bound.saved, original};
+    SksePairGeneration staged_generation = {.ess_fd = staged};
+    if (!skse_pair_copied_key(to->profile, leaf, strlen(leaf), &before, token, &staged_generation.key))
+        return from_pair(SKSE_PAIR_STORAGE, detail);
+    row = skse_pair_rebind_copy(source->store, &original_generation, destination->store, &staged_generation);
+    if (row != SKSE_PAIR_OK && row != SKSE_PAIR_ALREADY) return from_pair(row, detail);
+    SkseGameEvent fresh;
+    status = bind_named_read(source, source_dir, leaf, original, &fresh, detail);
+    if (status != SKSE_BRIDGE_OK) return status;
+    if (fstat(staged, &after) || !skse_save_same_version(&before, &after) ||
+        memcmp(&fresh.saved, &bound.saved, sizeof bound.saved)) return from_pair(SKSE_PAIR_ESS_CHANGED, detail);
+    return from_pair(row, detail);
 }
 
 static SkseBridgeResult confirm_named_ess(const SkseGameEvent *requested,
@@ -438,7 +521,7 @@ static SkseBridgeResult prepare_named_load(SkseEventBridge *bridge, uint32_t tic
     if (loader_fd) *loader_fd = -1;
     if (!event || !out || !loader_fd) return SKSE_BRIDGE_ARGUMENT;
     SkseGameEvent bound;
-    SkseBridgeResult status = bind_named_ess(bridge ? &bridge->running : NULL, saves, leaf, source, &bound, detail);
+    SkseBridgeResult status = bind_named_read(bridge, saves, leaf, source, &bound, detail);
     if (status != SKSE_BRIDGE_OK) return status;
     bound.ticket = ticket;
     if (ticket) {
@@ -449,7 +532,10 @@ static SkseBridgeResult prepare_named_load(SkseEventBridge *bridge, uint32_t tic
     int fd = -1;
     status = prepare_load_input(bridge, &bound, source, scratch, &input, &fd, detail);
     if (status != SKSE_BRIDGE_OK) return status;
-    status = confirm_named_ess(&bound, saves, leaf, source, detail);
+    SkseGameEvent still_named;
+    status = bind_named_read(bridge, saves, leaf, source, &still_named, detail);
+    if (status == SKSE_BRIDGE_OK && memcmp(&still_named.saved, &bound.saved, sizeof bound.saved))
+        status = from_pair(SKSE_PAIR_ESS_CHANGED, detail);
     if (status == SKSE_BRIDGE_OK) {
         *event = bound;
         *out = input;

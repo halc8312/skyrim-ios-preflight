@@ -1840,7 +1840,8 @@ static dispatch_queue_t SaveCopyQueue(void) {
     return queue;
 }
 
-static int CopySelectedSave(NSString *source, NSString *target, NSString *name, int *side) {
+static int CopySelectedSave(NSString *source, NSString *target, NSString *profileDirectory,
+                            NSString *profileID, NSString *name, int *side) {
     NSString *path = CanonicalSupportPath(Base());
     if (!path.length) return ENOENT;
     int flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
@@ -1851,8 +1852,18 @@ static int CopySelectedSave(NSString *source, NSString *target, NSString *name, 
 #endif
     int root = open(path.fileSystemRepresentation, flags);
     if (root < 0) return errno;
+#if defined(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL) && defined(SKYRIM_IOS_MOD_HOOKS)
+    NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:profileID];
+    uuid_t bytes;
+    if (uuid) [uuid getUUIDBytes:bytes];
+    NSString *profile = CanonicalSupportPath(profileDirectory);
+    int error = skyrim_save_app_copy_selected(root, source.fileSystemRepresentation, target.fileSystemRepresentation,
+        profile.fileSystemRepresentation, uuid ? bytes : NULL, name.fileSystemRepresentation, side);
+#else
+    (void)profileDirectory; (void)profileID;
     int error = skse_copy_named_save(root, source.fileSystemRepresentation, target.fileSystemRepresentation,
                                     name.fileSystemRepresentation, side);
+#endif
     close(root);
     return error;
 }
@@ -1862,6 +1873,8 @@ static NSString *saveCopyTargetID; /* main thread, one explicit copy at a time *
 static NSString *SaveCopyMessage(int error, int side, NSString *profile) {
     switch (error) {
     case 0:
+        if (side & 2) return [NSString stringWithFormat:T(@"Copied the save and its StorageUtil data to %@.",
+                                                          @"%@ にセーブとStorageUtilの追加データをコピーしました。"), profile];
         return [NSString stringWithFormat:side ? T(@"Copied both .ess and .skse files to %@.", @"%@ に .ess と .skse の両方をコピーしました。") :
             T(@"Copied the .ess file to %@.", @"%@ に .ess をコピーしました。"), profile];
     case EEXIST:
@@ -1870,6 +1883,12 @@ static NSString *SaveCopyMessage(int error, int side, NSString *profile) {
         return T(@"The save or its companion changed during copying.", @"コピー中にセーブまたは追加セーブが変わりました。");
     case ENOSPC:
         return T(@"There is not enough space for the save copy.", @"セーブのコピーに必要な空き容量がありません。");
+    case EBUSY:
+        return T(@"The companion save is being written. Try copying again shortly.",
+                 @"追加セーブを保存中です。少し待ってからコピーし直してください。");
+    case ENOTSUP:
+        return T(@"Choose a named profile to carry over the StorageUtil data.",
+                 @"StorageUtilの追加データを引き継ぐには、名前付きプロファイルを選んでください。");
     case ENOENT:
         return T(@"The save, its companion, or the profile folder is unavailable.", @"セーブ、追加セーブ、またはプロファイルのフォルダが見つかりません。");
     default:
@@ -1941,7 +1960,7 @@ static NSString *SaveCopyMessage(int error, int side, NSString *profile) {
         [self reportCopy:ENOENT side:0 profile:nil];
         return;
     }
-    NSString *targetName = ProfileName(target), *saveName = self.saveName;
+    NSString *targetName = ProfileName(target), *saveName = self.saveName, *targetDirectory = ProfileDir(target);
     saveCopyTargetID = targetID;
     self.navigationItem.hidesBackButton = YES;
     UIGestureRecognizer *back = self.navigationController.interactivePopGestureRecognizer;
@@ -1954,7 +1973,7 @@ static NSString *SaveCopyMessage(int error, int side, NSString *profile) {
     [progress startAnimating];
     dispatch_async(SaveCopyQueue(), ^{
         int side = 0;
-        int error = CopySelectedSave(sourcePath, targetPath, saveName, &side);
+        int error = CopySelectedSave(sourcePath, targetPath, targetDirectory, targetID, saveName, &side);
         dispatch_async(dispatch_get_main_queue(), ^{
             saveCopyTargetID = nil;
             self.navigationItem.hidesBackButton = NO;

@@ -253,6 +253,11 @@ static SksePairResult expected_ess(sqlite3 *db, const SksePairKey *key, SkseEssD
     sqlite3_finalize(s);
     return result;
 }
+SksePairResult skse_pair_contains(SksePairStore *store, const SksePairKey *key) {
+    if (!store || !valid_key(key)) return SKSE_PAIR_ARGUMENT;
+    SkseEssDigest ignored;
+    return store->db ? expected_ess(store->db, key, &ignored) : SKSE_PAIR_MISSING;
+}
 static SksePairResult read_image(sqlite3 *db, const SksePairGeneration *g, SksePairImage *out,
                                  SkseEssDigest *verified_ess) {
     if (!g || !valid_key(&g->key) || g->ess_fd < 0) return SKSE_PAIR_ARGUMENT;

@@ -81,6 +81,8 @@ SksePairResult skse_pair_export(SksePairStore *store, const SksePairGeneration *
  * conflict. The caller handles the surrounding .ess copy transaction. */
 SksePairResult skse_pair_rebind_copy(SksePairStore *source, const SksePairGeneration *original,
                                     SksePairStore *destination, const SksePairGeneration *copy);
+/* Check for a row without reading the .ess or returning companion data. */
+SksePairResult skse_pair_contains(SksePairStore *store, const SksePairKey *key);
 const char *skse_pair_result(SksePairResult result);
 
 #ifdef __cplusplus
