@@ -107,6 +107,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.run_reviewed_fixture(
             stage_effect_magnitude, "test_effect_magnitude_lift.c",
             "Classic typed effect lookup captures magnitude only in the matching visitor",
+            extra_sources=(HERE / "highheel_lifetimes.c",),
         )
 
     def test_reviewed_pex_reader_and_linked_class_witness(self):

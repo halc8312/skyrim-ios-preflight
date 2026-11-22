@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "guest_memory.h"
+#include "highheel_lifetimes.h"
 #include "lift_prelude.h"
 
 #include <assert.h>
@@ -179,6 +180,8 @@ static Result run(uint32_t type, bool loaded_actor, uint8_t actor_type, bool pre
     M32(STACK + 8) = ACTOR_FORM_ID;
     f_8B39F0(&cpu);
     assert(cpu.r[0] == ACTOR_FORM_ID && cpu.r[2] == (0x20000 | EFFECT_NUMBER));
+    assert((uint64_t)cpu.r[0] + ((uint64_t)cpu.r[2] << 32) ==
+           highheel_effect_handle(ACTOR_FORM_ID, EFFECT_NUMBER));
     M32(STACK + 4) = type;
     M32(STACK + 8) = cpu.r[0];
     M32(STACK + 12) = cpu.r[2];

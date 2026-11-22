@@ -268,6 +268,17 @@ KeepUpdate or StopUpdate calls still needs to match the instance and its
 world and equipment lifetime. Furniture and scheduled updates follow
 their own script paths.
 
+The runtime records a scalar lifetime when the fixed producer publishes an
+authenticated start or finish. The handle matches the stock
+`f_8B39F0` result with the actor FormID in the low word and
+`0x20000 | effect_number` in the high word. A typed Keep candidate must
+match the live actor and the observed magnitude. A Stop candidate can
+match an active lifetime for sitting or a recorded finish for
+unequipping. Repeated starts for the same handle make it ambiguous for
+that VM epoch. The matching path stores only copied values. The native
+caller must still attest the live VMIdentifier and target form, and the
+scene consumer must recheck the request before applying a change.
+
 The effect fixture now uses `highheel_effect_sample`, a read-only C reader
 for the retained callback. It accepts the complete expected setting ID
 and checks the event phase and number against the stock publication and

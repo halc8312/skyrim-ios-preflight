@@ -116,10 +116,17 @@ int main(int argc, char **argv) {
     put(SLOT, ACTOR);
     send_phase(&table, ESTABLISHED_SETTING, true);
     skyrim_vm_epoch_registered(1);
+    const SkyrimVmScope initial = {1, 1};
+    const uint64_t first_handle = UINT64_C(0x2f22300000014);
+    const bool effect_enabled = mode == 0 || mode >= 4;
+    assert(!skyrim_highheel_effect_matches(initial, first_handle, 0x14, true, 0x40e80000));
     send_phase(&table, 0x03000800, true);
     put(SETTING + 0xc, ESTABLISHED_SETTING);
     table.highheel_effect.phase(&foreign, EFFECT, ARGS, START);
     send_phase(&table, ESTABLISHED_SETTING, true);
+    assert(skyrim_highheel_effect_matches(initial, first_handle, 0x14, true, 0x40e80000) == effect_enabled);
+    assert(!skyrim_highheel_effect_matches(initial, first_handle, 0x15, true, 0x40e80000));
+    assert(!skyrim_highheel_effect_matches(initial, first_handle, 0x14, true, 0x40800000));
     if (mode >= 4) {
         class_mode = mode;
         skyrim_highheel_pex_observe_class(skyrim_highheel_class_observe);
@@ -132,7 +139,6 @@ int main(int argc, char **argv) {
     }
     table.highheel_pex.linked(&owner, 1, true);
     assert(skyrim_highheel_pex_linked_in(1));
-    const SkyrimVmScope initial = {1, 1};
     HighHeelNativeBindings bindings = {0};
     const bool has_bindings = skyrim_highheel_class_snapshot(initial, &bindings);
     assert(has_bindings == (mode == 4 || mode == 5 || mode == 7) && !scratch_live);
@@ -150,10 +156,30 @@ int main(int argc, char **argv) {
     send_phase(&table, ESTABLISHED_SETTING, true);
     send_phase(&table, ESTABLISHED_SETTING, true);
     send_phase(&table, ESTABLISHED_SETTING, false);
+    assert(!skyrim_highheel_effect_matches(initial, first_handle, 0x14, false, 0));
+    const uint64_t second_handle = UINT64_C(0x2f22400000014);
+    put(EFFECT + 0x5c, 0xf224);
+    put(ARGS + 8, 0xf224);
+    send_phase(&table, ESTABLISHED_SETTING, true);
+    assert(skyrim_highheel_effect_matches(initial, second_handle, 0x14, true, 0x40e80000) == effect_enabled);
+    assert(skyrim_highheel_effect_matches(initial, second_handle, 0x14, false, 0) == effect_enabled);
+    send_phase(&table, ESTABLISHED_SETTING, false);
+    assert(!skyrim_highheel_effect_matches(initial, second_handle, 0x14, true, 0x40e80000));
+    assert(skyrim_highheel_effect_matches(initial, second_handle, 0x14, false, 0) == effect_enabled);
+    for (unsigned n = 1; n <= 700; ++n) {
+        put(EFFECT + 0x5c, n);
+        put(ARGS + 8, n);
+        send_phase(&table, ESTABLISHED_SETTING, true);
+        send_phase(&table, ESTABLISHED_SETTING, false);
+    }
+    assert(skyrim_highheel_effect_matches(initial, UINT64_C(0x202bc00000014), 0x14, false, 0) == effect_enabled);
+    assert(skyrim_highheel_effect_matches(initial, second_handle, 0x14, false, 0) == effect_enabled);
     skyrim_vm_epoch_before_revert(SKYRIM_VM_REVERT_LOAD);
     skyrim_vm_epoch_after_load(1);
     assert(!skyrim_highheel_class_snapshot(initial, &bindings));
     send_phase(&table, ESTABLISHED_SETTING, false);
+    assert(!skyrim_highheel_effect_matches(initial, second_handle, 0x14, false, 0));
+    assert(!skyrim_highheel_effect_matches((SkyrimVmScope){2, 1}, second_handle, 0x14, false, 0));
     skyrim_highheel_effect_cancel();
     free(MEM);
 }

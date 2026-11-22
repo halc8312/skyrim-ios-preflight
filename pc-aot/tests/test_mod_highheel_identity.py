@@ -58,6 +58,7 @@ class HighHeelIdentityTests(unittest.TestCase):
                         PORT / "mod_highheel_class_host.c",
                         PORT / "classic_vm_epoch.c", PORT / "classic_mod_catalog.c", PORT / "mod_plugins.c",
                         EXPERIMENT / "highheel_identity.c", EXPERIMENT / "highheel_effect.c",
+                        EXPERIMENT / "highheel_lifetimes.c",
                         PROBE / "probe_asset_file.c", "-o", cls.host_binary], check=True, timeout=60)
 
     def setUp(self):
