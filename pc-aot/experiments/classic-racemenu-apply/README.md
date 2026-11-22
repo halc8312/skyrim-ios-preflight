@@ -239,6 +239,25 @@ or character data. It neither loads a TRI nor proves a cached TRI's source
 or retention. An all-part retained resource check remains necessary before
 applying the selected slot.
 
+For the audited default female head, the Direct TRI parser can also
+establish provenance before the character menu is open. The host joins
+the expected loose file read to a successful parse and the original
+constructor using a one-use receipt. A bounded process-local table
+records the resulting entry and compiled TRI pair. The stock constructor
+and teardown invalidate that entry before changing its contents. The
+host checks the pair only at the stock lookup return while the original
+caller already owns a reference and reports it only if the original
+morph selector uses the same TRI. No guest reference or cache entry is
+created or kept by the observer.
+
+For a non-fresh selection, `IOS_ECE_CACHE schema=1 verified=1` means the
+selected audited TRI was already loaded with matching provenance.
+Untracked, retired or reused entries and a modified winner fail that
+check. The production-host fixture exercises the existing ReadFile shim
+as well as the one-use receipt, lifetime check and mismatched-pair
+refusal. Establishing provenance for the other head parts and holding
+their resources together for preset application remain separate.
+
 ### ECE all-head preflight fixture
 
 Run `test_ece_head_preflight` with the same private lift and optional owned

@@ -159,7 +159,7 @@ enum SkyrimEceNoseNotice {
     SkyrimEceNoseMenu = 1, SkyrimEceNoseMenuEnd, SkyrimEceNoseBegin, SkyrimEceNoseEnd,
     SkyrimEceNoseFace, SkyrimEceNoseHead, SkyrimEceNoseHeadEnd, SkyrimEceNoseLookup,
     SkyrimEceNoseLookupEnd, SkyrimEceNoseParse, SkyrimEceNoseParsed, SkyrimEceNoseConstructed,
-    SkyrimEceNoseRetiring, SkyrimEceNoseMorph, SkyrimEceNoseMorphRecord, SkyrimEceNosePartLayout
+    SkyrimEceNoseRetiring, SkyrimEceNoseMorph, SkyrimEceNoseMorphRecord, SkyrimEceNosePartLayout, SkyrimEceNoseParseDone
 };
 typedef struct {
     uint64_t (*notify)(const struct CPU *, enum SkyrimEceNoseNotice, uint32_t first, uint32_t second,

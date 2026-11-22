@@ -88,6 +88,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_CAMERA_RENDER", "^IOS_CAMERA_RENDER schema=1 first=(?:[0-9]|1[0-5]) second=(?:[0-9]|1[0-5])$") \
     X("IOS_CAMERA_CULL", "^IOS_CAMERA_CULL schema=1 stages=[1357] producer=(?:[0-9]|[1-9][0-9]|1[0-2][0-9])(?:,(?:[0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])){2} first=(?:[0-9]|[1-9][0-9]|1[0-2][0-9])(?:,(?:[0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])){2} second=(?:[0-9]|[1-9][0-9]|1[0-2][0-9])(?:,(?:[0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])){2}$") \
     X("IOS_ECE_TRI", "^IOS_ECE_TRI schema=1 (?:source=0 parsed=0|source=[0-2] parsed=1)$") \
+    X("IOS_ECE_CACHE", "^IOS_ECE_CACHE schema=1 verified=[01]$") \
     X("IOS_ECE_LAYOUT", "^IOS_ECE_LAYOUT schema=1 complete=[01]$") \
     X("IOS_ECE_NOSE", "^IOS_ECE_NOSE schema=1 female_nord=[01] head=[01] geometry=[01] path=[01] fresh=[01] record=[01]$") \
     X("IOS_CLASSIC_HIGHHEEL_PEX", "^IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=[01] verified=[01]$") \

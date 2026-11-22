@@ -15,7 +15,7 @@ typedef bool (*EceNoseSourceFinish)(void *context, const struct CPU *cpu, uint64
 
 typedef struct {
     bool female_nord, head, geometry, selected_path, fresh_tri, morph_record;
-    bool layout_checked, layout_complete;
+    bool layout_checked, layout_complete, cached_tri;
 } EceNoseWitnessReport;
 
 typedef void (*EceNoseReport)(void *context, EceNoseWitnessReport report);
@@ -33,6 +33,7 @@ bool ece_nose_head(uint32_t caller, uint32_t face, uint32_t part, uint32_t geome
 void ece_nose_head_end(bool active);
 bool ece_nose_lookup(uint32_t path);
 void ece_nose_lookup_end(bool active, uint32_t result);
+void ece_nose_cached(uint32_t entry, uint32_t tri);
 uint64_t ece_nose_parse(const struct CPU *cpu, uint32_t path, uint32_t stream);
 bool ece_nose_parsed(const struct CPU *cpu, uint64_t receipt, bool parsed);
 void ece_nose_constructed(bool fresh, uint32_t entry);

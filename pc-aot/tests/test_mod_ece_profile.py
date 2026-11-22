@@ -144,6 +144,8 @@ class EceProfileTests(unittest.TestCase):
                 "IOS_ECE_NOSE schema=1 female_nord=1 head=1 geometry=1 path=1 fresh=1 record=1",
                 "IOS_ECE_NOSE schema=1 female_nord=1 head=1 geometry=1 path=1 fresh=0 record=1",
             ])
+            cache = [line for line in completed.stderr.decode().splitlines() if line.startswith("IOS_ECE_CACHE")]
+            self.assertEqual(cache, ["IOS_ECE_CACHE schema=1 verified=0", "IOS_ECE_CACHE schema=1 verified=1"])
             heels = [line for line in completed.stderr.decode().splitlines() if line.startswith("IOS_CLASSIC_HIGHHEEL_PEX")]
             self.assertEqual(heels, [
                 "IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=0 verified=0",

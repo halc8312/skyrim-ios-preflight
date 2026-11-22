@@ -13,7 +13,7 @@ typedef struct {
     EceNoseReport report;
     void *context;
     EceNoseWitnessReport output;
-    uint32_t menu, actor, preview, race, face, geometry, entry, tri;
+    uint32_t menu, actor, preview, race, face, geometry, entry, tri, cached_entry, cached_tri;
     bool applying, head, lookup, looked_up, parse_started, morph, invalid;
 } EceWitness;
 
@@ -122,7 +122,7 @@ bool ece_nose_head(uint32_t caller, uint32_t face, uint32_t part, uint32_t geome
 void ece_nose_head_end(bool active) {
     if (!active) return;
     witness.head = false;
-    witness.entry = witness.tri = witness.geometry = 0;
+    witness.entry = witness.tri = witness.geometry = witness.cached_entry = witness.cached_tri = 0;
 }
 
 static bool equal_string(uint32_t address, const char *expected, bool path) {
@@ -154,6 +154,14 @@ void ece_nose_lookup_end(bool active, uint32_t result) {
     if (!active) return;
     witness.lookup = false;
     if (!result || result != witness.entry) witness.entry = witness.tri = 0;
+    if (!result || result != witness.cached_entry) witness.cached_entry = witness.cached_tri = 0;
+}
+
+void ece_nose_cached(uint32_t entry, uint32_t tri) {
+    if (witness.lookup && !witness.invalid) {
+        witness.cached_entry = entry;
+        witness.cached_tri = tri;
+    }
 }
 
 uint64_t ece_nose_parse(const struct CPU *cpu, uint32_t path, uint32_t stream) {
@@ -180,6 +188,7 @@ void ece_nose_constructed(bool fresh, uint32_t entry) {
 
 void ece_nose_retiring(uint32_t entry) {
     if (witness.entry == entry) witness.entry = witness.tri = 0;
+    if (witness.cached_entry == entry) witness.cached_entry = witness.cached_tri = 0;
 }
 
 bool ece_nose_morph(uint32_t tri, uint32_t geometry) {
@@ -188,6 +197,7 @@ bool ece_nose_morph(uint32_t tri, uint32_t geometry) {
         return false;
     witness.morph = true;
     witness.output.fresh_tri = tri == witness.tri;
+    witness.output.cached_tri = !witness.output.fresh_tri && tri == witness.cached_tri;
     return true;
 }
 

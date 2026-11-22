@@ -29,7 +29,6 @@ APP_DECLARATION = b"""#include "PcGuestModHooksABI.h"
 #define ece_nose_lookup_end(active, result) do { if (active) ECE_NOSE_NOTIFY(LookupEnd, result, 0, 0, 0, 0); } while (0)
 #define ece_nose_parse(cpu, path, stream) ECE_NOSE_NOTIFY(Parse, path, stream, 0, 0, 0)
 #define ece_nose_parsed(cpu, ticket, parsed) ((ticket) && ECE_NOSE_NOTIFY(Parsed, parsed, 0, 0, 0, ticket))
-#define ece_nose_constructed(fresh, entry) do { if (fresh) ECE_NOSE_NOTIFY(Constructed, entry, 0, 0, 0, 0); } while (0)
 #define ece_nose_retiring(entry) ECE_NOSE_NOTIFY(Retiring, entry, 0, 0, 0, 0)
 #define ece_nose_morph(tri, geometry) ECE_NOSE_NOTIFY(Morph, tri, geometry, 0, 0, 0)
 #define ece_nose_morph_record(active, name, matched) do { if (active) ECE_NOSE_NOTIFY(MorphRecord, name, matched, 0, 0, 0); } while (0)
@@ -125,12 +124,23 @@ def lookup(function):
     return insert(function, LOOKUP, after=b"    ece_nose_lookup_end(ece_lookup, eax == 0 ? M32(esp + 0xCu) : 0);\n")
 
 
-def parse(function):
+def parse(function, *, app=False):
     function = insert(function, b"L_5A0710:\n", before=b"    bool ece_fresh = false;\n")
     function = insert(function, call("5A078B", "59EF90"),
                       b"    const uint64_t ece_receipt = ece_nose_parse(c, edi, M32(esp + 4u));\n",
                       b"    ece_fresh = ece_nose_parsed(c, ece_receipt, (uint8_t)eax != 0);\n")
-    return insert(function, call("5A07D3", "5A0550"), after=b"    ece_nose_constructed(ece_fresh, eax);\n")
+    if not app:
+        return insert(function, call("5A07D3", "5A0550"), after=b"    ece_nose_constructed(ece_fresh, eax);\n")
+    function = insert(function, call("5A07D3", "5A0550"),
+                      after=b"    if (ece_fresh) ECE_NOSE_NOTIFY(Constructed, eax, 0, 0, 0, ece_receipt);\n")
+    return insert(function, b"L_5A07D9:\n",
+                  after=b"    if (ece_fresh) ECE_NOSE_NOTIFY(ParseDone, 0, 0, 0, 0, ece_receipt);\n")
+
+
+def new_entry(function, *, app=False):
+    if not app:
+        return function
+    return insert(function, b"L_5A0550:\n", after=b"    ece_nose_retiring(ecx);\n")
 
 
 def retiring(function):
@@ -148,7 +158,7 @@ def morph(function):
 
 
 TRANSFORMS = {
-    "exe_66.c": (("5A0710", parse), ("5A0660", retiring)),
+    "exe_66.c": (("5A0710", parse), ("5A0660", retiring), ("5A0550", new_entry)),
     "exe_67.c": (("5A4070", head), ("5A4870", parts), ("5A5B70", lookup)),
     "exe_68.c": (("5A75F0", morph),),
     "exe_185.c": (("882290", slider), ("87F6E0", face)),
@@ -175,8 +185,8 @@ def stage(unit, original, *, app_base=None, racemenu=False):
             raise ValueError("A prior stage changed an ECE witness function")
         if transform is slider:
             body = slider(prior, racemenu=racemenu, app=app)
-        elif transform is parts:
-            body = parts(prior, app=app)
+        elif transform in (parts, parse, new_entry):
+            body = transform(prior, app=app)
         else:
             body = transform(prior)
         data = data[:start] + body + data[end:]

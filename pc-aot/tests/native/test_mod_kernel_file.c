@@ -92,7 +92,7 @@ static void check_highheel_read(CPU *cpu) {
 static void check_ece_nose(CPU *cpu, uint32_t handle, uint32_t other) {
     enum { ACTOR = 0x20000, BASE = 0x22000, RACE = 0x24000, MENU = 0x26000, ROWS = 0x28000,
            HEAD = 0x2A000, FACE = 0x2C000, GEOMETRY = 0x2E000, ENTRY = 0x34000, TRI = 0x35000,
-           NOSE_NAME = 0x37000, RELATIVE_PATH = 0x38000 };
+           NOSE_NAME = 0x37000, RELATIVE_PATH = 0x38000, OTHER_TRI = 0x35100 };
     M32(ECE_PLAYER) = ACTOR;
     M32(ACTOR) = 0x10D201C;
     M32(ACTOR + 0x24) = BASE;
@@ -125,13 +125,29 @@ static void check_ece_nose(CPU *cpu, uint32_t handle, uint32_t other) {
         assert(!NOSE(Begin, MENU, BASE, 0, 0, 0));
         NOSE(MenuEnd, 0, 0, 0, 0, 0);
     }
-    for (int test = 0; test < 5; ++test) {
+    M32(OTHER_TRI) = 0x10BE9D4;
+    for (int test = 0; test < 9; ++test) {
+        NOSE(Retiring, ENTRY, 0, 0, 0, 0);
+        M32(ENTRY + 0x2C) = TRI;
+        if (test >= 5) {
+            M32(ECE_STREAM + 0x1C) = handle;
+            const uint64_t ticket = NOSE(Parse, RELATIVE_PATH, ECE_STREAM, 0, 0, 0);
+            const uint32_t read_args[] = {handle, BUFFER, 32, BYTES_READ, BYTES_READ + 8};
+            M32(STACK) = 0xA580E2;
+            assert(ticket && invoke(cpu, shim_ReadFile, 5, read_args) == 1 && M32(BYTES_READ) == 32);
+            assert(NOSE(Parsed, 1, 0, 0, 0, ticket));
+            if (test == 7) NOSE(ParseDone, 0, 0, 0, 0, ticket);
+            NOSE(Constructed, ENTRY, 0, 0, 0, ticket);
+            NOSE(ParseDone, 0, 0, 0, 0, ticket);
+            if (test == 6) NOSE(Retiring, ENTRY, 0, 0, 0, 0);
+            if (test == 8) M32(ENTRY + 0x2C) = OTHER_TRI;
+        }
         assert(NOSE(Menu, 0xA5CE2B, MENU, 0, 0, 0));
         assert(NOSE(Begin, MENU, BASE, RACE, 0, 0));
         NOSE(Face, 0x885611, MENU, ACTOR, BASE, FACE);
         assert(NOSE(Head, 0x5A48D2, FACE, HEAD, GEOMETRY, 0));
         assert(NOSE(Lookup, RELATIVE_PATH, 0, 0, 0, 0));
-        if (test != 2) {
+        if (test < 5 && test != 2) {
             const uint32_t selected = test == 1 ? other : handle;
             M32(ECE_STREAM + 0x1C) = selected;
             const uint64_t legacy = test == 4 ? skyrim_ece_tri_app_begin(cpu, ECE_PATH, ECE_STREAM) : 0;
@@ -148,10 +164,11 @@ static void check_ece_nose(CPU *cpu, uint32_t handle, uint32_t other) {
             const bool fresh = NOSE(Parsed, 1, 0, 0, 0, ticket);
             assert(fresh == (test == 0) && !skyrim_ece_tri_read_pending);
             if (legacy) skyrim_ece_tri_app_finish(cpu, legacy, 1);
-            if (fresh) NOSE(Constructed, ENTRY, 0, 0, 0, 0);
+            if (fresh) NOSE(Constructed, ENTRY, 0, 0, 0, ticket);
+            NOSE(ParseDone, 0, 0, 0, 0, ticket);
         }
-        NOSE(LookupEnd, ENTRY, 0, 0, 0, 0);
-        assert(NOSE(Morph, TRI, GEOMETRY, 0, 0, 0));
+        assert((NOSE(LookupEnd, ENTRY, 0, 0, 0, 0) != 0) == (test == 0 || test == 5));
+        assert(NOSE(Morph, M32(ENTRY + 0x2C), GEOMETRY, 0, 0, 0));
         NOSE(MorphRecord, NOSE_NAME, 1, 0, 0, 0);
         NOSE(HeadEnd, 0, 0, 0, 0, 0);
         NOSE(End, 0, 0, 0, 0, 0);

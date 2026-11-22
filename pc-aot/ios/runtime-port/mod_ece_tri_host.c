@@ -8,6 +8,7 @@
 #include "ece_nose_witness.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,6 +23,7 @@ enum {
     FIRST_MAPPED = 0x10000, LOOSE_STREAM = 0x110CD68,
     ARCHIVE_STREAM = 0x110CBB4, ARCHIVE_ENTRY_STREAM = 0x110CBE4,
     LOOSE_FILE_HANDLE = 0x1C, LOOSE_BACKING_STREAM = 0x30, LOOSE_READ_RETURN = 0xA580E2,
+    TRI_FROM_ENTRY = 0x2C, RUNTIME_TRI_VTABLE = 0x10BE9D4, TRI_CACHE_LIMIT = 16,
     UNKNOWN = 0, LOOSE = 1, BSA = 2
 };
 
@@ -29,6 +31,14 @@ static bool allowed;
 static int winner = -1;
 static struct stat identity;
 static atomic_uint reported;
+static pthread_mutex_t tri_cache_lock = PTHREAD_MUTEX_INITIALIZER;
+typedef struct { uint32_t entry, tri; } EceCachedTri;
+static EceCachedTri tri_cache[TRI_CACHE_LIMIT];
+typedef struct {
+    const struct CPU *owner;
+    uint64_t ticket;
+} EceParseProof;
+static _Thread_local EceParseProof parsed_tri;
 static _Thread_local struct {
     const struct CPU *owner;
     uint64_t next, ticket;
@@ -60,6 +70,9 @@ bool skyrim_ece_tri_configure(int data, SkyrimEceProfileDigest digest) {
 void skyrim_ece_tri_retire(void) {
     if (winner >= 0) close(winner);
     winner = -1;
+    pthread_mutex_lock(&tri_cache_lock);
+    memset(tri_cache, 0, sizeof tri_cache);
+    pthread_mutex_unlock(&tri_cache_lock);
 }
 
 static bool configured_path(uint32_t name, bool relative) {
@@ -79,6 +92,69 @@ static uint32_t word(uint32_t address) {
     uint32_t value;
     memcpy(&value, MEM + address, sizeof value);
     return value;
+}
+
+/* All guest dereferences are synchronous on a stock-owned entry. The
+ * cache only records its identity and never owns a guest reference. */
+static uint32_t entry_tri(uint32_t entry) {
+    if (entry < FIRST_MAPPED || (entry & 3) || entry > UINT32_MAX - TRI_FROM_ENTRY - 3) return 0;
+    const uint32_t tri = word(entry + TRI_FROM_ENTRY);
+    return tri >= FIRST_MAPPED && !(tri & 3) && tri <= UINT32_MAX - 3 &&
+           word(tri) == RUNTIME_TRI_VTABLE ? tri : 0;
+}
+
+static void invalidate_entry(uint32_t entry) {
+    pthread_mutex_lock(&tri_cache_lock);
+    for (size_t i = 0; i < TRI_CACHE_LIMIT; ++i) {
+        if (tri_cache[i].entry == entry) tri_cache[i] = (EceCachedTri){0};
+    }
+    pthread_mutex_unlock(&tri_cache_lock);
+}
+
+static bool proof_matches(const struct CPU *cpu, uint64_t ticket) {
+    return ticket && parsed_tri.owner == cpu && parsed_tri.ticket == ticket;
+}
+
+static bool record_entry(const struct CPU *cpu, uint64_t ticket, uint32_t entry) {
+    if (!proof_matches(cpu, ticket)) return false;
+    parsed_tri = (EceParseProof){0};
+    const uint32_t tri = entry_tri(entry);
+    if (!tri) return false;
+    pthread_mutex_lock(&tri_cache_lock);
+    size_t slot = TRI_CACHE_LIMIT;
+    for (size_t i = 0; i < TRI_CACHE_LIMIT; ++i) {
+        if (tri_cache[i].entry == entry) {
+            slot = i;
+            break;
+        }
+        if (slot == TRI_CACHE_LIMIT && !tri_cache[i].entry) slot = i;
+    }
+    if (slot < TRI_CACHE_LIMIT) tri_cache[slot] = (EceCachedTri){entry, tri};
+    pthread_mutex_unlock(&tri_cache_lock);
+    return true;
+}
+
+static bool winner_unchanged(void) {
+    const int saved_errno = errno;
+    struct stat stat;
+    const bool same = winner >= 0 && !fstat(winner, &stat) && same_file(&stat);
+    errno = saved_errno;
+    return same;
+}
+
+static uint32_t verified_cached_tri(uint32_t entry) {
+    const uint32_t tri = entry_tri(entry);
+    if (!tri) return 0;
+    bool verified = false;
+    pthread_mutex_lock(&tri_cache_lock);
+    for (size_t i = 0; i < TRI_CACHE_LIMIT; ++i) {
+        if (tri_cache[i].entry == entry && tri_cache[i].tri == tri) {
+            verified = true;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&tri_cache_lock);
+    return verified && winner_unchanged() ? tri : 0;
 }
 
 static uint64_t begin_read(const struct CPU *cpu, uint32_t path, uint32_t stream, bool nose) {
@@ -167,7 +243,7 @@ static _Thread_local bool nose_attempt;
 enum { NOSE_ATTEMPT_LIMIT = 64 };
 static atomic_uint nose_attempts;
 static _Atomic uint64_t nose_reports;
-static atomic_uint layout_reports;
+static atomic_uint layout_reports, cache_reports;
 
 static bool read_nose_field(void *memory, uint32_t address, void *output, size_t size) {
     if (!memory || address < FIRST_MAPPED || (size != 1 && size != 4) ||
@@ -182,12 +258,8 @@ static uint64_t begin_nose_read(void *memory, const struct CPU *cpu, uint32_t pa
 
 static bool finish_nose_read(void *memory, const struct CPU *cpu, uint64_t receipt) {
     unsigned source;
-    if (memory != MEM || cpu != nose_owner || !finish_read(cpu, receipt, true, &source) || source != LOOSE) return false;
-    const int saved_errno = errno;
-    struct stat stat;
-    const bool same = winner >= 0 && !fstat(winner, &stat) && same_file(&stat);
-    errno = saved_errno;
-    return same;
+    return memory == MEM && finish_read(cpu, receipt, true, &source) &&
+           source == LOOSE && winner_unchanged();
 }
 
 static void report_nose(void *memory, EceNoseWitnessReport result) {
@@ -197,6 +269,14 @@ static void report_nose(void *memory, EceNoseWitnessReport result) {
         if (!(atomic_fetch_or_explicit(&layout_reports, bit, memory_order_relaxed) & bit)) {
             const int previous_errno = errno;
             fprintf(stderr, "IOS_ECE_LAYOUT schema=1 complete=%u\n", (unsigned)result.layout_complete);
+            errno = previous_errno;
+        }
+    }
+    if (result.selected_path && result.morph_record && !result.fresh_tri) {
+        const unsigned bit = 1u << (unsigned)result.cached_tri;
+        if (!(atomic_fetch_or_explicit(&cache_reports, bit, memory_order_relaxed) & bit)) {
+            const int previous_errno = errno;
+            fprintf(stderr, "IOS_ECE_CACHE schema=1 verified=%u\n", (unsigned)result.cached_tri);
             errno = previous_errno;
         }
     }
@@ -223,6 +303,34 @@ static bool claim_nose_attempt(void) {
 uint64_t skyrim_ece_nose_app_observe(const struct CPU *cpu, enum SkyrimEceNoseNotice site, uint32_t first,
                                     uint32_t second, uint32_t third, uint32_t fourth, uint64_t ticket) {
     if (!MEM || winner < 0 || !cpu || rt_current_cpu() != cpu) return 0;
+    /* The stock loader can populate the cache before any preview exists. */
+    if (site == SkyrimEceNoseParse) {
+        const uint64_t source = cpu == nose_owner ? ece_nose_parse(cpu, first, second) :
+                                begin_read(cpu, first, second, true);
+        if (source) parsed_tri = (EceParseProof){0};
+        return source;
+    }
+    if (site == SkyrimEceNoseParsed) {
+        const bool verified = cpu == nose_owner ? ece_nose_parsed(cpu, ticket, first != 0) :
+                              finish_nose_read(MEM, cpu, ticket) && first != 0;
+        if (verified) parsed_tri = (EceParseProof){cpu, ticket};
+        return verified;
+    }
+    if (site == SkyrimEceNoseConstructed) {
+        if (record_entry(cpu, ticket, first) && cpu == nose_owner) ece_nose_constructed(true, first);
+        return 0;
+    }
+    if (site == SkyrimEceNoseParseDone) {
+        if (proof_matches(cpu, ticket)) parsed_tri = (EceParseProof){0};
+        return 0;
+    }
+    /* Both a reused allocation and a destroyed entry invalidate the same
+     * slot before the guest changes the underlying TRI pointer. */
+    if (site == SkyrimEceNoseRetiring) {
+        if (first) invalidate_entry(first);
+        if (cpu == nose_owner) ece_nose_retiring(first);
+        return 0;
+    }
     if (site == SkyrimEceNoseMenu) {
         if (nose_owner) {
             if (cpu == nose_owner) ece_nose_menu(first, second); /* Discard a reentrant menu scope. */
@@ -256,14 +364,17 @@ uint64_t skyrim_ece_nose_app_observe(const struct CPU *cpu, enum SkyrimEceNoseNo
     case SkyrimEceNoseHead: return ece_nose_head(first, second, third, fourth);
     case SkyrimEceNoseHeadEnd: ece_nose_head_end(true); break;
     case SkyrimEceNoseLookup: return ece_nose_lookup(first);
-    case SkyrimEceNoseLookupEnd: ece_nose_lookup_end(true, first); break;
-    case SkyrimEceNoseParse: return ece_nose_parse(cpu, first, second);
-    case SkyrimEceNoseParsed: return ece_nose_parsed(cpu, ticket, first != 0);
-    case SkyrimEceNoseConstructed: ece_nose_constructed(true, first); break;
-    case SkyrimEceNoseRetiring: ece_nose_retiring(first); break;
+    case SkyrimEceNoseLookupEnd: {
+        const uint32_t tri = verified_cached_tri(first);
+        if (tri) ece_nose_cached(first, tri);
+        ece_nose_lookup_end(true, first);
+        return tri != 0;
+    }
     case SkyrimEceNoseMorph: return ece_nose_morph(first, second);
     case SkyrimEceNoseMorphRecord: ece_nose_morph_record(true, first, second != 0); break;
-    case SkyrimEceNoseMenu: break;
+    case SkyrimEceNoseMenu: case SkyrimEceNoseParse: case SkyrimEceNoseParsed:
+    case SkyrimEceNoseConstructed: case SkyrimEceNoseParseDone: case SkyrimEceNoseRetiring:
+        break;
     }
     return 0;
 }
