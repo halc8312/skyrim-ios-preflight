@@ -193,9 +193,15 @@ static Result run(Scenario mode, bool observe)
     witness = observe ? &sample : NULL;
 #ifdef SKYRIM_TEST_SCENE_RUNTIME
     runtime_cpu = &cpu;
+    if (observe && mode != FLAT_ONLY) {
+        skyrim_highheel_scene_guest_frame_begin(&cpu, cpu.fs_base);
+        skyrim_highheel_scene_guest_frame_wait(&cpu, cpu.fs_base, mode == MISSING ? UINT32_MAX : 0);
+    }
+    if (mode == DEGENERATE_POSE) M32(CHILD + 0x98) = 0x200;
 #endif
     fixture_update_third_person(&cpu);
 #ifdef SKYRIM_TEST_SCENE_RUNTIME
+    skyrim_highheel_scene_guest_frame_end(&cpu);
     runtime_cpu = NULL;
 #endif
     witness = NULL;

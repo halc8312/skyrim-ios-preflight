@@ -207,6 +207,41 @@ void skyrim_highheel_effect_phase(const struct CPU *cpu, uint32_t effect, uint32
     if (skyrim_highheel_effect_guest_selected) highheel_effect.phase(cpu, effect, arguments, site);
 }
 
+static _Thread_local struct {
+    const struct CPU *cpu;
+    uint32_t fs;
+    unsigned receipt;
+} highheel_frame;
+
+void skyrim_highheel_scene_guest_frame_begin(const struct CPU *cpu, uint32_t fs) {
+    if (!cpu || !fs) return;
+    if (highheel_frame.cpu) {
+        highheel_frame.receipt = SkyrimHighHeelFrameAbsent;
+        return;
+    }
+    highheel_frame.cpu = cpu;
+    highheel_frame.fs = fs;
+    highheel_frame.receipt = SkyrimHighHeelFrameObserved;
+}
+
+unsigned skyrim_highheel_scene_guest_frame_receipt(const struct CPU *cpu, uint32_t fs) {
+    if (!cpu || !fs || cpu != highheel_frame.cpu || fs != highheel_frame.fs) return SkyrimHighHeelFrameAbsent;
+    return highheel_frame.receipt;
+}
+
+void skyrim_highheel_scene_guest_frame_wait(const struct CPU *cpu, uint32_t fs, uint32_t wait_result) {
+    if (skyrim_highheel_scene_guest_frame_receipt(cpu, fs) == SkyrimHighHeelFrameObserved && wait_result == 0)
+        highheel_frame.receipt = SkyrimHighHeelFrameWaited;
+}
+
+void skyrim_highheel_scene_guest_frame_end(const struct CPU *cpu) {
+    if (cpu == highheel_frame.cpu) {
+        highheel_frame.cpu = NULL;
+        highheel_frame.fs = 0;
+        highheel_frame.receipt = SkyrimHighHeelFrameAbsent;
+    }
+}
+
 bool skyrim_highheel_scene_guest_notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice site,
                                         uint32_t first, uint32_t second, uint32_t third) {
     if (site == SkyrimHighHeelSceneArm) {

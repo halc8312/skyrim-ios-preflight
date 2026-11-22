@@ -111,6 +111,8 @@ class ReceiverTests(unittest.TestCase):
         self.schema.line('IOS_CLASSIC_HIGHHEEL_METHODS schema=1 members=1 globals=0')
         self.schema.line('IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured=31 valid=1')
         self.schema.line('IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured=15 valid=0')
+        self.schema.line('IOS_CLASSIC_HIGHHEEL_FRAME schema=1 phase=2 composed=1 same_z=1')
+        self.schema.line('IOS_CLASSIC_HIGHHEEL_FRAME schema=1 phase=0 composed=0 same_z=0')
         self.schema.line('IOS_ECE_TRI schema=1 source=1 parsed=1')
         self.schema.line('IOS_ECE_CACHE schema=1 verified=1')
         self.schema.line('IOS_ECE_LAYOUT schema=1 complete=1')
@@ -238,6 +240,9 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_CAMERA_CULL schema=1 stages=7 producer=129,129,0 first=0,0,0 second=0,0,0',
                      'IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured=15 valid=1',
                      'IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured=31 valid=1 node=123456',
+                     'IOS_CLASSIC_HIGHHEEL_FRAME schema=1 phase=3 composed=1 same_z=1',
+                     'IOS_CLASSIC_HIGHHEEL_FRAME schema=1 phase=2 composed=0 same_z=1',
+                     'IOS_CLASSIC_HIGHHEEL_FRAME schema=1 phase=2 composed=1 same_z=1 node=123456',
                      'IOS_CLASSIC_HIGHHEEL_SCENE schema=1 root=2 names=32 duplicate=0 limited=0',
                      'IOS_CLASSIC_HIGHHEEL_SCENE schema=1 root=2 names=31 duplicate=0 limited=0 node=123456',
                      'IOS_CAMERA_BODY schema=1 slot=12 arms=4 body=4',

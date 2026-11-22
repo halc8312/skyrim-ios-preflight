@@ -11,7 +11,7 @@ extern uint8_t *MEM;
 
 enum {
     FIRST_MAPPED = 0x10000, NAME = 8, STOCK_NAMES = 0x12e2fc0,
-    LOCAL_SCALE = 0x50, WORLD_POSITION = 0x78, WORLD_SCALE = 0x84, POSE_MASK = 31,
+    LOCAL_Z = 0x4c, LOCAL_SCALE = 0x50, WORLD_POSITION = 0x78, WORLD_SCALE = 0x84, POSE_MASK = 31,
     NODE_UPDATE = 0xaad9a0, FLAT_UPDATE = 0xabdf60, MAX_DEPTH = 32, MAX_VISITS = 128
 };
 static const uint32_t name_slots[] = {4, 0x1c, 0x20, 0x24, 0x28};
@@ -22,6 +22,9 @@ static _Thread_local struct {
     uint32_t names[sizeof name_slots / sizeof *name_slots];
     ClassicHeelPose pose;
     unsigned depth, visits, kind, found, duplicate, captured;
+    uint32_t before_node, before_z;
+    unsigned frame;
+    bool frame_report, composition, same_z;
     bool started, limited;
 } scene;
 
@@ -73,6 +76,8 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
         }
         scene.owner = cpu;
         scene.root = first;
+        scene.frame_report = third == SkyrimHighHeelSceneFrame && second <= SkyrimHighHeelFrameWaited;
+        scene.frame = scene.frame_report ? second : SkyrimHighHeelFrameAbsent;
         return true;
     }
     if (scene.owner != cpu) return false;
@@ -99,6 +104,11 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
             fprintf(stderr, "IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured=%u valid=%u\n",
                     scene.captured, (unsigned)valid);
         }
+        if (scene.frame_report) {
+            const bool composed = !limited && !(scene.duplicate & 1u) && scene.composition;
+            fprintf(stderr, "IOS_CLASSIC_HIGHHEEL_FRAME schema=1 phase=%u composed=%u same_z=%u\n",
+                    scene.frame, (unsigned)composed, (unsigned)(composed && scene.same_z));
+        }
         memset(&scene, 0, sizeof scene);
         errno = saved_errno;
         return true;
@@ -119,6 +129,14 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
         if (scene.depth > 1 && second == current && first == scene.path[scene.depth - 2]) --scene.depth;
         else scene.limited = true;
         break;
+    case SkyrimHighHeelScenePreCompose:
+        if (scene.frame_report && first == current && scene.depth > 1 &&
+            second == scene.path[scene.depth - 2] && first <= UINT32_MAX - LOCAL_Z - 3 &&
+            word(first + NAME) == scene.names[0]) {
+            scene.before_node = first;
+            scene.before_z = word(first + LOCAL_Z);
+        }
+        break;
     case SkyrimHighHeelSceneMember:
         if (first != current) break;
         if (scene.depth > 1 && second != scene.path[scene.depth - 2]) {
@@ -133,7 +151,14 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
             const unsigned bit = 1u << i;
             scene.duplicate |= scene.found & bit;
             scene.found |= bit;
-            if (third == SkyrimHighHeelScenePose && !(scene.duplicate & bit)) capture_pose((unsigned)i, first);
+            if (third == SkyrimHighHeelScenePose && !(scene.duplicate & bit)) {
+                capture_pose((unsigned)i, first);
+                if (!i && first == scene.before_node) {
+                    scene.composition = true;
+                    scene.same_z = scene.before_z == word(first + LOCAL_Z);
+                    scene.before_node = 0;
+                }
+            }
             break;
         }
         break;

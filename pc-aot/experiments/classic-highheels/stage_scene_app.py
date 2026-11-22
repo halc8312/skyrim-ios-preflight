@@ -7,8 +7,13 @@ from stage_scene_witness import DEPENDENCIES, UNIT, UNITS, private_fixture as ho
 
 
 DIGESTS = {name: digest for name, digest, _ in UNITS if name in ("exe_34.c", "exe_275.c", "exe_276.c")}
+DIGESTS.update({
+    "exe_106.c": "d606d487f73c4eee34d00dd37788b5ed8cf4962966d9150436d34322df0c231a",
+    "exe_108.c": "08bde439851e0994444a4edc2eeae2968a90159dd6d6b6723058b17743c20517",
+})
 HEADER = b'#include "PcGuestModHooksABI.h"\n'
 STATE = b"__atomic_load_n(&skyrim_highheel_scene_guest_state, __ATOMIC_RELAXED)"
+READY = STATE + b" == SkyrimHighHeelSceneReady"
 ACTIVE = STATE + b" == SkyrimHighHeelSceneActive"
 NOTIFY = b"skyrim_highheel_scene_guest_notify(c, SkyrimHighHeelScene"
 
@@ -21,15 +26,30 @@ def once(body, old, new):
 
 def getter(body):
     native = b"L_4D52EA:\n    eax = (uint32_t)(TL32((uint32_t)(ecx + 0x20u)));\n"
-    hook = (b"    if (eax && " + STATE + b" == SkyrimHighHeelSceneReady &&\n"
+    hook = (b"    if (eax && " + READY + b" &&\n"
             b"        M32(esp) == 0x735095u && M32(esp + 4u) == 0x734FCFu)\n"
-            b"        " + NOTIFY + b"Arm, eax, 0, 0);\n")
+            b"        " + NOTIFY + b"Arm, eax, skyrim_highheel_scene_guest_frame_receipt(c, c->fs_base), SkyrimHighHeelSceneFrame);\n")
     return once(body, native, native + hook)
 
 
 def bracket(body, token, before, after):
     call, = [line for line in body.splitlines(keepends=True) if b"M32(esp) = " + token in line]
     return once(body, call, before + call + after)
+
+
+def frame(body):
+    before = (b"    const bool skyrim_heel_frame = " + READY + b" && M32(esp + 8u) == 0x6F3C84u;\n"
+              b"    if (skyrim_heel_frame) skyrim_highheel_scene_guest_frame_begin(c, c->fs_base);\n")
+    finish = b"    if (skyrim_heel_frame) skyrim_highheel_scene_guest_frame_end(c);\n"
+    return bracket(bracket(body, b"0x69477Fu;", before, b""), b"0x69479Du;", b"", finish)
+
+
+def observe_wait(body):
+    # The bookkeeping import overwrites eax on success. Read it immediately
+    # after the actual wait, before the original success branch consumes it.
+    after = (b"    if (" + READY + b" && M32(esp + 4u) == 0x69477Fu)\n"
+             b"        skyrim_highheel_scene_guest_frame_wait(c, c->fs_base, eax);\n")
+    return bracket(body, b"0x6A0902u;", b"", after)
 
 
 def root_update(body):
@@ -63,6 +83,10 @@ def receiver(body):
     last_store = b"    MF32((uint32_t)(edx + 0x30u)) = (float)ST(0); fpop(c);\n"
     sample = (b"    if (skyrim_heel_sample) " + NOTIFY +
               b"Member, skyrim_heel_node, skyrim_heel_parent, SkyrimHighHeelScenePose);\n")
+    compose = b"L_AB5391:\n"
+    before_compose = (b"    if (skyrim_heel_sample) " + NOTIFY +
+                      b"PreCompose, skyrim_heel_node, skyrim_heel_parent, 0);\n")
+    body = once(body, compose, compose + before_compose)
     return once(once(body, native, native + start), last_store, last_store + sample)
 
 
@@ -70,6 +94,8 @@ def apply(name, original, base):
     if name not in DIGESTS or sha256(original).hexdigest() != DIGESTS[name]:
         raise ValueError("Scene app unit differs from the reviewed Classic lift")
     for address, edit in {"exe_34.c": ((0x4D52C0, getter),),
+                          "exe_106.c": ((0x694770, frame),),
+                          "exe_108.c": ((0x6A08F0, observe_wait),),
                           "exe_275.c": ((0xAAF320, root_update), (0xAAD9A0, children)),
                           "exe_276.c": ((0xAB5370, receiver),)}[name]:
         # Prior compatible stages only touch disjoint function bodies.

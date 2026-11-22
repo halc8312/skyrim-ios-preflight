@@ -284,7 +284,13 @@ def stage_highheel_scene_observe(root: Path, staged: dict[str, bytes]) -> dict[s
         base = staged.get(name, original)
         if base != original:
             cull = load(EXPERIMENTS / "classic-camera", "stage_camera_cull_trial")
-            if name != "exe_275.c" or base != cull.stage_camera_cull_trial(name, original, runtime_base=original):
+            earlier = [original]
+            if name == "exe_106.c":
+                fuz = load(EXPERIMENTS / "fuz-voice", "stage_world_lift")
+                earlier.append(fuz.patch_range_release(original)[0])
+            if name in ("exe_106.c", "exe_275.c"):
+                earlier += [cull.stage_camera_cull_trial(name, original, runtime_base=data) for data in earlier]
+            if base not in earlier:
                 raise ValueError(f"{name}: unreviewed earlier stage overlaps the HighHeels scene witness")
         result[name] = stage.apply(name, original, base)
     return result

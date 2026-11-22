@@ -399,6 +399,17 @@ the store. The existing lifted recomposition fixture uses the same pose
 solver and checks the original world update and the undo.
 
 The successful wait within `f_694770` provides a frame-phase receipt.
+The enabled diagnostic takes the `WaitForSingleObject` result in
+`f_6A08F0` at `0x6A0902` before stock bookkeeping can overwrite it.
+It carries the result through `f_75CFB0` only on the same CPU and FS
+and clears it when that call returns. `IOS_CLASSIC_HIGHHEEL_FRAME`
+reports `phase=0` for an unobserved call path, `1` for an observed
+phase without a successful wait, and `2` for a successful wait.
+`composed=1` requires both ends of the normal local transform
+composition on one unambiguous `NPC` node. `same_z` compares the
+local height within just that call. The trace exports only these
+flags and runs as part of the one-shot scene diagnostic.
+
 The queue producer uses separate synchronization, and `f_6A2B30` can
 call the task dispatcher directly. Its opcode 7 can update a receiver's
 world data. The normal composition entry `f_AB5370` uses local Z only
