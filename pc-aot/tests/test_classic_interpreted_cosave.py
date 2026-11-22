@@ -26,7 +26,7 @@ class InterpretedCoSaveTests(unittest.TestCase):
         sources = (
             "generation.c", "records.c", "digest.c", "immutable_ess.c",
             "mod_history.c", "core_snapshot.c", "plugin_records.c", "plugin_stream.c",
-            "event_bridge.c", "event_trace.c", "observer/lifecycle.c", "interpreted_records.c",
+            "event_bridge.c", "event_trace.c", "observer/lifecycle.c", "interpreted_records.c", "copy_pair.c",
         )
         flags = ["-I", VM, "-I", COSAVE, *(COSAVE / source for source in sources),
                  VM / "probe_local_file.c", VM / "fixtures/owned_storage.c", "-lsqlite3"]
@@ -41,13 +41,14 @@ class InterpretedCoSaveTests(unittest.TestCase):
         cls.addClassCleanup(temporary.cleanup)
         cls.work = Path(temporary.name)
         cls.test = cls.work / "test"
+        cls.host_cc, cls.flags = host_cc, flags
         compile_interpreter(host_cc, cls.test, COSAVE / "fixtures/interpreted_generation.c", flags)
 
-    def exercise(self, directory, dll, expected, *args):
+    def exercise(self, directory, dll, expected, *args, runner=None):
         store, scratch = directory / "store", directory / "scratch"
         store.mkdir(mode=0o700)
         scratch.mkdir(mode=0o700)
-        result = subprocess.run([self.test, dll, store, scratch, *args], capture_output=True, text=True, timeout=20)
+        result = subprocess.run([runner or self.test, dll, store, scratch, *args], capture_output=True, text=True, timeout=20)
         if result.returncode == 77:
             self.skipTest("filesystem lacks the required immutable save capture")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -84,3 +85,15 @@ class InterpretedCoSaveTests(unittest.TestCase):
             self.assertLessEqual(matching[0].file_size, 64 * 1024 * 1024)
             dll.write_bytes(mod.read(matching[0]))
         self.exercise(directory, dll, "restored a signed integer from the exact persisted generation", words)
+        copied = self.work / "owned-copied"
+        copied.mkdir(mode=0o700)
+        runner = self.test
+        if sys.platform.startswith("linux"):
+            from test_skse_cosave_snapshot import NAMED_FIXTURE
+
+            clone_fixture = copied / "clone.c"
+            clone_fixture.write_text(NAMED_FIXTURE, encoding="utf-8")
+            runner = copied / "test"
+            compile_interpreter(self.host_cc, runner, COSAVE / "fixtures/interpreted_generation.c",
+                                [*self.flags, "-DSKSE_TEST_NAMED_CLONE", clone_fixture])
+        self.exercise(copied, dll, "restored a signed integer from the copied profile", words, "copy", runner=runner)
