@@ -56,3 +56,8 @@ typedef bool (*ClassicHeelCommitNode)(void *actor, const ClassicHeelNode *observ
 ClassicHeelResult classic_heel_set_height(ClassicHeelHeight *height, float desired_offset,
                                          void *actor, ClassicHeelReadNode read_node,
                                          ClassicHeelCommitNode commit_node);
+/* The copied pose and verified node must come from the same owner update.
+ * Smoothing starts at the owned height of that node's current generation. */
+ClassicHeelResult classic_heel_set_pose_height(ClassicHeelHeight *height, const ClassicHeelPose *pose,
+                                              void *actor, ClassicHeelReadNode read_node,
+                                              ClassicHeelCommitNode commit_node);

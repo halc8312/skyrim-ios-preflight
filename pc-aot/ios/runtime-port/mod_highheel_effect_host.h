@@ -13,7 +13,7 @@ void skyrim_highheel_effect_fill(PcGuestModHooks *);
 /* The caller supplies a borrowed self handle and a separately typed target.
  * Recheck at the point of use when the call crosses a thread boundary. */
 bool skyrim_highheel_effect_matches(SkyrimVmScope, uint64_t handle, uint32_t actor, bool keep, uint32_t magnitude);
-/* Caller holds the VM commit guard for scope. action only copies a scalar
- * request and returns without entering the VM or effect observer. */
+/* Caller holds the VM commit guard for scope. action performs only a bounded
+ * scalar update and returns without entering the VM or effect observer. */
 bool skyrim_highheel_effect_commit_if_matches(SkyrimVmScope, uint64_t handle, uint32_t actor, bool keep,
                                                uint32_t magnitude, bool (*action)(void *), void *context);

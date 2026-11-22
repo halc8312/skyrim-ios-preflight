@@ -151,7 +151,7 @@ static void test_pose_on_named_nodes(void)
     ClassicHeelHeight height = {0};
     float target;
     assert(classic_heel_pose_height(&pose, &target) && fabsf(target - 4.793427f) < 0.00001f);
-    assert(classic_heel_set_height(&height, target, &scene, read_node, commit_node) == CLASSIC_HEEL_APPLIED);
+    assert(classic_heel_set_pose_height(&height, &pose, &scene, read_node, commit_node) == CLASSIC_HEEL_APPLIED);
     assert(fabsf(MF32(NPC + 0x4c) - 14.793427f) < 0.00001f);
     assert(fabsf(MF32(NPC + 0x80) - 329.58685f) < 0.0001f);
     assert(classic_heel_set_height(&height, 0, &scene, read_node, commit_node) == CLASSIC_HEEL_APPLIED);

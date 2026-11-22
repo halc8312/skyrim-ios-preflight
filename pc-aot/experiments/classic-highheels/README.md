@@ -388,7 +388,20 @@ create and attach a missing node, so it cannot serve as a passive
 diagnostic. These observations leave exclusion against animation and
 rendering writes unproven.
 
-Played PEX identity, live third-person root ownership and serialization
-with animation or rendering still need verification. The alternate
-world-data dispatch is outside this fixture. The app's task queue,
-runtime, and scene are untouched.
+The app now has a request queue for authenticated Keep and Stop calls.
+Keep replaces the current request for that actor. Stop clears it. A
+scene update samples the node once, uses only the offset owned by that
+node as the smoothing baseline, and checks the request and VM epoch
+again before a scalar write. Applying a nonzero offset also requires
+the effect to remain current. The authored scene test changes all
+three inputs while a node is being read to verify rejection before
+the store. The existing lifted recomposition fixture uses the same pose
+solver and checks the original world update and the undo.
+
+The successful wait within `f_694770` provides a frame-phase receipt.
+The queue producer uses separate synchronization, and `f_6A2B30` can
+call the task dispatcher directly. Its opcode 7 can update a receiver's
+world data. The normal composition entry `f_AB5370` uses local Z only
+when the parent-copy flag is clear and the auxiliary branch is bypassed.
+Live activation still requires evidence of receiver ownership and
+serialization and a check for stock local-Z resets between updates.

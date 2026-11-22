@@ -163,6 +163,7 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_class_host.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/classic_mod_catalog.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_scene_host.c" "${highheel_sources}/highheel_height.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_scene_requests.c"
             "${ece_sources}/ece_nose_witness.c" "${ece_sources}/ece_head_geometry.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_save_host.c"
             "${SKYRIM_IOS_SAVE_WITNESS}/save_attempt.c" "${SKYRIM_IOS_SAVE_WITNESS}/runtime_save.c"
