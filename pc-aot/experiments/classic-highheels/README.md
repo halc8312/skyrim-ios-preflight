@@ -471,3 +471,24 @@ authored pose and one current effect to exercise the real queue,
 stage and ABI in one call. The ordinary iPhone launch still requires
 a provider that connects the pose, current receiver and native
 requests over successive game updates.
+
+### Opt-in player trial
+
+The app can select the temporary-transform stage for the player only. It is off
+by default. `SKYRIM_CLASSIC_HIGHHEEL_PLAYER_TRIAL=1` requests it, and the
+selection also needs the Classic SKSE guest, every hook group listed for the
+trial, the matching HighHeels ESM and effect PEX, and the stock
+`hdtHighHeelNative.ini` (194 bytes, digest-checked). If any input is missing the
+original paths stay in place and nothing is applied. A failure while binding the
+native provider or selecting the groups retires the trial again.
+
+Requests are accepted for the player form only. While the trial is enabled, the
+guest library asks the host to continue after each accepted `Finish`
+(`SkyrimHighHeelSceneContinue`). The host answers yes only for an enabled trial,
+and the scene then re-arms for the next stock update. Without that answer the
+scene stays one-shot, as for the diagnostics. A pending request from the
+player queue is discarded when its effect has ended in the same VM epoch.
+
+These checks run on the host only, against authored scenes and the reviewed
+lift. Other actors and the queued opcode-7 world-data path are not covered, and
+nothing here is a result from an iPhone.

@@ -27,7 +27,13 @@ Classic Labビルド18を実機検証用に作成した。対応する署名済�
 
 **Claudeへの引き継ぎ。** 第一弾の作業ブランチは `codex/first-wave-apple-check`。検証済みの基準は `c4f57a8` で、固定版の描画関数に補正を渡すPC試験、新旧ゲストの接続、梱包メタデータの試験が合格した。最新の作業では、直前の有効な三人称姿勢と現在のプレイヤー・効果・VMを照合して補正を渡す試験起動を追加した。既定はオフ。`SKYRIM_CLASSIC_HIGHHEEL_PLAYER_TRIAL=1`、Classic有効、必要なフック、実物のESM・PEX・既定INIを揃えた構成でのみ選択する。
 
-新しい試験起動は、固定版を使う `test_highheel_height.ClassicHighHeelHeightTest.test_reviewed_app_uses_only_the_temporary_transform_for_a_selected_offset` がGCCの60秒のコンパイル制限に達し、実行結果を確認できていない。通常の読み取り診断と要求キューのPC試験は合格した。次はコンパイル負荷が下がった状態で対象の試験を再実行し、Apple SDKで起動条件を検証する。プレイヤー以外と、通常の三人称更新とは別のタスクから骨格を更新する経路の対応も残る。第一弾全体の実機確認・署名済み配布は未完了。実行手順と残項目は [第一弾計画](MOD_FIRST_WAVE_PLAN.md) に記載している。 [先行版のApple側検証](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44974347440)
+新しい試験起動を検証する固定版の試験 `test_highheel_height.ClassicHighHeelHeightTest.test_reviewed_app_uses_only_the_temporary_transform_for_a_selected_offset` は、`9aee707` 時点ではGCCの60秒のコンパイル制限に達して結果が出なかった。負荷のない状態で再実行すると、診断の1件と合わせた2件がGCC 13.3で26.5秒、ASan/UBSan付きで50.7秒、Clang 18で11.2秒で合格した。時間切れは負荷による一時的なものだった。
+
+その後、HighHeels関連のPC試験（高さ17件、ホスト12件、フック統合17件、梱包11件、診断14件）をGCC 13.3のASan/UBSan付きとサニタイザーなし、Clang 18の3構成で実行し、すべて合格した。この過程で2点を直した。1つ目は、`9aee707` が加えた通知 `SkyrimHighHeelSceneContinue` を、フック統合試験の受信側が想定していなかったこと。変換を選ぶ2つの群で試験が中断した。受信側にこの通知の分岐と呼び出し回数の検査を足した。製品のコードは変えていない。2つ目は、`742c44f` で追加した固定版のクラス表の試験が、Clang 18の `-Werror` で組み立てに失敗したこと。固定版から生成したコードの `if ((a == b))` が `-Wparentheses-equality` に当たる。Clangの場合だけこの警告を外した。
+
+MOD全体の `test_mod_*.py` は80件を同じ3構成で実行した。結果はすべて、エラー2件、スキップ10件だった。エラーはWSLに `zlib.h` がなく、`test_mod_archive` と `test_mod_features` の組み立てに失敗したもので、これらが使うソースは今回の範囲で変更していない。スキップは、固定版のSkydream、ECEの私用データ、libarchive、`vendor/` が無いことによる。これらの試験は、必要な入力を揃えた環境で別に実行する。
+
+次はApple SDKで起動条件を検証する。プレイヤー以外と、通常の三人称更新とは別のタスクから骨格を更新する経路の対応も残る。第一弾全体の実機確認・署名済み配布は未完了。実行手順と残項目は [第一弾計画](MOD_FIRST_WAVE_PLAN.md) に記載している。 [先行版のApple側検証](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/44974347440)
 
 固定版の親子変換処理が高さ補正を受け取れるようにした。装備効果とVM世代を照合した補正値を、ゲームが既に確保した作業領域だけに渡す。新旧のゲストとアプリを組み合わせた試験で互換性を確認した。固定版を使うPC試験では自作の姿勢と効果を使い、描画座標が変わり、元のローカル変換が全バイト一致することを確認した。通常起動で対象の姿勢を毎回渡す処理と実機確認が残る。
 
