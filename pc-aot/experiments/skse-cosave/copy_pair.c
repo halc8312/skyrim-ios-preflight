@@ -243,7 +243,8 @@ static int contents_match(int source, const struct stat *original, int copied, c
 /* An explicit repeat may publish only the previously staged base. Preserve
  * every existing destination file if any proof or file has changed. */
 static int recover_copy(int destination, const struct stat *destination_info,
-                        const CopySource *source, const char *side_name, size_t stem) {
+                        const CopySource *source, const char *side_name, size_t stem,
+                        SksePrepareSaveCopy prepare, void *context) {
     const int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW;
     int side = openat(destination, side_name, flags | O_NONBLOCK);
     if (side < 0) return EEXIST;
@@ -277,6 +278,13 @@ static int recover_copy(int destination, const struct stat *destination_info,
         verify_source(destination, proof.directory, staging, &stage_info) ||
         verify_source(staging, "base", base, &base_info)) goto done;
 
+    if (prepare) {
+        error = prepare(context, source->dir, source->base_fd, source->names.base, base);
+        if (!error) error = verify_copy_source(source);
+        if (!error) error = verify_source(destination, side_name, side, &side_info);
+        if (!error) error = verify_source(destination, proof.directory, staging, &stage_info);
+        if (error) goto done;
+    }
     error = publish_file(staging, "base", destination, source->names.base);
     if (!error) (void)remove_owned(destination, proof.directory, &stage_info, AT_REMOVEDIR);
 done:
@@ -287,8 +295,8 @@ done:
 }
 #endif
 
-int skse_copy_save_pair(int source_dir, int base_fd, int side_fd,
-                        int destination_dir, const char *selected_ess) {
+static int copy_save_pair(int source_dir, int base_fd, int side_fd, int destination_dir,
+                          const char *selected_ess, SksePrepareSaveCopy prepare, void *context) {
     size_t stem = skse_save_stem(selected_ess);
     if (!stem || side_fd < -1) return EINVAL;
     CopySource source = {.dir = source_dir, .base_fd = base_fd, .side_fd = side_fd};
@@ -312,7 +320,8 @@ int skse_copy_save_pair(int source_dir, int base_fd, int side_fd,
     if (existing.base[0]) return EEXIST;
     if (existing.side[0]) {
 #if defined(__APPLE__) || defined(__linux__)
-        if (side_fd >= 0) return recover_copy(destination_dir, &destination, &source, existing.side, stem);
+        if (side_fd >= 0) return recover_copy(destination_dir, &destination, &source, existing.side, stem,
+                                              prepare, context);
 #endif
         return EEXIST;
     }
@@ -326,6 +335,13 @@ int skse_copy_save_pair(int source_dir, int base_fd, int side_fd,
     if (!error && side_fd >= 0) error = copy_file(scratch.fd, "side", side_fd, source.side.st_size);
     if (!error) error = check_destination(destination_dir, names->base, stem);
     if (!error) error = verify_copy_source(&source);
+    if (!error && prepare) {
+        const int staged = openat(scratch.fd, "base", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+        error = staged < 0 ? errno : prepare(context, source_dir, base_fd, names->base, staged);
+        if (staged >= 0) close(staged);
+        if (!error) error = verify_copy_source(&source);
+        if (!error) error = check_destination(destination_dir, names->base, stem);
+    }
     if (!error && side_fd >= 0) {
         /* Keep the staged inode allocated until any rollback has finished. */
         side_guard = openat(scratch.fd, "side", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -346,6 +362,10 @@ int skse_copy_save_pair(int source_dir, int base_fd, int side_fd,
     /* After the base is visible, the copy succeeded even if the empty scratch
      * directory could not be removed. It is never reused by another copy. */
     return error;
+}
+
+int skse_copy_save_pair(int source_dir, int base_fd, int side_fd, int destination_dir, const char *selected_ess) {
+    return copy_save_pair(source_dir, base_fd, side_fd, destination_dir, selected_ess, NULL, NULL);
 }
 
 static int valid_relative_directory(const char *path) {
@@ -381,8 +401,9 @@ static int open_save_directory(int root, const char *path, int create) {
     }
 }
 
-int skse_copy_named_save(int profile_root, const char *source_path, const char *destination_path,
-                         const char *selected_ess, int *copied_side) {
+int skse_copy_named_save_prepared(int profile_root, const char *source_path, const char *destination_path,
+                                  const char *selected_ess, SksePrepareSaveCopy prepare, void *context,
+                                  int *copied_side) {
     if (!copied_side) return EINVAL;
     *copied_side = 0;
     size_t stem = skse_save_stem(selected_ess);
@@ -406,7 +427,7 @@ int skse_copy_named_save(int profile_root, const char *source_path, const char *
     }
     if (!error) {
         destination = open_save_directory(profile_root, destination_path, 1);
-        error = destination < 0 ? errno : skse_copy_save_pair(source, base, side, destination, selected_ess);
+        error = destination < 0 ? errno : copy_save_pair(source, base, side, destination, selected_ess, prepare, context);
     }
     if (!error) *copied_side = side >= 0;
     if (destination >= 0) close(destination);
@@ -414,4 +435,10 @@ int skse_copy_named_save(int profile_root, const char *source_path, const char *
     if (base >= 0) close(base);
     close(source);
     return error;
+}
+
+int skse_copy_named_save(int profile_root, const char *source_path, const char *destination_path,
+                         const char *selected_ess, int *copied_side) {
+    return skse_copy_named_save_prepared(profile_root, source_path, destination_path, selected_ess, NULL, NULL,
+                                        copied_side);
 }

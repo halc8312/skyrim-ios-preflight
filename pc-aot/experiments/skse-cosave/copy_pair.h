@@ -31,6 +31,16 @@ int skse_copy_save_pair(int source_dir, int base_fd, int side_fd,
 int skse_copy_named_save(int profile_root, const char *source_path, const char *destination_path,
                          const char *selected_ess, int *copied_side);
 
+/* Prepare app-owned companion data against the finalized, still-private copy
+ * before it becomes visible. The callback receives borrowed read-only files,
+ * may add metadata to the staged copy, and returns zero or an errno value.
+ * It must not edit save bytes. It may run again for a verified interrupted copy. */
+typedef int (*SksePrepareSaveCopy)(void *context, int source_dir, int source_ess,
+                                   const char *leaf, int staged_ess);
+int skse_copy_named_save_prepared(int profile_root, const char *source_path, const char *destination_path,
+                                  const char *selected_ess, SksePrepareSaveCopy prepare, void *context,
+                                  int *copied_side);
+
 #ifdef __cplusplus
 }
 #endif

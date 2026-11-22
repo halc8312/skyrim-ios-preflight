@@ -450,6 +450,95 @@ static void interrupted_process(int root) {
     close_fixture(f);
 }
 
+typedef struct { Fixture *files; unsigned calls; int result, recovered_side; struct stat staged; } Preparation;
+#if defined(__APPLE__)
+static const char prepared_attribute[] = "org.skyrimios.test-prepared";
+#else
+static const char prepared_attribute[] = "user.org.skyrimios.test-prepared";
+#endif
+
+static int check_prepared_save(void *context, int source, int original, const char *leaf, int staged) {
+    Preparation *check = context;
+    struct stat first, second, directory, expected;
+    assert(!strcmp(leaf, base_name) && !fstat(source, &directory) && !fstat(check->files->source, &expected));
+    assert(skse_save_same_file(&directory, &expected));
+    assert(!exists(check->files->destination, base_name));
+    assert(exists(check->files->destination, side_name) == check->recovered_side);
+    assert(!fstat(original, &first) && !fstat(staged, &second) && !skse_save_same_file(&first, &second));
+    assert((fcntl(original, F_GETFL) & O_ACCMODE) == O_RDONLY);
+    assert((fcntl(staged, F_GETFL) & O_ACCMODE) == O_RDONLY);
+    assert(contents_match(original, &first, staged, &second));
+    ++check->calls;
+    if (!check->result) {
+        unsigned char marker = 37;
+#if defined(__APPLE__)
+        assert(!fsetxattr(staged, prepared_attribute, &marker, sizeof marker, 0, XATTR_CREATE));
+#else
+        assert(!fsetxattr(staged, prepared_attribute, &marker, sizeof marker, XATTR_CREATE));
+#endif
+        check->staged = second;
+    }
+    return check->result;
+}
+
+static void expect_prepared_copy(int destination, const struct stat *staged) {
+    int fd = openat(destination, base_name, O_RDONLY | O_NOFOLLOW);
+    struct stat published;
+    assert(fd >= 0 && !fstat(fd, &published));
+    unsigned char marker = 0;
+#if defined(__APPLE__)
+    assert(fgetxattr(fd, prepared_attribute, &marker, sizeof marker, 0, 0) == sizeof marker);
+    const struct timespec earlier = staged->st_mtimespec, later = published.st_mtimespec;
+#else
+    assert(fgetxattr(fd, prepared_attribute, &marker, sizeof marker) == sizeof marker);
+    const struct timespec earlier = staged->st_mtim, later = published.st_mtim;
+#endif
+    assert(marker == 37 && skse_save_same_file(staged, &published) && staged->st_size == published.st_size);
+    assert(earlier.tv_sec == later.tv_sec && earlier.tv_nsec == later.tv_nsec);
+    assert(!close(fd));
+}
+
+static void prepared_copies(int root) {
+    Fixture f = new_fixture(root, "prepared", 1);
+    Preparation check = {.files = &f, .result = EBUSY};
+    int side = 9;
+    assert(skse_copy_named_save_prepared(root, "prepared/source", "prepared/destination", "CASE SAVE.ess",
+                                         check_prepared_save, &check, &side) == EBUSY);
+    assert(check.calls == 1 && !side);
+    expect_entries(f.destination, 0);
+
+    interrupt_copy(&f, INTERRUPT_BEFORE_BASE);
+    check.recovered_side = 1;
+    assert(skse_copy_named_save_prepared(root, "prepared/source", "prepared/destination", "CASE SAVE.ess",
+                                         check_prepared_save, &check, &side) == EBUSY);
+    assert(check.calls == 2 && !side && !exists(f.destination, base_name));
+    expect_bytes(f.destination, side_name, side_bytes, sizeof side_bytes);
+
+    check.result = 0;
+    assert(!skse_copy_named_save_prepared(root, "prepared/source", "prepared/destination", "CASE SAVE.ess",
+                                          check_prepared_save, &check, &side));
+    assert(check.calls == 3 && side);
+    expect_bytes(f.destination, base_name, base_bytes, sizeof base_bytes);
+    expect_prepared_copy(f.destination, &check.staged);
+    expect_entries(f.destination, 2);
+    assert(skse_copy_named_save_prepared(root, "prepared/source", "prepared/destination", base_name,
+                                         check_prepared_save, &check, &side) == EEXIST);
+    assert(check.calls == 3 && !side);
+    expect_bytes(f.source, base_name, base_bytes, sizeof base_bytes);
+    expect_bytes(f.source, side_name, side_bytes, sizeof side_bytes);
+    close_fixture(f);
+
+    f = new_fixture(root, "prepared-plain", 0);
+    check = (Preparation){.files = &f};
+    assert(!skse_copy_named_save_prepared(root, "prepared-plain/source", "prepared-plain/destination", base_name,
+                                          check_prepared_save, &check, &side));
+    assert(check.calls == 1 && !side);
+    expect_bytes(f.destination, base_name, base_bytes, sizeof base_bytes);
+    expect_prepared_copy(f.destination, &check.staged);
+    expect_entries(f.destination, 1);
+    close_fixture(f);
+}
+
 static void named_profile_paths(int root) {
     Fixture f = new_fixture(root, "named", 1);
     const char *const src = "named/source", *const dst = "named/destination/Documents/My Games/Skyrim/Saves";
@@ -489,6 +578,7 @@ int main(int argc, char **argv) {
     wrong_args_and_collisions(root);
     fail_cases(root);
     interrupted_process(root);
+    prepared_copies(root);
     named_profile_paths(root);
     assert(!close(root));
     puts("classic_profile_copy=PASS");
