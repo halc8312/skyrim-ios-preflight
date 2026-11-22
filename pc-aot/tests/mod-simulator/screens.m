@@ -106,12 +106,12 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     return row;
 }
 - (void)openModDetails:(NSString *)name {
-    XCUIElement *title = [self findRow:name].staticTexts[name];
-    XCTAssertFalse(CGRectIsNull(elementFrame(title)));
-    // A tap on the accessibility cell can be delivered to its accessory
-    // switch. Tap the title itself and verify the detail navigation.
-    [[title coordinateWithNormalizedOffset:CGVectorMake(.5, .5)] tap];
-    XCTAssertTrue([self.app.navigationBars[name] waitForExistenceWithTimeout:8]);
+    XCUIElement *row = [self findRow:name];
+    // Match by title, but derive the touch from the visible cell's frame.
+    // The leading quarter hits its content, away from the trailing switch.
+    [[row coordinateWithNormalizedOffset:CGVectorMake(.25, .5)] tap];
+    XCTAssertTrue([self.app.navigationBars[name] waitForExistenceWithTimeout:8],
+                  @"Could not open MOD details for %@. %@", name, self.app.debugDescription);
 }
 - (void)setMod:(NSString *)name enabled:(BOOL)enabled {
     XCUIElement *toggle = [self findRow:name].switches.firstMatch;
