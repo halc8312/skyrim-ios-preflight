@@ -42,6 +42,10 @@ static bool value_request_conflicts(const ClassicValueFunction *fn, size_t index
     return false;
 }
 
+static bool value_object_argument(uint8_t type) {
+    return type == CLASSIC_VALUES_FORM || type == CLASSIC_VALUES_OBJECT_REFERENCE;
+}
+
 /* Configure before the pinned registration hook. The provider must retain the
  * callback context and the bound VM scope until retirement succeeds. */
 bool skse_classic_values_request(const ClassicValueRequest *request) {
@@ -56,7 +60,7 @@ bool skse_classic_values_request(const ClassicValueRequest *request) {
     for (size_t i = 0; i < request->count; ++i) {
         const ClassicValueFunction *fn = &request->functions[i];
         ClassicValueBinding *row = &values_publication.rows[i];
-        if (!fn->id || fn->result < CLASSIC_VALUES_STRING || fn->result > CLASSIC_VALUES_BOOL ||
+        if (!fn->id || fn->result == CLASSIC_VALUES_FORM || fn->result > CLASSIC_VALUES_BOOL ||
             fn->count > CLASSIC_VALUES_ARGS || !int0_copy_name(row->class_name, fn->class_name) ||
             !int0_copy_name(row->name, fn->name) || value_request_conflicts(fn, i)) {
             accepted = false;
@@ -64,8 +68,8 @@ bool skse_classic_values_request(const ClassicValueRequest *request) {
         }
         for (size_t j = 0; j < fn->count; ++j) {
             const uint8_t type = fn->arguments[j];
-            if (type < CLASSIC_VALUES_FORM || type > CLASSIC_VALUES_BOOL ||
-                (type == CLASSIC_VALUES_FORM && !request->copy_form_id) ||
+            if (type < CLASSIC_VALUES_FORM || type > CLASSIC_VALUES_OBJECT_REFERENCE ||
+                (value_object_argument(type) && !request->copy_form_id) ||
                 (type == CLASSIC_VALUES_STRING && !request->copy_string)) accepted = false;
         }
         if (!accepted) break;
@@ -153,7 +157,7 @@ static bool value_read_arguments(CPU *c, const ClassicValueFunction *fn, const C
         if (!address || address % 4 || address > UINT32_MAX - 7 ||
             !request->read_guest(request->context, c, address, value, sizeof value)) return false;
         arguments[i].type = fn->arguments[i];
-        if (arguments[i].type == CLASSIC_VALUES_FORM) {
+        if (value_object_argument(arguments[i].type)) {
             // A scalar VM object carries a class tag. The low bit denotes an array.
             if (value[0] < 0x10000 || (value[0] & 3) || value[1] < 0x10000 || (value[1] & 3) ||
                 !request->copy_form_id(request->context, c, frame, address, &arguments[i].bits) ||
@@ -193,6 +197,7 @@ static bool value_invoke_owned(CPU *c, const ClassicValueFunction *fn, const Cla
                                            text ? result_text : NULL, text ? sizeof result_text : 0);
     const char *end = text ? memchr(result_text, 0, sizeof result_text) : NULL;
     bool accepted = completed && output.type == fn->result && !output.string &&
+                    (output.type != CLASSIC_VALUES_NONE || !output.bits) &&
                     (output.type != CLASSIC_VALUES_BOOL || output.bits <= 1) &&
                     (!text || (end && !output.bits)) &&
                     value_recheck_frame(c, fn, frame);
@@ -243,7 +248,7 @@ static void classic_values_run(CPU *c) {
 }
 
 static uint32_t make_value_native(CPU *c, const ClassicValueFunction *fn, uint32_t vtable_copy,
-                                  uint32_t form_type, bool copy_vtable) {
+                                  const uint32_t *argument_types, bool copy_vtable) {
     const uint32_t class_bytes = (uint32_t)strlen(fn->class_name) + 1, name_bytes = (uint32_t)strlen(fn->name) + 1;
     const uint32_t names = gmalloc(class_bytes + name_bytes);
     if (!names) return 0;
@@ -265,20 +270,22 @@ static uint32_t make_value_native(CPU *c, const ClassicValueFunction *fn, uint32
             M32(object + 0x14) = fn->result;
             M32(object + 0x2c) = fn->id;
             for (uint32_t i = 0; i < fn->count; ++i)
-                M32(types + i * 8 + 4) = fn->arguments[i] == CLASSIC_VALUES_FORM ? form_type : fn->arguments[i];
+                M32(types + i * 8 + 4) = argument_types[fn->arguments[i]];
         }
     }
     gfree(names);
     return object;
 }
 
-static uint32_t value_form_type(CPU *c, uint32_t registry) {
-    // Original Game.GetForm constructs its Form signature with this helper.
+static uint32_t value_class_type(CPU *c, uint32_t registry, uint8_t argument) {
+    /* Stock Classic signature helpers for Form (type 0) and
+     * ObjectReference (type 0x3d) respectively. */
+    const uint32_t helper = argument == CLASSIC_VALUES_FORM ? 0x8c1b40u : 0x8d8ea0u;
     const uint32_t output = gmalloc(4);
     if (!output) return 0;
     M32(output) = 0;
     const uint32_t args[] = {output, registry};
-    const uint32_t result = skse_member(c, 0x8c1b40u, 0, 2, args);
+    const uint32_t result = skse_member(c, helper, 0, 2, args);
     const uint32_t type = result == output ? M32(output) : 0;
     gfree(output);
     return type >= 0x10000 && !(type & 3) ? type : 0;
@@ -291,15 +298,22 @@ static void classic_values_publish(CPU *c, uint32_t registry, uint32_t has_thunk
         int0_leave();
         return;
     }
-    bool needs_form = false;
+    uint32_t argument_types[] = {
+        [CLASSIC_VALUES_STRING] = CLASSIC_VALUES_STRING, [CLASSIC_VALUES_INT] = CLASSIC_VALUES_INT,
+        [CLASSIC_VALUES_FLOAT] = CLASSIC_VALUES_FLOAT, [CLASSIC_VALUES_BOOL] = CLASSIC_VALUES_BOOL,
+        [CLASSIC_VALUES_OBJECT_REFERENCE] = 0
+    };
     for (size_t i = 0; i < request->count; ++i) {
         const ClassicValueFunction *fn = &values_publication.rows[i].function;
-        for (unsigned j = 0; j < fn->count; ++j) needs_form |= fn->arguments[j] == CLASSIC_VALUES_FORM;
-    }
-    const uint32_t form_type = needs_form ? value_form_type(c, registry) : 0;
-    if (needs_form && !form_type) {
-        int0_leave();
-        return;
+        for (unsigned j = 0; j < fn->count; ++j) {
+            const uint8_t type = fn->arguments[j];
+            if (argument_types[type]) continue;
+            argument_types[type] = value_class_type(c, registry, type);
+            if (!argument_types[type]) {
+                int0_leave();
+                return;
+            }
+        }
     }
     const uint32_t table_copy = gmalloc((RUN_SLOT + 2) * 4);
     if (!table_copy) {
@@ -309,7 +323,7 @@ static void classic_values_publish(CPU *c, uint32_t registry, uint32_t has_thunk
     size_t made = 0;
     for (; made < request->count; ++made) {
         ClassicValueBinding *row = &values_publication.rows[made];
-        row->object = make_value_native(c, &row->function, table_copy, form_type, !made);
+        row->object = make_value_native(c, &row->function, table_copy, argument_types, !made);
         if (!row->object) break;
     }
     if (made != request->count) {

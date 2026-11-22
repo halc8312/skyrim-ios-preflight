@@ -17,6 +17,7 @@ enum {
     STRING_POOL = 0x3000, STRING_SLOTS = 4, STRING_BYTES = 512, FIXTURE_FUNCTIONS = 8,
     FIXTURE_FORM_VALUE = 0x10020, FIXTURE_FORM_CLASS = 0x111100, FIXTURE_KEYWORD_CLASS = 0x124800,
     FIXTURE_KEYWORD = 0x128000, FIXTURE_KEYWORD_RECORD = 0x138000,
+    FIXTURE_REFERENCE_CLASS = 0x166000, FIXTURE_REFERENCE = 0x167000,
 };
 #define THUNK_BASE UINT32_C(0xff000000)
 
@@ -159,6 +160,10 @@ uint32_t rt_invoke(CPU *c, uint32_t address, int argc, const uint32_t *args) {
         assert(!self && argc == 2 && args[1] == REGISTRY && !M32(args[0]));
         M32(args[0]) = no_form_class ? 1 : FIXTURE_FORM_CLASS;
         return args[0];
+    case 0x8d8ea0:
+        assert(!self && argc == 2 && args[1] == REGISTRY && !M32(args[0]));
+        M32(args[0]) = no_form_class ? 1 : FIXTURE_REFERENCE_CLASS;
+        return args[0];
     case 0x8e0040:
         assert(!self && argc == 2 && args[0] == FIXTURE_FORM_VALUE && args[1] == REGISTRY);
         return M32(args[0]) == FIXTURE_KEYWORD_CLASS && M32(args[0] + 4) == FIXTURE_KEYWORD ? FIXTURE_KEYWORD_RECORD : 0;
@@ -167,8 +172,9 @@ uint32_t rt_invoke(CPU *c, uint32_t address, int argc, const uint32_t *args) {
         return FIXTURE_KEYWORD_RECORD + (other_static_form ? 4 : 0);
     case REGISTRY_METHOD: {
         assert(self == REGISTRY && argc == 1 && registrations < sizeof objects / sizeof objects[0]);
-        assert(M32(args[0] + 0x14) >= 2 && M32(args[0] + 0x14) <= 5);
         const Allocation *object = allocation_at(args[0], true);
+        const uint32_t type = M32(args[0] + 0x14);
+        assert((type >= 2 && type <= 5) || (!type && !strcmp(object->group, "HighHeelFixture")));
         strcpy(function_names[registrations], object->name);
         strcpy(class_names[registrations], object->group);
         objects[registrations++] = args[0];
@@ -739,6 +745,77 @@ static void test_form_values(bool unavailable) {
     assert(M32(RESULT) == CLASSIC_VALUES_INT && M32(RESULT + 4) == 17);
 }
 
+static bool invoke_none_result(void *context, uint64_t epoch, uint32_t method, const ClassicValue *args,
+                               size_t count, ClassicValue *out, char *text, size_t capacity) {
+    ValueProvider *provider = context;
+    assert(epoch == FIXTURE_EPOCH && (method == 10 || method == 11) && !text && !capacity);
+    assert(count == (method == 10 ? 2u : 1u));
+    assert(args[0].type == CLASSIC_VALUES_OBJECT_REFERENCE && args[0].bits == 0x14 && !args[0].string);
+    if (method == 10)
+        assert(args[1].type == CLASSIC_VALUES_FLOAT && args[1].bits == 0xc0200000u && !args[1].string);
+    ++provider->calls;
+    *out = (ClassicValue){.type = CLASSIC_VALUES_NONE, .bits = provider->bad_type};
+    return true;
+}
+
+static bool copy_reference_id(void *context, CPU *owner, const ClassicValueFrame *frame,
+                              uint32_t address, uint32_t *identity) {
+    assert(context && owner == &cpu && frame->registry == REGISTRY && address == FIXTURE_FORM_VALUE);
+    if (M32(address) != FIXTURE_REFERENCE_CLASS || M32(address + 4) != FIXTURE_REFERENCE) return false;
+    *identity = 0x14;
+    return true;
+}
+
+static void test_none_result(bool unavailable) {
+    ValueProvider provider = {.result_live = true};
+    ClassicValueFunction methods[] = {
+        {"HighHeelFixture", "KeepUpdate", 10, CLASSIC_VALUES_NONE, 2,
+         {CLASSIC_VALUES_OBJECT_REFERENCE, CLASSIC_VALUES_NONE}},
+        {"HighHeelFixture", "StopUpdate", 11, CLASSIC_VALUES_NONE, 1, {CLASSIC_VALUES_OBJECT_REFERENCE}},
+    };
+    ClassicValueRequest request = {.epoch = FIXTURE_EPOCH, .functions = methods, .count = 2,
+        .read_guest = read_values, .owns_frame = owns_value_frame, .invoke = invoke_none_result,
+        .discard = discard_value_result, .context = &provider};
+    assert(!skse_classic_values_request(&request));
+    request.copy_form_id = copy_reference_id;
+    assert(!skse_classic_values_request(&request));
+    methods[0].arguments[1] = CLASSIC_VALUES_FLOAT;
+    assert(skse_classic_values_request(&request));
+    no_form_class = unavailable;
+    register_functions();
+    check_builtin();
+    if (unavailable) {
+        assert(registrations == 1 && thunk_count == 2 && live_allocations(false) == 1);
+        return;
+    }
+    assert(registrations == 3 && thunk_count == 3);
+    const uint32_t keep = objects[1], stop = objects[2];
+    assert(M32(keep + 0x14) == CLASSIC_VALUES_NONE && M32(stop + 0x14) == CLASSIC_VALUES_NONE);
+    assert(M32(M32(keep + 0x18) + 4) == FIXTURE_REFERENCE_CLASS);
+    assert(M32(M32(keep + 0x18) + 12) == CLASSIC_VALUES_FLOAT);
+    assert(M32(M32(stop + 0x18) + 4) == FIXTURE_REFERENCE_CLASS);
+    const uint32_t run = M32(M32(keep) + RUN_SLOT * 4);
+    assert(run == M32(M32(stop) + RUN_SLOT * 4));
+    const unsigned destroyed = result_deletions;
+    M32(STATE) = LIST;
+    form_argument = true;
+    argument(0, FIXTURE_FORM_CLASS, FIXTURE_REFERENCE);
+    argument(1, CLASSIC_VALUES_FLOAT, 0xc0200000u);
+    assert(!run_values(run, keep, REGISTRY, RESULT) && !provider.calls);
+    argument(0, FIXTURE_REFERENCE_CLASS, FIXTURE_REFERENCE);
+    argument(1, CLASSIC_VALUES_INT, 0xc0200000u);
+    assert(!run_values(run, keep, REGISTRY, RESULT) && !provider.calls);
+    argument(1, CLASSIC_VALUES_FLOAT, 0xc0200000u);
+    provider.bad_type = true;
+    assert(!run_values(run, keep, REGISTRY, RESULT) && provider.calls == 1 && provider.discards == 1);
+    assert(result_deletions == destroyed && M32(RESULT) == CLASSIC_VALUES_INT && M32(RESULT + 4) == 48);
+    provider.bad_type = false;
+    assert(run_values(run, keep, REGISTRY, RESULT) && provider.calls == 2 && provider.discards == 1);
+    assert(result_deletions == destroyed + 1 && M32(RESULT) == CLASSIC_VALUES_NONE && !M32(RESULT + 4));
+    argument(1, CLASSIC_VALUES_INT, 0);
+    assert(run_values(run, stop, REGISTRY, RESULT) && provider.calls == 3 && provider.discards == 1);
+}
+
 static void test_probe(const char *mode) {
     char type[] = "ClassicLabFixture", name[] = "IntegerProbe";
     TestProvider provider = {0};
@@ -1007,6 +1084,8 @@ int main(int argc, char **argv) {
         test_string_result();
     else if (!strcmp(argv[1], "values-form") || !strcmp(argv[1], "values-form-unavailable"))
         test_form_values(!strcmp(argv[1], "values-form-unavailable"));
+    else if (!strcmp(argv[1], "values-none") || !strcmp(argv[1], "values-reference-unavailable"))
+        test_none_result(!strcmp(argv[1], "values-reference-unavailable"));
     else if (!strcmp(argv[1], "values") || !strcmp(argv[1], "values-rollback"))
         test_values(!strcmp(argv[1], "values-rollback"));
     else test_probe(argv[1]);

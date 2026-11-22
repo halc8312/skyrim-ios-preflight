@@ -95,6 +95,15 @@ function and class belong to the exact winning script. A borrowed stack,
 frame or VMIdentifier cannot be stored after Run. The stack ID only checks
 the current invocation.
 
+`highheel_visit_native_self` checks the owner, full VM epoch, live stack
+and registered function. A successful match lends the typed self VMValue
+to a synchronous visitor. The exact owner script's default-state methods
+are MoveUp and OnUpdate for KeepUpdate and MoveDown for StopUpdate. The
+Classic value provider can now describe their ObjectReference parameters
+using the stock type helper `f_8D8EA0` and publish a None result. Runtime
+selection still needs the linked function identities and the resolved
+effect instance for each invocation.
+
 ### Read the two typed update arguments during Run
 
 The exact owner archive includes the effect and footwear PSC alongside

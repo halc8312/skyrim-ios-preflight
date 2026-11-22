@@ -77,7 +77,8 @@ class ClassicInt0StagingTests(unittest.TestCase):
 
     def run_fixture(self, binary, *args):
         env = {**os.environ, "LB_SKSE_SELFTEST": "0"}
-        result = subprocess.run([binary, *args], check=True, capture_output=True, text=True, timeout=10, env=env)
+        result = subprocess.run([binary, *args], capture_output=True, text=True, timeout=10, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr.splitlines(), ["IOS_CLASSIC_VM registered=1 primitive_passed=0",
                                                       "IOS_CLASSIC_RELEASE value=48"])
 
@@ -120,7 +121,8 @@ class ClassicInt0StagingTests(unittest.TestCase):
         for defines, modes in (([], ("default",)),
                                ([PROBE_DEFINE], ("default", "success", "names", "table", "object", "values",
                                                  "values-rollback", "values-string", "values-form",
-                                                 "values-form-unavailable"))):
+                                                 "values-form-unavailable", "values-none",
+                                                 "values-reference-unavailable"))):
             binary = self.stage.parent / ("int0-enabled" if defines else "int0-default")
             subprocess.run([*flags, *defines, fixture, "-o", binary], check=True, timeout=60)
             for mode in modes:

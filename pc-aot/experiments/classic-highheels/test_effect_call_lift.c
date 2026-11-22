@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "funcs_exe.h"
 #include "guest_memory.h"
+#include "highheel_native_frame.h"
 #include "lift_prelude.h"
 
 #include <assert.h>
@@ -17,18 +18,19 @@ enum {
     EFFECT_CLASS = 0x4700, FIRST_SELF = 0x4800, SECOND_SELF = 0x4900,
     ARGUMENT_PAGE = 0x1a80, ARGUMENT_PAGES = 0x1a10, PROBE_SP = 0x2b80,
     ARG_OBJECT_CLASS = 0x4a00, ARG_OBJECT = 0x4b00, VM_FLOAT = 4,
-    SLOT_CHECK = 1, SLOT_RUN = 2, RUN_RETURN = 0xc46e61, STACK_ID = 73, EPOCH = 7,
+    SLOT_CHECK = 1, SLOT_RUN = 2, RUN_RETURN = 0xc46e61, STACK_ID = 73,
 };
 
-typedef struct AuthoredBindings {
-    uint32_t registry, epoch, keep, stop, move_up, on_update, move_down, effect_class;
-} AuthoredBindings;
+#define EPOCH UINT64_C(0x100000007)
 
 uint8_t *MEM;
 static gm_space space;
-static const AuthoredBindings bindings = {
-    REGISTRY, EPOCH, KEEP, STOP, MOVE_UP, ON_UPDATE, MOVE_DOWN, EFFECT_CLASS,
+static const HighHeelNativeBindings bindings = {
+    .epoch = EPOCH, .registry = REGISTRY, .effect_class = EFFECT_CLASS,
+    .keep_update = KEEP, .stop_update = STOP,
+    .move_up = MOVE_UP, .on_update = ON_UPDATE, .move_down = MOVE_DOWN,
 };
+static const CPU *current_owner;
 static bool observe;
 static unsigned runs, observations;
 static uint32_t expected_self;
@@ -124,43 +126,26 @@ static void check_fixture_arguments(const CPU *cpu)
     ++argument_checks;
 }
 
-/* Model authenticated function/type identities. Read only while the owner
- * is inside this ordinary Run callback. The observer borrows the VMValue. */
-static bool observe_caller(const CPU *cpu, const AuthoredBindings *auth,
-                           uint32_t epoch, void (*read_self)(const uint8_t *))
+static bool copy_guest(void *context, uint32_t address, void *value, size_t size)
 {
-    uint32_t sp = cpu->r[4];
-    if (epoch != auth->epoch || !gm_pointer(&space, sp, 24) ||
-        M32(sp) != RUN_RETURN || M32(sp + 8) != auth->registry)
-        return false;
-    uint32_t frame = M32(sp + 20);
-    if (!frame || !gm_pointer(&space, frame, 12) || M32(frame + 8) != cpu->r[1])
-        return false;
-    uint32_t stack = M32(frame);
-    if (!stack || !gm_pointer(&space, stack, 0x48) || M32(stack + 0x30) != frame ||
-        M32(stack + 0x44) != M32(sp + 12))
-        return false;
-    uint32_t caller = M32(frame + 4);
-    if (!caller || caller == frame || !gm_pointer(&space, caller, 0x1c) || M32(caller) != stack)
-        return false;
-    uint32_t function = M32(caller + 8);
-    bool keep = cpu->r[1] == auth->keep &&
-                (function == auth->move_up || function == auth->on_update);
-    bool stop = cpu->r[1] == auth->stop && function == auth->move_down;
-    if ((!keep && !stop) || M32(caller + 0x14) != auth->effect_class ||
-        !M32(caller + 0x18))
-        return false;
-    read_self(MEM + caller + 0x14);
+    const void *bytes = gm_pointer(context, address, size);
+    if (!bytes) return false;
+    memcpy(value, bytes, size);
     return true;
 }
 
-static void check_borrowed_self(const uint8_t *value)
+static bool check_borrowed_self(void *context, uint32_t value)
 {
-    assert(value == MEM + CALLER + 0x14);
-    uint32_t payload;
-    memcpy(&payload, value + 4, sizeof payload);
-    assert(payload == expected_self);
+    assert(context == current_owner && value == CALLER + 0x14);
+    assert(M32(value) == EFFECT_CLASS && M32(value + 4) == expected_self);
     ++observations;
+    return true;
+}
+
+static bool observe_caller(CPU *cpu, const HighHeelNativeBindings *auth, uint64_t epoch, uint32_t sp)
+{
+    return highheel_visit_native_self(auth, epoch, cpu, current_owner, cpu->r[1], sp,
+                                      copy_guest, &space, check_borrowed_self, cpu);
 }
 
 void f_C329E0(CPU *cpu)
@@ -196,19 +181,35 @@ void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache)
     assert(M32(M32(sp + 4)) == 0);
     ++runs;
     if (observe) {
-        assert(!observe_caller(cpu, &bindings, EPOCH + 1, check_borrowed_self));
-        AuthoredBindings other = bindings;
+        assert(!observe_caller(cpu, &bindings, (uint32_t)EPOCH, sp));
+        assert(!observe_caller(cpu, &bindings, EPOCH, UINT32_MAX - 3));
+        CPU foreign = *cpu;
+        assert(!observe_caller(&foreign, &bindings, EPOCH, sp));
+        HighHeelNativeBindings other = bindings;
         other.registry += 4;
-        assert(!observe_caller(cpu, &other, EPOCH, check_borrowed_self));
+        assert(!observe_caller(cpu, &other, EPOCH, sp));
         /* Model another invocation running on this stack. Even while the
          * outer frame is allocated, its callback is no longer current. */
         M32(STACK + 0x30) = OUTER;
-        assert(!observe_caller(cpu, &bindings, EPOCH, check_borrowed_self));
+        assert(!observe_caller(cpu, &bindings, EPOCH, sp));
         M32(STACK + 0x30) = FRAME;
         M32(STACK + 0x44) = STACK_ID + 1;
-        assert(!observe_caller(cpu, &bindings, EPOCH, check_borrowed_self));
+        assert(!observe_caller(cpu, &bindings, EPOCH, sp));
         M32(STACK + 0x44) = STACK_ID;
-        bool accepted = observe_caller(cpu, &bindings, EPOCH, check_borrowed_self);
+        M32(FRAME + 4) = FRAME;
+        assert(!observe_caller(cpu, &bindings, EPOCH, sp));
+        M32(FRAME + 4) = 0x100000;
+        assert(!observe_caller(cpu, &bindings, EPOCH, sp));
+        M32(FRAME + 4) = CALLER;
+        const uint32_t result = M32(sp + 16);
+        M32(sp + 16) += 4;
+        assert(!observe_caller(cpu, &bindings, EPOCH, sp));
+        M32(sp + 16) = result;
+        const uint32_t base = M32(sp + 4);
+        M32(base) = EFFECT_CLASS;
+        assert(!observe_caller(cpu, &bindings, EPOCH, sp));
+        M32(base) = 0;
+        bool accepted = observe_caller(cpu, &bindings, EPOCH, sp);
         assert(accepted == !!expected_self);
         if (accepted)
             check_fixture_arguments(cpu);
@@ -248,7 +249,9 @@ static Result invoke(uint32_t native, uint32_t caller_function, uint32_t owner,
     observe = probe;
     expected_self = accepted ? self : 0;
     runs = observations = argument_checks = 0;
+    current_owner = &cpu;
     f_C46CB0(&cpu);
+    current_owner = NULL;
     assert(cpu.r[0] == 0 && cpu.r[4] == SP + 20);
     assert(M32(TLS_DATA + 0x4ac) == 5);
     assert(runs == 1 && observations == (unsigned)(probe && accepted) && argument_checks == observations);

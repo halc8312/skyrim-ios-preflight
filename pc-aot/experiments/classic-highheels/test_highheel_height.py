@@ -128,6 +128,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.run_reviewed_fixture(
             stage_effect_call, "test_effect_call_lift.c",
             "Classic ordinary native invocation lends typed script self and update arguments",
+            extra_sources=(HERE / "highheel_native_frame.c",),
         )
 
     def test_reviewed_effect_event_retains_target_through_native_dispatch(self):
