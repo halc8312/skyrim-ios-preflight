@@ -158,6 +158,7 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
             "${loading_menu_sources}/loading_menu.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_loading_menu_host.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_ece_profile.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_ece_tri_host.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_pex_host.c" "${highheel_sources}/highheel_identity.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_effect_host.c" "${highheel_sources}/highheel_effect.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/classic_mod_catalog.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_scene_host.c" "${highheel_sources}/highheel_height.c"
             "${ece_sources}/ece_nose_witness.c" "${ece_sources}/ece_head_geometry.c"

@@ -27,6 +27,7 @@ enum {
 };
 static SkyrimHighHeelPexDigest digest_bytes;
 static atomic_uint reported;
+static _Atomic(uint64_t) last_linked_epoch;
 static _Thread_local struct {
     const struct CPU *owner;
     SkyrimVmScope vm;
@@ -152,8 +153,17 @@ static uint64_t end(const struct CPU *cpu, bool parsed) {
 
 static void linked(const struct CPU *cpu, uint64_t epoch, bool passed) {
     SkyrimVmScope vm;
-    if (cpu && cpu == rt_current_cpu() && epoch && skyrim_vm_scope_current(&vm) && epoch == vm.epoch)
-        report(1, passed);
+    if (!cpu || cpu != rt_current_cpu() || !epoch || !skyrim_vm_scope_current(&vm) || epoch != vm.epoch) return;
+    if (passed) {
+        uint64_t prior = atomic_load_explicit(&last_linked_epoch, memory_order_relaxed);
+        while (prior < epoch && !atomic_compare_exchange_weak_explicit(&last_linked_epoch, &prior, epoch,
+                                                                        memory_order_release, memory_order_relaxed)) {}
+    }
+    report(1, passed);
+}
+
+bool skyrim_highheel_pex_linked_in(uint64_t epoch) {
+    return epoch && atomic_load_explicit(&last_linked_epoch, memory_order_acquire) == epoch;
 }
 
 void skyrim_highheel_pex_fill(PcGuestModHooks *table) {

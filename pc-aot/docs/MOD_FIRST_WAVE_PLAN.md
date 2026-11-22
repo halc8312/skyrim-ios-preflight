@@ -461,7 +461,7 @@ python3 scripts/build_title_guest.py private/<stage> --classic-skse --mod-hooks 
 | USLEEP | DLCのマスターが解決され、選んだレコードが変わっている |
 | Enhanced Camera | 通常の徒歩で一人称と三人称を切り替え、腕と体を画面で確認する。詳細診断の `IOS_CAMERA_CULL` で、一人称の体が描画リストの作成と描画前のどの判定を通ったかを確認する |
 | Safety Load | 同じコピーしたセーブで設定のオンとオフを比較する。ロードにかかった時間、失敗、メモリを記録する |
-| HDT Physics ExtensionsとHighHeels | 物理設定とメッシュを取り込み、静止時の表示を確認する。HighHeelsを含むプロファイルで詳細診断を有効にし、実物の効果スクリプトを読み込んだ起動の `IOS_CLASSIC_HIGHHEEL_PEX` を確認する。phase 0 はファイルと解析、phase 1 はクラスのリンク成功を表す。`IOS_CLASSIC_HIGHHEEL_SCENE` では一回の三人称更新で対象5ノードが見つかるかを確認する。`names=31 duplicate=0 limited=0` が5ノードの検出を表す。高さ補正の接続後は同じ靴を装備・解除し、立つ・歩く・泳ぐ・衣装を変えるときの高さと元の姿勢への復帰を比較する |
+| HDT Physics ExtensionsとHighHeels | 物理設定とメッシュを取り込み、静止時の表示を確認する。HighHeelsを含むプロファイルで詳細診断を有効にし、実物の効果スクリプトを読み込んだ起動の `IOS_CLASSIC_HIGHHEEL_PEX` を確認する。phase 0 はファイルと解析、phase 1 はクラスのリンク成功を表す。装備・解除の際は `IOS_CLASSIC_HIGHHEEL_CATALOG result=0` と、`IOS_CLASSIC_HIGHHEEL_EFFECT` の開始・終了を確認する。`linked=1` は同じVM世代でのリンクを表す。`IOS_CLASSIC_HIGHHEEL_SCENE` の `names=31 duplicate=0 limited=0` は一回の三人称更新で5ノードが見つかったことを表す。高さ補正の接続後は同じ靴を装備・解除し、立つ・歩く・泳ぐ・衣装を変えるときの高さと元の姿勢への復帰を比較する |
 
 ## 9. 必要な入力（Web環境にないもの）
 

@@ -44,6 +44,7 @@
 #include "mod_racemenu_preset.h"
 #include "mod_save_host.h"
 #include "highheel_identity.h"
+#include "mod_highheel_effect_host.h"
 #include "mod_highheel_pex_host.h"
 #include "mod_highheel_scene_host.h"
 /* classic_skse_control.h, in the staged skse_system.c */
@@ -577,7 +578,7 @@ static bool DigestHighHeelPex(const void *bytes, size_t length, uint8_t output[3
     return CC_SHA256(bytes, (CC_LONG)length, output) != NULL;
 }
 
-static HighHeelIdentityResult PrepareHighHeelPexObserver(NSString *game) {
+static HighHeelIdentityResult PrepareHighHeelObservers(NSString *game, bool wantEffect, bool *effectReady) {
     if (launchPackageIds.count) game = CanonicalSupportPath(game);
     char data[PATH_MAX];
     if (!game || skyrim_plugin_child_path(game.fileSystemRepresentation, "Data", data, sizeof data) != 1)
@@ -589,8 +590,11 @@ static HighHeelIdentityResult PrepareHighHeelPexObserver(NSString *game) {
     const int fd = open(data, O_RDONLY | O_DIRECTORY | O_CLOEXEC | noFollow);
     if (fd < 0) return HIGHHEEL_IDENTITY_UNREADABLE;
     const HighHeelIdentityResult result = highheel_identity_check_assets(fd, DigestHighHeelPex);
+    if (result == HIGHHEEL_IDENTITY_MATCH) {
+        skyrim_highheel_pex_configure(DigestHighHeelPex);
+        if (wantEffect) *effectReady = skyrim_highheel_effect_prepare(fd, DigestHighHeelPex);
+    }
     close(fd);
-    if (result == HIGHHEEL_IDENTITY_MATCH) skyrim_highheel_pex_configure(DigestHighHeelPex);
     return result;
 }
 
@@ -649,13 +653,16 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     const uint32_t heelGroups = PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE;
     const BOOL heelPex = (compiled & heelGroups) == heelGroups;
     const BOOL heelScene = (compiled & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) && skyrim_camera_app_ready();
+    const bool heelEffect = (compiled & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE) != 0;
     if (!launchWithoutMods && !launchPluginListFailed && skyrim_mobile_verbose() && (heelPex || heelScene)) {
         for (NSString *name in skyrim_mobile_loaded_plugins()) {
             if ([name caseInsensitiveCompare:@"hdtHighHeel.esm"] == NSOrderedSame) {
                 if (heelPex) {
-                    const HighHeelIdentityResult result = PrepareHighHeelPexObserver(game);
+                    bool effectReady = false;
+                    const HighHeelIdentityResult result = PrepareHighHeelObservers(game, heelEffect, &effectReady);
                     fprintf(stderr, "IOS_CLASSIC_HIGHHEEL_ASSETS schema=1 result=%u\n", (unsigned)result);
                     if (result == HIGHHEEL_IDENTITY_MATCH) plan->groups |= heelGroups;
+                    if (effectReady) plan->groups |= PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE;
                 }
                 if (heelScene) plan->groups |= PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE;
                 break;
@@ -681,8 +688,10 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     if (plan->groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) table.ece_nose.notify = skyrim_ece_nose_app_observe;
     if (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE) skyrim_highheel_pex_fill(&table);
     if (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) skyrim_highheel_scene_fill(&table);
+    if (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE) skyrim_highheel_effect_fill(&table);
     if (plan->groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) skyrim_save_app_fill(&table);
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
+    skyrim_highheel_effect_cancel();
     /* Keep the original paths: select nothing. */
     if (pc_guest_select_mod_hooks(0, NULL) != 0) fputs("IOS_MOD_HOOKS selection failed\n", stderr);
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f)
@@ -752,6 +761,7 @@ static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady, NSStrin
 
 void skyrim_mods_report_features_at_exit(void) {
 #ifdef SKYRIM_IOS_MOD_HOOKS
+    skyrim_highheel_effect_cancel();
     if (skyrim_mods_feature_enabled(SKYRIM_FEATURE_FUZ)) skyrim_fuz_app_report(1);
 #endif
 }

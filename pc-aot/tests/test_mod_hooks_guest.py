@@ -22,6 +22,9 @@ spec = importlib.util.spec_from_file_location("title_assembly_for_hooks", ROOT /
 assembly = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(assembly)
 
+HIGHHEEL_STARTUP_NOTICE = (b"    if (skyrim_highheel_effect_guest_selected && (uint8_t)eax)\n"
+                           b"        skyrim_highheel_effect_plugins_ready(c, TL32((uint32_t)(0x12E2CB8u)));\n")
+
 
 class GroupTests(unittest.TestCase):
     def test_parses_staged_groups(self):
@@ -35,6 +38,7 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups("ece_tri_observe,ece_nose_observe"), 18432)
         self.assertEqual(hooks.parse_groups("vm_lifecycle,highheel_pex_observe"), 32772)
         self.assertEqual(hooks.parse_groups("highheel_scene_observe"), 65536)
+        self.assertEqual(hooks.parse_groups("vm_lifecycle,highheel_pex_observe,highheel_effect_observe"), 163844)
         self.assertEqual(hooks.parse_groups("save_lifecycle"), 64)
         self.assertEqual(hooks.parse_groups("fresh_load,save_lifecycle,vm_lifecycle"), 4164)
         self.assertEqual(hooks.parse_groups("loading_menu_observe"), 128)
@@ -47,7 +51,8 @@ class GroupTests(unittest.TestCase):
                               ("fuz_menu,fuz_menu", "twice"), ("fuz", "Unknown"),
                               ("fuz_world", "list both"), ("safety_load", "list both"),
                               ("fresh_load,save_lifecycle", "needs"), ("ece_nose_observe", "needs"),
-                              ("highheel_pex_observe", "needs")):
+                              ("highheel_pex_observe", "needs"), ("highheel_effect_observe", "needs"),
+                              ("vm_lifecycle,highheel_effect_observe", "needs")):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
                 hooks.parse_groups(text)
 
@@ -212,6 +217,54 @@ class ComposeTests(unittest.TestCase):
         self.assertEqual(data.replace(precache.HOOK, b"", 1).replace(precache.SKIP_WARM, b"", 1), unit)
 
 
+    def test_highheel_effect_stages_are_scoped_and_preserve_fresh_load(self):
+        heel = hooks.load(ROOT / "experiments/classic-highheels", "stage_effect_event")
+        startup = hooks.load(hooks.SAVE_SEAMS, "stage_native_load")
+        calls = tuple(f"    esp -= 4; M32(esp) = 0x{site:X}u; SPILL(); f_656860(c); RELOAD();\n".encode()
+                      for site in heel.PUBLICATION_SITES)
+        producer = b"\nvoid f_656CB0(CPU *c) {\n" + b"".join(calls) + b"}\n"
+        other_phase = b"\nvoid other_phase(CPU *c) {\n" + calls[0] + b"}\n"
+        effect = producer + other_phase
+        init = b"\nvoid f_699100(CPU *c) {\n" + startup.STARTUP_ORDER + b"}\n"
+        other_init = b"\nvoid other_init(CPU *c) {\n" + startup.STARTUP_ORDER + b"}\n"
+        original = init + other_init
+        (self.gen / heel.UNIT).write_bytes(effect)
+        (self.gen / startup.STARTUP_UNIT).write_bytes(original)
+        with self.assertRaisesRegex(ValueError, "reviewed Classic lift"):
+            hooks.stage_highheel_effect_observe(self.root)
+        with self.assertRaisesRegex(ValueError, "Unreviewed Classic startup unit"):
+            hooks.stage_highheel_plugins_ready(self.root, {}, fresh_load=False)
+        first = (heel.UNIT, hashlib.sha256(effect).hexdigest(), heel.UNITS[0][2])
+        with mock.patch.object(heel, "UNITS", (first, *heel.UNITS[1:])), \
+                mock.patch.object(startup, "STARTUP_SHA", hashlib.sha256(original).hexdigest()):
+            hook_groups = hooks.parse_groups("vm_lifecycle,highheel_pex_observe,highheel_effect_observe")
+            # Unrelated stages do not contribute to either authored unit.
+            with self.stages(vm_lifecycle=lambda root: {}, highheel_pex_observe=lambda root: {},
+                             fresh_load=lambda root: {}, highheel_effect_observe=hooks.stage_highheel_effect_observe):
+                plain = hooks.compose(self.root, hook_groups)
+                fresh = hooks.compose(self.root, hook_groups | 4096 | 64)
+            hook_header = b'#include "PcGuestModHooksABI.h"\n'
+            staged_effect = plain[heel.UNIT]
+            self.assertEqual(staged_effect, fresh[heel.UNIT])
+            for site, call in zip(heel.PUBLICATION_SITES, calls):
+                effect_notice = (b"    if (skyrim_highheel_effect_guest_selected)\n"
+                                 + f"        skyrim_highheel_effect_phase(c, esi, esp, 0x{site:X}u);\n".encode())
+                self.assertIn(effect_notice + call, staged_effect)
+                self.assertEqual(staged_effect.count(effect_notice), 1)
+                staged_effect = staged_effect.replace(effect_notice, b"", 1)
+            self.assertEqual(staged_effect, hook_header + effect)
+            self.assertEqual(plain[startup.STARTUP_UNIT], hook_header + init.replace(
+                startup.STARTUP_ORDER, startup.STARTUP_ORDER + HIGHHEEL_STARTUP_NOTICE) + other_init)
+            legacy = startup.stage_startup_plugins(self.root, {})
+            self.assertEqual(fresh[startup.STARTUP_UNIT].replace(HIGHHEEL_STARTUP_NOTICE, b"", 1), legacy)
+            self.assertEqual(fresh[startup.STARTUP_UNIT].count(HIGHHEEL_STARTUP_NOTICE), 1)
+            self.assertIn(b"TL32((uint32_t)(0x12E2CB8u)), 0);\n" + HIGHHEEL_STARTUP_NOTICE,
+                          fresh[startup.STARTUP_UNIT])
+            changed = legacy.replace(startup.STARTUP_ORDER, startup.STARTUP_ORDER + b"    fixture_change(c);\n", 1)
+            with self.assertRaisesRegex(ValueError, "overlaps the HighHeels startup notification"):
+                hooks.stage_highheel_plugins_ready(self.root, {startup.STARTUP_UNIT: changed}, fresh_load=True)
+
+
 class OwnedLiftTests(unittest.TestCase):
     def test_all_stages_compose_and_parse_with_the_pinned_lift(self):
         generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
@@ -226,14 +279,14 @@ class OwnedLiftTests(unittest.TestCase):
         groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe,"
                                     "loading_menu_observe,inventory_fit,safety_load,camera_render_observe,"
                                     "ece_tri_observe,save_lifecycle,fresh_load,camera_cull_observe,ece_nose_observe,"
-                                    "highheel_pex_observe,highheel_scene_observe")
+                                    "highheel_pex_observe,highheel_scene_observe,highheel_effect_observe")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
             work = Path(scratch)
             sources = classic.prepare_sources(originals, work / "classic-sources")
             result, staged = hooks.prepare_sources(sources, work / "mod-hook-sources", groups, state, root)
-            self.assertTrue({"exe_95.c", "exe_100.c", "exe_101.c", "exe_189.c", "exe_35.c", "exe_188.c",
+            self.assertTrue({"exe_95.c", "exe_96.c", "exe_100.c", "exe_101.c", "exe_189.c", "exe_35.c", "exe_188.c",
                              "exe_66.c", "exe_106.c", "exe_107.c", "exe_185.c", "exe_186.c", "exe_199.c", "exe_259.c",
                              "exe_262.c", "exe_275.c", "exe_359.c"} <= set(staged))
             frame = (work / "mod-hook-sources" / "exe_107.c").read_bytes()
@@ -276,7 +329,12 @@ class OwnedLiftTests(unittest.TestCase):
             start, end = hooks.function_span(startup, "f_699100")
             original = (root / "gen/exe_107.c").read_bytes()
             old_start, old_end = hooks.function_span(original, "f_699100")
-            self.assertEqual(startup[start:end].replace(notice, b"", 1), original[old_start:old_end])
+            self.assertEqual(startup.count(HIGHHEEL_STARTUP_NOTICE), 1)
+            self.assertIn(notice + HIGHHEEL_STARTUP_NOTICE, startup)
+            self.assertEqual(startup[start:end].replace(notice + HIGHHEEL_STARTUP_NOTICE, b"", 1),
+                             original[old_start:old_end])
+            phase = (work / "mod-hook-sources" / "exe_96.c").read_bytes()
+            self.assertEqual(phase.count(b"skyrim_highheel_effect_phase(c, esi, esp,"), 2)
             linker = (work / "mod-hook-sources" / "exe_346.c").read_bytes()
             self.assertEqual(linker.count(b"skyrim_highheel_pex_begin(c, "), 1)
             self.assertEqual(linker.count(b"skyrim_highheel_pex_linked(c, "), 1)

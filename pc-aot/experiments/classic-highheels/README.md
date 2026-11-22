@@ -252,8 +252,17 @@ The effect fixture now uses `highheel_effect_sample`, a read-only C reader
 for the retained callback. It accepts the complete expected setting ID
 and checks the event phase and number against the stock publication and
 the live effect. The result contains copied values. A rejected read leaves
-the result untouched. The iPhone host still needs to supply the setting ID
-from the finalized load order and call the reader at the same guest seam.
+the result untouched. The optional `highheel_effect_observe` guest group
+uses the same reader at those two sites with `vm_lifecycle` and
+`highheel_pex_observe`. On startup the
+app joins the finalized catalogue with the exact files in the launch Data
+view. `IOS_CLASSIC_HIGHHEEL_CATALOG` reports match (0), owner absent (1),
+different assets (2), unreadable (3), or possible override (4).
+`IOS_CLASSIC_HIGHHEEL_EFFECT` reports the first matching start or finish
+with each PEX link status. Link status indicates whether the exact class
+was observed linking somewhere in the current VM generation. Proof for
+an individual effect requires a separate check of its bound script.
+The log contains only the phase and the link flag.
 
 ### Refresh the same named node after applying or removing the offset
 

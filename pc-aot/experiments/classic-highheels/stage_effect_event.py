@@ -23,7 +23,28 @@ UNITS = (
 UNIT = UNITS[0][0]
 DEPENDENCIES = tuple(name for name, _, _ in UNITS[1:])
 DECLARE = b"void highheels_observe_phase(const CPU *, uint32_t, uint32_t, uint32_t, uint32_t);\n"
+PRODUCER = 0x656CB0
 PUBLICATION_SITES = (0x656EC5, 0x65710B)
+
+
+def observe_publications(body, observe):
+    for site in PUBLICATION_SITES:
+        call = f"    esp -= 4; M32(esp) = 0x{site:X}u; SPILL(); f_656860(c); RELOAD();\n".encode()
+        if body.count(call) != 1:
+            raise ValueError("Expected one retained effect-phase publication")
+        body = body.replace(call, observe(site) + call, 1)
+    return body
+
+
+def stage_app(unit):
+    if sha256(unit).hexdigest() != UNITS[0][1]:
+        raise ValueError("Effect event unit differs from the reviewed Classic lift")
+    original = function(unit, PRODUCER)
+    observed = observe_publications(original, lambda site: (
+        "    if (skyrim_highheel_effect_guest_selected)\n"
+        f"        skyrim_highheel_effect_phase(c, esi, esp, 0x{site:X}u);\n"
+    ).encode())
+    return b'#include "PcGuestModHooksABI.h"\n' + unit.replace(original, observed, 1)
 
 
 def private_fixture(*units):
@@ -31,14 +52,9 @@ def private_fixture(*units):
         sha256(body).hexdigest() != digest for body, (_, digest, _) in zip(units, UNITS)
     ):
         raise ValueError("Effect event units differ from the reviewed Classic lift")
-    original = function(units[0], 0x656CB0)
-    observed = original.replace(b"void f_656CB0(", b"void observed_effect_producer(", 1)
-    for site in PUBLICATION_SITES:
-        call = f"    esp -= 4; M32(esp) = 0x{site:X}u; SPILL(); f_656860(c); RELOAD();\n".encode()
-        if observed.count(call) != 1:
-            raise ValueError("Expected one retained effect-phase publication")
-        capture = f"    highheels_observe_phase(c, esi, ecx, esp, 0x{site:X}u);\n".encode()
-        observed = observed.replace(call, capture + call, 1)
+    observed = observe_publications(
+        function(units[0], PRODUCER), lambda site: f"    highheels_observe_phase(c, esi, ecx, esp, 0x{site:X}u);\n".encode()
+    ).replace(b"void f_656CB0(", b"void observed_effect_producer(", 1)
     return PRELUDE + DECLARE + observed + b"".join(
         function(body, address)
         for body, (_, _, addresses) in zip(units, UNITS)

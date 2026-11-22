@@ -8,6 +8,8 @@ import sys
 import tempfile
 import unittest
 
+from test_mod_hooks_binding import write_fixture_headers
+
 ROOT = Path(__file__).resolve().parents[1]
 PORT = ROOT / "ios/runtime-port"
 EXPERIMENT = ROOT / "experiments/classic-highheels"
@@ -37,6 +39,8 @@ class HighHeelIdentityTests(unittest.TestCase):
         build = tempfile.TemporaryDirectory()
         cls.addClassCleanup(build.cleanup)
         cls.binary = Path(build.name) / "highheel-identity"
+        cls.host_binary = Path(build.name) / "highheel-effect-host"
+        write_fixture_headers(Path(build.name))
         flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O2", "-I", PORT,
                  "-I", EXPERIMENT, "-I", CATALOG, "-I", PROBE]
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
@@ -47,6 +51,13 @@ class HighHeelIdentityTests(unittest.TestCase):
                         EXPERIMENT / "highheel_identity.c", PORT / "classic_mod_catalog.c",
                         PORT / "mod_plugins.c", PROBE / "probe_asset_file.c", "-o", cls.binary],
                        check=True, timeout=60)
+        subprocess.run([cc, *flags, "-pthread", "-I", build.name, "-I", ROOT / "ios/private-abi",
+                        "-I", ROOT / "experiments/fuz-voice",
+                        ROOT / "tests/native/test_mod_highheel_effect_host.c",
+                        PORT / "mod_highheel_effect_host.c", PORT / "mod_highheel_pex_host.c",
+                        PORT / "classic_vm_epoch.c", PORT / "classic_mod_catalog.c", PORT / "mod_plugins.c",
+                        EXPERIMENT / "highheel_identity.c", EXPERIMENT / "highheel_effect.c",
+                        PROBE / "probe_asset_file.c", "-o", cls.host_binary], check=True, timeout=60)
 
     def setUp(self):
         work = tempfile.TemporaryDirectory()
@@ -108,6 +119,25 @@ class HighHeelIdentityTests(unittest.TestCase):
         self.assertEqual(self.check(), (DIFFERENT, 1))
         (self.data / ESM).unlink()
         self.assertEqual(self.check(), (DIFFERENT, 0))
+
+    def test_host_observes_only_the_loaded_effect_and_distinguishes_a_current_pex_link(self):
+        (self.data / "Override.esp").write_bytes(plugin_header("Skyrim.esm", ESM))
+        pex = "IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=1 verified=1"
+        for mode, expected in (
+            (0, ["IOS_CLASSIC_HIGHHEEL_CATALOG schema=1 result=0",
+                 "IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=1 linked=0",
+                 pex,
+                 "IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=1 linked=1",
+                 "IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=0 linked=1",
+                 "IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=0 linked=0"]),
+            (1, ["IOS_CLASSIC_HIGHHEEL_CATALOG schema=1 result=1", pex]),
+            (2, ["IOS_CLASSIC_HIGHHEEL_CATALOG schema=1 result=4", pex]),
+            (3, [pex]),
+        ):
+            with self.subTest(mode=mode):
+                result = subprocess.run([self.host_binary, self.data, str(mode)], text=True, capture_output=True,
+                                        timeout=10, check=True)
+                self.assertEqual(result.stderr.splitlines(), expected)
 
     def test_refuses_case_conflicts_and_linked_assets(self):
         pex = self.data / PEX

@@ -31,8 +31,10 @@ GROUPS = {
     "camera_render_observe": 1024, "ece_tri_observe": 2048, "fresh_load": 4096,
     "camera_cull_observe": 8192, "ece_nose_observe": 16384,
     "highheel_pex_observe": 32768, "highheel_scene_observe": 65536,
+    "highheel_effect_observe": 131072,
 }
 FRESH_LOAD_DEPS = GROUPS["save_lifecycle"] | GROUPS["vm_lifecycle"]
+HIGHHEEL_EFFECT_DEPS = GROUPS["highheel_pex_observe"] | GROUPS["vm_lifecycle"]
 # The interface header and the reviewed seam headers its tables use; the IPA
 # assembly checks the same five (scripts/assemble_title_ipa.py).
 HEADERS = {
@@ -113,6 +115,8 @@ def parse_groups(text: str) -> int:
         raise ValueError("ece_nose_observe needs ece_tri_observe; list both")
     if mask & GROUPS["highheel_pex_observe"] and not mask & GROUPS["vm_lifecycle"]:
         raise ValueError("highheel_pex_observe needs vm_lifecycle; list both")
+    if mask & GROUPS["highheel_effect_observe"] and mask & HIGHHEEL_EFFECT_DEPS != HIGHHEEL_EFFECT_DEPS:
+        raise ValueError("highheel_effect_observe needs highheel_pex_observe and vm_lifecycle; list both")
     return mask
 
 
@@ -286,6 +290,45 @@ def stage_highheel_scene_observe(root: Path, staged: dict[str, bytes]) -> dict[s
     return result
 
 
+def stage_highheel_effect_observe(root: Path) -> dict[str, bytes]:
+    stage = load(EXPERIMENTS / "classic-highheels", "stage_effect_event")
+    return {stage.UNIT: stage.stage_app((root / "gen" / stage.UNIT).read_bytes())}
+
+
+def stage_highheel_plugins_ready(root: Path, staged: dict[str, bytes], *, fresh_load: bool) -> dict[str, bytes]:
+    startup = load(SAVE_SEAMS, "stage_native_load")
+    unit = startup.STARTUP_UNIT
+    original = (root / "gen" / unit).read_bytes()
+    if digest(original) != startup.STARTUP_SHA:
+        raise ValueError("Unreviewed Classic startup unit")
+
+    # Camera stages own edits elsewhere in this unit. In InitTES, the only
+    # sanctioned earlier edit is the exact FreshLoad notification.
+    base = staged.get(unit, original)
+    expected = startup.stage_startup_plugins(root, {}) if fresh_load else original
+    start, end = function_span(base, "f_699100")
+    ref_start, ref_end = function_span(expected, "f_699100")
+    if base[start:end] != expected[ref_start:ref_end]:
+        raise ValueError("Unreviewed earlier stage overlaps the HighHeels startup notification")
+    orig_start, orig_end = function_span(original, "f_699100")
+    stock = original[orig_start:orig_end]
+    if stock.count(startup.STARTUP_ORDER) != 1:
+        raise ValueError("Expected one reviewed Classic plugin order publication")
+
+    # Insert at the original call's return, after the FreshLoad notification
+    # when present. The stock suffix is identical on both reviewed paths.
+    stock_return = stock.index(startup.STARTUP_ORDER) + len(startup.STARTUP_ORDER)
+    tail = stock[stock_return:]
+    if not base[start:end].endswith(tail):
+        raise ValueError("Classic startup continuation changed")
+    insert = end - len(tail)
+    notice = (b"    if (skyrim_highheel_effect_guest_selected && (uint8_t)eax)\n"
+              b"        skyrim_highheel_effect_plugins_ready(c, TL32((uint32_t)(0x12E2CB8u)));\n")
+    body = base[:insert] + notice + base[insert:]
+    header = b'#include "PcGuestModHooksABI.h"\n'
+    return {unit: body if header in body else header + body}
+
+
 def stage_vm_lifecycle(root: Path) -> dict[str, bytes]:
     sites = [*VM_SITES, VM_SCRIPT_RELOAD_SITE]
     staged: dict[str, bytes] = {}
@@ -324,6 +367,7 @@ STAGES = {
     "fresh_load": stage_fresh_load,
     "highheel_pex_observe": stage_highheel_pex_observe,
     "highheel_scene_observe": stage_highheel_scene_observe,
+    "highheel_effect_observe": stage_highheel_effect_observe,
 }
 
 
@@ -352,6 +396,8 @@ def compose(root: Path, mask: int) -> dict[str, bytes]:
     if mask & GROUPS["fresh_load"]:
         startup = load(SAVE_SEAMS, "stage_native_load")
         staged[startup.STARTUP_UNIT] = startup.stage_startup_plugins(root, staged)
+    if mask & GROUPS["highheel_effect_observe"]:
+        staged.update(stage_highheel_plugins_ready(root, staged, fresh_load=bool(mask & GROUPS["fresh_load"])))
     return staged
 
 
