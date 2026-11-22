@@ -72,6 +72,16 @@ bool skyrim_highheel_effect_matches(SkyrimVmScope scope, uint64_t handle, uint32
     return matched && scope_current(scope);
 }
 
+bool skyrim_highheel_effect_commit_if_matches(SkyrimVmScope scope, uint64_t handle, uint32_t actor, bool keep,
+                                               uint32_t magnitude, bool (*action)(void *), void *context) {
+    if (!action) return false;
+    pthread_mutex_lock(&lifetime_lock);
+    const bool accepted = highheel_lifetimes_match(&lifetimes, scope.epoch, scope.registry, handle,
+                                                   actor, keep, magnitude) && action(context);
+    pthread_mutex_unlock(&lifetime_lock);
+    return accepted;
+}
+
 static void plugins_ready(const struct CPU *cpu, uint32_t handler) {
     uint32_t current;
     if (!cpu || cpu != rt_current_cpu() || !handler ||

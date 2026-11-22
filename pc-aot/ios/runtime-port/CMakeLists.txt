@@ -227,6 +227,7 @@ endif()
 if(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
     # The staged value publication (classic_papyrus_values.c.in) is compiled into skse_compat.c.
     target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/classic_papyrusutil.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_native_host.c" "${highheel_sources}/highheel_native_frame.c"
         "${cosave_source}/generation.c" "${cosave_source}/digest.c" "${cosave_source}/immutable_ess.c"
         "${cosave_source}/mod_history.c" "${cosave_source}/core_snapshot.c" "${cosave_source}/plugin_records.c"
         "${cosave_source}/plugin_stream.c" "${cosave_source}/event_bridge.c" "${cosave_source}/event_trace.c"

@@ -83,6 +83,11 @@ static void send_phase(const PcGuestModHooks *table, uint32_t setting, bool star
     table->highheel_effect.phase(&owner, EFFECT, ARGS, starting ? START : FINISH);
 }
 
+static bool count_request(void *context) {
+    ++*(unsigned *)context;
+    return true;
+}
+
 int main(int argc, char **argv) {
     assert(argc == 3);
     const unsigned mode = (unsigned)strtoul(argv[2], NULL, 10);
@@ -163,9 +168,23 @@ int main(int argc, char **argv) {
     send_phase(&table, ESTABLISHED_SETTING, true);
     assert(skyrim_highheel_effect_matches(initial, second_handle, 0x14, true, 0x40e80000) == effect_enabled);
     assert(skyrim_highheel_effect_matches(initial, second_handle, 0x14, false, 0) == effect_enabled);
+    unsigned requests = 0;
+    assert(skyrim_vm_commit_begin(&initial));
+    assert(!skyrim_highheel_effect_commit_if_matches(initial, second_handle, 0x15, true, 0x40e80000,
+                                                    count_request, &requests));
+    assert(skyrim_highheel_effect_commit_if_matches(initial, second_handle, 0x14, true, 0x40e80000,
+                                                   count_request, &requests) == effect_enabled);
+    skyrim_vm_commit_end();
     send_phase(&table, ESTABLISHED_SETTING, false);
     assert(!skyrim_highheel_effect_matches(initial, second_handle, 0x14, true, 0x40e80000));
     assert(skyrim_highheel_effect_matches(initial, second_handle, 0x14, false, 0) == effect_enabled);
+    assert(skyrim_vm_commit_begin(&initial));
+    assert(!skyrim_highheel_effect_commit_if_matches(initial, second_handle, 0x14, true, 0x40e80000,
+                                                    count_request, &requests));
+    assert(skyrim_highheel_effect_commit_if_matches(initial, second_handle, 0x14, false, 0,
+                                                   count_request, &requests) == effect_enabled);
+    skyrim_vm_commit_end();
+    assert(requests == (effect_enabled ? 2u : 0u));
     for (unsigned n = 1; n <= 700; ++n) {
         put(EFFECT + 0x5c, n);
         put(ARGS + 8, n);

@@ -276,8 +276,12 @@ match the live actor and the observed magnitude. A Stop candidate can
 match an active lifetime for sitting or a recorded finish for
 unequipping. Repeated starts for the same handle make it ambiguous for
 that VM epoch. The matching path stores only copied values. The native
-caller must still attest the live VMIdentifier and target form, and the
-scene consumer must recheck the request before applying a change.
+provider uses the VM registry's current bound identifier to attest the
+borrowed `self` and the fixed ObjectReference unpacker to confirm the
+target. It repeats the caller check before committing the scalar request
+under the VM and effect guards. The scene consumer must recheck the
+request before applying a change. App startup activates this provider
+once that consumer is connected.
 
 The effect fixture now uses `highheel_effect_sample`, a read-only C reader
 for the retained callback. It accepts the complete expected setting ID
