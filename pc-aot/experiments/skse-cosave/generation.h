@@ -75,6 +75,12 @@ SksePairResult skse_pair_restore(SksePairStore *store, const SksePairGeneration 
  * generation. Frees no caller buffer; use free() after success. */
 SksePairResult skse_pair_export(SksePairStore *store, const SksePairGeneration *generation,
                                 void **data, size_t *size);
+/* Copy verified records into a different authorized profile. Both generation
+ * keys must describe the exact finalized files. The destination must match the
+ * authenticated source .ess byte for byte; an existing different image is a
+ * conflict. The caller handles the surrounding .ess copy transaction. */
+SksePairResult skse_pair_rebind_copy(SksePairStore *source, const SksePairGeneration *original,
+                                    SksePairStore *destination, const SksePairGeneration *copy);
 const char *skse_pair_result(SksePairResult result);
 
 #ifdef __cplusplus

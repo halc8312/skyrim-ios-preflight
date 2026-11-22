@@ -253,7 +253,8 @@ static SksePairResult expected_ess(sqlite3 *db, const SksePairKey *key, SkseEssD
     sqlite3_finalize(s);
     return result;
 }
-static SksePairResult read_image(sqlite3 *db, const SksePairGeneration *g, SksePairImage *out) {
+static SksePairResult read_image(sqlite3 *db, const SksePairGeneration *g, SksePairImage *out,
+                                 SkseEssDigest *verified_ess) {
     if (!g || !valid_key(&g->key) || g->ess_fd < 0) return SKSE_PAIR_ARGUMENT;
     if (!db) return SKSE_PAIR_MISSING;
     /* A generation with no companion costs one small lookup, with no ESS read.
@@ -284,6 +285,7 @@ static SksePairResult read_image(sqlite3 *db, const SksePairGeneration *g, SkseP
         if (!out->data) { result = SKSE_PAIR_STORAGE; goto done; }
         memcpy(out->data, image, (size_t)bytes);
         out->size = (size_t)bytes;
+        if (verified_ess) *verified_ess = ess;
     }
 done:
     sqlite3_finalize(row);
@@ -295,7 +297,7 @@ static SksePairResult begin_stage(SksePairStore *store, const SksePairKey *targe
     SksePairStage *stage = calloc(1, sizeof *stage);
     if (!stage) return SKSE_PAIR_STORAGE;
     stage->target = *target;
-    SksePairResult result = base ? read_image(store->db, base, &stage->image) : skse_records_empty(&stage->image);
+    SksePairResult result = base ? read_image(store->db, base, &stage->image, NULL) : skse_records_empty(&stage->image);
     if (result == SKSE_PAIR_OK) *out = stage;
     else skse_pair_discard(stage);
     return result;
@@ -460,12 +462,30 @@ SksePairResult skse_pair_commit_immutable(SksePairStore *store, SksePairStage *s
     return commit_image(store, stage, &ess);
 }
 
+SksePairResult skse_pair_rebind_copy(SksePairStore *source, const SksePairGeneration *original,
+                                   SksePairStore *destination, const SksePairGeneration *copy) {
+    if (!source || !destination || destination->readonly || !original || !copy ||
+        !valid_key(&original->key) || !valid_key(&copy->key) ||
+        !memcmp(original->key.profile, copy->key.profile, sizeof copy->key.profile)) return SKSE_PAIR_ARGUMENT;
+    SksePairStage stage = {.target = copy->key};
+    SkseEssDigest original_digest, copy_digest;
+    SksePairResult result = read_image(source->db, original, &stage.image, &original_digest);
+    if (result == SKSE_PAIR_OK) result = skse_ess_digest(copy->ess_fd, &copy_digest);
+    if (result == SKSE_PAIR_OK) {
+        if (original_digest.size != copy_digest.size ||
+            memcmp(original_digest.hash, copy_digest.hash, sizeof copy_digest.hash)) result = SKSE_PAIR_WRONG_GENERATION;
+        else result = commit_image(destination, &stage, &copy_digest);
+    }
+    free(stage.image.data);
+    return result;
+}
+
 SksePairResult skse_pair_export(SksePairStore *store, const SksePairGeneration *generation, void **data, size_t *size) {
     if (!data || !size) return SKSE_PAIR_ARGUMENT;
     *data = NULL; *size = 0;
     if (!store) return SKSE_PAIR_ARGUMENT;
     SksePairImage image = {0};
-    SksePairResult result = read_image(store->db, generation, &image);
+    SksePairResult result = read_image(store->db, generation, &image, NULL);
     if (result == SKSE_PAIR_OK) { *data = image.data; *size = image.size; }
     return result;
 }
@@ -474,7 +494,7 @@ SksePairResult skse_pair_restore(SksePairStore *store, const SksePairGeneration 
     if (!store || !generation || !revert || !visitor) return SKSE_PAIR_ARGUMENT;
     revert(context);
     SksePairImage image = {0};
-    SksePairResult result = read_image(store->db, generation, &image);
+    SksePairResult result = read_image(store->db, generation, &image, NULL);
     if (result == SKSE_PAIR_OK) result = skse_records_visit(&image, uid, visitor, context);
     free(image.data);
     if (result == SKSE_PAIR_STOPPED) revert(context);

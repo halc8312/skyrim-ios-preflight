@@ -140,6 +140,27 @@ SkseBridgeResult skse_bridge_bind_named_ess(SkseEventBridge *bridge, uint32_t ti
     return status;
 }
 
+SkseBridgeResult skse_bridge_rebind_named_copy(SkseEventBridge *source, int source_dir, int original,
+    SkseEventBridge *destination, int destination_dir, int copy, const char *leaf, SksePairResult *detail) {
+    if (detail) *detail = SKSE_PAIR_OK;
+    if (!source || !source->readonly || !destination || destination->readonly) return SKSE_BRIDGE_ARGUMENT;
+    const SkseGameScope *from = &source->running, *to = &destination->running;
+    if (!memcmp(from->profile, to->profile, sizeof from->profile) ||
+        from->text != to->text || from->voices != to->voices) return SKSE_BRIDGE_SCOPE;
+    struct stat first, second;
+    if (fstat(source_dir, &first) || fstat(destination_dir, &second)) return SKSE_BRIDGE_IO;
+    if (skse_save_same_file(&first, &second)) return SKSE_BRIDGE_ARGUMENT;
+    SkseGameEvent source_event, destination_event;
+    SkseBridgeResult result = bind_named_ess(from, source_dir, leaf, original, &source_event, detail);
+    if (result == SKSE_BRIDGE_OK)
+        result = bind_named_ess(to, destination_dir, leaf, copy, &destination_event, detail);
+    if (result != SKSE_BRIDGE_OK) return result;
+    const SksePairGeneration original_generation = {source_event.saved, original};
+    const SksePairGeneration copied_generation = {destination_event.saved, copy};
+    return from_pair(skse_pair_rebind_copy(source->store, &original_generation,
+                     destination->store, &copied_generation), detail);
+}
+
 static SkseBridgeResult confirm_named_ess(const SkseGameEvent *requested,
     int saves, const char *leaf, int source, SksePairResult *detail) {
     SkseGameEvent actual;

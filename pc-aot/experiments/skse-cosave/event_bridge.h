@@ -74,6 +74,12 @@ void skse_bridge_close(SkseEventBridge *bridge);
  * database still verifies the full base digest before handing out records. */
 SkseBridgeResult skse_bridge_bind_named_ess(SkseEventBridge *bridge, uint32_t ticket,
     int saves, const char *leaf, int source, SkseGameEvent *event, SksePairResult *detail);
+/* After an explicit file copy, rebind verified records to the exact published
+ * .ess under the same leaf and language in a different profile. The source
+ * bridge and both file descriptors are read-only. The destination bridge is
+ * writable. The caller owns the file copy, including any needed rollback. */
+SkseBridgeResult skse_bridge_rebind_named_copy(SkseEventBridge *source, int source_dir, int original,
+    SkseEventBridge *destination, int destination_dir, int copy, const char *leaf, SksePairResult *detail);
 SkseBridgeResult skse_bridge_begin_save(SkseEventBridge *bridge, const SkseGameEvent *requested,
                                        const SksePairGeneration *verified_base,
                                        SksePendingSave **out, SksePairResult *detail);

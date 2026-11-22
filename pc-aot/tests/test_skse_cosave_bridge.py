@@ -64,9 +64,12 @@ class Binding:
         self.lib = C.CDLL(str(library))
         table = {
             "skse_bridge_open": ([C.c_char_p, P(Scope), P(PTR), P(C.c_int)], C.c_int),
+            "skse_bridge_open_readonly": ([C.c_char_p, P(Scope), P(PTR), P(C.c_int)], C.c_int),
             "skse_bridge_close": ([PTR], None),
             "skse_bridge_bind_named_ess": ([PTR, C.c_uint32, C.c_int, C.c_char_p, C.c_int, P(Event),
                                            P(C.c_int)], C.c_int),
+            "skse_bridge_rebind_named_copy": ([PTR, C.c_int, C.c_int, PTR, C.c_int, C.c_int, C.c_char_p,
+                                               P(C.c_int)], C.c_int),
             "skse_bridge_drop": ([PTR], None),
             "skse_bridge_check_call": ([P(Event), C.c_uint32, P(Trace)], C.c_int),
             "skse_bridge_capture_save": ([PTR, P(Trace), P(Evidence), P(C.c_int)], C.c_int),
@@ -85,9 +88,10 @@ class Binding:
             fun.argtypes, fun.restype = args, result
             setattr(self, name.removeprefix("skse_bridge_"), fun)
 
-    def open_at(self, root, running):
+    def open_at(self, root, running, readonly=False):
         bridge, detail = PTR(), C.c_int(-1)
-        result = self.open(os.fsencode(root), C.byref(running), C.byref(bridge), C.byref(detail))
+        opener = self.open_readonly if readonly else self.open
+        result = opener(os.fsencode(root), C.byref(running), C.byref(bridge), C.byref(detail))
         return result, detail.value, bridge
 
     def stage(self, host, bridge, action, payload, uid=gen.UID, base=None):
@@ -262,6 +266,75 @@ class BridgeTests(BridgeHarness):
             self.assertEqual(current[:2], (OK, gen.OK))
             self.assertEqual(bytes(initial[2].saved.slot), bytes(current[2].saved.slot))
             self.assertNotEqual(bytes(initial[2].saved.event), bytes(current[2].saved.event))
+
+    def test_named_profile_copy_rebinds_only_exact_finalized_save_in_the_same_language(self):
+        target = self.root / "target-saves"
+        target.mkdir()
+        into = self.root / "target-private"
+        into.mkdir(mode=0o700)
+        leaf = os.fsencode(self.ess.name)
+        old_folder = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        new_folder = os.open(target, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, old_folder)
+        self.addCleanup(os.close, new_folder)
+
+        def start_bridge(root, running, readonly=False):
+            status, detail, connection = self.api.open_at(root, running, readonly)
+            self.assertEqual((status, detail), (OK, gen.OK))
+            self.addCleanup(self.api.close, connection)
+            return connection
+
+        def bind(connection, folder, fd):
+            event, detail = Event(), C.c_int(-1)
+            status = self.api.bind_named_ess(connection, 3, folder, leaf, fd, C.byref(event), C.byref(detail))
+            self.assertEqual((status, detail.value), (OK, gen.OK))
+            return event.saved
+
+        original_key = bind(self.bridge, old_folder, self.fd)
+        wire = gen.image(gen.section(0, [(7, 1, b"catalogue")]), gen.section(gen.UID, [(23, 1, b"setting")]))
+        status, source_store = self.native.store(self.private / "text-en-voice-en")
+        self.assertEqual(status, gen.OK)
+        self.addCleanup(self.native.close, source_store)
+        old_generation = gen.Generation(original_key, self.fd)
+        status, stage = self.native.stage(original_key, wire)
+        self.assertEqual(status, gen.OK)
+        self.addCleanup(self.native.discard, stage)
+        self.assertEqual(self.native.commit(source_store, stage, C.byref(old_generation)), gen.OK)
+        source = start_bridge(self.private, scope(launch=20), readonly=True)
+        destination = start_bridge(into, scope(launch=21, profile=2))
+
+        path = target / self.ess.name
+        wrong = bytes([self.original[0] ^ 1]) + self.original[1:]
+        path.write_bytes(wrong)
+
+        def rebind(to, fd, from_bridge=source):
+            detail = C.c_int(-1)
+            status = self.api.rebind_named_copy(from_bridge, old_folder, self.fd, to, new_folder, fd, leaf,
+                                                C.byref(detail))
+            return status, detail.value
+
+        with path.open("rb") as bad:
+            self.assertEqual(rebind(destination, bad.fileno()), (PAIR, gen.WRONG))
+            staged = target / "staged"
+            staged.write_bytes(self.original)
+            staged.replace(path)
+            self.assertEqual(rebind(destination, bad.fileno()), (PAIR, gen.CHANGED))
+        with path.open("rb") as copied:
+            other_language = start_bridge(into, scope(launch=22, profile=2, voices=1))
+            self.assertEqual(rebind(other_language, copied.fileno()), (SCOPE, gen.OK))
+            self.assertEqual(rebind(destination, copied.fileno(), self.bridge), (ARG, gen.OK))
+            self.assertEqual(rebind(destination, copied.fileno()), (OK, gen.OK))
+            self.assertEqual(rebind(destination, copied.fileno()), (OK, gen.ALREADY))
+            relaunched = start_bridge(into, scope(launch=23, profile=2), readonly=True)
+            target_key = bind(relaunched, new_folder, copied.fileno())
+            self.assertNotEqual(bytes(original_key), bytes(target_key))
+            status, target_store = self.native.store(into / "text-en-voice-en")
+            self.assertEqual(status, gen.OK)
+            self.addCleanup(self.native.close, target_store)
+            self.assertEqual(self.native.data(target_store, gen.Generation(target_key, copied.fileno())), (gen.OK, wire))
+            self.assertEqual(self.native.data(target_store, old_generation), (gen.MISSING, None))
+        self.assertEqual(self.native.data(source_store, old_generation), (gen.OK, wire))
+        self.assertEqual(self.ess.read_bytes(), self.original)
 
     def test_nested_guest_callback_and_unknown_owner_survive(self):
         foreign = gen.section(gen.FOREIGN, [(1240, 9, b"arbitrary foreign bytes\xff")])
