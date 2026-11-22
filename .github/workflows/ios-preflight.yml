@@ -23,13 +23,17 @@ on:
         description: Run the Classic MOD screen simulator without rebuilding the device app
         type: boolean
         default: false
+      guest_tls_sdk:
+        description: Link the guest hook library's thread-local receipt with the iPhoneOS SDK and run it in the simulator
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   apple-sdk-preflight:
-    if: ${{ !inputs.full_title_host && !inputs.classic_trial && !inputs.dll_probe && !inputs.first_wave_trial && !inputs.mod_screens }}
+    if: ${{ !inputs.full_title_host && !inputs.classic_trial && !inputs.dll_probe && !inputs.first_wave_trial && !inputs.mod_screens && !inputs.guest_tls_sdk }}
     runs-on: macos-26
     timeout-minutes: 25
     env:
@@ -198,6 +202,30 @@ jobs:
           bash pc-aot/experiments/skse-plugin-vm/test-apple-sdk.sh | tee "$RUNNER_TEMP/dll-sdk.log"
           grep -q '^DLL_SIMULATOR: english verified ' "$RUNNER_TEMP/dll-sdk.log"
           grep -q '^DLL_SIMULATOR: japanese verified ' "$RUNNER_TEMP/dll-sdk.log"
+
+  guest-tls-sdk:
+    if: ${{ inputs.guest_tls_sdk }}
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Link with the iPhoneOS SDK and run the thread-local receipt test in the simulator
+        run: |
+          set -euo pipefail
+          bash pc-aot/scripts/check-guest-tls-sdk.sh 2>&1 | tee "$RUNNER_TEMP/guest-tls-sdk.log"
+          grep -q '^GUEST_TLS_SDK: iPhoneOS link imports' "$RUNNER_TEMP/guest-tls-sdk.log"
+      - name: Keep the check log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: guest-tls-sdk-log
+          path: ${{ runner.temp }}/guest-tls-sdk.log
+          if-no-files-found: warn
+          retention-days: 1
 
   classic-mod-simulator:
     if: ${{ inputs.mod_screens }}

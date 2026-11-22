@@ -22,6 +22,11 @@ import time
 ROOT=Path(__file__).resolve().parents[1].resolve()
 ABI=ROOT / "ios/private-abi"
 SYSTEM_SYMBOLS=set("acos asin atan atan2 ceil cos cosh exp exp2 fabs floor fmod frexp ldexp log log10 log2 nearbyint nearbyintf pow remainder round sin sinh sqrt sqrtf tan tanh trunc memcpy memmove memset memcmp setjmp _setjmp abort __stack_chk_fail __stack_chk_guard".split())
+# Darwin binds a thread-local variable through dyld's TLV bootstrap. Only the hook
+# library keeps per-thread state (the HighHeels frame receipt), so only its object may
+# import the symbol. Any other object that needs it still blocks the link.
+THREAD_LOCAL_BOOTSTRAP="__tlv_bootstrap"
+THREAD_LOCAL_OBJECTS=frozenset({"pc_guest_mod_hooks_library.o"})
 TARGET="arm64-apple-ios18.0"
 REQUIRED_DARWIN_HEADERS=("stdint.h", "math.h", "setjmp.h", "string.h", "sys/types.h")
 
@@ -114,14 +119,22 @@ def toolchain(llvm_bin=None, darwin_headers=None):
 def import_symbols(tool, objects):
     undefined=set()
     defined=set()
+    thread_local_users=set()
     for obj in objects:
         raw=output([tool["nm"],*tool["nm_flags"],obj])
         for line in raw.splitlines():
             bits=line.split()
             if len(bits)<2: continue
-            (undefined if bits[1]=="U" else defined).add(bits[0])
+            if bits[1]=="U":
+                undefined.add(bits[0])
+                if bits[0]==THREAD_LOCAL_BOOTSTRAP: thread_local_users.add(Path(obj).name)
+            else:
+                defined.add(bits[0])
     imports=sorted(undefined-defined)
-    unknown=[s for s in imports if not s.startswith("_") or s[1:] not in SYSTEM_SYMBOLS]
+    thread_local_allowed=thread_local_users<=THREAD_LOCAL_OBJECTS
+    unknown=[s for s in imports
+             if not (s.startswith("_") and s[1:] in SYSTEM_SYMBOLS)
+             and not (s==THREAD_LOCAL_BOOTSTRAP and thread_local_allowed)]
     return imports,unknown
 
 

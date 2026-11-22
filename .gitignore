@@ -885,3 +885,6 @@
 !/pc-aot/ios/runtime-port/mod_*.h
 !/pc-aot/tests/test_mod_*.py
 !/pc-aot/tests/native/test_mod_*.c
+
+# Apple SDK check of the guest hook library thread-local receipt (source only).
+!/pc-aot/scripts/check-guest-tls-sdk.sh

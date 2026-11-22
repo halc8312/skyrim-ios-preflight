@@ -111,6 +111,25 @@ class ToolchainTests(unittest.TestCase):
         self.assertEqual(imports,["_accidental","_memcpy"])
         self.assertEqual(unknown,["_accidental"])
 
+    def test_thread_local_bootstrap_is_allowed_only_for_the_hook_library(self):
+        tool={"nm":"nm","nm_flags":["-P"]}
+        with mock.patch.object(builder,"output",side_effect=["__tlv_bootstrap U\n_memcpy U\n","_helper T 0 4\n"]):
+            imports,unknown=builder.import_symbols(tool,["objects/pc_guest_mod_hooks_library.o","objects/exe_0.o"])
+        self.assertEqual(imports,["__tlv_bootstrap","_memcpy"])
+        self.assertEqual(unknown,[])
+        # Any other object that needs it blocks the link, and so does a user alongside the hook library.
+        for order in (["objects/exe_0.o"],["objects/pc_guest_mod_hooks_library.o","objects/exe_0.o"]):
+            with self.subTest(objects=order):
+                outputs=["__tlv_bootstrap U\n"]*len(order)
+                with mock.patch.object(builder,"output",side_effect=outputs):
+                    imports,unknown=builder.import_symbols(tool,order)
+                self.assertEqual(imports,["__tlv_bootstrap"])
+                self.assertEqual(unknown,["__tlv_bootstrap"])
+        # The nearby spelling is not the allowed symbol.
+        with mock.patch.object(builder,"output",side_effect=["_tlv_bootstrap U\n"]):
+            imports,unknown=builder.import_symbols(tool,["objects/pc_guest_mod_hooks_library.o"])
+        self.assertEqual(unknown,["_tlv_bootstrap"])
+
 
 class BuildTests(unittest.TestCase):
     def setUp(self):
