@@ -22,8 +22,8 @@ typedef union {
 typedef struct {
     TestMemory guest;
     const SkyrimFuzPolicy *policy;
-    unsigned reads, replacements, probes, hook_calls, original_calls;
-    bool deny_write, deny_text, mutate_frame;
+    unsigned reads, text_reads, replacements, probes, hook_calls, original_calls;
+    bool deny_write, deny_text, mutate_frame, mutate_text_header;
     SkyrimFuzAvailability wav, stock;
     const char *configured_stock;
     bool changed;
@@ -39,6 +39,7 @@ static bool in_guest(uint32_t address, size_t length) {
 static bool read_guest(void *opaque, uint32_t address, void *bytes, size_t length) {
     Fixture *fixture = opaque;
     ++fixture->reads;
+    if (address == TEXT) ++fixture->text_reads;
     if (!in_guest(address, length) || (fixture->deny_text && address == TEXT)) return false;
     memcpy(bytes, fixture->guest.bytes + address, length);
     return true;
@@ -62,6 +63,7 @@ static SkyrimFuzAvailability lookup_voice(void *opaque, const char *path) {
     if (!strcmp(path, fixture->configured_stock)) {
         if (fixture->mutate_frame)
             fixture->guest.bytes[FRAME + SKYRIM_FUZ_LIFT_FRAME_BYTES - 1] = 0x79;
+        if (fixture->mutate_text_header) --fixture->guest.bytes[RESPONSE + 4];
         return fixture->stock;
     }
     static const char *const candidates[] = {
@@ -144,6 +146,7 @@ static void check_assignment(Fixture *fixture, bool changed, unsigned probes, un
     set_u32(expected.bytes + SLOT - 4, RETURN_ADDRESS);
     if (changed) memcpy(expected.bytes + FRAME, stock_game_path, sizeof stock_game_path);
     if (fixture->mutate_frame) expected.bytes[FRAME + SKYRIM_FUZ_LIFT_FRAME_BYTES - 1] = 0x79;
+    if (fixture->mutate_text_header) --expected.bytes[RESPONSE + 4];
     run_assignment(fixture);
     assert(fixture->hook_calls == 1 && fixture->original_calls == 1 && fixture->changed == changed);
     assert(fixture->probes == probes && fixture->replacements == replacements);
@@ -162,11 +165,13 @@ int main(void) {
     SkyrimFuzPolicy policy = configure(&fixture);
     fixture.policy = &policy;
     check_assignment(&fixture, true, 4, 1);
+    assert(fixture.text_reads == 1);
 
     initialize(&fixture, text);
     fixture.policy = &policy;
     fixture.wav = SKYRIM_FUZ_PRESENT;
     check_assignment(&fixture, false, 1, 0);
+    assert(!fixture.text_reads);
 
     initialize(&fixture, text);
     fixture.policy = &policy;
@@ -183,6 +188,7 @@ int main(void) {
     fixture.policy = &policy;
     fixture.wav = SKYRIM_FUZ_LOOKUP_ERROR;
     check_assignment(&fixture, false, 3, 0);
+    assert(!fixture.text_reads);
 
     initialize(&fixture, text);
     fixture.policy = &policy;
@@ -196,8 +202,14 @@ int main(void) {
 
     initialize(&fixture, text);
     fixture.policy = &policy;
+    fixture.mutate_text_header = true;
+    check_assignment(&fixture, false, 4, 0);
+
+    initialize(&fixture, text);
+    fixture.policy = &policy;
     fixture.deny_text = true;
-    check_assignment(&fixture, false, 0, 0);
+    check_assignment(&fixture, false, 3, 0);
+    assert(fixture.text_reads == 1);
 
     initialize(&fixture, text);
     fixture.policy = &policy;

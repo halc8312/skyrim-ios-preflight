@@ -23,7 +23,8 @@ typedef struct {
 
 typedef enum {
     SKYRIM_FUZ_KEEP_VOICE, SKYRIM_FUZ_USE_STOCK, SKYRIM_FUZ_SKIP_RESPONSE,
-    SKYRIM_FUZ_STOCK_UNAVAILABLE, SKYRIM_FUZ_RESOURCE_FAILURE, SKYRIM_FUZ_UNSUPPORTED_INPUT
+    SKYRIM_FUZ_STOCK_UNAVAILABLE, SKYRIM_FUZ_RESOURCE_FAILURE, SKYRIM_FUZ_UNSUPPORTED_INPUT,
+    SKYRIM_FUZ_NEEDS_STOCK
 } SkyrimFuzDecision;
 
 typedef struct {
@@ -40,4 +41,10 @@ typedef struct {
  * performs any resource I/O. The helper has no game engine dependency. */
 SkyrimFuzVoice skyrim_fuz_choose_voice(const SkyrimFuzPolicy *policy, const char *wav_path,
                                        const char *response, bool topic_force_subtitle);
+
+/* Probe original voice candidates first, so callers can defer reading the
+ * response. Only NEEDS_STOCK permits a separate stock selection. */
+SkyrimFuzDecision skyrim_fuz_probe_original(const SkyrimFuzPolicy *policy, const char *wav_path);
+SkyrimFuzVoice skyrim_fuz_choose_stock(const SkyrimFuzPolicy *policy, const char *response,
+                                       bool topic_force_subtitle);
 #endif

@@ -15,24 +15,28 @@ static uint32_t get_u32(const uint8_t bytes[4]) {
     return get_u16(bytes) | ((uint32_t)get_u16(bytes + 2) << 16);
 }
 
+static bool read_text_header(const SkyrimFuzLiftMemory *memory, uint32_t object, uint8_t text[BSSTRING_BYTES]) {
+    if (!memory || !memory->read || !object || object > UINT32_MAX - (BSSTRING_BYTES - 1) ||
+        !memory->read(memory->context, object, text, BSSTRING_BYTES))
+        return false;
+    const uint32_t address = get_u32(text);
+    const size_t length = get_u16(text + 4);
+    return address ? length < SKYRIM_FUZ_RESPONSE_TEXT_BYTES && length < get_u16(text + 6) &&
+                     address <= UINT32_MAX - length : length == 0;
+}
+
+static bool copy_text_payload(const SkyrimFuzLiftMemory *memory, const uint8_t text[BSSTRING_BYTES], char *response) {
+    const uint32_t address = get_u32(text);
+    const size_t length = get_u16(text + 4);
+    if (!address) { response[0] = '\0'; return true; }
+    if (!memory->read(memory->context, address, response, length + 1)) return false;
+    return !response[length] && !memchr(response, '\0', length);
+}
+
 bool skyrim_fuz_copy_response_text(const SkyrimFuzLiftMemory *memory, uint32_t object,
                                     char response[SKYRIM_FUZ_RESPONSE_TEXT_BYTES]) {
     uint8_t text[BSSTRING_BYTES];
-    if (!memory || !memory->read || !response || !object || object > UINT32_MAX - (BSSTRING_BYTES - 1) ||
-        !memory->read(memory->context, object, text, sizeof text))
-        return false;
-
-    uint32_t address = get_u32(text);
-    size_t length = get_u16(text + 4);
-    size_t capacity = get_u16(text + 6);
-    if (!address) {
-        response[0] = '\0';
-        return length == 0;
-    }
-    if (length >= SKYRIM_FUZ_RESPONSE_TEXT_BYTES || length >= capacity || address > UINT32_MAX - length ||
-        !memory->read(memory->context, address, response, length + 1))
-        return false;
-    return !response[length] && !memchr(response, '\0', length);
+    return response && read_text_header(memory, object, text) && copy_text_payload(memory, text, response);
 }
 
 static bool relative_name(const char *path, size_t length, char output[SKSE_WIN_PATH_BYTES]) {
@@ -64,12 +68,19 @@ bool skyrim_fuz_apply_lifted_path_choice(const SkyrimFuzPolicy *policy, const Sk
     uint32_t frame = get_u32(argument);
     if (frame != argument_slot + SKYRIM_FUZ_LIFT_FRAME_FROM_SLOT) return false;
 
-    char before[SKYRIM_FUZ_LIFT_FRAME_BYTES], path[SKSE_WIN_PATH_BYTES], response[SKYRIM_FUZ_RESPONSE_TEXT_BYTES];
+    char before[SKYRIM_FUZ_LIFT_FRAME_BYTES], path[SKSE_WIN_PATH_BYTES];
+    uint8_t text[BSSTRING_BYTES], checked[BSSTRING_BYTES];
     if (!memory->read(memory->context, frame, before, sizeof before) ||
-        !original_path(before, path) || !skyrim_fuz_copy_response_text(memory, response_object, response))
+        !original_path(before, path) || !read_text_header(memory, response_object, text) ||
+        skyrim_fuz_probe_original(policy, path) != SKYRIM_FUZ_NEEDS_STOCK)
         return false;
-    SkyrimFuzVoice voice = skyrim_fuz_choose_voice(policy, path, response, false);
-    if (voice.decision != SKYRIM_FUZ_USE_STOCK) return false;
+
+    char response[SKYRIM_FUZ_RESPONSE_TEXT_BYTES];
+    if (!read_text_header(memory, response_object, checked) || memcmp(checked, text, sizeof text) ||
+        !copy_text_payload(memory, text, response)) return false;
+    const SkyrimFuzVoice voice = skyrim_fuz_choose_stock(policy, response, false);
+    if (voice.decision != SKYRIM_FUZ_USE_STOCK || !read_text_header(memory, response_object, checked) ||
+        memcmp(checked, text, sizeof text)) return false;
 
     const size_t prefix = sizeof game_prefix - 1;
     size_t length = 0;
