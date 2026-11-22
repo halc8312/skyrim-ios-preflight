@@ -102,6 +102,13 @@ class HighHeelIdentityTests(unittest.TestCase):
         (self.data / ESM).write_bytes(b"wrong size")
         self.assertEqual(self.check("Skyrim.esm", ESM), (DIFFERENT, 0))
 
+    def test_startup_checks_the_selected_view_before_the_catalogue_exists(self):
+        self.assertEqual(self.check(), (MATCH, 2))
+        (self.data / PEX).unlink()
+        self.assertEqual(self.check(), (DIFFERENT, 1))
+        (self.data / ESM).unlink()
+        self.assertEqual(self.check(), (DIFFERENT, 0))
+
     def test_refuses_case_conflicts_and_linked_assets(self):
         pex = self.data / PEX
         alias = pex.with_name(pex.name.upper())
@@ -124,6 +131,7 @@ class HighHeelIdentityTests(unittest.TestCase):
             self.skipTest("Set both owned HighHeels ESM and effect PEX paths")
         for source, name in zip(supplied, (ESM, PEX)):
             shutil.copyfile(source, self.data / name)
+        self.assertEqual(self.check(real=True), (MATCH, 2))
         self.assertEqual(self.check("Skyrim.esm", "Update.esm", ESM, slot=2, real=True), (MATCH, 2))
         for source, name in zip(supplied, (ESM, PEX)):
             self.assertEqual(Path(source).read_bytes(), (self.data / name).read_bytes())

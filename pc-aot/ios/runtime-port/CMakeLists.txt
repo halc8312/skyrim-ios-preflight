@@ -157,7 +157,8 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_camera_host.c"
             "${loading_menu_sources}/loading_menu.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_loading_menu_host.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_ece_profile.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_ece_tri_host.c"
-            "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_pex_host.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_pex_host.c" "${highheel_sources}/highheel_identity.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/classic_mod_catalog.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_scene_host.c" "${highheel_sources}/highheel_height.c"
             "${ece_sources}/ece_nose_witness.c" "${ece_sources}/ece_head_geometry.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_save_host.c"
@@ -168,6 +169,9 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
             "${SKYRIM_IOS_SAVE_WITNESS}" "${save_publication}" "${ece_sources}" "${highheel_sources}")
         target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_MOD_HOOK_SEAMS}")
         target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_MOD_HOOKS=1 SKYRIM_CLASSIC_CAMERA_CULL_TRIAL=1)
+        if(NOT SKYRIM_IOS_SKSE_DLL_PROBE)
+            target_sources(skyrim_ios_runtime PRIVATE "${skse_vm_source}/probe_asset_file.c")
+        endif()
     endif()
 endif()
 if(SKYRIM_IOS_SKSE_DLL_PROBE)
@@ -220,7 +224,6 @@ endif()
 if(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
     # The staged value publication (classic_papyrus_values.c.in) is compiled into skse_compat.c.
     target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/classic_papyrusutil.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/classic_mod_catalog.c"
         "${cosave_source}/generation.c" "${cosave_source}/digest.c" "${cosave_source}/immutable_ess.c"
         "${cosave_source}/mod_history.c" "${cosave_source}/core_snapshot.c" "${cosave_source}/plugin_records.c"
         "${cosave_source}/plugin_stream.c" "${cosave_source}/event_bridge.c" "${cosave_source}/event_trace.c"

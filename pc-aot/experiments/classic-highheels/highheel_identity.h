@@ -11,7 +11,11 @@ typedef enum {
     HIGHHEEL_IDENTITY_POSSIBLE_OVERRIDE
 } HighHeelIdentityResult;
 
-typedef bool (*HighHeelDigest)(const uint8_t *bytes, size_t length, uint8_t sha256[32]);
+typedef bool (*HighHeelDigest)(const void *bytes, size_t length, uint8_t sha256[32]);
+
+/* Verify the released loose files in the selected Data view. This does not
+ * establish the game's actual load index, effective record, or VM binding. */
+HighHeelIdentityResult highheel_identity_check_assets(int data, HighHeelDigest digest);
 
 /* Join a stable deployed Data directory and a copied catalogue from the same
  * launch. Check the exact owner ESM and loose PEX, then reject later loaded

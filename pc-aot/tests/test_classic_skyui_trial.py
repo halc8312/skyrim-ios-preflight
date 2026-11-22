@@ -84,7 +84,8 @@ static NSString *LaunchPath(void) { return [profilePath stringByAppendingPathCom
 static NSString *PackageDir(NSString *pid) { return [packagesPath stringByAppendingPathComponent:pid]; }
 static NSDictionary *LoadPackage(NSString *pid) { (void)pid; return nil; }
 /* Other MOD features have their own tests. Observe the startup handoff here. */
-static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady) {
+static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady, NSString *game) {
+    assert([game isEqualToString:modGamePath]);
     frozenFeaturesProfile = profile;
     frozenSkyUIAssetsReady = skyuiAssetsReady;
 }

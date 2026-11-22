@@ -36,7 +36,8 @@ static bool equal_digest(const uint8_t digest[32], const char *expected) {
     return true;
 }
 
-static HighHeelIdentityResult verify_assets(int data, HighHeelDigest digest) {
+HighHeelIdentityResult highheel_identity_check_assets(int data, HighHeelDigest digest) {
+    if (data < 0 || !digest) return HIGHHEEL_IDENTITY_UNREADABLE;
     for (size_t i = 0; i < sizeof assets / sizeof assets[0]; ++i) {
         uint8_t *bytes, hash[32];
         size_t size;
@@ -93,7 +94,7 @@ HighHeelIdentityResult highheel_identity_join(int data, const ClassicModCatalog 
     while (owner < count && !name_matches(rows[owner].name, rows[owner].length, owner_name)) ++owner;
     if (owner == count) return HIGHHEEL_IDENTITY_NOT_LOADED;
 
-    HighHeelIdentityResult result = verify_assets(data, digest);
+    HighHeelIdentityResult result = highheel_identity_check_assets(data, digest);
     for (size_t i = owner + 1; i < count && result == HIGHHEEL_IDENTITY_MATCH; ++i)
         result = verify_later_plugin(data, &rows[i]);
     if (result == HIGHHEEL_IDENTITY_MATCH) *setting_id = (uint32_t)rows[owner].index << 24 | HIGHHEEL_LOCAL_SETTING;

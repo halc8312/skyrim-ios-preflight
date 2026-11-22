@@ -43,6 +43,7 @@
 #include "mod_loading_menu_host.h"
 #include "mod_racemenu_preset.h"
 #include "mod_save_host.h"
+#include "highheel_identity.h"
 #include "mod_highheel_pex_host.h"
 #include "mod_highheel_scene_host.h"
 /* classic_skse_control.h, in the staged skse_system.c */
@@ -576,9 +577,27 @@ static bool DigestHighHeelPex(const void *bytes, size_t length, uint8_t output[3
     return CC_SHA256(bytes, (CC_LONG)length, output) != NULL;
 }
 
+static HighHeelIdentityResult PrepareHighHeelPexObserver(NSString *game) {
+    if (launchPackageIds.count) game = CanonicalSupportPath(game);
+    char data[PATH_MAX];
+    if (!game || skyrim_plugin_child_path(game.fileSystemRepresentation, "Data", data, sizeof data) != 1)
+        return HIGHHEEL_IDENTITY_UNREADABLE;
+    int noFollow = O_NOFOLLOW;
+#ifdef O_NOFOLLOW_ANY
+    if (launchPackageIds.count) noFollow = O_NOFOLLOW_ANY;
+#endif
+    const int fd = open(data, O_RDONLY | O_DIRECTORY | O_CLOEXEC | noFollow);
+    if (fd < 0) return HIGHHEEL_IDENTITY_UNREADABLE;
+    const HighHeelIdentityResult result = highheel_identity_check_assets(fd, DigestHighHeelPex);
+    close(fd);
+    if (result == HIGHHEEL_IDENTITY_MATCH) skyrim_highheel_pex_configure(DigestHighHeelPex);
+    return result;
+}
+
 /* Select the guest hook groups for the features allowed so far, before the
  * guest starts. Returns the features whose groups were selected. */
-static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *saveProfile, SkyrimHookPlan *plan) {
+static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *saveProfile,
+                               NSString *game, SkyrimHookPlan *plan) {
     const uint32_t fuzGroups = PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD;
     const BOOL menuObserver = skyrim_loading_menu_app_ready();
     const uint32_t host = fuzGroups | PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER |
@@ -634,8 +653,9 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
         for (NSString *name in skyrim_mobile_loaded_plugins()) {
             if ([name caseInsensitiveCompare:@"hdtHighHeel.esm"] == NSOrderedSame) {
                 if (heelPex) {
-                    skyrim_highheel_pex_configure(DigestHighHeelPex);
-                    plan->groups |= heelGroups;
+                    const HighHeelIdentityResult result = PrepareHighHeelPexObserver(game);
+                    fprintf(stderr, "IOS_CLASSIC_HIGHHEEL_ASSETS schema=1 result=%u\n", (unsigned)result);
+                    if (result == HIGHHEEL_IDENTITY_MATCH) plan->groups |= heelGroups;
                 }
                 if (heelScene) plan->groups |= PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE;
                 break;
@@ -674,7 +694,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
 
 /* Reasons: 0 enabled, 1 host implementation unavailable, 2 MOD not in the active packages, 3 safe mode or plugin list
  * failure, 4 the guest lacks the needed hook groups (rebuild it), 5 the MOD version could not be verified. */
-static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady) {
+static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady, NSString *game) {
     NSMutableDictionary *enabledKeys = [NSMutableDictionary dictionary];
     BOOL firstIsOriginal;
     NSArray<NSString *> *roots = DataRootsFor(launchWithoutMods ? @[] : launchPackageIds, nil, &firstIsOriginal);
@@ -705,7 +725,7 @@ static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady) {
         FeatureSelected(profile, SKYRIM_FEATURE_PAPYRUSUTIL) && !reasons[SKYRIM_FEATURE_PAPYRUSUTIL])
         saveProfile = ProfileDir(profile);
     const uint32_t selected = SelectModHooks(hooked,
-        inventoryFit && skyuiAssetsReady && [launchSetup[@"skyuiTrial"] isEqual:@YES], saveProfile, &plan);
+        inventoryFit && skyuiAssetsReady && [launchSetup[@"skyuiTrial"] isEqual:@YES], saveProfile, game, &plan);
     if (inventoryFit) {
         const BOOL armed = (plan.groups & PC_GUEST_MOD_HOOK_INVENTORY_FIT) != 0;
         if (armed) launchSetup[@"inventoryFit"] = @YES;
@@ -717,6 +737,7 @@ static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady) {
     }
 #else
     (void)skyuiAssetsReady;
+    (void)game;
 #endif
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
         if (!FeatureSelected(profile, f)) continue;
@@ -739,7 +760,7 @@ static BOOL SkyUITrialSelected(NSDictionary *profile) {
     return [profile[@"skyuiTrial"] isEqual:@YES];
 }
 
-BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed) {
+BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed, NSString *game_view) {
     NSDictionary *profile = RunningProfile();
     BOOL requested = SkyUITrialSelected(profile);
     BOOL enabled = requested && !launchWithoutMods && !launchPluginListFailed && skyui_listed;
@@ -747,7 +768,7 @@ BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed) {
     if (enabled) launchSetup[@"skyuiTrial"] = @YES;
     const SkyrimSkyUIRequirements needs = requested ? SkyUIRequirementsFor(launchWithoutMods ? @[] : launchPackageIds)
         : (SkyrimSkyUIRequirements){.status = SKYRIM_SKYUI_REQ_SKYUI_ABSENT};
-    FreezeFeatures(profile, needs.status == SKYRIM_SKYUI_REQ_OK);
+    FreezeFeatures(profile, needs.status == SKYRIM_SKYUI_REQ_OK, game_view);
     if (requested && !enabled && !launchNotice) {
         launchNotice = launchPluginListFailed
             ? T(@"SkyUI is off for this launch because the active plugin list could not be verified.",

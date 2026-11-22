@@ -42,7 +42,7 @@ void skyrim_mods_set_plugin_choices(NSArray *rows);
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 /* Apply the selected profile's trial once, after guest binding and plugin
  * publication, before any guest code runs. */
-BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed);
+BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed, NSString *game_view);
 #endif
 /* Called with the running frame count; marks the launch healthy once. */
 void skyrim_mods_frame(uint64_t frames);

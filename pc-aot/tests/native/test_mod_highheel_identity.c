@@ -42,14 +42,14 @@ static bool read_guest(void *unused, uint32_t address, void *out, size_t size) {
     return false;
 }
 
-static bool replay_digest(const uint8_t *bytes, size_t length, uint8_t digest[32]) {
+static bool replay_digest(const void *bytes, size_t length, uint8_t digest[32]) {
     assert(length >= 32);
     ++hashes;
     memcpy(digest, bytes, 32);
     return true;
 }
 
-static bool python_digest(const uint8_t *bytes, size_t length, uint8_t digest[32]) {
+static bool python_digest(const void *bytes, size_t length, uint8_t digest[32]) {
     ++hashes;
     FILE *input = tmpfile();
     assert(input && fwrite(bytes, 1, length, input) == length && fflush(input) == 0);
@@ -79,8 +79,17 @@ static bool python_digest(const uint8_t *bytes, size_t length, uint8_t digest[32
 }
 
 int main(int argc, char **argv) {
-    assert(argc >= 5);
+    assert(argc >= 4);
     if (strcmp(argv[2], "-")) python = argv[2];
+    const HighHeelDigest digest = python ? python_digest : replay_digest;
+    const int data = open(argv[1], O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    assert(data >= 0);
+    if (argc == 4) {
+        const HighHeelIdentityResult result = highheel_identity_check_assets(data, digest);
+        close(data);
+        printf("%u %u\n", (unsigned)result, hashes);
+        return 0;
+    }
     const unsigned expected_slot = (unsigned)strtoul(argv[3], NULL, 10);
     count = (size_t)argc - 4;
     assert(count <= SKSE_CLASSIC_MOD_LIMIT);
@@ -95,11 +104,8 @@ int main(int argc, char **argv) {
 
     ClassicModCatalog *catalog = NULL;
     ClassicModCatalogResult captured = classic_mod_catalog_capture(read_guest, NULL, &catalog);
-    int data = open(argv[1], O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    assert(data >= 0);
     uint32_t setting = UINT32_MAX;
-    HighHeelIdentityResult result = highheel_identity_join(data, catalog,
-                                                           python ? python_digest : replay_digest, &setting);
+    const HighHeelIdentityResult result = highheel_identity_join(data, catalog, digest, &setting);
     close(data);
     classic_mod_catalog_free(catalog);
     if (result == HIGHHEEL_IDENTITY_MATCH) {

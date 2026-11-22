@@ -103,6 +103,8 @@ class ReceiverTests(unittest.TestCase):
         self.schema.line('IOS_CAMERA_RENDER schema=1 first=0 second=15')
         self.schema.line('IOS_CAMERA_CULL schema=1 stages=7 producer=129,128,0 first=1,0,1 second=0,0,0')
         self.schema.line('IOS_CLASSIC_HIGHHEEL_SCENE schema=1 root=2 names=31 duplicate=0 limited=0')
+        for result in (0, 2, 3):
+            self.schema.line(f'IOS_CLASSIC_HIGHHEEL_ASSETS schema=1 result={result}')
         self.schema.line('IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured=31 valid=1')
         self.schema.line('IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured=15 valid=0')
         self.schema.line('IOS_ECE_TRI schema=1 source=1 parsed=1')
@@ -252,6 +254,8 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_CLASSIC_LANTERN schema=1 phase=2 accepted=1 npc=17352704',
                      'IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=2 verified=1',
                      'IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=1 verified=1 path=Data/Scripts/sample.pex',
+                     'IOS_CLASSIC_HIGHHEEL_ASSETS schema=1 result=1',
+                     'IOS_CLASSIC_HIGHHEEL_ASSETS schema=1 result=0 path=Data/Scripts/sample.pex',
                      timing().replace('samples=1', 'samples=2'),
                      self.bundle['sessions'][0]['lines'][-1].replace('result=-1', 'result=2147483648')]
         for line in bad_lines:

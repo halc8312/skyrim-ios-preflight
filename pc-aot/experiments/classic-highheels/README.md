@@ -211,6 +211,12 @@ the expected EffectSetting FormID for a separately authenticated native
 event. A device witness still needs to link the selected file to the
 guest's successfully bound script in the current world.
 
+At diagnostic startup the iPhone host runs the asset check before enabling
+the PEX observer. It passes the exact Data view selected for launch.
+`IOS_CLASSIC_HIGHHEEL_ASSETS` reports `0` for matching files, `2` for missing
+or different files, and `3` if the check cannot establish either result.
+The PEX observer independently checks which file the game actually reads.
+
 The hosted PEX witness runs the pinned class loader, its original Store
 open/read/close and the loose stream's original ReadFile route. The harness
 models the parser's inner results and the caller's link result. It uses the

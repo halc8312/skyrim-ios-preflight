@@ -528,7 +528,7 @@ int skyrim_mobile_prepare_mods(const char *gameDirectory) {
     int prepared = skyrim_mods_manages_plugins() ? scanModPlugins(YES, skyuiResult) :
         skyrim_plugin_apply_list(profilePath.fileSystemRepresentation, NULL, 0) == 0;
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
-    if (prepared) return skyrim_mods_prepare_skyui_trial(skyuiListed);
+    if (prepared) return skyrim_mods_prepare_skyui_trial(skyuiListed, modGamePath);
 #endif
     return prepared;
 }
