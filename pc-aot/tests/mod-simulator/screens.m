@@ -705,7 +705,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self findRow:@"Trial Two (imported)"];
     [self capture:@"imported-profile"];
 
-    [[self findRow:@"Default"] tap];
+    [[self findRow:@"Trial Two"] tap];
     [self goBackFrom:@"Profiles"];
     [[self findRow:@"Add BodySlide or FNIS output folder"] tap];
     [self pick:@"AuthoredGenerated" folder:YES];
@@ -717,8 +717,14 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self findRow:@"These generated files were added with a different MOD setup. Regenerate for this profile."];
     [self goBackFrom:@"AuthoredGenerated"];
     [self setMod:@"AuthoredFolder" enabled:YES];
-    [[self findRow:@"Default"] tap];
-    [[self findRow:@"Trial Two"] tap];
-    [self goBackFrom:@"Profiles"];
+
+    // Trial Two is both running and selected. Change only the plugin, while
+    // leaving both packages and the generated output enabled.
+    [[self findRow:@"Plugin order"] tap];
+    [self setMod:@"AuthoredPrerequisite.esp" enabled:NO];
+    [self goBackFrom:@"MOD"];
+    [self openModDetails:@"AuthoredGenerated"];
+    [self findRow:@"These generated files were added with a different MOD setup. Regenerate for this profile."];
+    [self goBackFrom:@"AuthoredGenerated"];
 }
 @end

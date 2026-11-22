@@ -36,9 +36,11 @@ def fixtures(directory):
     generated_file.parent.mkdir(parents=True)
     generated_file.write_bytes(b"authored output fixture")
     plugin_body = struct.pack("<4sHfII", b"HEDR", 12, 1.7, 0, 0x800)
+    plugin_header = struct.pack("<4sIIIIHH", b"TES4", len(plugin_body), 0, 0, 0, 43, 0)
+    (inputs / "AuthoredGenerated/Data/AuthoredGenerated.esp").write_bytes(plugin_header + plugin_body)
     with ZipFile(inputs / "AuthoredZip.zip", "w", ZIP_DEFLATED) as archive:
         archive.writestr("Data/" + common, b"authored zip\n")
-        archive.writestr("Data/AuthoredPrerequisite.esp", struct.pack("<4sIIIIHH", b"TES4", len(plugin_body), 0, 0, 0, 43, 0) + plugin_body)
+        archive.writestr("Data/AuthoredPrerequisite.esp", plugin_header + plugin_body)
         for name, pointers in (("se", 8), ("le", 4)):
             archive.writestr(f"Data/meshes/authored/{name}.hkx",
                              struct.pack("<IIII4BIIIII16sII", 0x57E0E057, 0x10C0C010, 0, 8, pointers, 1, 0, 1,
@@ -352,14 +354,14 @@ def verify(container, assets, summary):
         assert (saves / name).read_bytes() == (assets / name).read_bytes()
     imported_saves = base / "Profiles" / imported["id"] / "Documents/My Games/Skyrim/Saves"
     assert not imported_saves.exists() or not any(imported_saves.iterdir())
-    assert imported["packages"] == active["packages"]
-    assert len(active["packages"]) == 4 and all(p["on"] for p in active["packages"])
+    assert imported["packages"] == active["packages"][:-1]
+    assert len(active["packages"]) == 5 and all(p["on"] for p in active["packages"])
     default_enabled = {p["id"] for p in profiles["Default"]["packages"] if p["on"]}
-    assert len(default_enabled) == 3
+    assert len(default_enabled) == 2
     default_plugins = {row["name"]: row["on"] for row in profiles["Default"]["plugins"]}
     assert default_plugins["Dragonborn.esm"] is False
     assert "Dawnguard.esm" not in default_plugins and "HearthFires.esm" not in default_plugins
-    assert len({p["id"] for p in active["packages"]} - default_enabled) == 2
+    assert len({p["id"] for p in imported["packages"]} - default_enabled) == 2
     exported = json.loads((container/"Documents/UI Samples/Trial Two.skyrimios-modlist.json").read_text())
     assert exported["format"]=="skyrimios-modlist" and exported["name"] == "Trial Two" and len(exported["packages"]) == 4
     view_data = base / "Views" / active["id"] / "Data"
@@ -376,17 +378,19 @@ def verify(container, assets, summary):
                                               "AuthoredFolderInstaller", "AuthoredGenerated"}
     assert len(packages) == 5 and not list((base/"Mods").glob(".staging-*"))
     generated = next(p for p in packages if p["name"] == "AuthoredGenerated")
-    profile = profiles["Default"]
-    ids = [p["id"] for p in profile["packages"] if p["on"] and p["id"] != generated["id"]]
-    assert generated["id"] in default_enabled
+    assert active["packages"][-1] == {"id": generated["id"], "on": True}
+    ids = [p["id"] for p in active["packages"][:-1] if p["on"]]
+    active_plugins = {row["name"]: row["on"] for row in active["plugins"]}
+    assert active_plugins["AuthoredGenerated.esp"] and not active_plugins["AuthoredPrerequisite.esp"]
     assert generated["generatedFor"] == {
-        "profile": profile["id"],
+        "profile": active["id"],
         "packagesSHA256": hashlib.sha256(",".join(ids).encode()).hexdigest(),
+        "pluginsSHA256": hashlib.sha256(b"authoredprerequisite.esp").hexdigest(),
     }
-    relative = Path("Data/meshes/authored/body.nif")
-    source = assets / "Imports/AuthoredGenerated" / relative
-    assert (base / "Mods" / generated["id"] / relative).read_bytes() == source.read_bytes()
-    assert not (base / "Views" / active["id"] / relative).exists()
+    for relative in (Path("Data/meshes/authored/body.nif"), Path("Data/AuthoredGenerated.esp")):
+        source = assets / "Imports/AuthoredGenerated" / relative
+        assert (base / "Mods" / generated["id"] / relative).read_bytes() == source.read_bytes()
+        assert not (base / "Views" / active["id"] / relative).exists()
     authored_zip = next(p for p in packages if p["name"] == "AuthoredZip")
     assert authored_zip["report"]["hkx64"] == 1
     with ZipFile(assets / "Imports/AuthoredZip.zip") as source:

@@ -828,19 +828,53 @@ static NSArray<NSString *> *EnabledPackageIds(NSDictionary *profile) {
     return ids;
 }
 
-/* The enabled immutable package IDs identify the source MODs and their order.
- * Ignore other generated outputs so replacing one does not invalidate the rest. */
-static NSString *GeneratedInputDigest(NSArray<NSString *> *enabled) {
+/* Generated outputs are excluded from the source packages and source plugin list. */
+static NSDictionary *GeneratedInputFingerprint(NSDictionary *profile, NSArray<NSString *> *enabled) {
     NSMutableArray<NSString *> *inputs = [NSMutableArray array];
-    for (NSString *packageID in enabled)
-        if (!LoadPackage(packageID)[@"generatedFor"]) [inputs addObject:packageID];
-    return HexDigest([[inputs componentsJoinedByString:@","] dataUsingEncoding:NSUTF8StringEncoding]);
+    NSMutableSet<NSString *> *sourcePlugins = [NSMutableSet set];
+    for (NSString *packageID in enabled) {
+        NSDictionary *package = LoadPackage(packageID);
+        if (package[@"generatedFor"]) continue;
+        [inputs addObject:packageID];
+        for (id name in package[@"plugins"])
+            if ([name isKindOfClass:NSString.class]) [sourcePlugins addObject:[name lowercaseString]];
+    }
+    char data[PATH_MAX];
+    BOOL hasData = originalGameDirectory &&
+        skyrim_plugin_child_path(originalGameDirectory.fileSystemRepresentation, "Data", data, sizeof data) == 1;
+    /* The launch list visits explicit choices first, then inherited DLC from Data. */
+    unsigned inheritedDlc = 0;
+    if (hasData) skyrim_plugin_read_profile_dlc(ProfileDir(profile).fileSystemRepresentation, &inheritedDlc);
+    NSMutableArray<NSString *> *choices = [NSMutableArray array];
+    for (id row in profile[@"plugins"]) {
+        if (![row isKindOfClass:NSDictionary.class] || ![row[@"name"] isKindOfClass:NSString.class]) continue;
+        NSString *name = row[@"name"];
+        const char *plugin = name.UTF8String;
+        if (!skyrim_plugin_name_valid(plugin) || skyrim_plugin_is_base(plugin)) continue;
+        inheritedDlc &= ~skyrim_plugin_dlc_bit(plugin);
+        if (![row[@"on"] boolValue]) continue;
+        NSString *key = name.lowercaseString;
+        if ([sourcePlugins containsObject:key] || (hasData && skyrim_plugin_file_present(data, plugin)))
+            [choices addObject:key];
+    }
+    if (inheritedDlc) {
+        for (NSString *name in @[@"dawnguard.esm", @"hearthfires.esm", @"dragonborn.esm"])
+            if ((inheritedDlc & skyrim_plugin_dlc_bit(name.UTF8String)) &&
+                skyrim_plugin_file_present(data, name.UTF8String)) [choices addObject:name];
+    }
+    return @{@"profile":profile[@"id"],
+             @"packagesSHA256":HexDigest([[inputs componentsJoinedByString:@","] dataUsingEncoding:NSUTF8StringEncoding]),
+             @"pluginsSHA256":HexDigest([[choices componentsJoinedByString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding])};
 }
 
-static NSString *GeneratedOutputWarning(NSDictionary *package, NSString *profileID, NSString *digest) {
+static NSString *GeneratedOutputWarning(NSDictionary *package, NSDictionary *fingerprint) {
     id stored = package[@"generatedFor"];
-    if (![stored isKindOfClass:NSDictionary.class]) return nil;
-    if ([stored[@"profile"] isEqual:profileID] && [stored[@"packagesSHA256"] isEqual:digest]) return nil;
+    if ([stored isEqual:fingerprint]) return nil;
+    if ([stored isKindOfClass:NSDictionary.class] && !stored[@"pluginsSHA256"] &&
+        [stored[@"profile"] isEqual:fingerprint[@"profile"]] &&
+        [stored[@"packagesSHA256"] isEqual:fingerprint[@"packagesSHA256"]])
+        return T(@"The original plugin setup was not recorded. Check it before adding these generated files again.",
+                 @"取り込み時のプラグイン設定が記録されていません。構成を確認してから生成ファイルを追加し直してください。");
     return T(@"These generated files were added with a different MOD setup. Regenerate for this profile.",
              @"別のMOD構成で追加した生成ファイルです。このプロファイル用に再生成してください。");
 }
@@ -880,12 +914,12 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
         if ([l isKindOfClass:NSMutableDictionary.class]) { l[@"backgrounded"] = @YES; WriteJSON(l, LaunchPath()); }
     }];
     if (!ids.count) return game;
-    NSString *digest = nil;
+    NSDictionary *fingerprint = nil;
     for (NSString *packageID in ids) {
         NSDictionary *package = LoadPackage(packageID);
         if (!package[@"generatedFor"]) continue;
-        if (!digest) digest = GeneratedInputDigest(ids);
-        NSString *warning = GeneratedOutputWarning(package, profile[@"id"], digest);
+        if (!fingerprint) fingerprint = GeneratedInputFingerprint(profile, ids);
+        NSString *warning = GeneratedOutputWarning(package, fingerprint);
         if (warning) {
             NSString *message = [NSString stringWithFormat:@"%@ — %@", package[@"name"] ?: @"MOD", warning];
             launchNotice = launchNotice ? [launchNotice stringByAppendingFormat:@"\n%@", message] : message;
@@ -1563,8 +1597,7 @@ static void ImportURL(NSURL *url, BOOL scoped, BOOL generated) {
         EnsureState();
         NSDictionary *profile = SelectedProfile();
         targetProfileID = [profile[@"id"] copy];
-        if (generated) generatedFor = @{@"profile":targetProfileID,
-            @"packagesSHA256":GeneratedInputDigest(EnabledPackageIds(profile))};
+        if (generated) generatedFor = GeneratedInputFingerprint(profile, EnabledPackageIds(profile));
     };
     if (NSThread.isMainThread) captureProfile();
     else dispatch_sync(dispatch_get_main_queue(), captureProfile);
@@ -2794,7 +2827,7 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
         [lines addObjectsFromArray:ReportLines(pkg)];
         if (pkg[@"generatedFor"]) {
             NSDictionary *profile = SelectedProfile();
-            NSString *warning = GeneratedOutputWarning(pkg, profile[@"id"], GeneratedInputDigest(EnabledPackageIds(profile)));
+            NSString *warning = GeneratedOutputWarning(pkg, GeneratedInputFingerprint(profile, EnabledPackageIds(profile)));
             [lines addObject:warning ?: T(@"Added as generated output for this MOD setup.",
                                          @"このMOD構成の生成済み出力として追加されました。")];
         }
