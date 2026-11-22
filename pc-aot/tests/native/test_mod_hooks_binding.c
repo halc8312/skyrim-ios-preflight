@@ -211,7 +211,7 @@ void f_A60200(CPU *c) { (void)c; }
 void f_842140(CPU *c) { (void)c; }
 void f_873D70(CPU *c) { (void)c; }
 
-static unsigned calls[40];
+static unsigned calls[41];
 static void forget(uint32_t r) { assert(r == 7); ++calls[0]; }
 static void choose(const struct CPU *c, uint32_t slot, uint32_t r, SkyrimFuzLiftChoice *out) {
     assert(!c && slot == 0x1000 && r == 7);
@@ -336,6 +336,14 @@ static void heel_linked(const struct CPU *cpu, uint64_t epoch, bool linked) {
 }
 static bool heel_scene(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, uint32_t first,
                        uint32_t second, uint32_t third) {
+    if (event == SkyrimHighHeelSceneContinue) {
+        /* Sent by the guest library right after an accepted Finish while the
+         * local transform is selected. It carries no arguments. This host
+         * declines, so the scene stays one-shot and the state returns to zero. */
+        assert(!cpu && !first && !second && !third);
+        ++calls[40];
+        return false;
+    }
     assert(!cpu && first == 0x64000 && !second && !third);
     assert(event == SkyrimHighHeelSceneArm || event == SkyrimHighHeelSceneFinish);
     ++calls[event == SkyrimHighHeelSceneArm ? 34 : 35];
@@ -420,6 +428,9 @@ static void check_calls(uint32_t groups, unsigned rounds) {
     for (int n = 34; n < 36; ++n) assert(calls[n] == (rounds && (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) ? 1u : 0u));
     for (int n = 36; n < 39; ++n) assert(calls[n] == (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE ? rounds : 0));
     assert(calls[39] == (rounds && (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) ? 4u : 0u));
+    /* One Continue per accepted Finish, which needs both the scene and the local transform. */
+    assert(calls[40] == (rounds && (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) &&
+                         (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) ? 1u : 0u));
 }
 
 /* argv: hooked-guest compiled-groups select-groups no-hooks-guest bad-reply-guest */

@@ -339,6 +339,11 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             flags += ["-fsanitize=address,undefined", "-g", "-fno-omit-frame-pointer"]
             if sys.platform.startswith("linux"):
                 flags += ["-fno-pie", "-no-pie"]
+        if "clang" in Path(cc).resolve().name:
+            # The reviewed generated lift writes some flag comparisons as `if ((a == b))`.
+            # Clang reports that as -Wparentheses-equality, which -Werror turns into a
+            # build failure. Only this one warning is skipped, and only for the generated code.
+            flags.append("-Wno-parentheses-equality")
         native = ROOT / "native"
         private = ROOT / "private"
         if private.resolve() != private:
