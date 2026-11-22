@@ -453,3 +453,21 @@ the Actor. Its queued path can run under the same frame wait, and
 its direct fallback can run on a different caller. Applying a
 transform correction on either path therefore requires a fresh
 actor and root match when the receiver is used.
+
+The `highheel_local_transform` guest stage now accepts a binary32
+adjustment at the original parent composition call through a typed
+optional hook. It requires the scene, effect, PEX and VM stages.
+Without an accepted finite value the original transform pointer is
+passed to the game. With one, the composer uses its existing stack
+destination as the temporary input. The fixed composer consumes
+each affected component before replacing it in that destination.
+The hosted check compares the complete world transform with a
+direct local Z change and verifies the original local bytes.
+
+The request queue can now calculate the scalar for that hook. It
+checks the VM epoch, effect identity and newest request while
+publishing the scalar. The combined lifted fixture supplies an
+authored pose and one current effect to exercise the real queue,
+stage and ABI in one call. The ordinary iPhone launch still requires
+a provider that connects the pose, current receiver and native
+requests over successive game updates.

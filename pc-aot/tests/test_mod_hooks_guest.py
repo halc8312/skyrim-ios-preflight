@@ -39,6 +39,8 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(hooks.parse_groups("vm_lifecycle,highheel_pex_observe"), 32772)
         self.assertEqual(hooks.parse_groups("highheel_scene_observe"), 65536)
         self.assertEqual(hooks.parse_groups("vm_lifecycle,highheel_pex_observe,highheel_effect_observe"), 163844)
+        self.assertEqual(hooks.parse_groups("vm_lifecycle,highheel_pex_observe,highheel_effect_observe,"
+                                            "highheel_scene_observe,highheel_local_transform"), 491524)
         self.assertEqual(hooks.parse_groups("save_lifecycle"), 64)
         self.assertEqual(hooks.parse_groups("fresh_load,save_lifecycle,vm_lifecycle"), 4164)
         self.assertEqual(hooks.parse_groups("loading_menu_observe"), 128)
@@ -52,7 +54,9 @@ class GroupTests(unittest.TestCase):
                               ("fuz_world", "list both"), ("safety_load", "list both"),
                               ("fresh_load,save_lifecycle", "needs"), ("ece_nose_observe", "needs"),
                               ("highheel_pex_observe", "needs"), ("highheel_effect_observe", "needs"),
-                              ("vm_lifecycle,highheel_effect_observe", "needs")):
+                              ("vm_lifecycle,highheel_effect_observe", "needs"),
+                              ("vm_lifecycle,highheel_pex_observe,highheel_effect_observe,highheel_local_transform",
+                               "needs")):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, message):
                 hooks.parse_groups(text)
 
@@ -279,7 +283,8 @@ class OwnedLiftTests(unittest.TestCase):
         groups = hooks.parse_groups("fuz_menu,fuz_world,vm_lifecycle,chargen_precache,chargen_slider,camera_observe,"
                                     "loading_menu_observe,inventory_fit,safety_load,camera_render_observe,"
                                     "ece_tri_observe,save_lifecycle,fresh_load,camera_cull_observe,ece_nose_observe,"
-                                    "highheel_pex_observe,highheel_scene_observe,highheel_effect_observe")
+                                    "highheel_pex_observe,highheel_scene_observe,highheel_effect_observe,"
+                                    "highheel_local_transform")
         originals = sorted((root / "gen").glob("exe_*.c"))
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in originals}
         with tempfile.TemporaryDirectory(prefix="mod-hooks-") as scratch:
@@ -310,6 +315,8 @@ class OwnedLiftTests(unittest.TestCase):
             self.assertEqual(scene.count(b"skyrim_highheel_scene_guest_notify(c, SkyrimHighHeelSceneEnter,"), 2)
             self.assertEqual(scene.count(b"skyrim_highheel_scene_guest_notify(c, SkyrimHighHeelSceneFinish,"), 1)
             self.assertIn(b"skyrim_camera_cull_guest_notify(", scene)
+            receiver = (work / "mod-hook-sources" / "exe_276.c").read_bytes()
+            self.assertEqual(receiver.count(b"skyrim_highheel_transform_guest_local_z("), 1)
             with self.assertRaisesRegex(ValueError, "unreviewed earlier stage"):
                 hooks.stage_highheel_scene_observe(root, {"exe_275.c": scene + b"// unrelated edit\n"})
             with self.assertRaisesRegex(ValueError, "unreviewed earlier stage"):

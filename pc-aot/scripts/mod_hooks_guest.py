@@ -31,10 +31,11 @@ GROUPS = {
     "camera_render_observe": 1024, "ece_tri_observe": 2048, "fresh_load": 4096,
     "camera_cull_observe": 8192, "ece_nose_observe": 16384,
     "highheel_pex_observe": 32768, "highheel_scene_observe": 65536,
-    "highheel_effect_observe": 131072,
+    "highheel_effect_observe": 131072, "highheel_local_transform": 262144,
 }
 FRESH_LOAD_DEPS = GROUPS["save_lifecycle"] | GROUPS["vm_lifecycle"]
 HIGHHEEL_EFFECT_DEPS = GROUPS["highheel_pex_observe"] | GROUPS["vm_lifecycle"]
+HIGHHEEL_TRANSFORM_DEPS = GROUPS["highheel_scene_observe"] | GROUPS["highheel_effect_observe"]
 # The interface header and the reviewed seam headers its tables use; the IPA
 # assembly checks the same five (scripts/assemble_title_ipa.py).
 HEADERS = {
@@ -117,6 +118,8 @@ def parse_groups(text: str) -> int:
         raise ValueError("highheel_pex_observe needs vm_lifecycle; list both")
     if mask & GROUPS["highheel_effect_observe"] and mask & HIGHHEEL_EFFECT_DEPS != HIGHHEEL_EFFECT_DEPS:
         raise ValueError("highheel_effect_observe needs highheel_pex_observe and vm_lifecycle; list both")
+    if mask & GROUPS["highheel_local_transform"] and mask & HIGHHEEL_TRANSFORM_DEPS != HIGHHEEL_TRANSFORM_DEPS:
+        raise ValueError("highheel_local_transform needs highheel_scene_observe and highheel_effect_observe; list both")
     return mask
 
 
@@ -301,6 +304,12 @@ def stage_highheel_effect_observe(root: Path) -> dict[str, bytes]:
     return {stage.UNIT: stage.stage_app((root / "gen" / stage.UNIT).read_bytes())}
 
 
+def stage_highheel_local_transform(root: Path, staged: dict[str, bytes]) -> dict[str, bytes]:
+    trial = load(EXPERIMENTS / "classic-highheels", "stage_scene_app")
+    unit = "exe_276.c"
+    return {unit: trial.apply_transform((root / "gen" / unit).read_bytes(), staged[unit])}
+
+
 def stage_highheel_plugins_ready(root: Path, staged: dict[str, bytes], *, fresh_load: bool) -> dict[str, bytes]:
     startup = load(SAVE_SEAMS, "stage_native_load")
     unit = startup.STARTUP_UNIT
@@ -374,6 +383,7 @@ STAGES = {
     "highheel_pex_observe": stage_highheel_pex_observe,
     "highheel_scene_observe": stage_highheel_scene_observe,
     "highheel_effect_observe": stage_highheel_effect_observe,
+    "highheel_local_transform": stage_highheel_local_transform,
 }
 
 
@@ -384,8 +394,9 @@ def compose(root: Path, mask: int) -> dict[str, bytes]:
     for name in group_names(mask):
         if mask & GROUPS["fresh_load"] and name in ("save_lifecycle", "vm_lifecycle"):
             continue  # the verified combined stage includes both original edits
-        if name in ("camera_cull_observe", "ece_nose_observe", "highheel_scene_observe"):
-            # Each observer checks the exact prior stages it can share a unit with.
+        if name in ("camera_cull_observe", "ece_nose_observe", "highheel_scene_observe",
+                    "highheel_local_transform"):
+            # Each combined stage checks the exact prior edits it can share a unit with.
             staged.update(STAGES[name](root, staged))
             continue
         if name not in STAGES:

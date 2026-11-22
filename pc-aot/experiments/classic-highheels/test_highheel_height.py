@@ -214,6 +214,23 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
                        for i, (fields, receipt, state) in enumerate(zip(cases, receipts, actors))),
         )
 
+    def test_reviewed_app_uses_only_the_temporary_transform_for_a_selected_offset(self):
+        port = ROOT / "ios/runtime-port"
+        abi = ROOT / "ios/private-abi"
+        self.run_reviewed_fixture(
+            stage_scene_app, "test_scene_witness_lift.c",
+            "Classic selected transform changes the world composition while preserving local translation",
+            extra_sources=(port / "mod_highheel_scene_host.c", abi / "pc_guest_mod_hooks_library.c",
+                           port / "mod_highheel_scene_requests.c", port / "classic_vm_epoch.c",
+                           HERE / "highheel_height.c"),
+            extra_flags=("-I", HERE, "-I", port, "-I", abi, "-I", ROOT / "experiments/fuz-voice",
+                         "-I", ROOT / "experiments/skse-cosave",
+                         "-DSKYRIM_TEST_SCENE_RUNTIME=1", "-DSKYRIM_TEST_SCENE_TRANSFORM=1",
+                         "-DPC_GUEST_MOD_HOOKS_COMPILED=491524u"),
+            generate=lambda *units: stage_scene_witness.private_fixture(*units, runtime=True, transform=True),
+            runs=((("0",), None), (("4",), None), (("9",), None)),
+        )
+
     def test_owned_effect_native_argument_boundaries(self):
         supplied = os.environ.get("SKYRIM_TEST_OWNED_HDT_EFFECT_DLL")
         objdump = shutil.which("objdump")

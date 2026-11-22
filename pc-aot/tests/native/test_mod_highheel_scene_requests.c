@@ -298,12 +298,35 @@ static void test_scope_or_effect_ends_while_reading_node(void) {
     check_position(&scene, 10);
 }
 
+static void test_transform_offset_is_a_current_effect_only(void) {
+    setup();
+    ClassicHeelPose pose = standing();
+    float offset = -9.0f;
+    assert(!skyrim_highheel_scene_transform_offset(current, FIRST_ACTOR, &pose, &offset) && offset == -9.0f);
+
+    Effect *effect = start_effect(0, FIRST_ACTOR, 7, 4.0f);
+    submit(effect, true);
+    pose.previous_height = 1.0f;
+    pose.max_step = 0.5f;
+    pose.smoothing_mode = 2;
+    assert(skyrim_highheel_scene_transform_offset(current, FIRST_ACTOR, &pose, &offset) && offset == 1.5f);
+    assert(!skyrim_highheel_scene_transform_offset(current, SECOND_ACTOR, &pose, &offset) && offset == 1.5f);
+    pose.swimming = true;
+    assert(skyrim_highheel_scene_transform_offset(current, FIRST_ACTOR, &pose, &offset) && offset == 0.0f);
+    pose.swimming = false;
+    effect->active = false;
+    assert(!skyrim_highheel_scene_transform_offset(current, FIRST_ACTOR, &pose, &offset) && offset == 0.0f);
+    submit(effect, false);
+    assert(!skyrim_highheel_scene_transform_offset(current, FIRST_ACTOR, &pose, &offset) && offset == 0.0f);
+}
+
 int main(void) {
     test_actor_coalescing_and_stop();
     test_effect_finish_and_new_epoch();
     test_replacement_matched_pose_and_retry();
     test_newer_keep_arrives_while_reading_node();
     test_scope_or_effect_ends_while_reading_node();
+    test_transform_offset_is_a_current_effect_only();
     skyrim_highheel_scene_reset_requests();
     return 0;
 }

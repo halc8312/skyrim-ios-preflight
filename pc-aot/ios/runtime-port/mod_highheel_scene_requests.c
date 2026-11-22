@@ -71,6 +71,49 @@ static SkyrimHighHeelUpdate snapshot_locked(SkyrimVmScope scope, uint32_t actor)
     return (SkyrimHighHeelUpdate){0};
 }
 
+static SkyrimHighHeelUpdate snapshot(SkyrimVmScope scope, uint32_t actor) {
+    pthread_mutex_lock(&request_lock);
+    const SkyrimHighHeelUpdate request = snapshot_locked(scope, actor);
+    pthread_mutex_unlock(&request_lock);
+    return request;
+}
+
+static void copy_magnitude(ClassicHeelPose *pose, const SkyrimHighHeelUpdate *request) {
+    _Static_assert(sizeof pose->magnitude == sizeof request->magnitude, "Classic Float width");
+    memcpy(&pose->magnitude, &request->magnitude, sizeof pose->magnitude);
+}
+
+typedef struct {
+    SkyrimHighHeelUpdate request;
+    float value, *output;
+} RequestedOffset;
+
+static bool publish_offset(void *context) {
+    const RequestedOffset *offset = context;
+    const SkyrimHighHeelUpdate *request = &offset->request;
+    pthread_mutex_lock(&request_lock);
+    const SkyrimHighHeelUpdate current = snapshot_locked(request->scope, request->actor);
+    const bool same = current.handle == request->handle && current.magnitude == request->magnitude;
+    if (same) *offset->output = offset->value;
+    pthread_mutex_unlock(&request_lock);
+    return same;
+}
+
+bool skyrim_highheel_scene_transform_offset(SkyrimVmScope scope, uint32_t actor, const ClassicHeelPose *pose,
+                                           float *output) {
+    if (!actor || !pose || !output) return false;
+    const SkyrimHighHeelUpdate request = snapshot(scope, actor);
+    if (!request.keep) return false;
+    ClassicHeelPose current = *pose;
+    copy_magnitude(&current, &request);
+    RequestedOffset offset = {.request = request, .output = output};
+    if (!classic_heel_pose_height(&current, &offset.value) || !skyrim_vm_commit_begin(&scope)) return false;
+    const bool accepted = skyrim_highheel_effect_commit_if_matches(scope, request.handle, actor, true,
+                                                                    request.magnitude, publish_offset, &offset);
+    skyrim_vm_commit_end();
+    return accepted;
+}
+
 typedef struct {
     SkyrimVmScope scope;
     uint32_t actor;
@@ -121,17 +164,14 @@ ClassicHeelResult skyrim_highheel_scene_update_height(SkyrimVmScope scope, uint3
                                                       void *scene, ClassicHeelReadNode read_node,
                                                       ClassicHeelCommitNode commit_node) {
     if (!actor || !height || !read_node || !commit_node) return CLASSIC_HEEL_INVALID;
-    pthread_mutex_lock(&request_lock);
-    const SkyrimHighHeelUpdate request = snapshot_locked(scope, actor);
-    pthread_mutex_unlock(&request_lock);
+    const SkyrimHighHeelUpdate request = snapshot(scope, actor);
     const bool apply = request.keep && skyrim_highheel_effect_matches(scope, request.handle, actor, true,
                                                                       request.magnitude);
     SceneUpdate update = {scope, actor, request, apply, scene, read_node, commit_node};
     if (apply) {
         if (!pose) return CLASSIC_HEEL_NODE_UNAVAILABLE;
         ClassicHeelPose current = *pose;
-        _Static_assert(sizeof current.magnitude == sizeof request.magnitude, "Classic Float width");
-        memcpy(&current.magnitude, &request.magnitude, sizeof current.magnitude);
+        copy_magnitude(&current, &request);
         return classic_heel_set_pose_height(height, &current, &update, read_for_update, commit_if_current);
     }
     if (height->applied_offset == 0.0f) return CLASSIC_HEEL_UNCHANGED;

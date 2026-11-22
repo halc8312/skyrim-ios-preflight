@@ -3,6 +3,7 @@
 from hashlib import sha256
 
 from stage_effect_magnitude import function
+from stage_scene_refresh import replace_local_z
 from stage_scene_witness import DEPENDENCIES, UNIT, UNITS, private_fixture as hosted_fixture
 
 
@@ -107,6 +108,18 @@ def apply(name, original, base):
         native = function(original, address)
         base = once(base, native, edit(native))
     return base if base.startswith(HEADER) else HEADER + base
+
+
+def apply_transform(original, observed):
+    if sha256(original).hexdigest() != DIGESTS["exe_276.c"]:
+        raise ValueError("Local transform unit differs from the reviewed Classic lift")
+    base = apply("exe_276.c", original, original)
+    if observed != base:
+        raise ValueError("Local transform requires the reviewed scene observation")
+    receiver_body = function(base, 0xAB5370)
+    staged = replace_local_z(receiver_body, b"skyrim_heel_sample && skyrim_highheel_transform_guest_selected &&\n"
+        b"        skyrim_highheel_transform_guest_local_z(c, esi, eax, M32(edx + 0x2cu), &z)")
+    return once(base, receiver_body, staged)
 
 
 def private_fixture(*units):

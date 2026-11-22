@@ -4,6 +4,10 @@
 #ifdef SKYRIM_TEST_SCENE_RUNTIME
 #include "mod_highheel_scene_host.h"
 #endif
+#ifdef SKYRIM_TEST_SCENE_TRANSFORM
+#include "mod_highheel_effect_host.h"
+#include "mod_highheel_scene_requests.h"
+#endif
 
 #include <assert.h>
 #include <stdbool.h>
@@ -46,6 +50,57 @@ void fixture_update_third_person(CPU *cpu);
 const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uint32_t table_bytes);
 static CPU *runtime_cpu;
 struct CPU *rt_current_cpu(void) { return runtime_cpu; }
+#ifdef SKYRIM_TEST_SCENE_TRANSFORM
+static unsigned transform_writes;
+static SkyrimHighHeelUpdate active_effect;
+
+bool skyrim_highheel_effect_matches(SkyrimVmScope scope, uint64_t handle, uint32_t actor, bool keep,
+                                    uint32_t magnitude)
+{
+    return keep && handle == active_effect.handle && actor == active_effect.actor &&
+           scope.epoch == active_effect.scope.epoch && scope.registry == active_effect.scope.registry &&
+           magnitude == active_effect.magnitude;
+}
+
+bool skyrim_highheel_effect_commit_if_matches(SkyrimVmScope scope, uint64_t handle, uint32_t actor, bool keep,
+                                              uint32_t magnitude, bool (*action)(void *), void *context)
+{
+    return skyrim_highheel_effect_matches(scope, handle, actor, keep, magnitude) && action(context);
+}
+
+static bool fixture_transform(const CPU *cpu, uint32_t node, uint32_t parent, uint32_t baseline, uint32_t *out)
+{
+    assert(cpu == runtime_cpu);
+    if (node != CHILD || parent != ROOT || M32(PLAYER + 0xc) != 0x14) return false;
+    assert(baseline == M32(node + 0x4c));
+    const ClassicHeelLeg leg = {.calf = {.z = 0x1.bf31f8p+4f}};
+    const ClassicHeelPose pose = {.left = leg, .right = leg, .local_scale = 1, .world_scale = 1};
+    SkyrimVmScope scope;
+    float offset;
+    if (!skyrim_vm_scope_current(&scope) || !skyrim_highheel_scene_transform_offset(scope, 0x14, &pose, &offset))
+        return false;
+    float height;
+    memcpy(&height, &baseline, sizeof height);
+    height += offset;
+    memcpy(out, &height, sizeof height);
+    ++transform_writes;
+    return true;
+}
+
+static void unexpected_vm(unsigned site) { (void)site; abort(); }
+static void unexpected_load(int ok) { (void)ok; abort(); }
+static void unexpected_delete(CPU *cpu, uint32_t vm, uint64_t handle)
+{ (void)cpu; (void)vm; (void)handle; abort(); }
+static bool unexpected_read(const CPU *cpu, uint32_t name, uint32_t loader)
+{ (void)cpu; (void)name; (void)loader; abort(); }
+static uint64_t unexpected_read_end(const CPU *cpu, bool parsed)
+{ (void)cpu; (void)parsed; abort(); }
+static void unexpected_link(const CPU *cpu, uint64_t epoch, bool linked)
+{ (void)cpu; (void)epoch; (void)linked; abort(); }
+static void unexpected_plugins(const CPU *cpu, uint32_t handler) { (void)cpu; (void)handler; abort(); }
+static void unexpected_effect(const CPU *cpu, uint32_t effect, uint32_t args, uint32_t site)
+{ (void)cpu; (void)effect; (void)args; (void)site; abort(); }
+#endif
 #endif
 
 static unsigned named_bit(uint32_t name)
@@ -258,11 +313,40 @@ int main(int argc, char **argv)
     const Result ordinary = run((Scenario)mode, false);
     PcGuestModHooks host = {.version = PC_GUEST_MOD_HOOKS_ABI, .bytes = sizeof host,
                             .groups = PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE};
+#ifdef SKYRIM_TEST_SCENE_TRANSFORM
+    skyrim_vm_epoch_registered(0x12300);
+    assert(skyrim_vm_scope_current(&active_effect.scope));
+    active_effect.actor = 0x14;
+    active_effect.handle = UINT64_C(0x0002000700000014);
+    active_effect.magnitude = UINT32_C(0x40200000);
+    active_effect.keep = true;
+    assert(skyrim_highheel_scene_queue_update(NULL, &active_effect));
+    host.groups |= PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM | PC_GUEST_MOD_HOOK_VM_LIFECYCLE |
+                   PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE;
+    host.vm_lifecycle = (PcGuestModVmHooks){unexpected_vm, unexpected_load, unexpected_delete};
+    host.highheel_pex = (PcGuestModHighHeelPexHooks){unexpected_read, unexpected_read_end, unexpected_link};
+    host.highheel_effect = (PcGuestModHighHeelEffectHooks){unexpected_plugins, unexpected_effect};
+    host.highheel_transform = (PcGuestModHighHeelTransformHooks){fixture_transform};
+#endif
     const PcGuestModHooksGuest *guest = skyrim_guest_bind_mod_hooks_v1(PC_GUEST_MOD_HOOKS_ABI, sizeof host);
     skyrim_highheel_scene_fill(&host);
     assert(guest && guest->compiled_groups == host.groups && guest->select(&host) == 0);
     const Result observed = run((Scenario)mode, true);
+#ifdef SKYRIM_TEST_SCENE_TRANSFORM
+    if (mode == COMPLETE) {
+        const uint32_t z = CHILD + 0x80;
+        float before, after;
+        memcpy(&before, ordinary.memory + z, sizeof before);
+        memcpy(&after, observed.memory + z, sizeof after);
+        assert(after == before + 2.5f && transform_writes == 1);
+        assert(!memcmp(ordinary.memory + CHILD + 0x20, observed.memory + CHILD + 0x20, 0x34));
+    } else {
+        assert(transform_writes == 0);
+        equal_results(&ordinary, &observed);
+    }
+#else
     equal_results(&ordinary, &observed);
+#endif
     /* A completed stock update gets only one line across the launch. */
     const Result repeated = run((Scenario)mode, true);
     equal_results(&ordinary, &repeated);
@@ -275,5 +359,10 @@ int main(int argc, char **argv)
     }
 #endif
     free(MEM);
+#ifdef SKYRIM_TEST_SCENE_TRANSFORM
+    skyrim_highheel_scene_reset_requests();
+    puts("Classic selected transform changes the world composition while preserving local translation");
+#else
     puts("Classic third-person traversal witnesses five actual named nodes without changing the scene");
+#endif
 }

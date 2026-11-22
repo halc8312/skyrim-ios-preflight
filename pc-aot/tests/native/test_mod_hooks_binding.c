@@ -7,6 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+enum {
+    LOCAL_NODE = 0x65000, LOCAL_PARENT = 0x64000, LOCAL_ORIGINAL = 0x40000000, LOCAL_ADJUSTED = 0x40400000,
+    LOCAL_DECLINED = 0x40800000, LOCAL_INVALID_RESULT = 0x40a00000, LOCAL_SAME_RESULT = 0x40c00000
+};
+
 #ifdef MOD_FIXTURE_GUEST
 static void base_entry(CPU *c) { c->r[0] += 5; }
 const FnEntry g_fn_table_exe[] = {{1, base_entry}};
@@ -28,8 +33,12 @@ const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uin
 }
 #endif
 
-#if defined(MOD_FIXTURE_ORIGINAL_TABLE) || defined(MOD_FIXTURE_PEX_TABLE) || defined(MOD_FIXTURE_SCENE_TABLE)
-#ifdef MOD_FIXTURE_SCENE_TABLE
+#if defined(MOD_FIXTURE_ORIGINAL_TABLE) || defined(MOD_FIXTURE_PEX_TABLE) || \
+    defined(MOD_FIXTURE_SCENE_TABLE) || defined(MOD_FIXTURE_EFFECT_TABLE)
+#ifdef MOD_FIXTURE_EFFECT_TABLE
+#define FIXTURE_LEGACY_TABLE_BYTES PC_GUEST_MOD_HOOKS_HIGHHEEL_EFFECT_BYTES
+#define FIXTURE_LEGACY_GROUPS PC_GUEST_MOD_HOOKS_HIGHHEEL_EFFECT
+#elif defined(MOD_FIXTURE_SCENE_TABLE)
 #define FIXTURE_LEGACY_TABLE_BYTES PC_GUEST_MOD_HOOKS_HIGHHEEL_SCENE_BYTES
 #define FIXTURE_LEGACY_GROUPS PC_GUEST_MOD_HOOKS_HIGHHEEL_SCENE
 #elif defined(MOD_FIXTURE_PEX_TABLE)
@@ -41,8 +50,24 @@ const PcGuestModHooksGuest *skyrim_guest_bind_mod_hooks_v1(uint32_t version, uin
 #endif
 static int original_select(const PcGuestModHooks *t) {
     assert(t->version == PC_GUEST_MOD_HOOKS_ABI && t->bytes == FIXTURE_LEGACY_TABLE_BYTES);
-#ifdef MOD_FIXTURE_SCENE_TABLE
-    assert(t->groups == (PC_GUEST_MOD_HOOK_CAMERA_OBSERVE | PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE));
+#if defined(MOD_FIXTURE_SCENE_TABLE) || defined(MOD_FIXTURE_EFFECT_TABLE)
+    uint32_t expected = PC_GUEST_MOD_HOOK_CAMERA_OBSERVE | PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE;
+#ifdef MOD_FIXTURE_EFFECT_TABLE
+    expected |= PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE |
+                PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE;
+    assert(t->highheel_effect.plugins_ready && t->highheel_effect.phase);
+    const CPU owner = {.r = {0x75000}};
+    t->highheel_effect.plugins_ready(&owner, 0x76000);
+    t->highheel_effect.phase(&owner, 0x77000, 0x78000, 0x656ec5);
+    t->highheel_effect.phase(&owner, 0x77000, 0x78000, 0x65710b);
+    assert(t->highheel_pex.begin(NULL, 0x61000, 0x62000));
+    assert(t->highheel_pex.end(NULL, true) == 11);
+    t->highheel_pex.linked(NULL, 11, true);
+    t->vm_lifecycle.before_revert(1);
+    t->vm_lifecycle.after_load(1);
+    t->vm_lifecycle.form_deleted(NULL, 0x900, 0x1234567890ull);
+#endif
+    assert(t->groups == expected);
     assert(t->camera.observe_return && t->highheel_scene.notify);
     assert(t->highheel_scene.notify(NULL, SkyrimHighHeelSceneArm, 0x64000, 0, 0));
     assert(t->highheel_scene.notify(NULL, SkyrimHighHeelSceneFinish, 0x64000, 0, 0));
@@ -127,16 +152,34 @@ __attribute__((visibility("default"))) unsigned exercise_mod_hooks(unsigned expe
     assert(epoch == (heel ? 11 : 0));
     skyrim_highheel_pex_linked(NULL, epoch, true);
     if (heel) seen |= 1u << 15;
-    static bool scene_seen;
+    const CPU effect_owner = {.r = {0x75000}};
+    static bool scene_seen, transform_seen;
+    uint32_t adjusted = 0x11;
+    assert(!skyrim_highheel_transform_guest_local_z(&effect_owner, LOCAL_NODE, LOCAL_PARENT, LOCAL_ORIGINAL, &adjusted));
+    assert(adjusted == 0x11);
     if (skyrim_highheel_scene_guest_notify(NULL, SkyrimHighHeelSceneArm, 0x64000, 0, 0)) {
         assert(!scene_seen && skyrim_highheel_scene_guest_state == SkyrimHighHeelSceneActive);
         assert(!skyrim_highheel_scene_guest_notify(NULL, SkyrimHighHeelSceneArm, 0x64000, 0, 0));
+        assert(!skyrim_highheel_transform_guest_local_z(NULL, LOCAL_NODE, LOCAL_PARENT, LOCAL_ORIGINAL, &adjusted));
+        assert(!skyrim_highheel_transform_guest_local_z(&effect_owner, 0, LOCAL_PARENT, LOCAL_ORIGINAL, &adjusted));
+        assert(!skyrim_highheel_transform_guest_local_z(&effect_owner, LOCAL_NODE, 0, LOCAL_ORIGINAL, &adjusted));
+        assert(!skyrim_highheel_transform_guest_local_z(&effect_owner, LOCAL_NODE, LOCAL_PARENT, LOCAL_ORIGINAL, NULL));
+        assert(!skyrim_highheel_transform_guest_local_z(&effect_owner, LOCAL_NODE, LOCAL_PARENT, 0x7f800000, &adjusted));
+        assert(!skyrim_highheel_transform_guest_local_z(&effect_owner, LOCAL_NODE, LOCAL_PARENT, LOCAL_DECLINED, &adjusted));
+        assert(!skyrim_highheel_transform_guest_local_z(&effect_owner, LOCAL_NODE, LOCAL_PARENT, LOCAL_INVALID_RESULT, &adjusted));
+        assert(!skyrim_highheel_transform_guest_local_z(&effect_owner, LOCAL_NODE, LOCAL_PARENT, LOCAL_SAME_RESULT, &adjusted));
+        assert(adjusted == 0x11);
+        transform_seen = skyrim_highheel_transform_guest_local_z(&effect_owner, LOCAL_NODE, LOCAL_PARENT,
+                                                                LOCAL_ORIGINAL, &adjusted);
+        assert(adjusted == (transform_seen ? LOCAL_ADJUSTED : 0x11));
         assert(skyrim_highheel_scene_guest_notify(NULL, SkyrimHighHeelSceneFinish, 0x64000, 0, 0));
         assert(!skyrim_highheel_scene_guest_state);
+        assert(!skyrim_highheel_transform_guest_local_z(&effect_owner, LOCAL_NODE, LOCAL_PARENT, LOCAL_ORIGINAL, &adjusted));
+        assert(adjusted == (transform_seen ? LOCAL_ADJUSTED : 0x11));
         scene_seen = true;
     }
     if (scene_seen) seen |= 1u << 16;
-    const CPU effect_owner = {.r = {0x75000}};
+    if (transform_seen) seen |= 1u << 17;
     skyrim_highheel_effect_plugins_ready(&effect_owner, 0x76000);
     skyrim_highheel_effect_phase(&effect_owner, 0x77000, 0x78000, 0x656ec5);
     skyrim_highheel_effect_phase(&effect_owner, 0x77000, 0x78000, 0x65710b);
@@ -168,7 +211,7 @@ void f_A60200(CPU *c) { (void)c; }
 void f_842140(CPU *c) { (void)c; }
 void f_873D70(CPU *c) { (void)c; }
 
-static unsigned calls[39];
+static unsigned calls[40];
 static void forget(uint32_t r) { assert(r == 7); ++calls[0]; }
 static void choose(const struct CPU *c, uint32_t slot, uint32_t r, SkyrimFuzLiftChoice *out) {
     assert(!c && slot == 0x1000 && r == 7);
@@ -307,6 +350,23 @@ static void heel_effect_phase(const struct CPU *cpu, uint32_t effect, uint32_t a
     assert(site == 0x656ec5 || site == 0x65710b);
     ++calls[site == 0x656ec5 ? 37 : 38];
 }
+static bool heel_local_z(const struct CPU *cpu, uint32_t node, uint32_t parent,
+                         uint32_t local_z, uint32_t *out) {
+    assert(cpu && cpu->r[0] == 0x75000 && node == LOCAL_NODE && parent == LOCAL_PARENT && out);
+    ++calls[39];
+    if (local_z == LOCAL_DECLINED) {
+        *out = LOCAL_ADJUSTED;
+        return false;
+    }
+    if (local_z == LOCAL_INVALID_RESULT) {
+        *out = 0x7fc00000;
+        return true;
+    }
+    if (local_z == LOCAL_SAME_RESULT) return true;
+    assert(local_z == LOCAL_ORIGINAL);
+    *out = LOCAL_ADJUSTED;
+    return true;
+}
 static PcGuestModHooks full_table(uint32_t groups) {
     return (PcGuestModHooks){
         PC_GUEST_MOD_HOOKS_ABI, sizeof(PcGuestModHooks), groups, 0,
@@ -315,7 +375,7 @@ static PcGuestModHooks full_table(uint32_t groups) {
         {before_revert, after_load, form_deleted}, {skip_warm}, {slider_pending, slider_nose, slider_applied},
         {camera_observed}, {loading_observed}, {safety_bypass}, {save_begin, save_current, save_event},
         {camera_render_observed}, {ece_tri_begin, ece_tri_finish}, {fresh_notify}, {cull_notified}, {ece_nose_notified},
-        {heel_begin, heel_end, heel_linked}, {heel_scene}, {heel_plugins_ready, heel_effect_phase}};
+        {heel_begin, heel_end, heel_linked}, {heel_scene}, {heel_plugins_ready, heel_effect_phase}, {heel_local_z}};
 }
 
 static unsigned expected_seen(uint32_t groups) {
@@ -333,6 +393,7 @@ static unsigned expected_seen(uint32_t groups) {
     if (groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) seen |= 1u << 14;
     if (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE) seen |= 1u << 15;
     if (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) seen |= 1u << 16;
+    if (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) seen |= 1u << 17;
     return seen;
 }
 
@@ -358,6 +419,7 @@ static void check_calls(uint32_t groups, unsigned rounds) {
     for (int n = 31; n < 34; ++n) assert(calls[n] == (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE ? rounds : 0));
     for (int n = 34; n < 36; ++n) assert(calls[n] == (rounds && (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) ? 1u : 0u));
     for (int n = 36; n < 39; ++n) assert(calls[n] == (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE ? rounds : 0));
+    assert(calls[39] == (rounds && (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) ? 4u : 0u));
 }
 
 /* argv: hooked-guest compiled-groups select-groups no-hooks-guest bad-reply-guest */
@@ -389,16 +451,20 @@ int main(int argc, char **argv) {
         check_calls(camera.groups, 1);
         return 0;
     }
-    if (!strcmp(argv[3], "scene-guest")) {
-        assert(pc_guest_open(argv[1]) == 0 && pc_guest_mod_hooks_compiled() == PC_GUEST_MOD_HOOKS_HIGHHEEL_SCENE);
-        const PcGuestModHooks effect = full_table(PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE |
-            PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE);
-        assert(pc_guest_mod_hooks_groups_valid(effect.groups));
-        assert(pc_guest_select_mod_hooks(effect.groups, &effect) != 0);
-        const PcGuestModHooks scene = full_table(PC_GUEST_MOD_HOOK_CAMERA_OBSERVE |
-                                                 PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE);
-        assert(pc_guest_select_mod_hooks(scene.groups, &scene) == 0);
-        check_calls(scene.groups, 1);
+    if (!strcmp(argv[3], "scene-guest") || !strcmp(argv[3], "effect-guest")) {
+        const bool effect_guest = !strcmp(argv[3], "effect-guest");
+        assert(pc_guest_open(argv[1]) == 0 && pc_guest_mod_hooks_compiled() == compiled);
+        const uint32_t effect = PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE |
+            PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE;
+        const uint32_t newer = effect_guest ? PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM |
+            effect | PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE : effect;
+        const PcGuestModHooks unavailable = full_table(newer);
+        assert(pc_guest_mod_hooks_groups_valid(unavailable.groups));
+        assert(pc_guest_select_mod_hooks(unavailable.groups, &unavailable) != 0);
+        const uint32_t scene = PC_GUEST_MOD_HOOK_CAMERA_OBSERVE | PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE;
+        const PcGuestModHooks supported = full_table(effect_guest ? scene | effect : scene);
+        assert(pc_guest_select_mod_hooks(supported.groups, &supported) == 0);
+        check_calls(supported.groups, 1);
         return 0;
     }
 
@@ -415,7 +481,7 @@ int main(int argc, char **argv) {
         !strcmp(argv[3], "safety-host") || !strcmp(argv[3], "save-host") || !strcmp(argv[3], "camera-host") ||
         !strcmp(argv[3], "ece-host") || !strcmp(argv[3], "fresh-host") ||
         !strcmp(argv[3], "cull-host") || !strcmp(argv[3], "nose-host") || !strcmp(argv[3], "heel-host") ||
-        !strcmp(argv[3], "scene-host")) {
+        !strcmp(argv[3], "scene-host") || !strcmp(argv[3], "effect-host")) {
         const uint32_t bytes = !strcmp(argv[3], "original-host") ? PC_GUEST_MOD_HOOKS_ORIGINAL_BYTES
             : !strcmp(argv[3], "observer-host") ? PC_GUEST_MOD_HOOKS_OBSERVED_BYTES
             : !strcmp(argv[3], "safety-host") ? PC_GUEST_MOD_HOOKS_SAFETY_BYTES
@@ -425,7 +491,9 @@ int main(int argc, char **argv) {
             : !strcmp(argv[3], "fresh-host") ? PC_GUEST_MOD_HOOKS_FRESH_LOAD_BYTES
             : !strcmp(argv[3], "cull-host") ? PC_GUEST_MOD_HOOKS_CAMERA_CULL_BYTES
             : !strcmp(argv[3], "nose-host") ? PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES
-            : !strcmp(argv[3], "heel-host") ? PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX_BYTES : PC_GUEST_MOD_HOOKS_HIGHHEEL_SCENE_BYTES;
+            : !strcmp(argv[3], "heel-host") ? PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX_BYTES
+            : !strcmp(argv[3], "scene-host") ? PC_GUEST_MOD_HOOKS_HIGHHEEL_SCENE_BYTES
+            : PC_GUEST_MOD_HOOKS_HIGHHEEL_EFFECT_BYTES;
         const uint32_t supported = pc_guest_mod_hooks_groups_for_bytes(bytes);
         const PcGuestModHooksGuest *reply = bind(PC_GUEST_MOD_HOOKS_ABI, bytes);
         assert(reply && reply->table_bytes == bytes);
@@ -433,7 +501,10 @@ int main(int argc, char **argv) {
         PcGuestModHooks table = full_table(PC_GUEST_MOD_HOOK_CAMERA_OBSERVE);
         assert(reply->select(&table) != 0); /* The agreed size is mandatory. */
         table.bytes = bytes;
-        table.groups |= supported & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE ? PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE |
+        table.groups |= supported & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE
+            ? PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM | PC_GUEST_MOD_HOOK_HIGHHEEL_TRANSFORM_REQUIRED |
+              PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE
+            : supported & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE ? PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE |
                 PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE
             : supported & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE ? PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE
             : supported & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE ? PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE
@@ -445,6 +516,9 @@ int main(int argc, char **argv) {
         table.groups = PC_GUEST_MOD_HOOK_CAMERA_OBSERVE;
         if (supported & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE)
             table.groups |= PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE;
+        if (supported & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE)
+            table.groups |= PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE |
+                            PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE;
         assert(reply->select(&table) == 0);
         assert(exercise(expected_seen(table.groups)) == expected_seen(table.groups));
         check_calls(table.groups, 1);
@@ -472,7 +546,7 @@ int main(int argc, char **argv) {
         PcGuestModHooks other = full_table(absent);
         assert(pc_guest_select_mod_hooks(absent, &other) != 0);
     }
-    const uint32_t unknown_group = 262144u;
+    const uint32_t unknown_group = 524288u;
     PcGuestModHooks unknown = full_table(unknown_group);
     assert(pc_guest_select_mod_hooks(unknown_group, &unknown) != 0);
     PcGuestModHooks world_only = full_table(PC_GUEST_MOD_HOOK_FUZ_WORLD);
@@ -487,6 +561,15 @@ int main(int argc, char **argv) {
     PcGuestModHooks effect_without_vm = full_table(PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE | PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE);
     assert(!pc_guest_mod_hooks_groups_valid(effect_without_vm.groups));
     assert(pc_guest_select_mod_hooks(effect_without_vm.groups, &effect_without_vm) != 0);
+    const uint32_t prerequisites = PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE;
+    const uint32_t transform = prerequisites | PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM |
+                               PC_GUEST_MOD_HOOK_HIGHHEEL_TRANSFORM_REQUIRED;
+    PcGuestModHooks missing_scene = full_table(transform & ~PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE);
+    assert(!pc_guest_mod_hooks_groups_valid(missing_scene.groups));
+    assert(pc_guest_select_mod_hooks(missing_scene.groups, &missing_scene) != 0);
+    PcGuestModHooks missing_effect = full_table(transform & ~PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE);
+    assert(!pc_guest_mod_hooks_groups_valid(missing_effect.groups));
+    assert(pc_guest_select_mod_hooks(missing_effect.groups, &missing_effect) != 0);
     if (choice) {
         assert(pc_guest_select_mod_hooks(choice, NULL) != 0);
         PcGuestModHooks mismatch = full_table(choice);
@@ -540,6 +623,11 @@ int main(int argc, char **argv) {
             wrong.highheel_effect.phase = NULL;
             assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
         }
+        if (choice & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) {
+            wrong = table;
+            wrong.highheel_transform.local_z = NULL;
+            assert(pc_guest_select_mod_hooks(choice, &wrong) != 0);
+        }
     } else {
         PcGuestModHooks nonempty = full_table(PC_GUEST_MOD_HOOK_FUZ_MENU);
         assert(pc_guest_select_mod_hooks(0, &nonempty) != 0);
@@ -564,6 +652,7 @@ int main(int argc, char **argv) {
     table.highheel_scene.notify = NULL;
     table.highheel_effect.plugins_ready = NULL;
     table.highheel_effect.phase = NULL;
+    table.highheel_transform.local_z = NULL;
     assert(exercise(expected_seen(choice)) == expected_seen(choice));
     check_calls(choice, 1);
 

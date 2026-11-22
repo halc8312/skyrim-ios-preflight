@@ -44,7 +44,8 @@ enum {
     PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE = 16384u,
     PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE = 32768u,
     PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE = 65536u,
-    PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE = 131072u
+    PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE = 131072u,
+    PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM = 262144u
 };
 #define PC_GUEST_MOD_HOOKS_ORIGINAL (PC_GUEST_MOD_HOOK_FUZ_MENU | PC_GUEST_MOD_HOOK_FUZ_WORLD | \
     PC_GUEST_MOD_HOOK_VM_LIFECYCLE | PC_GUEST_MOD_HOOK_CHARGEN_PRECACHE | PC_GUEST_MOD_HOOK_CHARGEN_SLIDER | \
@@ -60,7 +61,10 @@ enum {
 #define PC_GUEST_MOD_HOOKS_ECE_NOSE (PC_GUEST_MOD_HOOKS_CAMERA_CULL | PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE)
 #define PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX (PC_GUEST_MOD_HOOKS_ECE_NOSE | PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE)
 #define PC_GUEST_MOD_HOOKS_HIGHHEEL_SCENE (PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX | PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE)
-#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOKS_HIGHHEEL_SCENE | PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE)
+#define PC_GUEST_MOD_HOOKS_HIGHHEEL_EFFECT (PC_GUEST_MOD_HOOKS_HIGHHEEL_SCENE | PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE)
+#define PC_GUEST_MOD_HOOKS_DEFINED (PC_GUEST_MOD_HOOKS_HIGHHEEL_EFFECT | PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM)
+#define PC_GUEST_MOD_HOOK_HIGHHEEL_TRANSFORM_REQUIRED (PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE | \
+    PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE)
 #define PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED (PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE | PC_GUEST_MOD_HOOK_VM_LIFECYCLE)
 
 /* Function types come from the reviewed experiment headers. */
@@ -198,6 +202,12 @@ typedef struct {
     void (*phase)(const struct CPU *, uint32_t effect, uint32_t arguments, uint32_t site);
 } PcGuestModHighHeelEffectHooks;
 
+typedef struct {
+    /* Reads a borrowed node at the original parent composition. On success
+     * only the guest's temporary transform gets the returned binary32 Z. */
+    bool (*local_z)(const struct CPU *, uint32_t node, uint32_t parent, uint32_t local_z, uint32_t *adjusted_z);
+} PcGuestModHighHeelTransformHooks;
+
 /* Host implementations. groups names the selection; only the tables of the
  * selected groups are read, and each of their entries must be set. */
 typedef struct {
@@ -220,6 +230,7 @@ typedef struct {
     PcGuestModHighHeelPexHooks highheel_pex;
     PcGuestModHighHeelSceneHooks highheel_scene;
     PcGuestModHighHeelEffectHooks highheel_effect;
+    PcGuestModHighHeelTransformHooks highheel_transform;
 } PcGuestModHooks;
 
 /* Hosts and guests built with the original v1 table still use this prefix. */
@@ -234,6 +245,7 @@ typedef struct {
 #define PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES offsetof(PcGuestModHooks, highheel_pex)
 #define PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX_BYTES offsetof(PcGuestModHooks, highheel_scene)
 #define PC_GUEST_MOD_HOOKS_HIGHHEEL_SCENE_BYTES offsetof(PcGuestModHooks, highheel_effect)
+#define PC_GUEST_MOD_HOOKS_HIGHHEEL_EFFECT_BYTES offsetof(PcGuestModHooks, highheel_transform)
 
 /* Guest reply. select copies the selected tables and succeeds at most once. */
 typedef struct {
@@ -253,11 +265,14 @@ static inline int pc_guest_mod_hooks_groups_valid(uint32_t groups) {
             (groups & PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED) == PC_GUEST_MOD_HOOK_FRESH_LOAD_REQUIRED)
         && (!(groups & PC_GUEST_MOD_HOOK_ECE_NOSE_OBSERVE) || (groups & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE))
         && (!(groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE) || (groups & PC_GUEST_MOD_HOOK_VM_LIFECYCLE))
-        && (!(groups & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE) || (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE));
+        && (!(groups & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE) || (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_PEX_OBSERVE))
+        && (!(groups & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) ||
+            (groups & PC_GUEST_MOD_HOOK_HIGHHEEL_TRANSFORM_REQUIRED) == PC_GUEST_MOD_HOOK_HIGHHEEL_TRANSFORM_REQUIRED);
 }
 
 static inline uint32_t pc_guest_mod_hooks_groups_for_bytes(uint32_t bytes) {
     if (bytes == sizeof(PcGuestModHooks)) return PC_GUEST_MOD_HOOKS_DEFINED;
+    if (bytes == PC_GUEST_MOD_HOOKS_HIGHHEEL_EFFECT_BYTES) return PC_GUEST_MOD_HOOKS_HIGHHEEL_EFFECT;
     if (bytes == PC_GUEST_MOD_HOOKS_HIGHHEEL_SCENE_BYTES) return PC_GUEST_MOD_HOOKS_HIGHHEEL_SCENE;
     if (bytes == PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX_BYTES) return PC_GUEST_MOD_HOOKS_HIGHHEEL_PEX;
     if (bytes == PC_GUEST_MOD_HOOKS_ECE_NOSE_BYTES) return PC_GUEST_MOD_HOOKS_ECE_NOSE;
@@ -305,6 +320,7 @@ static inline int pc_guest_mod_hooks_table_valid(const PcGuestModHooks *t) {
     if ((g & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) && !t->highheel_scene.notify) return 0;
     if ((g & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE) &&
         (!t->highheel_effect.plugins_ready || !t->highheel_effect.phase)) return 0;
+    if ((g & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) && !t->highheel_transform.local_z) return 0;
     return 1;
 }
 
@@ -333,6 +349,9 @@ bool skyrim_highheel_pex_begin(const struct CPU *, uint32_t name, uint32_t loade
 uint64_t skyrim_highheel_pex_end(const struct CPU *, bool parsed);
 void skyrim_highheel_pex_linked(const struct CPU *, uint64_t epoch, bool linked);
 extern unsigned skyrim_highheel_scene_guest_state;
+extern bool skyrim_highheel_transform_guest_selected;
+bool skyrim_highheel_transform_guest_local_z(const struct CPU *, uint32_t node, uint32_t parent,
+                                           uint32_t local_z, uint32_t *adjusted_z);
 void skyrim_highheel_scene_guest_frame_begin(const struct CPU *, uint32_t fs);
 void skyrim_highheel_scene_guest_frame_wait(const struct CPU *, uint32_t fs, uint32_t wait_result);
 void skyrim_highheel_scene_guest_frame_end(const struct CPU *);

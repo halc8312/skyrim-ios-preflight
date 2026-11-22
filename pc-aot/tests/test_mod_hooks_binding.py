@@ -52,7 +52,8 @@ class GroupRules(unittest.TestCase):
                             ("LOADING_MENU_OBSERVE", 128), ("INVENTORY_FIT", 256), ("SAFETY_LOAD", 512),
                             ("CAMERA_RENDER_OBSERVE", 1024), ("ECE_TRI_OBSERVE", 2048), ("FRESH_LOAD", 4096),
                             ("CAMERA_CULL_OBSERVE", 8192), ("ECE_NOSE_OBSERVE", 16384), ("HIGHHEEL_PEX_OBSERVE", 32768),
-                            ("HIGHHEEL_SCENE_OBSERVE", 65536), ("HIGHHEEL_EFFECT_OBSERVE", 131072)):
+                            ("HIGHHEEL_SCENE_OBSERVE", 65536), ("HIGHHEEL_EFFECT_OBSERVE", 131072),
+                            ("HIGHHEEL_LOCAL_TRANSFORM", 262144)):
             self.assertIn(f"PC_GUEST_MOD_HOOK_{name} = {value}u", text)
         self.assertIn('"skyrim_guest_bind_mod_hooks_v1"', text)
 
@@ -73,7 +74,7 @@ class NativeBinding(unittest.TestCase):
                      "-DMOD_FIXTURE_GUEST", FIXTURE, ABI / "pc_guest_library.c", ABI / "pc_guest_skse_library.c"]
             guests = {}
             for groups in (15, 3, 8, 4, 16, 32, 64, 128, 256, 640, 1024, 2048, 4095, 4164, 8191, 8192,
-                           16383, 18432, 32767, 32772, 65535, 65536, 131071, 163844, 262143):
+                           16383, 18432, 32767, 32772, 65535, 65536, 131071, 163844, 262143, 491524, 524287):
                 guests[groups] = stage / f"guest-{groups}"
                 subprocess.run([*guest, ABI / "pc_guest_mod_hooks_library.c",
                                 f"-DPC_GUEST_MOD_HOOKS_COMPILED={groups}u", "-o", guests[groups]], check=True)
@@ -87,8 +88,10 @@ class NativeBinding(unittest.TestCase):
             subprocess.run([*guest, "-DMOD_FIXTURE_NO_HOOKS", "-DMOD_FIXTURE_PEX_TABLE", "-o", pex], check=True)
             scene = stage / "guest-scene-table"
             subprocess.run([*guest, "-DMOD_FIXTURE_NO_HOOKS", "-DMOD_FIXTURE_SCENE_TABLE", "-o", scene], check=True)
+            effect = stage / "guest-effect-table"
+            subprocess.run([*guest, "-DMOD_FIXTURE_NO_HOOKS", "-DMOD_FIXTURE_EFFECT_TABLE", "-o", effect], check=True)
             # Unknown groups and dependencies that aren't built are rejected.
-            for groups in (512, 4096, 16384, 32768, 131072, 131076, 163840, 262144, 2):
+            for groups in (512, 4096, 16384, 32768, 131072, 131076, 163840, 262144, 327680, 425988, 524288, 2):
                 with self.subTest(compiled=groups):
                     rejected = subprocess.run([*guest, ABI / "pc_guest_mod_hooks_library.c",
                                                f"-DPC_GUEST_MOD_HOOKS_COMPILED={groups}u",
@@ -107,7 +110,8 @@ class NativeBinding(unittest.TestCase):
                                      (18432, 0), (18432, 2048), (18432, 18432), (32767, 32767),
                                      (32772, 0), (32772, 32772), (65535, 65535),
                                      (65536, 0), (65536, 65536), (131071, 131071),
-                                     (163844, 0), (163844, 32772), (163844, 163844), (262143, 262143)):
+                                     (163844, 0), (163844, 32772), (163844, 163844), (262143, 262143),
+                                     (491524, 0), (491524, 229380), (491524, 491524), (524287, 524287)):
                 with self.subTest(compiled=compiled, choice=choice):
                     run = subprocess.run([host, guests[compiled], str(compiled), str(choice), plain, bad],
                                          capture_output=True, text=True)
@@ -118,14 +122,15 @@ class NativeBinding(unittest.TestCase):
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertNotIn("MOD hook groups", run.stderr)
             for binary, groups, mode in ((original, 16, "original-guest"), (pex, 16, "original-guest"),
-                                         (scene, 131071, "scene-guest"),
+                                         (scene, 131071, "scene-guest"), (effect, 262143, "effect-guest"),
                                          (guests[4095], 4095, "original-host"),
                                          (guests[4095], 4095, "observer-host"), (guests[4095], 4095, "safety-host"),
                                          (guests[4095], 4095, "save-host"), (guests[4095], 4095, "camera-host"),
                                          (guests[8191], 8191, "ece-host"), (guests[16383], 16383, "fresh-host"),
                                          (guests[32767], 32767, "cull-host"), (guests[65535], 65535, "nose-host"),
                                          (guests[131071], 131071, "heel-host"),
-                                         (guests[262143], 262143, "scene-host")):
+                                         (guests[262143], 262143, "scene-host"),
+                                         (guests[524287], 524287, "effect-host")):
                 with self.subTest(mode=mode):
                     run = subprocess.run([host, binary, str(groups), mode, plain, bad], capture_output=True, text=True)
                     self.assertEqual(run.returncode, 0, run.stderr)
