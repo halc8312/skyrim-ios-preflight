@@ -124,7 +124,8 @@ class NamedOpenedLoadTests(OpenedLoadHarness):
         cls.addClassCleanup(tmp.cleanup)
         implementation = Path(tmp.name) / "clone.c"
         implementation.write_text(sn.NAMED_FIXTURE)
-        cls.extra_sources = (*br.BridgeHarness.extra_sources, "-DSKSE_TEST_NAMED_CLONE", implementation)
+        cls.extra_sources = (*br.BridgeHarness.extra_sources, gen.SOURCE / "copy_pair.c",
+                             "-DSKSE_TEST_NAMED_CLONE", implementation)
         super().setUpClass()
 
     def open_readonly(self, directory):
@@ -135,6 +136,81 @@ class NamedOpenedLoadTests(OpenedLoadHarness):
         if reader:
             self.addCleanup(self.api.close, reader)
         return status, detail.value, reader
+
+    def test_named_copy_is_consumed_by_a_fresh_profile_and_restores_its_paired_records(self):
+        donor_private = self.root / "donor-private"
+        donor_private.mkdir(mode=0o700)
+        donor_saves = self.root / "donor-saves"
+        donor_saves.mkdir(mode=0o700)
+        donor_file = donor_saves / self.ess.name
+        donor_file.write_bytes(self.original)
+        leaf = os.fsencode(donor_file.name)
+        donor_scope = br.scope(launch=212, profile=2)
+        status, detail, donor = self.api.open_at(donor_private, donor_scope)
+        self.assertEqual((status, detail), (br.OK, gen.OK))
+        self.addCleanup(self.api.close, donor)
+        status, records = self.native.store(donor_private / "text-en-voice-en")
+        self.assertEqual(status, gen.OK)
+        self.addCleanup(self.native.close, records)
+
+        root = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, root)
+        source_dir = os.open(donor_saves, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, source_dir)
+        detail = C.c_int(-1)
+        requested = br.Event()
+        expected = gen.image(gen.section(0, [(7, 1, b"catalogue")]), gen.section(gen.UID, [(23, 1, b"setting")]))
+        with donor_file.open("rb") as source:
+            status = self.api.bind_named_ess(donor, 1, source_dir, leaf, source.fileno(), C.byref(requested),
+                                             C.byref(detail))
+            self.assertEqual((status, detail.value), (br.OK, gen.OK))
+            status, stage = self.native.stage(requested.saved, expected)
+            self.assertEqual(status, gen.OK)
+            self.addCleanup(self.native.discard, stage)
+            generation = gen.Generation(requested.saved, source.fileno())
+            self.assertEqual(self.native.commit(records, stage, C.byref(generation)), gen.OK)
+
+        status, reason, donor_reader = self.api.open_at(donor_private, donor_scope, readonly=True)
+        self.assertEqual((status, reason), (br.OK, gen.OK))
+        self.addCleanup(self.api.close, donor_reader)
+        callback = C.CFUNCTYPE(C.c_int, br.PTR, C.c_int, C.c_int, C.c_char_p, C.c_int)
+        prepared = []
+
+        @callback
+        def prepare(_, directory, original, name, staged):
+            result = self.api.prepare_copied_ess(donor_reader, directory, original, self.bridge, staged, name,
+                                                 C.byref(detail))
+            prepared.append((result, detail.value))
+            return int(result != br.OK)
+
+        copy = self.api.lib.skse_copy_named_save_prepared
+        copy.argtypes = [C.c_int, C.c_char_p, C.c_char_p, C.c_char_p, callback, br.PTR, br.P(C.c_int)]
+        copy.restype = C.c_int
+        side = C.c_int(-1)
+        result = copy(root, b"donor-saves", b"copy-saves", leaf, prepare, None, C.byref(side))
+        self.assertEqual((result, side.value, prepared), (0, 0, [(br.OK, gen.OK)]))
+
+        status, reason, destination_reader = self.open_readonly(self.private)
+        self.assertEqual((status, reason), (br.OK, gen.OK))
+        destination_dir = os.open(self.root / "copy-saves", os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, destination_dir)
+        load = self.api.lib.skse_bridge_prepare_named_load
+        load.argtypes = [br.PTR, C.c_uint32, C.c_int, C.c_char_p, C.c_int, C.c_int, br.P(br.Event),
+                         br.P(br.PTR), br.P(C.c_int), br.P(C.c_int)]
+        load.restype = C.c_int
+        named, token, view = br.Event(), br.PTR(), C.c_int(-1)
+        self.addCleanup(lambda: self.discard(token) if token else None)
+        with (self.root / "copy-saves" / donor_file.name).open("rb") as source:
+            result = load(destination_reader, 1, destination_dir, leaf, source.fileno(), self.scratch_fd,
+                          C.byref(named), C.byref(token), C.byref(view), C.byref(detail))
+        self.assertEqual((result, detail.value), (br.OK, gen.OK))
+        self.addCleanup(os.close, view.value)
+        action = self.action(site=br.LOAD, fd=view.value)
+        action.saved = named.saved
+        observed = self.observe(action)
+        self.assertEqual(observed.requested.ticket, named.ticket)
+        self.assertEqual(self.complete(token, observed), (br.OK, gen.OK, expected))
+        self.assertEqual(donor_file.read_bytes(), self.original)
 
     def test_empty_readonly_store_only_reports_missing_after_authenticated_read(self):
         private = self.root / "readonly-empty"
