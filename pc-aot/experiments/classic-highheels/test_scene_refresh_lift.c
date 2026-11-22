@@ -65,6 +65,14 @@ static bool read_node(void *actor, const char *name, ClassicHeelNode *out)
     return true;
 }
 
+static void refresh_node(uint32_t node)
+{
+    CPU cpu = {.r = {0, node, 0, 0, STACK}};
+    M32(STACK + 4) = CONTEXT;
+    f_AB53E0(&cpu);
+    assert(cpu.r[4] == STACK + 8);
+}
+
 static bool commit_node(void *actor, const ClassicHeelNode *observed, float local_z)
 {
     Scene *scene = actor;
@@ -84,10 +92,7 @@ static bool commit_node(void *actor, const ClassicHeelNode *observed, float loca
     if (M32(node + 0x1c) || M32(M32(node) + 0xb4) != REFRESH)
         return false;
     MF32(node + 0x4c) = local_z;
-    CPU cpu = {.r = {0, node, 0, 0, STACK}};
-    M32(STACK + 4) = CONTEXT;
-    f_AB53E0(&cpu);
-    assert(cpu.r[4] == STACK + 8);
+    refresh_node(node);
     ++scene->refreshes;
     return true;
 }
@@ -158,6 +163,60 @@ static void test_pose_on_named_nodes(void)
     assert(MF32(NPC + 0x4c) == 10.0f && MF32(NPC + 0x80) == 320.0f && scene.refreshes == 2);
 }
 
+#ifdef SKYRIM_TEST_HEEL_LOCAL_ARGUMENT
+static float local_offset;
+static unsigned accepted;
+
+bool fixture_local_z(const CPU *cpu, uint32_t node, uint32_t local_z, uint32_t *out)
+{
+    assert(cpu && out);
+    if (node != NPC || local_offset == 0.0f) return false;
+    float before;
+    memcpy(&before, &local_z, sizeof before);
+    const float proposed = before + local_offset;
+    if (!isfinite(proposed)) return false;
+    memcpy(out, &proposed, sizeof proposed);
+    ++accepted;
+    return true;
+}
+
+static void test_local_transform_argument(void)
+{
+    make_scene(ROOT, NPC, CHILDREN, 10.0f);
+    make_scene(OTHER_ROOT, OTHER_NPC, OTHER_CHILDREN, 20.0f);
+    /* A rotated, scaled parent makes a local Z change affect world X. */
+    MF32(ROOT + 0x54) = MF32(ROOT + 0x74) = 0.0f;
+    MF32(ROOT + 0x5c) = 1.0f;
+    MF32(ROOT + 0x6c) = -1.0f;
+    for (unsigned i = 0; i < 2; ++i) {
+        const float offset = i ? -2.5f : 4.25f;
+        MF32(NPC + 0x4c) = 10.0f + offset;
+        refresh_node(NPC);
+        uint8_t expected[0x34], local[0x34];
+        memcpy(expected, MEM + NPC + 0x54, sizeof expected);
+        assert(MF32(NPC + 0x78) == 100.0f + 2.0f * (10.0f + offset));
+        MF32(NPC + 0x4c) = 10.0f;
+        memcpy(local, MEM + NPC + 0x20, sizeof local);
+        local_offset = offset;
+        for (unsigned pass = 0; pass < 2; ++pass) {
+            refresh_node(NPC);
+            assert(!memcmp(expected, MEM + NPC + 0x54, sizeof expected));
+            assert(!memcmp(local, MEM + NPC + 0x20, sizeof local));
+        }
+        local_offset = 0.0f;
+        refresh_node(NPC);
+        assert(MF32(NPC + 0x78) == 120.0f);
+    }
+    assert(accepted == 4);
+    local_offset = 17.0f;
+    refresh_node(OTHER_NPC);
+    assert(MF32(OTHER_NPC + 0x80) == 340.0f && accepted == 4);
+    M32(NPC + 0x98) = 0x200; /* Stock parent-copy branch. */
+    refresh_node(NPC);
+    assert(!memcmp(MEM + ROOT + 0x54, MEM + NPC + 0x54, 0x34) && accepted == 4);
+}
+#endif
+
 int main(void)
 {
     gm_space space = {0};
@@ -192,6 +251,9 @@ int main(void)
     assert(classic_heel_set_height(&height, 1.0f, &scene, read_node, commit_node) == CLASSIC_HEEL_NODE_UNAVAILABLE);
     assert(MF32(OTHER_NPC + 0x4c) == 20.0f && scene.refreshes == 5);
     test_pose_on_named_nodes();
+#ifdef SKYRIM_TEST_HEEL_LOCAL_ARGUMENT
+    test_local_transform_argument();
+#endif
     assert(gm_release(&space, NULL));
     puts("Classic scene recomposes owned local height and undo in the authored NiNode hierarchy");
     return 0;

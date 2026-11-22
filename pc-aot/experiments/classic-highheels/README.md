@@ -416,3 +416,30 @@ world data. The normal composition entry `f_AB5370` uses local Z only
 when the parent-copy flag is clear and the auxiliary branch is bypassed.
 Live activation still requires evidence of receiver ownership and
 serialization and a check for stock local-Z resets between updates.
+
+The hosted composition fixture also exercises an alternative to
+persisting a value on the node. In the normal parent composition
+branch it passes a private stack copy of the local transform to the
+unchanged stock transform routine. Only the copy's Z is adjusted. The
+test compares every byte of the resulting world transform with the
+stock result for a node whose local Z was changed directly. Positive
+and negative offsets match with a rotated, scaled parent. Repeat
+updates preserve the original local transform. Clearing the offset on
+the next update restores the baseline, and another node and the stock
+parent-copy branch keep their original behavior.
+
+This still requires a current actor and live node at each affected
+update, including stock task refreshes. Local-transform readers keep
+seeing the animation's baseline, so compatibility with consumers of
+the local value must be evaluated separately from world rendering.
+On the ordinary scene update, `f_AAD9A0` can run attached controllers
+before composition. The stock transform controller `f_A80CB0` writes
+a fresh local translation from its interpolator. Opcode 7 invokes
+the same downward refresh with update flags zero and skips that
+controller pass. A node's identity by itself therefore cannot prove
+that its local translation has retained an earlier offset.
+
+The owned HighHeels DLL samples the ActorState word at actor
+`+0x68`. Bit `0x400` denotes swimming for its height calculation.
+Its mode-1 smoothing check uses bit `0x20` of that same word.
+These values need a fresh read from the actor entering the update.

@@ -175,6 +175,14 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             extra_sources=(HERE / "highheel_height.c",),
         )
 
+    def test_reviewed_scene_composes_a_temporary_local_height(self):
+        self.run_reviewed_fixture(
+            stage_scene_refresh, "test_scene_refresh_lift.c",
+            "Classic scene recomposes owned local height and undo in the authored NiNode hierarchy",
+            extra_sources=(HERE / "highheel_height.c",), extra_flags=("-DSKYRIM_TEST_HEEL_LOCAL_ARGUMENT",),
+            generate=stage_scene_refresh.private_composition_fixture,
+        )
+
     def test_reviewed_third_person_scene_witness_follows_original_edges(self):
         self.run_reviewed_fixture(
             stage_scene_witness, "test_scene_witness_lift.c",
@@ -289,7 +297,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
 
 
     def run_reviewed_fixture(self, stage, test, expected_output, *, extra_sources=(), extra_flags=(),
-                             runs=(((), None),)):
+                             runs=(((), None),), generate=None):
         supplied_generation = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
         cc = shutil.which(os.environ.get("CC", "cc"))
         if not (supplied_generation and cc and os.name == "posix"):
@@ -318,7 +326,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="classic-highheel-queue-", dir=private) as directory:
             scratch = Path(directory)
             staged = scratch / "lifted.c"
-            staged.write_bytes(stage.private_fixture(*originals))
+            staged.write_bytes((generate or stage.private_fixture)(*originals))
             binary = scratch / "classic_fixture"
             subprocess.run(
                 [cc, *flags, *extra_flags, "-isystem", generation / "gen", "-isystem", runtime, "-I", native,

@@ -26,3 +26,33 @@ def private_fixture(*units):
         for unit, (_, addresses) in zip(units, SCENE_UNITS)
         for address in addresses
     )
+
+
+def private_composition_fixture(*units):
+    body = private_fixture(*units)
+    native = function(units[1], 0xAB5370)
+    args = (b"L_AB5391:\n"
+            b"    edx = (uint32_t)((uint32_t)(esi + 0x20u));\n"
+            b"    { uint32_t v_ = edx; esp -= 4; M32(esp) = v_; }\n"
+            b"    ecx = (uint32_t)((uint32_t)(esp + 0xCu));\n")
+    ret = b"    esp -= 4; M32(esp) = 0xAB53A2u; SPILL(); f_4EC9C0(c); RELOAD();\n"
+    if native.count(args) != 1 or native.count(ret) != 1 or body.count(native) != 1:
+        raise ValueError("Expected the exact local transform composition")
+    scratch = b"""L_AB5391:
+    ;
+    const uint32_t stock_sp = esp;
+    uint32_t z;
+    edx = (uint32_t)(esi + 0x20u);
+    if (fixture_local_z(c, esi, M32(edx + 0x2cu), &z)) {
+        esp -= 0x34u;
+        for (uint32_t offset = 0; offset < 0x34u; offset += 4u)
+            M32(esp + offset) = M32(edx + offset);
+        M32(esp + 0x2cu) = z;
+        edx = esp;
+    }
+    { uint32_t v_ = edx; esp -= 4; M32(esp) = v_; }
+    ecx = (uint32_t)(stock_sp + 8u);
+"""
+    composed = native.replace(args, scratch).replace(ret, ret + b"    esp = stock_sp;\n")
+    declaration = b"bool fixture_local_z(const CPU *, uint32_t, uint32_t, uint32_t *);\n"
+    return b"#include <stdbool.h>\n" + body.replace(native, declaration + composed)
