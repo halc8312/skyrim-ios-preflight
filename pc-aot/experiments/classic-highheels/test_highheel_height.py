@@ -134,6 +134,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
         self.run_reviewed_fixture(
             stage_effect_event, "test_effect_event_lift.c",
             "Classic effect events lend the target and preserve effect identity and magnitude through native dispatch",
+            extra_sources=(HERE / "highheel_effect.c",),
         )
 
     def test_owned_esm_pins_script_effect_identity(self):

@@ -248,6 +248,13 @@ KeepUpdate or StopUpdate calls still needs to match the instance and its
 world and equipment lifetime. Furniture and scheduled updates follow
 their own script paths.
 
+The effect fixture now uses `highheel_effect_sample`, a read-only C reader
+for the retained callback. It accepts the complete expected setting ID
+and checks the event phase and number against the stock publication and
+the live effect. The result contains copied values. A rejected read leaves
+the result untouched. The iPhone host still needs to supply the setting ID
+from the finalized load order and call the reader at the same guest seam.
+
 ### Refresh the same named node after applying or removing the offset
 
 In the exact owned DLL, refresh and undo each resolve the current

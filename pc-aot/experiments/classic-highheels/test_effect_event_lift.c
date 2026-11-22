@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "funcs_exe.h"
 #include "guest_memory.h"
+#include "highheel_effect.h"
 #include "lift_prelude.h"
 
 #include <assert.h>
@@ -33,17 +34,24 @@ static bool producer_mode;
 static uint32_t producer_handle, producer_target;
 static uint32_t call_sites[32];
 static size_t call_count;
-typedef struct {
-    uint32_t form_id, setting_id, number, magnitude, phase;
-} PhaseEvidence;
-static PhaseEvidence producer_evidence;
+static HighHeelEffectSample producer_evidence;
 static unsigned producer_attempts;
+static gm_space space;
 
 void observed_effect_producer(CPU *);
 
 static unsigned refs(uint32_t object)
 {
     return M32(object + 0x18) & 0x3ff;
+}
+
+static bool read_guest(void *alter_number, uint32_t address, void *value, size_t size)
+{
+    const void *bytes = gm_pointer(&space, address, size);
+    if (!bytes) return false;
+    memcpy(value, bytes, size);
+    if (alter_number && address == EFFECT + 0x5c) ((uint8_t *)value)[0] ^= 1u;
+    return true;
 }
 
 void highheels_observe_phase(const CPU *cpu, uint32_t effect, uint32_t source, uint32_t args, uint32_t site)
@@ -58,15 +66,14 @@ void highheels_observe_phase(const CPU *cpu, uint32_t effect, uint32_t source, u
     uint32_t actor = M32(M32(args + 4));
     assert(actor == producer_target && (!actor || refs(actor) == 2));
     ++producer_attempts;
-    if (!actor || M8(actor + 0x12) != ACTOR_TYPE) return;
-    uint32_t item = M32(effect + 0x34);
-    if (!item) return;
-    uint32_t setting = M32(item + 0xc);
-    if (!setting || M8(setting + 0x12) != MGEF_TYPE) return;
-    uint32_t id = M32(setting + 0xc), magnitude = M32(effect + 0x50);
-    if (id != HIGH_HEEL_FORM_ID || (magnitude & 0x7f800000u) == 0x7f800000u) return;
-    assert(M32(item) == BASE_MAGNITUDE && magnitude != BASE_MAGNITUDE);
-    producer_evidence = (PhaseEvidence){M32(actor + 0xc), id, EFFECT_NUMBER, magnitude, phase};
+    if (!highheel_effect_sample(read_guest, NULL, effect, args, site, HIGH_HEEL_FORM_ID, &producer_evidence)) return;
+    assert(M32(ITEM) == BASE_MAGNITUDE && producer_evidence.magnitude != BASE_MAGNITUDE);
+    HighHeelEffectSample rejected = {.actor_id = UINT32_MAX};
+    assert(!highheel_effect_sample(read_guest, &rejected, effect, args, site, HIGH_HEEL_FORM_ID, &rejected));
+    assert(!highheel_effect_sample(read_guest, NULL, effect, args, phase ? 0x65710b : 0x656ec5,
+                                  HIGH_HEEL_FORM_ID, &rejected));
+    assert(!highheel_effect_sample(read_guest, NULL, effect, 0xfffffffcu, site, HIGH_HEEL_FORM_ID, &rejected));
+    assert(rejected.actor_id == UINT32_MAX);
 }
 
 static void trace_call(uint32_t site)
@@ -337,7 +344,7 @@ static void run_producer(bool observed, bool start, uint32_t setting, uint32_t m
     producer_handle = handle;
     producer_target = handle == (GENERATION | TARGET_INDEX) ? ACTOR : 0;
     producer_attempts = 0;
-    producer_evidence = (PhaseEvidence){0};
+    producer_evidence = (HighHeelEffectSample){0};
     call_count = 0;
     memset(call_sites, 0, sizeof call_sites);
     notifications = guard_releases = stale_releases = 0;
@@ -417,18 +424,17 @@ static void compare_producers(bool start, uint32_t setting, uint32_t magnitude,
     assert(original.form_id == observed.form_id && original.number == observed.number &&
            original.phase == observed.phase);
     if (accept) {
-        assert(producer_evidence.form_id == ACTOR_FORM_ID);
+        assert(producer_evidence.actor_id == ACTOR_FORM_ID);
         assert(producer_evidence.setting_id == HIGH_HEEL_FORM_ID);
-        assert(producer_evidence.number == EFFECT_NUMBER && producer_evidence.phase == start);
+        assert(producer_evidence.number == EFFECT_NUMBER && producer_evidence.starting == start);
         assert(producer_evidence.magnitude == magnitude);
     } else {
-        assert(!producer_evidence.form_id && !producer_evidence.setting_id && !producer_evidence.number);
+        assert(!producer_evidence.actor_id && !producer_evidence.setting_id && !producer_evidence.number);
     }
 }
 
 int main(void)
 {
-    gm_space space = {0};
     assert(gm_reserve(&space, NULL));
     const uint32_t addresses[] = {STACK, CAS_IMPORT, REF_TABLE, EVENT_SOURCE, EVENT_INIT, SCRIPT_EFFECT_TABLE};
     for (unsigned i = 0; i < sizeof addresses / sizeof addresses[0]; ++i)
