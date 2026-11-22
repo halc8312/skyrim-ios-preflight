@@ -229,6 +229,7 @@ static _Thread_local struct {
     uint32_t fs;
     unsigned receipt;
 } highheel_frame;
+static _Thread_local uint32_t highheel_frame_serial;
 
 void skyrim_highheel_scene_guest_frame_begin(const struct CPU *cpu, uint32_t fs) {
     if (!cpu || !fs) return;
@@ -239,11 +240,16 @@ void skyrim_highheel_scene_guest_frame_begin(const struct CPU *cpu, uint32_t fs)
     highheel_frame.cpu = cpu;
     highheel_frame.fs = fs;
     highheel_frame.receipt = SkyrimHighHeelFrameObserved;
+    if (!++highheel_frame_serial) ++highheel_frame_serial;
 }
 
 unsigned skyrim_highheel_scene_guest_frame_receipt(const struct CPU *cpu, uint32_t fs) {
     if (!cpu || !fs || cpu != highheel_frame.cpu || fs != highheel_frame.fs) return SkyrimHighHeelFrameAbsent;
     return highheel_frame.receipt;
+}
+
+uint32_t skyrim_highheel_scene_guest_frame_serial(const struct CPU *cpu, uint32_t fs) {
+    return skyrim_highheel_scene_guest_frame_receipt(cpu, fs) ? highheel_frame_serial : 0;
 }
 
 void skyrim_highheel_scene_guest_frame_wait(const struct CPU *cpu, uint32_t fs, uint32_t wait_result) {
@@ -272,8 +278,11 @@ bool skyrim_highheel_scene_guest_notify(const struct CPU *cpu, enum SkyrimHighHe
     if (__atomic_load_n(&skyrim_highheel_scene_guest_state, __ATOMIC_RELAXED) != SkyrimHighHeelSceneActive)
         return false;
     const bool accepted = highheel_scene.notify(cpu, site, first, second, third);
-    if (site == SkyrimHighHeelSceneFinish && accepted)
-        __atomic_store_n(&skyrim_highheel_scene_guest_state, 0, __ATOMIC_RELAXED);
+    if (site == SkyrimHighHeelSceneFinish && accepted) {
+        const bool repeat = skyrim_highheel_transform_guest_selected &&
+                            highheel_scene.notify(cpu, SkyrimHighHeelSceneContinue, 0, 0, 0);
+        __atomic_store_n(&skyrim_highheel_scene_guest_state, repeat ? SkyrimHighHeelSceneReady : 0, __ATOMIC_RELAXED);
+    }
     return accepted;
 }
 

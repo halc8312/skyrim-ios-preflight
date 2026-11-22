@@ -100,6 +100,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_CLASSIC_HIGHHEEL_POSE", "^IOS_CLASSIC_HIGHHEEL_POSE schema=1 (?:captured=(?:[1-9]|[12][0-9]|3[01]) valid=0|captured=31 valid=1)$") \
     X("IOS_CLASSIC_HIGHHEEL_FRAME", "^IOS_CLASSIC_HIGHHEEL_FRAME schema=1 phase=[0-2] (?:composed=0 same_z=0|composed=1 same_z=[01])$") \
     X("IOS_CLASSIC_HIGHHEEL_ACTOR", "^IOS_CLASSIC_HIGHHEEL_ACTOR schema=1 (?:current=0 swimming=0 smooth_state=0|current=1 swimming=[01] smooth_state=[01])$") \
+    X("IOS_CLASSIC_HIGHHEEL_TRIAL", "^IOS_CLASSIC_HIGHHEEL_TRIAL schema=1 applied=1$") \
     X("IOS_CAMERA_BODY", "^IOS_CAMERA_BODY schema=1 slot=[089] arms=[0-5] body=[0-5]$") \
     X("IOS_LOADING_MENU", "^IOS_LOADING_MENU opening=[01] ts_ns=[0-9]{1,20}$") \
     X("IOS_CHARGEN_MENU", "^IOS_CHARGEN_MENU opening=[01] ts_ns=[0-9]{1,20}$") \

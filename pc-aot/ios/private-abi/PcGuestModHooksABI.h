@@ -182,7 +182,7 @@ typedef struct {
 enum SkyrimHighHeelSceneNotice {
     SkyrimHighHeelSceneArm, SkyrimHighHeelSceneRoot, SkyrimHighHeelSceneEnter,
     SkyrimHighHeelSceneLeave, SkyrimHighHeelSceneMember, SkyrimHighHeelSceneFinish,
-    SkyrimHighHeelScenePreCompose, SkyrimHighHeelSceneActor
+    SkyrimHighHeelScenePreCompose, SkyrimHighHeelSceneActor, SkyrimHighHeelSceneContinue
 };
 enum { SkyrimHighHeelSceneReady = 1, SkyrimHighHeelSceneActive };
 /* Member's third argument is zero for names-only or this value after world-transform writes. */
@@ -190,7 +190,8 @@ enum { SkyrimHighHeelScenePose = 1 };
 /* Arm's second argument, when its third argument declares frame support. */
 enum { SkyrimHighHeelFrameAbsent, SkyrimHighHeelFrameObserved, SkyrimHighHeelFrameWaited };
 enum { SkyrimHighHeelSceneFrame = 1 };
-/* Actor lends the original receiver and root at the non-preview getter. */
+/* Actor lends the original receiver and root at the non-preview getter, plus
+ * the serial of the same stock frame phase, or zero when unobserved. */
 typedef struct {
     bool (*notify)(const struct CPU *, enum SkyrimHighHeelSceneNotice, uint32_t first, uint32_t second, uint32_t third);
 } PcGuestModHighHeelSceneHooks;
@@ -356,6 +357,7 @@ void skyrim_highheel_scene_guest_frame_begin(const struct CPU *, uint32_t fs);
 void skyrim_highheel_scene_guest_frame_wait(const struct CPU *, uint32_t fs, uint32_t wait_result);
 void skyrim_highheel_scene_guest_frame_end(const struct CPU *);
 unsigned skyrim_highheel_scene_guest_frame_receipt(const struct CPU *, uint32_t fs);
+uint32_t skyrim_highheel_scene_guest_frame_serial(const struct CPU *, uint32_t fs);
 bool skyrim_highheel_scene_guest_notify(const struct CPU *, enum SkyrimHighHeelSceneNotice,
                                          uint32_t first, uint32_t second, uint32_t third);
 extern bool skyrim_highheel_effect_guest_selected;

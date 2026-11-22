@@ -1,6 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "mod_highheel_scene_host.h"
 #include "highheel_height.h"
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+#include "mod_highheel_scene_requests.h"
+#include <math.h>
+#include <stdatomic.h>
+#endif
 
 #include <errno.h>
 #include <stdio.h>
@@ -29,7 +34,42 @@ static _Thread_local struct {
     bool actor_checked, actor_current, swimming, smooth_this_state;
     bool frame_report, composition, same_z;
     bool started, limited;
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+    uint32_t actor, serial, npc, parent;
+    unsigned npc_depth, eligible;
+    bool trial, normal[MAX_DEPTH];
+    float offset;
+    SkyrimVmScope scope;
+#endif
 } scene;
+
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+static atomic_bool trial_enabled, trial_observed, trial_applied;
+static _Thread_local struct {
+    const struct CPU *cpu;
+    SkyrimVmScope scope;
+    uint32_t root, npc, parent, serial;
+    ClassicHeelPose pose;
+    float offset;
+} prior;
+
+static void retire_trial(void *unused, uint64_t epoch) {
+    (void)unused; (void)epoch;
+    skyrim_highheel_scene_reset_requests();
+}
+
+bool skyrim_highheel_scene_prepare_player_trial(void) {
+    if (atomic_load_explicit(&trial_enabled, memory_order_relaxed) ||
+        !skyrim_vm_epoch_subscribe(retire_trial, NULL)) return false;
+    atomic_store_explicit(&trial_enabled, true, memory_order_release);
+    return true;
+}
+
+void skyrim_highheel_scene_cancel_player_trial(void) {
+    atomic_store_explicit(&trial_enabled, false, memory_order_release);
+    skyrim_highheel_scene_reset_requests();
+}
+#endif
 
 static uint32_t word(uint32_t address) {
     uint32_t value;
@@ -81,11 +121,87 @@ static void capture_pose(unsigned index, uint32_t node) {
     scene.captured |= 1u << index;
 }
 
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+static void join_pose_sample(unsigned index) {
+    if (!scene.trial || !scene.npc_depth || scene.depth < scene.npc_depth ||
+        scene.path[scene.npc_depth - 1] != scene.npc ||
+        (index != 0u && scene.depth == scene.npc_depth)) return;
+    for (unsigned depth = scene.npc_depth - 1; depth < scene.depth; ++depth)
+        if (!scene.normal[depth]) return;
+    scene.eligible |= 1u << index;
+}
+
+static void finish_trial(bool limited) {
+    ClassicHeelPose base = scene.pose;
+    base.magnitude = 1.0f;
+    float unused;
+    if (limited || scene.duplicate || scene.captured != POSE_MASK || scene.eligible != POSE_MASK ||
+        !scene.actor_current || !scene.scope.epoch || !scene.serial ||
+        !classic_heel_pose_height(&base, &unused)) {
+        memset(&prior, 0, sizeof prior);
+        return;
+    }
+    prior.cpu = scene.owner;
+    prior.scope = scene.scope;
+    prior.root = scene.root;
+    prior.npc = scene.npc;
+    prior.parent = scene.parent;
+    prior.serial = scene.serial;
+    prior.pose = scene.pose;
+    prior.offset = scene.offset;
+    if (scene.offset != 0.0f && !atomic_exchange_explicit(&trial_applied, true, memory_order_relaxed))
+        fputs("IOS_CLASSIC_HIGHHEEL_TRIAL schema=1 applied=1\n", stderr);
+}
+
+static bool local_z(const struct CPU *cpu, uint32_t node, uint32_t parent, uint32_t baseline, uint32_t *output) {
+    if (!output || !MEM || !cpu || cpu != rt_current_cpu() || cpu != scene.owner ||
+        !scene.trial || !scene.actor_current || scene.limited || !scene.npc_depth ||
+        scene.frame != SkyrimHighHeelFrameWaited || !scene.serial || scene.serial != prior.serial + 1u ||
+        prior.cpu != cpu || prior.root != scene.root || prior.npc != node || scene.npc != node ||
+        prior.parent != parent || scene.parent != parent ||
+        prior.scope.epoch != scene.scope.epoch || prior.scope.registry != scene.scope.registry ||
+        !capture_actor_state(scene.actor, scene.root)) return false;
+    if (node > UINT32_MAX - LOCAL_SCALE - 3 || parent > UINT32_MAX - WORLD_SCALE - 3 ||
+        word(node + LOCAL_Z) != baseline || word(node + 0x18u) != parent) return false;
+    const float scale = scalar(node + LOCAL_SCALE);
+    const float world_scale = scale * scalar(parent + WORLD_SCALE);
+    if (scale != prior.pose.local_scale || world_scale != prior.pose.world_scale) return false;
+
+    ClassicHeelPose pose = prior.pose;
+    pose.swimming = scene.swimming;
+    pose.smooth_this_state = scene.smooth_this_state;
+    pose.smoothing_mode = 1;
+    pose.max_step = 0.1f;
+    pose.previous_height = prior.offset;
+    float offset, original;
+    if (!skyrim_highheel_scene_transform_offset(scene.scope, PLAYER_FORM, &pose, &offset) || offset == 0.0f)
+        return false;
+    memcpy(&original, &baseline, sizeof original);
+    const float adjusted = original + offset;
+    if (!isfinite(adjusted) || adjusted == original) return false;
+    scene.offset = offset;
+    memcpy(output, &adjusted, sizeof adjusted);
+    return true;
+}
+#endif
+
 static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, uint32_t first, uint32_t second,
                    uint32_t third) {
     if (!MEM || !cpu || cpu != rt_current_cpu()) return false;
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+    const bool trial = atomic_load_explicit(&trial_enabled, memory_order_acquire);
+    if (event == SkyrimHighHeelSceneContinue) return trial;
+#endif
     if (event == SkyrimHighHeelSceneArm) {
         if (scene.owner || !node_address(first)) return false;
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+        if (trial && !skyrim_highheel_scene_player_pending() &&
+            atomic_load_explicit(&trial_observed, memory_order_relaxed)) {
+            if (prior.serial) memset(&prior, 0, sizeof prior);
+            return false;
+        }
+        scene.trial = trial && second == SkyrimHighHeelFrameWaited;
+#endif
         for (size_t i = 0; i < sizeof name_slots / sizeof *name_slots; ++i) {
             scene.names[i] = word(STOCK_NAMES + name_slots[i]);
             if (!scene.names[i]) return false;
@@ -101,6 +217,12 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
         if (scene.started || scene.actor_checked) return false;
         scene.actor_checked = true;
         scene.actor_current = capture_actor_state(first, second);
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+        if (scene.trial && scene.actor_current && third && skyrim_vm_scope_current(&scene.scope)) {
+            scene.actor = first;
+            scene.serial = third;
+        }
+#endif
         return scene.actor_current;
     }
     if (event == SkyrimHighHeelSceneRoot) {
@@ -116,6 +238,10 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
         const unsigned expected_depth = scene.kind ? 1 : 0;
         const int saved_errno = errno;
         const bool limited = scene.limited || first != scene.root || scene.depth != expected_depth;
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+        if (trial) finish_trial(limited);
+        if (!trial || !atomic_exchange_explicit(&trial_observed, true, memory_order_relaxed)) {
+#endif
         fprintf(stderr, "IOS_CLASSIC_HIGHHEEL_SCENE schema=1 root=%u names=%u duplicate=%u limited=%u\n",
                 scene.kind, scene.found, scene.duplicate, (unsigned)limited);
         if (scene.captured) {
@@ -135,6 +261,9 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
             fprintf(stderr, "IOS_CLASSIC_HIGHHEEL_ACTOR schema=1 current=%u swimming=%u smooth_state=%u\n",
                     (unsigned)scene.actor_current, (unsigned)scene.swimming, (unsigned)scene.smooth_this_state);
         }
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+        }
+#endif
         memset(&scene, 0, sizeof scene);
         errno = saved_errno;
         return true;
@@ -149,6 +278,9 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
             break;
         }
         ++scene.visits;
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+        scene.normal[scene.depth] = false;
+#endif
         scene.path[scene.depth++] = second;
         return true;
     case SkyrimHighHeelSceneLeave:
@@ -156,11 +288,22 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
         else scene.limited = true;
         break;
     case SkyrimHighHeelScenePreCompose:
-        if (scene.frame_report && first == current && scene.depth > 1 &&
-            second == scene.path[scene.depth - 2] && first <= UINT32_MAX - LOCAL_Z - 3 &&
-            word(first + NAME) == scene.names[0]) {
-            scene.before_node = first;
-            scene.before_z = word(first + LOCAL_Z);
+        if (first == current && scene.depth > 1 && second == scene.path[scene.depth - 2] &&
+            first <= UINT32_MAX - LOCAL_Z - 3) {
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+            scene.normal[scene.depth - 1] = true;
+#endif
+            if (scene.frame_report && word(first + NAME) == scene.names[0]) {
+                scene.before_node = first;
+                scene.before_z = word(first + LOCAL_Z);
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+                if (!scene.npc_depth) {
+                    scene.npc_depth = scene.depth;
+                    scene.npc = first;
+                    scene.parent = second;
+                }
+#endif
+            }
         }
         break;
     case SkyrimHighHeelSceneMember:
@@ -179,6 +322,9 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
             scene.found |= bit;
             if (third == SkyrimHighHeelScenePose && !(scene.duplicate & bit)) {
                 capture_pose((unsigned)i, first);
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+                join_pose_sample((unsigned)i);
+#endif
                 if (!i && first == scene.before_node) {
                     scene.composition = true;
                     scene.same_z = scene.before_z == word(first + LOCAL_Z);
@@ -195,4 +341,8 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
 
 void skyrim_highheel_scene_fill(PcGuestModHooks *table) {
     table->highheel_scene.notify = notify;
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+    if (table->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM)
+        table->highheel_transform.local_z = local_z;
+#endif
 }

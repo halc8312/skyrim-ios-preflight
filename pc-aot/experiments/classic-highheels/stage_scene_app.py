@@ -34,7 +34,7 @@ def getter(body):
     hook = (b"    if (eax && " + READY + b" &&\n"
             b"        M32(esp) == 0x735095u && M32(esp + 4u) == 0x734FCFu &&\n"
             b"        " + NOTIFY + b"Arm, eax, skyrim_highheel_scene_guest_frame_receipt(c, c->fs_base), SkyrimHighHeelSceneFrame))\n"
-            b"        " + NOTIFY + b"Actor, skyrim_heel_actor, eax, 0);\n")
+            b"        " + NOTIFY + b"Actor, skyrim_heel_actor, eax, skyrim_highheel_scene_guest_frame_serial(c, c->fs_base));\n")
     return once(body, native, native + hook)
 
 

@@ -7,7 +7,9 @@
 /* Native callers publish only validated scalars. Requests use the original
  * actor-wide Keep/Stop semantics and replace earlier values for that actor. */
 bool skyrim_highheel_scene_queue_update(void *, const SkyrimHighHeelUpdate *);
+bool skyrim_highheel_scene_queue_player_update(void *, const SkyrimHighHeelUpdate *);
 void skyrim_highheel_scene_reset_requests(void);
+bool skyrim_highheel_scene_player_pending(void);
 
 /* Calculate for a verified scene receiver. The copied pose may include the
  * previous rendered offset for smoothing. Only the current request in the

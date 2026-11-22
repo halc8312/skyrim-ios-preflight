@@ -48,6 +48,10 @@
 #include "mod_highheel_effect_host.h"
 #include "mod_highheel_pex_host.h"
 #include "mod_highheel_scene_host.h"
+#include "probe_asset_file.h"
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+#include "mod_highheel_scene_requests.h"
+#endif
 /* classic_skse_control.h, in the staged skse_system.c */
 void skyrim_classic_control_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t handle);
 #endif
@@ -579,7 +583,21 @@ static bool DigestHighHeelPex(const void *bytes, size_t length, uint8_t output[3
     return CC_SHA256(bytes, (CC_LONG)length, output) != NULL;
 }
 
-static HighHeelIdentityResult PrepareHighHeelObservers(NSString *game, bool wantEffect, bool *effectReady) {
+static bool HighHeelTrialUsesStockSettings(int data) {
+    static const size_t expected_size = 194;
+    uint8_t *bytes = NULL;
+    size_t size = 0;
+    if (skse_probe_asset_read_unique(&data, "SKSE/Plugins/hdtHighHeelNative.ini", expected_size, &bytes, &size))
+        return false;
+    const bool stock = size == expected_size &&
+        [HexDigest([NSData dataWithBytes:bytes length:size])
+            isEqualToString:@"db4e58a6c5b385a4e6cec2777688b818c4b0a00634f933465b09c1b4a5a81f33"];
+    free(bytes);
+    return stock;
+}
+
+static HighHeelIdentityResult PrepareHighHeelObservers(NSString *game, bool wantEffect, bool *effectReady,
+                                                       bool *trialSettingsReady) {
     if (launchPackageIds.count) game = CanonicalSupportPath(game);
     char data[PATH_MAX];
     if (!game || skyrim_plugin_child_path(game.fileSystemRepresentation, "Data", data, sizeof data) != 1)
@@ -596,11 +614,19 @@ static HighHeelIdentityResult PrepareHighHeelObservers(NSString *game, bool want
         if (wantEffect && skyrim_highheel_effect_prepare(fd, DigestHighHeelPex)) {
             skyrim_highheel_pex_observe_class(skyrim_highheel_class_observe);
             *effectReady = true;
+            if (trialSettingsReady) *trialSettingsReady = HighHeelTrialUsesStockSettings(fd);
         }
     }
     close(fd);
     return result;
 }
+
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+static void RetireHighHeelPlayerTrial(void) {
+    if (skyrim_highheel_native_retire()) skyrim_highheel_scene_cancel_player_trial();
+    else fputs("PRIVATE_GUEST HighHeels player trial native retirement failed\n", stderr);
+}
+#endif
 
 /* Select the guest hook groups for the features allowed so far, before the
  * guest starts. Returns the features whose groups were selected. */
@@ -658,17 +684,40 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     const BOOL heelPex = (compiled & heelGroups) == heelGroups;
     const BOOL heelScene = (compiled & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) && skyrim_camera_app_ready();
     const bool heelEffect = (compiled & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE) != 0;
-    if (!launchWithoutMods && !launchPluginListFailed && skyrim_mobile_verbose() && (heelPex || heelScene)) {
+    const bool heelDiagnostics = skyrim_mobile_verbose();
+    bool heelPlayerTrial = false;
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+    const char *heelOption = getenv("SKYRIM_CLASSIC_HIGHHEEL_PLAYER_TRIAL");
+    const bool heelTrialRequested = heelOption && !strcmp(heelOption, "1");
+    const uint32_t heelTrialGroups = heelGroups | PC_GUEST_MOD_HOOK_HIGHHEEL_TRANSFORM_REQUIRED |
+                                    PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM;
+    heelPlayerTrial = heelTrialRequested && pc_guest_classic_skse_active &&
+                      (compiled & heelTrialGroups) == heelTrialGroups;
+#endif
+    if (!launchWithoutMods && !launchPluginListFailed &&
+        (heelPlayerTrial || (heelDiagnostics && (heelPex || heelScene)))) {
         for (NSString *name in skyrim_mobile_loaded_plugins()) {
             if ([name caseInsensitiveCompare:@"hdtHighHeel.esm"] == NSOrderedSame) {
+                uint32_t observers = heelDiagnostics && heelScene ? PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE : 0;
+                bool trialReady = false;
+                bool effectReady = false;
                 if (heelPex) {
-                    bool effectReady = false;
-                    const HighHeelIdentityResult result = PrepareHighHeelObservers(game, heelEffect, &effectReady);
+                    bool stockSettings = false;
+                    const HighHeelIdentityResult result = PrepareHighHeelObservers(
+                        game, heelEffect, &effectReady, heelPlayerTrial ? &stockSettings : NULL);
                     fprintf(stderr, "IOS_CLASSIC_HIGHHEEL_ASSETS schema=1 result=%u\n", (unsigned)result);
-                    if (result == HIGHHEEL_IDENTITY_MATCH) plan->groups |= heelGroups;
-                    if (effectReady) plan->groups |= PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE;
+                    if (result == HIGHHEEL_IDENTITY_MATCH) observers |= heelGroups;
+                    if (effectReady) observers |= PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE;
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+                    if (heelPlayerTrial && effectReady && stockSettings && skyrim_highheel_scene_prepare_player_trial()) {
+                        trialReady = skyrim_highheel_native_prepare(skyrim_highheel_scene_queue_player_update, NULL);
+                        if (trialReady) observers |= heelTrialGroups;
+                        else skyrim_highheel_scene_cancel_player_trial();
+                    }
+#endif
                 }
-                if (heelScene) plan->groups |= PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE;
+                if (heelDiagnostics || trialReady) plan->groups |= observers;
+                else if (effectReady) skyrim_highheel_effect_cancel();
                 break;
             }
         }
@@ -694,7 +743,18 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     if (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_SCENE_OBSERVE) skyrim_highheel_scene_fill(&table);
     if (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE) skyrim_highheel_effect_fill(&table);
     if (plan->groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) skyrim_save_app_fill(&table);
-    if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) return plan->enabled;
+    if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) {
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+        if (heelTrialRequested) {
+            const bool selected = (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) != 0;
+            fprintf(stderr, "PRIVATE_GUEST HighHeels player trial selected=%u\n", (unsigned)selected);
+        }
+#endif
+        return plan->enabled;
+    }
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+    if (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) RetireHighHeelPlayerTrial();
+#endif
     skyrim_highheel_effect_cancel();
     /* Keep the original paths: select nothing. */
     if (pc_guest_select_mod_hooks(0, NULL) != 0) fputs("IOS_MOD_HOOKS selection failed\n", stderr);
@@ -765,6 +825,9 @@ static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady, NSStrin
 
 void skyrim_mods_report_features_at_exit(void) {
 #ifdef SKYRIM_IOS_MOD_HOOKS
+#ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
+    if (pc_guest_mod_hooks_selected() & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) RetireHighHeelPlayerTrial();
+#endif
     skyrim_highheel_effect_cancel();
     if (skyrim_mods_feature_enabled(SKYRIM_FEATURE_FUZ)) skyrim_fuz_app_report(1);
 #endif

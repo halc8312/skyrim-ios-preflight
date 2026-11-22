@@ -3,6 +3,7 @@
 #include "mod_highheel_effect_host.h"
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -10,6 +11,8 @@ static pthread_mutex_t request_lock = PTHREAD_MUTEX_INITIALIZER;
 static SkyrimVmScope request_scope;
 static SkyrimHighHeelUpdate *rows;
 static size_t count, capacity;
+static atomic_bool player_pending;
+enum { PLAYER_FORM = 0x14 };
 
 static size_t actor_index(uint32_t actor) {
     for (size_t i = 0; i < count; ++i)
@@ -22,6 +25,7 @@ static bool queue(const SkyrimHighHeelUpdate *update) {
     if (update->scope.epoch > request_scope.epoch) {
         count = 0;
         request_scope = update->scope;
+        atomic_store_explicit(&player_pending, false, memory_order_relaxed);
     }
     if (update->scope.registry != request_scope.registry) return false;
     size_t index = actor_index(update->actor);
@@ -50,8 +54,18 @@ bool skyrim_highheel_scene_queue_update(void *unused, const SkyrimHighHeelUpdate
         (uint32_t)update->handle != update->actor) return false;
     pthread_mutex_lock(&request_lock);
     const bool queued = queue(update);
+    if (queued && update->actor == PLAYER_FORM)
+        atomic_store_explicit(&player_pending, update->keep, memory_order_release);
     pthread_mutex_unlock(&request_lock);
     return queued;
+}
+
+bool skyrim_highheel_scene_player_pending(void) {
+    return atomic_load_explicit(&player_pending, memory_order_acquire);
+}
+
+bool skyrim_highheel_scene_queue_player_update(void *context, const SkyrimHighHeelUpdate *update) {
+    return update && update->actor == PLAYER_FORM && skyrim_highheel_scene_queue_update(context, update);
 }
 
 void skyrim_highheel_scene_reset_requests(void) {
@@ -60,6 +74,7 @@ void skyrim_highheel_scene_reset_requests(void) {
     rows = NULL;
     count = capacity = 0;
     request_scope = (SkyrimVmScope){0};
+    atomic_store_explicit(&player_pending, false, memory_order_release);
     pthread_mutex_unlock(&request_lock);
 }
 
@@ -99,6 +114,18 @@ static bool publish_offset(void *context) {
     return same;
 }
 
+/* An ended effect cannot rejoin in the same epoch. The effect gate can fail
+ * after a concurrent request was queued, so discard only the same row. */
+static void discard_ended_request(const SkyrimHighHeelUpdate *request) {
+    pthread_mutex_lock(&request_lock);
+    const SkyrimHighHeelUpdate current = snapshot_locked(request->scope, request->actor);
+    if (current.handle == request->handle && current.magnitude == request->magnitude) {
+        rows[actor_index(current.actor)] = rows[--count];
+        if (current.actor == PLAYER_FORM) atomic_store_explicit(&player_pending, false, memory_order_release);
+    }
+    pthread_mutex_unlock(&request_lock);
+}
+
 bool skyrim_highheel_scene_transform_offset(SkyrimVmScope scope, uint32_t actor, const ClassicHeelPose *pose,
                                            float *output) {
     if (!actor || !pose || !output) return false;
@@ -110,6 +137,7 @@ bool skyrim_highheel_scene_transform_offset(SkyrimVmScope scope, uint32_t actor,
     if (!classic_heel_pose_height(&current, &offset.value) || !skyrim_vm_commit_begin(&scope)) return false;
     const bool accepted = skyrim_highheel_effect_commit_if_matches(scope, request.handle, actor, true,
                                                                     request.magnitude, publish_offset, &offset);
+    if (!accepted) discard_ended_request(&request);
     skyrim_vm_commit_end();
     return accepted;
 }

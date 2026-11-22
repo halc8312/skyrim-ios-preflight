@@ -226,6 +226,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             extra_flags=("-I", HERE, "-I", port, "-I", abi, "-I", ROOT / "experiments/fuz-voice",
                          "-I", ROOT / "experiments/skse-cosave",
                          "-DSKYRIM_TEST_SCENE_RUNTIME=1", "-DSKYRIM_TEST_SCENE_TRANSFORM=1",
+                         "-DSKYRIM_IOS_CLASSIC_PAPYRUSUTIL=1",
                          "-DPC_GUEST_MOD_HOOKS_COMPILED=491524u"),
             generate=lambda *units: stage_scene_witness.private_fixture(*units, runtime=True, transform=True),
             runs=((("0",), None), (("4",), None), (("9",), None)),
