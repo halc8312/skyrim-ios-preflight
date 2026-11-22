@@ -25,10 +25,15 @@ def once(body, old, new):
 
 
 def getter(body):
+    entry = b"L_4D52C0:\n"
     native = b"L_4D52EA:\n    eax = (uint32_t)(TL32((uint32_t)(ecx + 0x20u)));\n"
+    # ECX becomes LoadedState before the stock pointer load. Keep the borrowed
+    # receiver only in this C invocation and only use it on the confirmed path.
+    body = once(body, entry, b"    const uint32_t skyrim_heel_actor = ecx;\n" + entry)
     hook = (b"    if (eax && " + READY + b" &&\n"
-            b"        M32(esp) == 0x735095u && M32(esp + 4u) == 0x734FCFu)\n"
-            b"        " + NOTIFY + b"Arm, eax, skyrim_highheel_scene_guest_frame_receipt(c, c->fs_base), SkyrimHighHeelSceneFrame);\n")
+            b"        M32(esp) == 0x735095u && M32(esp + 4u) == 0x734FCFu &&\n"
+            b"        " + NOTIFY + b"Arm, eax, skyrim_highheel_scene_guest_frame_receipt(c, c->fs_base), SkyrimHighHeelSceneFrame))\n"
+            b"        " + NOTIFY + b"Actor, skyrim_heel_actor, eax, 0);\n")
     return once(body, native, native + hook)
 
 

@@ -11,6 +11,8 @@ extern uint8_t *MEM;
 
 enum {
     FIRST_MAPPED = 0x10000, NAME = 8, STOCK_NAMES = 0x12e2fc0,
+    PLAYER_SINGLETON = 0x1b2e8e4, PLAYER_FORM = 0x14, FORM_ID = 0xc, FORM_TYPE = 0x12, CHARACTER = 0x3e,
+    ACTOR_LOADED = 0x44, ACTOR_STATE = 0x68, LOADED_ROOT = 0x20, SWIMMING = 0x400, SMOOTH_STATE = 0x20,
     LOCAL_Z = 0x4c, LOCAL_SCALE = 0x50, WORLD_POSITION = 0x78, WORLD_SCALE = 0x84, POSE_MASK = 31,
     NODE_UPDATE = 0xaad9a0, FLAT_UPDATE = 0xabdf60, MAX_DEPTH = 32, MAX_VISITS = 128
 };
@@ -24,6 +26,7 @@ static _Thread_local struct {
     unsigned depth, visits, kind, found, duplicate, captured;
     uint32_t before_node, before_z;
     unsigned frame;
+    bool actor_checked, actor_current, swimming, smooth_this_state;
     bool frame_report, composition, same_z;
     bool started, limited;
 } scene;
@@ -36,6 +39,19 @@ static uint32_t word(uint32_t address) {
 
 static bool node_address(uint32_t value) {
     return value >= FIRST_MAPPED && !(value & 3) && value <= UINT32_MAX - NAME - 3;
+}
+
+static bool capture_actor_state(uint32_t actor, uint32_t root) {
+    if (root != scene.root || !node_address(actor) || actor > UINT32_MAX - ACTOR_STATE - 3 ||
+        word(PLAYER_SINGLETON) != actor || word(actor + FORM_ID) != PLAYER_FORM ||
+        MEM[actor + FORM_TYPE] != CHARACTER) return false;
+    const uint32_t loaded = word(actor + ACTOR_LOADED);
+    if (!node_address(loaded) || loaded > UINT32_MAX - LOADED_ROOT - 3 ||
+        word(loaded + LOADED_ROOT) != root) return false;
+    const uint32_t flags = word(actor + ACTOR_STATE);
+    scene.swimming = (flags & SWIMMING) != 0;
+    scene.smooth_this_state = (flags & SMOOTH_STATE) != 0;
+    return true;
 }
 
 static unsigned update_kind(uint32_t target) {
@@ -81,6 +97,12 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
         return true;
     }
     if (scene.owner != cpu) return false;
+    if (event == SkyrimHighHeelSceneActor) {
+        if (scene.started || scene.actor_checked) return false;
+        scene.actor_checked = true;
+        scene.actor_current = capture_actor_state(first, second);
+        return scene.actor_current;
+    }
     if (event == SkyrimHighHeelSceneRoot) {
         if (scene.started) return false;
         scene.started = true;
@@ -108,6 +130,10 @@ static bool notify(const struct CPU *cpu, enum SkyrimHighHeelSceneNotice event, 
             const bool composed = !limited && !(scene.duplicate & 1u) && scene.composition;
             fprintf(stderr, "IOS_CLASSIC_HIGHHEEL_FRAME schema=1 phase=%u composed=%u same_z=%u\n",
                     scene.frame, (unsigned)composed, (unsigned)(composed && scene.same_z));
+        }
+        if (scene.actor_checked) {
+            fprintf(stderr, "IOS_CLASSIC_HIGHHEEL_ACTOR schema=1 current=%u swimming=%u smooth_state=%u\n",
+                    (unsigned)scene.actor_current, (unsigned)scene.swimming, (unsigned)scene.smooth_this_state);
         }
         memset(&scene, 0, sizeof scene);
         errno = saved_errno;

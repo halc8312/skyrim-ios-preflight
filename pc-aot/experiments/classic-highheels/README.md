@@ -442,4 +442,14 @@ that its local translation has retained an earlier offset.
 The owned HighHeels DLL samples the ActorState word at actor
 `+0x68`. Bit `0x400` denotes swimming for its height calculation.
 Its mode-1 smoothing check uses bit `0x20` of that same word.
-These values need a fresh read from the actor entering the update.
+The normal player getter now lends its original receiver through the
+verified non-preview return. The host joins it to the current player
+singleton, its Character type and FormID, and the root in its current
+LoadedState before sampling those two bits. The diagnostic reports
+three booleans and retains no Actor address after the callback.
+
+The stock opcode-7 task carries a retained scene object without
+the Actor. Its queued path can run under the same frame wait, and
+its direct fallback can run on a different caller. Applying a
+transform correction on either path therefore requires a fresh
+actor and root match when the receiver is used.

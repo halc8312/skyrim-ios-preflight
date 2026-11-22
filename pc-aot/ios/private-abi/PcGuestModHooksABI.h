@@ -178,7 +178,7 @@ typedef struct {
 enum SkyrimHighHeelSceneNotice {
     SkyrimHighHeelSceneArm, SkyrimHighHeelSceneRoot, SkyrimHighHeelSceneEnter,
     SkyrimHighHeelSceneLeave, SkyrimHighHeelSceneMember, SkyrimHighHeelSceneFinish,
-    SkyrimHighHeelScenePreCompose
+    SkyrimHighHeelScenePreCompose, SkyrimHighHeelSceneActor
 };
 enum { SkyrimHighHeelSceneReady = 1, SkyrimHighHeelSceneActive };
 /* Member's third argument is zero for names-only or this value after world-transform writes. */
@@ -186,6 +186,7 @@ enum { SkyrimHighHeelScenePose = 1 };
 /* Arm's second argument, when its third argument declares frame support. */
 enum { SkyrimHighHeelFrameAbsent, SkyrimHighHeelFrameObserved, SkyrimHighHeelFrameWaited };
 enum { SkyrimHighHeelSceneFrame = 1 };
+/* Actor lends the original receiver and root at the non-preview getter. */
 typedef struct {
     bool (*notify)(const struct CPU *, enum SkyrimHighHeelSceneNotice, uint32_t first, uint32_t second, uint32_t third);
 } PcGuestModHighHeelSceneHooks;
