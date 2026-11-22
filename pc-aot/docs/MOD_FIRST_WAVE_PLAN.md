@@ -366,6 +366,17 @@ python3 scripts/build_title_guest.py private/<stage> --classic-skse --mod-hooks 
 
 コミット：`Check DLC masters, skeleton winners and generated assets per profile`（試験と表示の単位で2〜3個に分けてよい）。
 
+#### FNIS 7.6の出力とXPMSEの確認
+
+PCのGenerateFNISforUsersで対象プロファイルのアニメーション構成を生成する。Foreの `RedirectFiles` を使う場合はパッチを有効にし、出力フォルダ全体を取り込む。追加アニメーションや選んだパッチによって使われるファイルは変わる。 [ForeのLE 7.6の手順とFAQ](https://www.nexusmods.com/skyrim/mods/11811?tab=description)
+
+| ファイル・機能 | アプリでの確認 |
+| --- | --- |
+| `meshes/animationdatasinglefile.txt` と `meshes/animationsetdatasinglefile.txt` | Foreの資料にあるアニメーションデータの一覧。選択中の構成で使える場所にファイルがあるかを確認する |
+| `defaultmale.hkx`、`defaultfemale.hkx`、`FNIS_FNISBase_Behavior.hkx` | 主な動作用のファイル。実際に優先されるファイルのHKXヘッダーを照合する。標準のSkyrimも同じ名前を使うため、ファイル名やヘッダーから生成元は判定できない |
+| `FNIS.esp` | XPMSEでAlternate Animationを使う際に必要。プロファイルで見つかり、次回起動時に有効にする設定かを表示する |
+| Creature PackとIdle Spells | クリーチャーのアニメーションと呪文を使う場合の追加機能 |
+
 ### P6 髪、カメラ、ロード、物理
 
 | 作業 | 内容 | Webで行うこと | 止まる条件・Codex |

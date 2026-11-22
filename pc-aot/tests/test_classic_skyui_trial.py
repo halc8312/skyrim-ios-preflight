@@ -244,7 +244,8 @@ int main(int argc, char **argv) { @autoreleasepool {
             flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-I", str(PORT), "-I", str(VM),
                      "-I", str(ROOT / "ios/private-abi")]
             objects = []
-            for c_source in (PORT / "mod_plugins.c", PORT / "mod_requirements.c", VM / "classic_pex.c"):
+            for c_source in (PORT / "mod_plugins.c", PORT / "mod_requirements.c", PORT / "mod_analyze.c",
+                             VM / "classic_pex.c"):
                 obj = root / f"{c_source.stem}.o"
                 subprocess.run(["clang", *flags, "-c", str(c_source), "-o", str(obj)], check=True, timeout=60)
                 objects.append(str(obj))

@@ -181,15 +181,14 @@ static unsigned char *read_head(const char *path, size_t want, size_t *got) {
     fclose(f);
     return b;
 }
-/* Packfile version 8 and the Skyrim Havok 2010.2 layout are shared by LE
- * and SE. Only recognize the documented little-endian 64-bit layout. */
-static int skyrim_64bit_hkx(const unsigned char *head, size_t length) {
-    static const unsigned char layout[] = {8, 1, 0, 1}; // pointer size, endian, padding, base class
+/* Packfile version 8 and the Skyrim Havok 2010.2 layout are shared by LE and SE. */
+unsigned skyrim_hkx_pointer_bytes(const unsigned char *head, size_t length) {
+    static const unsigned char layout[] = {1, 0, 1}; // endian, padding, base class
     static const char version[] = "hk_2010.2.0-r1";
-    return length >= 64 && le32(head) == 0x57e0e057u && le32(head + 4) == 0x10c0c010u &&
-           le32(head + 12) == 8 && !memcmp(head + 16, layout, sizeof layout) &&
-           le32(head + 20) == 3 && le32(head + 24) == 2 && le32(head + 32) == 0 &&
-           !memcmp(head + 40, version, sizeof version);
+    if (length < 64 || le32(head) != 0x57e0e057u || le32(head + 4) != 0x10c0c010u ||
+        le32(head + 12) != 8 || memcmp(head + 17, layout, sizeof layout) || le32(head + 20) != 3 ||
+        le32(head + 24) != 2 || le32(head + 32) != 0 || memcmp(head + 40, version, sizeof version)) return 0;
+    return head[16] == 4 || head[16] == 8 ? head[16] : 0;
 }
 static void inspect(const char *path, const char *name, size_t size, int top_level, int in_skse,
                     SkyrimModReport *r) {
@@ -222,7 +221,7 @@ static void inspect(const char *path, const char *name, size_t size, int top_lev
         free(b);
     } else if (!strcasecmp(dot, ".hkx") && size >= 64) {
         unsigned char *b = read_head(path, 64, &got);
-        if (b && skyrim_64bit_hkx(b, got)) ++r->hkx_64bit;
+        if (b && skyrim_hkx_pointer_bytes(b, got) == 8) ++r->hkx_64bit;
         free(b);
     } else if (!strcasecmp(dot, ".bsa") && top_level) {
         unsigned char *b = read_head(path, 8, &got);

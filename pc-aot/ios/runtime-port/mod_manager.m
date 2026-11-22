@@ -296,7 +296,7 @@ static SkyrimSkyUIRequirements SkyUIRequirementsFor(NSArray<NSString *> *package
     return result;
 }
 
-static NSArray<NSString *> *XpmseRequirementLines(NSArray<NSString *> *packageIds) {
+static NSArray<NSString *> *XpmseRequirementLines(NSArray<NSString *> *packageIds, NSArray<NSDictionary *> *choices) {
     NSArray<NSString *> *roots = DataRootsFor(packageIds, nil, NULL);
     const char **paths = calloc(roots.count + 1, sizeof *paths);
     if (!paths) return @[];
@@ -306,14 +306,34 @@ static NSArray<NSString *> *XpmseRequirementLines(NSArray<NSString *> *packageId
     free(paths);
     if (status) return @[];
     NSMutableArray *lines = [NSMutableArray arrayWithArray:@[
-        [NSString stringWithFormat:T(@"Common FNIS-related files present: %u of %u.",
-          @"このプロファイルにある主なFNIS関連ファイル：%u／%u個。"),
-          result.fnis_present, (unsigned)SKYRIM_XPMSE_FNIS_MARKERS],
+        [NSString stringWithFormat:T(@"Common FNIS-related HKX files with a 32-bit Skyrim header: %u of %u.",
+          @"Skyrimの32ビット形式を確認した主な関連HKX：%u／%u個。"),
+          result.fnis_hkx32, (unsigned)SKYRIM_XPMSE_FNIS_HKX],
+        [NSString stringWithFormat:T(@"Animation data lists found: %u of %u.",
+          @"アニメーションデータの一覧ファイル：%u／%u個。"),
+          result.fnis_lists, (unsigned)SKYRIM_XPMSE_FNIS_LISTS],
         result.skse_script ? T(@"SKSE Classic script found.", @"SKSE Classicのスクリプトを確認しました。")
                            : T(@"Add the SKSE Classic scripts to this profile.", @"このプロファイルにSKSE Classicのスクリプトを追加してください。"),
     ]];
-    [lines addObject:T(@"For animation changes, use the FNIS output generated on a PC for this Skyrim LE profile.",
-                       @"アニメーションを変えるには、このSkyrim LEプロファイル用にPCで生成したFNISの出力を使います。")];
+    if (result.fnis_hkx64)
+        [lines addObject:[NSString stringWithFormat:T(@"%u of the checked HKX files are 64-bit. Use Skyrim LE output.",
+          @"確認したHKXのうち%u個は64ビット形式です。Skyrim LE用の出力を使ってください。"), result.fnis_hkx64]];
+    if (result.fnis_hkx_unknown)
+        [lines addObject:[NSString stringWithFormat:T(@"Format could not be confirmed for %u of the checked HKX files.",
+          @"確認したHKXのうち%u個は形式を判定できませんでした。"), result.fnis_hkx_unknown]];
+    BOOL fnisSelected = NO;
+    for (NSDictionary *row in choices) {
+        if ([row[@"name"] caseInsensitiveCompare:@"FNIS.esp"] != NSOrderedSame) continue;
+        fnisSelected = [row[@"on"] boolValue];
+        break;
+    }
+    if (result.fnis_plugin && fnisSelected)
+        [lines addObject:T(@"FNIS.esp is selected for the next launch.", @"FNIS.espは次回起動時に有効にする設定です。")];
+    else
+        [lines addObject:T(@"Install and enable FNIS.esp to use FNIS Alternate Animations with XPMSE.",
+                           @"XPMSEでFNISの代替アニメーションを使うには、FNIS.espを入れて有効にしてください。")];
+    [lines addObject:T(@"For animation changes, import the full FNIS output generated on a PC for this Skyrim LE profile.",
+                       @"アニメーションを変えるには、このSkyrim LEプロファイル用にPCで生成したFNISの出力をまとめて取り込んでください。")];
     [lines addObject:T(@"NiOverride is optional for the skeleton files. Some XPMSE options on PC use RaceMenu's bundled copy or the standalone package.",
                        @"骨格ファイルにNiOverrideは必須ではありません。PC版XPMSEの一部のオプションには、RaceMenu同梱版か単体版を使います。")];
     if (result.nioverride)
@@ -2834,7 +2854,8 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
         for (NSString *plugin in pkg[@"plugins"])
             if ([plugin caseInsensitiveCompare:@"XPMSE.esp"] == NSOrderedSame) {
-                [lines addObjectsFromArray:XpmseRequirementLines(EnabledPackageIds(SelectedProfile()))];
+                NSDictionary *profile = SelectedProfile();
+                [lines addObjectsFromArray:XpmseRequirementLines(EnabledPackageIds(profile), EffectivePlugins(profile))];
                 break;
             }
 #endif

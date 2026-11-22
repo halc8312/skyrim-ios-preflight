@@ -9,7 +9,8 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--xpmse")) {
         SkyrimXpmseRequirements x;
         if (skyrim_xpmse_requirements((const char *const *)argv + 2, (size_t)(argc - 2), &x)) return 1;
-        printf("%u %u %u %u\n", x.fnis_present, x.skse_script, x.nioverride, x.unreadable);
+        printf("%u %u %u %u %u %u %u %u\n", x.fnis_hkx32, x.fnis_hkx64, x.fnis_hkx_unknown,
+               x.fnis_lists, x.fnis_plugin, x.skse_script, x.nioverride, x.unreadable);
         return 0;
     }
     SkyrimSkyUIRequirements r;

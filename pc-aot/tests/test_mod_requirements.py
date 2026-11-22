@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -41,7 +42,8 @@ class RequirementTests(unittest.TestCase):
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
             flags += ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run([cc, *flags, ROOT / "tests/native/test_mod_requirements.c", PORT / "mod_requirements.c",
-                        PORT / "mod_plugins.c", VM / "classic_pex.c", "-o", cls.binary], check=True, timeout=60)
+                        PORT / "mod_analyze.c", PORT / "mod_plugins.c", VM / "classic_pex.c", "-o", cls.binary],
+                       check=True, timeout=60)
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -118,21 +120,35 @@ class RequirementTests(unittest.TestCase):
         self.assertEqual(self.check(skyui, linked_dir)[0], UNREADABLE)
 
     def test_xpmse_reports_dependencies_in_profile_order(self):
+        def packfile(pointer_bytes):
+            return struct.pack("<IIII4BIIIII16sII", 0x57E0E057, 0x10C0C010, 0, 8,
+                               pointer_bytes, 1, 0, 1, 3, 2, 0, 0, 75, b"hk_2010.2.0-r1\0\xff", 0, 0xFFFFFFFF)
+
         fnis = self.root("fnis", {
-            "meshes/actors/character/Characters/defaultmale.hkx": b"graph",
-            "meshes/actors/character/characters female/defaultfemale.hkx": b"graph",
-            "meshes/actors/character/behaviors/FNIS_FNISBase_Behavior.HKX": b"graph",
+            "meshes/actors/character/Characters/defaultmale.hkx": packfile(4),
+            "meshes/actors/character/characters female/defaultfemale.hkx": packfile(4),
+            "meshes/actors/character/behaviors/FNIS_FNISBase_Behavior.HKX": packfile(4),
+            "meshes/AnimationDataSingleFile.txt": b"authored list",
+            "meshes/AnimationSetDataSingleFile.txt": b"authored list",
+            "fnis.ESP": b"authored marker",
         })
         skse = self.root("skse", {"Scripts/SKSE.pex": skse_pex()})
         nioverride = self.root("nioverride", {"SKSE/Plugins/NiOverride.dll": b"authored marker"})
-        self.assertEqual(self.check("--xpmse", fnis, skse, nioverride), [3, 1, 1, 0])
-        self.assertEqual(self.check("--xpmse", skse), [0, 1, 0, 0])
+        self.assertEqual(self.check("--xpmse", fnis, skse, nioverride), [3, 0, 0, 2, 1, 1, 1, 0])
+        self.assertEqual(self.check("--xpmse", skse), [0, 0, 0, 0, 0, 1, 0, 0])
 
         invalid = self.root("invalid", {"scripts/skse.pex": skse_pex(release=False)})
-        self.assertEqual(self.check("--xpmse", skse, invalid), [0, 0, 0, 0])
+        self.assertEqual(self.check("--xpmse", skse, invalid), [0, 0, 0, 0, 0, 0, 0, 0])
         absent = self.root("absent", {})
         (absent / "Meshes").symlink_to(fnis / "meshes")
-        self.assertEqual(self.check("--xpmse", fnis, absent, skse), [0, 1, 0, 3])
+        self.assertEqual(self.check("--xpmse", fnis, absent, skse), [0, 0, 0, 0, 1, 1, 0, 5])
+
+        override = self.root("override", {
+            "meshes/actors/character/characters/defaultmale.hkx": packfile(8),
+            "meshes/actors/character/characters female/defaultfemale.hkx": packfile(4)[:-1],
+        })
+        self.assertEqual(self.check("--xpmse", fnis, override), [1, 1, 1, 2, 1, 0, 0, 0])
+        self.assertEqual(self.check("--xpmse", override, fnis), [3, 0, 0, 2, 1, 0, 0, 0])
 
     def test_missing_roots_do_not_fail(self):
         skyui = self.root("skyui", self.skyui())

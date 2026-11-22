@@ -29,10 +29,14 @@ typedef struct {
  * overwrite order (later wins). Returns 0, or EINVAL for bad arguments. */
 int skyrim_skyui_requirements(const char *const *data_roots, size_t count,
                               SkyrimSkyUIRequirements *out);
-enum { SKYRIM_XPMSE_FNIS_MARKERS = 3 };
+enum { SKYRIM_XPMSE_FNIS_HKX = 3, SKYRIM_XPMSE_FNIS_LISTS = 2 };
 
 typedef struct {
-    unsigned fnis_present;  /* common generated character graphs and FNISBase */
+    unsigned fnis_hkx32;    /* known 32-bit headers among the common behavior files */
+    unsigned fnis_hkx64;    /* known incompatible 64-bit headers */
+    unsigned fnis_hkx_unknown; /* present with an unrecognized header */
+    unsigned fnis_lists;    /* installed animation data text files */
+    unsigned fnis_plugin;   /* FNIS.esp present, selection is checked separately */
     unsigned skse_script;   /* verified SKSE.GetVersionRelease PEX declaration */
     unsigned nioverride;    /* supplied by RaceMenu or a standalone package */
     unsigned unreadable;    /* ambiguous paths, links or read errors */

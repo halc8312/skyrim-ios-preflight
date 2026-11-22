@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #define _POSIX_C_SOURCE 200809L
 #include "mod_requirements.h"
+#include "mod_analyze.h"
 #include "mod_plugins.h"
 #include "classic_pex.h"
 
@@ -118,20 +119,41 @@ int skyrim_skyui_requirements(const char *const *roots, size_t count, SkyrimSkyU
 int skyrim_xpmse_requirements(const char *const *roots, size_t count, SkyrimXpmseRequirements *out) {
     if (!out || (count && !roots)) return EINVAL;
     *out = (SkyrimXpmseRequirements){0};
-    /* The generated character graphs and base behavior are common FNIS
-     * files. Add-ons and enabled patches may provide additional graphs. */
-    static const char *const fnis[SKYRIM_XPMSE_FNIS_MARKERS] = {
+    /* The character graphs may also be stock. These paths do not establish
+     * which configuration produced the files. */
+    static const char *const hkx[SKYRIM_XPMSE_FNIS_HKX] = {
         "meshes/actors/character/characters/defaultmale.hkx",
         "meshes/actors/character/characters female/defaultfemale.hkx",
         "meshes/actors/character/behaviors/FNIS_FNISBase_Behavior.hkx",
     };
     char path[PATH_MAX_BYTES];
-    for (size_t i = 0; i < SKYRIM_XPMSE_FNIS_MARKERS; ++i) {
-        int found = winner(roots, count, fnis[i], path, sizeof path);
-        if (found < 0) ++out->unreadable;
-        if (found > 0) ++out->fnis_present;
+    for (size_t i = 0; i < SKYRIM_XPMSE_FNIS_HKX; ++i) {
+        int found = winner(roots, count, hkx[i], path, sizeof path);
+        if (!found) continue;
+        FILE *f = found > 0 ? fopen(path, "rb") : NULL;
+        if (!f) { ++out->unreadable; continue; }
+        unsigned char head[64];
+        size_t length = fread(head, 1, sizeof head, f);
+        int error = ferror(f);
+        fclose(f);
+        if (error) { ++out->unreadable; continue; }
+        unsigned pointers = skyrim_hkx_pointer_bytes(head, length);
+        if (pointers == 4) ++out->fnis_hkx32;
+        else if (pointers == 8) ++out->fnis_hkx64;
+        else ++out->fnis_hkx_unknown;
     }
-    int found = winner(roots, count, "Scripts/SKSE.pex", path, sizeof path);
+    static const char *const lists[SKYRIM_XPMSE_FNIS_LISTS] = {
+        "meshes/animationdatasinglefile.txt", "meshes/animationsetdatasinglefile.txt",
+    };
+    for (size_t i = 0; i < SKYRIM_XPMSE_FNIS_LISTS; ++i) {
+        int found = winner(roots, count, lists[i], path, sizeof path);
+        if (found < 0) ++out->unreadable;
+        if (found > 0) ++out->fnis_lists;
+    }
+    int found = winner(roots, count, "FNIS.esp", path, sizeof path);
+    if (found < 0) ++out->unreadable;
+    out->fnis_plugin = found > 0;
+    found = winner(roots, count, "Scripts/SKSE.pex", path, sizeof path);
     if (found < 0) ++out->unreadable;
     if (found > 0) out->skse_script = check_skse_script(path) == SKYRIM_SKYUI_REQ_OK;
 

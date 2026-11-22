@@ -28,6 +28,8 @@ size_t skyrim_dds_level_bytes(unsigned format, unsigned width, unsigned height);
 long skyrim_nif_stream_version(const unsigned char *bytes, size_t length);
 /* BSA version (103 Oblivion, 104 classic, 105 Special Edition), or -1. */
 long skyrim_bsa_version(const unsigned char *bytes, size_t length);
+/* Pointer width in bytes for the recognized Skyrim Havok packfile header, or 0. */
+unsigned skyrim_hkx_pointer_bytes(const unsigned char *bytes, size_t length);
 
 typedef struct {
     unsigned plugins, se_plugins, esl;
