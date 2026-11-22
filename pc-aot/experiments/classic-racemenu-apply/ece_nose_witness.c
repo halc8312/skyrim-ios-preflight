@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "ece_nose_witness.h"
+#include "ece_head_geometry.h"
 
 enum { MENU_TICK = 0xA5CE2B, MENU_VTABLE = 0x10E7404, NOSE_CALL = 0x885611, HEAD_CALL = 0x5A48D2,
        PLAYER = 0x1B2E8E4, PLAYER_VTABLE = 0x10D201C, NORD = 0x13746, FEMALE_HEAD = 0x51623,
@@ -96,6 +97,15 @@ void ece_nose_face(uint32_t caller, uint32_t menu, uint32_t actor, uint32_t base
     if (witness.applying && caller == NOSE_CALL && menu == witness.menu &&
         actor == witness.actor && base == witness.preview && !witness.face && same_player())
         witness.face = face;
+}
+
+void ece_nose_parts(uint32_t base, uint32_t face, uint32_t list, uint32_t count) {
+    if (!witness.applying || witness.output.layout_checked || base != witness.preview ||
+        !face || face != witness.face || !same_player()) return;
+    EceHeadLayout layout;
+    witness.output.layout_checked = true;
+    witness.output.layout_complete = ece_head_layout(witness.read, witness.context, face, list, count, &layout) &&
+                                     layout.count != 0;
 }
 
 bool ece_nose_head(uint32_t caller, uint32_t face, uint32_t part, uint32_t geometry) {

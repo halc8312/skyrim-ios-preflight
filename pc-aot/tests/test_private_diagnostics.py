@@ -106,6 +106,7 @@ class ReceiverTests(unittest.TestCase):
         self.schema.line('IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured=31 valid=1')
         self.schema.line('IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured=15 valid=0')
         self.schema.line('IOS_ECE_TRI schema=1 source=1 parsed=1')
+        self.schema.line('IOS_ECE_LAYOUT schema=1 complete=1')
         self.schema.line('IOS_ECE_NOSE schema=1 female_nord=1 head=1 geometry=1 path=1 fresh=1 record=1')
         self.schema.line('IOS_LOADING_MENU opening=1 ts_ns=123456')
         self.schema.line('IOS_LOADING_MENU opening=0 ts_ns=234567')

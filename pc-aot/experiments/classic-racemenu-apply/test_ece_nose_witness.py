@@ -105,7 +105,8 @@ class EceNoseWitnessTests(unittest.TestCase):
                 # Leave the menu guards and geometry flow in their full, checked
                 # units. Run the pinned fresh-parse wrapper and morph selector
                 # against the same authored memory/geometry fixture.
-                for function in {"exe_66.c": ("5A0710", "5A0660"), "exe_68.c": ("5A7570", "5A75F0")}.get(name, ()):
+                for function in {"exe_66.c": ("5A0710", "5A0660"), "exe_67.c": ("5A4870",),
+                                 "exe_68.c": ("5A7570", "5A75F0")}.get(name, ()):
                     start, end = function_span(staged, function)
                     fixture += staged[start:end]
                 if name == "exe_67.c":
@@ -138,7 +139,8 @@ class EceNoseWitnessTests(unittest.TestCase):
                     flags += ["-fno-pie", "-no-pie"]
             subprocess.run([compiler, *flags, "-I", HERE, "-isystem", directory,
                             "-isystem", gen, "-isystem", runtime, entry,
-                            HERE / "ece_nose_witness.c", HERE / "test_ece_nose_witness.c", "-o", binary],
+                            HERE / "ece_nose_witness.c", HERE / "ece_head_geometry.c",
+                            HERE / "test_ece_nose_witness.c", "-o", binary],
                            check=True, timeout=60)
             subprocess.run([binary, *arguments], check=True, timeout=30)
 

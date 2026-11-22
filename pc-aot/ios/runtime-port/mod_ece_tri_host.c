@@ -167,6 +167,7 @@ static _Thread_local bool nose_attempt;
 enum { NOSE_ATTEMPT_LIMIT = 64 };
 static atomic_uint nose_attempts;
 static _Atomic uint64_t nose_reports;
+static atomic_uint layout_reports;
 
 static bool read_nose_field(void *memory, uint32_t address, void *output, size_t size) {
     if (!memory || address < FIRST_MAPPED || (size != 1 && size != 4) ||
@@ -191,6 +192,14 @@ static bool finish_nose_read(void *memory, const struct CPU *cpu, uint64_t recei
 
 static void report_nose(void *memory, EceNoseWitnessReport result) {
     if (memory != MEM || !nose_attempt) return;
+    if (result.layout_checked) {
+        const unsigned bit = 1u << (unsigned)result.layout_complete;
+        if (!(atomic_fetch_or_explicit(&layout_reports, bit, memory_order_relaxed) & bit)) {
+            const int previous_errno = errno;
+            fprintf(stderr, "IOS_ECE_LAYOUT schema=1 complete=%u\n", (unsigned)result.layout_complete);
+            errno = previous_errno;
+        }
+    }
     const unsigned key = (unsigned)result.female_nord << 5 | (unsigned)result.head << 4 |
                          (unsigned)result.geometry << 3 | (unsigned)result.selected_path << 2 |
                          (unsigned)result.fresh_tri << 1 | (unsigned)result.morph_record;
@@ -243,6 +252,7 @@ uint64_t skyrim_ece_nose_app_observe(const struct CPU *cpu, enum SkyrimEceNoseNo
         return nose_attempt && ece_nose_begin(first, second, third);
     case SkyrimEceNoseEnd: ece_nose_end(true); break;
     case SkyrimEceNoseFace: if (ticket <= UINT32_MAX) ece_nose_face(first, second, third, fourth, (uint32_t)ticket); break;
+    case SkyrimEceNosePartLayout: ece_nose_parts(first, second, third, fourth); break;
     case SkyrimEceNoseHead: return ece_nose_head(first, second, third, fourth);
     case SkyrimEceNoseHeadEnd: ece_nose_head_end(true); break;
     case SkyrimEceNoseLookup: return ece_nose_lookup(first);

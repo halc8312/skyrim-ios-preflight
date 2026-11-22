@@ -220,6 +220,25 @@ the live FaceGen resource cache. Applying a slot still requires a live
 preflight that covers the current geometry and selected resources for all
 relevant head parts before the stock slider changes them.
 
+The layout diagnostic runs after the stock visitor has chosen the default
+or override part list and before its first part application. It qualifies
+the same preview actor, base and face as the surrounding nose event. The
+read-only traversal mirrors the supported stock NiNode and leaf name
+lookup and geometry cast. It considers only head parts with nonempty model
+and TRI paths, verifies each participating shape and vertex count, and
+refuses unknown dispatch, duplicate shapes, inconsistent parent links or
+an incomplete traversal. The bounds are 32 parts, 32 levels and 256 child
+slots across one layout. The fixture compares the selected geometry and
+path against the original lookup helpers and runs the in-game callback
+placement in the original default and override visitors with authored
+scene objects.
+
+`IOS_ECE_LAYOUT schema=1 complete=1` means all participating shapes in the
+selected list could be read in that scope. It carries no paths, addresses
+or character data. It neither loads a TRI nor proves a cached TRI's source
+or retention. An all-part retained resource check remains necessary before
+applying the selected slot.
+
 ### ECE all-head preflight fixture
 
 Run `test_ece_head_preflight` with the same private lift and optional owned

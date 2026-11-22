@@ -48,6 +48,7 @@ def kernel_file_fixture(folder, ece_witness=False):
         flags += ["-DSKYRIM_IOS_MOD_HOOKS=1", "-I", ece, "-I", ROOT / "ios/private-abi",
                   "-I", ROOT / "experiments/fuz-voice"]
         sources += [port / "mod_ece_profile.c", port / "mod_ece_tri_host.c", ece / "ece_nose_witness.c",
+                    ece / "ece_head_geometry.c",
                     port / "mod_highheel_pex_host.c", port / "classic_vm_epoch.c"]
     subprocess.run([compiler, *flags, "-I", folder, "-I", runtime, "-I", port,
                     *sources, "-lm", "-o", binary], check=True, timeout=90)

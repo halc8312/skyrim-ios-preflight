@@ -22,6 +22,7 @@ APP_DECLARATION = b"""#include "PcGuestModHooksABI.h"
 #define ece_nose_begin(menu, preview, race) ECE_NOSE_NOTIFY(Begin, menu, preview, race, 0, 0)
 #define ece_nose_end(active) do { if (active) ECE_NOSE_NOTIFY(End, 0, 0, 0, 0, 0); } while (0)
 #define ece_nose_face(caller, menu, actor, base, face) ECE_NOSE_NOTIFY(Face, caller, menu, actor, base, face)
+#define ece_nose_parts(base, face, list, count) ECE_NOSE_NOTIFY(PartLayout, base, face, list, count, 0)
 #define ece_nose_head(caller, face, part, geometry) ECE_NOSE_NOTIFY(Head, caller, face, part, geometry, 0)
 #define ece_nose_head_end(active) do { if (active) ECE_NOSE_NOTIFY(HeadEnd, 0, 0, 0, 0, 0); } while (0)
 #define ece_nose_lookup(path) ECE_NOSE_NOTIFY(Lookup, path, 0, 0, 0, 0)
@@ -97,6 +98,15 @@ def face(function):
                     b"    ece_nose_face(ece_caller, esi, ece_actor, M32(esp + 0x28u), eax);\n")
 
 
+def parts(function, *, app=False):
+    # The default/override branch has selected ebx/edi. The original caller
+    # still owns the preview base and the FaceGen argument structure.
+    active = b"skyrim_ece_nose_guest_selected && " if app else b""
+    probe = (b"    if (" + active + b"edi && M32(esp + 0x10u))\n"
+             b"        ece_nose_parts(esi, M32(M32(esp + 0x10u)), ebx, edi);\n")
+    return insert(function, b"L_5A489E:\n", after=probe)
+
+
 def head(function):
     function = insert(function, b"L_5A4070:\n",
                       before=b"    const uint32_t ece_caller = M32(esp), ece_face = M32(esp + 4u),\n"
@@ -139,7 +149,7 @@ def morph(function):
 
 TRANSFORMS = {
     "exe_66.c": (("5A0710", parse), ("5A0660", retiring)),
-    "exe_67.c": (("5A4070", head), ("5A5B70", lookup)),
+    "exe_67.c": (("5A4070", head), ("5A4870", parts), ("5A5B70", lookup)),
     "exe_68.c": (("5A75F0", morph),),
     "exe_185.c": (("882290", slider), ("87F6E0", face)),
     "exe_186.c": (("885980", menu),),
@@ -163,6 +173,11 @@ def stage(unit, original, *, app_base=None, racemenu=False):
                 reviewed = reviewed.replace(addition, b"", 1)
         if reviewed != original[before:after] and not (transform is slider and racemenu):
             raise ValueError("A prior stage changed an ECE witness function")
-        body = slider(prior, racemenu=racemenu, app=app) if transform is slider else transform(prior)
+        if transform is slider:
+            body = slider(prior, racemenu=racemenu, app=app)
+        elif transform is parts:
+            body = parts(prior, app=app)
+        else:
+            body = transform(prior)
         data = data[:start] + body + data[end:]
     return (APP_DECLARATION if app else DECLARATION) + data

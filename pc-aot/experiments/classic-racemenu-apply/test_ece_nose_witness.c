@@ -17,6 +17,8 @@ enum {
     GEOMETRY_INFO = 0x47000, PARSE_STACK = STACK + 0x400, SELECTOR_STACK = STACK + 0x800,
     TRI_RECORDS = 0x48000, MORPH_ORDER = 0x49000, DECREMENT = 0x4A000,
     DESTROY_TRI = 0x4B000, TRI_TABLE = 0x4C000, NOSE_DOWN_REF = NAME_REF + 4, NOSE_DOWN = NAME + 16,
+    HEAD_LIST = 0x4D000, OVERRIDE_LIST = HEAD_LIST + 4, FACE_CHILDREN = 0x4E000, LAYOUT_ARGS = 0x4F000,
+    FACE_TABLE = 0x10BEA8C, GEOMETRY_TABLE = 0x1117E6C, TRI_MODEL_TABLE = 0x10A2E08,
     TRI_RECORD_BYTES = 36, EXTENDED_RECORD_OFFSET = 12
 };
 enum {
@@ -28,7 +30,8 @@ uint8_t *MEM;
 static unsigned kind, begin_count, finish_count, reports, apply_calls;
 static EceNoseWitnessReport result;
 static CPU cpu;
-static bool lookup_only, check_after_release;
+static bool lookup_only, check_after_release, layout_read, layout_override;
+static unsigned layout_visits;
 static unsigned entry_releases, tri_releases, frees, selected;
 static uint32_t up_ordinal, down_ordinal;
 static uint16_t geometry_vertices;
@@ -67,6 +70,7 @@ void rt_call_ic(CPU *owner, uint32_t target, const FnEntry **cache) {
 
 static bool read_word(void *context, uint32_t address, void *out, size_t count) {
     assert(context == MEM && address >= 0x10000 && address <= PLAYER + 4 - count);
+    if (address == FACE_TABLE + 0x9C) layout_read = true;
     memcpy(out, MEM + address, count);
     return true;
 }
@@ -301,6 +305,64 @@ static void test_both_records(bool after_release, bool cached_reference) {
     lookup_only = false;
 }
 
+void f_5681C0(CPU *owner) { owner->r[0] = (unsigned)layout_override; owner->r[4] += 4; }
+void f_568280(CPU *owner) {
+    assert(layout_override && M32(owner->r[4] + 4) == BASE);
+    owner->r[0] = OVERRIDE_LIST;
+    owner->r[4] += 4;
+}
+void f_5682F0(CPU *owner) {
+    assert(layout_override && M32(owner->r[4] + 4) == BASE);
+    owner->r[0] = 1;
+    owner->r[4] += 4;
+}
+void f_5A4070(CPU *owner) {
+    const uint32_t sp = owner->r[4];
+    assert(layout_read && M32(sp) == 0x5A48D2 &&
+           M32(sp + 4) == FACE && M32(sp + 8) == HEAD && ++layout_visits == 1);
+    owner->r[4] += 20;
+}
+
+static void test_stock_layout(bool selected, bool override) {
+    layout_override = override;
+    M32(BASE + 0x14C) = HEAD_LIST;
+    M8(BASE + 0x150) = 1;
+    M32(HEAD_LIST) = override ? 0 : HEAD;
+    M32(OVERRIDE_LIST) = override ? HEAD : 0;
+    M32(HEAD + 0x20) = STALE_PATH;
+    M32(HEAD + 0x78) = TRI_MODEL_TABLE;
+    M32(HEAD + 0x7C) = PATH;
+    M32(HEAD + 0x94) = NAME;
+    M32(PATH - 4) = M32(STALE_PATH - 4) = 4;
+    M32(TRI_MODEL_TABLE + 0x10) = 0x4F8CA0;
+    M32(FACE) = FACE_TABLE;
+    M32(FACE + 0xAC) = FACE_CHILDREN;
+    M16(FACE + 0xB0) = M16(FACE + 0xB2) = 1;
+    M32(FACE_CHILDREN) = GEOMETRY;
+    M32(FACE_TABLE + 0x9C) = 0xAAE1D0;
+    M32(GEOMETRY) = GEOMETRY_TABLE;
+    M32(GEOMETRY + 8) = NAME;
+    M32(GEOMETRY + 0x18) = selected ? FACE : HEAD;
+    M32(GEOMETRY_TABLE + 0x9C) = 0xAAF450;
+    M32(GEOMETRY_TABLE + 0x20) = 0xC707B0;
+    M32(LAYOUT_ARGS) = FACE;
+    M8(MENU + 0x10) = 0x40;
+    M8(BASE + 0x24) = 1;
+    layout_read = false;
+    layout_visits = reports = 0;
+    assert(ece_nose_witness_arm(read_word, begin_source, finish_source, report, MEM));
+    assert(ece_nose_menu(0xA5CE2B, MENU));
+    assert(ece_nose_begin(MENU, BASE, RACE));
+    ece_nose_face(0x885611, MENU, ACTOR, BASE, FACE);
+    cpu = (CPU){.r = {0, BASE, 0, 0, STACK}};
+    M32(STACK + 4) = LAYOUT_ARGS;
+    f_5A4870(&cpu);
+    assert(layout_visits == 1 && cpu.r[4] == STACK + 8);
+    ece_nose_end(true);
+    ece_nose_menu_end(true);
+    assert(reports == 1 && result.layout_checked && result.layout_complete == selected);
+}
+
 int main(int argc, char **argv) {
     MEM = calloc(1, TLS_INDEX + 4);
     assert(MEM);
@@ -357,6 +419,9 @@ int main(int argc, char **argv) {
     test_both_records(false, false);
     test_both_records(true, false);
     test_both_records(false, true);
+    test_stock_layout(true, false);
+    test_stock_layout(true, true);
+    test_stock_layout(false, true);
     free(MEM);
     return 0;
 }
