@@ -55,6 +55,7 @@ class HighHeelIdentityTests(unittest.TestCase):
                         "-I", ROOT / "experiments/fuz-voice",
                         ROOT / "tests/native/test_mod_highheel_effect_host.c",
                         PORT / "mod_highheel_effect_host.c", PORT / "mod_highheel_pex_host.c",
+                        PORT / "mod_highheel_class_host.c",
                         PORT / "classic_vm_epoch.c", PORT / "classic_mod_catalog.c", PORT / "mod_plugins.c",
                         EXPERIMENT / "highheel_identity.c", EXPERIMENT / "highheel_effect.c",
                         PROBE / "probe_asset_file.c", "-o", cls.host_binary], check=True, timeout=60)
@@ -123,16 +124,21 @@ class HighHeelIdentityTests(unittest.TestCase):
     def test_host_observes_only_the_loaded_effect_and_distinguishes_a_current_pex_link(self):
         (self.data / "Override.esp").write_bytes(plugin_header("Skyrim.esm", ESM))
         pex = "IOS_CLASSIC_HIGHHEEL_PEX schema=1 phase=1 verified=1"
+        ready = ["IOS_CLASSIC_HIGHHEEL_CATALOG schema=1 result=0",
+                 "IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=1 linked=0", pex]
+        phases = ["IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=1 linked=1",
+                  "IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=0 linked=1",
+                  "IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=0 linked=0"]
         for mode, expected in (
-            (0, ["IOS_CLASSIC_HIGHHEEL_CATALOG schema=1 result=0",
-                 "IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=1 linked=0",
-                 pex,
-                 "IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=1 linked=1",
-                 "IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=0 linked=1",
-                 "IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=0 linked=0"]),
+            (0, ready + phases),
             (1, ["IOS_CLASSIC_HIGHHEEL_CATALOG schema=1 result=1", pex]),
             (2, ["IOS_CLASSIC_HIGHHEEL_CATALOG schema=1 result=4", pex]),
             (3, [pex]),
+            (4, ready + ["IOS_CLASSIC_HIGHHEEL_METHODS schema=1 members=1 globals=1"] + phases),
+            (5, ready + ["IOS_CLASSIC_HIGHHEEL_METHODS schema=1 members=1 globals=0"] + phases),
+            (6, ready + ["IOS_CLASSIC_HIGHHEEL_METHODS schema=1 members=0 globals=0"] + phases),
+            (7, ready + ["IOS_CLASSIC_HIGHHEEL_METHODS schema=1 members=1 globals=1",
+                         "IOS_CLASSIC_HIGHHEEL_METHODS schema=1 members=0 globals=0"] + phases),
         ):
             with self.subTest(mode=mode):
                 result = subprocess.run([self.host_binary, self.data, str(mode)], text=True, capture_output=True,

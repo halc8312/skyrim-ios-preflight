@@ -95,6 +95,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_CLASSIC_HIGHHEEL_ASSETS", "^IOS_CLASSIC_HIGHHEEL_ASSETS schema=1 result=[023]$") \
     X("IOS_CLASSIC_HIGHHEEL_CATALOG", "^IOS_CLASSIC_HIGHHEEL_CATALOG schema=1 result=[0-4]$") \
     X("IOS_CLASSIC_HIGHHEEL_EFFECT", "^IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=[01] linked=[01]$") \
+    X("IOS_CLASSIC_HIGHHEEL_METHODS", "^IOS_CLASSIC_HIGHHEEL_METHODS schema=1 (?:members=0 globals=0|members=1 globals=[01])$") \
     X("IOS_CLASSIC_HIGHHEEL_SCENE", "^IOS_CLASSIC_HIGHHEEL_SCENE schema=1 root=[0-2] names=(?:[0-9]|[12][0-9]|3[01]) duplicate=(?:[0-9]|[12][0-9]|3[01]) limited=[01]$") \
     X("IOS_CLASSIC_HIGHHEEL_POSE", "^IOS_CLASSIC_HIGHHEEL_POSE schema=1 (?:captured=(?:[1-9]|[12][0-9]|3[01]) valid=0|captured=31 valid=1)$") \
     X("IOS_CAMERA_BODY", "^IOS_CAMERA_BODY schema=1 slot=[089] arms=[0-5] body=[0-5]$") \

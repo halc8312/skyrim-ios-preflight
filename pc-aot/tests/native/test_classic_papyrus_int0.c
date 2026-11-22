@@ -469,7 +469,8 @@ static void test_string_result(void) {
     assert(skse_classic_values_retire(FIXTURE_EPOCH));
     assert(!skse_classic_values_with_provider(FIXTURE_EPOCH, REGISTRY, observe_provider, &snapshots));
     assert(snapshots == 1);
-    assert(!values_publication.request.owns_frame && !values_publication.request.commit);
+    const ClassicValueRequest *retired = &values_publication.providers[CLASSIC_VALUE_PROVIDER_DEFAULT];
+    assert(!retired->owns_frame && !retired->commit);
     assert(!run_values(run, object, REGISTRY, RESULT) && provider.calls == 7 && provider.discards == 6 &&
            result_deletions == destroyed + 1);
 }
@@ -767,6 +768,7 @@ static bool copy_reference_id(void *context, CPU *owner, const ClassicValueFrame
 }
 
 static void test_none_result(bool unavailable) {
+    const ClassicValueProvider provider_key = CLASSIC_VALUE_PROVIDER_HIGHHEELS;
     ValueProvider provider = {.result_live = true};
     ClassicValueFunction methods[] = {
         {"HighHeelFixture", "KeepUpdate", 10, CLASSIC_VALUES_NONE, 2,
@@ -776,11 +778,11 @@ static void test_none_result(bool unavailable) {
     ClassicValueRequest request = {.epoch = FIXTURE_EPOCH, .functions = methods, .count = 2,
         .read_guest = read_values, .owns_frame = owns_value_frame, .invoke = invoke_none_result,
         .discard = discard_value_result, .context = &provider};
-    assert(!skse_classic_values_request(&request));
+    assert(!skse_classic_values_request_for_provider(provider_key, &request));
     request.copy_form_id = copy_reference_id;
-    assert(!skse_classic_values_request(&request));
+    assert(!skse_classic_values_request_for_provider(provider_key, &request));
     methods[0].arguments[1] = CLASSIC_VALUES_FLOAT;
-    assert(skse_classic_values_request(&request));
+    assert(skse_classic_values_request_for_provider(provider_key, &request));
     no_form_class = unavailable;
     register_functions();
     check_builtin();
@@ -790,6 +792,10 @@ static void test_none_result(bool unavailable) {
     }
     assert(registrations == 3 && thunk_count == 3);
     const uint32_t keep = objects[1], stop = objects[2];
+    assert(skse_classic_values_matches_published_object(provider_key, FIXTURE_EPOCH, REGISTRY, 10, keep));
+    assert(skse_classic_values_matches_published_object(provider_key, FIXTURE_EPOCH, REGISTRY, 11, stop));
+    unsigned snapshots = 0;
+    assert(!skse_classic_values_with_provider(FIXTURE_EPOCH, REGISTRY, observe_provider, &snapshots) && !snapshots);
     assert(M32(keep + 0x14) == CLASSIC_VALUES_NONE && M32(stop + 0x14) == CLASSIC_VALUES_NONE);
     assert(M32(M32(keep + 0x18) + 4) == FIXTURE_REFERENCE_CLASS);
     assert(M32(M32(keep + 0x18) + 12) == CLASSIC_VALUES_FLOAT);
@@ -814,6 +820,118 @@ static void test_none_result(bool unavailable) {
     assert(result_deletions == destroyed + 1 && M32(RESULT) == CLASSIC_VALUES_NONE && !M32(RESULT + 4));
     argument(1, CLASSIC_VALUES_INT, 0);
     assert(run_values(run, stop, REGISTRY, RESULT) && provider.calls == 3 && provider.discards == 1);
+}
+
+typedef struct {
+    ValueProvider state;
+    ClassicValueProvider key;
+    uint32_t object, result;
+    unsigned finishes;
+} PairedValueProvider;
+
+static bool owns_paired_frame(void *context, CPU *owner, uint64_t epoch, const ClassicValueFrame *frame) {
+    PairedValueProvider *provider = context;
+    return frame->object == provider->object && owns_value_frame(&provider->state, owner, epoch, frame);
+}
+
+static bool invoke_paired_value(void *context, uint64_t epoch, uint32_t method, const ClassicValue *args,
+                                size_t count, ClassicValue *out, char *text, size_t capacity) {
+    PairedValueProvider *provider = context;
+    assert(epoch == FIXTURE_EPOCH && method == 12 && args && !count && !text && !capacity);
+    assert(!skse_classic_values_matches_published_object(provider->key, epoch, REGISTRY, method, provider->object));
+    ++provider->state.calls;
+    *out = (ClassicValue){.type = CLASSIC_VALUES_INT, .bits = provider->result};
+    return true;
+}
+
+static bool commit_paired_value(void *context, uint64_t epoch, uint32_t method) {
+    PairedValueProvider *provider = context;
+    assert(epoch == FIXTURE_EPOCH && method == 12);
+    ++provider->state.commits;
+    return !provider->state.reject_commit;
+}
+
+static void discard_paired_value(void *context, uint64_t epoch) {
+    PairedValueProvider *provider = context;
+    discard_value_result(&provider->state, epoch);
+}
+
+static void finish_paired_value(void *context, uint64_t epoch) {
+    PairedValueProvider *provider = context;
+    assert(epoch == FIXTURE_EPOCH);
+    ++provider->finishes;
+}
+
+static void test_value_providers(bool fail_registration) {
+    PairedValueProvider settings = {.state.result_live = true, .key = CLASSIC_VALUE_PROVIDER_DEFAULT, .result = 47};
+    PairedValueProvider heels = {.state.result_live = true, .key = CLASSIC_VALUE_PROVIDER_HIGHHEELS, .result = 91};
+    const ClassicValueFunction settings_method = {"JsonUtil", "ReadValue", 12, CLASSIC_VALUES_INT, 0, {0}};
+    ClassicValueFunction heels_methods[] = {
+        {"HeelFixture", "ReadValue", 12, CLASSIC_VALUES_INT, 0, {0}},
+        {"jSoNuTiL", "readVALUE", 13, CLASSIC_VALUES_INT, 1, {CLASSIC_VALUES_INT}},
+    };
+    const ClassicValueRequest settings_request = {
+        .epoch = FIXTURE_EPOCH, .functions = &settings_method, .count = 1, .read_guest = read_values,
+        .owns_frame = owns_paired_frame, .invoke = invoke_paired_value, .commit = commit_paired_value,
+        .discard = discard_paired_value, .finished = finish_paired_value, .context = &settings,
+    };
+    ClassicValueRequest heels_request = settings_request;
+    heels_request.functions = heels_methods;
+    heels_request.count = 2;
+    heels_request.context = &heels;
+    assert(!skse_classic_values_request_for_provider(CLASSIC_VALUE_PROVIDER_COUNT, &heels_request));
+    assert(skse_classic_values_request(&settings_request));
+    assert(!skse_classic_values_request_for_provider(heels.key, &heels_request));
+    heels_methods[1].class_name = "HeelFixture";
+    heels_methods[1].name = "Save";
+    assert(skse_classic_values_request_for_provider(heels.key, &heels_request));
+    const ClassicInt0Request conflicting = {"heelfixture", "readvalue", FIXTURE_EPOCH, FIXTURE_FUNCTION, invoke_int0, NULL};
+    assert(!skse_classic_int0_request(&conflicting));
+    assert(!skse_classic_values_matches_published_object(heels.key, FIXTURE_EPOCH, REGISTRY, 12, GUEST_HEAP));
+
+    fail_parameter_row = fail_registration;
+    register_functions();
+    check_builtin();
+    if (fail_registration) {
+        assert(registrations == 1 && thunk_count == 2 && form_deletions == 3);
+        assert(live_allocations(false) == 1 && live_allocations(true) == 1 && !values_publication.registry);
+        fail_parameter_row = false;
+        classic_values_publish(&cpu, REGISTRY, M32(M32(objects[0]) + HAS_CALLBACK_SLOT * 4));
+    }
+    assert(registrations == 4 && thunk_count == 3);
+    settings.object = objects[1];
+    heels.object = objects[2];
+    assert(!strcmp(class_names[1], "JsonUtil") && !strcmp(class_names[2], "HeelFixture"));
+    assert(skse_classic_values_matches_published_object(settings.key, FIXTURE_EPOCH, REGISTRY, 12, settings.object));
+    assert(skse_classic_values_matches_published_object(heels.key, FIXTURE_EPOCH, REGISTRY, 12, heels.object));
+    assert(!skse_classic_values_matches_published_object(heels.key, FIXTURE_EPOCH, REGISTRY, 12, settings.object));
+    assert(!skse_classic_values_matches_published_object(heels.key, FIXTURE_EPOCH + 1, REGISTRY, 12, heels.object));
+    assert(!skse_classic_values_matches_published_object(heels.key, FIXTURE_EPOCH, REGISTRY + 4, 12, heels.object));
+    assert(!skse_classic_values_matches_published_object(heels.key, FIXTURE_EPOCH, REGISTRY, 13, heels.object));
+
+    const uint32_t run = M32(M32(settings.object) + RUN_SLOT * 4);
+    assert(run == M32(M32(heels.object) + RUN_SLOT * 4));
+    assert(run_values(run, settings.object, REGISTRY, RESULT) && M32(RESULT + 4) == settings.result);
+    assert(settings.state.calls == 1 && settings.state.commits == 1 && settings.finishes == 1);
+    assert(!heels.state.calls && !heels.state.commits && !heels.finishes);
+    heels.state.reject_commit = true;
+    assert(!run_values(run, heels.object, REGISTRY, RESULT) && M32(RESULT + 4) == settings.result);
+    assert(heels.state.calls == 1 && heels.state.commits == 1 && heels.state.discards == 1 && heels.finishes == 1);
+    assert(settings.state.calls == 1 && settings.state.commits == 1 && !settings.state.discards && settings.finishes == 1);
+    heels.state.reject_commit = false;
+
+    unsigned snapshots = 0;
+    assert(skse_classic_values_with_provider(FIXTURE_EPOCH, REGISTRY, observe_provider, &snapshots));
+    assert(snapshots == 1 && skse_classic_values_retire(FIXTURE_EPOCH));
+    assert(!skse_classic_values_with_provider(FIXTURE_EPOCH, REGISTRY, observe_provider, &snapshots));
+    assert(!skse_classic_values_matches_published_object(settings.key, FIXTURE_EPOCH, REGISTRY, 12, settings.object));
+    assert(!run_values(run, settings.object, REGISTRY, RESULT) && settings.state.calls == 1 && settings.finishes == 1);
+    assert(run_values(run, heels.object, REGISTRY, RESULT) && M32(RESULT + 4) == heels.result);
+    assert(heels.state.calls == 2 && heels.state.commits == 2 && heels.finishes == 2);
+    assert(!skse_classic_values_retire_for_provider(heels.key, FIXTURE_EPOCH + 1));
+    assert(skse_classic_values_retire_for_provider(heels.key, FIXTURE_EPOCH));
+    assert(!skse_classic_values_matches_published_object(heels.key, FIXTURE_EPOCH, REGISTRY, 12, heels.object));
+    assert(!run_values(run, heels.object, REGISTRY, RESULT) && heels.state.calls == 2 && heels.finishes == 2);
 }
 
 static void test_probe(const char *mode) {
@@ -1086,6 +1204,8 @@ int main(int argc, char **argv) {
         test_form_values(!strcmp(argv[1], "values-form-unavailable"));
     else if (!strcmp(argv[1], "values-none") || !strcmp(argv[1], "values-reference-unavailable"))
         test_none_result(!strcmp(argv[1], "values-reference-unavailable"));
+    else if (!strcmp(argv[1], "values-providers") || !strcmp(argv[1], "values-providers-rollback"))
+        test_value_providers(!strcmp(argv[1], "values-providers-rollback"));
     else if (!strcmp(argv[1], "values") || !strcmp(argv[1], "values-rollback"))
         test_values(!strcmp(argv[1], "values-rollback"));
     else test_probe(argv[1]);

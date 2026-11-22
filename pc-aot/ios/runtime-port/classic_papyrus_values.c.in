@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Staged host proof for one Classic VM and one set of interpreted statics. */
+/* Staged native publication for independently owned statics in one Classic VM. */
 
 #include "classic_papyrus_values.h"
 
@@ -7,11 +7,13 @@ typedef struct {
     ClassicValueFunction function;
     char class_name[CLASSIC_INT0_NAME_BYTES], name[CLASSIC_INT0_NAME_BYTES];
     uint32_t object;
+    ClassicValueProvider provider;
 } ClassicValueBinding;
 
 static struct {
-    ClassicValueRequest request;
-    ClassicValueBinding rows[CLASSIC_VALUES_FUNCTIONS];
+    ClassicValueRequest providers[CLASSIC_VALUE_PROVIDER_COUNT];
+    ClassicValueBinding rows[CLASSIC_VALUE_PROVIDER_COUNT * CLASSIC_VALUES_FUNCTIONS];
+    size_t count;
     uint32_t registry, vtable;
 } values_publication;
 
@@ -20,14 +22,14 @@ static bool value_name_matches(const char *group, const char *name, const char *
 }
 
 static bool classic_values_reserved(const char *class_name, const char *name) {
-    for (size_t i = 0; i < values_publication.request.count; ++i) {
+    for (size_t i = 0; i < values_publication.count; ++i) {
         const ClassicValueFunction *fn = &values_publication.rows[i].function;
         if (value_name_matches(class_name, name, fn->class_name, fn->name)) return true;
     }
     return false;
 }
 
-static bool value_request_conflicts(const ClassicValueFunction *fn, size_t index) {
+static bool value_request_conflicts(ClassicValueProvider provider, const ClassicValueFunction *fn, size_t index) {
     const ClassicInt0Request *one = &int0_publication.request;
     if (one->epoch && value_name_matches(fn->class_name, fn->name, one->class_name, one->function_name)) return true;
     unsigned count;
@@ -35,8 +37,9 @@ static bool value_request_conflicts(const ClassicValueFunction *fn, size_t index
     for (unsigned i = 0; i < count; ++i)
         if (value_name_matches(fn->class_name, fn->name, builtin[i].class_name, builtin[i].name)) return true;
     for (size_t i = 0; i < index; ++i) {
-        const ClassicValueFunction *other = &values_publication.rows[i].function;
-        if (fn->id == other->id || value_name_matches(fn->class_name, fn->name, other->class_name, other->name))
+        const ClassicValueBinding *other = &values_publication.rows[i];
+        if ((provider == other->provider && fn->id == other->function.id) ||
+            value_name_matches(fn->class_name, fn->name, other->function.class_name, other->function.name))
             return true;
     }
     return false;
@@ -48,21 +51,24 @@ static bool value_object_argument(uint8_t type) {
 
 /* Configure before the pinned registration hook. The provider must retain the
  * callback context and the bound VM scope until retirement succeeds. */
-bool skse_classic_values_request(const ClassicValueRequest *request) {
-    if (!request || !request->epoch || !request->functions || !request->count ||
+bool skse_classic_values_request_for_provider(ClassicValueProvider provider, const ClassicValueRequest *request) {
+    if ((unsigned)provider >= CLASSIC_VALUE_PROVIDER_COUNT || !request || !request->epoch ||
+        !request->functions || !request->count ||
         request->count > CLASSIC_VALUES_FUNCTIONS || !request->read_guest || !request->owns_frame ||
         !request->invoke || !int0_enter()) return false;
-    if (values_publication.request.epoch) {
+    ClassicValueRequest *slot = &values_publication.providers[provider];
+    if (slot->epoch || values_publication.registry) {
         int0_leave();
         return false;
     }
+    const size_t first = values_publication.count;
     bool accepted = true;
     for (size_t i = 0; i < request->count; ++i) {
         const ClassicValueFunction *fn = &request->functions[i];
-        ClassicValueBinding *row = &values_publication.rows[i];
+        ClassicValueBinding *row = &values_publication.rows[first + i];
         if (!fn->id || fn->result == CLASSIC_VALUES_FORM || fn->result > CLASSIC_VALUES_BOOL ||
             fn->count > CLASSIC_VALUES_ARGS || !int0_copy_name(row->class_name, fn->class_name) ||
-            !int0_copy_name(row->name, fn->name) || value_request_conflicts(fn, i)) {
+            !int0_copy_name(row->name, fn->name) || value_request_conflicts(provider, fn, first + i)) {
             accepted = false;
             break;
         }
@@ -73,41 +79,70 @@ bool skse_classic_values_request(const ClassicValueRequest *request) {
                 (type == CLASSIC_VALUES_STRING && !request->copy_string)) accepted = false;
         }
         if (!accepted) break;
+        row->provider = provider;
         row->function = *fn;
         row->function.class_name = row->class_name;
         row->function.name = row->name;
     }
     if (accepted) {
-        values_publication.request = *request;
-        values_publication.request.functions = NULL; // Names and signatures above are now owned copies.
+        *slot = *request;
+        slot->functions = NULL; // Names and signatures above are now owned copies.
+        values_publication.count += request->count;
     } else {
-        memset(values_publication.rows, 0, sizeof values_publication.rows);
+        memset(&values_publication.rows[first], 0, request->count * sizeof values_publication.rows[0]);
     }
     int0_leave();
     return accepted;
 }
 
-bool skse_classic_values_retire(uint64_t epoch) {
-    if (!epoch || !int0_enter()) return false;
-    ClassicValueRequest *request = &values_publication.request;
+bool skse_classic_values_request(const ClassicValueRequest *request) {
+    return skse_classic_values_request_for_provider(CLASSIC_VALUE_PROVIDER_DEFAULT, request);
+}
+
+bool skse_classic_values_retire_for_provider(ClassicValueProvider provider, uint64_t epoch) {
+    if ((unsigned)provider >= CLASSIC_VALUE_PROVIDER_COUNT || !epoch || !int0_enter()) return false;
+    ClassicValueRequest *request = &values_publication.providers[provider];
     const bool retired = request->epoch == epoch && request->invoke;
     if (retired) *request = (ClassicValueRequest){.epoch = epoch, .count = request->count};
     int0_leave();
     return retired;
 }
 
+bool skse_classic_values_retire(uint64_t epoch) {
+    return skse_classic_values_retire_for_provider(CLASSIC_VALUE_PROVIDER_DEFAULT, epoch);
+}
+
+bool skse_classic_values_matches_published_object(ClassicValueProvider provider, uint64_t epoch, uint32_t registry,
+                                                  uint32_t method, uint32_t linked_object) {
+    if ((unsigned)provider >= CLASSIC_VALUE_PROVIDER_COUNT || !epoch || !registry || !method ||
+        !linked_object || !int0_enter()) return false;
+    const ClassicValueRequest *request = &values_publication.providers[provider];
+    bool matched = false;
+    if (request->epoch == epoch && request->invoke && values_publication.registry == registry) {
+        for (size_t i = 0; i < values_publication.count; ++i) {
+            const ClassicValueBinding *row = &values_publication.rows[i];
+            if (row->provider == provider && row->function.id == method && row->object == linked_object) {
+                matched = true;
+                break;
+            }
+        }
+    }
+    int0_leave();
+    return matched;
+}
+
 bool skse_classic_values_with_provider(uint64_t epoch, uint32_t registry,
                                       bool (*operation)(void *), void *context) {
     if (!epoch || !registry || !operation || !int0_enter()) return false;
-    const ClassicValueRequest *request = &values_publication.request;
+    const ClassicValueRequest *request = &values_publication.providers[CLASSIC_VALUE_PROVIDER_DEFAULT];
     const bool completed = request->epoch == epoch && request->invoke &&
                            values_publication.registry == registry && operation(context);
     int0_leave();
     return completed;
 }
 
-static bool value_read_frame(CPU *c, const ClassicValueFunction *fn, ClassicValueFrame *frame) {
-    const ClassicValueRequest *request = &values_publication.request;
+static bool value_read_frame(CPU *c, const ClassicValueRequest *request, const ClassicValueFunction *fn,
+                             ClassicValueFrame *frame) {
     const uint32_t sp = c->r[4];
     uint32_t words[6], base[2];
     if (!sp || sp % 4 || sp > UINT32_MAX - CLASSIC_VALUES_BASE_OFFSET - 7 ||
@@ -125,9 +160,10 @@ static bool value_read_frame(CPU *c, const ClassicValueFunction *fn, ClassicValu
     return request->owns_frame(request->context, c, request->epoch, frame);
 }
 
-static bool value_recheck_frame(CPU *c, const ClassicValueFunction *fn, const ClassicValueFrame *frame) {
+static bool value_recheck_frame(CPU *c, const ClassicValueRequest *request, const ClassicValueFunction *fn,
+                                const ClassicValueFrame *frame) {
     ClassicValueFrame current;
-    return value_read_frame(c, fn, &current) && classic_value_same_frame(frame, &current);
+    return value_read_frame(c, request, fn, &current) && classic_value_same_frame(frame, &current);
 }
 
 bool skse_classic_values_matches_static_form(CPU *c, const ClassicValueFrame *frame,
@@ -143,11 +179,11 @@ bool skse_classic_values_matches_static_form(CPU *c, const ClassicValueFrame *fr
     return supplied == skse_member(c, 0x451a30u, 0, 1, &expected);
 }
 
-static bool value_read_arguments(CPU *c, const ClassicValueFunction *fn, const ClassicValueFrame *frame,
+static bool value_read_arguments(CPU *c, const ClassicValueRequest *request, const ClassicValueFunction *fn,
+                                 const ClassicValueFrame *frame,
                                  ClassicValue arguments[CLASSIC_VALUES_ARGS],
                                  char strings[CLASSIC_VALUES_ARGS][CLASSIC_VALUES_STRING_BYTES]) {
     if (!fn->count) return true;
-    const ClassicValueRequest *request = &values_publication.request;
     const uint32_t state = frame->state, list = frame->argument_list;
     const uint32_t offset = skse_member(c, VM_ARG_OFFSET, list, 1, &state);
     for (uint32_t i = 0; i < fn->count; ++i) {
@@ -182,13 +218,13 @@ static bool value_read_arguments(CPU *c, const ClassicValueFunction *fn, const C
     return true;
 }
 
-static bool value_invoke_owned(CPU *c, const ClassicValueFunction *fn, const ClassicValueFrame *frame) {
-    const ClassicValueRequest *request = &values_publication.request;
+static bool value_invoke_owned(CPU *c, const ClassicValueRequest *request, const ClassicValueFunction *fn,
+                               const ClassicValueFrame *frame) {
     ClassicValue args[CLASSIC_VALUES_ARGS] = {0}, output = {0};
     char strings[CLASSIC_VALUES_ARGS][CLASSIC_VALUES_STRING_BYTES];
     char result_text[CLASSIC_VALUES_STRING_BYTES];
     const bool text = fn->result == CLASSIC_VALUES_STRING;
-    if (!value_read_arguments(c, fn, frame, args, strings)) return false;
+    if (!value_read_arguments(c, request, fn, frame, args, strings)) return false;
     const uint32_t scratch = text ? gmalloc(8 + sizeof result_text) : 0;
     if (text && !scratch) return false;
 
@@ -200,7 +236,7 @@ static bool value_invoke_owned(CPU *c, const ClassicValueFunction *fn, const Cla
                     (output.type != CLASSIC_VALUES_NONE || !output.bits) &&
                     (output.type != CLASSIC_VALUES_BOOL || output.bits <= 1) &&
                     (!text || (end && !output.bits)) &&
-                    value_recheck_frame(c, fn, frame);
+                    value_recheck_frame(c, request, fn, frame);
     uint32_t interned = 0;
     if (accepted && text) {
         const uint32_t text_address = scratch + 8;
@@ -209,7 +245,7 @@ static bool value_invoke_owned(CPU *c, const ClassicValueFunction *fn, const Cla
         M32(scratch + 4) = 0;
         skse_member(c, STRING_SET, scratch + 4, 1, &text_address);
         interned = M32(scratch + 4);
-        accepted = interned > CLASSIC_VALUES_STRING_DATA_OFFSET && value_recheck_frame(c, fn, frame);
+        accepted = interned > CLASSIC_VALUES_STRING_DATA_OFFSET && value_recheck_frame(c, request, fn, frame);
     }
     if (accepted && request->commit)
         accepted = request->commit(request->context, request->epoch, fn->id);
@@ -228,17 +264,18 @@ static bool value_invoke_owned(CPU *c, const ClassicValueFunction *fn, const Cla
 
 static void classic_values_run(CPU *c) {
     if (rt_current_cpu() != c || !int0_enter()) RET(0,5);
-    const ClassicValueRequest *request = &values_publication.request;
     const uint32_t self = c->r[1];
     bool accepted = false;
-    if (request->invoke && self && values_publication.registry) {
-        for (size_t i = 0; i < request->count; ++i) {
+    if (self && values_publication.registry) {
+        for (size_t i = 0; i < values_publication.count; ++i) {
             const ClassicValueBinding *row = &values_publication.rows[i];
             if (row->object != self) continue;
+            const ClassicValueRequest *request = &values_publication.providers[row->provider];
+            if (!request->invoke) break;
             const ClassicValueFunction *fn = &row->function;
             ClassicValueFrame frame;
-            if (value_read_frame(c, fn, &frame) && M32(self) == values_publication.vtable &&
-                M32(self + 0x2c) == fn->id) accepted = value_invoke_owned(c, fn, &frame);
+            if (value_read_frame(c, request, fn, &frame) && M32(self) == values_publication.vtable &&
+                M32(self + 0x2c) == fn->id) accepted = value_invoke_owned(c, request, fn, &frame);
             if (request->finished) request->finished(request->context, request->epoch);
             break;
         }
@@ -293,8 +330,7 @@ static uint32_t value_class_type(CPU *c, uint32_t registry, uint8_t argument) {
 
 static void classic_values_publish(CPU *c, uint32_t registry, uint32_t has_thunk) {
     if (!registry || rt_current_cpu() != c || !int0_enter()) return;
-    const ClassicValueRequest *request = &values_publication.request;
-    if (!request->invoke || values_publication.registry) {
+    if (values_publication.registry) {
         int0_leave();
         return;
     }
@@ -303,8 +339,12 @@ static void classic_values_publish(CPU *c, uint32_t registry, uint32_t has_thunk
         [CLASSIC_VALUES_FLOAT] = CLASSIC_VALUES_FLOAT, [CLASSIC_VALUES_BOOL] = CLASSIC_VALUES_BOOL,
         [CLASSIC_VALUES_OBJECT_REFERENCE] = 0
     };
-    for (size_t i = 0; i < request->count; ++i) {
-        const ClassicValueFunction *fn = &values_publication.rows[i].function;
+    bool active = false;
+    for (size_t i = 0; i < values_publication.count; ++i) {
+        const ClassicValueBinding *row = &values_publication.rows[i];
+        if (!values_publication.providers[row->provider].invoke) continue;
+        active = true;
+        const ClassicValueFunction *fn = &row->function;
         for (unsigned j = 0; j < fn->count; ++j) {
             const uint8_t type = fn->arguments[j];
             if (argument_types[type]) continue;
@@ -315,21 +355,25 @@ static void classic_values_publish(CPU *c, uint32_t registry, uint32_t has_thunk
             }
         }
     }
-    const uint32_t table_copy = gmalloc((RUN_SLOT + 2) * 4);
+    const uint32_t table_copy = active ? gmalloc((RUN_SLOT + 2) * 4) : 0;
     if (!table_copy) {
         int0_leave();
         return;
     }
-    size_t made = 0;
-    for (; made < request->count; ++made) {
-        ClassicValueBinding *row = &values_publication.rows[made];
-        row->object = make_value_native(c, &row->function, table_copy, argument_types, !made);
+    size_t next = 0;
+    bool first = true;
+    for (; next < values_publication.count; ++next) {
+        ClassicValueBinding *row = &values_publication.rows[next];
+        if (!values_publication.providers[row->provider].invoke) continue;
+        row->object = make_value_native(c, &row->function, table_copy, argument_types, first);
         if (!row->object) break;
+        first = false;
     }
-    if (made != request->count) {
+    if (next != values_publication.count) {
         const uint32_t deleting = 1;
-        while (made) {
-            ClassicValueBinding *row = &values_publication.rows[--made];
+        while (next) {
+            ClassicValueBinding *row = &values_publication.rows[--next];
+            if (!row->object) continue;
             skse_virtual(c, row->object, 0, 1, &deleting);
             row->object = 0;
         }
@@ -340,8 +384,9 @@ static void classic_values_publish(CPU *c, uint32_t registry, uint32_t has_thunk
     const uint32_t vtable = table_copy + 4;
     M32(vtable + HAS_CALLBACK_SLOT * 4) = has_thunk;
     M32(vtable + RUN_SLOT * 4) = rt_thunk(classic_values_run, "Classic.ValueProbe.Run");
-    for (size_t i = 0; i < made; ++i) {
+    for (size_t i = 0; i < values_publication.count; ++i) {
         ClassicValueBinding *row = &values_publication.rows[i];
+        if (!row->object) continue;
         M32(row->object) = vtable;
         skse_virtual(c, registry, REGISTER_SLOT, 1, &row->object);
     }

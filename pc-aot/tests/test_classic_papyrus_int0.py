@@ -122,7 +122,8 @@ class ClassicInt0StagingTests(unittest.TestCase):
                                ([PROBE_DEFINE], ("default", "success", "names", "table", "object", "values",
                                                  "values-rollback", "values-string", "values-form",
                                                  "values-form-unavailable", "values-none",
-                                                 "values-reference-unavailable"))):
+                                                 "values-reference-unavailable", "values-providers",
+                                                 "values-providers-rollback"))):
             binary = self.stage.parent / ("int0-enabled" if defines else "int0-default")
             subprocess.run([*flags, *defines, fixture, "-o", binary], check=True, timeout=60)
             for mode in modes:

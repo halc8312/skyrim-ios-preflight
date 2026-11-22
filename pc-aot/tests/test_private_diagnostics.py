@@ -108,6 +108,7 @@ class ReceiverTests(unittest.TestCase):
         for result in range(5):
             self.schema.line(f'IOS_CLASSIC_HIGHHEEL_CATALOG schema=1 result={result}')
         self.schema.line('IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=0 linked=1')
+        self.schema.line('IOS_CLASSIC_HIGHHEEL_METHODS schema=1 members=1 globals=0')
         self.schema.line('IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured=31 valid=1')
         self.schema.line('IOS_CLASSIC_HIGHHEEL_POSE schema=1 captured=15 valid=0')
         self.schema.line('IOS_ECE_TRI schema=1 source=1 parsed=1')
@@ -261,6 +262,7 @@ class ReceiverTests(unittest.TestCase):
                      'IOS_CLASSIC_HIGHHEEL_ASSETS schema=1 result=0 path=Data/Scripts/sample.pex',
                      'IOS_CLASSIC_HIGHHEEL_CATALOG schema=1 result=5',
                      'IOS_CLASSIC_HIGHHEEL_EFFECT schema=1 start=1 linked=1 form=33556480',
+                     'IOS_CLASSIC_HIGHHEEL_METHODS schema=1 members=0 globals=1',
                      timing().replace('samples=1', 'samples=2'),
                      self.bundle['sessions'][0]['lines'][-1].replace('result=-1', 'result=2147483648')]
         for line in bad_lines:

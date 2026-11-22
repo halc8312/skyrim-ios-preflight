@@ -44,6 +44,7 @@
 #include "mod_racemenu_preset.h"
 #include "mod_save_host.h"
 #include "highheel_identity.h"
+#include "mod_highheel_class_host.h"
 #include "mod_highheel_effect_host.h"
 #include "mod_highheel_pex_host.h"
 #include "mod_highheel_scene_host.h"
@@ -592,7 +593,10 @@ static HighHeelIdentityResult PrepareHighHeelObservers(NSString *game, bool want
     const HighHeelIdentityResult result = highheel_identity_check_assets(fd, DigestHighHeelPex);
     if (result == HIGHHEEL_IDENTITY_MATCH) {
         skyrim_highheel_pex_configure(DigestHighHeelPex);
-        if (wantEffect) *effectReady = skyrim_highheel_effect_prepare(fd, DigestHighHeelPex);
+        if (wantEffect && skyrim_highheel_effect_prepare(fd, DigestHighHeelPex)) {
+            skyrim_highheel_pex_observe_class(skyrim_highheel_class_observe);
+            *effectReady = true;
+        }
     }
     close(fd);
     return result;

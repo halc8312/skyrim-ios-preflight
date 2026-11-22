@@ -11,6 +11,9 @@
 /* Include after the runtime's x86.h, which declares CPU. */
 
 enum { CLASSIC_VALUES_FUNCTIONS = 16, CLASSIC_VALUES_ARGS = 4, CLASSIC_VALUES_STRING_BYTES = 512 };
+typedef enum {
+    CLASSIC_VALUE_PROVIDER_DEFAULT, CLASSIC_VALUE_PROVIDER_HIGHHEELS, CLASSIC_VALUE_PROVIDER_COUNT
+} ClassicValueProvider;
 /* Form and ObjectReference are request types resolved to guest class tags. */
 enum { CLASSIC_VALUES_NONE = 0, CLASSIC_VALUES_FORM = 1, CLASSIC_VALUES_STRING = 2, CLASSIC_VALUES_INT = 3,
        CLASSIC_VALUES_FLOAT = 4, CLASSIC_VALUES_BOOL = 5, CLASSIC_VALUES_OBJECT_REFERENCE = 6 };
@@ -41,6 +44,8 @@ static inline bool classic_value_same_frame(const ClassicValueFrame *a, const Cl
 }
 
 typedef struct {
+    /* Provider registration receipt. The caller verifies the current VM
+     * generation separately while attesting a frame. */
     uint64_t epoch;
     const ClassicValueFunction *functions;
     size_t count;
@@ -66,9 +71,19 @@ typedef struct {
 } ClassicValueRequest;
 
 /* Configure before the pinned registration hook; retire after the guest returns.
- * Calls are serialized: a Run that finds another call in progress returns 0. */
+ * Calls are serialized: a Run that finds another call in progress returns 0.
+ * These entry points operate on the default provider. */
 bool skse_classic_values_request(const ClassicValueRequest *request);
 bool skse_classic_values_retire(uint64_t epoch);
+/* Each provider owns its callbacks and method IDs. VM class/function pairs
+ * are unique across providers. All active rows are built before submission. */
+bool skse_classic_values_request_for_provider(ClassicValueProvider, const ClassicValueRequest *);
+bool skse_classic_values_retire_for_provider(ClassicValueProvider, uint64_t epoch);
+/* Match an independently witnessed linked object against the submitted row
+ * using the request's registration receipt. This check is nonblocking and
+ * runs outside provider callbacks. */
+bool skse_classic_values_matches_published_object(ClassicValueProvider, uint64_t epoch, uint32_t registry,
+                                                   uint32_t method, uint32_t linked_object);
 /* During copy_form_id, check the typed argument against the original registry's
  * entry for a static FormID already authenticated by the provider. The result
  * only compares the engine's two references while the same frame is current. */

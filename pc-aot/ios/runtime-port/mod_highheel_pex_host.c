@@ -6,7 +6,6 @@
 #endif
 
 #include "mod_highheel_pex_host.h"
-#include "classic_vm_epoch.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -26,6 +25,7 @@ enum {
     PEX_BYTES = 5875
 };
 static SkyrimHighHeelPexDigest digest_bytes;
+static SkyrimHighHeelLinkedClass observe_class;
 static atomic_uint reported;
 static _Atomic(uint64_t) last_linked_epoch;
 static _Thread_local struct {
@@ -38,6 +38,7 @@ static _Thread_local struct {
 _Thread_local bool skyrim_highheel_pex_read_pending;
 
 void skyrim_highheel_pex_configure(SkyrimHighHeelPexDigest digest) { digest_bytes = digest; }
+void skyrim_highheel_pex_observe_class(SkyrimHighHeelLinkedClass observer) { observe_class = observer; }
 
 static bool guest_object(uint32_t object, unsigned last) {
     return object >= FIRST_MAPPED && !(object & 3) && object <= UINT32_MAX - last;
@@ -153,13 +154,17 @@ static uint64_t end(const struct CPU *cpu, bool parsed) {
 
 static void linked(const struct CPU *cpu, uint64_t epoch, bool passed) {
     SkyrimVmScope vm;
-    if (!cpu || cpu != rt_current_cpu() || !epoch || !skyrim_vm_scope_current(&vm) || epoch != vm.epoch) return;
+    struct CPU *owner = rt_current_cpu();
+    if (!cpu || cpu != owner || !epoch || !skyrim_vm_scope_current(&vm) || epoch != vm.epoch) return;
     if (passed) {
         uint64_t prior = atomic_load_explicit(&last_linked_epoch, memory_order_relaxed);
         while (prior < epoch && !atomic_compare_exchange_weak_explicit(&last_linked_epoch, &prior, epoch,
                                                                         memory_order_release, memory_order_relaxed)) {}
     }
     report(1, passed);
+    /* The pinned guest calls this immediately after reloading the CPU from
+     * f_C34F20. It checked the retained class against that same EBX. */
+    if (passed && observe_class) observe_class(owner, vm, owner->r[3]);
 }
 
 bool skyrim_highheel_pex_linked_in(uint64_t epoch) {

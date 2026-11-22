@@ -25,6 +25,8 @@ Classic Labビルド18を実機検証用に作成した。対応する署名済�
 
 **2026-11-22　HighHeelsのスクリプト読込とリンクの詳細診断**
 
+実物のHighHeels PEXがリンクされた直後に、ゲーム本来のメンバー・グローバル関数検索で5つの関数を照合する処理を接続した。検索結果が各関数のテーブル範囲内にあることを確認し、同じ世代で結果が食い違った場合は利用を止める。旧版の接続形式を維持し、`IOS_CLASSIC_HIGHHEEL_METHODS` には検索の成否だけを記録する。Classicのネイティブ登録では、PapyrusUtilとHighHeelsが個別に関数を登録・照合できるようにした。固定版の関数検索、実物HighHeelsを使った照合、実物PapyrusUtil 3.3を使った既存処理の回帰試験は、GCCのASan/UBSanで合格した。実際のHighHeelsネイティブの有効化と、装備中の効果の反映は残る。
+
 HighHeelsの `KeepUpdate(ObjectReference, Float)` と `StopUpdate(ObjectReference)` の型に合わせ、Classicのネイティブ登録が `ObjectReference` の実クラスと戻り値なしの関数を扱えるようにした。登録時に必要なクラスが見つからなければ公開を中止する。固定版の通常呼び出しでは、現在のVM世代とスタック、呼び出した関数を照合し、効果スクリプトの `self` をその場で参照する試験が合格した。既存のPapyrusUtil 3.3の実物を含む登録・設定の試験もGCCのASan/UBSanで合格した。ゲームがリンクした関数と登録したネイティブを照合する部分、装備中の効果への関連付けは引き続き接続する。
 
 iPhone向けコードに、ゲームがプラグイン順を確定した後でHighHeelsの効果を照合する診断を接続した。後から読み込むMODがHighHeelsのレコードを上書きし得る場合は照合を中止する。結果は `IOS_CLASSIC_HIGHHEEL_CATALOG` に記録する。一致した効果の開始・終了と、同じPapyrus VM世代で実物のPEXがリンクされたかどうかを `IOS_CLASSIC_HIGHHEEL_EFFECT` に記録する。古い世代のリンクは現在の確認に使わない。旧版との接続、固定版ゲストへの組み込み、PC上での照合と世代切り替えを検証した。iPhoneでの装備・解除による高さの反映は未接続。

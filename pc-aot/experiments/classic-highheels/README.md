@@ -104,6 +104,17 @@ using the stock type helper `f_8D8EA0` and publish a None result. Runtime
 selection still needs the linked function identities and the resolved
 effect instance for each invocation.
 
+The iPhone host looks up the five functions while the verified PEX linker
+retains the class. The fixed engine searches default members with
+`f_C365A0` and globals with `f_C36540`. Each result identifies a slot;
+the host checks the slot's bounds before copying the function identity.
+The snapshot belongs to its original VM scope and refuses conflicting
+observations for that generation. `IOS_CLASSIC_HIGHHEEL_METHODS` reports
+whether the three callers and two global slots were located. The caller
+must compare the global slots against its own native registrations.
+PapyrusUtil and HighHeels have separate provider registrations for that
+comparison.
+
 ### Read the two typed update arguments during Run
 
 The exact owner archive includes the effect and footwear PSC alongside

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 
+import stage_class_lookup
 import stage_effect_call
 import stage_effect_event
 import stage_effect_magnitude
@@ -54,7 +55,7 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             self.assertEqual(result.strip(), "9 Classic HighHeels host scenarios passed")
 
     def test_unreviewed_lift_is_refused(self):
-        for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude,
+        for stage in (stage_task_queue, stage_item_delivery, stage_effect_magnitude, stage_class_lookup,
                       stage_effect_call, stage_effect_event, stage_scene_refresh, stage_pex_proof,
                       stage_scene_witness, stage_scene_app):
             with self.subTest(unit=stage.UNIT):
@@ -129,6 +130,12 @@ class ClassicHighHeelHeightTest(unittest.TestCase):
             stage_effect_call, "test_effect_call_lift.c",
             "Classic ordinary native invocation lends typed script self and update arguments",
             extra_sources=(HERE / "highheel_native_frame.c",),
+        )
+
+    def test_reviewed_class_lookup_returns_function_slots(self):
+        self.run_reviewed_fixture(
+            stage_class_lookup, "test_class_lookup_lift.c",
+            "Classic class lookups return slots from separate global and member tables",
         )
 
     def test_reviewed_effect_event_retains_target_through_native_dispatch(self):
