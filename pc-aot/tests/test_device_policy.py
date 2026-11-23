@@ -119,6 +119,10 @@ int main(void) { @autoreleasepool {
 #include <errno.h>
 typedef struct { unsigned unused; } SkyrimFrameClock;
 #include "performance_metrics.h"
+#include "present_pacing_core.h"
+/* The real display-pacing decisions are linked; the option is off (environment unset), so the
+ * pacer below must behave exactly as before. The Metal-side hint is never reached when off. */
+void skyrim_present_refresh_hint(unsigned fps) { (void)fps; assert(!"refresh hint reached while off"); }
 static uint64_t metrics_epoch, now, target, slept, measured, remaining_seen;
 static uint64_t interval_start, interval_end;
 static unsigned waits, pumps, recorded, mode, overruns;
@@ -170,8 +174,10 @@ int main(void) {
 ''')
             binary = Path(tmp) / "pacer"
             subprocess.run([cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(ROOT/"ios/runtime-port"),
-                            str(source), "-o", str(binary)], check=True, timeout=60)
-            subprocess.run([str(binary)], check=True, timeout=10)
+                            str(source), str(ROOT/"ios/runtime-port/present_pacing_core.c"), "-o", str(binary)],
+                           check=True, timeout=60)
+            env = {k: v for k, v in os.environ.items() if k != "SKYRIM_IOS_DISPLAY_SYNC"}
+            subprocess.run([str(binary)], check=True, timeout=10, env=env)
 
     def test_runloop_elapsed_budget_does_not_add_a_second_sleep(self):
         """Real wait body with authored CF results/clocks; not an Apple API test."""

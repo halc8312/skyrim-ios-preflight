@@ -112,7 +112,10 @@ target_compile_definitions(dxvk_d3d9 PRIVATE
 enable_language(OBJC)
 add_library(skyrim_performance STATIC "${_root}/ios/runtime-port/performance_metrics.c"
   "${_root}/ios/runtime-port/lock_metrics.c"
-  "${_root}/ios/runtime-port/device_policy.c" "${_root}/ios/runtime-port/device_platform.m")
+  "${_root}/ios/runtime-port/device_policy.c" "${_root}/ios/runtime-port/device_platform.m"
+  "${_root}/ios/runtime-port/display_timing_core.c" "${_root}/ios/runtime-port/display_timing.m"
+  "${_root}/ios/runtime-port/cpu_sample_core.c" "${_root}/ios/runtime-port/cpu_sampler.m"
+  "${_root}/ios/runtime-port/present_pacing_core.c")
 target_compile_features(skyrim_performance PRIVATE c_std_11)
 target_compile_options(skyrim_performance PRIVATE -O2 "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>")
 target_include_directories(skyrim_performance PUBLIC "${_root}/ios/runtime-port")

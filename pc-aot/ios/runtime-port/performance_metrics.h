@@ -51,6 +51,15 @@ enum SkyrimPerfKind {
     SKYRIM_PERF_SAVE_FIRST_TO_LAST_WRITE_START,
     SKYRIM_PERF_SAVE_LAST_WRITE_START_TO_CLOSE,
     SKYRIM_PERF_SAVE_CLOSE_CALL,
+    /* Display and GPU observers (perf phase 1). Appended after every older kind
+     * so earlier numeric stall IDs are unchanged. Presented times and GPU
+     * times come from Metal's own clock, not the host wall clock above. */
+    SKYRIM_PERF_DISPLAY_INTERVAL,
+    SKYRIM_PERF_DISPLAY_DROPPED,
+    SKYRIM_PERF_DISPLAY_LATENCY,
+    SKYRIM_PERF_GPU_COMMAND_BUFFER,
+    SKYRIM_PERF_GPU_FRAME_BUSY,
+    SKYRIM_PERF_GPU_FRAME_SPAN,
     SKYRIM_PERF_KIND_COUNT
 };
 #define SKYRIM_PERF_BUCKET_COUNT 20
@@ -103,6 +112,16 @@ void skyrim_perf_record(unsigned kind, uint64_t elapsed_ns, int failed, uint64_t
 void skyrim_perf_interval(unsigned kind, uint64_t started_ns, uint64_t ended_ns,
                           int failed, uint64_t sleep_calls);
 void skyrim_perf_end(unsigned kind, uint64_t started_ns, int failed);
+/* For observers that run on system callback threads (Metal handlers). Only the
+ * display/GPU kinds are accepted; anything else is dropped. Histogram only: no
+ * stall span is recorded, so a stuttering display cannot crowd out the bounded
+ * shader/save samples. Atomics only; no locks, allocation or file I/O. */
+void skyrim_perf_observe(unsigned kind, uint64_t elapsed_ns, int failed);
+/* As above, but a span of at least SKYRIM_PERF_OBSERVE_SPAN_NS (a long display
+ * gap, in the host monotonic clock) is also kept as a bounded stall sample so
+ * it can be correlated with frame_gap and shader work. */
+#define SKYRIM_PERF_OBSERVE_SPAN_NS UINT64_C(100000000)
+void skyrim_perf_observe_span(unsigned kind, uint64_t started_ns, uint64_t ended_ns);
 uint64_t skyrim_perf_bucket_upper_ns(unsigned bucket);
 /* One reader. Atomic fields may straddle an interval during concurrent writes;
  * windows are approximate, with no counters discarded between windows. */

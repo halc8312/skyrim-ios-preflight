@@ -10,6 +10,7 @@
 #include <time.h>
 #include "device_policy.h"
 #include "performance_metrics.h"
+#include "display_timing_core.h"
 
 static NSMutableArray *observers;
 
@@ -56,11 +57,11 @@ void skyrim_device_platform_initialize(void) {
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     id activityPause = [center addObserverForName:UIApplicationWillResignActiveNotification object:nil
         queue:nil usingBlock:^(NSNotification *note) {
-            (void)note; skyrim_perf_activity(0);
+            (void)note; skyrim_perf_activity(0); skyrim_display_reset();
         }];
     id activityResume = [center addObserverForName:UIApplicationDidBecomeActiveNotification object:nil
         queue:nil usingBlock:^(NSNotification *note) {
-            (void)note; skyrim_perf_activity(1);
+            (void)note; skyrim_perf_activity(1); skyrim_display_reset();
         }];
     [observers addObject:activityPause]; [observers addObject:activityResume];
     if (UIApplication.sharedApplication.applicationState == UIApplicationStateBackground)

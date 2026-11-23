@@ -1,0 +1,134 @@
+diff --git a/runtime/lift_prelude.h b/runtime/lift_prelude.h
+index 34528a3..f6d633e 100644
+--- a/runtime/lift_prelude.h
++++ b/runtime/lift_prelude.h
+@@ -30,6 +30,19 @@ static inline void rt_movsd(uint32_t n, uint32_t dst, uint32_t src) {
+ #define LD_FENCE() ((void)0)
+ #endif
+ 
++/* A fence that the preceding/following accesses already provide. Under LB_STRICT_ORDER on AArch64 every
++ * TLn is an acquire load and every TSn a release store, each ordering all earlier/later accesses at least as
++ * strongly as the dmb it replaces. tools/lift.py only emits these where every guest-memory access of the
++ * instruction (or of the block so far) is such a TLn/TSn; anywhere else the full fence stays. Without
++ * LB_STRICT_ORDER, or off AArch64, TLn/TSn are plain accesses, so the real fence is kept. */
++#if defined(__aarch64__) && defined(LB_STRICT_ORDER)
++#define ST_FENCE_TSO() ((void)0)
++#define LD_FENCE_TSO() ((void)0)
++#else
++#define ST_FENCE_TSO() ST_FENCE()
++#define LD_FENCE_TSO() LD_FENCE()
++#endif
++
+ /* Guest memory other threads can see (see TSO in tools/lift.py).
+  *
+  * Default (0.21+): plain loads/stores, but volatile so the compiler keeps
+diff --git a/tools/lift.py b/tools/lift.py
+index 252b217..0342761 100644
+--- a/tools/lift.py
++++ b/tools/lift.py
+@@ -9,6 +9,7 @@ so a missing feature fails loudly at runtime instead of silently.
+ """
+ import json
+ import os
++import re
+ import sys
+ 
+ import capstone
+@@ -83,6 +84,51 @@ MEMORDER = os.environ.get("LIFT_MEMORDER") == "1"
+ TSO = os.environ.get("LIFT_TSO", "1") == "1"
+ 
+ 
++# Patch 0007 (v2: writes are also recognised from the emitted text, so x87/MMX stores get a fence).
++# Under LB_STRICT_ORDER on AArch64 a TLn is an acquire load and a TSn a release store; they already order
++# everything the neighbouring ST_FENCE/LD_FENCE would. A fence is replaced by its *_TSO form only when the
++# instruction's emitted text proves that every guest-memory access it makes is a TLn/TSn (and that there is at
++# least one). Any other way of touching guest memory (M8..M64, MF32/MF64, MEM, memcpy and friends, atomics,
++# the locked old_/new_ temporaries) keeps the real fence. The check is on the emitted text on purpose, so a
++# new lifting form that is not listed here defaults to the safe fence.
++PLAIN_ACCESS = re.compile(r"\bM(?:8|16|32|64)\(|\bMF(?:32|64)\(|\bMEM\b|\brt_movsd\b|\bmem(?:cpy|move|set)\b"
++                          r"|__atomic|\b(?:old|new)_\b")
++ORDERED_LOAD = re.compile(r"\bTL(?:8|16|32)\(")
++ORDERED_STORE = re.compile(r"\bTS(?:8|16|32)\(")
++STORE_CALL = re.compile(r"\b(?:M(?:8|16|32|64)|MF(?:32|64))\(")
++MEM_WRITE = re.compile(r"\b(?:memcpy|memmove|memset)\(MEM \+ ")
++ASSIGNS = re.compile(r"\s*(?:<<|>>|[-+*/|&^])?=(?!=)")   # `=` and compound assignment (`|=` is emitted for bts)
++
++
++def only_ordered_accesses(lines, ordered):
++    text = "\n".join(lines)
++    return bool(ordered.search(text)) and not PLAIN_ACCESS.search(text)
++
++
++def stack_address(arg, frame):
++    return "esp" in arg or "fs_base" in arg or (frame and "ebp" in arg)
++
++
++def plain_shared_store(lines, frame):
++    """A plain (not TSn) store to guest memory that is not this thread's stack, found in the emitted text.
++    capstone reports some stores (x87 fstp/fist, MMX movq m64) as reads; the text is authoritative."""
++    text = "\n".join(lines)
++    for m in STORE_CALL.finditer(text):
++        depth, k = 0, m.end() - 1
++        for k in range(m.end() - 1, len(text)):
++            depth += text[k] == "("
++            depth -= text[k] == ")"
++            if depth == 0:
++                break
++        if ASSIGNS.match(text[k + 1:]) and not stack_address(text[m.end():k], frame):
++            return True
++    for m in MEM_WRITE.finditer(text):
++        end = text.find(",", m.end())
++        if not stack_address(text[m.end():end if end > 0 else None], frame):
++            return True
++    return "rt_movsd(" in text
++
++
+ def stack_op(i, op, frame):
+     """Is memory operand `op` this thread's own stack (or its TEB)?"""
+     if op.mem.base and i.reg_name(op.mem.base) in (("esp", "ebp") if frame else ("esp",)):
+@@ -114,13 +160,19 @@ def mem_order(i, lines, frame=False):
+     mn = i.mnemonic
+     if mn.startswith("lock ") or (mn == "xchg" and any(op.type == x86.X86_OP_MEM for op in i.operands)):
+         return ["FULL_FENCE();"] + lines + ["FULL_FENCE();"]
++    by_operand = False
+     for op in i.operands:
+         if op.type == x86.X86_OP_MEM and (op.access & 2):
+             if op.mem.base and i.reg_name(op.mem.base) in (("esp", "ebp") if frame else ("esp",)):
+                 continue
+             if op.mem.segment and i.reg_name(op.mem.segment) == "fs":
+                 continue
+-            return ["ST_FENCE();"] + lines
++            by_operand = True
++            break
++    # capstone reports the memory operand of some stores (x87 fstp/fist/fistt, MMX movq m64, ...) as a read only,
++    # so the operand test above misses them. The emitted text is authoritative (patch 0007 v2).
++    if by_operand or plain_shared_store(lines, frame):
++        return ["ST_FENCE_TSO();" if only_ordered_accesses(lines, ORDERED_STORE) else "ST_FENCE();"] + lines
+     return lines
+ 
+ class Unsupported(Exception):
+@@ -1135,6 +1187,7 @@ class Lifter:
+             if not insns or insns[-1].address + insns[-1].size != b:
+                 raise Unsupported("decode %X" % a)
+             ld_pending = False
++            ld_plain = False   # a shared load since the last fence is not an acquire TLn (0007)
+             for i in insns:
+                 last = i is insns[-1]
+                 nxt = i.address + i.size
+@@ -1144,12 +1197,15 @@ class Lifter:
+                     # does, so a flag test followed by reads of the data it
+                     # guards needs a load fence where control leaves the block.
+                     if ld_pending and i.mnemonic != "call" and i.mnemonic != "jmp":
+-                        lines = ["LD_FENCE();"] + lines
++                        lines = ["LD_FENCE();" if ld_plain else "LD_FENCE_TSO();"] + lines
+                         ld_pending = False
++                        ld_plain = False
+                 else:
+                     lines = self.lift(i)
+                     if shared_load(i, frame):
+                         ld_pending = True
++                        if not only_ordered_accesses(lines, ORDERED_LOAD):
++                            ld_plain = True
+                     lines = mem_order(i, lines, frame)
+                 for line in lines:
+                     o.append("    " + line)

@@ -102,6 +102,9 @@ PY
     test_lifecycle_controller.LifecycleTests.test_actual_controller_preserves_producers_and_resume_races -v
   run_validation python3 -m unittest discover -s tests -p 'test_present_timing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_frame_timing_analysis.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_display_timing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_cpu_sample.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_present_pacing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_shader_lead_diagnostics.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_asset_timing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_audio_submix.py' -v

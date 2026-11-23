@@ -1365,3 +1365,37 @@ Codemagic build12（`6af6edd005c8b21ba24ef3d5`、公開commit `08f80fdd0c233c5e6
 既存のprofile／DPAPI署名手順により`private/title-signing-20261112/SkyrimIOS-PC2011-build4-signed.ipa`を生成。SHA256は`d32aa66981cc893f4c986c9f473a44c37ee88b238e181b6468b5a91de17c8750`。2イメージ／39,412コードページ／4resourceを暗号検証し、profileのApple chain・既存端末／App ID・メモリ拡張3権限も検証。旧IPA・private guest・ゲーム入力・セーブは保持した。インストールはまだ行っておらず、OS受理・実際のFPS／発熱／音声／描画・cache保存は未確認。
 
 実機更新は本人の保存・完全終了・USB接続・ロック解除後、`snapshot_pc_build4.py`でプロフィールだけを保護し、`phone_pc_build4.py install`でUpgradeする。ゲーム26ファイルは再転送せず、前後の一覧／セーブを照合する。最初は同じsave／同じ画質／同じFPS上限で静止・カメラ・魔法／攻撃を試す。cache比較はその後ホームに戻りしばらく待ってから完全終了し、再起動して同じ条件を使う。新しい計測で初回生成、生成lock待ち、readback／I/O、メモリ回収後の再確保を分け、体感だけから原因や改善倍率を断定しない。
+
+## 表示時刻・GPU時間・CPUサンプリングの計測（build23準備、実機未確認）
+
+目的は、体感の「常にカクつく」「FPSが低い」を、CPU側の時刻だけでなく、実際に画面へ出た間隔、GPUの処理時間、CPUがどこで時間を使うかで分けて見られるようにすること。**この節の計測は、まだ実機で動かしていない。数値の意味と限界は、実機のログが届いてから確かめる。**
+
+### 設計判断: MoltenVKは変更しない
+
+当初の想定は、固定MoltenVKの `MVKImage.mm` と `MVKQueue.mm` へ観測フックを入れる方法だった。しかし固定MoltenVKの提示経路 `MVKPresentableSwapchainImage::presentCAMetalDrawable` は、すでに `addPresentedHandler` を使っている。一方、`verify_lifecycle_baseline.py` は `MVKQueue.mm`・`MVKDevice.mm`・`MVKImage.mm`・`MVKCommandBuffer.mm` の4ファイルを「元のまま」とバイト固定し、ビルド前後に検査する。これは、過去に却下したGPU admissionの再発を防ぐ保護である。その4ファイルを変えると、この保護を緩めることになり、さらにパイプラインキャッシュの識別子（`build-dependencies.sh`、`verify_lifecycle_baseline.py` が入力）も変わって、利用者のシェーダーキャッシュが作り直しになる。
+
+そこで、ホスト側だけで、Metalの公開コールバックを観測する:
+
+- 画面に出た時刻: `-[CAMetalLayer nextDrawable]` を包み、返ったdrawableに `-addPresentedHandler:` を足して `presentedTime` を読む。`presentedTime` が0なら、表示されなかったフレームとして数える。
+- GPU時間: 実際のコマンドキューのクラス（実機で、本物のキューから見つける）の、コマンドバッファ作成メソッド3種を包み、`-addCompletedHandler:` で `GPUStartTime` / `GPUEndTime` を読む。見つからないメソッドは、「入れられなかった」と報告し、成功とはしない。
+- どちらも、元の実装を必ず呼び、結果をそのまま返す。待ち・結果・提出順・エラー処理は変えない。`SKYRIM_IOS_DISPLAY_TIMING=0` で何も入れない。
+
+Metalの時計（`CACurrentMediaTime`）とホストの時計（`CLOCK_MONOTONIC`）は、端末がスリープしていた時間だけずれる。そこで、両方を同時に読み、差だけを使って提示時刻をホスト時計へ写す（`display_timing_core.c`）。
+
+### 新しい記録
+
+`performance_metrics.h` の末尾に、`display_interval`・`display_dropped`・`display_latency`・`gpu_command_buffer`・`gpu_frame_busy`・`gpu_frame_span` を追加した（既存の番号は動かさない）。既存の5秒窓の `IOS_TIMING` に載る。100ms以上の表示間隔は、既存の有界の標本（`IOS_STALL`）にも1件ずつ入り、`frame_gap` や シェーダー・セーブの作業と重ねて見られる。`display_*` は、標本が溢れて他の作業の標本を押し出さないよう、ヒストグラムのみとする。`gpu_frame_busy` と `gpu_frame_span` は、直前の提示コールバックから今回までに完了したコマンドバッファをまとめたもので、どのdrawableを作ったかは分からない（統計的な対応）。`IOS_DISPLAY_TIMING` の1行が、起動時に何を入れられたかを書く。
+
+### CPUサンプリング（既定オフ）
+
+起動画面の「CPU計測」を入れたときだけ、専用スレッドが動く（`SKYRIM_IOS_CPU_SAMPLE=1`、既定500Hz）。毎回、実行中のスレッドを1つずつ短く止め、プログラムカウンタとフレームポインタの連鎖（8段まで、範囲・並び・上向きを毎回確認）を読んで再開する。**止めている間は、読み取りだけで、メモリ確保・ロック・ログ・dyldの呼び出しをしない**（止めたスレッドがそれらのロックを持っていると、デッドロックするため）。記録は、スレッドの通し番号と、アプリ自身の画像（本体、`SkyrimGuest.framework`）の先頭からのオフセットだけ。関数名やパスは端末から出さない。`scripts/analyze-cpu-samples.py` が、同じビルドのシンボル表（`llvm-nm -n --defined-only`）と画像UUIDで関数名に直し、自分自身の時間と、呼び出し元を含めた時間の上位を出す。シンボル表はゲストの派生情報なので、リポジトリには置かない。
+
+### 試験とキャッシュ識別子
+
+PCの試験（`test_display_timing.py`、`test_cpu_sample.py`）が、本物の記録関数、時計の写し、集計、巻き戻しの境界、表の溢れ、並行呼び出し、診断の許可リスト、解析器の出力を確かめる。Objective-Cの薄い層（`display_timing.m`、`cpu_sampler.m`）はApple SDKでしかコンパイルできず、実機CIで確かめる。パイプラインキャッシュの識別子（利用者が再利用する側）は、この変更の前後で同じであることを、`test_display_timing.py` が固定値で確かめる。変更したのは、識別子の入力のうち、観測だけの `performance_metrics.h` で、その新しい版の指紋を、既存の確認済み一覧に足した。
+
+### 表示に合わせたフレームの出し方（比較設定、既定オフ、実機未確認）
+
+起動画面の比較設定「表示に合わせてフレームを出す」（`SKYRIM_IOS_DISPLAY_SYNC`）を入れたときだけ、FPS上限を、CPUの時計で寝る代わりに、Metalへ「1フレームの最小表示時間」として渡す（drawableの `-present` を `-presentAfterMinimumDuration:` へ振り替える）。CPU側の待ちは、上限の期限の半周期前までに縮める。表示の更新率が上限で割り切れるとき（60Hz画面の30・60、120Hz画面の24・30・40・60）だけ、`CADisplayLink` の `preferredFrameRateRange` でOSへ更新率を伝える。割り切れない組み合わせ（60Hz画面の24・40）は、設定を書き換えず、設定画面のフッターに「均等にならない」注記（日本語・英語）を出す。**オフのとき、CPU側の待ちは従来のコードのまま**（`test_device_policy.py` が、実際の関数を、この部品とリンクして確かめる）。MoltenVKは変更しない。
+
+`Info.plist` に `CADisableMinimumFrameDurationOnPhone` を追加した。iPhoneアプリが高い更新率を要求する条件で、**オフのときにも効くアプリ全体の変更**になる。実際の更新率は、ビルド23の `display_interval` の分布で確かめる。`presentAfterMinimumDuration:` が内部で `-present` を呼ぶ実装だと、入れ子の保護で間隔の指定が黙って失われる。その場合は `display_interval` が変わらないことで分かるため、効果の判断は、この分布と `frame_gap` で行う。CPU側を半周期早める値は出発点で、実機の記録で調整する。

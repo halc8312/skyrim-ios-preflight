@@ -1,0 +1,345 @@
+diff --git a/runtime/lift_prelude.h b/runtime/lift_prelude.h
+index f6d633e..eb43d1f 100644
+--- a/runtime/lift_prelude.h
++++ b/runtime/lift_prelude.h
+@@ -10,6 +10,17 @@ void rt_setjmp3(CPU *c);
+     c->r[4] = esp; c->r[5] = ebp; c->r[6] = esi; c->r[7] = edi; c->flags = f; } while (0)
+ #define RELOAD() do { eax = c->r[0]; ecx = c->r[1]; edx = c->r[2]; ebx = c->r[3]; \
+     esp = c->r[4]; ebp = c->r[5]; esi = c->r[6]; edi = c->r[7]; f = c->flags; } while (0)
++/* Partial flag transfer (patch 0008). `m` is a constant mask of the flags (cf 1, zf 2, sf 4, of 8, pf 16, af 32)
++ * that can still be observed; the other flags are neither written to nor read back from CPU. Mask 63 is what
++ * SPILL()/RELOAD() do, and tools/lift.py leaves those two macros in place for it. */
++#define SPILLF(m) do { c->r[0] = eax; c->r[1] = ecx; c->r[2] = edx; c->r[3] = ebx; \
++    c->r[4] = esp; c->r[5] = ebp; c->r[6] = esi; c->r[7] = edi; \
++    if ((m) & 1) c->flags.cf = f.cf; if ((m) & 2) c->flags.zf = f.zf; if ((m) & 4) c->flags.sf = f.sf; \
++    if ((m) & 8) c->flags.of = f.of; if ((m) & 16) c->flags.pf = f.pf; if ((m) & 32) c->flags.af = f.af; } while (0)
++#define RELOADF(m) do { eax = c->r[0]; ecx = c->r[1]; edx = c->r[2]; ebx = c->r[3]; \
++    esp = c->r[4]; ebp = c->r[5]; esi = c->r[6]; edi = c->r[7]; \
++    if ((m) & 1) f.cf = c->flags.cf; if ((m) & 2) f.zf = c->flags.zf; if ((m) & 4) f.sf = c->flags.sf; \
++    if ((m) & 8) f.of = c->flags.of; if ((m) & 16) f.pf = c->flags.pf; if ((m) & 32) f.af = c->flags.af; } while (0)
+ static inline void rt_movsd(uint32_t n, uint32_t dst, uint32_t src) {
+     /* forward rep movsd; overlapping copies must behave like the dword loop */
+     if (dst <= src || dst >= src + n * 4) memmove(MEM + dst, MEM + src, (size_t)n * 4);
+diff --git a/tools/lift.py b/tools/lift.py
+index 0342761..77c506c 100644
+--- a/tools/lift.py
++++ b/tools/lift.py
+@@ -1268,6 +1268,294 @@ class Lifter:
+         raise Unsupported(mn)
+ 
+ 
++# ---- Patch 0008: call-flag traffic (analysis on the emitted text; see flags_pass in the notes) ----
++FLAG_NAMES = ("cf", "zf", "sf", "of", "pf", "af")
++FLAG_BIT = {"cf": 1, "zf": 2, "sf": 4, "of": 8, "pf": 16, "af": 32}
++FLAG_ALL = 63
++FLAG_LOGIC = 1 | 2 | 4 | 8 | 16          # logicN writes cf zf sf of pf, not af
++FLAG_INCDEC = 2 | 4 | 8 | 16 | 32        # incN/decN write zf sf of pf af, not cf
++FLAG_SHIFT = 1 | 2 | 4 | 8 | 16          # shl/shr/sar with a non-zero count write cf zf sf of pf
++FP_QUICK = re.compile(r"\bf\b|goto|SPILL|RELOAD|return|c->flags")
++FP_FIELD = re.compile(r"\bf\.(cf|zf|sf|of|pf|af)\b(\s*(?:<<|>>|[-+*/|&^])?=(?!=))?")
++FP_HELPER = re.compile(r"\b(add|adc|sub|sbb|logic|inc|dec|neg|shl|shr|sar|rol|ror|rcl|rcr|shld|shrd)(?:8|16|32)\(")
++FP_BARE = re.compile(r"(?<![\w.&>])f\b(?![\w.])")
++FP_CONTROL = re.compile(r"\b(?:if|else|for|while|do|switch|goto|return|case|break|continue)\b|\?|&&|\|\|")
++FP_GOTO = re.compile(r"\bgoto (L_[0-9A-Za-z_]+);")
++FP_DIRECT = re.compile(r"esp -= 4; M32\(esp\) = 0x[0-9A-F]+u; SPILL\(\); f_([0-9A-F]+)\(c\); RELOAD\(\);")
++FP_RTCALL = re.compile(r"esp -= 4; M32\(esp\) = 0x[0-9A-F]+u; SPILL\(\); rt_call\(c, 0x[0-9A-F]+u\); RELOAD\(\);")
++FP_INDIRECT = re.compile(r"\{ uint32_t t_ = .* esp -= 4; M32\(esp\) = 0x[0-9A-F]+u; SPILL\(\); "
++                         r"\{ static const FnEntry \*ic_; .*rt_call_ic\(c, t_, &ic_\); \} RELOAD\(\); \}")
++FP_RETURN = re.compile(r"esp \+= [0-9]+; SPILL\(\); return;")
++FP_TAIL = re.compile(r"\{ SPILL\(\); f_([0-9A-F]+)\(c\); return; \}")
++FP_TAIL_ANY = re.compile(r"SPILL\(\); f_([0-9A-F]+)\(c\); return;")
++FP_RTTAIL = re.compile(r"\{ SPILL\(\); rt_call\(c, [^;]*\); return; \}")
++FP_JUMP = re.compile(r"goto L_[0-9A-Za-z_]+;")
++FP_COUNT = re.compile(r"(?:\(uint8_t\))?\(?0x([0-9A-Fa-f]+)u?\)?")
++
++
++def fp_split_args(text):
++    out, depth, cur = [], 0, []
++    for ch in text:
++        if ch == "," and depth == 0:
++            out.append("".join(cur))
++            cur = []
++            continue
++        depth += ch == "("
++        depth -= ch == ")"
++        cur.append(ch)
++    out.append("".join(cur))
++    return out
++
++
++def fp_call_args(text, open_index):
++    """Argument text of the call whose '(' is text[open_index], and the index of its ')'."""
++    depth = 0
++    for k in range(open_index, len(text)):
++        if text[k] == "(":
++            depth += 1
++        elif text[k] == ")":
++            depth -= 1
++            if depth == 0:
++                return text[open_index + 1:k], k
++    return None, -1
++
++
++def fp_scan(line):
++    """None for a line that cannot touch flags or control flow, else a tuple
++    (kind, use, kill, gotos, falls, target, tails): kind is 'g' generic, 'D' direct call, 'U' unknown call,
++    'T' unconditional tail call, 'X' other exit; `target` is a hex string for 'D'/'T'; `tails` is the list of known
++    tail-call targets found inside a generic line."""
++    s = line.strip()
++    if not s or not FP_QUICK.search(s):
++        return None
++    m = FP_DIRECT.fullmatch(s)
++    if m:
++        return ("D", 0, 0, (), True, m.group(1), ())
++    if FP_RTCALL.fullmatch(s):
++        return ("U", FLAG_ALL, 0, (), True, None, ())
++    if s.startswith("{ uint32_t t_ = ") and FP_INDIRECT.fullmatch(s) and s.count("SPILL();") == 1 \
++            and s.count("RELOAD();") == 1 and "f." not in s and "&f" not in s:
++        return ("U", FLAG_ALL, 0, (), True, None, ())
++    if FP_RETURN.fullmatch(s) or FP_RTTAIL.fullmatch(s):
++        return ("X", FLAG_ALL, 0, (), False, None, ())
++    m = FP_TAIL.fullmatch(s)
++    if m:
++        return ("T", 0, 0, (), False, m.group(1), ())
++    use = kill = 0
++    falls = True
++    gotos = tuple(FP_GOTO.findall(s))
++    if FP_JUMP.fullmatch(s) or (s.startswith("{ jt_ = ") and s.endswith("goto L_dispatch; }")) or \
++            (s.startswith("switch (jt_) {") and s.endswith("return; }")):
++        falls = False
++    if "SPILL" in s or "RELOAD" in s or "c->flags" in s:
++        use = FLAG_ALL
++    tails = tuple(FP_TAIL_ANY.findall(s))
++    defs = 0
++    for fm in FP_FIELD.finditer(s):
++        bit = FLAG_BIT[fm.group(1)]
++        if fm.group(2) is not None and fm.group(2).strip() == "=":
++            defs |= bit
++        else:
++            use |= bit
++    helper_kill = 0
++    helpers = 0
++    for hm in FP_HELPER.finditer(s):
++        args, close = fp_call_args(s, hm.end() - 1)
++        if args is None:
++            use = FLAG_ALL
++            continue
++        parts = fp_split_args(args)
++        if parts[-1].strip() != "&f":
++            use = FLAG_ALL
++            continue
++        helpers += 1
++        name = hm.group(1)
++        if name in ("adc", "sbb", "rcl", "rcr"):
++            use |= FLAG_BIT["cf"]
++        if name in ("add", "adc", "sub", "sbb", "neg"):
++            helper_kill |= FLAG_ALL
++        elif name == "logic":
++            helper_kill |= FLAG_LOGIC
++        elif name in ("inc", "dec"):
++            helper_kill |= FLAG_INCDEC
++        elif name in ("shl", "shr", "sar") and len(parts) == 3:
++            cm = FP_COUNT.fullmatch(parts[1].strip())
++            if cm and (int(cm.group(1), 16) & 31):
++                helper_kill |= FLAG_SHIFT
++    if s.count("&f") != helpers:
++        use = FLAG_ALL
++    rest = FP_FIELD.sub("", s).replace("&f", "")
++    if FP_BARE.search(rest):
++        use = FLAG_ALL
++    if not FP_CONTROL.search(s):
++        kill = (defs | helper_kill) & FLAG_ALL
++    if not (use or kill or gotos or tails or not falls):
++        return None
++    return ("g", use, kill, gotos, falls, None, tails)
++
++
++def fp_parse_function(lines):
++    """(nodes, labels, body_start) or None when the function does not have the expected shape."""
++    if len(lines) < 7 or not lines[0].startswith("void f_") or lines[2] != "    Flags f = c->flags;" \
++            or lines[3] != "    uint32_t jt_ = 0;" or lines[4] != "    (void)f; (void)jt_;" or lines[-1] != "}":
++        return None
++    nodes, labels = [], {}
++    for idx in range(5, len(lines) - 1):
++        line = lines[idx]
++        if line.startswith("L_") and line.endswith(":"):
++            labels[line[:-1]] = len(nodes)
++            continue
++        node = fp_scan(line)
++        if node is not None:
++            nodes.append((idx,) + node)
++    return nodes, labels
++
++
++def fp_prepare(parsed):
++    """Per-node successor lists (indices; len(nodes) is the function end, which counts as an exit)."""
++    nodes, labels = parsed
++    count = len(nodes)
++    succ = []
++    for k, node in enumerate(nodes):
++        kind, gotos, falls = node[1], node[4], node[5]
++        targets = []
++        for label in gotos:
++            target = labels.get(label)
++            targets.append(count if target is None else target)
++        if falls:
++            targets.append(k + 1)
++        succ.append(targets)
++    return succ
++
++
++def fp_solve(parsed, succ, summary):
++    """Backward liveness over the function; returns the live-in list (live[len(nodes)] is the exit = all flags)."""
++    nodes = parsed[0]
++    count = len(nodes)
++    live = [0] * (count + 1)
++    live[count] = FLAG_ALL
++    base = []
++    for node in nodes:
++        kind, use, target, tails = node[1], node[2], node[6], node[7]
++        if kind == "D" or kind == "T":
++            base.append(summary.get(int(target, 16), FLAG_ALL))
++        else:
++            need = use
++            for t in tails:
++                need |= summary.get(int(t, 16), FLAG_ALL)
++            base.append(need)
++    changed = True
++    while changed:
++        changed = False
++        for k in range(count - 1, -1, -1):
++            kind = nodes[k][1]
++            if kind == "g":
++                out = 0
++                for t in succ[k]:
++                    out |= live[t]
++                value = base[k] | (out & ~nodes[k][3])
++            else:
++                value = base[k]
++            if value != live[k]:
++                live[k] = value
++                changed = True
++    return live
++
++
++def fp_mask_text(macro, mask):
++    return "%s(%d);" % (macro, mask)
++
++
++def flags_pass(functions, hidden, report=None):
++    """functions: {address: [lines]} (modified in place); hidden: addresses whose direct callers reach host code
++    (HOST_OVERRIDES), which keep the full SPILL/RELOAD. Returns the analysis dictionary."""
++    parsed, succs, callers = {}, {}, {}
++    skipped = []
++    for fa, lines in functions.items():
++        p = fp_parse_function(lines)
++        if p is None:
++            skipped.append(fa)
++            continue
++        parsed[fa] = p
++        succs[fa] = fp_prepare(p)
++        for node in p[0]:
++            if node[1] in ("D", "T"):
++                callers.setdefault(int(node[6], 16), set()).add(fa)
++            for t in node[7]:
++                callers.setdefault(int(t, 16), set()).add(fa)
++    summary = {fa: 0 for fa in parsed}
++    for fa in skipped:
++        summary[fa] = FLAG_ALL
++    for fa in hidden:
++        summary[fa] = FLAG_ALL
++    pending = set(parsed) - set(hidden)
++    rounds = 0
++    while pending:
++        rounds += 1
++        fa = pending.pop()
++        live = fp_solve(parsed[fa], succs[fa], summary)
++        value = live[0] if parsed[fa][0] else FLAG_ALL
++        if value != summary[fa]:
++            summary[fa] = value
++            for caller in callers.get(fa, ()):
++                if caller in parsed and caller not in hidden:
++                    pending.add(caller)
++    stats = {"functions": len(functions), "analysed": len(parsed), "skipped_shape": len(skipped),
++             "solves": rounds, "spill_sites": 0, "spill_reduced": 0, "spill_flags_dropped": 0,
++             "reload_sites": 0, "reload_reduced": 0, "reload_flags_dropped": 0, "tail_sites": 0, "tail_reduced": 0,
++             "spill_mask_histogram": {}, "reload_mask_histogram": {}}
++    sites = [] if report is None else report
++    for fa, p in parsed.items():
++        nodes = p[0]
++        succ = succs[fa]
++        live = fp_solve(p, succ, summary)
++        lines = functions[fa]
++        for k, node in enumerate(nodes):
++            idx, kind, target, tails = node[0], node[1], node[6], node[7]
++            line = lines[idx]
++            if kind == "D" or kind == "U":
++                out = 0
++                for t in succ[k]:
++                    out |= live[t]
++                stats["reload_sites"] += 1
++                reload_mask = out
++                spill_mask = FLAG_ALL
++                if kind == "D":
++                    stats["spill_sites"] += 1
++                    spill_mask = summary.get(int(target, 16), FLAG_ALL)
++                if spill_mask != FLAG_ALL:
++                    stats["spill_reduced"] += 1
++                    stats["spill_flags_dropped"] += bin(FLAG_ALL & ~spill_mask).count("1")
++                    line = line.replace("SPILL();", fp_mask_text("SPILLF", spill_mask), 1)
++                if reload_mask != FLAG_ALL:
++                    stats["reload_reduced"] += 1
++                    stats["reload_flags_dropped"] += bin(FLAG_ALL & ~reload_mask).count("1")
++                    line = line.replace("RELOAD();", fp_mask_text("RELOADF", reload_mask), 1)
++                if kind == "D":
++                    key = str(spill_mask)
++                    stats["spill_mask_histogram"][key] = stats["spill_mask_histogram"].get(key, 0) + 1
++                key = str(reload_mask)
++                stats["reload_mask_histogram"][key] = stats["reload_mask_histogram"].get(key, 0) + 1
++                lines[idx] = line
++                if report is not None:
++                    sites.append((fa, idx, kind, target, spill_mask, reload_mask))
++            elif kind == "T" or tails:
++                targets = [target] if kind == "T" else list(tails)
++                for t in targets:
++                    mask = summary.get(int(t, 16), FLAG_ALL)
++                    stats["tail_sites"] += 1
++                    if mask != FLAG_ALL:
++                        stats["tail_reduced"] += 1
++                        line = line.replace("SPILL(); f_%s(c); return;" % t,
++                                            "%s f_%s(c); return;" % (fp_mask_text("SPILLF", mask), t), 1)
++                lines[idx] = line
++    stats["summary_histogram"] = {}
++    for fa, mask in summary.items():
++        stats["summary_histogram"][str(mask)] = stats["summary_histogram"].get(str(mask), 0) + 1
++    return {"stats": stats, "summary": summary}
++# ---- end of patch 0008 analysis ----
++
++
+ def write_if_changed(path, text):
+     try:
+         if open(path).read() == text:
+@@ -1305,6 +1593,23 @@ def main():
+     print("lifted", len(good), "rejected", len(failed))
+     print(sorted(reasons.items(), key=lambda x: -x[1])[:30])
+ 
++    if os.environ.get("LIFT_CALLFLAGS", "1") != "0":
++        # Direct callers of a function that host code can replace must not assume anything about its flags.
++        hidden = set(HOST_OVERRIDES.get(MOD, ())) | set(HOST_OVERRIDES_SKYRIM.get(MOD, ()))
++        flat = {}
++        for fa in good:
++            body = "\n".join(good[fa][0]).split("\n")
++            good[fa] = (body, good[fa][1])
++            flat[fa] = body
++        analysis = flags_pass(flat, hidden)
++        print("call flags:", {k: v for k, v in analysis["stats"].items() if not k.endswith("histogram")})
++        # The report goes to the file named by LIFT_CALLFLAGS_REPORT, never into the generated tree (the guest
++        # build requires the tree to hold exactly the known set of files).
++        if os.environ.get("LIFT_CALLFLAGS_REPORT"):
++            with open(os.environ["LIFT_CALLFLAGS_REPORT"], "w") as out:
++                json.dump({"stats": analysis["stats"],
++                           "flags_live_in": {"%X" % k: v for k, v in sorted(analysis["summary"].items())}}, out, indent=0)
++
+     names = sorted(good)
+     write_if_changed(os.path.join(OUT, "funcs_%s.h" % MOD),
+                      '#pragma once\n#include "x86.h"\n' + "".join("void f_%X(CPU *c);\n" % fa for fa in names))

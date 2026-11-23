@@ -4,6 +4,8 @@
 #include "mobile_ui.h"
 #include "performance_metrics.h"
 #include "device_policy.h"
+#include "display_timing.h"
+#include "present_pacing_core.h"
 #include "lifecycle_runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -130,7 +132,16 @@ void skyrim_ios_pace_frame(void) {
     static _Thread_local SkyrimFrameClock clock;
     uint64_t started = monotonic_ns(), sleeps = 0;
     uint64_t epoch = __atomic_load_n(&metrics_epoch, __ATOMIC_RELAXED);
-    uint64_t deadline = skyrim_mobile_frame_deadline(&clock, started, skyrim_mobile_fps_limit());
+    const unsigned fps = skyrim_mobile_fps_limit();
+    uint64_t deadline = skyrim_mobile_frame_deadline(&clock, started, fps);
+    if (skyrim_present_sync_enabled()) {
+        /* Opt-in: Metal spaces the frames by the cap, so the CPU only keeps the game from
+         * running far ahead and releases half a period early. Off: this block never runs. */
+        const uint64_t period = skyrim_present_min_duration_ns(fps);
+        skyrim_present_set_target(period);
+        skyrim_present_refresh_hint(fps);
+        deadline = skyrim_present_cpu_deadline(deadline, started, period, 1);
+    }
     for (;;) {
         uint64_t now = monotonic_ns();
         if (now >= deadline) break;
