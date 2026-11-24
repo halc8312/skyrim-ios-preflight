@@ -914,3 +914,6 @@
 !/pc-aot/patches/skydream/0008-reduce-call-flag-traffic.patch
 !/pc-aot/tests/test_call_flag_traffic.py
 !/pc-aot/tests/native_call_flags.c
+!/pc-aot/patches/skydream/0009-keep-x87-top-in-a-local.patch
+!/pc-aot/tests/test_x87_top.py
+!/pc-aot/tests/native_x87_top.c

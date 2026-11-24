@@ -1,0 +1,163 @@
+diff --git a/runtime/lift_prelude.h b/runtime/lift_prelude.h
+index eb43d1f..13dad03 100644
+--- a/runtime/lift_prelude.h
++++ b/runtime/lift_prelude.h
+@@ -21,6 +21,15 @@ void rt_setjmp3(CPU *c);
+     esp = c->r[4]; ebp = c->r[5]; esi = c->r[6]; edi = c->r[7]; \
+     if ((m) & 1) f.cf = c->flags.cf; if ((m) & 2) f.zf = c->flags.zf; if ((m) & 4) f.sf = c->flags.sf; \
+     if ((m) & 8) f.of = c->flags.of; if ((m) & 16) f.pf = c->flags.pf; if ((m) & 32) f.af = c->flags.af; } while (0)
++/* x87 stack position kept in the function local top_ inside a basic block (patch 0009, tools/lift.py x87_pass).
++ * Same arithmetic as ST/fpush/fpop/fstatus in x86.h; lift.py writes top_ back to c->top before anything else can see it. */
++#define ST87(i) (c->st[(top_ + (i)) & 7])
++#define FPUSH87(v) do { double x87v_ = (v); top_ = (top_ - 1) & 7; c->st[top_] = x87v_; } while (0)
++#define FPOP87() (top_ = (top_ + 1) & 7)
++static inline uint16_t fstatus_at(CPU *c, uint32_t top) {
++    return (uint16_t)((c->c3 << 14) | ((top & 7) << 11) | (c->c2 << 10) | (c->c1 << 9) | (c->c0 << 8));
++}
++#define FSTATUS87() fstatus_at(c, top_)
+ static inline void rt_movsd(uint32_t n, uint32_t dst, uint32_t src) {
+     /* forward rep movsd; overlapping copies must behave like the dword loop */
+     if (dst <= src || dst >= src + n * 4) memmove(MEM + dst, MEM + src, (size_t)n * 4);
+diff --git a/tools/lift.py b/tools/lift.py
+index 77c506c..f4b4506 100644
+--- a/tools/lift.py
++++ b/tools/lift.py
+@@ -1556,6 +1556,119 @@ def flags_pass(functions, hidden, report=None):
+ # ---- end of patch 0008 analysis ----
+ 
+ 
++# ---- Patch 0009: x87 stack position in a local (analysis on the emitted text) ----
++X87_USE = re.compile(r"\bST\(|\bfpush\(c, |\bfpop\(c\)|\bfstatus\(c\)")
++X87_EXTERNAL = re.compile(r"c->top|\bfxam\(|\bfprem\(|\bfpu_env\(")
++X87_CONTROL = re.compile(r"\bgoto\b|\breturn\b|SPILL|RELOAD|\bswitch\b")
++X87_CALL_WITH_CPU = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\(c[,)]")
++X87_CPU_CALLS_THAT_IGNORE_TOP = frozenset(("fpush", "fpop", "fstatus", "fcompare", "fround", "fist16", "fist32", "fist64"))
++X87_PURE_JUMP = re.compile(r"^(?:if \(.*\) )?goto L_[0-9A-Za-z_]+;$")
++X87_LOAD = "    top_ = c->top;"
++X87_FLUSH = "    c->top = top_;"
++
++
++def x87_rewrite(line):
++    """Rewrite one simple line to use `top_`. Returns (new line, changes top_)."""
++    changed = False
++    start = 0
++    while True:
++        k = line.find("fpush(c, ", start)
++        if k < 0:
++            break
++        depth, j = 0, k + len("fpush")
++        for j in range(k + len("fpush"), len(line)):
++            if line[j] == "(":
++                depth += 1
++            elif line[j] == ")":
++                depth -= 1
++                if depth == 0:
++                    break
++        else:
++            raise ValueError("unbalanced fpush: " + line)
++        line = line[:k] + "FPUSH87(" + line[k + len("fpush(c, "):j] + ")" + line[j + 1:]
++        changed = True
++        start = k + 1
++    if "fpop(c)" in line:
++        line = line.replace("fpop(c)", "FPOP87()")
++        changed = True
++    line = line.replace("fstatus(c)", "FSTATUS87()")
++    line = re.sub(r"\bST\(", "ST87(", line)
++    return line, changed
++
++
++def x87_unsafe_call(line):
++    for m in X87_CALL_WITH_CPU.finditer(line):
++        if m.group(1) not in X87_CPU_CALLS_THAT_IGNORE_TOP:
++            return True
++    return False
++
++
++def x87_pass_function(lines, stats):
++    """lines: one function's emitted lines (header first, closing brace last). Returns the new list."""
++    if len(lines) < 7 or lines[4] != "    (void)f; (void)jt_;" or lines[-1] != "}":
++        stats["functions_skipped_shape"] = stats.get("functions_skipped_shape", 0) + 1
++        return lines
++    out = []
++    loaded = modified = used = False
++    for idx, line in enumerate(lines):
++        if idx < 5 or idx == len(lines) - 1:
++            out.append(line)
++            continue
++        if line.startswith("L_") and line.endswith(":"):
++            if modified:
++                out.append(X87_FLUSH)
++                stats["flushes"] += 1
++            loaded = modified = False
++            out.append(line)
++            continue
++        has_use = X87_USE.search(line) is not None
++        if not (has_use or loaded or modified):
++            out.append(line)
++            continue
++        external = X87_EXTERNAL.search(line) is not None or X87_CONTROL.search(line) is not None or x87_unsafe_call(line)
++        if external:
++            if modified:
++                out.append(X87_FLUSH)
++                stats["flushes"] += 1
++                modified = False
++            out.append(line)
++            if not (X87_PURE_JUMP.match(line.strip()) and not has_use):
++                loaded = False
++            if has_use:
++                stats["lines_left_unrewritten"] += 1
++            continue
++        if not has_use:
++            out.append(line)
++            continue
++        if not loaded:
++            out.append(X87_LOAD)
++            stats["loads"] += 1
++            loaded = True
++        new, changes = x87_rewrite(line)
++        out.append(new)
++        stats["lines_rewritten"] += 1
++        used = True
++        if changes:
++            modified = True
++    if used:
++        out.insert(5, "    uint32_t top_ = 0; (void)top_;")
++    return out
++
++
++def x87_pass(functions):
++    """functions: {address: [lines]}; returns (new functions, statistics)."""
++    stats = {"functions": len(functions), "functions_changed": 0, "lines_rewritten": 0, "loads": 0, "flushes": 0,
++             "lines_left_unrewritten": 0}
++    result = {}
++    for fa, lines in functions.items():
++        new = x87_pass_function(lines, stats)
++        if len(new) != len(lines):
++            stats["functions_changed"] += 1
++        result[fa] = new
++    return result, stats
++# ---- end of patch 0009 ----
++
++
+ def write_if_changed(path, text):
+     try:
+         if open(path).read() == text:
+@@ -1610,6 +1723,18 @@ def main():
+                 json.dump({"stats": analysis["stats"],
+                            "flags_live_in": {"%X" % k: v for k, v in sorted(analysis["summary"].items())}}, out, indent=0)
+ 
++    if os.environ.get("LIFT_X87TOP", "1") != "0":
++        flat = {}
++        for fa in good:
++            flat[fa] = "\n".join(good[fa][0]).split("\n")
++        rewritten, x87_stats = x87_pass(flat)
++        for fa in good:
++            good[fa] = (rewritten[fa], good[fa][1])
++        print("x87 top:", x87_stats)
++        if os.environ.get("LIFT_X87TOP_REPORT"):
++            with open(os.environ["LIFT_X87TOP_REPORT"], "w") as out:
++                json.dump(x87_stats, out, indent=0)
++
+     names = sorted(good)
+     write_if_changed(os.path.join(OUT, "funcs_%s.h" % MOD),
+                      '#pragma once\n#include "x86.h"\n' + "".join("void f_%X(CPU *c);\n" % fa for fa in names))
