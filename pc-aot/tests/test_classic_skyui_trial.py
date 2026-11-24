@@ -67,7 +67,7 @@ class ClassicSkyUITrialTests(unittest.TestCase):
 static BOOL launchWithoutMods, launchPluginListFailed, launchHasPackages, healthyMarked;
 static NSMutableDictionary *state, *launchSetup;
 static NSString *activeProfile, *originalGameDirectory, *packagesPath;
-static NSString *launchNotice, *profilePath, *modGamePath, *modNotice;
+static NSString *launchNotice, *profilePath, *modGamePath;
 static NSArray<NSDictionary *> *launchPlugins, *modPlugins;
 static NSArray<NSString *> *launchPackageIds;
 static NSDictionary *frozenFeaturesProfile;
@@ -100,6 +100,7 @@ static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady, NSStrin
     + function(manager, "static void RestoreLastGoodSetup(")
     + between(manager, "BOOL skyrim_mods_manages_plugins(", "NSArray<NSDictionary *> *skyrim_mods_plugin_choices(")
     + function(manager, "void skyrim_mods_frame(")
+    + between(mobile, "typedef enum {\n    SKModNoticeNone,", "\n\n/* Keep the launch finding") + "\n"
     + between(mobile, "static int readPluginHeader(", "static NSString *modStateText(") + r'''
 @interface TrialSwitch : NSObject
 @property(nonatomic) BOOL on;
