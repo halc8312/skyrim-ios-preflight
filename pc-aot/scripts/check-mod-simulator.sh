@@ -84,6 +84,8 @@ if live:
     required = {"nexus-live-listing"}
 elif sys.argv[4] == "dll-probe":
     required = {"installed-dll-diagnosis"}
+elif os.environ.get("SKYRIM_IOS_SKSE_DLL_PROBE") == "1":
+    required.add("installed-dll-diagnosis")
 if sys.argv[4] == "screens" and os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1":
     required.add("additional-save-check")
 captured = set()

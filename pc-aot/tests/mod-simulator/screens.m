@@ -731,5 +731,17 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self openModDetails:@"AuthoredGenerated"];
     [self findRow:@"These generated files were added with a different MOD setup. Regenerate for this profile."];
     [self goBackFrom:@"AuthoredGenerated"];
+#ifdef SKYRIM_IOS_SKSE_DLL_PROBE
+    [[self findRow:@"Trial Two"] tap];
+    [self.app.navigationBars[@"Profiles"].buttons[@"Add"] tap];
+    [self fillName:@"DLL Trial" replacing:@"MOD" inAlert:@"New profile"];
+    [[self findRow:@"DLL Trial"] tap];
+    [self goBackFrom:@"Profiles"];
+    [self checkInstalledModDllDiagnostics];
+    [self goBackFrom:@"DLL Compatibility"];
+    [self goBackFrom:@"AuthoredDLL"];
+    [[self findRow:@"DLL Trial"] tap];
+    [[self findRow:@"Trial Two"] tap];
+#endif
 }
 @end

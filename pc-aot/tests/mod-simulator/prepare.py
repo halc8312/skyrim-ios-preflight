@@ -374,9 +374,13 @@ def verify(container, assets, summary):
     assert not (view/"unselected-folder-file.txt").exists()
     assert not (view/"missing.txt").exists()
     packages = [json.loads(path.read_text()) for path in (base/"Mods").glob("*/package.json")]
-    assert {p["name"] for p in packages} == {"AuthoredZip", "AuthoredFolder", "AuthoredInstaller",
-                                              "AuthoredFolderInstaller", "AuthoredGenerated"}
-    assert len(packages) == 5 and not list((base/"Mods").glob(".staging-*"))
+    names = {"AuthoredZip", "AuthoredFolder", "AuthoredInstaller", "AuthoredFolderInstaller", "AuthoredGenerated"}
+    if os.environ.get("SKYRIM_IOS_SKSE_DLL_PROBE") == "1":
+        names.add("AuthoredDLL")
+        assert "DLL Trial" in profiles
+        verify_dll_package(base, assets)
+    assert {p["name"] for p in packages} == names
+    assert len(packages) == len(names) and not list((base/"Mods").glob(".staging-*"))
     generated = next(p for p in packages if p["name"] == "AuthoredGenerated")
     assert active["packages"][-1] == {"id": generated["id"], "on": True}
     ids = [p["id"] for p in active["packages"][:-1] if p["on"]]
