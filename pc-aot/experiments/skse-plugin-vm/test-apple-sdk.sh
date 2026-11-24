@@ -4,12 +4,14 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/skse-dll-sdk.XXXXXXXX")"
+port="$root/ios/runtime-port"
 pushd "$here" >/dev/null
 
 CC=clang python3 -B -m unittest -v test_probe_local_file test_probe_directory test_skse_plugin_vm test_pe_image \
     test_dependency_plan test_probe_asset_file test_x86_skse_records test_papyrus_trial \
     test_wintext test_winenv test_winstartup test_winfile_directories test_classic_pex test_x86_sse_conversion
 CC=clang python3 -B -m unittest discover -s "$root/tests" -p test_classic_skse_binding.py -v
+CC=clang python3 -B -m unittest discover -s "$root/tests" -p test_mod_hook_catalog.py -v
 device_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
 sources=(pe_image.c x86_call.c x86_heap.c x86_winthread.c x86_wintext.c x86_winenv.c x86_winfile.c x86_winsync.c x86_skse_records.c papyrus_trial.c dependency_plan.c plugin_trial.c
     probe_local_file.c probe_directory.c probe_asset_file.c)
@@ -22,7 +24,7 @@ for source in classic_pex classic_scalar; do
         -std=c11 -O2 -Wall -Wextra -Werror -c "$source.c" -o "$work/$source.o"
 done
 xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" -fmodules -fobjc-arc \
-    -Wall -Wextra -Werror -fsyntax-only mod_dll_probe.m
+    -I"$port" -Wall -Wextra -Werror -fsyntax-only mod_dll_probe.m
 xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$device_sdk" -fmodules -fobjc-arc \
     -DSKYRIM_IOS_SKSE_DLL_PROBE=1 -DSKYRIM_IOS_CLASSIC_SKSE=1 -I"$here" -I"$root/ios/private-abi" \
     -I"$root/experiments/skse-cosave" -fsyntax-only "$root/ios/runtime-port/mod_manager.m"
@@ -77,7 +79,8 @@ package.mkdir(parents=True)
 PY
 simulator_sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 xcrun --sdk iphonesimulator clang -target "$(uname -m)-apple-ios18.0-simulator" -isysroot "$simulator_sdk" \
-    -fobjc-arc -fmodules -O2 -Wall -Wextra -Werror "${sources[@]}" mod_dll_probe.m test_simulator.m \
+    -I"$port" -fobjc-arc -fmodules -O2 -Wall -Wextra -Werror "${sources[@]}" \
+    "$port/mod_hook_catalog.c" mod_dll_probe.m test_simulator.m \
     -framework UIKit -framework Foundation -framework UniformTypeIdentifiers -o "$app/DllCompatibility"
 codesign --force --sign - "$app"
 popd >/dev/null
