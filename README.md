@@ -4,7 +4,7 @@ Experimental source and local-build tools for owners of **Skyrim 2011 / Legendar
 
 **[Build and install your own copy](pc-aot/docs/BUILD_YOUR_COPY.md)**
 
-The active game port lives in [`pc-aot/`](pc-aot/README.md). The default branch is `codex/skyrim-pc-aot-foundation`; `main` and the older probe workflows retain earlier research.
+The active game port lives in [`pc-aot/`](pc-aot/README.md) on `main`. See the [development status](pc-aot/docs/STATUS.md) for current performance work, MOD trials, and device evidence.
 
 - Use your own English LE game files and Apple signing account.
 - The documented route uses Windows once for input preparation and a Mac with Xcode for building and signing.

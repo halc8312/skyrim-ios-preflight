@@ -184,13 +184,13 @@ class DisplayTimingTests(unittest.TestCase):
                       contract['observations']['ios/runtime-port/performance_metrics.h'])
         identity = namespace.identities(ROOT, 'clang-test', '/test/iphoneos.sdk', '18.0')
         self.assertEqual(identity['reviewed'], 1)
-        # Pinned from the revision before this work (3209aab). An intentional,
-        # shader-relevant change must update this value on purpose; an
-        # observation-only change must not move it.
+        # The first-wave combination changes prepare_runtime.py to stage the
+        # ECE/HighHeels read witnesses. That file stays in the full cache key.
+        # Later observation-only changes must preserve this integrated identity.
         self.assertEqual(identity['reuse'], BASELINE_REUSE_IDENTITY)
 
 
-BASELINE_REUSE_IDENTITY = '889f546780319fa46e4c818e4b6e37ace37f7e04b45ff346ce84c4566a8a5267'
+BASELINE_REUSE_IDENTITY = 'e63b0673ad588a6631ba8da8ac6bb06d5f24937361d4a06b427f25bddc2ba90a'
 
 if __name__ == '__main__':
     unittest.main()

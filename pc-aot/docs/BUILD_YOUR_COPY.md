@@ -22,10 +22,10 @@ iOS 18.0+ is the build target. iPhone 17 Pro Max has gameplay evidence. **15 Pro
 
 ## 1 Source and tools
 
-The default branch is `codex/skyrim-pc-aot-foundation`. Clone it explicitly so the preparation and build steps use the same branch:
+Use `main` for both preparation and build:
 
 ```sh
-git clone --branch codex/skyrim-pc-aot-foundation --single-branch https://github.com/halc8312/skyrim-ios-preflight.git
+git clone --branch main --single-branch https://github.com/halc8312/skyrim-ios-preflight.git
 cd skyrim-ios-preflight/pc-aot
 git rev-parse HEAD
 ```
