@@ -346,7 +346,36 @@ static NSString *gameLanguageFallback(void) {
 /* ---- Classic MOD plugins ------------------------------------------------- */
 static NSArray<NSDictionary *> *modPlugins;
 static NSString *modGamePath;
-static NSString *modNotice;
+typedef enum {
+    SKModNoticeNone,
+    SKModNoticeNoMemory,
+    SKModNoticePublishFailed,
+    SKModNoticeDlcReadFailed,
+    SKModNoticeBlocked
+} SKModNoticeKind;
+typedef struct {
+    SKModNoticeKind kind;
+    unsigned blockedCount;
+} SKModNotice;
+static SKModNotice modNotice;
+
+/* Keep the launch finding even if the language changes in Settings. */
+static NSString *modNoticeText(void) {
+    switch (modNotice.kind) {
+    case SKModNoticeNoMemory:
+        return L(@"Not enough memory to read the MOD list.", @"メモリ不足のためMODの一覧を読めませんでした。");
+    case SKModNoticePublishFailed:
+        return L(@"Could not update the MOD list. The previous list is in use.", @"MODの一覧を更新できなかったため、前回の設定で起動しました。");
+    case SKModNoticeDlcReadFailed:
+        return L(@"Could not read the previous DLC choices. The current plugin list is in use.",
+                 @"以前のDLC設定を確認できなかったため、現在のプラグイン一覧を使用します。");
+    case SKModNoticeBlocked:
+        return [NSString stringWithFormat:L(@"%u MOD file(s) could not be loaded. See Settings > MOD.", @"%u個のMODを読み込めませんでした。設定の「MOD」で理由を確認できます。"), modNotice.blockedCount];
+    case SKModNoticeNone:
+        break;
+    }
+    return nil;
+}
 /* Choices are stored per profile by mod_manager.m. Rows for plugins that
  * are absent this launch (package off, safe mode) are kept, after the
  * present ones, so they come back unchanged. */
@@ -413,8 +442,7 @@ static int scanModPlugins(BOOL publish, BOOL *skyuiListed) {
     int dlcError = skyrim_plugin_read_profile_dlc(profilePath.fileSystemRepresentation, &inheritedDlc);
     if (publish && dlcError) {
         skyrim_mods_plugin_list_failed();
-        modNotice = L(@"Could not read the previous DLC choices. The current plugin list is in use.",
-                      @"以前のDLC設定を確認できなかったため、現在のプラグイン一覧を使用します。");
+        modNotice = (SKModNotice){SKModNoticeDlcReadFailed, 0};
         fprintf(stderr, "IOS_MODS dlc_choices_read=%d\n", dlcError);
         return 1;
     }
@@ -431,7 +459,7 @@ static int scanModPlugins(BOOL publish, BOOL *skyuiListed) {
     if (!headers || !status) {
         if (publish) skyrim_mods_plugin_list_failed();
         free(headers); free(status);
-        modNotice = L(@"Not enough memory to read the MOD list.", @"メモリ不足のためMODの一覧を読めませんでした。");
+        modNotice = (SKModNotice){SKModNoticeNoMemory, 0};
         return 1;
     }
     NSMutableDictionary<NSString *, NSNumber *> *index = [NSMutableDictionary dictionary];
@@ -510,13 +538,13 @@ static int scanModPlugins(BOOL publish, BOOL *skyuiListed) {
         }
         modPlugins = snapshot;
         if (publish && !published)
-            modNotice = L(@"Could not update the MOD list. The previous list is in use.", @"MODの一覧を更新できなかったため、前回の設定で起動しました。");
+            modNotice = (SKModNotice){SKModNoticePublishFailed, 0};
         else if (blocked)
-            modNotice = [NSString stringWithFormat:L(@"%u MOD file(s) could not be loaded. See Settings > MOD.", @"%u個のMODを読み込めませんでした。設定の「MOD」で理由を確認できます。"), blocked];
+            modNotice = (SKModNotice){SKModNoticeBlocked, blocked};
         fprintf(stderr, "IOS_MODS found=%lu enabled_loaded=%lu blocked=%u published=%d managed=%d\n",
             (unsigned long)rows.count, (unsigned long)loaded, blocked, published, (int)anyChoice);
     } else {
-        modNotice = L(@"Not enough memory to read the MOD list.", @"メモリ不足のためMODの一覧を読めませんでした。");
+        modNotice = (SKModNotice){SKModNoticeNoMemory, 0};
     }
     if (publish && !published) skyrim_mods_plugin_list_failed();
     for (size_t i = 0; i < count; ++i) skyrim_plugin_header_free(&headers[i]);
@@ -526,7 +554,8 @@ static int scanModPlugins(BOOL publish, BOOL *skyuiListed) {
 int skyrim_mobile_prepare_mods(const char *gameDirectory) {
     NSCAssert(NSThread.isMainThread, @"MOD selection is published before guest startup");
     modGamePath = gameDirectory ? [NSString stringWithUTF8String:gameDirectory] : nil;
-    modPlugins = nil; modNotice = nil;
+    modPlugins = nil;
+    modNotice = (SKModNotice){SKModNoticeNone, 0};
     BOOL *skyuiResult = NULL;
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     BOOL skyuiListed = NO;
@@ -541,7 +570,7 @@ int skyrim_mobile_prepare_mods(const char *gameDirectory) {
 }
 static NSString *modStateText(NSDictionary *row) {
     switch ([row[@"state"] intValue]) {
-    case SKYRIM_PLUGIN_LOAD: return L(@"Loaded", @"読み込み中");
+    case SKYRIM_PLUGIN_LOAD: return L(@"Loaded", @"読み込み済み");
     case SKYRIM_PLUGIN_OFF: return L(@"Off", @"オフ");
     case SKYRIM_PLUGIN_UNREADABLE: return L(@"Unreadable: not a classic (LE) plugin?", @"読めません（LE用ではない可能性）");
     case SKYRIM_PLUGIN_BAD_NAME: return L(@"Rename using English letters and digits only", @"ファイル名を半角英数字に変えてください");
@@ -799,7 +828,7 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+1 : section==3 ? 2 : section==5 ? 3 : section==6 ? shaderRows().count : 1;
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
-    return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),@"Language",L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映"),L(@"Diagnostics", @"診断"),L(@"MOD — applies after restart", @"MOD — 次回起動から反映")][section];
+    return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),L(@"Language / 言語", @"言語 / Language"),L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映"),L(@"Diagnostics", @"診断"),L(@"MOD — applies after restart", @"MOD — 次回起動から反映")][section];
 }
 static NSString *unevenCadenceNote(void) {
     if (value(@"displaySync", 0) != 1) return nil;
@@ -809,7 +838,7 @@ static NSString *unevenCadenceNote(void) {
         @"この画面の更新は%uHzのため、%uFPS上限では均等にならず、一部のフレームが長く表示されます。更新率で割り切れる上限（30や60など）なら均等になります。"), hz, fps];
 }
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
-    if (section==8) return modNotice ?: L(@"Import a classic Skyrim package or folder here. Apply your selection by restarting.", @"2011年版（LE）用のパッケージやフォルダはここから追加できます。変更は次回起動時に反映されます。");
+    if (section==8) return modNoticeText() ?: L(@"Import a classic Skyrim package or folder here. Apply your selection by restarting.", @"2011年版（LE）用のパッケージやフォルダはここから追加できます。変更は次回起動時に反映されます。");
     if (section==7) return L(@"Send performance, settings and numeric error records from this launch and the previous launch to your paired PC. Game data and saves are excluded. Open the game system menu first; keep the PC awake and Tailscale connected. After receipt, tell us in the chat that you sent it.",
         @"今回と前回の起動の性能・設定・エラー番号を、登録した自分のPCへ送ります。ゲームデータやセーブは送りません。先にゲームのシステムメニューを開き、PCを起動してTailscaleを接続してください。送信できたら、このチャットで知らせてください。");
     if (section==0) { NSString *base = L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。"); NSString *note = unevenCadenceNote(); return note ? [base stringByAppendingFormat:@"\n%@", note] : base; }
@@ -1177,7 +1206,7 @@ void skyrim_mobile_install(void *window) {
     [overlay message:L(@"Drag an empty area to look. Open the gear for sensitivity, layout and graphics.", @"空いている場所をドラッグして視点移動。右上の設定で感度・配置・画質を変更")];
     NSString *fallback = gameLanguageFallback();
     NSMutableArray *notices = [NSMutableArray array];
-    for (NSString *n in @[fallback ?: @"", skyrim_mods_launch_notice() ?: @"", modNotice ?: @"", skyrim_mods_save_notice() ?: @""]) if (n.length) [notices addObject:n];
+    for (NSString *n in @[fallback ?: @"", skyrim_mods_launch_notice() ?: @"", modNoticeText() ?: @"", skyrim_mods_save_notice() ?: @""]) if (n.length) [notices addObject:n];
     if (notices.count) [overlay message:[notices componentsJoinedByString:@"\n"]];
 }
 void skyrim_mobile_tick(void) {
