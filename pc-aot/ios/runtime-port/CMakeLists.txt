@@ -197,7 +197,8 @@ if(SKYRIM_IOS_SKSE_DLL_PROBE)
         "${dll_probe_source}/plugin_trial.c"
         "${dll_probe_source}/probe_directory.c"
         "${dll_probe_source}/probe_local_file.c"
-        "${dll_probe_source}/mod_dll_probe.m")
+        "${dll_probe_source}/mod_dll_probe.m"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mod_hook_catalog.c")
     target_include_directories(skyrim_ios_runtime PRIVATE "${dll_probe_source}")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_SKSE_DLL_PROBE=1)
     if(SKYRIM_IOS_CLASSIC_SKSE)

@@ -228,6 +228,8 @@ def project(work, sdl_prefix, archive_prefix):
         "x86_skse_records.c", "dependency_plan.c", "plugin_trial.c",
         "probe_local_file.c", "probe_directory.c", "probe_asset_file.c", "mod_dll_probe.m"
     ]] if dll_enabled else []
+    if dll_enabled:
+        app_sources.append("mod_hook_catalog.c")
     classic_enabled = os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1"
     if classic_enabled:
         app_sources.extend(("mod_requirements.c", "mod_features.c"))
