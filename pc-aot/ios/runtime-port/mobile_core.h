@@ -15,6 +15,7 @@ enum {
     SKYRIM_PAD_BOTH_HANDS = 19, SKYRIM_PAD_CONTROL_COUNT = 20
 };
 uint64_t skyrim_mobile_now(void);
+void skyrim_mobile_landscape_size(int *width, int *height);
 void skyrim_mobile_button(unsigned index, int down);
 void skyrim_mobile_button_cancel(unsigned index);
 void skyrim_mobile_move(float x, float y, float deadzone);

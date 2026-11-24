@@ -94,6 +94,14 @@ static void both_hands(void) {
     skyrim_mobile_clear();
 }
 int main(void) {
+    int width = 1179, height = 2556;
+    skyrim_mobile_landscape_size(&width, &height);
+    assert(width == 2556 && height == 1179);
+    skyrim_mobile_landscape_size(&width, &height);
+    assert(width == 2556 && height == 1179);
+    width = 0;
+    skyrim_mobile_landscape_size(&width, &height);
+    assert(width == 0 && height == 1179);
     /* Append-only startup preference: missing old dictionaries remain OFF.
      * Existing five IDs keep their persisted meaning. */
     assert(SKYRIM_SHADER_REUSE == 4 && SKYRIM_SHADER_EXACT_STATE == 5);

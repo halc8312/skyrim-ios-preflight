@@ -589,11 +589,15 @@ int skyrim_mobile_shader_option(unsigned option) {
     return key && skyrim_shader_option_enabled([startup[[NSString stringWithUTF8String:key]] doubleValue]);
 }
 void skyrim_mobile_render_size(int *width, int *height) {
+    /* The app supports landscape only. SDL can report portrait extents
+     * before the scene rotates, but the guest keeps its startup back buffer. */
+    skyrim_mobile_landscape_size(width, height);
     int selected = [startup[@"resolution"] intValue];
     if (!selected) return;
     int w = *width, h = *height;
     skyrim_ios_drawable_size(&w, &h);
     if (w <= 0 || h <= 0) return;
+    skyrim_mobile_landscape_size(&w, &h);
     renderHeight = selected >= 2160 ? h : MIN(h, selected);
     renderHeight = MAX(2, renderHeight & ~1);
     renderWidth = MAX(2, ((int)lround((double)w * renderHeight / h)) & ~1);

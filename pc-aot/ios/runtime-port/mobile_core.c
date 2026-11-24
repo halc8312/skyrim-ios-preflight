@@ -12,6 +12,14 @@ static uint64_t tap_until[SKYRIM_PAD_CONTROL_COUNT], look_time, look_interval, f
 static unsigned limit, thermal;
 static int guard;
 
+void skyrim_mobile_landscape_size(int *width, int *height) {
+    if (*width > 0 && *width < *height) {
+        int short_edge = *width;
+        *width = *height;
+        *height = short_edge;
+    }
+}
+
 uint64_t skyrim_mobile_now(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
