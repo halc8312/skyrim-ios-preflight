@@ -3,6 +3,10 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include "probe_directory.h"
 #include "probe_local_file.h"
+#include "mod_hook_catalog.h"
+#ifdef SKYRIM_IOS_MOD_HOOKS
+#include "PcGuestModHooksABI.h"
+#endif
 #include <CommonCrypto/CommonDigest.h>
 #include <stdlib.h>
 #include <string.h>
@@ -243,17 +247,42 @@ static NSArray<NSString *> *DiagnoseSingleDLL(BOOL japanese, const char *path, u
     if (audit.count)
         [lines addObject:Text(japanese, @"Code write requests observed in isolation",
                                       @"分離した診断で観測したコード変更要求")];
+    uint32_t compiledGroups = 0;
+#ifdef SKYRIM_IOS_MOD_HOOKS
+    compiledGroups = pc_guest_mod_hooks_compiled();
+#endif
     for (size_t i = 0; i < audit.count; ++i) {
         const SkseX86CodeWrite *write = &audit.writes[i];
+        uint32_t length = write->width;
+        uint8_t instruction[5];
+        const uint8_t *request = NULL;
         if (write->width == 1 && (write->value == 0xe8 || write->value == 0xe9) && i + 1 < audit.count &&
             audit.writes[i + 1].address == write->address + 1 && audit.writes[i + 1].width == 4) {
-            uint32_t target = write->address + 5 + audit.writes[++i].value;
+            uint32_t relative = audit.writes[++i].value;
+            instruction[0] = (uint8_t)write->value;
+            for (unsigned b = 0; b < 4; ++b)
+                instruction[b + 1] = (uint8_t)(relative >> (8 * b));
+            length = sizeof instruction;
+            request = instruction;
+        }
+        SkyrimPatchDescription description;
+        skyrim_mod_patch_describe(write->address, length, request, compiledGroups, NULL, 0, &description);
+        if (request) {
             [lines addObject:[NSString stringWithFormat:Text(japanese, @"0x%08x · %u bytes · %@ to 0x%08x",
-                @"0x%08x · %uバイト · %@ 0x%08x"), write->address, 5u,
-                write->value == 0xe8 ? @"CALL" : @"JMP", target]];
+                @"0x%08x · %uバイト · %@ 0x%08x"),
+                write->address, (unsigned)length, description.kind == SKYRIM_PATCH_CALL ? @"CALL" : @"JMP",
+                description.target]];
         } else {
             [lines addObject:[NSString stringWithFormat:Text(japanese, @"0x%08x · %u-byte write",
                 @"0x%08x · %uバイトの書き込み"), write->address, write->width]];
+        }
+        if (description.catalog >= 0) {
+            char text[400];
+            int size = skyrim_mod_patch_text(&description, japanese, text, sizeof text);
+            if (size > 0 && (size_t)size < sizeof text) {
+                NSString *detail = [NSString stringWithUTF8String:text];
+                if (detail) [lines addObject:detail];
+            }
         }
     }
     if (audit.truncated) [lines addObject:Text(japanese, @"The observation limit was reached.",

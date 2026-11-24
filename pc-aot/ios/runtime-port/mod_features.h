@@ -22,6 +22,7 @@ typedef enum {
     SKYRIM_FEATURE_SAFETY_LOAD,
     SKYRIM_FEATURE_HDT_PHYSICS,
     SKYRIM_FEATURE_HDT_HIGHHEELS,
+    SKYRIM_FEATURE_ENB,   /* enbseries.ini in a package's Data root (docs/ENB_PLAN.md) */
     SKYRIM_FEATURE_COUNT
 } SkyrimFeature;
 

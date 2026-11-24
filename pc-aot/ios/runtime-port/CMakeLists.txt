@@ -140,7 +140,8 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
     set(skse_vm_source "${SKYRIM_IOS_ROOT}/experiments/skse-plugin-vm")
     target_sources(skyrim_ios_runtime PRIVATE
         "${cosave_source}/inspect.c" "${cosave_source}/records.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/mod_requirements.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_features.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_fuz.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mod_requirements.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_features.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/enb_ini.c" "${CMAKE_CURRENT_SOURCE_DIR}/enb_fx.c" "${CMAKE_CURRENT_SOURCE_DIR}/enb_preset.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_fuz.c"
         "${skse_vm_source}/classic_pex.c")
     target_include_directories(skyrim_ios_runtime PRIVATE "${skse_vm_source}")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_SKSE=1 SKYDREAM_SKSE=1)
@@ -196,7 +197,8 @@ if(SKYRIM_IOS_SKSE_DLL_PROBE)
         "${dll_probe_source}/plugin_trial.c"
         "${dll_probe_source}/probe_directory.c"
         "${dll_probe_source}/probe_local_file.c"
-        "${dll_probe_source}/mod_dll_probe.m")
+        "${dll_probe_source}/mod_dll_probe.m"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mod_hook_catalog.c")
     target_include_directories(skyrim_ios_runtime PRIVATE "${dll_probe_source}")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_SKSE_DLL_PROBE=1)
     if(SKYRIM_IOS_CLASSIC_SKSE)
