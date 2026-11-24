@@ -25,8 +25,12 @@ static const char *const names[SKYRIM_PERF_KIND_COUNT] = {
     "write_file", "write_file_ex", "save_candidate_write", "save_candidate_write_ex",
     "save_candidate_window", "mvk_cold_lock_wait", "mvk_convert",
     "pacer_runloop", "pacer_sleep", "ui_pump", "pacer_overrun", "graphics_state_wait",
-    "save_first_to_last_write_start", "save_last_write_start_to_close", "save_close_call"
+    "save_first_to_last_write_start", "save_last_write_start_to_close", "save_close_call",
+    "display_interval", "display_dropped", "display_latency",
+    "gpu_command_buffer", "gpu_frame_busy", "gpu_frame_span"
 };
+_Static_assert(sizeof names / sizeof names[0] == SKYRIM_PERF_KIND_COUNT,
+               "every kind needs a log name; append new names at the end");
 typedef struct PerfAtomic {
     _Atomic uint64_t buckets[SKYRIM_PERF_BUCKET_COUNT];
     _Atomic uint64_t total_ns, max_ns, failures, sleep_calls;
@@ -286,6 +290,20 @@ void skyrim_perf_interval(unsigned kind, uint64_t started, uint64_t ended, int f
     skyrim_perf_interval_context(kind, started, ended, failed, sleeps, work_context);
 }
 
+static int observer_kind(unsigned kind) {
+    return kind >= SKYRIM_PERF_DISPLAY_INTERVAL && kind < SKYRIM_PERF_KIND_COUNT;
+}
+void skyrim_perf_observe(unsigned kind, uint64_t elapsed, int failed) {
+    if (!observer_kind(kind)) return;
+    histogram_record(&counters[kind], elapsed, failed, 0);
+}
+void skyrim_perf_observe_span(unsigned kind, uint64_t started, uint64_t ended) {
+    if (!observer_kind(kind) || !started || ended < started) return;
+    histogram_record(&counters[kind], ended - started, 0, 0);
+    if (ended - started >= SKYRIM_PERF_OBSERVE_SPAN_NS)
+        stall_record(kind, started, ended, 0, 0, (SkyrimPerfContext){0});
+}
+
 void skyrim_perf_end(unsigned kind, uint64_t started, int failed) {
     uint64_t now = skyrim_perf_now_ns();
     skyrim_perf_interval(kind, started, now, failed, 0);
@@ -359,7 +377,8 @@ void skyrim_perf_log_window(void) {
             (kind >= SKYRIM_PERF_HLSL && kind <= SKYRIM_PERF_SHADER_MODULE) ||
                 (kind >= SKYRIM_PERF_READ_FILE && kind <= SKYRIM_PERF_XWMA_DECODE) ||
                 (kind >= SKYRIM_PERF_IMAGE_ACQUIRE && kind <= SKYRIM_PERF_SUBMISSION_WAIT) ||
-                (kind >= SKYRIM_PERF_WRITE_FILE && kind <= SKYRIM_PERF_SAVE_CANDIDATE_WRITE_EX),
+                (kind >= SKYRIM_PERF_WRITE_FILE && kind <= SKYRIM_PERF_SAVE_CANDIDATE_WRITE_EX) ||
+                kind == SKYRIM_PERF_GPU_COMMAND_BUFFER,
             (unsigned long long)w.failures, (unsigned long long)w.sleep_calls);
         if (used < 0 || (size_t)used >= sizeof(line)) continue;
         for (unsigned i = 0; i < SKYRIM_PERF_BUCKET_COUNT; ++i) {

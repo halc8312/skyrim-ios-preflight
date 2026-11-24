@@ -20,6 +20,7 @@
 #include "lock_metrics.h"
 #include "pipeline_cache_control.h"
 #include "device_policy.h"
+#include "present_pacing_core.h"
 #include "game_language.h"
 #include "mod_plugins.h"
 #include "mod_manager.h"
@@ -132,6 +133,10 @@ static int renderWidth, renderHeight;
 static unsigned iniCount;
 static NSTimeInterval mobileTime(void) { return (double)skyrim_mobile_now()/1e9; }
 static struct { const char *section, *key; char value[48]; } ini[40];
+/* Shown only when the display-pacing trial is selected and the chosen FPS limit cannot be shown
+ * evenly at this screen's refresh rate (for example 24 or 40 on a 60 Hz screen). The setting is
+ * never rewritten; the note only says why frames may stay on screen for unequal times. */
+static NSString *unevenCadenceNote(void);
 static double value(NSString *key, double fallback) {
     id number = settings[key];
     return [number isKindOfClass:NSNumber.class] && isfinite([number doubleValue]) ? [number doubleValue] : fallback;
@@ -195,7 +200,9 @@ static NSArray<NSDictionary *> *shaderRows(void) {
         L(@"Save cache while settings are open", @"設定画面でキャッシュを保存"),
         L(@"Keep shader cache in app storage", @"シェーダーキャッシュをアプリ内に保持"),
         L(@"Reuse cache after compatible updates", @"互換性のある更新後もキャッシュを再利用"),
-        L(@"Separate waits for drawing preparation", @"描画の準備待ちを分ける")];
+        L(@"Separate waits for drawing preparation", @"描画の準備待ちを分ける"),
+        L(@"CPU sampling for analysis (slightly slower)", @"CPU計測（解析用・少し重くなります）"),
+        L(@"Pace frames to the display (experimental)", @"表示に合わせてフレームを出す（試験）")];
     NSMutableArray *rows = [NSMutableArray arrayWithCapacity:SKYRIM_SHADER_OPTION_COUNT];
     for (unsigned i = 0; i < SKYRIM_SHADER_OPTION_COUNT; ++i)
         [rows addObject:@{@"key":[NSString stringWithUTF8String:skyrim_shader_option_key(i)],
@@ -794,11 +801,18 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
     return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),@"Language",L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映"),L(@"Diagnostics", @"診断"),L(@"MOD — applies after restart", @"MOD — 次回起動から反映")][section];
 }
+static NSString *unevenCadenceNote(void) {
+    if (value(@"displaySync", 0) != 1) return nil;
+    const unsigned fps = (unsigned)value(@"fps", 0), hz = (unsigned)UIScreen.mainScreen.maximumFramesPerSecond;
+    if (!fps || skyrim_present_even_cadence(hz, fps)) return nil;
+    return [NSString stringWithFormat:L(@"This screen refreshes at %u Hz, so a %u FPS limit cannot be shown evenly; some frames stay on screen longer. A limit that divides the refresh rate (for example 30 or 60) stays even.",
+        @"この画面の更新は%uHzのため、%uFPS上限では均等にならず、一部のフレームが長く表示されます。更新率で割り切れる上限（30や60など）なら均等になります。"), hz, fps];
+}
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
     if (section==8) return modNotice ?: L(@"Import a classic Skyrim package or folder here. Apply your selection by restarting.", @"2011年版（LE）用のパッケージやフォルダはここから追加できます。変更は次回起動時に反映されます。");
     if (section==7) return L(@"Send performance, settings and numeric error records from this launch and the previous launch to your paired PC. Game data and saves are excluded. Open the game system menu first; keep the PC awake and Tailscale connected. After receipt, tell us in the chat that you sent it.",
         @"今回と前回の起動の性能・設定・エラー番号を、登録した自分のPCへ送ります。ゲームデータやセーブは送りません。先にゲームのシステムメニューを開き、PCを起動してTailscaleを接続してください。送信できたら、このチャットで知らせてください。");
-    if (section==0) return L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。");
+    if (section==0) { NSString *base = L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。"); NSString *note = unevenCadenceNote(); return note ? [base stringByAppendingFormat:@"\n%@", note] : base; }
     if (section==1) return L(@"Drag outside the buttons to look. Use the arrows and LB / RB to navigate menus, and LT / RT for the left and right hands. Hold L+R to use both hands together.", @"ボタン以外をドラッグして視点移動。十字キーとLB／RBでメニュー移動、LT／RTで左右の手を操作します。「両手」を長押しすると左右の手を同時に使えます。");
     if (section==2) return L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。");
     if (section==3) return L(@"These settings do not pause the game. Open the game system menu first. Quick save sends F5 and checks for a changed save file; it is not an emulator save state.", @"設定画面だけではゲームは一時停止しません。先にシステムメニューを開いてください。クイックセーブはゲームのF5入力を送り、保存ファイルの更新を確認します。実行状態を丸ごと復元するステートセーブではありません。");

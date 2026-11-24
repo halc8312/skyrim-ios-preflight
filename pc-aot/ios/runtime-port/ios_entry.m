@@ -17,6 +17,8 @@
 #include "mobile_ui.h"
 #include "mod_manager.h"
 #include "device_policy.h"
+#include "cpu_sampler.h"
+#include "display_timing.h"
 #include "diagnostic_upload.h"
 #include "PcGuestABI.h"
 #ifdef SKYRIM_IOS_MOD_HOOKS
@@ -314,6 +316,8 @@ int SDL_main(int argc, char **argv) {
         begin_log();
         skyrim_ios_stage("sdl-application-entry");
         skyrim_device_platform_initialize();
+        // Observation only (presented time, GPU time); prints what it installed.
+        (void)skyrim_display_timing_install();
         NSURL *game = directory(NSDocumentDirectory, @"Skyrim");
         NSURL *defaultProfile = directory(NSApplicationSupportDirectory, @"SkyrimIOS/Profile");
         NSURL *cache = directory(NSCachesDirectory, @"SkyrimIOS/DXVK");
@@ -329,6 +333,8 @@ int SDL_main(int argc, char **argv) {
                 startup_failure(@"Cannot initialize shader preparation option");
             fprintf(stderr, "IOS_SHADER_OPTION option=%u enabled=%u\n", i, (unsigned)enabled);
         }
+        // Off unless the startup switch set SKYRIM_IOS_CPU_SAMPLE=1; reports its state either way.
+        (void)skyrim_cpu_sampler_start();
         NSURL *pipelineCache = persistent_shader_cache(cache);
         if (pipelineCache != cache) {
             // Import only a validated pipeline-v1.cache when the destination

@@ -296,7 +296,7 @@ class ReceiverTests(unittest.TestCase):
             'IOS_GRAPHICS_POLICY schema=1 exact_state=1 wait_scope=1']
         self.schema.bundle(self.encoded(candidate))
         for bad in (context.replace('source=0', 'source=1'),
-                    'IOS_SHADER_OPTION option=6 enabled=1',
+                    'IOS_SHADER_OPTION option=8 enabled=1',
                     'IOS_GRAPHICS_POLICY schema=1 exact_state=1 wait_scope=0',
                     'IOS_GRAPHICS_POLICY schema=1 exact_state=1 wait_scope=1 key=private'):
             with self.subTest(row=bad), self.assertRaises(d.Rejected):

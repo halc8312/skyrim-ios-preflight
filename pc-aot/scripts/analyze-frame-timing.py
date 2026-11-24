@@ -21,7 +21,8 @@ KINDS = ('frame_gap', 'present_host', 'pacer', 'hlsl', 'graphics_pipeline',
          'save_candidate_write', 'save_candidate_write_ex', 'save_candidate_window', 'mvk_cold_lock_wait',
          'mvk_convert', 'pacer_runloop', 'pacer_sleep', 'ui_pump', 'pacer_overrun',
          'graphics_state_wait', 'save_first_to_last_write_start', 'save_last_write_start_to_close',
-         'save_close_call')
+         'save_close_call', 'display_interval', 'display_dropped', 'display_latency',
+         'gpu_command_buffer', 'gpu_frame_busy', 'gpu_frame_span')
 U64 = (1 << 64) - 1
 UPPER = (0, 1000000, 2000000, 4000000, 8000000, 12000000, 16666667,
          20000000, 25000000, 33333334, 40000000, 50000000, 66666667,
@@ -208,6 +209,37 @@ def shader_lead_summary(rows, duplicates, conflicts, drops, launch_origin, timin
         scope='Completed foreground draw cold waits >=50ms. Zero producer fields mean unobserved, not no prefetch.',
         interpretation='Producer timestamps identify the returned library only, not all lock owners. Positive lead means before draw wait start; compile-to-publication is host wall time, not hardware compilation time. Details are the longest waits; aggregates cover all unique observations.',
         drops_scope='Drops are session totals without timestamps and cannot be assigned to a frame. Different reporter sequences are separate drains even when counts match; conflicting sequences are excluded entirely. Sequence is output order only, not a producer or thread ID.')
+
+
+DISPLAY_EDGES_MS = ('0', '1', '2', '4', '8', '12', '16.67', '20', '25', '33.33', '40', '50',
+                    '66.67', '100', '166.67', '250', '500', '1000', '2000', 'inf')
+
+
+def display_summary(aggregate):
+    """Presented-interval shape and dropped presents, from Metal's presented times.
+
+    Bucket edges are the recorder's own; at 60 Hz a steady 16.67 ms lands in the
+    12-16.67 bin and one missed refresh lands in 25-33.33. None when the log has
+    no display kinds (older builds, or the observer was disabled).
+    """
+    interval = aggregate.get('display_interval')
+    dropped = aggregate.get('display_dropped')
+    if not interval and not dropped:
+        return None
+    result = dict(dropped_presents=sum(dropped['bins']) if dropped else 0)
+    if interval:
+        bins = interval['bins']
+        total = sum(bins)
+        result['intervals'] = total
+        result['interval_bins_ms'] = {'%s-%s' % (DISPLAY_EDGES_MS[i-1] if i else '0', DISPLAY_EDGES_MS[i]): count
+                                      for i, count in enumerate(bins) if count}
+        result['share_over_20ms'] = sum(bins[8:]) / total if total else None
+        result['share_over_33ms'] = sum(bins[10:]) / total if total else None
+        result['share_over_50ms'] = sum(bins[12:]) / total if total else None
+        result['share_over_100ms'] = sum(bins[14:]) / total if total else None
+        result['approximate_mean_ms'] = interval['total_ns'] / total / 1e6 if total else None
+        result['approximate_fps'] = total * 1e9 / interval['total_ns'] if interval['total_ns'] else None
+    return result
 
 
 def percentile(bins, percent):
@@ -429,6 +461,7 @@ def summarize(lines):
             over_50ms=sum(a['bins'][12:]), over_100ms=sum(a['bins'][14:]),
             over_250ms=sum(a['bins'][16:]), failures=a['failures'] if a['failures_known'] else None,
             sleep_calls=a['sleep_calls'])
+    display = display_summary(aggregate)
     frames = sorted((s for s in spans if s['kind']=='frame_gap'),
                     key=lambda s:s['end']-s['start'], reverse=True)[:20]
     origin = min((s['start'] for s in spans),default=0)
@@ -534,7 +567,7 @@ def summarize(lines):
     return dict(schema=1, scope='one launch; host wall time; not GPU time or a causal attribution',
         shader_lead=shader_lead_summary(shader_leads, shader_lead_duplicates, shader_lead_conflicts,
                                         lead_drops, launch_origin, timing_origin),
-        timing_records=timing_records, stall_records=stall_records, invalid_records=invalid,
+        timing_records=timing_records, stall_records=stall_records, invalid_records=invalid, display=display,
         work_contexts=list(contexts.values()), duplicate_context_records=context_duplicates,
         duplicate_timing_records=duplicate, sampled_spans=len(spans), dropped_busy=dropped_busy,
         dropped_full=dropped_full, kinds=kinds, longest_sampled_frame_gaps=correlations,
@@ -559,6 +592,9 @@ def summarize(lines):
                  'Unfinished waits and work completing after capture are absent even with zero drops. Missing or empty observations do not prove that a probe was enabled or that its target was reached.',
                  'Save candidates are filename-classified, not proof of autosave; their handle windows include idle time and exclude earlier serialization and later durability.',
                  'Save phases partition a written handle window at the last observed write start and entry to close. The last write can still be in flight at close. Older logs have only the overall window.',
+                 'Display and GPU kinds (display_*, gpu_*) use the Metal media clock, not the host wall clock. Presented times are when the frame was shown; GPU times are what the GPU reported for each command buffer.',
+                 'gpu_frame_busy and gpu_frame_span group command buffers by the presented callback they completed before, not by the drawable they built. gpu_frame_span includes idle gaps between buffers. Neither is a CPU measurement.',
+                 'Older logs have no display or GPU kinds; the display block is then absent, not zero.',
                  'Use a separate log for each launch; anonymous thread ordinals restart per process.'])
 
 

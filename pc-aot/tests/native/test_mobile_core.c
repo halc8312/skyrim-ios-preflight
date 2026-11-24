@@ -97,10 +97,14 @@ int main(void) {
     /* Append-only startup preference: missing old dictionaries remain OFF.
      * Existing five IDs keep their persisted meaning. */
     assert(SKYRIM_SHADER_REUSE == 4 && SKYRIM_SHADER_EXACT_STATE == 5);
-    assert(SKYRIM_SHADER_OPTION_COUNT == 6);
+    assert(SKYRIM_SHADER_CPU_SAMPLE == 6 && SKYRIM_SHADER_DISPLAY_SYNC == 7 && SKYRIM_SHADER_OPTION_COUNT == 8);
     assert(!strcmp(skyrim_shader_option_key(5), "shaderExactState"));
     assert(!strcmp(skyrim_shader_option_environment(5), "SKYRIM_EXACT_GRAPHICS_STATE"));
-    assert(!skyrim_shader_option_key(6) && !skyrim_shader_option_environment(UINT32_MAX));
+    assert(!strcmp(skyrim_shader_option_key(6), "cpuSample"));
+    assert(!strcmp(skyrim_shader_option_environment(6), "SKYRIM_IOS_CPU_SAMPLE"));
+    assert(!strcmp(skyrim_shader_option_key(7), "displaySync"));
+    assert(!strcmp(skyrim_shader_option_environment(7), "SKYRIM_IOS_DISPLAY_SYNC"));
+    assert(!skyrim_shader_option_key(8) && !skyrim_shader_option_environment(UINT32_MAX));
     assert(skyrim_shader_option_enabled(1));
     assert(!skyrim_shader_option_enabled(0) && !skyrim_shader_option_enabled(NAN));
     assert(!skyrim_shader_option_enabled(2) && !skyrim_shader_option_enabled(-1));

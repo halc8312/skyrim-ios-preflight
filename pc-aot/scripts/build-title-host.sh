@@ -140,6 +140,9 @@ PY
     test_lifecycle_controller.LifecycleTests.test_actual_controller_preserves_producers_and_resume_races -v
   run_validation python3 -m unittest discover -s tests -p 'test_present_timing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_frame_timing_analysis.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_display_timing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_cpu_sample.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_present_pacing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_shader_lead_diagnostics.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_asset_timing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_audio_submix.py' -v
@@ -274,15 +277,6 @@ fi
 if (( MOD_SIMULATOR_STATUS != 0 )); then
   echo "Required MOD simulator checks failed; no host package will be published." >&2
   exit "$MOD_SIMULATOR_STATUS"
-fi
-if [[ "$DLL_PROBE" == 1 ]]; then
-  dll_run="$RUN/mod-dll-simulator"
-  dll_status=0
-  check_mod_simulator "$dll_run" dll-probe || dll_status=$?
-  if [[ -d "$dll_run/evidence" ]]; then
-    ditto -c -k --keepParent "$dll_run/evidence" "$RUN/artifacts/mod-simulator-dll-checks.zip"
-  fi
-  (( dll_status == 0 )) || exit "$dll_status"
 fi
 if (( METAL_CHECK_STATUS != 0 )); then
   echo 'Required Metal checks failed; no host package or success result will be published.' >&2

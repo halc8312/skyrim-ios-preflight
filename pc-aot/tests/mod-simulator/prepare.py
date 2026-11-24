@@ -217,7 +217,7 @@ def project(work, sdl_prefix, archive_prefix):
                    buildActionMask=2147483647, runOnlyForDeploymentPostprocessing=0)
     app_sources = [
         "mobile_ui.m", "mobile_core.c", "game_language.c", "diagnostic_upload.m",
-        "performance_metrics.c", "lock_metrics.c", "mod_manager.m", "mod_fomod.m",
+        "performance_metrics.c", "present_pacing_core.c", "lock_metrics.c", "mod_manager.m", "mod_fomod.m",
         "mod_browser.m", "mod_plugins.c", "mod_archive.c", "mod_deploy.c",
         "mod_analyze.c", "mod_optimize.c", "mod_libarchive.c", "mod_translate.swift",
     ]
@@ -408,9 +408,9 @@ def verify(container, assets, summary):
     print("Real simulator UI result, original game/profile, conflict winner, archive and folder installers, and export verified.")
 
 
-def verify_dll(container, assets, summary):
-    base = verify_original(container, assets, summary)
-    packages = list((base / "Mods").glob("*/package.json"))
+def verify_dll_package(base, assets):
+    packages = [p for p in (base / "Mods").glob("*/package.json")
+                if json.loads(p.read_text())["name"] == "AuthoredDLL"]
     assert len(packages) == 1
     package = packages[0]
     metadata = json.loads(package.read_text())
@@ -420,6 +420,12 @@ def verify_dll(container, assets, summary):
         for name in fixture.namelist():
             assert (package.parent / name).read_bytes() == fixture.read(name)
     print("Installed MOD DLL diagnosis and unchanged original game, profile and imported DLL bytes verified.")
+
+
+def verify_dll(container, assets, summary):
+    base = verify_original(container, assets, summary)
+    assert len(list((base / "Mods").glob("*/package.json"))) == 1
+    verify_dll_package(base, assets)
 
 
 if __name__ == "__main__":

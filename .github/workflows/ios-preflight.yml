@@ -189,7 +189,7 @@ jobs:
   dll-probe-sdk:
     if: ${{ inputs.dll_probe }}
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
@@ -202,6 +202,20 @@ jobs:
           bash pc-aot/experiments/skse-plugin-vm/test-apple-sdk.sh | tee "$RUNNER_TEMP/dll-sdk.log"
           grep -q '^DLL_SIMULATOR: english verified ' "$RUNNER_TEMP/dll-sdk.log"
           grep -q '^DLL_SIMULATOR: japanese verified ' "$RUNNER_TEMP/dll-sdk.log"
+      - name: Check installed MODs and the save viewer without building the renderer
+        if: ${{ !inputs.full_title_host && !inputs.mod_screens }}
+        env:
+          SKYRIM_IOS_CLASSIC_SKSE: "1"
+          SKYRIM_IOS_SKSE_DLL_PROBE: "1"
+        run: bash pc-aot/scripts/check-mod-simulator-ci.sh screens
+      - name: Keep companion and installed MOD screen evidence
+        if: ${{ always() && !inputs.full_title_host && !inputs.mod_screens }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dll-and-save-simulator-checks
+          path: pc-aot/local/mod-simulator-checks/*/artifacts
+          if-no-files-found: warn
+          retention-days: 1
 
   guest-tls-sdk:
     if: ${{ inputs.guest_tls_sdk }}
