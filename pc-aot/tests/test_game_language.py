@@ -31,6 +31,7 @@ class GameLanguageTests(unittest.TestCase):
             self.assertIn("pack completeness PASS", result.stdout)
             self.assertIn("missing template deferral and recovery PASS", result.stdout)
             self.assertIn("profile preservation and switching PASS", result.stdout)
+            self.assertIn("Arabic MOD English alias and preference recovery PASS", result.stdout)
 
     def test_real_guest_reads_the_same_case_sensitive_profile_we_select(self):
         cc = shutil.which(os.environ.get("CC", "cc"))
@@ -122,7 +123,7 @@ int main(int argc, char **argv) { @autoreleasepool {
     NSData *original = [@"; existing profile\n[General]\nsLanguage=ENGLISH\nOther=42\n" dataUsingEncoding:NSUTF8StringEncoding];
     // A fresh copy with only the executable and Data must pass language preparation.
     startup = @{@"game_text":@1,@"game_voices":@1};
-    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));
     assert(gameLanguagePrepared && gameLanguage.requested_text && gameLanguage.requested_voices);
     assert(!gameLanguage.text && !gameLanguage.voices);
     assert(!strcmp(skyrim_mobile_classic_text_language(), "ENGLISH"));
@@ -132,7 +133,7 @@ int main(int argc, char **argv) { @autoreleasepool {
     // Restore just the template and relaunch with the same preferences. The
     // authored game has no Japanese packs, so ordinary pack selection resumes.
     assert([original writeToFile:defaults options:0 error:NULL]);
-    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));
     assert(gameLanguage.requested_text && gameLanguage.requested_voices);
     assert(gameLanguage.text_reason == SKYRIM_GAME_PACK_MISSING &&
            gameLanguage.voices_reason == SKYRIM_GAME_PACK_MISSING);
@@ -141,16 +142,21 @@ int main(int argc, char **argv) { @autoreleasepool {
     assert([original writeToFile:target options:0 error:NULL]);
     // UI language alone must neither touch the profile nor need a default INI.
     startup = @{@"language":@1};
-    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));
     assert(skyrim_mobile_classic_text_language() == NULL);
     assert(gameLanguagePrepared && !gameLanguage.text && !gameLanguage.voices);
     assert([[NSData dataWithContentsOfFile:target] isEqualToData:original]);
     NSDictionary *attributes = [fm attributesOfItemAtPath:target error:NULL];
-    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));
     assert([attributes[NSFileModificationDate] isEqual:[fm attributesOfItemAtPath:target error:NULL][NSFileModificationDate]]);
+    // The reviewed Arabic MOD applies even without a persisted game language choice.
+    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_READY));
+    assert(gameLanguage.arabic_mod == SKYRIM_ARABIC_MOD_READY);
+    assert(!strcmp(skyrim_mobile_classic_text_language(), "ENGLISH"));
+    assert(!startup[@"game_text"]);
     // Requested Japanese without a pack falls back explicitly, not silently.
     startup = @{@"game_text":@1,@"game_voices":@1};
-    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));
     assert(!gameLanguage.text && !gameLanguage.voices && gameLanguage.text_reason && gameLanguage.voices_reason);
     NSString *updated = [NSString stringWithContentsOfFile:target encoding:NSUTF8StringEncoding error:NULL];
     assert([updated containsString:@"sLanguage=ENGLISH"] && [updated containsString:@"Other=42"]);
@@ -159,26 +165,26 @@ int main(int argc, char **argv) { @autoreleasepool {
     // Existing settings survive a preparation failure; originals are read-only.
     NSData *bad = [NSData dataWithBytes:"a\0b" length:3];
     assert([bad writeToFile:target options:0 error:NULL]);
-    assert(!skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+    assert(!skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));
     assert(!gameLanguagePrepared);
     assert(skyrim_mobile_classic_text_language() == NULL);
     assert([[NSData dataWithContentsOfFile:target] isEqualToData:bad]);
     assert([fm removeItemAtPath:target error:NULL]);
     assert([original writeToFile:defaults options:0 error:NULL]);
     startup = @{@"game_text":@0};
-    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));
     assert([[NSData dataWithContentsOfFile:defaults] isEqualToData:original]);
     assert([fm fileExistsAtPath:target]);
     NSString *lower = [folder stringByAppendingPathComponent:@"Skyrim.ini"];
     if (![fm fileExistsAtPath:lower]) {
         NSData *unused = [@"[General]\nsLanguage=JAPANESE\nUnused=99\n" dataUsingEncoding:NSUTF8StringEncoding];
         assert([unused writeToFile:lower options:0 error:NULL]);
-        assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+        assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));
         assert([[NSData dataWithContentsOfFile:lower] isEqualToData:unused]);
         NSString *current = [NSString stringWithContentsOfFile:target encoding:NSUTF8StringEncoding error:NULL];
         assert([current containsString:@"sLanguage=ENGLISH"] && [current containsString:@"Other=42"]);
         assert([fm removeItemAtPath:target error:NULL]);
-        assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation));
+        assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));
         assert(![fm fileExistsAtPath:target]);
         current = [NSString stringWithContentsOfFile:lower encoding:NSUTF8StringEncoding error:NULL];
         assert([current containsString:@"sLanguage=ENGLISH"] && [current containsString:@"Unused=99"]);
@@ -188,7 +194,7 @@ int main(int argc, char **argv) { @autoreleasepool {
     // ready result, the Classic dictionary follows game text even with English UI.
     startup = @{@"language":@0, @"game_text":@1};
     SkyrimGameLanguagePacks ready = {SKYRIM_GAME_PACK_READY, SKYRIM_GAME_PACK_MISSING};
-    gameLanguage = skyrim_game_language_select(SKYRIM_GAME_JAPANESE, SKYRIM_GAME_ENGLISH, ready);
+    gameLanguage = skyrim_game_language_select(SKYRIM_GAME_JAPANESE, SKYRIM_GAME_ENGLISH, ready, SKYRIM_ARABIC_MOD_OFF);
     assert(!strcmp(skyrim_mobile_classic_text_language(), "JAPANESE"));
     puts("startup profile-only changes PASS");
 } }

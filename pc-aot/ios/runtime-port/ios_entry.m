@@ -349,11 +349,12 @@ int SDL_main(int argc, char **argv) {
         if (pc_guest_open(framework.fileSystemRepresentation) != 0)
             startup_failure(@"Private guest framework binding failed; see preceding diagnostics");
         skyrim_ios_stage("private-guest-bound");
-        if (!skyrim_mobile_prepare_game_language(game.fileSystemRepresentation))
-            startup_failure(@"Cannot safely apply the game language to the app profile; the guest was not started");
         // The original game folder, or a copy-on-write clone with the enabled
         // MOD packages laid over Data. The original is never modified.
         NSURL *runtimeGame = [NSURL fileURLWithPath:skyrim_mods_prepare_game(game.path) isDirectory:YES];
+        unsigned arabicMod = skyrim_mods_arabic_text_status(runtimeGame.path);
+        if (!skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, arabicMod))
+            startup_failure(@"Cannot safely apply the game language to the app profile; the guest was not started");
         if (!skyrim_mobile_prepare_mods(runtimeGame.fileSystemRepresentation))
             startup_failure(@"Cannot restore the profile plugin list; the guest was not started");
 #ifdef SKYRIM_IOS_CLASSIC_SETTINGS_PROBE

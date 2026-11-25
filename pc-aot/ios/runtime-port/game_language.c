@@ -88,14 +88,20 @@ void skyrim_game_language_probe(const char *root, SkyrimGameLanguagePacks *packs
     // this probe checks installation completeness only, not audio decoding.
 }
 SkyrimGameLanguage skyrim_game_language_select(unsigned text, unsigned voices,
-                                               SkyrimGameLanguagePacks packs) {
+                                               SkyrimGameLanguagePacks packs, unsigned arabic_mod) {
     SkyrimGameLanguage state = {0};
+    state.arabic_mod = arabic_mod;
     state.requested_text = text == SKYRIM_GAME_JAPANESE;
     state.requested_voices = voices == SKYRIM_GAME_JAPANESE;
     state.text_reason = state.requested_text ? packs.text_status : SKYRIM_GAME_PACK_READY;
     state.voices_reason = state.requested_voices ? packs.voices_status : SKYRIM_GAME_PACK_READY;
     state.text = state.requested_text && state.text_reason == SKYRIM_GAME_PACK_READY;
     state.voices = state.requested_voices && state.voices_reason == SKYRIM_GAME_PACK_READY;
+    if (state.arabic_mod == SKYRIM_ARABIC_MOD_READY) {
+        // The reviewed translation replaces the English tables and font configuration.
+        state.text = SKYRIM_GAME_ENGLISH;
+        state.text_reason = SKYRIM_GAME_PACK_READY;
+    }
     return state;
 }
 
@@ -144,6 +150,8 @@ SkyrimGameIniSource skyrim_game_language_plan_profile(const char *game, const ch
      * Creating a three-key profile here would discard the template's archives. */
     language->text = SKYRIM_GAME_ENGLISH;
     language->voices = SKYRIM_GAME_ENGLISH;
+    if (language->arabic_mod == SKYRIM_ARABIC_MOD_READY)
+        language->arabic_mod = SKYRIM_ARABIC_MOD_NEEDS_INI;
     if (language->requested_text) language->text_reason = SKYRIM_GAME_MISSING_DEFAULT_INI;
     if (language->requested_voices) language->voices_reason = SKYRIM_GAME_MISSING_DEFAULT_INI;
     return SKYRIM_PROFILE_INI_DEFERRED;

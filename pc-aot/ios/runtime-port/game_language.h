@@ -6,6 +6,8 @@ extern "C" {
 #endif
 
 enum { SKYRIM_GAME_ENGLISH, SKYRIM_GAME_JAPANESE };
+enum { SKYRIM_ARABIC_MOD_OFF, SKYRIM_ARABIC_MOD_READY, SKYRIM_ARABIC_MOD_OVERRIDDEN,
+       SKYRIM_ARABIC_MOD_NEEDS_INI };
 enum { SKYRIM_GAME_PACK_READY, SKYRIM_GAME_PACK_MISSING,
        SKYRIM_GAME_PACK_INCOMPLETE, SKYRIM_GAME_PACK_UNSUPPORTED };
 enum { SKYRIM_GAME_MISSING_DEFAULT_INI = 4 }; /* effective-language reason */
@@ -20,6 +22,7 @@ typedef struct {
 typedef struct {
     unsigned requested_text, requested_voices, text, voices;
     unsigned text_reason, voices_reason;
+    unsigned arabic_mod;
 } SkyrimGameLanguage;
 
 /* Once at startup. Fixed filenames and size-only installed-pack validation;
@@ -28,7 +31,7 @@ typedef struct {
  * guarantee. No archive contents are read and no files are changed here. */
 void skyrim_game_language_probe(const char *game_directory, SkyrimGameLanguagePacks *packs);
 SkyrimGameLanguage skyrim_game_language_select(unsigned text, unsigned voices,
-                                               SkyrimGameLanguagePacks packs);
+                                               SkyrimGameLanguagePacks packs, unsigned arabic_mod);
 /* Resolve before writing: the guest requests Skyrim.INI with this exact case.
  * Prefer that existing file, otherwise reuse a single case-insensitive match.
  * Return 1 for an existing regular file, 0 for absent (canonical path output),

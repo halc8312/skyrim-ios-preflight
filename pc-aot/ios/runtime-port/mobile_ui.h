@@ -8,7 +8,7 @@ extern "C" {
 void skyrim_mobile_initialize(const char *profile);
 /* Once after initialization and before guest threads. Only app-owned profile
  * preferences are written; original game archives/masters are never changed. */
-int skyrim_mobile_prepare_game_language(const char *game_directory);
+int skyrim_mobile_prepare_game_language(const char *game_directory, unsigned arabic_mod);
 #if defined(SKYRIM_IOS_CLASSIC_SKSE) || defined(SKYDREAM_SKSE)
 /* Effective text from an explicitly prepared game profile, or NULL when
  * the guest's existing ini supplies the language. Immutable during play. */

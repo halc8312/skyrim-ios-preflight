@@ -83,6 +83,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_GRAPHICS_POLICY", "^IOS_GRAPHICS_POLICY schema=1 (?:exact_state=0 wait_scope=0|exact_state=1 wait_scope=1)$") \
     X("IOS_STATE_CACHE", "^IOS_STATE_CACHE entries=[0-9]{1,20} shader_tuples=[0-9]{1,20} wakeup_links=[0-9]{1,20}$") \
     X("IOS_GAME_LANGUAGE", "^IOS_GAME_LANGUAGE requested_text=[01] text=[01] text_reason=[0-3] requested_voices=[01] voices=[01] voices_reason=[0-3]$") \
+    X("IOS_ARABIC_MOD", "^IOS_ARABIC_MOD status=[1-3] applied=[01]$") \
     X("IOS_OVERLAY_LAYOUT", "^IOS_OVERLAY_LAYOUT schema=1 view_pt=[0-9]{1,5}x[0-9]{1,5} safe=[0-9]{1,5},[0-9]{1,5},[0-9]{1,5},[0-9]{1,5} top_controls_max_y=[0-9]{1,5} scale=[0-9]{1,4}$") \
     X("IOS_CLASSIC_SKYUI", "^IOS_CLASSIC_SKYUI (?:requested=0 enabled=0|requested=1 enabled=[01])$") \
     X("IOS_MOD_FEATURE", "^IOS_MOD_FEATURE id=[0-9]{1,2} requested=1 available=[01] enabled=[01] reason=[0-5]$") \

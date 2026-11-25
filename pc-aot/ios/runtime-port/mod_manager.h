@@ -14,6 +14,8 @@
  *    the packages laid over Data. Never fatal; falls back to the original. */
 NSString *skyrim_mods_select_profile(NSString *default_profile_directory);
 NSString *skyrim_mods_prepare_game(NSString *game_directory);
+/* After prepare_game. Recognize the reviewed Arabic MOD in the effective view. */
+unsigned skyrim_mods_arabic_text_status(NSString *game_view);
 #if defined(SKYRIM_IOS_CLASSIC_SKSE) && defined(SKYRIM_IOS_SKSE_DLL_PROBE)
 #include "mod_papyrus_inputs.h"
 /* On the startup main thread after skyrim_mobile_prepare_mods succeeds.

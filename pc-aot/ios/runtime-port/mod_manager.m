@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include "mobile_ui.h"
 #include "mod_manager.h"
+#include "game_language.h"
 #include "copy_pair.h"
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 #include "PcGuestSkseTrial.h"
@@ -1079,6 +1080,62 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
     return view;
 }
 
+/* Skyrim LE Arabic falta uses English filenames. Pin the user-provided archive
+ * and the base game, Update and Interface files, in this order. DLC string
+ * tables are used by the game only when their own ESMs are present. */
+static BOOL IsReviewedArabicTextPack(NSDictionary *package) {
+    return [package[@"sha256"] isEqual:@"ab5059db24c89ef34a378fbf8b537fd88cd57e3ad649cbd5d18bddbff542c36a"];
+}
+
+static BOOL ArabicTextFilesMatch(const char *view) {
+    static const struct { const char *file; off_t bytes; } files[] = {
+        {"FontConfig.txt", 1066}, {"fonts_en.swf", 1652614},
+        {"fonts_en2.swf", 74230}, {"Translate_english.txt", 54102},
+        {"Skyrim_english.STRINGS", 1331960}, {"Skyrim_english.DLSTRINGS", 2894890},
+        {"Skyrim_english.ILSTRINGS", 5361511}, {"Update_english.STRINGS", 46963},
+        {"Update_english.DLSTRINGS", 136390}, {"Update_english.ILSTRINGS", 25947},
+    };
+    char data[PATH_MAX], interfaceDir[PATH_MAX], stringsDir[PATH_MAX], path[PATH_MAX];
+    if (skyrim_plugin_child_path(view, "Data", data, sizeof data) != 1 ||
+        skyrim_plugin_child_path(data, "Interface", interfaceDir, sizeof interfaceDir) != 1 ||
+        skyrim_plugin_child_path(data, "Strings", stringsDir, sizeof stringsDir) != 1) return NO;
+    CC_SHA256_CTX hash;
+    if (CC_SHA256_Init(&hash) != 1) return NO;
+    unsigned char buffer[16384], digest[CC_SHA256_DIGEST_LENGTH];
+    for (size_t i = 0; i < sizeof files / sizeof *files; ++i) {
+        if (skyrim_plugin_child_path(i < 4 ? interfaceDir : stringsDir, files[i].file, path, sizeof path) != 1)
+            return NO;
+        int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+        if (fd < 0) return NO;
+        struct stat st;
+        BOOL valid = !fstat(fd, &st) && S_ISREG(st.st_mode) && st.st_size == files[i].bytes;
+        off_t remaining = files[i].bytes;
+        while (valid && remaining > 0) {
+            size_t count = remaining < (off_t)sizeof buffer ? (size_t)remaining : sizeof buffer;
+            ssize_t got = read(fd, buffer, count);
+            if (got < 0 && errno == EINTR) continue;
+            valid = got > 0 && CC_SHA256_Update(&hash, buffer, (CC_LONG)got) == 1;
+            if (valid) remaining -= got;
+        }
+        if (close(fd) || !valid) return NO;
+    }
+    static const unsigned char expected[] = {
+        0xef, 0x16, 0x4e, 0x51, 0x0c, 0x30, 0x91, 0x5e, 0xb6, 0x79, 0x79, 0x0b, 0xf2, 0x95, 0xce, 0x21,
+        0x2a, 0xa8, 0x9a, 0x9e, 0x72, 0xea, 0x0f, 0x2a, 0x38, 0x67, 0xe6, 0xd4, 0x1c, 0x20, 0x6e, 0x9c,
+    };
+    return CC_SHA256_Final(digest, &hash) == 1 && !memcmp(digest, expected, sizeof digest);
+}
+
+unsigned skyrim_mods_arabic_text_status(NSString *gameView) {
+    for (NSString *pid in launchPackageIds) {
+        NSDictionary *package = LoadPackage(pid);
+        if (IsReviewedArabicTextPack(package))
+            return ArabicTextFilesMatch(gameView.fileSystemRepresentation)
+                ? SKYRIM_ARABIC_MOD_READY : SKYRIM_ARABIC_MOD_OVERRIDDEN;
+    }
+    return SKYRIM_ARABIC_MOD_OFF;
+}
+
 #if defined(SKYRIM_IOS_CLASSIC_SKSE) && defined(SKYRIM_IOS_SKSE_DLL_PROBE)
 int skyrim_mods_acquire_papyrus_inputs(SkyrimPapyrusInputs *inputs) {
     if (!inputs) return EINVAL;
@@ -1300,6 +1357,10 @@ static void AttachPackage(NSMutableDictionary *profile, NSDictionary *package) {
     [NSNotificationCenter.defaultCenter postNotificationName:@"SKModsChanged" object:nil];
     NSString *added = [NSString stringWithFormat:T(@"Added %@ to profile \"%@\". Save your game, then fully close and reopen the app.",
         @"%@ をプロファイル「%@」に追加しました。ゲーム内で保存し、アプリを完全終了して開き直すと反映します。"), name, profileName];
+    if (IsReviewedArabicTextPack(package))
+        added = [added stringByAppendingFormat:@"\n%@", T(
+            @"Keep this MOD enabled to use Arabic game text after restart.",
+            @"再起動後にゲームをアラビア語で表示するには、このMODをオンにしておいてください。")];
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     BOOL providesSkyUI = NO;
     for (id plugin in names) if ([plugin isKindOfClass:NSString.class] && [[plugin lowercaseString] isEqualToString:@"skyui.esp"]) providesSkyUI = YES;

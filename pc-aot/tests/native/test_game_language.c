@@ -83,14 +83,14 @@ static void testSelect(void) {
     for (unsigned t = 0; t <= SKYRIM_GAME_PACK_UNSUPPORTED; ++t)
         for (unsigned v = 0; v <= SKYRIM_GAME_PACK_UNSUPPORTED; ++v) {
             SkyrimGameLanguagePacks packs = {t, v};
-            SkyrimGameLanguage en = skyrim_game_language_select(0, 0, packs);
+            SkyrimGameLanguage en = skyrim_game_language_select(0, 0, packs, SKYRIM_ARABIC_MOD_OFF);
             assert(!en.text && !en.voices && !en.text_reason && !en.voices_reason);
-            SkyrimGameLanguage jp = skyrim_game_language_select(1, 1, packs);
+            SkyrimGameLanguage jp = skyrim_game_language_select(1, 1, packs, SKYRIM_ARABIC_MOD_OFF);
             assert(jp.text == !t && jp.voices == !v && jp.text_reason == t && jp.voices_reason == v);
-            SkyrimGameLanguage mixed = skyrim_game_language_select(1, 0, packs);
+            SkyrimGameLanguage mixed = skyrim_game_language_select(1, 0, packs, SKYRIM_ARABIC_MOD_OFF);
             assert(mixed.text == !t && !mixed.voices && !mixed.voices_reason);
         }
-    SkyrimGameLanguage invalid = skyrim_game_language_select(99, 2, (SkyrimGameLanguagePacks){0,0});
+    SkyrimGameLanguage invalid = skyrim_game_language_select(99, 2, (SkyrimGameLanguagePacks){0,0}, SKYRIM_ARABIC_MOD_OFF);
     assert(!invalid.text && !invalid.voices && !invalid.requested_text && !invalid.requested_voices);
     puts("independent language selection PASS");
 }
@@ -108,7 +108,7 @@ static void testMissingTemplate(const char *game) {
     SkyrimGameLanguagePacks ready = {SKYRIM_GAME_PACK_READY, SKYRIM_GAME_PACK_READY};
     for (unsigned text = 0; text < 2; ++text) {
         for (unsigned voices = 0; voices < 2; ++voices) {
-            SkyrimGameLanguage language = skyrim_game_language_select(text, voices, ready);
+            SkyrimGameLanguage language = skyrim_game_language_select(text, voices, ready, SKYRIM_ARABIC_MOD_OFF);
             assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
                 sizeof target) == SKYRIM_PROFILE_INI_DEFERRED);
             assert(language.requested_text == text && language.requested_voices == voices);
@@ -118,7 +118,7 @@ static void testMissingTemplate(const char *game) {
             assert(access(target, F_OK) && access(defaults, F_OK));
         }
     }
-    SkyrimGameLanguage language = skyrim_game_language_select(1, 1, ready);
+    SkyrimGameLanguage language = skyrim_game_language_select(1, 1, ready, SKYRIM_ARABIC_MOD_OFF);
     assert(!symlink("absent", defaults));
     assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
         sizeof target) == SKYRIM_PROFILE_INI_ERROR);
@@ -135,6 +135,14 @@ static void testMissingTemplate(const char *game) {
     file = fopen(target, "wb"); assert(file && !fclose(file));
     assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
         sizeof target) == SKYRIM_PROFILE_INI_EXISTING);
+    language = skyrim_game_language_select(1, 0, ready, SKYRIM_ARABIC_MOD_READY);
+    assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
+        sizeof target) == SKYRIM_PROFILE_INI_EXISTING);
+    assert(language.arabic_mod == SKYRIM_ARABIC_MOD_READY);
+    assert(!unlink(target));
+    assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
+        sizeof target) == SKYRIM_PROFILE_INI_DEFERRED);
+    assert(language.arabic_mod == SKYRIM_ARABIC_MOD_NEEDS_INI);
     puts("missing template deferral and recovery PASS");
 }
 static void testIni(void) {
@@ -163,6 +171,21 @@ static void testIni(void) {
     free(result);
     result = transform("[Archive]\nsResourceArchiveList2=Extra.bsa\n", en);
     assert(strstr(result, "Extra.bsa, Skyrim - Voices.bsa, Skyrim - VoicesExtra.bsa\n")); free(result);
+    SkyrimGameLanguagePacks ready = {SKYRIM_GAME_PACK_READY, SKYRIM_GAME_PACK_READY};
+    SkyrimGameLanguage arabic = skyrim_game_language_select(1, 1, ready, SKYRIM_ARABIC_MOD_READY);
+    assert(arabic.requested_text && !arabic.text && !arabic.text_reason && arabic.voices);
+    result = transform(original, arabic);
+    assert(strstr(result, "sLanguage=ENGLISH\r\nKeep=42"));
+    assert(strstr(result, "sFontConfigFile=Interface\\FontConfig.txt\r\n"));
+    assert(strstr(result, "sResourceArchiveList2=Skyrim - Voices_Japanese.bsa, Skyrim - VoicesExtra_Japanese.bsa"));
+    SkyrimGameLanguage unselected = skyrim_game_language_select(1, 1, ready, SKYRIM_ARABIC_MOD_OFF);
+    restored = transform(result, unselected);
+    assert(strstr(restored, "sLanguage=JAPANESE"));
+    assert(strstr(restored, "sFontConfigFile=Interface\\FontConfig_Japanese.txt"));
+    free(restored); free(result);
+    SkyrimGameLanguage overridden = skyrim_game_language_select(1, 0, ready, SKYRIM_ARABIC_MOD_OVERRIDDEN);
+    assert(overridden.text && !overridden.voices);
+    puts("Arabic MOD English alias and preference recovery PASS");
     result = transform("", text); assert(strstr(result, "[General]\nsLanguage=JAPANESE\n")); free(result);
     size_t size = 99; assert(!skyrim_game_language_ini("a\0b", 3, en, &size) && !size);
     assert(!skyrim_game_language_ini(NULL, 0, en, &size));
