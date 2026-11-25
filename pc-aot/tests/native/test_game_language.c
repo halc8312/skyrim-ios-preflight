@@ -135,7 +135,8 @@ static void testMissingTemplate(const char *game) {
     file = fopen(target, "wb"); assert(file && !fclose(file));
     assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
         sizeof target) == SKYRIM_PROFILE_INI_EXISTING);
-    language = skyrim_game_language_select(1, 0, ready, SKYRIM_ARABIC_MOD_READY);
+    language = skyrim_game_language_select(SKYRIM_GAME_ARABIC, SKYRIM_GAME_ENGLISH,
+        ready, SKYRIM_ARABIC_MOD_READY);
     assert(skyrim_game_language_plan_profile(game, folder, &language, target, defaults,
         sizeof target) == SKYRIM_PROFILE_INI_EXISTING);
     assert(language.arabic_mod == SKYRIM_ARABIC_MOD_READY);
@@ -172,19 +173,25 @@ static void testIni(void) {
     result = transform("[Archive]\nsResourceArchiveList2=Extra.bsa\n", en);
     assert(strstr(result, "Extra.bsa, Skyrim - Voices.bsa, Skyrim - VoicesExtra.bsa\n")); free(result);
     SkyrimGameLanguagePacks ready = {SKYRIM_GAME_PACK_READY, SKYRIM_GAME_PACK_READY};
-    SkyrimGameLanguage arabic = skyrim_game_language_select(1, 1, ready, SKYRIM_ARABIC_MOD_READY);
-    assert(arabic.requested_text && !arabic.text && !arabic.text_reason && arabic.voices);
+    SkyrimGameLanguage arabic = skyrim_game_language_select(SKYRIM_GAME_ARABIC, SKYRIM_GAME_JAPANESE,
+        ready, SKYRIM_ARABIC_MOD_READY);
+    assert(arabic.requested_text == SKYRIM_GAME_ARABIC && !arabic.text && !arabic.text_reason && arabic.voices);
     result = transform(original, arabic);
     assert(strstr(result, "sLanguage=ENGLISH\r\nKeep=42"));
     assert(strstr(result, "sFontConfigFile=Interface\\FontConfig.txt\r\n"));
     assert(strstr(result, "sResourceArchiveList2=Skyrim - Voices_Japanese.bsa, Skyrim - VoicesExtra_Japanese.bsa"));
-    SkyrimGameLanguage unselected = skyrim_game_language_select(1, 1, ready, SKYRIM_ARABIC_MOD_OFF);
+    SkyrimGameLanguage unselected = skyrim_game_language_select(1, 1, ready, SKYRIM_ARABIC_MOD_READY);
+    assert(unselected.arabic_mod == SKYRIM_ARABIC_MOD_OFF);
     restored = transform(result, unselected);
     assert(strstr(restored, "sLanguage=JAPANESE"));
     assert(strstr(restored, "sFontConfigFile=Interface\\FontConfig_Japanese.txt"));
     free(restored); free(result);
-    SkyrimGameLanguage overridden = skyrim_game_language_select(1, 0, ready, SKYRIM_ARABIC_MOD_OVERRIDDEN);
-    assert(overridden.text && !overridden.voices);
+    SkyrimGameLanguage overridden = skyrim_game_language_select(SKYRIM_GAME_ARABIC, SKYRIM_GAME_ENGLISH,
+        ready, SKYRIM_ARABIC_MOD_OVERRIDDEN);
+    assert(!overridden.text && !overridden.voices && overridden.arabic_mod == SKYRIM_ARABIC_MOD_OVERRIDDEN);
+    SkyrimGameLanguage unavailable = skyrim_game_language_select(SKYRIM_GAME_ARABIC, SKYRIM_GAME_ENGLISH,
+        ready, SKYRIM_ARABIC_MOD_OFF);
+    assert(!unavailable.text && !unavailable.voices && unavailable.arabic_mod == SKYRIM_ARABIC_MOD_UNAVAILABLE);
     puts("Arabic MOD English alias and preference recovery PASS");
     result = transform("", text); assert(strstr(result, "[General]\nsLanguage=JAPANESE\n")); free(result);
     size_t size = 99; assert(!skyrim_game_language_ini("a\0b", 3, en, &size) && !size);

@@ -13,7 +13,9 @@
  *    folder — the original when no MOD package is on, otherwise a clone with
  *    the packages laid over Data. Never fatal; falls back to the original. */
 NSString *skyrim_mods_select_profile(NSString *default_profile_directory);
-NSString *skyrim_mods_prepare_game(NSString *game_directory);
+NSString *skyrim_mods_prepare_game(NSString *game_directory, BOOL arabic_text);
+/* The next-launch profile has an enabled, recognized Arabic text pack. */
+BOOL skyrim_mods_has_arabic_text(void);
 /* After prepare_game. Recognize the reviewed Arabic MOD in the effective view. */
 unsigned skyrim_mods_arabic_text_status(NSString *game_view);
 #if defined(SKYRIM_IOS_CLASSIC_SKSE) && defined(SKYRIM_IOS_SKSE_DLL_PROBE)

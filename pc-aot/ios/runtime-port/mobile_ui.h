@@ -6,6 +6,7 @@ extern "C" {
 #endif
 /* Startup settings/INI values become immutable before guest threads start. */
 void skyrim_mobile_initialize(const char *profile);
+int skyrim_mobile_wants_arabic_game_text(void);
 /* Once after initialization and before guest threads. Only app-owned profile
  * preferences are written; original game archives/masters are never changed. */
 int skyrim_mobile_prepare_game_language(const char *game_directory, unsigned arabic_mod);

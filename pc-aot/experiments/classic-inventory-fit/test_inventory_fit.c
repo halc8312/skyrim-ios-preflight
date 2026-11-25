@@ -7,7 +7,8 @@
 
 enum {
     STACK = 0x12800, MOVIE = 0x12100, VTABLE = 0x12200, MODE_METHOD = 0x5000,
-    DISPLAY = 0x12CF5B0, INVENTORY_NAME = 0x10E5B7C, OTHER_NAME = 0x10BA54C
+    DISPLAY = 0x12CF5B0, INVENTORY_NAME = 0x10E5B7C, MAGIC_NAME = 0x10E6584,
+    LOCKPICKING_NAME = 0x10E62CC, QUEST_JOURNAL_NAME = 0x10EA0EC
 };
 uint8_t *MEM;
 static bool enabled;
@@ -58,15 +59,21 @@ int main(void) {
     MEM = space.base;
     M32(MOVIE) = VTABLE;
     M32(VTABLE + 0x6C) = MODE_METHOD;
-    compare(INVENTORY_NAME, 3, 2868, 1320, 3);
+    static const uint32_t menus[] = {REVIEWED_MENU_POINTERS};
+    for (size_t i = 0; i < sizeof menus / sizeof *menus; ++i)
+        compare(menus[i], 3, 2868, 1320, 3);
     enabled = true;
-    compare(INVENTORY_NAME, 3, 1920, 1080, 3);
-    compare(INVENTORY_NAME, 3, 854, 480, 3); /* Rounded 16:9. */
-    compare(INVENTORY_NAME, 3, 956, 440, 1);
-    compare(INVENTORY_NAME, 3, 2868, 1320, 1);
+    for (size_t i = 0; i < sizeof menus / sizeof *menus; ++i) {
+        compare(menus[i], 3, 1920, 1080, 3);
+        compare(menus[i], 3, 854, 480, 3); /* Rounded 16:9. */
+        compare(menus[i], 3, 956, 440, 1);
+        compare(menus[i], 3, 2868, 1320, 1);
+    }
+    compare(MAGIC_NAME, 3, 1440, 1080, 3);
     compare(INVENTORY_NAME, 3, 0, 440, 3);
     compare(INVENTORY_NAME, 3, UINT32_MAX, 440, 3);
-    compare(INVENTORY_NAME, 2, 956, 440, 2);
-    compare(OTHER_NAME, 3, 956, 440, 3);
+    compare(MAGIC_NAME, 2, 956, 440, 2);
+    compare(LOCKPICKING_NAME, 3, 956, 440, 3);
+    compare(QUEST_JOURNAL_NAME, 1, 956, 440, 1);
     assert(gm_release(&space, NULL));
 }

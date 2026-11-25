@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 
-from stage_inventory_fit import DECLARATION, FIT, INVENTORY_UNIT, UNIT, mode_call, stage_inventory_fit
+from stage_inventory_fit import CALLER_UNITS, DECLARATION, FIT, MENU_CALLERS, UNIT, mode_call, stage_inventory_fit
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -20,9 +20,9 @@ from mod_hooks_guest import validate_generation
 class InventoryFitTests(unittest.TestCase):
     def test_refuses_other_source(self):
         with self.assertRaisesRegex(ValueError, "differ from the reviewed"):
-            stage_inventory_fit(b"authored loader", b"authored inventory")
+            stage_inventory_fit(b"authored loader", {})
 
-    def test_owned_inventory_mode_call(self):
+    def test_owned_supported_menu_mode_calls(self):
         lift = os.environ.get("SKYRIM_TEST_OWNED_CLASSIC_LIFT")
         compiler = shutil.which(os.environ.get("CC", "cc"))
         if not lift or not compiler:
@@ -32,9 +32,15 @@ class InventoryFitTests(unittest.TestCase):
         validate_generation(state, lift)
         source = lift / "gen" / UNIT
         original = source.read_bytes()
-        staged = stage_inventory_fit(original, (lift / "gen" / INVENTORY_UNIT).read_bytes())
+        callers = {name: (lift / "gen" / name).read_bytes() for name in CALLER_UNITS}
+        staged = stage_inventory_fit(original, callers)
         self.assertEqual(staged.count(FIT), 1)
         self.assertEqual(staged.removeprefix(DECLARATION).replace(FIT, b"", 1), original)
+        bad_magic = callers["exe_183.c"].replace(
+            b"{ uint32_t v_ = 0x10E6584u;", b"{ uint32_t v_ = 0x10E6588u;")
+        self.assertTrue(bad_magic != callers["exe_183.c"])
+        with self.assertRaises(ValueError):
+            stage_inventory_fit(original, {**callers, "exe_183.c": bad_magic})
 
         def fixture(name, unit):
             return (f"void {name}_fit(CPU *c) {{\n".encode()
@@ -58,7 +64,9 @@ class InventoryFitTests(unittest.TestCase):
             fragment.write_bytes(DECLARATION + b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n'
                                  + fixture("baseline", original) + fixture("staged", staged))
             binary = directory / "inventory-test"
-            subprocess.run([compiler, *flags, *includes, fragment, HERE / "test_inventory_fit.c",
+            expected = ",".join(f"0x{row[3]}u" for row in MENU_CALLERS)
+            subprocess.run([compiler, *flags, *includes, f"-DREVIEWED_MENU_POINTERS={expected}",
+                            fragment, HERE / "test_inventory_fit.c",
                             ROOT / "native/guest_memory.c", "-o", binary], check=True, timeout=90)
             subprocess.run([binary], check=True, timeout=30)
         self.assertEqual(source.read_bytes(), original)

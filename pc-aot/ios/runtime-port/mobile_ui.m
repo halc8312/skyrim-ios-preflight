@@ -236,7 +236,8 @@ void skyrim_mobile_initialize(const char *profile) {
     }
     if (![@[@0,@24,@30,@40,@60] containsObject:@(value(@"fps",0))]) [settings removeObjectForKey:@"fps"];
     if (![@[@0,@1] containsObject:@(value(@"language",0))]) [settings removeObjectForKey:@"language"];
-    if (![@[@0,@1] containsObject:@(value(@"game_text",0))]) [settings removeObjectForKey:@"game_text"];
+    if (![@[@0,@1,@(SKYRIM_GAME_ARABIC)] containsObject:@(value(@"game_text",0))])
+        [settings removeObjectForKey:@"game_text"];
     if (![@[@0,@1] containsObject:@(value(@"game_voices",0))]) [settings removeObjectForKey:@"game_voices"];
     if (![@[@-1,@0,@1] containsObject:@(value(@"autosave",-1))]) [settings removeObjectForKey:@"autosave"];
     persist(); startup = [settings copy];
@@ -273,6 +274,10 @@ void skyrim_mobile_initialize(const char *profile) {
         integerINI("Decals","uMaxSkinDecalPerActor",enabled ? 20 : 0);
     }
 }
+int skyrim_mobile_wants_arabic_game_text(void) {
+    return [startup[@"game_text"] unsignedIntValue] == SKYRIM_GAME_ARABIC;
+}
+
 static BOOL applyGameLanguageProfile(const char *gameDirectory) {
     NSString *folder = [profilePath stringByAppendingPathComponent:@"Documents/My Games/Skyrim"];
     char profileFile[PATH_MAX], defaultFile[PATH_MAX];
@@ -305,8 +310,7 @@ int skyrim_mobile_prepare_game_language(const char *gameDirectory, unsigned arab
     gameLanguage = skyrim_game_language_select([startup[@"game_text"] unsignedIntValue],
         [startup[@"game_voices"] unsignedIntValue], gameLanguagePacks, arabicMod);
     // Choosing only the app's display language leaves the game's profile untouched.
-    BOOL explicitSelection = startup[@"game_text"] != nil || startup[@"game_voices"] != nil ||
-        arabicMod == SKYRIM_ARABIC_MOD_READY;
+    BOOL explicitSelection = startup[@"game_text"] != nil || startup[@"game_voices"] != nil;
     gameLanguagePrepared = !explicitSelection || applyGameLanguageProfile(gameDirectory);
     fprintf(stderr, "IOS_GAME_LANGUAGE requested_text=%u text=%u text_reason=%u requested_voices=%u voices=%u voices_reason=%u\n",
         gameLanguage.requested_text, gameLanguage.text, gameLanguage.text_reason,
@@ -318,8 +322,7 @@ int skyrim_mobile_prepare_game_language(const char *gameDirectory, unsigned arab
 }
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 const char *skyrim_mobile_classic_text_language(void) {
-    if (!gameLanguagePrepared || (!startup[@"game_text"] && !startup[@"game_voices"] &&
-        gameLanguage.arabic_mod != SKYRIM_ARABIC_MOD_READY)) return NULL;
+    if (!gameLanguagePrepared || (!startup[@"game_text"] && !startup[@"game_voices"])) return NULL;
     return gameLanguage.text == SKYRIM_GAME_JAPANESE ? "JAPANESE" : "ENGLISH";
 }
 
@@ -333,6 +336,9 @@ int skyrim_mobile_classic_game_language(unsigned *text, unsigned *voices) {
 
 static NSString *gameLanguageFallback(void) {
     if (!gameLanguagePrepared) return nil;
+    if (gameLanguage.arabic_mod == SKYRIM_ARABIC_MOD_UNAVAILABLE)
+        return L(@"Arabic text is unavailable in this profile or session. Enable the Arabic MOD and restart.",
+                 @"今回はアラビア語を利用できません。このプロファイルでアラビア語MODをオンにして、通常起動してください。");
     if (gameLanguage.arabic_mod == SKYRIM_ARABIC_MOD_OVERRIDDEN)
         return L(@"The Arabic MOD has missing or overwritten files. Move it last in MOD order or import the original RAR again.",
                  @"アラビア語MODのファイルが不足しているか、別のMODに上書きされています。MOD一覧で最後に移動するか、元のRARを取り込み直してください。");
@@ -864,9 +870,10 @@ static NSString *unevenCadenceNote(void) {
     if (section==5) {
         NSString *description = L(@"App language changes immediately. Game text and voices apply after a full app restart and require the corresponding installed pack. Unavailable packs use English.",
             @"アプリの言語はすぐに反映します。ゲームのテキスト・音声はアプリの完全終了・再起動後に反映します。対応パックが未導入・未対応の場合は英語になります。");
-        if (gameLanguage.arabic_mod == SKYRIM_ARABIC_MOD_READY)
-            description = L(@"Arabic text (العربية) is active for this session. To use the text choice above, turn off the Arabic MOD and restart. Voices can be set separately.",
-                            @"今回はアラビア語（العربية）で表示しています。上で選んだテキスト言語を使うには、アラビア語MODをオフにして再起動してください。音声は別に設定できます。");
+        if (skyrim_mods_has_arabic_text())
+            description = [description stringByAppendingFormat:@"\n%@", L(
+                @"Arabic text (العربية) is available from the enabled translation MOD.",
+                @"アラビア語MODが有効なので、ゲームのテキストで「العربية」を選べます。")];
         NSString *fallback = gameLanguageFallback();
         return fallback ? [description stringByAppendingFormat:@"\n%@", fallback] : description;
     }
@@ -889,11 +896,16 @@ static NSString *unevenCadenceNote(void) {
        @{@"key":@"opacity",@"title":L(@"Control opacity", @"ボタンの不透明度"),@"values":@[@.25,@.4,@.6,@.8,@1],@"default":@.8}
     ][p.row];
     if (p.section==4) return @{@"key":@"autosave",@"title":L(@"Autosave", @"オートセーブ"),@"values":@[@-1,@0,@1],@"labels":@[L(@"Keep current", @"現在の設定を維持"),L(@"Off", @"オフ"),L(@"On", @"オン")],@"default":@-1};
-    if (p.section==5) return @[
-        @{@"key":@"language",@"title":L(@"App language", @"アプリの言語"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]},
-        @{@"key":@"game_text",@"title":L(@"Game text — after restart", @"ゲームのテキスト — 次回起動"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]},
-        @{@"key":@"game_voices",@"title":L(@"Game voices — after restart", @"ゲームの音声 — 次回起動"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]}
-    ][p.row];
+    if (p.section==5 && p.row==1) {
+        BOOL arabic = skyrim_mods_has_arabic_text();
+        return @{@"key":@"game_text",@"title":L(@"Game text — after restart", @"ゲームのテキスト — 次回起動"),
+                 @"values":arabic ? @[@0,@1,@(SKYRIM_GAME_ARABIC)] : @[@0,@1],
+                 @"labels":arabic ? @[@"English",@"日本語",@"العربية"] : @[@"English",@"日本語"]};
+    }
+    if (p.section==5 && p.row==0)
+        return @{@"key":@"language",@"title":L(@"App language", @"アプリの言語"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]};
+    if (p.section==5 && p.row==2)
+        return @{@"key":@"game_voices",@"title":L(@"Game voices — after restart", @"ゲームの音声 — 次回起動"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]};
     if (p.section==2 && p.row) return graphicsRows()[p.row-1];
     return nil;
 }
@@ -917,7 +929,8 @@ static NSString *unevenCadenceNote(void) {
     } else if (r) {
         cell.textLabel.text=r[@"title"];
         NSNumber *choice=settings[r[@"key"]] ?: r[@"default"] ?: (p.section==2 ? [r[@"values"] firstObject] : @0);
-        cell.detailTextLabel.text=choiceLabel(r,choice);
+        cell.detailTextLabel.text=p.section==5 && p.row==1 && choice.unsignedIntValue==SKYRIM_GAME_ARABIC &&
+            ![r[@"values"] containsObject:choice] ? L(@"Arabic MOD unavailable", @"アラビア語MODなし") : choiceLabel(r,choice);
     } else if(p.section==2) {cell.textLabel.text=L(@"Graphics preset", @"画質プリセット");cell.detailTextLabel.text=L(@"Choose", @"選択");}
     else cell.textLabel.text=p.row ? L(@"Reset control layout", @"配置を初期状態に戻す") : L(@"Edit control layout", @"ボタンをドラッグして配置");
     cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
@@ -988,10 +1001,7 @@ static NSString *unevenCadenceNote(void) {
                 [overlay message:L(@"Shader option saved. Applies after restart.", @"シェーダー設定を保存しました。次回起動から反映します")];
             if (p.section==5 && p.row) {
                 unsigned status = p.row == 1 ? gameLanguagePacks.text_status : gameLanguagePacks.voices_status;
-                if (p.row == 1 && gameLanguage.arabic_mod == SKYRIM_ARABIC_MOD_READY)
-                    [overlay message:L(@"Text preference saved. Turn off the Arabic MOD and restart to use it.",
-                                       @"テキスト言語を保存しました。反映するにはアラビア語MODをオフにして再起動してください。")];
-                else [overlay message:choice.intValue && status != SKYRIM_GAME_PACK_READY ?
+                [overlay message:choice.unsignedIntValue == SKYRIM_GAME_JAPANESE && status != SKYRIM_GAME_PACK_READY ?
                     L(@"Japanese is not ready for this option. English will be used until a supported pack is installed; restart after installation.",
                       @"この項目の日本語パックは未導入・未対応のため英語になります。対応パック導入後に再起動してください。") :
                     L(@"Game language saved. Fully close and reopen the app to apply.", @"ゲームの言語を保存しました。アプリを完全終了して開き直すと反映します。")];

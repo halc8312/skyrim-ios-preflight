@@ -351,7 +351,8 @@ int SDL_main(int argc, char **argv) {
         skyrim_ios_stage("private-guest-bound");
         // The original game folder, or a copy-on-write clone with the enabled
         // MOD packages laid over Data. The original is never modified.
-        NSURL *runtimeGame = [NSURL fileURLWithPath:skyrim_mods_prepare_game(game.path) isDirectory:YES];
+        NSString *effectiveGame = skyrim_mods_prepare_game(game.path, skyrim_mobile_wants_arabic_game_text());
+        NSURL *runtimeGame = [NSURL fileURLWithPath:effectiveGame isDirectory:YES];
         unsigned arabicMod = skyrim_mods_arabic_text_status(runtimeGame.path);
         if (!skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, arabicMod))
             startup_failure(@"Cannot safely apply the game language to the app profile; the guest was not started");

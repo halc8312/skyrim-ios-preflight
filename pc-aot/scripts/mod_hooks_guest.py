@@ -226,8 +226,9 @@ def stage_loading_menu_observe(root: Path) -> dict[str, bytes]:
 
 def stage_inventory_fit(root: Path) -> dict[str, bytes]:
     inventory = load(EXPERIMENTS / "classic-inventory-fit", "stage_inventory_fit")
-    return {inventory.UNIT: inventory.stage_inventory_fit((root / "gen" / inventory.UNIT).read_bytes(),
-                                                         (root / "gen" / inventory.INVENTORY_UNIT).read_bytes())}
+    gen = root / "gen"
+    callers = {name: (gen / name).read_bytes() for name in inventory.CALLER_UNITS}
+    return {inventory.UNIT: inventory.stage_inventory_fit((gen / inventory.UNIT).read_bytes(), callers)}
 
 
 def stage_safety_load(root: Path) -> dict[str, bytes]:

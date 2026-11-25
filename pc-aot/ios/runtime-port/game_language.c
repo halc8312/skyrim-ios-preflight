@@ -90,17 +90,16 @@ void skyrim_game_language_probe(const char *root, SkyrimGameLanguagePacks *packs
 SkyrimGameLanguage skyrim_game_language_select(unsigned text, unsigned voices,
                                                SkyrimGameLanguagePacks packs, unsigned arabic_mod) {
     SkyrimGameLanguage state = {0};
-    state.arabic_mod = arabic_mod;
-    state.requested_text = text == SKYRIM_GAME_JAPANESE;
+    state.requested_text = text <= SKYRIM_GAME_ARABIC ? text : SKYRIM_GAME_ENGLISH;
     state.requested_voices = voices == SKYRIM_GAME_JAPANESE;
-    state.text_reason = state.requested_text ? packs.text_status : SKYRIM_GAME_PACK_READY;
+    state.text_reason = state.requested_text == SKYRIM_GAME_JAPANESE
+        ? packs.text_status : SKYRIM_GAME_PACK_READY;
     state.voices_reason = state.requested_voices ? packs.voices_status : SKYRIM_GAME_PACK_READY;
-    state.text = state.requested_text && state.text_reason == SKYRIM_GAME_PACK_READY;
+    state.text = state.requested_text == SKYRIM_GAME_JAPANESE && state.text_reason == SKYRIM_GAME_PACK_READY;
     state.voices = state.requested_voices && state.voices_reason == SKYRIM_GAME_PACK_READY;
-    if (state.arabic_mod == SKYRIM_ARABIC_MOD_READY) {
+    if (state.requested_text == SKYRIM_GAME_ARABIC) {
         // The reviewed translation replaces the English tables and font configuration.
-        state.text = SKYRIM_GAME_ENGLISH;
-        state.text_reason = SKYRIM_GAME_PACK_READY;
+        state.arabic_mod = arabic_mod == SKYRIM_ARABIC_MOD_OFF ? SKYRIM_ARABIC_MOD_UNAVAILABLE : arabic_mod;
     }
     return state;
 }

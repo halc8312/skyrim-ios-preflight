@@ -91,8 +91,11 @@ static const char *k_win_user_prefix = "\\users\\player\\";
     @unittest.skipUnless(sys.platform == "darwin", "Foundation startup path executes on the Mac validation host")
     def test_actual_startup_keeps_unconfigured_profile_and_atomically_updates_only_profile(self):
         source = (PORT / "mobile_ui.m").read_text()
-        function = source[source.index("static BOOL applyGameLanguageProfile("):
+        function = source[source.index("int skyrim_mobile_wants_arabic_game_text("):
                           source.index("static NSString *gameLanguageFallback(")]
+        mods = (PORT / "mod_manager.m").read_text()
+        package_selection = mods[mods.index("static BOOL IsReviewedArabicTextPack("):
+                                 mods.index("/* Generated outputs are excluded")]
         with tempfile.TemporaryDirectory(prefix="game-language-apple-") as tmp:
             native = Path(tmp) / "startup.m"
             native.write_text(r'''
@@ -107,10 +110,22 @@ static NSDictionary *startup;
 static SkyrimGameLanguagePacks gameLanguagePacks;
 static SkyrimGameLanguage gameLanguage;
 static BOOL gameLanguagePrepared;
-''' + function + r'''
+static NSDictionary *testProfile, *testPackages;
+static NSDictionary *SelectedProfile(void) { return testProfile; }
+static NSDictionary *LoadPackage(NSString *key) { return testPackages[key]; }
+''' + function + package_selection + r'''
 int main(int argc, char **argv) { @autoreleasepool {
     assert(argc == 2);
     assert(skyrim_mobile_classic_text_language() == NULL);
+    testPackages = @{@"ordinary":@{}, @"translation":@{@"arabicText": @YES}};
+    NSDictionary *ordinary = @{@"id":@"ordinary", @"on":@YES};
+    testProfile = @{@"packages":@[ordinary, @{@"id":@"translation", @"on":@NO}]};
+    assert(!skyrim_mods_has_arabic_text());
+    assert(([EnabledPackageIds(testProfile) isEqualToArray:@[@"ordinary"]]));
+    testProfile = @{@"packages":@[ordinary, @{@"id":@"translation", @"on":@YES}]};
+    assert(skyrim_mods_has_arabic_text());
+    assert(([EnabledPackageIdsForText(testProfile, NO) isEqualToArray:@[@"ordinary"]]));
+    assert(([EnabledPackageIdsForText(testProfile, YES) isEqualToArray:@[@"ordinary",@"translation"]]));
     NSString *root = [NSString stringWithUTF8String:argv[1]];
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *game = [root stringByAppendingPathComponent:@"Game"];
@@ -149,11 +164,19 @@ int main(int argc, char **argv) { @autoreleasepool {
     NSDictionary *attributes = [fm attributesOfItemAtPath:target error:NULL];
     assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));
     assert([attributes[NSFileModificationDate] isEqual:[fm attributesOfItemAtPath:target error:NULL][NSFileModificationDate]]);
-    // The reviewed Arabic MOD applies even without a persisted game language choice.
+    // Availability alone cannot override a profile's language.
+    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_READY));
+    assert(gameLanguage.arabic_mod == SKYRIM_ARABIC_MOD_OFF);
+    assert(!skyrim_mobile_wants_arabic_game_text());
+    assert(skyrim_mobile_classic_text_language() == NULL);
+    startup = @{@"game_text":@(SKYRIM_GAME_ARABIC)};
+    assert(skyrim_mobile_wants_arabic_game_text());
     assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_READY));
     assert(gameLanguage.arabic_mod == SKYRIM_ARABIC_MOD_READY);
     assert(!strcmp(skyrim_mobile_classic_text_language(), "ENGLISH"));
-    assert(!startup[@"game_text"]);
+    assert(gameLanguage.requested_text == SKYRIM_GAME_ARABIC);
+    assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));
+    assert(gameLanguage.arabic_mod == SKYRIM_ARABIC_MOD_UNAVAILABLE);
     // Requested Japanese without a pack falls back explicitly, not silently.
     startup = @{@"game_text":@1,@"game_voices":@1};
     assert(skyrim_mobile_prepare_game_language(game.fileSystemRepresentation, SKYRIM_ARABIC_MOD_OFF));

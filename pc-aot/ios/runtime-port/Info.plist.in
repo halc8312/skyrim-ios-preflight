@@ -10,7 +10,7 @@
   <key>CFBundleName</key><string>SkyrimIOS</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
-  <key>CFBundleVersion</key><string>25</string>
+  <key>CFBundleVersion</key><string>26</string>
   <key>NSLocalNetworkUsageDescription</key><string>Send diagnostics to your own PC when you choose Send diagnostics.</string>
   <key>LSRequiresIPhoneOS</key><true/>
   <key>UIFileSharingEnabled</key><true/>

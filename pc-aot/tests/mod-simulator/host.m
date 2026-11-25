@@ -146,7 +146,7 @@ static void copyFixture(NSURL *source, NSURL *destination) {
     NSString *active = skyrim_mods_select_profile(profile.path);
     if (!active) [NSException raise:NSInternalInconsistencyException format:@"Simulator profile selection failed"];
     skyrim_mobile_initialize(active.fileSystemRepresentation);
-    NSString *view = skyrim_mods_prepare_game(game.path);
+    NSString *view = skyrim_mods_prepare_game(game.path, NO);
     if (!view || !skyrim_mobile_prepare_mods(view.fileSystemRepresentation)) {
         [NSException raise:NSInternalInconsistencyException format:@"Simulator MOD startup failed"];
     }

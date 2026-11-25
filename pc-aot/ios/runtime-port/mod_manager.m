@@ -768,7 +768,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
 
 /* Reasons: 0 enabled, 1 host implementation unavailable, 2 MOD not in the active packages, 3 safe mode or plugin list
  * failure, 4 the guest lacks the needed hook groups (rebuild it), 5 the MOD version could not be verified. */
-static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady, NSString *game) {
+static void FreezeFeatures(NSDictionary *profile, NSString *game) {
     NSMutableDictionary *enabledKeys = [NSMutableDictionary dictionary];
     BOOL firstIsOriginal;
     NSArray<NSString *> *roots = DataRootsFor(launchWithoutMods ? @[] : launchPackageIds, nil, &firstIsOriginal);
@@ -792,25 +792,21 @@ static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady, NSStrin
 #ifdef SKYRIM_IOS_MOD_HOOKS
     SkyrimHookPlan plan;
     if (PrepareRaceMenuPreset(profile)) hooked |= 1u << SKYRIM_FEATURE_RACEMENU;
-    const BOOL inventoryFit = [profile[@"inventoryFit"] isEqual:@YES];
+    const BOOL inventoryFit = ![profile[@"inventoryFit"] isEqual:@NO];
     NSString *saveProfile = nil;
     if (!launchWithoutMods && !launchPluginListFailed && skyrim_mobile_verbose() &&
         [activeProfile isEqual:profile[@"id"]] && ![activeProfile isEqual:@"default"] &&
         FeatureSelected(profile, SKYRIM_FEATURE_PAPYRUSUTIL) && !reasons[SKYRIM_FEATURE_PAPYRUSUTIL])
         saveProfile = ProfileDir(profile);
     const uint32_t selected = SelectModHooks(hooked,
-        inventoryFit && skyuiAssetsReady && [launchSetup[@"skyuiTrial"] isEqual:@YES], saveProfile, game, &plan);
-    if (inventoryFit) {
-        const BOOL armed = (plan.groups & PC_GUEST_MOD_HOOK_INVENTORY_FIT) != 0;
-        if (armed) launchSetup[@"inventoryFit"] = @YES;
-        fprintf(stderr, "IOS_INVENTORY_FIT armed=%d\n", armed);
-    }
+        inventoryFit && !launchWithoutMods && !launchPluginListFailed, saveProfile, game, &plan);
+    launchSetup[@"inventoryFit"] = @(inventoryFit);
+    fprintf(stderr, "IOS_INVENTORY_FIT armed=%d\n", (plan.groups & PC_GUEST_MOD_HOOK_INVENTORY_FIT) != 0);
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
         if ((hooked >> f & 1u) && !(selected >> f & 1u))
             reasons[f] = plan.reason[f] == SKYRIM_HOOK_PLAN_GUEST_HOOKS_MISSING ? 4 : 1;
     }
 #else
-    (void)skyuiAssetsReady;
     (void)game;
 #endif
     for (unsigned f = 0; f < SKYRIM_FEATURE_COUNT; ++f) {
@@ -846,7 +842,7 @@ BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed, NSString *game_view) {
     if (enabled) launchSetup[@"skyuiTrial"] = @YES;
     const SkyrimSkyUIRequirements needs = requested ? SkyUIRequirementsFor(launchWithoutMods ? @[] : launchPackageIds)
         : (SkyrimSkyUIRequirements){.status = SKYRIM_SKYUI_REQ_SKYUI_ABSENT};
-    FreezeFeatures(profile, needs.status == SKYRIM_SKYUI_REQ_OK, game_view);
+    FreezeFeatures(profile, game_view);
     if (requested && !enabled && !launchNotice) {
         launchNotice = launchPluginListFailed
             ? T(@"SkyUI is off for this launch because the active plugin list could not be verified.",
@@ -874,7 +870,7 @@ static void RestoreLastGoodSetup(NSMutableDictionary *profile) {
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     profile[@"skyuiTrial"] = SkyUITrialSelected(lastGood) ? @YES : nil;
 #ifdef SKYRIM_IOS_MOD_HOOKS
-    profile[@"inventoryFit"] = [lastGood[@"inventoryFit"] isEqual:@YES] ? @YES : nil;
+    profile[@"inventoryFit"] = [lastGood[@"inventoryFit"] isEqual:@NO] ? @NO : nil;
 #endif
     profile[@"features"] = [lastGood[@"features"] isKindOfClass:NSDictionary.class] ? [lastGood[@"features"] mutableCopy] : nil;
 #endif
@@ -940,11 +936,31 @@ static NSString *HexDigest(NSData *data) {
     for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) [s appendFormat:@"%02x", d[i]];
     return s;
 }
-static NSArray<NSString *> *EnabledPackageIds(NSDictionary *profile) {
+/* This translation uses the English filenames. Keep it out of English and
+ * Japanese game views even when the user keeps it enabled in the profile. */
+static BOOL IsReviewedArabicTextPack(NSDictionary *package) {
+    return [package[@"arabicText"] isEqual:@YES] ||
+        [package[@"sha256"] isEqual:@"ab5059db24c89ef34a378fbf8b537fd88cd57e3ad649cbd5d18bddbff542c36a"];
+}
+
+static NSArray<NSString *> *EnabledPackageIdsForText(NSDictionary *profile, BOOL includeArabic) {
     NSMutableArray *ids = [NSMutableArray array];
-    for (NSDictionary *row in profile[@"packages"])
-        if ([row[@"on"] boolValue] && LoadPackage(row[@"id"])) [ids addObject:row[@"id"]];
+    for (NSDictionary *row in profile[@"packages"]) {
+        if (![row[@"on"] boolValue]) continue;
+        NSDictionary *package = LoadPackage(row[@"id"]);
+        if (package && (includeArabic || !IsReviewedArabicTextPack(package))) [ids addObject:row[@"id"]];
+    }
     return ids;
+}
+
+static NSArray<NSString *> *EnabledPackageIds(NSDictionary *profile) {
+    return EnabledPackageIdsForText(profile, YES);
+}
+
+BOOL skyrim_mods_has_arabic_text(void) {
+    for (NSDictionary *row in SelectedProfile()[@"packages"])
+        if ([row[@"on"] boolValue] && IsReviewedArabicTextPack(LoadPackage(row[@"id"]))) return YES;
+    return NO;
 }
 
 /* Generated outputs are excluded from the source packages and source plugin list. */
@@ -953,7 +969,7 @@ static NSDictionary *GeneratedInputFingerprint(NSDictionary *profile, NSArray<NS
     NSMutableSet<NSString *> *sourcePlugins = [NSMutableSet set];
     for (NSString *packageID in enabled) {
         NSDictionary *package = LoadPackage(packageID);
-        if (package[@"generatedFor"]) continue;
+        if (package[@"generatedFor"] || IsReviewedArabicTextPack(package)) continue;
         [inputs addObject:packageID];
         for (id name in package[@"plugins"])
             if ([name isKindOfClass:NSString.class]) [sourcePlugins addObject:[name lowercaseString]];
@@ -998,12 +1014,12 @@ static NSString *GeneratedOutputWarning(NSDictionary *package, NSDictionary *fin
              @"別のMOD構成で追加した生成ファイルです。このプロファイル用に再生成してください。");
 }
 
-NSString *skyrim_mods_prepare_game(NSString *game) {
+NSString *skyrim_mods_prepare_game(NSString *game, BOOL arabicText) {
     EnsureState();
     originalGameDirectory = game;
     launchPackageIds = nil;
     NSMutableDictionary *profile = RunningProfile();
-    NSArray *ids = launchWithoutMods ? @[] : EnabledPackageIds(profile);
+    NSArray *ids = launchWithoutMods ? @[] : EnabledPackageIdsForText(profile, arabicText);
     launchHasPackages = ids.count > 0;
     launchPluginListFailed = NO;
     if (launchWithoutMods) launchPlugins = @[];
@@ -1083,11 +1099,7 @@ NSString *skyrim_mods_prepare_game(NSString *game) {
 /* Skyrim LE Arabic falta uses English filenames. Pin the user-provided archive
  * and the base game, Update and Interface files, in this order. DLC string
  * tables are used by the game only when their own ESMs are present. */
-static BOOL IsReviewedArabicTextPack(NSDictionary *package) {
-    return [package[@"sha256"] isEqual:@"ab5059db24c89ef34a378fbf8b537fd88cd57e3ad649cbd5d18bddbff542c36a"];
-}
-
-static BOOL ArabicTextFilesMatch(const char *view) {
+static BOOL ArabicTextFilesMatch(const char *data) {
     static const struct { const char *file; off_t bytes; } files[] = {
         {"FontConfig.txt", 1066}, {"fonts_en.swf", 1652614},
         {"fonts_en2.swf", 74230}, {"Translate_english.txt", 54102},
@@ -1095,9 +1107,8 @@ static BOOL ArabicTextFilesMatch(const char *view) {
         {"Skyrim_english.ILSTRINGS", 5361511}, {"Update_english.STRINGS", 46963},
         {"Update_english.DLSTRINGS", 136390}, {"Update_english.ILSTRINGS", 25947},
     };
-    char data[PATH_MAX], interfaceDir[PATH_MAX], stringsDir[PATH_MAX], path[PATH_MAX];
-    if (skyrim_plugin_child_path(view, "Data", data, sizeof data) != 1 ||
-        skyrim_plugin_child_path(data, "Interface", interfaceDir, sizeof interfaceDir) != 1 ||
+    char interfaceDir[PATH_MAX], stringsDir[PATH_MAX], path[PATH_MAX];
+    if (skyrim_plugin_child_path(data, "Interface", interfaceDir, sizeof interfaceDir) != 1 ||
         skyrim_plugin_child_path(data, "Strings", stringsDir, sizeof stringsDir) != 1) return NO;
     CC_SHA256_CTX hash;
     if (CC_SHA256_Init(&hash) != 1) return NO;
@@ -1129,9 +1140,10 @@ static BOOL ArabicTextFilesMatch(const char *view) {
 unsigned skyrim_mods_arabic_text_status(NSString *gameView) {
     for (NSString *pid in launchPackageIds) {
         NSDictionary *package = LoadPackage(pid);
-        if (IsReviewedArabicTextPack(package))
-            return ArabicTextFilesMatch(gameView.fileSystemRepresentation)
-                ? SKYRIM_ARABIC_MOD_READY : SKYRIM_ARABIC_MOD_OVERRIDDEN;
+        if (!IsReviewedArabicTextPack(package)) continue;
+        char data[PATH_MAX];
+        return skyrim_plugin_child_path(gameView.fileSystemRepresentation, "Data", data, sizeof data) == 1 &&
+            ArabicTextFilesMatch(data) ? SKYRIM_ARABIC_MOD_READY : SKYRIM_ARABIC_MOD_OVERRIDDEN;
     }
     return SKYRIM_ARABIC_MOD_OFF;
 }
@@ -1359,8 +1371,8 @@ static void AttachPackage(NSMutableDictionary *profile, NSDictionary *package) {
         @"%@ をプロファイル「%@」に追加しました。ゲーム内で保存し、アプリを完全終了して開き直すと反映します。"), name, profileName];
     if (IsReviewedArabicTextPack(package))
         added = [added stringByAppendingFormat:@"\n%@", T(
-            @"Keep this MOD enabled to use Arabic game text after restart.",
-            @"再起動後にゲームをアラビア語で表示するには、このMODをオンにしておいてください。")];
+            @"Choose العربية under Settings → Game text, then restart the app.",
+            @"設定の「ゲームのテキスト」で「العربية」を選び、アプリを再起動してください。")];
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     BOOL providesSkyUI = NO;
     for (id plugin in names) if ([plugin isKindOfClass:NSString.class] && [[plugin lowercaseString] isEqualToString:@"skyui.esp"]) providesSkyUI = YES;
@@ -1417,6 +1429,7 @@ static void PublishStaged(NSString *staging, NSMutableDictionary *package, NSStr
         return;
     }
     package[@"plugins"] = PluginsIn(data);
+    if (ArabicTextFilesMatch(data.fileSystemRepresentation)) package[@"arabicText"] = @YES;
     if (!package[@"files"]) {
         unsigned long long files = 0, bytes = 0;
         NSDirectoryEnumerator *en = [NSFileManager.defaultManager enumeratorAtPath:data];
@@ -2819,15 +2832,15 @@ enum {
 #ifdef SKYRIM_IOS_MOD_HOOKS
         if (p.row == HubInventoryFitRow) {
             NSDictionary *profile = SelectedProfile();
-            c.textLabel.text = T(@"Fit SkyUI inventory (trial)", @"SkyUIの持ち物画面を収める（試験）");
+            c.textLabel.text = T(@"Fit menus to wide screens", @"横長画面にメニューを収める");
             const BOOL supported = (pc_guest_mod_hooks_compiled() & PC_GUEST_MOD_HOOK_INVENTORY_FIT) != 0;
             c.detailTextLabel.text = supported
-                ? T(@"Applies to wide displays with SkyUI trial enabled after restarting.",
-                    @"SkyUI試験をオンにして再起動すると、横長画面の持ち物表示に反映します。")
+                ? T(@"Keeps the edges of inventory, magic and similar menus visible. Applies after restart.",
+                    @"持ち物や魔法などのメニューを上下が切れないように表示します。再起動後に反映します。")
                 : T(@"Requires a compatible guest build.", @"対応するゲーム実行部分が必要です。");
             UISwitch *toggle = [UISwitch new];
-            toggle.enabled = supported && SkyUITrialSelected(profile);
-            toggle.on = [profile[@"inventoryFit"] isEqual:@YES];
+            toggle.enabled = supported;
+            toggle.on = ![profile[@"inventoryFit"] isEqual:@NO];
             toggle.accessibilityLabel = c.textLabel.text;
             toggle.accessibilityIdentifier = @"mod-skyui-inventory-fit";
             [toggle addTarget:self action:@selector(inventoryFitToggled:) forControlEvents:UIControlEventValueChanged];
@@ -2934,9 +2947,9 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
 #ifdef SKYRIM_IOS_MOD_HOOKS
 - (void)inventoryFitToggled:(UISwitch *)toggle {
     if (SaveProfileToggle(toggle, @"inventoryFit"))
-        skyrim_mobile_show_notice(T(@"Inventory fit setting saved for the next launch.", @"持ち物画面の設定を保存しました。次回起動から反映します。"));
+        skyrim_mobile_show_notice(T(@"Menu fit setting saved for the next launch.", @"メニューの表示設定を保存しました。次回起動から反映します。"));
     else
-        skyrim_mobile_show_notice(T(@"Could not save the inventory fit setting.", @"持ち物画面の設定を保存できませんでした。"));
+        skyrim_mobile_show_notice(T(@"Could not save the menu fit setting.", @"メニューの表示設定を保存できませんでした。"));
 }
 #endif
 #endif
