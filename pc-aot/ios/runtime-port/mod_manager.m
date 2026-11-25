@@ -1219,7 +1219,19 @@ static dispatch_queue_t ImportQueue(void) {
     dispatch_once(&once, ^{ q = dispatch_queue_create("SkyrimIOS.mod-import", DISPATCH_QUEUE_SERIAL); });
     return q;
 }
-static void Notice(NSString *text) { dispatch_async(dispatch_get_main_queue(), ^{ skyrim_mobile_show_notice(text); }); }
+/* The game overlay sits behind Settings. Keep the latest import message in
+ * the MOD menu, including after dismissal of a document picker or installer. */
+static NSString *const ImportNoticeChanged = @"SKModImportNoticeChanged";
+static NSString *lastImportNotice; /* main thread */
+static void Notice(NSString *text) {
+    void (^publish)(void) = ^{
+        lastImportNotice = [text copy];
+        [NSNotificationCenter.defaultCenter postNotificationName:ImportNoticeChanged object:nil];
+        skyrim_mobile_show_notice(text);
+    };
+    if (NSThread.isMainThread) publish();
+    else dispatch_async(dispatch_get_main_queue(), publish);
+}
 static NSString *FileDigest(NSString *path) {
     FILE *f = fopen(path.fileSystemRepresentation, "rb");
     if (!f) return nil;
@@ -1233,9 +1245,22 @@ static NSString *FileDigest(NSString *path) {
     for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) [s appendFormat:@"%02x", d[i]];
     return s;
 }
-static uint64_t FreeBytes(void) {
-    NSDictionary *v = [[NSURL fileURLWithPath:Base()] resourceValuesForKeys:@[NSURLVolumeAvailableCapacityForImportantUsageKey] error:NULL];
-    return [v[NSURLVolumeAvailableCapacityForImportantUsageKey] unsignedLongLongValue];
+static BOOL ImportSpaceAvailable(uint64_t bytes) {
+    NSString *path = Base();
+    NSURL *url = [NSURL fileURLWithPath:path isDirectory:YES];
+    id capacity = nil;
+    if (![url getResourceValue:&capacity forKey:NSURLVolumeAvailableCapacityForImportantUsageKey error:NULL] ||
+        ![capacity isKindOfClass:NSNumber.class] || [capacity longLongValue] < 0)
+        capacity = [NSFileManager.defaultManager attributesOfFileSystemForPath:path error:NULL][NSFileSystemFreeSize];
+    if (![capacity isKindOfClass:NSNumber.class] || [capacity longLongValue] < 0) {
+        Notice(T(@"Could not check the free space for this MOD.", @"このMODの追加に必要な空き容量を確認できませんでした。"));
+        return NO;
+    }
+    if (bytes > SKYRIM_ZIP_MAX_TOTAL || bytes + (256ull << 20) > [capacity unsignedLongLongValue]) {
+        Notice(T(@"Not enough free space on this iPhone for this MOD.", @"このMODを入れるための空き容量が足りません。"));
+        return NO;
+    }
+    return YES;
 }
 static NSArray<NSString *> *PluginsIn(NSString *data) {
     NSMutableArray *out = [NSMutableArray array];
@@ -1327,14 +1352,14 @@ static BOOL ProfileHasPackage(NSDictionary *profile, NSString *packageID) {
 static void AttachPackage(NSMutableDictionary *profile, NSDictionary *package) {
     NSString *name = [package[@"name"] isKindOfClass:NSString.class] ? package[@"name"] : T(@"MOD", @"MOD");
     if (!profile) {
-        skyrim_mobile_show_notice([NSString stringWithFormat:T(@"%@ is installed, but the selected profile was removed.",
+        Notice([NSString stringWithFormat:T(@"%@ is installed, but the selected profile was removed.",
             @"%@ は取り込み済みですが、選んだプロファイルが削除されています。"), name]);
         return;
     }
     NSString *profileName = ProfileName(profile);
     NSString *packageID = package[@"id"];
     if (ProfileHasPackage(profile, packageID)) {
-        skyrim_mobile_show_notice([NSString stringWithFormat:T(@"%@ is already in %@.", @"%@ は「%@」に追加済みです。"),
+        Notice([NSString stringWithFormat:T(@"%@ is already in %@.", @"%@ は「%@」に追加済みです。"),
             name, profileName]);
         return;
     }
@@ -1362,7 +1387,7 @@ static void AttachPackage(NSMutableDictionary *profile, NSDictionary *package) {
     if (!SaveState()) {
         profile[@"packages"] = oldPackages;
         profile[@"plugins"] = oldPlugins;
-        skyrim_mobile_show_notice([NSString stringWithFormat:T(@"Could not add %@ to %@.",
+        Notice([NSString stringWithFormat:T(@"Could not add %@ to %@.",
             @"%@ を「%@」に追加できませんでした。"), name, profileName]);
         return;
     }
@@ -1379,7 +1404,7 @@ static void AttachPackage(NSMutableDictionary *profile, NSDictionary *package) {
     NSString *skyuiWarning = providesSkyUI ? SkyUIRequirementText(SkyUIRequirementsFor(EnabledPackageIds(profile))) : nil;
     if (skyuiWarning) added = [added stringByAppendingFormat:@"\n%@", skyuiWarning];
 #endif
-    skyrim_mobile_show_notice(added);
+    Notice(added);
 }
 
 static BOOL ReuseInstalledArchive(NSString *digest, NSString *targetProfileID) {
@@ -1409,7 +1434,7 @@ static BOOL ReuseInstalledArchive(NSString *digest, NSString *targetProfileID) {
         if (!match) return; // The installed package changed. Use the staged archive.
         handled = YES;
         if (ambiguous) {
-            skyrim_mobile_show_notice(T(@"This archive has more than one installed setup.",
+            Notice(T(@"This archive has more than one installed setup.",
                 @"このアーカイブは複数の構成で取り込み済みです。"));
             return;
         }
@@ -1533,7 +1558,7 @@ static void RunInstallerFromRaw(NSString *staging, NSString *raw, NSMutableDicti
         NSDictionary *profile = ProfileById(targetProfileID);
         if (!profile) {
             dispatch_async(ImportQueue(), ^{ skyrim_remove_tree(staging.fileSystemRepresentation); });
-            skyrim_mobile_show_notice(T(@"The profile for this MOD was removed. Choose a profile and add it again.",
+            Notice(T(@"The profile for this MOD was removed. Choose a profile and add it again.",
                 @"このMODの追加先のプロファイルが削除されました。プロファイルを選び直してから追加してください。"));
             return;
         }
@@ -1541,7 +1566,11 @@ static void RunInstallerFromRaw(NSString *staging, NSString *raw, NSMutableDicti
         skyrim_fomod_run(package[@"name"] ?: package[@"archive"] ?: @"MOD", raw, config, [staging stringByAppendingPathComponent:@"Data"], active, ^(BOOL installed, NSString *message) {
             dispatch_async(ImportQueue(), ^{
                 skyrim_remove_tree(raw.fileSystemRepresentation);
-                if (!installed) { skyrim_remove_tree(staging.fileSystemRepresentation); if (message) Notice(message); return; }
+                if (!installed) {
+                    skyrim_remove_tree(staging.fileSystemRepresentation);
+                    Notice(message ?: T(@"MOD installation canceled.", @"MODの追加を取り消しました。"));
+                    return;
+                }
                 package[@"installer"] = @YES;
                 PublishStaged(staging, package, targetProfileID);
             });
@@ -1569,9 +1598,8 @@ static BOOL ImportOther(NSString *path, NSString *name, NSString *digest, NSStri
     SkyrimArchiveList list;
     int status = skyrim_archive_list(path.fileSystemRepresentation, &list);
     if (status) { Notice(ZipErrorText(status)); return YES; }
-    if (list.total + (256ull << 20) > FreeBytes()) {
+    if (!ImportSpaceAvailable(list.total)) {
         skyrim_archive_list_free(&list);
-        Notice(T(@"Not enough free space on this iPhone for this MOD.", @"このMODを入れるための空き容量が足りません。"));
         return YES;
     }
     char prefix[1024]; int installer = 0;
@@ -1615,9 +1643,8 @@ static void ImportZip(NSString *path, NSString *name, NSString *digest, NSString
     if (status) { Notice(ZipErrorText(status)); return; }
     NSMutableDictionary *package = [@{@"id":NSUUID.UUID.UUIDString, @"name":name.stringByDeletingPathExtension,
         @"archive":name, @"sha256":digest ?: @"", @"imported":@(NSDate.date.timeIntervalSince1970)} mutableCopy];
-    if ((uint64_t)zip.total + (256ull << 20) > FreeBytes()) {
+    if (!ImportSpaceAvailable(zip.total)) {
         skyrim_zip_close(&zip);
-        Notice(T(@"Not enough free space on this iPhone for this MOD.", @"このMODを入れるための空き容量が足りません。"));
         return;
     }
     const char **paths = calloc(zip.count ? zip.count : 1, sizeof *paths);
@@ -1655,10 +1682,7 @@ static void ImportZip(NSString *path, NSString *name, NSString *digest, NSString
 
 static void ImportRaceMenuPreset(NSString *path, NSString *name, NSString *digest, NSString *targetProfileID) {
     uint64_t bytes = [[NSFileManager.defaultManager attributesOfItemAtPath:path error:NULL] fileSize];
-    if (bytes > SKYRIM_ZIP_MAX_TOTAL || bytes + (256ull << 20) > FreeBytes()) {
-        Notice(T(@"Not enough free space on this iPhone for this preset.", @"このプリセットを入れるための空き容量が足りません。"));
-        return;
-    }
+    if (!ImportSpaceAvailable(bytes)) return;
     NSString *staging = NewStaging();
     NSString *data = [staging stringByAppendingPathComponent:@"Data"];
     if (!staging || skyrim_mod_stage_racemenu_preset(path.fileSystemRepresentation, name.fileSystemRepresentation,
@@ -1688,22 +1712,22 @@ static void ImportEceSlot(NSString *staged, NSString *name, NSString *targetProf
 #endif
         int fd = directory ? open(directory.fileSystemRepresentation, flags) : -1;
         if (fd < 0) {
-            skyrim_mobile_show_notice(T(@"The selected profile is unavailable.", @"選んだプロファイルを開けませんでした。"));
+            Notice(T(@"The selected profile is unavailable.", @"選んだプロファイルを開けませんでした。"));
             return;
         }
         unsigned slot = 0;
         int error = skyrim_mod_publish_ece_slot(fd, staged.fileSystemRepresentation, name.fileSystemRepresentation, &slot);
         close(fd);
         if (!slot) {
-            skyrim_mobile_show_notice(T(@"Choose a numbered ECE slot such as _1_commonTriRaces.slot (1–40).",
+            Notice(T(@"Choose a numbered ECE slot such as _1_commonTriRaces.slot (1–40).",
                 @"_1_commonTriRaces.slot のような、1〜40番のECEスロットを選んでください。"));
         } else if (error == EEXIST) {
-            skyrim_mobile_show_notice([NSString stringWithFormat:T(@"Slot %u in %@ is already in use.",
+            Notice([NSString stringWithFormat:T(@"Slot %u in %@ is already in use.",
                 @"スロット%uは「%@」で使用中です。"), slot, ProfileName(profile)]);
         } else if (error) {
-            skyrim_mobile_show_notice(T(@"Could not prepare the ECE slot.", @"ECEスロットを用意できませんでした。"));
+            Notice(T(@"Could not prepare the ECE slot.", @"ECEスロットを用意できませんでした。"));
         } else {
-            skyrim_mobile_show_notice([NSString stringWithFormat:T(@"Stored ECE slot %u in %@. Applying it in character creation is under verification.",
+            Notice([NSString stringWithFormat:T(@"Stored ECE slot %u in %@. Applying it in character creation is under verification.",
                 @"ECEスロット%uを「%@」に保存しました。キャラクター作成画面での反映は検証中です。"), slot, ProfileName(profile)]);
         }
     });
@@ -1782,6 +1806,10 @@ static void ImportFolder(NSString *folder, NSString *targetProfileID, NSDictiona
 static void ImportModList(NSString *path);
 
 static void ImportURL(NSURL *url, BOOL scoped, BOOL generated) {
+    if (!url.isFileURL) {
+        Notice(T(@"Select a file saved in the Files app.", @"「ファイル」アプリに保存したファイルを選んでください。"));
+        return;
+    }
     /* A profile can change while the archive is being unpacked or optimized. */
     __block NSString *targetProfileID;
     __block NSDictionary *generatedFor;
@@ -1817,26 +1845,47 @@ static void ImportURL(NSURL *url, BOOL scoped, BOOL generated) {
         return;
     }
     NSString *copy = [inbox stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingPathExtension:name.pathExtension]];
-    NSError *error = nil;
-    BOOL copied = [NSFileManager.defaultManager copyItemAtPath:url.path toPath:copy error:&error];
-    if (accessing) [url stopAccessingSecurityScopedResource];
-    if (!copied) { Notice(T(@"Could not open the shared file.", @"共有されたファイルを開けませんでした。")); return; }
-    Notice([NSString stringWithFormat:T(@"Adding %@…", @"%@ を追加しています…"), name]);
-    dispatch_async(ImportQueue(), ^{
-        NSString *ext = name.pathExtension.lowercaseString;
-        if ([ext isEqualToString:@"json"]) dispatch_sync(dispatch_get_main_queue(), ^{ ImportModList(copy); });
-        else if ([ext isEqualToString:@"slot"]) ImportEceSlot(copy, name, targetProfileID);
-        else {
-            NSString *digest = FileDigest(copy);
-            if (!ReuseInstalledArchive(digest, targetProfileID)) {
-                if ([ext isEqualToString:@"zip"]) ImportZip(copy, name, digest, targetProfileID);
-                else if ([ext isEqualToString:@"jslot"]) ImportRaceMenuPreset(copy, name, digest, targetProfileID);
-                else if (!ImportOther(copy, name, digest, targetProfileID))
-                    Notice(T(@"This file type is not supported.", @"このファイル形式には対応していません。"));
-            }
+    void (^stageArchive)(void) = ^{
+        __block BOOL copied = NO;
+        if (scoped) {
+            NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+            [coordinator coordinateReadingItemAtURL:url options:0 error:NULL byAccessor:^(NSURL *readURL) {
+                copied = [NSFileManager.defaultManager copyItemAtPath:readURL.path toPath:copy error:NULL];
+            }];
+        } else {
+            copied = [NSFileManager.defaultManager copyItemAtPath:url.path toPath:copy error:NULL];
         }
-        [NSFileManager.defaultManager removeItemAtPath:copy error:NULL];
-    });
+        if (accessing) [url stopAccessingSecurityScopedResource];
+        if (!copied) {
+            [NSFileManager.defaultManager removeItemAtPath:copy error:NULL];
+            Notice(T(@"Could not open the selected file. Try saving a local copy in Files.",
+                     @"選んだファイルを開けませんでした。「ファイル」アプリでこのiPhone内にコピーしてみてください。"));
+            return;
+        }
+        Notice([NSString stringWithFormat:T(@"Adding %@…", @"%@ を追加しています…"), name]);
+        dispatch_async(ImportQueue(), ^{
+            NSString *ext = name.pathExtension.lowercaseString;
+            if ([ext isEqualToString:@"json"]) dispatch_sync(dispatch_get_main_queue(), ^{ ImportModList(copy); });
+            else if ([ext isEqualToString:@"slot"]) ImportEceSlot(copy, name, targetProfileID);
+            else {
+                NSString *digest = FileDigest(copy);
+                if (!ReuseInstalledArchive(digest, targetProfileID)) {
+                    if ([ext isEqualToString:@"zip"]) ImportZip(copy, name, digest, targetProfileID);
+                    else if ([ext isEqualToString:@"jslot"]) ImportRaceMenuPreset(copy, name, digest, targetProfileID);
+                    else if (!ImportOther(copy, name, digest, targetProfileID))
+                        Notice(T(@"This file type is not supported.", @"このファイル形式には対応していません。"));
+                }
+            }
+            [NSFileManager.defaultManager removeItemAtPath:copy error:NULL];
+        });
+    };
+    if (scoped) {
+        Notice([NSString stringWithFormat:T(@"Reading %@…", @"%@ を読み込んでいます…"), name]);
+        dispatch_async(ImportQueue(), stageArchive);
+    } else {
+        // The built-in browser releases its temporary download after this call.
+        stageArchive();
+    }
 }
 
 void skyrim_mods_import_url(NSURL *url, BOOL scoped) { ImportURL(url, scoped, NO); }
@@ -1874,7 +1923,7 @@ static NSURL *ExportModList(NSDictionary *profile) {
 static void ImportModList(NSString *path) {
     NSDictionary *doc = MutableJSON([NSData dataWithContentsOfFile:path]);
     if (![doc isKindOfClass:NSDictionary.class] || ![doc[@"format"] isEqual:@"skyrimios-modlist"]) {
-        skyrim_mobile_show_notice(T(@"This is not a SkyrimIOS MOD list.", @"SkyrimIOSのMOD構成ファイルではありません。"));
+        Notice(T(@"This is not a SkyrimIOS MOD list.", @"SkyrimIOSのMOD構成ファイルではありません。"));
         return;
     }
     EnsureState();
@@ -1898,7 +1947,7 @@ static void ImportModList(NSString *path) {
                              @"packages":rows, @"plugins":plugins} mutableCopy]];
     SaveState();
     [NSNotificationCenter.defaultCenter postNotificationName:@"SKModsChanged" object:nil];
-    skyrim_mobile_show_notice(missing.count ?
+    Notice(missing.count ?
         [NSString stringWithFormat:T(@"Created profile \"%@\". Missing MODs: %@", @"プロファイル「%@」を作成しました。足りないMOD：%@"), name, [missing componentsJoinedByString:@", "]] :
         [NSString stringWithFormat:T(@"Created profile \"%@\" with all MODs.", @"プロファイル「%@」を作成しました（MODはすべてそろっています）。"), name]);
 }
@@ -2675,6 +2724,73 @@ static NSString *FeatureName(unsigned feature) {
 @end
 #endif
 
+static NSURL *ModInboxURL(void) {
+    NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory
+        inDomains:NSUserDomainMask].firstObject;
+    NSURL *inbox = [documents URLByAppendingPathComponent:@"MOD Inbox" isDirectory:YES];
+    if (!inbox || ![NSFileManager.defaultManager createDirectoryAtURL:inbox
+        withIntermediateDirectories:YES attributes:nil error:NULL]) return nil;
+    struct stat st;
+    return !lstat(inbox.fileSystemRepresentation, &st) && S_ISDIR(st.st_mode) ? inbox : nil;
+}
+
+static BOOL ModInboxArchive(NSURL *url) {
+    NSString *ext = url.pathExtension.lowercaseString;
+    if (![@[@"zip", @"rar", @"7z"] containsObject:ext]) return NO;
+    struct stat st;
+    return !lstat(url.fileSystemRepresentation, &st) && S_ISREG(st.st_mode);
+}
+
+@interface SKModInbox : UITableViewController
+@property(nonatomic, copy) NSArray<NSURL *> *archives;
+@end
+
+@implementation SKModInbox
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"MOD Inbox";
+}
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    NSURL *inbox = ModInboxURL();
+    NSArray *entries = inbox ? [NSFileManager.defaultManager contentsOfDirectoryAtURL:inbox
+        includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:NULL] : nil;
+    NSMutableArray *archives = [NSMutableArray array];
+    for (NSURL *url in entries) if (ModInboxArchive(url)) [archives addObject:url];
+    [archives sortUsingComparator:^NSComparisonResult(NSURL *a, NSURL *b) {
+        return [a.lastPathComponent localizedStandardCompare:b.lastPathComponent];
+    }];
+    self.archives = archives;
+    [self.tableView reloadData];
+}
+- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
+    (void)table; (void)section;
+    return MAX((NSInteger)self.archives.count, 1);
+}
+- (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)path {
+    (void)table;
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    cell.textLabel.numberOfLines = 0;
+    if (self.archives.count) {
+        cell.textLabel.text = self.archives[path.row].lastPathComponent;
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    } else {
+        cell.textLabel.text = T(@"Copy a ZIP, RAR or 7z to Files → On My iPhone → SkyrimIOS → MOD Inbox, then reopen this list.",
+                               @"「ファイル」→「このiPhone内」→「SkyrimIOS」→「MOD Inbox」にZIP・RAR・7zをコピーし、この一覧を開き直してください。");
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    }
+    return cell;
+}
+- (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
+    [table deselectRowAtIndexPath:path animated:YES];
+    if (!self.archives.count) return;
+    NSURL *url = self.archives[path.row];
+    [self.navigationController popViewControllerAnimated:YES];
+    if (ModInboxArchive(url)) skyrim_mods_import_url(url, YES);
+    else Notice(T(@"The selected archive is no longer in MOD Inbox.", @"選んだファイルがMOD Inboxから移動または削除されました。"));
+}
+@end
+
 @interface SKModHub : UITableViewController <UIDocumentPickerDelegate>
 @property(nonatomic, strong) NSMutableArray<NSMutableDictionary *> *rows;   /* selected choices and available packages */
 @property(nonatomic, strong) NSDictionary<NSString *, NSDictionary *> *packages;
@@ -2698,15 +2814,26 @@ enum {
 @implementation SKModHub
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title = @"MOD";
+    (void)ModInboxURL();
     self.tableView.estimatedRowHeight = 60; self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:T(@"Reorder", @"並べ替え") style:UIBarButtonItemStylePlain target:self action:@selector(toggleReorder)];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(modsChanged:) name:@"SKModsChanged" object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(importNoticeChanged:) name:ImportNoticeChanged object:nil];
     [self reload];
 }
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
 - (void)modsChanged:(NSNotification *)notification {
     (void)notification;
     [self reload];
+}
+- (void)updateImportPrompt {
+    self.navigationItem.prompt = [lastImportNotice componentsSeparatedByString:@"\n"].firstObject;
+}
+- (void)importNoticeChanged:(NSNotification *)notification {
+    (void)notification;
+    [self updateImportPrompt];
+    if (self.tableView.window && !self.tableView.hasUncommittedUpdates)
+        [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:HubAdd] withRowAnimation:UITableViewRowAnimationNone];
 }
 - (void)reload {
     EnsureState();
@@ -2732,6 +2859,7 @@ enum {
     [super viewWillAppear:animated];
     RefreshLanguage();
     [self updateReorderTitle];
+    [self updateImportPrompt];
     /* The game keeps drawing on the main thread behind this screen; pause it
      * while any MOD screen is open so scrolling stays smooth. Released when the
      * settings root appears again (see mobile_ui.m). */
@@ -2751,7 +2879,7 @@ enum {
     (void)t;
     switch (s) {
     case HubMods: return self.rows.count ? (NSInteger)self.rows.count : 1;
-    case HubAdd: return 4;
+    case HubAdd: return 5;
     case HubTools: return HubToolCount;
     case HubOptimize: return 2;
     case HubShare: return 2;
@@ -2769,8 +2897,11 @@ enum {
         return T(@"This profile is used from the next launch. The plugin order is shown for the running profile.", @"このプロファイルは次回起動から使われます。プラグインの並びは現在使用中のプロファイルのものです。");
     if (s == HubMods) return T(@"Changes apply after a full restart. MOD files are kept inside the app; the original game files are not changed. Only MODs for Skyrim 2011 / Legendary Edition work.",
         @"変更はアプリの完全終了・再起動後に反映します。MODはアプリ内に保存され、元のゲームファイルは変更しません。Skyrim 2011年版／Legendary Edition用のMODだけが動きます。");
-    if (s == HubAdd) return T(@"Choose a RaceMenu .jslot or a numbered ECE .slot to prepare it for this profile. You can also share a zip to SkyrimIOS.",
-        @"このプロファイルにRaceMenuの.jslotや番号付きのECEの.slotを追加できます。zipはSkyrimIOSへの共有からも追加できます。");
+    if (s == HubAdd) {
+        NSString *help = T(@"If file selection fails, copy the archive to MOD Inbox in the Files app and add it from there.",
+                           @"ファイルを選べない場合は、「ファイル」アプリで圧縮ファイルをMOD Inboxにコピーし、ここから追加してください。");
+        return lastImportNotice.length ? [NSString stringWithFormat:@"%@\n\n%@", lastImportNotice, help] : help;
+    }
     if (s == HubOptimize) return T(@"Applied to each MOD when it is added: oversized textures are reduced, Special Edition textures and archives are converted for the 2011 engine, and missing mipmaps are rebuilt. Your original download is not changed. Applies to MODs added from now on.",
         @"MODを追加するときに自動で行います：大きすぎるテクスチャの縮小、SE用テクスチャとBSAの2011年版向け変換、縮小版（ミップマップ）の作成。元のダウンロードファイルは変更しません。これから追加するMODに適用されます。");
     if (s == HubSafety) return T(@"If a launch with MODs ends unexpectedly, the app asks what to do at the next launch.", @"MODありの起動が途中で終了した場合、次回起動時に対応を選べます。");
@@ -2801,8 +2932,8 @@ enum {
     }
     case HubAdd: {
         NSArray *titles = @[T(@"Add an archive or character preset", @"圧縮ファイル・キャラクタープリセットを追加"), T(@"Add a folder", @"フォルダを選んで追加"), T(@"Find on Nexus Mods", @"Nexus ModsでMODを探す"),
-            T(@"Add BodySlide or FNIS output folder", @"BodySlide・FNISの出力フォルダを追加")];
-        NSArray *icons = @[@"doc.zipper", @"folder", @"safari", @"folder.badge.plus"];
+            T(@"Add BodySlide or FNIS output folder", @"BodySlide・FNISの出力フォルダを追加"), T(@"Add from MOD Inbox", @"MOD Inboxから追加")];
+        NSArray *icons = @[@"doc.zipper", @"folder", @"safari", @"folder.badge.plus", @"tray.and.arrow.down"];
         c.textLabel.text = titles[p.row]; c.imageView.image = [UIImage systemImageNamed:icons[p.row]];
         break;
     }
@@ -3012,7 +3143,9 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
 }
 - (void)pick:(NSArray<UTType *> *)types single:(BOOL)single generated:(BOOL)generated {
     self.pickingGenerated = generated;
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:NO];
+    BOOL copyFile = ![types containsObject:UTTypeFolder];
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:types asCopy:copyFile];
     picker.delegate = self; picker.allowsMultipleSelection = !single;
     [self presentViewController:picker animated:YES completion:nil];
 }
@@ -3075,7 +3208,10 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
             [self pick:types single:NO generated:NO];
         } else if (p.row == 1) [self pick:@[UTTypeFolder] single:YES generated:NO];
         else if (p.row == 2) [self.navigationController pushViewController:skyrim_mods_browser_controller() animated:YES];
-        else [self pick:@[UTTypeFolder] single:YES generated:YES];
+        else if (p.row == 3) [self pick:@[UTTypeFolder] single:YES generated:YES];
+        else if (ModInboxURL()) [self.navigationController pushViewController:[[SKModInbox alloc]
+            initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
+        else Notice(T(@"Could not create MOD Inbox.", @"MOD Inboxを作成できませんでした。"));
         break;
     case HubTools:
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE

@@ -290,21 +290,18 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     if (fallback) [fallback tap]; else [item tap];
     XCUIElement *picker = self.app.navigationBars[@"FullDocumentManagerViewControllerNavigationBar"];
     XCUIElement *files = self.app.collectionViews[@"File View"];
-    // Folders must be opened then chosen; multi-select archives may require
-    // an explicit Open. A single-select JSON picker dismisses on selection.
-    if (folder || [name.pathExtension.lowercaseString isEqualToString:@"zip"]) {
-        NSPredicate *confirmLabels = [NSPredicate predicateWithFormat:@"label IN %@", @[@"Open", @"Choose"]];
-        XCUIElementQuery *choices = [self.app.buttons matchingPredicate:confirmLabels];
-        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:6];
-        do {
-            XCUIElement *ready = nil;
-            for (XCUIElement *confirm in choices.allElementsBoundByIndex) {
-                if (canHit(confirm) && confirm.enabled) { ready = confirm; break; }
-            }
-            if (ready) { [ready tap]; break; }
-            if (!picker.exists && !files.exists) break;
-            [NSThread sleepForTimeInterval:.15];
-        } while (until.timeIntervalSinceNow > 0);
+    // Files can either confirm a selection or dismiss immediately.
+    NSArray *labels = folder ? @[@"Open", @"Choose"] : @[@"Open", @"Choose", @"Copy", @"Import"];
+    NSPredicate *confirmLabels = [NSPredicate predicateWithFormat:@"label IN %@", labels];
+    XCUIElementQuery *choices = [self.app.buttons matchingPredicate:confirmLabels];
+    NSDate *confirmUntil = [NSDate dateWithTimeIntervalSinceNow:6];
+    while ((picker.exists || files.exists) && confirmUntil.timeIntervalSinceNow > 0) {
+        XCUIElement *ready = nil;
+        for (XCUIElement *confirm in choices.allElementsBoundByIndex) {
+            if (canHit(confirm) && confirm.enabled) { ready = confirm; break; }
+        }
+        if (ready) { [ready tap]; break; }
+        [NSThread sleepForTimeInterval:.15];
     }
     // Returning straight from Open/Choose can resolve MOD's table while
     // the remote Files accessibility subtree is being dismissed.
@@ -519,6 +516,9 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [[self findRow:@"Add an archive or character preset"] tap];
     [self pick:@"AuthoredZip.zip" folder:NO];
     [self findRow:@"AuthoredZip"];
+    NSPredicate *imported = [NSPredicate predicateWithFormat:@"label BEGINSWITH %@", @"Added AuthoredZip to profile"];
+    XCTAssertTrue([[self.app.navigationBars[@"MOD"].staticTexts matchingPredicate:imported].firstMatch
+        waitForExistenceWithTimeout:8]);
     [self capture:@"zip-imported"];
     [self openModDetails:@"AuthoredZip"];
     [self findRow:@"⚠️ Incompatible 64-bit HKX detected (1). Use Skyrim LE files."];
@@ -540,8 +540,8 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self goBackFrom:@"Profiles"];
     XCUIElement *reused = [self findRow:@"AuthoredZip"].switches.firstMatch;
     XCTAssertEqualObjects(reused.value, @"0");
-    [[self findRow:@"Add an archive or character preset"] tap];
-    [self pick:@"AuthoredZip.zip" folder:NO];
+    [[self findRow:@"Add from MOD Inbox"] tap];
+    [[self findRow:@"AuthoredZip.zip"] tap];
     NSPredicate *packageEnabled = [NSPredicate predicateWithFormat:@"value == %@", @"1"];
     XCTNSPredicateExpectation *assigned = [[XCTNSPredicateExpectation alloc] initWithPredicate:packageEnabled object:reused];
     XCTAssertEqual([XCTWaiter waitForExpectations:@[assigned] timeout:10], XCTWaiterResultCompleted);
@@ -639,6 +639,8 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 
     [[self findRow:@"Add a folder"] tap];
     [self pick:@"AuthoredBrokenInstaller" folder:YES];
+    XCTAssertTrue([self.app.navigationBars[@"MOD"].staticTexts[@"The installer file could not be read."]
+        waitForExistenceWithTimeout:8]);
     XCTAssertFalse([installer waitForExistenceWithTimeout:3]);
     XCTAssertFalse(self.app.staticTexts[@"AuthoredBrokenInstaller"].exists);
 

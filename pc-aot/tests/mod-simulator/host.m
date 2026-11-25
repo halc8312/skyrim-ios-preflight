@@ -125,6 +125,8 @@ static void copyFixture(NSURL *source, NSURL *destination) {
     BOOL reimport = [NSProcessInfo.processInfo.arguments containsObject:@"-ReimportAuthoredExport"];
     if (!reimport) {
         copyFixture([fixtures URLByAppendingPathComponent:@"Imports"], inputs);
+        copyFixture([inputs URLByAppendingPathComponent:@"AuthoredZip.zip"],
+            [docs URLByAppendingPathComponent:@"MOD Inbox/AuthoredZip.zip"]);
         copyFixture([fixtures URLByAppendingPathComponent:@"Original"], game);
         copyFixture([fixtures URLByAppendingPathComponent:@"Authored Save.ess"],
             [profile URLByAppendingPathComponent:@"Documents/My Games/Skyrim/Saves/Authored Save.ess"]);
