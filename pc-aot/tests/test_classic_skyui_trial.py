@@ -71,7 +71,6 @@ static NSString *launchNotice, *profilePath, *modGamePath;
 static NSArray<NSDictionary *> *launchPlugins, *modPlugins;
 static NSArray<NSString *> *launchPackageIds;
 static NSDictionary *frozenFeaturesProfile;
-static BOOL frozenSkyUIAssetsReady;
 static int bridgeCalls, bridgeSelection, rejectSelection;
 int pc_guest_select_classic_skse(int enabled) {
     ++bridgeCalls;
@@ -84,10 +83,9 @@ static NSString *LaunchPath(void) { return [profilePath stringByAppendingPathCom
 static NSString *PackageDir(NSString *pid) { return [packagesPath stringByAppendingPathComponent:pid]; }
 static NSDictionary *LoadPackage(NSString *pid) { (void)pid; return nil; }
 /* Other MOD features have their own tests. Observe the startup handoff here. */
-static void FreezeFeatures(NSDictionary *profile, BOOL skyuiAssetsReady, NSString *game) {
+static void FreezeFeatures(NSDictionary *profile, NSString *game) {
     assert([game isEqualToString:modGamePath]);
     frozenFeaturesProfile = profile;
-    frozenSkyUIAssetsReady = skyuiAssetsReady;
 }
 #define L T
 ''' + between(manager, "static id MutableJSON(", "static NSString *ProfileName(")
@@ -173,11 +171,11 @@ int main(int argc, char **argv) { @autoreleasepool {
     start(game, 0);
     activeProfile = @"second";
     start(game, 1);
-    assert(!launchNotice && frozenSkyUIAssetsReady);
+    assert(!launchNotice && SkyUIRequirementsFor(launchPackageIds).status == SKYRIM_SKYUI_REQ_OK);
     launchPackageIds = @[@"bad-skse"];
     start(game, 1);
     assert([launchNotice containsString:@"Scripts/SKSE.pex is not the SKSE 1.7.3 script."]);
-    assert(!frozenSkyUIAssetsReady);
+    assert(SkyUIRequirementsFor(launchPackageIds).status != SKYRIM_SKYUI_REQ_OK);
     launchPackageIds = @[];
     toggle.on = NO;
     [hub skyuiTrialToggled:toggle];
