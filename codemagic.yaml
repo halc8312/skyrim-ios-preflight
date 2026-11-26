@@ -355,7 +355,7 @@ workflows:
       - pc-aot/local/ci/*/artifacts/*
 # Append this manual workflow under workflows in the existing private harness.
   pc2011-title-host:
-    name: Skyrim PC 2011 original-guest iPhoneOS host
+    name: Skyrim PC 2011 MOD iPhoneOS host
     instance_type: mac_mini_m2
     max_build_duration: 65
     environment:
@@ -363,6 +363,11 @@ workflows:
       vars:
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         JOBS: "2"
+        SKYRIM_IOS_CLASSIC_SKSE: "1"
+        SKYRIM_IOS_SKSE_DLL_PROBE: "1"
+        SKYRIM_IOS_MOD_HOOKS: "1"
+        SKYRIM_IOS_CLASSIC_PAPYRUSUTIL: "1"
+        HOMEBREW_NO_AUTO_UPDATE: "1"
     cache:
       cache_paths:
         - $CM_BUILD_DIR/pc-aot/local/ios-dependencies
@@ -383,6 +388,31 @@ workflows:
           set -euo pipefail
           export PATH="$(brew --prefix bison)/bin:$(brew --prefix make)/libexec/gnubin:$PATH"
           bash pc-aot/scripts/build-title-host.sh
+      - name: Verify the iPhone translation bridge and record Swift SDK libraries
+        script: |
+          set -euo pipefail
+          runs=(pc-aot/local/title-host/run-*)
+          test "${#runs[@]}" -eq 1
+          output="${runs[0]}/artifacts"
+          grep -Fq ' _OBJC_CLASS_$_SKTranslator' "${runs[0]}/app-symbols.txt"
+          grep -Fq '/Translation.framework/Translation' "$output/linked-libraries.txt"
+          grep -Fq '/SwiftUI.framework/SwiftUI' "$output/linked-libraries.txt"
+          python3 - "$(xcrun --sdk iphoneos --show-sdk-path)" "$output" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+          sdk, output = map(Path, sys.argv[1:])
+          names = sorted(p.name for p in (sdk / "usr/lib/swift").glob("libswift*.tbd") if p.is_file())
+          listing = "".join(name + "\n" for name in names).encode()
+          if not listing:
+              raise SystemExit("No iPhoneOS Swift SDK libraries found")
+          (output / "ios-swift-sdk-stubs.txt").write_bytes(listing)
+          result = output / "result.json"
+          record = json.loads(result.read_text())
+          record["ios_swift_sdk_stubs_sha256"] = hashlib.sha256(listing).hexdigest()
+          result.write_text(json.dumps(record, indent=2) + "\n")
+          PY
     artifacts:
       - pc-aot/local/title-host/*/artifacts/*
       - pc-aot/local/ios-dependencies/logs/*/*.log
