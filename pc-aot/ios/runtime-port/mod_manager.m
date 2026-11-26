@@ -2898,8 +2898,8 @@ enum {
     if (s == HubMods) return T(@"Changes apply after a full restart. MOD files are kept inside the app; the original game files are not changed. Only MODs for Skyrim 2011 / Legendary Edition work.",
         @"変更はアプリの完全終了・再起動後に反映します。MODはアプリ内に保存され、元のゲームファイルは変更しません。Skyrim 2011年版／Legendary Edition用のMODだけが動きます。");
     if (s == HubAdd) {
-        NSString *help = T(@"If file selection fails, copy the archive to MOD Inbox in the Files app and add it from there.",
-                           @"ファイルを選べない場合は、「ファイル」アプリで圧縮ファイルをMOD Inboxにコピーし、ここから追加してください。");
+        NSString *help = T(@"Tap one archive to add it. If file selection fails, copy the archive to MOD Inbox in the Files app and add it from there.",
+                           @"追加するファイルを1つタップしてください。選べない場合は、「ファイル」アプリで圧縮ファイルをMOD Inboxにコピーし、ここから追加してください。");
         return lastImportNotice.length ? [NSString stringWithFormat:@"%@\n\n%@", lastImportNotice, help] : help;
     }
     if (s == HubOptimize) return T(@"Applied to each MOD when it is added: oversized textures are reduced, Special Edition textures and archives are converted for the 2011 engine, and missing mipmaps are rebuilt. Your original download is not changed. Applies to MODs added from now on.",
@@ -3141,12 +3141,14 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
     }]];
     [self presentViewController:c animated:YES completion:nil];
 }
-- (void)pick:(NSArray<UTType *> *)types single:(BOOL)single generated:(BOOL)generated {
+- (void)pick:(NSArray<UTType *> *)types generated:(BOOL)generated {
     self.pickingGenerated = generated;
     BOOL copyFile = ![types containsObject:UTTypeFolder];
     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc]
         initForOpeningContentTypes:types asCopy:copyFile];
-    picker.delegate = self; picker.allowsMultipleSelection = !single;
+    picker.delegate = self;
+    // Single selection avoids the extra confirmation used for marking several files.
+    picker.allowsMultipleSelection = NO;
     [self presentViewController:picker animated:YES completion:nil];
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)picker didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
@@ -3205,10 +3207,10 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
         if (p.row == 0) {
             NSMutableArray *types = [NSMutableArray arrayWithObject:UTTypeZIP];
             for (NSString *ext in @[@"7z", @"rar", @"jslot", @"slot"]) { UTType *u = [UTType typeWithFilenameExtension:ext]; if (u) [types addObject:u]; }
-            [self pick:types single:NO generated:NO];
-        } else if (p.row == 1) [self pick:@[UTTypeFolder] single:YES generated:NO];
+            [self pick:types generated:NO];
+        } else if (p.row == 1) [self pick:@[UTTypeFolder] generated:NO];
         else if (p.row == 2) [self.navigationController pushViewController:skyrim_mods_browser_controller() animated:YES];
-        else if (p.row == 3) [self pick:@[UTTypeFolder] single:YES generated:YES];
+        else if (p.row == 3) [self pick:@[UTTypeFolder] generated:YES];
         else if (ModInboxURL()) [self.navigationController pushViewController:[[SKModInbox alloc]
             initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
         else Notice(T(@"Could not create MOD Inbox.", @"MOD Inboxを作成できませんでした。"));
@@ -3239,7 +3241,7 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
         if (p.row == 1) [self chooseLimit:p];
         break;
     case HubShare:
-        if (p.row) [self pick:@[UTTypeJSON] single:YES generated:NO];
+        if (p.row) [self pick:@[UTTypeJSON] generated:NO];
         else [self share:ExportModList(SelectedProfile()) from:p];
         break;
     }

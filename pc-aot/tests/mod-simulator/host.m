@@ -49,6 +49,8 @@ static void configureFixturePicker(void) {
                                                        BOOL animated, void (^completion)(void)) {
         if ([controller isKindOfClass:UIDocumentPickerViewController.class]) {
             UIDocumentPickerViewController *picker = (UIDocumentPickerViewController *)controller;
+            if (picker.allowsMultipleSelection)
+                [NSException raise:NSInternalInconsistencyException format:@"MOD picker must accept one selection at a time"];
             picker.directoryURL = [directory(NSDocumentDirectory) URLByAppendingPathComponent:@"UI Samples" isDirectory:YES];
         }
         present(host, action, controller, animated, completion);
