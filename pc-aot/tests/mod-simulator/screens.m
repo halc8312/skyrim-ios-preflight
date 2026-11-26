@@ -517,7 +517,8 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self pick:@"AuthoredZip.zip" folder:NO];
     [self findRow:@"AuthoredZip"];
     NSPredicate *imported = [NSPredicate predicateWithFormat:@"label BEGINSWITH %@", @"Added AuthoredZip to profile"];
-    XCTAssertTrue([[self.app.staticTexts matchingPredicate:imported].firstMatch
+    XCUIElement *importRow = [self findRow:@"Add an archive or character preset"];
+    XCTAssertTrue([[importRow.staticTexts matchingPredicate:imported].firstMatch
         waitForExistenceWithTimeout:8]);
     [self capture:@"zip-imported"];
     [self openModDetails:@"AuthoredZip"];
@@ -640,7 +641,8 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [[self findRow:@"Add a folder"] tap];
     [self pick:@"AuthoredBrokenInstaller" folder:YES];
     NSPredicate *failed = [NSPredicate predicateWithFormat:@"label BEGINSWITH %@", @"The installer file could not be read."];
-    XCTAssertTrue([[self.app.staticTexts matchingPredicate:failed].firstMatch
+    importRow = [self findRow:@"Add an archive or character preset"];
+    XCTAssertTrue([[importRow.staticTexts matchingPredicate:failed].firstMatch
         waitForExistenceWithTimeout:8]);
     XCTAssertFalse([installer waitForExistenceWithTimeout:3]);
     XCTAssertFalse(self.app.staticTexts[@"AuthoredBrokenInstaller"].exists);

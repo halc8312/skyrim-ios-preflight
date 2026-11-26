@@ -2826,14 +2826,11 @@ enum {
     (void)notification;
     [self reload];
 }
-- (void)updateImportPrompt {
-    self.navigationItem.prompt = [lastImportNotice componentsSeparatedByString:@"\n"].firstObject;
-}
 - (void)importNoticeChanged:(NSNotification *)notification {
     (void)notification;
-    [self updateImportPrompt];
     if (self.tableView.window && !self.tableView.hasUncommittedUpdates)
-        [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:HubAdd] withRowAnimation:UITableViewRowAnimationNone];
+        [self.tableView reloadRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:0 inSection:HubAdd]]
+                             withRowAnimation:UITableViewRowAnimationNone];
 }
 - (void)reload {
     EnsureState();
@@ -2859,7 +2856,6 @@ enum {
     [super viewWillAppear:animated];
     RefreshLanguage();
     [self updateReorderTitle];
-    [self updateImportPrompt];
     /* The game keeps drawing on the main thread behind this screen; pause it
      * while any MOD screen is open so scrolling stays smooth. Released when the
      * settings root appears again (see mobile_ui.m). */
@@ -2897,11 +2893,8 @@ enum {
         return T(@"This profile is used from the next launch. The plugin order is shown for the running profile.", @"このプロファイルは次回起動から使われます。プラグインの並びは現在使用中のプロファイルのものです。");
     if (s == HubMods) return T(@"Changes apply after a full restart. MOD files are kept inside the app; the original game files are not changed. Only MODs for Skyrim 2011 / Legendary Edition work.",
         @"変更はアプリの完全終了・再起動後に反映します。MODはアプリ内に保存され、元のゲームファイルは変更しません。Skyrim 2011年版／Legendary Edition用のMODだけが動きます。");
-    if (s == HubAdd) {
-        NSString *help = T(@"Tap one archive to add it. If file selection fails, copy the archive to MOD Inbox in the Files app and add it from there.",
-                           @"追加するファイルを1つタップしてください。選べない場合は、「ファイル」アプリで圧縮ファイルをMOD Inboxにコピーし、ここから追加してください。");
-        return lastImportNotice.length ? [NSString stringWithFormat:@"%@\n\n%@", lastImportNotice, help] : help;
-    }
+    if (s == HubAdd) return T(@"Tap one archive to add it. If file selection fails, copy the archive to MOD Inbox in the Files app and add it from there.",
+                             @"追加するファイルを1つタップしてください。選べない場合は、「ファイル」アプリで圧縮ファイルをMOD Inboxにコピーし、ここから追加してください。");
     if (s == HubOptimize) return T(@"Applied to each MOD when it is added: oversized textures are reduced, Special Edition textures and archives are converted for the 2011 engine, and missing mipmaps are rebuilt. Your original download is not changed. Applies to MODs added from now on.",
         @"MODを追加するときに自動で行います：大きすぎるテクスチャの縮小、SE用テクスチャとBSAの2011年版向け変換、縮小版（ミップマップ）の作成。元のダウンロードファイルは変更しません。これから追加するMODに適用されます。");
     if (s == HubSafety) return T(@"If a launch with MODs ends unexpectedly, the app asks what to do at the next launch.", @"MODありの起動が途中で終了した場合、次回起動時に対応を選べます。");
@@ -2935,6 +2928,10 @@ enum {
             T(@"Add BodySlide or FNIS output folder", @"BodySlide・FNISの出力フォルダを追加"), T(@"Add from MOD Inbox", @"MOD Inboxから追加")];
         NSArray *icons = @[@"doc.zipper", @"folder", @"safari", @"folder.badge.plus", @"tray.and.arrow.down"];
         c.textLabel.text = titles[p.row]; c.imageView.image = [UIImage systemImageNamed:icons[p.row]];
+        if (p.row == 0) {
+            c.detailTextLabel.numberOfLines = 0;
+            c.detailTextLabel.text = lastImportNotice;
+        }
         break;
     }
     case HubTools:
@@ -3153,6 +3150,11 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)picker didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     (void)picker;
+    if (!urls.count) {
+        Notice(T(@"Files did not provide the selected item. Try MOD Inbox.",
+                 @"選んだファイルを受け取れませんでした。MOD Inboxから追加してください。"));
+        return;
+    }
     for (NSURL *url in urls) ImportURL(url, YES, self.pickingGenerated);
 }
 - (void)share:(NSURL *)file from:(NSIndexPath *)p {
