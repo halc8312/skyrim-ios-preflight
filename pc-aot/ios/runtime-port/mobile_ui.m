@@ -612,7 +612,7 @@ void skyrim_mobile_render_size(int *width, int *height) {
     int selected = [startup[@"resolution"] intValue];
     if (!selected) return;
     int w = *width, h = *height;
-    skyrim_ios_drawable_size(&w, &h);
+    skyrim_ios_startup_pixel_size(&w, &h);
     if (w <= 0 || h <= 0) return;
     skyrim_mobile_landscape_size(&w, &h);
     renderHeight = selected >= 2160 ? h : MIN(h, selected);

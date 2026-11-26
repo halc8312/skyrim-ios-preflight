@@ -11,6 +11,7 @@ void skyrim_ios_present_result(int32_t result);
 void skyrim_ios_set_window(void *window);
 void skyrim_ios_pump_events(void);
 void skyrim_ios_drawable_size(int *width, int *height);
+void skyrim_ios_startup_pixel_size(int *width, int *height);
 void skyrim_ios_present_phase(unsigned phase);
 void skyrim_ios_pace_frame(void);
 void skyrim_ios_metrics_active(int active);

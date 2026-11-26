@@ -22,7 +22,7 @@ SDL_bool SDLCALL SDL_GetWindowWMInfo(SDL_Window *window, SDL_SysWMinfo *info) {
 }
 const char *SDLCALL SDL_GetError(void) { unexpected(__func__); }
 int platform_text_input(int enabled) { (void)enabled; unexpected(__func__); }
-void skyrim_ios_drawable_size(int *width, int *height) { (void)width; (void)height; unexpected(__func__); }
+void skyrim_ios_startup_pixel_size(int *width, int *height) { (void)width; (void)height; unexpected(__func__); }
 /* Record only the real menu's two requests in this guest-free test sandbox. */
 static void recordMenuState(const char *source, int active) {
     if (active != 0 && active != 1) unexpected(source);

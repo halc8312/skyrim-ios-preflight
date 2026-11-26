@@ -99,6 +99,18 @@ void skyrim_ios_drawable_size(int *width, int *height) {
     if (size) { *width = (int)(size >> 32); *height = (int)(uint32_t)size; }
 }
 
+void skyrim_ios_startup_pixel_size(int *width, int *height) {
+    if (!pthread_main_np() || !ui_window) return;
+    /* Before Vulkan creates its Metal view, the drawable query returns
+     * points. UIKit's pixel-size query already applies the window's DPI. */
+    int w = 0, h = 0;
+    SDL_GetWindowSizeInPixels(ui_window, &w, &h);
+    if (w > 0 && h > 0) {
+        *width = w;
+        *height = h;
+    }
+}
+
 void skyrim_ios_present_phase(unsigned phase) {
     static _Thread_local uint64_t entered;
     static _Thread_local uint64_t entered_epoch;
