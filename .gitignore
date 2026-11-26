@@ -920,3 +920,9 @@
 !/pc-aot/patches/skydream/0009-keep-x87-top-in-a-local.patch
 !/pc-aot/tests/test_x87_top.py
 !/pc-aot/tests/native_x87_top.c
+!/pc-aot/docs/IPHONE_OPTIMIZATION_AUDIT.md
+!/pc-aot/ios/private-abi/
+!/pc-aot/ios/private-abi/pc_guest_math.h
+!/pc-aot/patches/skydream/0010-memory-base-and-atomic-rmw.patch
+!/pc-aot/tests/test_memory_base_atomic_rmw.py
+!/pc-aot/tests/test_mutex_policy.py

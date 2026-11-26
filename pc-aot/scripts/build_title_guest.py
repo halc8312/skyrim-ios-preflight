@@ -28,6 +28,11 @@ SYSTEM_SYMBOLS=set("acos asin atan atan2 ceil cos cosh exp exp2 fabs floor fmod 
 THREAD_LOCAL_BOOTSTRAP="__tlv_bootstrap"
 THREAD_LOCAL_OBJECTS=frozenset({"pc_guest_mod_hooks_library.o"})
 TARGET="arm64-apple-ios18.0"
+# iOS 18 runs on A12 and newer only. apple-a12 lets the compiler use the ARMv8.3/8.4 instructions every such
+# device has: single-instruction atomics (ldadd/cas), load-acquire RCpc (ldapr) for the strict-order loads.
+GUEST_CPU="apple-a12"
+VECTORIZE_FLAGS=("-fvectorize","-fslp-vectorize")
+MATH_HEADER=ABI/"pc_guest_math.h"
 REQUIRED_DARWIN_HEADERS=("stdint.h", "math.h", "setjmp.h", "string.h", "sys/types.h")
 
 def digest(p):
@@ -64,10 +69,18 @@ def require_tool(path, label):
     return path
 
 
-def toolchain(llvm_bin=None, darwin_headers=None):
+def toolchain(llvm_bin=None, darwin_headers=None, mcpu=GUEST_CPU, vectorize=True):
+    """mcpu: a clang -mcpu name, or "generic"/"" for the baseline ARMv8.0 code. vectorize: also run the loop and SLP
+    vectorizers at -O1 (the per-lane SSE loops in generated code; no fast-math, so the results are unchanged)."""
     common=["--target="+TARGET,"-std=gnu11","-O1","-g0","-fno-strict-aliasing",
             "-fwrapv","-fsigned-char","-fvisibility=hidden","-fno-stack-protector",
             "-fno-builtin","-DLB_STRICT_ORDER","-DGAME_SKYRIM","-w"]
+    if mcpu and mcpu!="generic":
+        if not re.fullmatch(r"[a-z0-9][a-z0-9.+-]*",mcpu):
+            raise ValueError("--mcpu must be a clang CPU name such as apple-a12")
+        common.append("-mcpu="+mcpu)
+    if vectorize:
+        common.extend(VECTORIZE_FLAGS)
     if sys.platform=="darwin":
         if llvm_bin or darwin_headers:
             raise ValueError("macOS uses Xcode; --llvm-bin and --darwin-headers are Windows options")
@@ -138,12 +151,15 @@ def import_symbols(tool, objects):
     return imports,unknown
 
 
-def link_command(tool, build, response, exports, binary, imports):
+def link_command(tool, build, response, exports, binary, imports, order_file=None):
+    """order_file: optional symbol order (one symbol per line) that places the listed functions first, so the code a
+    play session actually runs shares few pages. It changes layout only."""
     if tool["official_apple_sdk_used"]:
         # Pass each linker argument separately: paths may contain spaces or commas.
         options=["-undefined","error","-no_adhoc_codesign","-dead_strip",
                  "-install_name","@rpath/SkyrimGuest.framework/SkyrimGuest",
                  "-exported_symbols_list",str(exports),"-filelist",str(response)]
+        if order_file: options+=["-order_file",str(order_file)]
         linker_args=[arg for option in options for arg in ("-Xlinker",option)]
         return [tool["clang"],"--target="+TARGET,"-isysroot",tool["sdk"],
                 "-dynamiclib","-nostdlib",*linker_args,"-lSystem","-o",binary]
@@ -152,7 +168,8 @@ def link_command(tool, build, response, exports, binary, imports):
     return [tool["linker"],"-dylib","-arch","arm64","-platform_version","ios","18.0","18.0",
             "-undefined","error","-no_adhoc_codesign","-dead_strip","-install_name",
             "@rpath/SkyrimGuest.framework/SkyrimGuest","-exported_symbols_list",exports,
-            "-filelist",response,"-L",build,"-lSystem","-o",binary]
+            "-filelist",response,*(["-order_file",order_file] if order_file else []),
+            "-L",build,"-lSystem","-o",binary]
 
 
 def main(argv=None):
@@ -164,6 +181,13 @@ def main(argv=None):
     p.add_argument("--mod-hooks", metavar="GROUPS",
                    help="With --classic-skse: comma-separated reviewed MOD hook groups to stage "
                         "(fuz_menu, fuz_world, vm_lifecycle, chargen_precache, chargen_slider)")
+    p.add_argument("--mcpu",default=GUEST_CPU,
+                   help="clang CPU for the guest (default apple-a12, the oldest chip iOS 18 runs on); "
+                        "'generic' keeps baseline ARMv8.0 code")
+    p.add_argument("--no-vectorize",action="store_true",
+                   help="do not add -fvectorize -fslp-vectorize (the generated SSE lane loops stay scalar at -O1)")
+    p.add_argument("--order-file",type=Path,
+                   help="linker symbol order file (one symbol per line, e.g. built from CPU samples); layout only")
     p.add_argument("--llvm-bin",type=Path,help="Windows LLVM bin directory; defaults to SKYRIM_LLVM_BIN, PATH, or Program Files/LLVM/bin")
     p.add_argument("--darwin-headers",type=Path,help="Windows public any-darwin-any include directory; alternatively set SKYRIM_DARWIN_HEADERS")
     a=p.parse_args(argv)
@@ -195,7 +219,7 @@ def main(argv=None):
     if not generated_sources:
         raise ValueError("Generated exe_*.c sources are missing; complete guest generation first")
     try:
-        tool=toolchain(a.llvm_bin,a.darwin_headers)
+        tool=toolchain(a.llvm_bin,a.darwin_headers,a.mcpu,not a.no_vectorize)
     except (ValueError,OSError,subprocess.SubprocessError) as error:
         p.error(str(error))
     build=stage/("arm64-ios-classic-skse" if a.classic_skse else "arm64-ios")
@@ -209,7 +233,9 @@ def main(argv=None):
     for name, expected in state["source_headers_sha256"].items():
         if digest(runtime/name)!=expected:
             raise ValueError("Generated-code ABI header changed: "+name)
-    flags=[*tool["compile_flags"],"-I",str(runtime),"-I",str(stage/"gen"),"-I",str(ABI)]
+    if a.order_file is not None and not a.order_file.is_file():
+        p.error("--order-file does not name a file")
+    flags=[*tool["compile_flags"],"-include",str(MATH_HEADER),"-I",str(runtime),"-I",str(stage/"gen"),"-I",str(ABI)]
     declarations_hash = None
     if a.classic_skse:
         declarations_hash = digest(stage/"gen/funcs_exe.h")
@@ -221,7 +247,8 @@ def main(argv=None):
     sources=generated_sources+[ABI/"pc_guest_library.c"]
     contract={"compiler":output([tool["clang"],"--version"]),"toolchain":tool["identity"],
               "inputs":inputs,"source_commit":state["source_commit"],
-              "flags":flags,"headers":state["source_headers_sha256"],"abi_header_sha256":digest(ABI/"PcGuestABI.h")}
+              "flags":flags,"headers":state["source_headers_sha256"],"abi_header_sha256":digest(ABI/"PcGuestABI.h"),
+              "math_header_sha256":digest(MATH_HEADER)}
     if a.classic_skse:
         sources.append(ABI/"pc_guest_skse_library.c")
         contract.update(classic_skse_experiment=True,
@@ -283,7 +310,7 @@ def main(argv=None):
     exports.write_text(("_skyrim_guest_classic_api_v1\n_skyrim_guest_bind_classic_v1\n"
                         if a.classic_skse else "_skyrim_guest_api_v1\n")
                        + ("_skyrim_guest_bind_mod_hooks_v1\n" if hook_groups else ""))
-    command(link_command(tool,build,response,exports,binary,imports),logs/"link.log",timeout=600)
+    command(link_command(tool,build,response,exports,binary,imports,a.order_file),logs/"link.log",timeout=600)
     info={"CFBundleDevelopmentRegion":"en","CFBundleExecutable":"SkyrimGuest",
           "CFBundleIdentifier":"org.skyrimios.pcguest","CFBundleInfoDictionaryVersion":"6.0",
           "CFBundleName":"SkyrimGuest","CFBundlePackageType":"FMWK",
@@ -297,6 +324,8 @@ def main(argv=None):
             "sha256":digest(binary),"translation_units":len(sources),"target":"arm64-apple-ios18.0",
             "strict_link_succeeded":True,"system_imports":imports,"source_commit":state["source_commit"],
             **inputs,
+            "mcpu":a.mcpu,"vectorized":not a.no_vectorize,
+            "order_file_sha256":digest(a.order_file) if a.order_file else None,
             "public_headers_only":not tool["official_apple_sdk_used"],
             "official_apple_sdk_used":tool["official_apple_sdk_used"],"signed":False,
             "game_executed":False,"physical_iphone_verified":False}

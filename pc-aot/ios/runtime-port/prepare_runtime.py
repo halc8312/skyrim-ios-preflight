@@ -324,8 +324,30 @@ def patch_native_textures(s: str) -> str:
     return patch_texture_loading(s)
 
 
+def patch_mutex_policy(s: str) -> str:
+    """Darwin's default pthread mutex hands the lock to the next waiter in order (fairshare), so a contended
+    guest critical section or wait-object lock makes each release wait for a context switch. First-fit lets
+    a running thread take it again, which is what Windows critical sections and these short wait-object sections
+    expect. Only the lock policy changes: recursion, ownership, wait order of the guest-visible events and every
+    protected structure are untouched. The macros exist on Apple platforms; elsewhere (PC tests) nothing changes."""
+    s = replace_once(s,
+        'static pthread_mutex_t g_wlock = PTHREAD_MUTEX_INITIALIZER;',
+        '#ifdef PTHREAD_FIRSTFIT_MUTEX_INITIALIZER\n'
+        'static pthread_mutex_t g_wlock = PTHREAD_FIRSTFIT_MUTEX_INITIALIZER;\n'
+        '#else\n'
+        'static pthread_mutex_t g_wlock = PTHREAD_MUTEX_INITIALIZER;\n'
+        '#endif', "first-fit wait-object lock")
+    return replace_once(s,
+        '                pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE);\n',
+        '                pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE);\n'
+        '#ifdef PTHREAD_MUTEX_POLICY_FIRSTFIT_NP\n'
+        '                pthread_mutexattr_setpolicy_np(&a, PTHREAD_MUTEX_POLICY_FIRSTFIT_NP);\n'
+        '#endif\n', "first-fit guest critical sections")
+
+
 def patch_kernel(s: str) -> str:
-    s = patch_file_writes(patch_asset_reads(patch_apc_queue(patch_directory_index(patch_waiter_membership(s)))))
+    s = patch_file_writes(patch_asset_reads(patch_apc_queue(patch_directory_index(
+        patch_waiter_membership(patch_mutex_policy(s))))))
     return patch_main_pump(patch_ece_read_witness(s))
 
 

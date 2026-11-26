@@ -23,6 +23,77 @@ builder=importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(builder)
 
 
+class GuestCodeGenerationFlagTests(unittest.TestCase):
+    """CPU target, vectorizer, math header and order file; Apple tools are mocked, the header is compiled for real."""
+    def toolchain(self, **kw):
+        sdk=Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree,sdk,ignore_errors=True)
+        tool=sdk/"tool"
+        tool.write_bytes(b"synthetic tool")
+        def answer(args):
+            if args[-1]=="--show-sdk-path": return str(sdk)
+            if args[-1] in ("--show-sdk-version","--show-sdk-build-version"): return "26.5"
+            return str(tool)
+        with mock.patch.object(builder.sys,"platform","darwin"),mock.patch.object(builder.shutil,"which",return_value="xcrun"),\
+                mock.patch.object(builder,"output",side_effect=answer):
+            return builder.toolchain(**kw)["compile_flags"]
+
+    def test_default_targets_the_oldest_ios_18_chip_and_vectorizes(self):
+        flags=self.toolchain()
+        self.assertIn("-mcpu=apple-a12",flags)
+        self.assertIn("-fvectorize",flags)
+        self.assertIn("-fslp-vectorize",flags)
+        self.assertIn("-fno-builtin",flags)   # unchanged: memcpy/memset keep their present lowering
+        self.assertIn("-O1",flags)
+
+    def test_cpu_and_vectorizer_can_be_switched_off_and_names_are_validated(self):
+        flags=self.toolchain(mcpu="generic",vectorize=False)
+        self.assertFalse([f for f in flags if f.startswith("-mcpu") or "vectorize" in f])
+        self.assertIn("-mcpu=apple-a14",self.toolchain(mcpu="apple-a14"))
+        for bad in ("apple a12","-march=x","apple-a12;rm"):
+            with self.assertRaisesRegex(ValueError,"CPU name"):
+                self.toolchain(mcpu=bad)
+
+    def test_order_file_reaches_both_linkers_only_when_given(self):
+        build=Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree,build,ignore_errors=True)
+        apple={"official_apple_sdk_used":True,"clang":Path("clang"),"sdk":Path("SDK")}
+        plain=builder.link_command(apple,build,"r","e","b",[])
+        self.assertNotIn("-order_file",plain)
+        cmd=builder.link_command(apple,build,"r","e","b",[],"order.txt")
+        i=cmd.index("-order_file")
+        self.assertEqual((cmd[i-1],cmd[i+1],cmd[i+2]),("-Xlinker","-Xlinker","order.txt"))
+        windows={"official_apple_sdk_used":False,"linker":Path("ld64.lld.exe")}
+        cmd=builder.link_command(windows,build,"r","e","b",["_x"],"order.txt")
+        self.assertEqual(cmd[cmd.index("-order_file")+1],"order.txt")
+        self.assertNotIn("-order_file",builder.link_command(windows,build,"r","e","b",["_x"]))
+
+    @unittest.skipUnless(shutil.which("clang"),"clang is needed to compile the header")
+    def test_math_header_turns_only_the_listed_functions_into_instructions(self):
+        names=("sqrt","fabs","floor","ceil","trunc","nearbyint")
+        with tempfile.TemporaryDirectory() as folder:
+            stubs=Path(folder)/"stubs"; stubs.mkdir()
+            (stubs/"math.h").write_text("#pragma once\n"+"".join(
+                "double %s(double); float %sf(float);\n"%(n,n) for n in names)+"double sin(double); double ldexp(double,int);\n")
+            source=Path(folder)/"m.c"
+            source.write_text("#include <math.h>\n"+"".join(
+                "double d_%s(double x){return %s(x);} float f_%s(float x){return %sf(x);}\n"%(n,n,n,n) for n in names)+
+                "double other(double x){return sin(x)+ldexp(x,3);}\n")
+            asm=Path(folder)/"m.s"
+            subprocess.run(["clang","--target=aarch64-apple-ios18.0","-ffreestanding","-O1","-fno-builtin","-mcpu=apple-a12",
+                            "-include",str(builder.MATH_HEADER),"-isystem",str(stubs),"-S","-o",str(asm),str(source)],
+                           check=True,capture_output=True)
+            text=asm.read_text()
+            self.assertNotRegex(text,r"\bb(?:l)?\s+_(sqrt|fabs|floor|ceil|trunc|nearbyint)f?\b")
+            for instruction in ("fsqrt","fabs","frintm","frintp","frintz","frinti"):
+                self.assertIn(instruction,text)
+            self.assertRegex(text,r"\bbl?\s+_sin\b")   # everything else still goes to libSystem
+            self.assertRegex(text,r"\bbl?\s+_ldexp\b")
+
+    def test_header_is_part_of_the_object_contract(self):
+        self.assertTrue(builder.MATH_HEADER.is_file())
+        self.assertEqual(builder.MATH_HEADER.parent,builder.ABI)
+
+
 class ToolchainTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()

@@ -28,7 +28,9 @@ SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 CC="$(xcrun --sdk iphoneos --find clang)"
 AR="$(xcrun --sdk iphoneos --find ar)"
 RANLIB="$(xcrun --sdk iphoneos --find ranlib)"
-FLAGS="-target arm64-apple-ios${DEPLOYMENT} -isysroot $SDK -O2"
+# iOS 18 runs on A12 and newer: ldadd/cas atomics and ldapr instead of ARMv8.0 retry loops (see CMakeLists.txt).
+CPU="${SKYRIM_IOS_CPU-apple-a12}"
+FLAGS="-target arm64-apple-ios${DEPLOYMENT} -isysroot $SDK -O2${CPU:+ -mcpu=$CPU}"
 mkdir -p "$WORK/sources" "$WORK/build" "$PREFIX/lib" "$PREFIX/include"
 mkdir -p "$WORK/logs"
 RUN_LOG="$(mktemp -d "$WORK/logs/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")"
@@ -46,7 +48,7 @@ preserve_failure() {
 }
 trap preserve_failure EXIT
 BASE_CONFIG="SDL-5d249570393f7a37e037abf22cd6012a4cc56a71 FFmpeg-db69d06eeeab4f46da15030a80d539efb4503ca8 MoltenVK-458870543b9bcf6b0edd6f90aaa776707b310d96 vkd3d-2.0 ios-$DEPLOYMENT $(xcodebuild -version) $(xcrun --sdk iphoneos --show-sdk-version)"
-CONFIG="$BASE_CONFIG $(shasum -a 256 "$0" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_spirv_cross.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_moltenvk.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_hot_cache.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/mvk_hot_cache.cpp.in" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compressed_copy.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_library.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/verify_lifecycle_baseline.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compile_timing.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_module_cold.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/runtime-port/performance_metrics.h" | cut -d' ' -f1)"
+CONFIG="$BASE_CONFIG cpu=${CPU:-generic} $(shasum -a 256 "$0" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_spirv_cross.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_moltenvk.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_hot_cache.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/mvk_hot_cache.cpp.in" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compressed_copy.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_library.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/verify_lifecycle_baseline.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_compile_timing.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/dependencies/patch_mvk_module_cold.py" | cut -d' ' -f1) $(shasum -a 256 "$ROOT/ios/runtime-port/performance_metrics.h" | cut -d' ' -f1)"
 KEY="$(printf '%s' "$CONFIG" | shasum -a 256 | cut -d' ' -f1)"
 if [[ -f "$WORK/configuration.sha256" && "$(cat "$WORK/configuration.sha256")" != "$KEY" ]]; then
   echo 'Dependency configuration changed; use a new SKYRIM_IOS_DEPS_ROOT to preserve previous build evidence.' >&2
@@ -216,7 +218,8 @@ PYMVK
       CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
       CONFIGURATION_BUILD_DIR="$WORK/build/moltenvk-static" \
       IPHONEOS_DEPLOYMENT_TARGET="$DEPLOYMENT" \
-      'GCC_PREPROCESSOR_DEFINITIONS=$(inherited) MVK_HIDE_VULKAN_SYMBOLS=0'
+      'GCC_PREPROCESSOR_DEFINITIONS=$(inherited) MVK_HIDE_VULKAN_SYMBOLS=0' \
+      ${CPU:+"OTHER_CFLAGS=\$(inherited) -mcpu=$CPU" "OTHER_CPLUSPLUSFLAGS=\$(inherited) -mcpu=$CPU"}
     cp "$WORK/build/moltenvk-static/libMoltenVK.a" "$PREFIX/lib/"
     cp -pRL MoltenVK/include/. "$PREFIX/include/"
     # Keep complete symbol evidence. Only performance observations are added;

@@ -10,6 +10,14 @@ endif()
 if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
   message(FATAL_ERROR "Set CMAKE_OSX_ARCHITECTURES=arm64")
 endif()
+# iOS 18 only runs on A12 and newer. Telling the compiler so lets it emit single-instruction atomics (ldadd/cas:
+# reference counts, spinlocks, Interlocked*) and load-acquire RCpc (ldapr) instead of the ARMv8.0 retry loops.
+# Set to an empty string for baseline ARMv8.0 code.
+set(SKYRIM_IOS_CPU "apple-a12" CACHE STRING "clang -mcpu for the iPhoneOS host and dependencies")
+set(_skyrim_cpu_flag "")
+if(SKYRIM_IOS_CPU)
+  set(_skyrim_cpu_flag "-mcpu=${SKYRIM_IOS_CPU}")
+endif()
 get_filename_component(_root "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 set(_deps_root "${_root}/local/ios-dependencies-build15")
 if(NOT "$ENV{SKYRIM_IOS_DEPS_ROOT}" STREQUAL "")
@@ -117,7 +125,7 @@ add_library(skyrim_performance STATIC "${_root}/ios/runtime-port/performance_met
   "${_root}/ios/runtime-port/cpu_sample_core.c" "${_root}/ios/runtime-port/cpu_sampler.m"
   "${_root}/ios/runtime-port/present_pacing_core.c")
 target_compile_features(skyrim_performance PRIVATE c_std_11)
-target_compile_options(skyrim_performance PRIVATE -O2 "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>")
+target_compile_options(skyrim_performance PRIVATE -O2 ${_skyrim_cpu_flag} "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>")
 target_include_directories(skyrim_performance PUBLIC "${_root}/ios/runtime-port")
 set_target_properties(dxvk_d3d9 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(dxvk_d3d9 PUBLIC cxx_std_17)
@@ -130,7 +138,7 @@ target_include_directories(dxvk_d3d9 PUBLIC "${_dxvk}/include/native/directx"
   "${SKYRIM_IOS_DEPS_PREFIX}/include")
 target_compile_definitions(dxvk_d3d9 PRIVATE NOMINMAX _WIN32_WINNT=0xa00
   DXVK_NATIVE DXVK_WSI_SDL2 _FILE_OFFSET_BITS=64)
-target_compile_options(dxvk_d3d9 PRIVATE -O2
+target_compile_options(dxvk_d3d9 PRIVATE -O2 ${_skyrim_cpu_flag}
   "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstdint>"
   "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstring>"
   -Wno-deprecated-declarations -fvisibility=default)

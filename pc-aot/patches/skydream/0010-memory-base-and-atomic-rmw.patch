@@ -1,0 +1,106 @@
+diff --git a/runtime/lift_prelude.h b/runtime/lift_prelude.h
+index eb43d1f..2400040 100644
+--- a/runtime/lift_prelude.h
++++ b/runtime/lift_prelude.h
+@@ -78,15 +78,23 @@ static inline void rt_movsd(uint32_t n, uint32_t dst, uint32_t src) {
+ #define TS16(a, v) (*(volatile u16u *)(MEM + (uint32_t)(a)) = (v))
+ #define TS32(a, v) (*(volatile u32u *)(MEM + (uint32_t)(a)) = (v))
+ #else
+-static inline uint8_t TL8(uint32_t a) { return __atomic_load_n(MEM + a, __ATOMIC_ACQUIRE); }
+-static inline void TS8(uint32_t a, uint8_t v) { __atomic_store_n(MEM + a, v, __ATOMIC_RELEASE); }
++/* The guest memory base is a parameter (patch 0010): a generated function binds `MEM` to a const local, so the
++ * compiler does not reload the global after every acquire/release access. Behaviour and ordering are unchanged. */
++static inline uint8_t TL8_(uint8_t *m, uint32_t a) { return __atomic_load_n(m + a, __ATOMIC_ACQUIRE); }
++static inline void TS8_(uint8_t *m, uint32_t a, uint8_t v) { __atomic_store_n(m + a, v, __ATOMIC_RELEASE); }
+ #define TSO_PAIR(n, T, mask) \
+-static inline T TL##n(uint32_t a) { \
+-    if (__builtin_expect(!(a & mask), 1)) return __atomic_load_n((T *)(MEM + a), __ATOMIC_ACQUIRE); \
+-    T v; memcpy(&v, MEM + a, sizeof v); __atomic_thread_fence(__ATOMIC_ACQUIRE); return v; } \
+-static inline void TS##n(uint32_t a, T v) { \
+-    if (__builtin_expect(!(a & mask), 1)) { __atomic_store_n((T *)(MEM + a), v, __ATOMIC_RELEASE); return; } \
+-    __atomic_thread_fence(__ATOMIC_RELEASE); __builtin_memcpy(MEM + a, &v, sizeof v); }
++static inline T TL##n##_(uint8_t *m, uint32_t a) { \
++    if (__builtin_expect(!(a & mask), 1)) return __atomic_load_n((T *)(m + a), __ATOMIC_ACQUIRE); \
++    T v; __builtin_memcpy(&v, m + a, sizeof v); __atomic_thread_fence(__ATOMIC_ACQUIRE); return v; } \
++static inline void TS##n##_(uint8_t *m, uint32_t a, T v) { \
++    if (__builtin_expect(!(a & mask), 1)) { __atomic_store_n((T *)(m + a), v, __ATOMIC_RELEASE); return; } \
++    __atomic_thread_fence(__ATOMIC_RELEASE); __builtin_memcpy(m + a, &v, sizeof v); }
+ TSO_PAIR(16, uint16_t, 1)
+ TSO_PAIR(32, uint32_t, 3)
++#define TL8(a) TL8_(MEM, (uint32_t)(a))
++#define TL16(a) TL16_(MEM, (uint32_t)(a))
++#define TL32(a) TL32_(MEM, (uint32_t)(a))
++#define TS8(a, v) TS8_(MEM, (uint32_t)(a), (v))
++#define TS16(a, v) TS16_(MEM, (uint32_t)(a), (v))
++#define TS32(a, v) TS32_(MEM, (uint32_t)(a), (v))
+ #endif
+diff --git a/tools/lift.py b/tools/lift.py
+index 77c506c..3f50061 100644
+--- a/tools/lift.py
++++ b/tools/lift.py
+@@ -82,6 +82,9 @@ MEMORDER = os.environ.get("LIFT_MEMORDER") == "1"
+ # lift_prelude.h), so guest threads can run on several cores. On by default;
+ # LIFT_TSO=0 emits plain accesses.
+ TSO = os.environ.get("LIFT_TSO", "1") == "1"
++# Patch 0010 switches. LIFT_LOCK_RMW=0 keeps the compare-exchange loops, LIFT_MEMLOCAL=0 keeps the global MEM.
++LOCK_RMW = os.environ.get("LIFT_LOCK_RMW", "1") != "0"
++MEMLOCAL = os.environ.get("LIFT_MEMLOCAL", "1") != "0"
+ 
+ 
+ # Patch 0007 (v2: writes are also recognised from the emitted text, so x87/MMX stores get a fence).
+@@ -357,6 +360,22 @@ class Lifter:
+             e("{ uint32_t w_ = %s; uint32_t o_ = %s((uint32_t *)(MEM + w_), %s, __ATOMIC_SEQ_CST); "
+               "f.cf = (o_ >> %s) & 1; }" % (w, fn, mask, bb))
+             return o
++        if locked and LOCK_RMW and not getattr(self, "_lk", False) and ops and ops[0].type == x86.X86_OP_MEM and \
++                mn in ("add", "sub", "and", "or", "xor", "inc", "dec") and ops[0].size in (1, 2, 4) and \
++                (len(ops) == 1 or ops[1].type in (x86.X86_OP_REG, x86.X86_OP_IMM)):
++            # Patch 0010: one atomic read-modify-write instead of a compare-exchange loop. The flags come from the
++            # value the atomic operation returned, which is what the successful iteration of the loop computed.
++            n, T = BITS[ops[0].size], UT[ops[0].size]
++            one = mn in ("inc", "dec")
++            src = "1" if one else self.get(i, ops[1], ops[0].size)
++            fetch = {"add": "add", "inc": "add", "sub": "sub", "dec": "sub", "and": "and", "or": "or", "xor": "xor"}[mn]
++            flags = {"add": "add%d(o_, s_, &f)", "sub": "sub%d(o_, s_, &f)", "inc": "inc%d(o_, &f)",
++                     "dec": "dec%d(o_, &f)", "and": "logic%d((%s)(o_ & s_), &f)",
++                     "or": "logic%d((%s)(o_ | s_), &f)", "xor": "logic%d((%s)(o_ ^ s_), &f)"}[mn]
++            flags = flags % ((n, T) if mn in ("and", "or", "xor") else (n,))
++            e("{ uint32_t la_ = %s; %s s_ = (%s)%s; %s o_ = __atomic_fetch_%s((%s *)(MEM + la_), s_, "
++              "__ATOMIC_SEQ_CST); (void)%s; }" % (self.addr(i, ops[0]), T, T, src, T, fetch, T, flags))
++            return o
+         if locked and not getattr(self, "_lk", False) and ops and ops[0].type == x86.X86_OP_MEM and \
+                 mn in ("add", "sub", "adc", "sbb", "and", "or", "xor", "inc", "dec", "neg", "not"):
+             T = UT[ops[0].size]
+@@ -1621,7 +1640,7 @@ def main():
+     for k in range(FILES):
+         chunk = buckets[k]
+         text = '#include "funcs_%s.h"\n#include "lift_prelude.h"\n\n' % MOD
+-        text += "".join("\n".join(good[fa][0]) + "\n\n" for fa in chunk)
++        text += "".join("\n".join(mem_local_pass("\n".join(good[fa][0]).split("\n"))) + "\n\n" for fa in chunk)
+         write_if_changed(os.path.join(OUT, "%s_%02d.c" % (MOD, k)), text)
+     text = '#include "funcs_%s.h"\n#include "rt_table.h"\nconst FnEntry g_fn_table_%s[] = {\n' % (MOD, MOD)
+     text += "".join("    {0x%Xu, f_%X},\n" % (fa, fa) for fa in names)
+@@ -1630,5 +1649,23 @@ def main():
+     json.dump({hex(k): v for k, v in failed.items()}, open(os.path.join(OUT, "%s_rejected.json" % MOD), "w"), indent=0)
+ 
+ 
++# ---- Patch 0010: guest memory base in a const local (text pass over the finished functions) ----
++MEM_PROLOGUE = ["    uint8_t *const mem_ = MEM;", "#define MEM mem_"]
++
++
++def mem_local_pass(lines):
++    """Bind `MEM` to a const local for the whole function. The macro is only visible inside the function body, so
++    every M*/TL*/TS* access, memcpy and atomic of the emitted text uses the local, while helpers defined earlier
++    (and other translation units) keep the global. Anything that is not a plain generated function is left alone.
++    Runs on the finished text, after the flag and x87 analyses that read the emitted lines."""
++    if not MEMLOCAL:
++        return lines
++    if len(lines) < 3 or not lines[0].startswith("void f_") or not lines[0].endswith(" {") or lines[-1] != "}":
++        return lines
++    if "mem_" in "\n".join(lines):
++        raise RuntimeError("mem_ is already used in the generated text")
++    return [lines[0]] + MEM_PROLOGUE + lines[1:] + ["#undef MEM"]
++
++
+ if __name__ == "__main__":
+     main()

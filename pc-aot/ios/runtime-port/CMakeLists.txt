@@ -40,6 +40,16 @@ if(SKYRIM_IOS_CLASSIC_PAPYRUSUTIL AND NOT (SKYRIM_IOS_CLASSIC_SKSE AND SKYRIM_IO
 endif()
 set(SKYRIM_IOS_BUNDLE_IDENTIFIER "local.skyrim.ios.diagnostic" CACHE STRING "Local application identifier")
 
+# See ios/dependencies/CMakeLists.txt. Only a real iPhoneOS arm64 build gets the A12 baseline; simulator and
+# other configurations keep the toolchain default.
+string(TOLOWER "${CMAKE_OSX_SYSROOT}" _skyrim_host_sdk)
+set(_skyrim_host_cpu_flag "")
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND _skyrim_host_sdk MATCHES "iphoneos" AND CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
+    set(SKYRIM_IOS_CPU "apple-a12" CACHE STRING "clang -mcpu for the iPhoneOS host and dependencies")
+    if(SKYRIM_IOS_CPU)
+        set(_skyrim_host_cpu_flag "-mcpu=${SKYRIM_IOS_CPU}")
+    endif()
+endif()
 if(NOT TARGET skyrim_ios_dependencies)
     add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../dependencies" dependencies)
 endif()
@@ -222,7 +232,7 @@ if(SKYRIM_IOS_MOD_HOOKS)
         "${fuz_seams}" "${SKYRIM_IOS_ROOT}/experiments/skse-plugin-vm")
     target_compile_definitions(skyrim_ios_fuz_host PRIVATE GAME_SKYRIM SKYRIM_IOS=1 SKYDREAM_MOBILE=1
         SKYRIM_IOS_GUEST_DIAGNOSTIC=1 SKYRIM_IOS_CLASSIC_SKSE=1 SKYDREAM_SKSE=1 SKYRIM_IOS_MOD_HOOKS=1)
-    target_compile_options(skyrim_ios_fuz_host PRIVATE -O2 -fno-strict-aliasing -fwrapv -fsigned-char
+    target_compile_options(skyrim_ios_fuz_host PRIVATE -O2 ${_skyrim_host_cpu_flag} -fno-strict-aliasing -fwrapv -fsigned-char
         -include "${CMAKE_CURRENT_SOURCE_DIR}/ios_build_contract.h")
     target_sources(skyrim_ios_runtime PRIVATE $<TARGET_OBJECTS:skyrim_ios_fuz_host>
         "${CMAKE_CURRENT_SOURCE_DIR}/mod_hook_selection.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_racemenu_preset.c")
@@ -249,7 +259,7 @@ if(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE OR SKYRIM_IOS_CLASSIC_PAPYRUSUTIL)
         "${profile_json_source}/profile_json.c" "${profile_json_source}/profile_overlay.c")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_CLASSIC_SETTINGS_BACKEND=1)
 endif()
-target_compile_options(skyrim_ios_runtime PRIVATE -O2 -fno-strict-aliasing -fwrapv -fsigned-char
+target_compile_options(skyrim_ios_runtime PRIVATE -O2 ${_skyrim_host_cpu_flag} -fno-strict-aliasing -fwrapv -fsigned-char
     "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>"
     -include "${CMAKE_CURRENT_SOURCE_DIR}/ios_build_contract.h")
 target_link_libraries(skyrim_ios_runtime PUBLIC skyrim_ios_dependencies)

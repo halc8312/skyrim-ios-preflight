@@ -1,0 +1,50 @@
+# iPhone向け未実装の最適化箇所の監査 — 2026-11-26
+
+固定版Skydream（`ecf814f`）に`patches/skydream/`の0001〜0009を当てたソースを読み、同じコンパイル条件（`--target=arm64-apple-ios18.0 -O1 -fno-builtin`、clang 18）で小さな入力のARM64機械語を確認して見つけた項目の一覧。**実機では測っていない。FPS・発熱・メモリの改善量は不明**で、ここに書く数字は機械語の命令数と、x86_64上の差分試験の結果だけ。ゲーム本体の入力は使っていない。
+
+## 実装したもの
+
+| # | 見つけた点 | 実装 | 確認したこと | まだ確認していないこと |
+| --- | --- | --- | --- | --- |
+| 1 | ゲストは`-fno-builtin`でコンパイルされるため、`sqrt`・`fabs`・`floor`・`ceil`・`trunc`・`nearbyint`（と`f`付き）が1命令にならず`libSystem`への外部呼び出しになる。x87の`fsqrt`/`fabs`/`frndint`/`fist`、SSEの`cvt*2si`・`sqrtss`などが対象 | [`pc_guest_math.h`](../ios/private-abi/pc_guest_math.h)を全ゲスト翻訳単位へ`-include`。この6関数だけコンパイラ内蔵版に対応づけ、`-fno-builtin`と他の関数（`sin`・`ldexp`など）は変えない | clang 18でaarch64向けに`fsqrt`/`fabs`/`frintm`/`frintp`/`frintz`/`frinti`になり、外部呼び出しが消えること。他の関数は外部呼び出しのままであること | 実ゲーム生成物での呼び出し箇所数と、実機での効果。`arm64-ios/imports.json`の`_sqrt`などが消えるかは再コンパイル後に見る |
+| 2 | `-O1`ではSSEの4レーン処理（`addps`/`mulps`/`minps`など）が、スタックへコピーしてからスカラー4回のループになる | ゲストのコンパイルに`-fvectorize -fslp-vectorize`を追加（`--no-vectorize`で外せる）。fast-mathは使わないため計算は同じ | 小さな入力で`fadd.4s`/`bit.16b`の1命令になること | **コンパイル時間の増加は未計測**（516ファイル・約140MB）。実ゲーム生成物でのビット一致は未確認 |
+| 3 | 生成コードの`TL32`/`TS32`などは毎回グローバル`MEM`を読み直す（`ldr x, [x8]`がアクセスごとに入る） | パッチ[0010](../patches/skydream/0010-memory-base-and-atomic-rmw.patch)。関数先頭で`MEM`をconstローカルに束縛し、アクセスはそのローカルを使う。順序保証（`ldapr`/`stlr`/`dmb`）は同じ。`LIFT_MEMLOCAL=0`で無効 | 同じ入力のARM64機械語で、ポインタを3段たどる関数の命令数が94→55、`MEM`の読み直しが8→1。x86_64で32関数×96入力（3,072件）が旧版と一致（レジスタ・フラグ・メモリ） | 実ゲームでの効果、MODフック再レビュー（下の注意） |
+| 4 | ホストアプリ、DXVK、MoltenVK、SDL、FFmpegは`-mcpu`なし（既定`apple-a7`、ARMv8.0）。ゲストも`build_title_guest.py`に`-mcpu`がなかった | すべて`-mcpu=apple-a12`。iOS 18はA12以降でしか動かない。参照カウント・spinlock・`Interlocked*`のatomicが`ldaxr/stlxr`の再試行ループから`ldadd`/`cas`の1命令に、acquireロードが`ldar`から`ldapr`になる。ホスト／DXVK：`SKYRIM_IOS_CPU`（CMake）、依存ライブラリ：`SKYRIM_IOS_CPU`（環境変数、空で無効）、ゲスト：`--mcpu`（`generic`で無効） | clangでatomic3種とacquireロードの機械語。依存ライブラリのキャッシュ鍵にCPU指定を含めた | **Mac未検証**：MoltenVKの`xcodebuild`に渡す`OTHER_CFLAGS`、FFmpeg・SDLのビルド。依存ライブラリは全再ビルドになる |
+| 7 | `lock add/sub/and/or/xor/inc/dec`が比較交換の再試行ループになる | パッチ0010。`__atomic_fetch_*`の1回の呼び出しにし、フラグは返された旧値から計算（成功した反復と同じ値）。`adc`・`sbb`・`neg`・`not`は従来のまま。`LIFT_LOCK_RMW=0`で無効 | x86_64で、サイズ8/16/32・即値・レジスタ・添字付きの24種を旧版と比較して一致。ARM64では`casal`が28→4、`ldadd`系が1→25（`-mcpu=apple-a12`時） | 実ゲームでの`lock`命令の実行頻度 |
+| 9 | Darwinの既定のpthread mutexはfairshare（解放時に待機側へ順に渡す）。ゲストのクリティカルセクションと全イベント／セマフォが共有する1個のロックは競合する | `kernel32.c`の`g_wlock`とクリティカルセクションをfirst-fitにする（[`patch_mutex_policy`](../ios/runtime-port/prepare_runtime.py)）。マクロがあるときだけ有効 | 文面の差分と、有り／無しの両方のコンパイル | Apple SDKに`PTHREAD_FIRSTFIT_MUTEX_INITIALIZER`があるか（無ければ従来どおりfairshareのまま）。実機での待ち時間。ゲストヒープ（`heap.c`）は既存試験が「変更なし」を前提にするため未変更 |
+| 11 | 140MBのゲストコードのリンク順が未指定 | `build_title_guest.py --order-file`でリンカーの`-order_file`に渡せる | 引数の受け渡し（Apple・LLD両方） | **順序ファイルの作り方は未確立**。既存のCPUサンプルのシンボル名化はまだない |
+
+## 実装していないもの
+
+| # | 内容 | 理由 |
+| --- | --- | --- |
+| 5 | 描画コマンドごとの経路：COMオブジェクト表のグローバル再帰mutex（`com_host`）、importのキャッシュ未登録 | `com_host`のロックは、すでに`runtime_lock_timing.py`が待ち時間を計測している箇所。実機のデータが出るまで外すと計測と食い違う。import経路の短縮案（呼び出し地点への展開など）は設計が固まっていない |
+| 6 | SSEレジスタ（`c->xmm[n]`）のローカル変数化 | 関数呼び出し前後のSPILL／RELOAD、ホストのhelper、flags解析との整合を決める必要があり、やり方がわかっていない |
+| 8 | ジャンプテーブルのswitchを表ごとにする | 方針は分かっている（表ごとの`switch`で比較段数が約10→数段）が、`flags_pass`が`switch (jt_) {`の形を特別扱いしているため、解析側の変更を先に設計する必要がある |
+| 10 | 描画解像度を下げたとき、スワップチェーン（表示面）も同じ大きさにする | `GetPresentExtent()`・SDLの表示サイズ・拡大の経路をまとめて変える変更で、表示が崩れる危険がある。実機で見ながらでないと進められない |
+| — | MSAAの解決を別パスにしない・書き戻しの削減 | DXVK 1.9.2のレンダーパス変更になる。方針自体が未確定 |
+| — | BSAの展開をホストのzlibへ置換 | ゲストの該当関数を特定していない |
+| — | `setjmp`→`_setjmp`、CRC32のARM命令 | 効果が小さい、または現在使っていない経路 |
+
+## 再コンパイルが必要な範囲
+
+| 変更 | ゲストの再生成（`lift.py`） | ゲストの再コンパイル | ホストの再ビルド |
+| --- | --- | --- | --- |
+| 1・2・4（ゲスト） | 不要 | **必要**（516ファイル）。古いステージは契約が変わったので使えない（新しいステージで） | 不要 |
+| 3・7（パッチ0010） | **必要**（約380秒） | 必要 | 不要 |
+| 4（ホスト・DXVK） | — | — | **必要**。依存ライブラリ（MoltenVK・SDL・FFmpeg・vkd3d）も全再ビルド |
+| 9 | — | — | 必要 |
+
+**パッチ0010の取り込み方**：`source-lock.json`には載せていない（0007〜0009と同じ扱い）。ゲスト生成で`--extra-patch`に0007・0008・（0009）・0010をこの順で渡す。0010は0007以降のどの組み合わせにも当たることを確認した。
+
+**注意（MODフック）**：`mod_hooks_guest.py`は生成済みファイルのSHA-256で固定したレビュー済みの生成物に対して動く。0010で生成コードが変わるため、MODつきのビルドに使うにはレビュー済みハッシュの更新が必要。MODなしの通常版には影響しない。
+
+**Metalのパイプラインキャッシュ**：`build-dependencies.sh`と`prepare_runtime.py`はキャッシュ名前空間の入力なので、この変更を入れたビルドは最初の起動でキャッシュを作り直す（初回のシェーダー生成による引っ掛かりが再び出る）。`tests/test_display_timing.py`の基準値を新しい値に更新した。
+
+## 試験
+
+- `tests/test_memory_base_atomic_rmw.py`：実際の変換器を0001〜0009版と0010追加版で走らせ、同じ入力で実行して比較（レジスタ・6フラグ・ゲストメモリ）。0007のみの版でも確認。
+- `tests/test_build_title_guest.py`：CPU指定・ベクトル化・order file・数学ヘッダー（clangでaarch64の機械語を確認）。
+- `tests/test_mutex_policy.py`：first-fitパッチの文面と、マクロ有り／無しの両方のコンパイル。
+- 全体の試験（PC）：1,172件合格・13件失敗。うち12件は変更前の状態でも同じ失敗（固定版ソースの一部が環境にない、PyYAML）で、1件（キャッシュ名前空間の基準値）は上記の意図した変更なので更新済み。
+- Apple SDKでのコンパイル、シミュレーター、実機は未実施。

@@ -190,7 +190,9 @@ class DisplayTimingTests(unittest.TestCase):
         self.assertEqual(identity['reuse'], BASELINE_REUSE_IDENTITY)
 
 
-BASELINE_REUSE_IDENTITY = 'e63b0673ad588a6631ba8da8ac6bb06d5f24937361d4a06b427f25bddc2ba90a'
+# Moved deliberately by the A12 build baseline (build-dependencies.sh -mcpu) and the first-fit lock policy
+# (prepare_runtime.py), neither of which is an observation-only change: the next launch rebuilds the Metal cache.
+BASELINE_REUSE_IDENTITY = 'cbb392aeedd781c853865b03388de9b4a5ccbf77191c15533cddb9488959de0d'
 
 if __name__ == '__main__':
     unittest.main()
