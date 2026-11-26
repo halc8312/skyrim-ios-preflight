@@ -8,9 +8,9 @@
 | --- | --- | --- | --- | --- |
 | 1 | ゲストは`-fno-builtin`でコンパイルされるため、`sqrt`・`fabs`・`floor`・`ceil`・`trunc`・`nearbyint`（と`f`付き）が1命令にならず`libSystem`への外部呼び出しになる。x87の`fsqrt`/`fabs`/`frndint`/`fist`、SSEの`cvt*2si`・`sqrtss`などが対象 | [`pc_guest_math.h`](../ios/private-abi/pc_guest_math.h)を全ゲスト翻訳単位へ`-include`。この6関数だけコンパイラ内蔵版に対応づけ、`-fno-builtin`と他の関数（`sin`・`ldexp`など）は変えない | clang 18でaarch64向けに`fsqrt`/`fabs`/`frintm`/`frintp`/`frintz`/`frinti`になり、外部呼び出しが消えること。他の関数は外部呼び出しのままであること | 実ゲーム生成物での呼び出し箇所数と、実機での効果。`arm64-ios/imports.json`の`_sqrt`などが消えるかは再コンパイル後に見る |
 | 2 | `-O1`ではSSEの4レーン処理（`addps`/`mulps`/`minps`など）が、スタックへコピーしてからスカラー4回のループになる | ゲストのコンパイルに`-fvectorize -fslp-vectorize`を追加（`--no-vectorize`で外せる）。fast-mathは使わないため計算は同じ | 小さな入力で`fadd.4s`/`bit.16b`の1命令になること | **コンパイル時間の増加は未計測**（516ファイル・約140MB）。実ゲーム生成物でのビット一致は未確認 |
-| 3 | 生成コードの`TL32`/`TS32`などは毎回グローバル`MEM`を読み直す（`ldr x, [x8]`がアクセスごとに入る） | パッチ[0010](../patches/skydream/0010-memory-base-and-atomic-rmw.patch)。関数先頭で`MEM`をconstローカルに束縛し、アクセスはそのローカルを使う。順序保証（`ldapr`/`stlr`/`dmb`）は同じ。`LIFT_MEMLOCAL=0`で無効 | 同じ入力のARM64機械語で、ポインタを3段たどる関数の命令数が94→55、`MEM`の読み直しが8→1。x86_64で32関数×96入力（3,072件）が旧版と一致（レジスタ・フラグ・メモリ） | 実ゲームでの効果、MODフック再レビュー（下の注意） |
+| 3 | 生成コードの`TL32`/`TS32`などは毎回グローバル`MEM`を読み直す（`ldr x, [x8]`がアクセスごとに入る） | パッチ[0010](../patches/skydream/0010-memory-base-and-atomic-rmw.patch)。関数先頭で`MEM`をconstローカルに束縛し、アクセスはそのローカルを使う。順序保証（`ldapr`/`stlr`/`dmb`）は同じ。`LIFT_MEMLOCAL=0`で無効 | 同じ入力のARM64機械語で、ポインタを3段たどる関数の命令数が94→55、`MEM`の読み直しが8→1。x86_64で32関数×96入力（3,072件）が旧版と一致（レジスタ・フラグ・メモリ） | 実機での効果、MODフック再レビュー（下の注意）。**実ゲームの生成物での確認は下の節** |
 | 4 | ホストアプリ、DXVK、MoltenVK、SDL、FFmpegは`-mcpu`なし（既定`apple-a7`、ARMv8.0）。ゲストも`build_title_guest.py`に`-mcpu`がなかった | すべて`-mcpu=apple-a12`。iOS 18はA12以降でしか動かない。参照カウント・spinlock・`Interlocked*`のatomicが`ldaxr/stlxr`の再試行ループから`ldadd`/`cas`の1命令に、acquireロードが`ldar`から`ldapr`になる。ホスト／DXVK：`SKYRIM_IOS_CPU`（CMake）、依存ライブラリ：`SKYRIM_IOS_CPU`（環境変数、空で無効）、ゲスト：`--mcpu`（`generic`で無効） | clangでatomic3種とacquireロードの機械語。依存ライブラリのキャッシュ鍵にCPU指定を含めた | **Mac未検証**：MoltenVKの`xcodebuild`に渡す`OTHER_CFLAGS`、FFmpeg・SDLのビルド。依存ライブラリは全再ビルドになる |
-| 7 | `lock add/sub/and/or/xor/inc/dec`が比較交換の再試行ループになる | パッチ0010。`__atomic_fetch_*`の1回の呼び出しにし、フラグは返された旧値から計算（成功した反復と同じ値）。`adc`・`sbb`・`neg`・`not`は従来のまま。`LIFT_LOCK_RMW=0`で無効 | x86_64で、サイズ8/16/32・即値・レジスタ・添字付きの24種を旧版と比較して一致。ARM64では`casal`が28→4、`ldadd`系が1→25（`-mcpu=apple-a12`時） | 実ゲームでの`lock`命令の実行頻度 |
+| 7 | `lock add/sub/and/or/xor/inc/dec`が比較交換の再試行ループになる | パッチ0010。`__atomic_fetch_*`の1回の呼び出しにし、フラグは返された旧値から計算（成功した反復と同じ値）。`adc`・`sbb`・`neg`・`not`は従来のまま。`LIFT_LOCK_RMW=0`で無効 | x86_64で、サイズ8/16/32・即値・レジスタ・添字付きの24種を旧版と比較して一致。ARM64では`casal`が28→4、`ldadd`系が1→25（`-mcpu=apple-a12`時） | （実ゲームの`lock`命令は全体で4か所だけと分かった。効果は実質ゼロ） |
 | 9 | Darwinの既定のpthread mutexはfairshare（解放時に待機側へ順に渡す）。ゲストのクリティカルセクションと全イベント／セマフォが共有する1個のロックは競合する | `kernel32.c`の`g_wlock`とクリティカルセクションをfirst-fitにする（[`patch_mutex_policy`](../ios/runtime-port/prepare_runtime.py)）。マクロがあるときだけ有効 | 文面の差分と、有り／無しの両方のコンパイル | Apple SDKに`PTHREAD_FIRSTFIT_MUTEX_INITIALIZER`があるか（無ければ従来どおりfairshareのまま）。実機での待ち時間。ゲストヒープ（`heap.c`）は既存試験が「変更なし」を前提にするため未変更 |
 | 11 | 140MBのゲストコードのリンク順が未指定 | `build_title_guest.py --order-file`でリンカーの`-order_file`に渡せる | 引数の受け渡し（Apple・LLD両方） | **順序ファイルの作り方は未確立**。既存のCPUサンプルのシンボル名化はまだない |
 
@@ -40,6 +40,24 @@
 **注意（MODフック）**：`mod_hooks_guest.py`は生成済みファイルのSHA-256で固定したレビュー済みの生成物に対して動く。0010で生成コードが変わるため、MODつきのビルドに使うにはレビュー済みハッシュの更新が必要。MODなしの通常版には影響しない。
 
 **Metalのパイプラインキャッシュ**：`build-dependencies.sh`と`prepare_runtime.py`はキャッシュ名前空間の入力なので、この変更を入れたビルドは最初の起動でキャッシュを作り直す（初回のシェーダー生成による引っ掛かりが再び出る）。`tests/test_display_timing.py`の基準値を新しい値に更新した。
+
+## 実ゲームの生成物での確認（パッチ0010）
+
+実際のゲーム入力（`TESV_unpacked.exe`、SHA-256が固定値と一致）から、PC上で次を実行した。
+
+1. 関数検出を再現：90,900関数。結果のSHA-256が固定値（`1fc28ce9…`）と完全に一致（4分30秒、`discover.py`をそのまま使用）。
+2. ゲストCを2通り生成：0001〜0003・0005〜0008のみ（基準）と、それに0010を追加。どちらも90,390関数・510件拒否で、これまでの記録と同じ。各約280秒。
+3. 両方をclang 18でARM64（`-O1 -mcpu=apple-a12 -fno-builtin -DLB_STRICT_ORDER`）にコンパイルし、512ファイルすべて警告・エラーなしで通過。Apple SDKの代わりに、`memcpy`をDarwinの強化版と同じく組み込みへ展開するスタブヘッダーを使った。
+
+| 確認項目 | 結果 |
+| --- | --- |
+| 基準と0010版の生成Cの差 | 各関数の先頭・末尾の3行（`MEM`の束縛）を除くと、**差は8行（`lock`命令4か所）だけ** |
+| ARM64の静的な命令数 | **31,675,430 → 28,762,708（9.2%減）**。全512ファイルが減り、ファイルごとの減少は4.1〜16.8%（中央値9.2%） |
+| 基準側の命令数の妥当性 | 記録済みの通常版25（32,258,971）に近い値で、比較条件として妥当 |
+| メモリ順序 | 生成Cの順序制御（`ST_FENCE`・`LD_FENCE`・`FULL_FENCE`など）は同一。機械語の`dmb`は+0.5〜0.7%（35,041→35,042、525,664→528,348、203,809→205,216）。ヘルパーのインライン展開で、非整列パスの複製が増えたためと考えられる |
+| 実ゲームの`lock`命令（項目7） | **全体で4か所だけ**。うち3か所は`lock dec`、1か所は`lock add byte`。項目7の効果は実質ゼロ |
+
+**注意**：命令数は静的なコード量で、実行時の命令数や実機の速度ではない。`MEM`の読み直しの削減は、メモリアクセスの多い関数ほど効く。実機のFPSへの効果は未測定。
 
 ## 試験
 
