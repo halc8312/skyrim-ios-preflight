@@ -937,7 +937,7 @@ static NSString *benchmarkSummary(void) {
         message:message preferredStyle:UIAlertControllerStyleAlert];
     [confirm addAction:[UIAlertAction actionWithTitle:L(@"Cancel", @"キャンセル") style:UIAlertActionStyleCancel handler:nil]];
     [confirm addAction:[UIAlertAction actionWithTitle:L(@"Start", @"開始") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [self dismissViewControllerAnimated:YES completion:^{
+        [self.navigationController.presentingViewController dismissViewControllerAnimated:YES completion:^{
             if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive ||
                 !skyrim_mods_benchmark_profile_active()) return;
             [overlay clearInput];
