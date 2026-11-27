@@ -36,6 +36,7 @@ class WaterDrawProbeTests(unittest.TestCase):
         self.assertFalse(captured.stdout)
         lines = captured.stderr.splitlines()
         self.assertEqual(lines, [
+            "IOS_WATER_OUTPUT schema=1 scene=2 draw=1 status=4 format=44 width=31 height=17",
             "IOS_WATER_DRAW schema=1 scene=2 kind=1 count=1 depth=0,0,1,0 ms_depth=0 "
             "color=0,1,0 params=0,0,1,0",
             "IOS_WATER_DRAW schema=1 scene=2 kind=2 count=1 depth=0,0,1,0 ms_depth=0 "
@@ -51,7 +52,8 @@ class WaterDrawProbeTests(unittest.TestCase):
             "IOS_WATER_SUMMARY schema=1 scene=2 end=1 frames=3 checked=2 fixed=0 unknown=0 other=0 limited=0",
             "IOS_WATER_PIXELS schema=1 scene=2 role=1 draw=1 format=100 nonfinite=0 outside=0 zero=0 one=0 interior=5 varies=1",
             "IOS_WATER_PIXELS schema=1 scene=2 role=3 draw=1 format=100 nonfinite=0 outside=0 zero=0 one=0 interior=5 varies=1",
-            "IOS_WATER_TINT schema=1 scene=2 draw=1 invalid=0 clear=1 partial=0 near_full=4 sky=1",
+            "IOS_WATER_PIXELS schema=1 scene=2 role=6 draw=1 format=44 nonfinite=0 outside=0 zero=0 one=0 interior=5 varies=0",
+            "IOS_WATER_TINT schema=1 scene=2 draw=1 invalid=0 clear=1 partial=0 near_full=4 sky=1 far_nonpositive=0 reversed=0",
         ])
         for line in lines:
             schema.line(line)

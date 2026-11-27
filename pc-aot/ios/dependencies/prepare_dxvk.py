@@ -539,8 +539,11 @@ def observe_water_draw(name: str, text: str) -> str:
       unsigned format = VK_FORMAT_UNDEFINED;
     };
     std::array<IosWaterReadback, skyrim_water::PixelRoles> m_iosWaterReadbacks{};
+    skyrim_water::CaptureTag m_iosWaterCompositePending{};
+    uint64_t m_iosWaterCompositeAttempt = 0;
     void PollWaterReadbacks();
-    void QueueWaterReadback(const Rc<DxvkImageView>& view, const skyrim_water::SampleView& sample,
+    void FinishWaterCompositeDraw(bool hasPrimitives);
+    bool QueueWaterReadback(const Rc<DxvkImageView>& view, const skyrim_water::SampleView& sample,
         skyrim_water::CaptureTag tag, skyrim_water::PixelRole role, const skyrim_water::CompositeTint& tint);''')
     if name.endswith('d3d9_shader.h'):
         return '#include "water_probe.h"\n' + once(text, '    D3D9PixelShader(\n',
@@ -554,18 +557,30 @@ def observe_water_draw(name: str, text: str) -> str:
     if name.endswith('d3d9_device.cpp'):
         reset = '  HRESULT D3D9DeviceEx::ResetSwapChain(D3DPRESENT_PARAMETERS* pPresentationParameters, D3DDISPLAYMODEEX* pFullscreenDisplayMode) {'
         text = once(text, reset, reset + '''
+    m_iosWaterCompositePending = {};
     for (auto& pending : m_iosWaterReadbacks) {
       pending.buffer = nullptr;
       pending.ready = nullptr;
     }
 ''')
+        # D3D9 has four indexed/non-indexed draw entry points. Sample after their CS draw,
+        # including the UP vertex/index buffer unbinds, and before any later draw or clear.
+        after_draw = "\n    if (unlikely(m_iosWaterCompositePending.sequence))\n      FinishWaterCompositeDraw(PrimitiveCount != 0);"
+        for anchor in (
+            '        cStartVertex, 0);\n    });',
+            '        cBaseVertexIndex, 0);\n    });',
+            '      ctx->bindVertexBuffer(0, DxvkBufferSlice(), 0);\n    });\n\n    m_state.vertexBuffers[0].vertexBuffer = nullptr;',
+            '      ctx->bindIndexBuffer(DxvkBufferSlice(), VK_INDEX_TYPE_UINT32);\n    });\n\n    m_state.vertexBuffers[0].vertexBuffer = nullptr;',
+        ):
+            draw_end = anchor.index('\n    });') + len('\n    });')
+            text = once(text, anchor, anchor[:draw_end] + after_draw + anchor[draw_end:])
         prepare = '  void D3D9DeviceEx::PrepareDraw(D3DPRIMITIVETYPE PrimitiveType) {'
         text = once(text, prepare, '''
   // Use padded offsets and rows for the Vulkan-to-Metal image copy. Only the
   // first texel in each row is written. CS owns its references after emission.
   static constexpr VkDeviceSize WaterReadbackStride = 256;
 
-  void D3D9DeviceEx::QueueWaterReadback(const Rc<DxvkImageView>& view,
+  bool D3D9DeviceEx::QueueWaterReadback(const Rc<DxvkImageView>& view,
       const skyrim_water::SampleView& sample, skyrim_water::CaptureTag tag,
       skyrim_water::PixelRole role, const skyrim_water::CompositeTint& tint) {
     using namespace skyrim_water;
@@ -573,33 +588,33 @@ def observe_water_draw(name: str, text: str) -> str:
     if (pending.buffer != nullptr || pending.tag.sequence == tag.sequence ||
         !(sample.flags & ViewBound) ||
         (sample.flags & (ViewShadow | ViewAliasesColor | ViewAliasesDepth)))
-      return;
+      return false;
 
     const auto& v = view->info();
     const auto& image = view->imageInfo();
     if (v.type != VK_IMAGE_VIEW_TYPE_2D || v.aspect != VK_IMAGE_ASPECT_COLOR_BIT ||
         v.numLayers != 1 || v.numLevels != 1 || image.sampleCount != VK_SAMPLE_COUNT_1_BIT ||
         !(image.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
-      return;
+      return false;
 
     const auto maps = [](VkComponentSwizzle actual, VkComponentSwizzle channel) {
       return actual == VK_COMPONENT_SWIZZLE_IDENTITY || actual == channel;
     };
-    if (!maps(v.swizzle.r, VK_COMPONENT_SWIZZLE_R)) return;
+    if (!maps(v.swizzle.r, VK_COMPONENT_SWIZZLE_R)) return false;
     PixelEncoding encoding;
     if (depthRole(role)) {
-      if (v.format != image.format) return;
+      if (v.format != image.format) return false;
       switch (v.format) {
         case VK_FORMAT_R32_SFLOAT:    encoding = PixelEncoding::R32Float; break;
         case VK_FORMAT_R16_SFLOAT:    encoding = PixelEncoding::R16Float; break;
         case VK_FORMAT_R8_UNORM:      encoding = PixelEncoding::R8Unorm; break;
         case VK_FORMAT_R8G8B8A8_UNORM: encoding = PixelEncoding::Rgba8Unorm; break;
         case VK_FORMAT_B8G8R8A8_UNORM: encoding = PixelEncoding::Bgra8Unorm; break;
-        default: return;
+        default: return false;
       }
     } else {
       if (!maps(v.swizzle.g, VK_COMPONENT_SWIZZLE_G) ||
-          !maps(v.swizzle.b, VK_COMPONENT_SWIZZLE_B)) return;
+          !maps(v.swizzle.b, VK_COMPONENT_SWIZZLE_B)) return false;
       // sRGB decoding preserves black/white and equality per channel.
       if (image.format == VK_FORMAT_R8G8B8A8_UNORM &&
           (v.format == image.format || v.format == VK_FORMAT_R8G8B8A8_SRGB))
@@ -607,10 +622,10 @@ def observe_water_draw(name: str, text: str) -> str:
       else if (image.format == VK_FORMAT_B8G8R8A8_UNORM &&
                (v.format == image.format || v.format == VK_FORMAT_B8G8R8A8_SRGB))
         encoding = PixelEncoding::Bgra8Unorm;
-      else return;
+      else return false;
     }
     PixelPoints points;
-    if (!pixelPoints(sample.width, sample.height, points)) return;
+    if (!pixelPoints(sample.width, sample.height, points)) return false;
 
     // Mark this request once even if the optional allocation fails.
     pending.tag = tag;
@@ -625,10 +640,10 @@ def observe_water_draw(name: str, text: str) -> str:
           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     } catch (const DxvkError&) {
       pending.ready = nullptr;
-      return;
+      return false;
     } catch (const std::bad_alloc&) {
       pending.ready = nullptr;
-      return;
+      return false;
     }
     pending.encoding = encoding;
     pending.format = sample.format;
@@ -643,6 +658,40 @@ def observe_water_draw(name: str, text: str) -> str:
       }
       ctx->signal(ready, 1);
     });
+    return true;
+  }
+
+  void D3D9DeviceEx::FinishWaterCompositeDraw(bool hasPrimitives) {
+    using namespace skyrim_water;
+    const auto tag = m_iosWaterCompositePending;
+    m_iosWaterCompositePending = {};
+    if (!hasPrimitives || !pixelsCurrent(tag)) return;
+    m_iosWaterCompositeAttempt = tag.sequence;
+
+    const auto& surface = m_state.renderTargets[0];
+    if (!(m_boundRTs & 1) || surface == nullptr) {
+      reportCompositeOutput(tag, CompositeOutput::NoTarget, {});
+      return;
+    }
+    const auto& view = surface->GetRenderTargetView(m_state.renderStates[D3DRS_SRGBWRITEENABLE]);
+    if (view == nullptr) {
+      reportCompositeOutput(tag, CompositeOutput::NoTarget, {});
+      return;
+    }
+    const auto size = view->mipLevelExtent(0);
+    const SampleView target{unsigned(view->info().format), view->info().aspect,
+                            size.width, size.height, ViewBound | ViewRenderTarget};
+    const auto& vp = m_state.viewport;
+    const auto& sc = m_state.scissorRect;
+    const bool scissored = m_state.renderStates[D3DRS_SCISSORTESTENABLE] &&
+        (sc.left > 0 || sc.top > 0 || sc.right < 0 || sc.bottom < 0 ||
+         uint32_t(sc.right) < size.width || uint32_t(sc.bottom) < size.height);
+    if (vp.X || vp.Y || vp.Width != size.width || vp.Height != size.height || scissored) {
+      reportCompositeOutput(tag, CompositeOutput::PartialViewport, target);
+      return;
+    }
+    const bool readback = QueueWaterReadback(view, target, tag, PixelRole::CompositeOutput, {});
+    reportCompositeOutput(tag, readback ? CompositeOutput::Queued : CompositeOutput::Unsupported, target);
   }
 
   void D3D9DeviceEx::PollWaterReadbacks() {
@@ -749,6 +798,8 @@ def observe_water_draw(name: str, text: str) -> str:
               sample(layout.depth, PixelRole::Depth);
               sample(layout.color, PixelRole::Refraction);
             } else {
+              if (self->m_iosWaterCompositeAttempt != tag.sequence)
+                self->m_iosWaterCompositePending = tag;
               const auto& c = layout.composite;
               const auto* controls = constants(c.controls);
               const auto* projection = constants(c.projection);

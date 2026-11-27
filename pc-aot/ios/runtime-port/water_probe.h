@@ -64,9 +64,9 @@ struct SampleView {
 struct ViewCount { SampleView view{}; unsigned draws = 0; };
 enum class PixelEncoding : uint8_t { R32Float, R16Float, R8Unorm, Rgba8Unorm, Bgra8Unorm };
 enum class PixelRole : unsigned {
-    Depth = 1, Refraction, CompositeDepth, CompositeSharp, CompositeBlurred
+    Depth = 1, Refraction, CompositeDepth, CompositeSharp, CompositeBlurred, CompositeOutput
 };
-constexpr unsigned PixelRoles = unsigned(PixelRole::CompositeBlurred);
+constexpr unsigned PixelRoles = unsigned(PixelRole::CompositeOutput);
 constexpr bool depthRole(PixelRole role) { return role == PixelRole::Depth || role == PixelRole::CompositeDepth; }
 struct PixelPoint { uint32_t x, y; };
 using PixelPoints = std::array<PixelPoint, 5>;
@@ -83,7 +83,9 @@ struct PixelSummary {
 };
 struct TintSummary {
     unsigned invalid = 0, clear = 0, partial = 0, nearFull = 0, sky = 0;
+    bool farNonpositive = false, reversed = false;
 };
+enum class CompositeOutput : unsigned { NoTarget = 1, PartialViewport, Unsupported, Queued };
 // Each texel starts four bytes after the previous one, regardless of its format.
 // Only counts leave the probe. For refraction compare RGB, ignoring alpha.
 bool summarizePixels(const uint8_t* bytes, size_t length, PixelEncoding encoding,
@@ -139,5 +141,6 @@ void draw(void* device, Layout* cached, const uint8_t* code, size_t length, Read
 bool pixelsCurrent(CaptureTag tag);
 void reportPixels(CaptureTag tag, PixelRole role, unsigned format, const PixelSummary& summary);
 void reportTint(CaptureTag tag, const TintSummary& summary);
+void reportCompositeOutput(CaptureTag tag, CompositeOutput status, const SampleView& target);
 }
 #endif

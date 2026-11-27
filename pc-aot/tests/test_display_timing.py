@@ -191,7 +191,7 @@ class DisplayTimingTests(unittest.TestCase):
 
 # Build 33 changes the pinned DXVK adapter and its water observer. Keep those
 # sources in the full cache key until a separate compatibility review.
-BASELINE_REUSE_IDENTITY = '956783564023b0d4e97d16e14bf7557802f397240229878074eadae77c888ab6'
+BASELINE_REUSE_IDENTITY = '268ebf7054efec27189f2c7ad7a0bed90f9c4b292eef9b7a59bbb2ab2cbdecea'
 
 if __name__ == '__main__':
     unittest.main()

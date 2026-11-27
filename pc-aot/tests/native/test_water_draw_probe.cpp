@@ -6,6 +6,7 @@
 #include <initializer_list>
 #include <limits>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace skyrim_water;
@@ -131,6 +132,8 @@ static void checkPixelReadback() {
     assert(summary.interior == 5 && !summary.varies); // alpha changes only
     assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::Bgra8Unorm, PixelRole::CompositeSharp, summary));
     assert(summary.interior == 5 && !summary.varies);
+    assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::Bgra8Unorm, PixelRole::CompositeOutput, summary));
+    assert(summary.interior == 5 && !summary.varies);
     assert(!summarizePixels(bytes.data(), bytes.size(), PixelEncoding::Bgra8Unorm, PixelRole(0), summary));
 
     bytes.assign(20, 0);
@@ -144,6 +147,15 @@ static void checkPixelReadback() {
     model = compositeTint(unguarded, projection, tint, distances);
     assert(summarizeTint(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, model, projected));
     assert(projected.nearFull == 5 && !projected.sky);
+    assert(!projected.farNonpositive && !projected.reversed);
+    model.from = -30.0f;
+    model.to = -5.0f;
+    assert(summarizeTint(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, model, projected));
+    assert(projected.nearFull == 5 && projected.farNonpositive && !projected.reversed);
+    std::swap(model.from, model.to);
+    assert(summarizeTint(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, model, projected));
+    assert(projected.clear == 5 && projected.reversed);
+    model = compositeTint(unguarded, projection, tint, distances);
     model.strength = 0.5f;
     assert(summarizeTint(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, model, projected));
     assert(projected.partial == 5 && !projected.nearFull);
@@ -305,6 +317,7 @@ int main(int argc, char**) {
                                       {"params4", 2, 3}, {"params5", 2, 4}});
         Layout compositeCache;
         draw(&device, &compositeCache, composite.data(), composite.size(), readCompositeInputs);
+        reportCompositeOutput(compositeTag, CompositeOutput::Queued, {44, 1, 31, 17, ViewBound | ViewRenderTarget});
         for (unsigned i = 0; i < Window::Frames; ++i) present(&device, &swap);
         assert(phase.load() == Phase::Idle);
         const auto tag = lastTag;
@@ -312,10 +325,12 @@ int main(int argc, char**) {
         PixelSummary summary{0, 0, 0, 0, 5, true};
         reportPixels(tag, PixelRole::Depth, 100, summary);
         reportPixels(compositeTag, PixelRole::CompositeDepth, 100, summary);
+        reportPixels(compositeTag, PixelRole::CompositeOutput, 44, {0, 0, 0, 0, 5, false});
         reportTint(compositeTag, {0, 1, 0, 4, 1});
         reportPixels(compositeTag, PixelRole::Refraction, 44, summary); // mismatched capture kind
         skyrim_water_probe_request(SKYRIM_WATER_PROBE_SURFACE);
         assert(!pixelsCurrent(tag));
         reportPixels(tag, PixelRole::Depth, 100, summary);  // a replaced capture must not report
+        reportCompositeOutput(compositeTag, CompositeOutput::NoTarget, {});
     }
 }

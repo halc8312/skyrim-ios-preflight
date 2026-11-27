@@ -282,6 +282,8 @@ bool summarizeTint(const uint8_t* bytes, size_t length, PixelEncoding encoding,
     if (!model.valid || !bytes || length < PixelCount * PixelStride || !validPixelEncoding(encoding) ||
         !(model.strength >= 0.0f && model.strength <= 1.0f))
         return false;
+    result.farNonpositive = model.to <= 0.0f;
+    result.reversed = model.to < model.from;
     for (size_t i = 0; i < PixelCount; ++i) {
         const float depth = pixelRed(bytes + PixelStride * i, encoding);
         if (!std::isfinite(depth) || depth < 0.0f || depth > 1.0f) { ++result.invalid; continue; }
@@ -378,7 +380,7 @@ void Window::draw(void* device, Layout* cached, const uint8_t* code, size_t leng
         ++compositeTint[unsigned(inputs.composite.tint)];
         ++compositeSkyGuard[unsigned(inputs.composite.skyGuard)];
         firstRole = unsigned(PixelRole::CompositeDepth) - 1;
-        endRole = PixelRoles;
+        endRole = unsigned(PixelRole::CompositeBlurred);
     }
     for (size_t role = firstRole; role < endRole; ++role) {
         auto& rows = sampleViews[role];
@@ -448,8 +450,17 @@ void reportTint(CaptureTag tag, const TintSummary& s) {
     if (tag.family != Family::ImageBlur) return;
     std::lock_guard<std::mutex> guard(windowLock);
     if (!window.acceptsPixels(tag, nowMs())) return;
-    std::fprintf(stderr, "IOS_WATER_TINT schema=1 scene=%u draw=%u invalid=%u clear=%u partial=%u near_full=%u sky=%u\n",
-                 tag.scene, tag.draw, s.invalid, s.clear, s.partial, s.nearFull, s.sky);
+    std::fprintf(stderr, "IOS_WATER_TINT schema=1 scene=%u draw=%u invalid=%u clear=%u partial=%u "
+                 "near_full=%u sky=%u far_nonpositive=%u reversed=%u\n",
+                 tag.scene, tag.draw, s.invalid, s.clear, s.partial, s.nearFull, s.sky,
+                 unsigned(s.farNonpositive), unsigned(s.reversed));
+}
+void reportCompositeOutput(CaptureTag tag, CompositeOutput status, const SampleView& target) {
+    if (tag.family != Family::ImageBlur) return;
+    std::lock_guard<std::mutex> guard(windowLock);
+    if (!window.acceptsPixels(tag, nowMs())) return;
+    std::fprintf(stderr, "IOS_WATER_OUTPUT schema=1 scene=%u draw=%u status=%u format=%u width=%u height=%u\n",
+                 tag.scene, tag.draw, unsigned(status), target.format, target.width, target.height);
 }
 } // namespace skyrim_water
 
