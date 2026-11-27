@@ -470,7 +470,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self.app.buttons[@"English"] tap];
 }
 
-- (void)checkNativeMenuControls {
+- (void)testNativeMenuControls {
     NSArray *previous = self.app.launchArguments;
     self.app.launchArguments = [previous arrayByAddingObject:@"-TestNativeMenuOverlay"];
     [self.app launch];
@@ -479,6 +479,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCUIElement *move = [[self.app descendantsMatchingType:XCUIElementTypeAny] objectForKeyedSubscript:@"skyrim-pad-18"];
     XCUIElement *save = self.app.buttons[@"skyrim-pad-save"];
     XCUIElement *input = self.app.staticTexts[@"native-menu-input"];
+    XCUIElement *touch = self.app.staticTexts[@"native-menu-touch"];
     XCTAssertTrue([toggle waitForExistenceWithTimeout:8]);
     XCTAssertTrue(canHit(settings));
     XCTAssertFalse(move.exists);
@@ -503,9 +504,9 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
         [self.app coordinateWithNormalizedOffset:CGVectorMake(.17,.65)]];
     XCTAssertEqualObjects(input.label, @"0");
     [middle pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.5,.24)]];
-    XCTAssertEqualObjects(input.label, @"2");  // Down one entry, no activation.
+    XCTAssertEqualObjects(input.label, @"2", @"%@", touch.label);  // Down one entry, no activation.
     [middle pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.30,.5)]];
-    XCTAssertEqualObjects(input.label, @"512");  // RB selects the next column with stock SkyUI bindings.
+    XCTAssertEqualObjects(input.label, @"512", @"%@", touch.label);  // RB selects the stock SkyUI column.
     [self capture:@"native-menu-compact"];
     [toggle tap];
     XCTAssertTrue(canHit(move));
@@ -518,7 +519,6 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 }
 
 - (void)testActualSettingsModScreens {
-    [self checkNativeMenuControls];
     [self.app launch];
     XCTAssertTrue([self.app.tables[@"mod-translation-bridge-checked"] waitForExistenceWithTimeout:10]);
     [self capture:@"settings"];

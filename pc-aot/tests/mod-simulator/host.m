@@ -29,27 +29,26 @@ static BOOL fixtureListMenu;
 SkyrimTouchMenu skyrim_loading_menu_touch_state(void) {
     return fixtureListMenu ? (SkyrimTouchMenu){.menus = 1u << 2, .list_navigation = true} : (SkyrimTouchMenu){0};
 }
-@interface SKOverlay : UIView @end
-@interface SKFixtureMenuWindow : UIWindow
-@property(nonatomic, strong) UILabel *inputReadout;
+@interface SKOverlay : UIView
+@property(nonatomic, readonly) UITouch *lookFinger;
 @end
-@implementation SKFixtureMenuWindow
-- (void)sendEvent:(UIEvent *)event {
-    BOOL ended = NO;
-    for (UITouch *touch in event.allTouches) {
-        if (touch.phase != UITouchPhaseBegan && touch.phase != UITouchPhaseEnded &&
-            touch.phase != UITouchPhaseCancelled) continue;
-        CGPoint p = [touch locationInView:self];
-        fprintf(stderr, "MOD_MENU_FIXTURE touch=%ld point=%.1f,%.1f view=%s\n", (long)touch.phase,
-                p.x, p.y, touch.view ? NSStringFromClass(touch.view.class).UTF8String : "none");
-        ended |= touch.phase == UITouchPhaseEnded;
-    }
-    [super sendEvent:event];
-    if (ended) {
-        unsigned buttons = (unsigned)skyrim_mobile_pad().buttons;
-        self.inputReadout.text = [NSString stringWithFormat:@"%u", buttons];
-        fprintf(stderr, "MOD_MENU_FIXTURE buttons=%u\n", buttons);
-    }
+@interface SKFixtureMenuOverlay : SKOverlay
+@property(nonatomic, strong) UILabel *inputReadout;
+@property(nonatomic, strong) UILabel *touchReadout;
+@end
+@implementation SKFixtureMenuOverlay
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesBegan:touches withEvent:event];
+    CGPoint p = [touches.anyObject locationInView:self];
+    self.touchReadout.text = [NSString stringWithFormat:@"Start %.0f,%.0f in %.0f×%.0f tracking=%d",
+        p.x, p.y, self.bounds.size.width, self.bounds.size.height, self.lookFinger != nil];
+}
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    CGPoint p = [touches.anyObject locationInView:self];
+    BOOL tracking = self.lookFinger != nil;
+    [super touchesEnded:touches withEvent:event];
+    self.inputReadout.text = [NSString stringWithFormat:@"%u", (unsigned)skyrim_mobile_pad().buttons];
+    self.touchReadout.text = [self.touchReadout.text stringByAppendingFormat:@" · End %.0f,%.0f tracking=%d", p.x, p.y, tracking];
 }
 @end
 
@@ -153,11 +152,10 @@ static void copyFixture(NSURL *source, NSURL *destination) {
     if ([NSProcessInfo.processInfo.arguments containsObject:@"-TestNativeMenuOverlay"]) {
         fixtureListMenu = YES;
         skyrim_benchmark_render_size(600, 500);
-        SKFixtureMenuWindow *window = [[SKFixtureMenuWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
-        self.window = window;
+        self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
         UIViewController *root = [UIViewController new];
         self.window.rootViewController = root;
-        UIView *pad = [[SKOverlay alloc] initWithFrame:root.view.bounds];
+        SKFixtureMenuOverlay *pad = [[SKFixtureMenuOverlay alloc] initWithFrame:root.view.bounds];
         /* No guest or lifecycle/checkpoint services run in this scenario. */
         [NSNotificationCenter.defaultCenter removeObserver:pad];
         [root.view addSubview:pad];
@@ -168,7 +166,15 @@ static void copyFixture(NSURL *source, NSURL *destination) {
         readout.text = @"0";
         readout.accessibilityIdentifier = @"native-menu-input";
         [root.view addSubview:readout];
-        window.inputReadout = readout;
+        pad.inputReadout = readout;
+        UILabel *touch = [[UILabel alloc] initWithFrame:CGRectMake(90, 40, CGRectGetWidth(root.view.bounds)-180, 24)];
+        touch.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        touch.textAlignment = NSTextAlignmentCenter;
+        touch.textColor = UIColor.whiteColor;
+        touch.text = @"No touch delivered";
+        touch.accessibilityIdentifier = @"native-menu-touch";
+        [root.view addSubview:touch];
+        pad.touchReadout = touch;
         [self.window makeKeyAndVisible];
         return;
     }

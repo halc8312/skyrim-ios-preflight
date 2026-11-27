@@ -18,6 +18,10 @@ case "$mode" in
     dll-probe) method=testInstalledModDllDiagnostics; export SKYRIM_IOS_SKSE_DLL_PROBE=1 ;;
     *) echo "Unknown simulator test mode: $mode" >&2; exit 2 ;;
 esac
+tests=("-only-testing:ModScreensUITests/ModScreensTests/$method")
+if [[ "$mode" == screens ]]; then
+    tests+=("-only-testing:ModScreensUITests/ModScreensTests/testNativeMenuControls")
+fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PREP="$ROOT/tests/mod-simulator/prepare.py"
 mkdir -p "$1"
@@ -48,7 +52,7 @@ xcodebuild -project "$RUN/work/ModScreens.xcodeproj" -scheme ModScreens \
     -destination "platform=iOS Simulator,id=$UDID" -destination-timeout 90 \
     -derivedDataPath "$RUN/DerivedData" -resultBundlePath "$result" \
     -parallel-testing-enabled NO -test-timeouts-enabled YES \
-    "-only-testing:ModScreensUITests/ModScreensTests/$method" \
+    "${tests[@]}" \
     -default-test-execution-time-allowance "$allowance" -maximum-test-execution-time-allowance "$allowance" \
     test || status=$?
 echo "xcodebuild test exited with status $status."
