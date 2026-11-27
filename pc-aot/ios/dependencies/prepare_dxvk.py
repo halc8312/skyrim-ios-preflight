@@ -536,7 +536,7 @@ def observe_water_draw(name: str, text: str) -> str:
       if (unlikely(skyrim_water::phase.load(std::memory_order_relaxed) != skyrim_water::Phase::Idle))
         skyrim_water::present(m_parent, this);''')
     if name.endswith('d3d9_device.cpp'):
-        entry = '  void D3D9DeviceEx::PrepareDraw(D3DPRIMITIVETYPE PrimitiveType) {'
+        entry = '      UndirtyTextures(usedDirtyTextures);'
         return '#include "water_probe.h"\n' + once(text, entry, entry + '''
     if (unlikely(skyrim_water::phase.load(std::memory_order_relaxed) == skyrim_water::Phase::Capturing)
         && PrimitiveType != D3DPT_FORCE_DWORD) {
@@ -564,6 +564,40 @@ def observe_water_draw(name: str, text: str) -> str:
             self->m_state.psConsts.fConsts[layout.params].data);
           if (layout.camera >= 0)
             inputs.camera = skyrim_water::classifyCamera(self->m_state.psConsts.fConsts[layout.camera].data);
+          if (layout.family == skyrim_water::Family::WaterFog) {
+            const auto describe = [self](int slot) {
+              using namespace skyrim_water;
+              SampleView result;
+              if (slot < 0) return result;
+              const auto* texture = GetCommonTexture(self->m_state.textures[slot]);
+              if (!texture) return result;
+              const DWORD usage = texture->Desc()->Usage;
+              const bool srgb = self->m_state.samplerStates[slot][D3DSAMP_SRGBTEXTURE] & 1;
+              if (usage & D3DUSAGE_RENDERTARGET) result.flags |= ViewRenderTarget;
+              if (usage & D3DUSAGE_DEPTHSTENCIL) result.flags |= ViewDepthStencil;
+              if (srgb) result.flags |= ViewSrgbRequested;
+              if (texture->IsShadow()) result.flags |= ViewShadow;
+              // Match the view selected by D3D9's BindTexture, including its sRGB choice.
+              const auto& view = texture->GetSampleView(srgb);
+              if (view == nullptr || !(self->m_activeTextures & (1u << slot))) return result;
+              result.flags |= ViewBound;
+              const auto size = view->mipLevelExtent(0);
+              result.format = unsigned(view->info().format);
+              result.aspect = view->info().aspect;
+              result.width = size.width;
+              result.height = size.height;
+              const auto* image = view->image().ptr();
+              for (const auto& target : self->m_state.renderTargets)
+                if (target != nullptr && target->GetCommonTexture()->GetImage().ptr() == image)
+                  result.flags |= ViewAliasesColor;
+              const auto& depth = self->m_state.depthStencil;
+              if (depth != nullptr && depth->GetCommonTexture()->GetImage().ptr() == image)
+                result.flags |= ViewAliasesDepth;
+              return result;
+            };
+            inputs.views[0] = describe(layout.depth);
+            inputs.views[1] = describe(layout.color);
+          }
           return inputs;
         });
     }

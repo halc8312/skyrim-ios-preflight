@@ -93,6 +93,14 @@ void report(const Window& w, End end) {
         const auto& c = w.cameraCounts;
         std::fprintf(stderr, "IOS_WATER_CAMERA schema=1 scene=%u count=%u endpoints=%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
                      w.scene, w.groups[0].matches, c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8]);
+        for (size_t role = 0; role < w.sampleViews.size(); ++role)
+            for (const auto& row : w.sampleViews[role]) {
+                if (!row.draws) break;
+                const auto& v = row.view;
+                std::fprintf(stderr, "IOS_WATER_VIEW schema=1 scene=%u role=%u format=%u aspect=%u "
+                             "width=%u height=%u flags=%u count=%u\n", w.scene, unsigned(role + 1),
+                             v.format, v.aspect, v.width, v.height, v.flags, row.draws);
+            }
     }
     std::fprintf(stderr, "IOS_WATER_SUMMARY schema=1 scene=%u end=%u frames=%u checked=%u "
                  "fixed=%u unknown=%u other=%u limited=%u\n", w.scene, unsigned(end), w.frames,
@@ -203,7 +211,20 @@ void Window::draw(void* device, Layout* cached, const uint8_t* code, size_t leng
     ++group.color[color < 2 ? color : 2];
     ++group.params[unsigned(inputs.params)];
     group.multisampled += inputs.depthMultisampled;
-    if (cached->family == Family::WaterFog) ++cameraCounts[unsigned(inputs.camera)];
+    if (cached->family == Family::WaterFog) {
+        ++cameraCounts[unsigned(inputs.camera)];
+        for (size_t role = 0; role < inputs.views.size(); ++role) {
+            auto& rows = sampleViews[role];
+            auto row = rows.begin();
+            while (row != rows.end() && row->draws && !(row->view == inputs.views[role])) ++row;
+            if (row == rows.end()) {
+                limited = true;
+                continue;
+            }
+            row->view = inputs.views[role];
+            ++row->draws;
+        }
+    }
 }
 
 std::atomic<Phase> phase{Phase::Idle};

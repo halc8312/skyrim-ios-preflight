@@ -60,7 +60,9 @@ static Inputs readInputs(void*, const Layout& kind) {
     ++reads;
     assert(kind.family == Family::WaterFog && kind.depth == 11 && kind.color == 8 && kind.params == 62 && kind.camera == 93);
     const float camera[4] = {4.0f, 0.0f, 3.0f, 0.0f};
-    return {Binding::ColorUsage, Binding::Unbound, false, Params::FiniteNonzero, classifyCamera(camera)};
+    Inputs inputs{Binding::ColorUsage, Binding::Unbound, false, Params::FiniteNonzero, classifyCamera(camera)};
+    inputs.views[0] = {100, 1, 1564, 720, ViewBound | ViewRenderTarget};
+    return inputs;
 }
 int main(int argc, char**) {
     const auto water = pixel({{"DepthSampler", 3, 11}, {"FogParam", 2, 62},
@@ -156,6 +158,8 @@ int main(int argc, char**) {
     assert(over.family == Family::Unparsed && window.limited && window.unknown == 2 && window.other == 1);
     assert(window.groups[0].depth[2] == 2 && window.groups[0].color[1] == 2 && window.groups[0].params[2] == 2);
     assert(window.cameraCounts[unsigned(Camera::Decreasing)] == 2);
+    assert(window.sampleViews[0][0].draws == 2 && window.sampleViews[0][0].view.format == 100);
+    assert(window.sampleViews[1][0].draws == 2 && !window.sampleViews[1][0].view.flags);
     assert(window.present(&device, &second, 4020) == End::None && window.frames == 0);
     assert(window.present(&device, &swap, 4021) == End::None && window.frames == 1);
     assert(window.present(&device, &swap, 4022) == End::None);
@@ -164,6 +168,7 @@ int main(int argc, char**) {
     assert(window.frames == 3 && window.checked == 6 && reads == 2);
     window.request(SKYRIM_WATER_PROBE_SUBMERGED, 5000);
     assert(window.checked == 0 && !window.limited && window.groups[0].matches == 0);
+    assert(window.sampleViews[0][0].draws == 0 && window.sampleViews[1][0].draws == 0);
     assert(window.present(&device, &swap, 25000) == End::Expired && window.frames == 0);
     window.request(SKYRIM_WATER_PROBE_SURFACE, 30000);
     window.present(&device, &swap, 34000);

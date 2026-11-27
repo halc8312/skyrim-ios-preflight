@@ -32,11 +32,24 @@ enum class Camera : uint8_t {
     CrossesZero, Increasing, Decreasing
 };
 Camera classifyCamera(const float* values);
+enum ViewFlags : unsigned {
+    ViewBound = 1, ViewRenderTarget = 2, ViewDepthStencil = 4,
+    ViewSrgbRequested = 8, ViewShadow = 16, ViewAliasesColor = 32, ViewAliasesDepth = 64
+};
+struct SampleView {
+    unsigned format = 0, aspect = 0, width = 0, height = 0, flags = 0;
+    bool operator==(const SampleView& other) const {
+        return format == other.format && aspect == other.aspect && width == other.width &&
+               height == other.height && flags == other.flags;
+    }
+};
+struct ViewCount { SampleView view{}; unsigned draws = 0; };
 struct Inputs {
     Binding depth = Binding::Undeclared, color = Binding::Undeclared;
     bool depthMultisampled = false;
     Params params = Params::Undeclared;
     Camera camera = Camera::Unavailable;
+    std::array<SampleView, 2> views{}; // WaterFog depth and refraction, respectively
 };
 using ReadInputs = Inputs (*)(void* device, const Layout& layout);
 struct Counts {
@@ -56,6 +69,7 @@ struct Window {
     bool limited = false;
     std::array<Counts, 3> groups{};
     std::array<unsigned, 9> cameraCounts{};
+    std::array<std::array<ViewCount, 8>, 2> sampleViews{};
     void request(unsigned label, uint64_t nowMs);
     End expire(uint64_t nowMs);
     End present(void* device, const void* chain, uint64_t nowMs);

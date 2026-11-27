@@ -58,6 +58,8 @@ Two Linux lavapipe runs used the pinned DXVK observer and an authored FXC pixel 
 
 `IOS_WATER_CAMERA` describes the depth reconstruction used by twelve stock LE water pixel shaders. All twelve sample the red depth channel and take the reciprocal of a linear function of depth using two camera-vector components. The observer recognizes the reflected camera float4 and classifies the denominator at depth 0 and 1. In order the counts mean unavailable, nonfinite, uniformly zero, uniformly nonzero, zero at depth 0 only, zero at depth 1 only, crosses zero in the interior, increasing, and decreasing. Missing or differently typed camera metadata leaves a draw unavailable. The report contains no register values. A zero at a single endpoint can be intentional with an infinite projection limit. A MOD may use another projection even when its uniform names match. Compare above and below at the same location before drawing conclusions about the actual sampled depth.
 
+`IOS_WATER_VIEW` groups WaterFog samples by the Vulkan view format, aspect and base level size selected after D3D9 updates its texture bindings. Role 1 is depth and role 2 is refraction. Flags are additive: 1 has a sampled view, 2 is a D3D9 render target, 4 is a depth/stencil target, 8 requests sRGB, 16 is classified as a shadow texture, 32 aliases a current color attachment and 64 aliases the current depth attachment. Fields with no selected view are zero except known flags. Counts record repeated draws, up to eight distinct view signatures per role. The probe describes the selected view and never reads texture pixels.
+
 ## Reproduce the shader checks
 
 Microsoft FXC in the Windows SDK can regenerate all 45 embedded shader DWORDs from `two_tone.hlsl`.

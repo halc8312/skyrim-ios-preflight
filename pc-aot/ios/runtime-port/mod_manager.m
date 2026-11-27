@@ -961,8 +961,8 @@ BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed, NSString *game_view) {
     }
 #ifdef SKYRIM_IOS_SKYUI_DENSITY
     const enum SkyrimSkyUIDensity density = SkyUIDensityPreference(profile);
-    const BOOL densityReady = density != SKYUI_STANDARD && enabled && needs.status == SKYRIM_SKYUI_REQ_OK &&
-                              ReviewedSkyUIArchive(game_view);
+    const BOOL densityReady = density != SKYUI_STANDARD && enabled && skyrim_loading_menu_app_ready() &&
+                              needs.status == SKYRIM_SKYUI_REQ_OK && ReviewedSkyUIArchive(game_view);
     skyrim_skyui_density_configure(densityReady ? density : SKYUI_STANDARD);
     if (densityReady) launchSetup[@"skyuiDensity"] = @(density);
     if (density != SKYUI_STANDARD && enabled && !densityReady && !launchNotice)
