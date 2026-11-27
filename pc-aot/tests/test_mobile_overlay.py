@@ -19,7 +19,13 @@ class NativeOverlayTests(unittest.TestCase):
 
     def test_actual_input_replaces_only_legacy_virtual_merge(self):
         source = self.sources["input.c"]
-        self.assertIn("SkyrimMobilePad native = skyrim_mobile_pad();", source)
+        override, normal = source.split("if (skyrim_benchmark_active() &&", 1)[1].split("} else {", 1)
+        self.assertIn("skyrim_benchmark_pad(skyrim_mobile_now(), &native)", override)
+        self.assertIn("b = native.buttons; lt = native.lt; rt = native.rt;", override)
+        self.assertIn("lx = native.lx; ly = native.ly; rx = native.rx; ry = native.ry;", override)
+        self.assertNotIn("skip_tap()", override)
+        self.assertIn("native = skyrim_mobile_pad();", normal)
+        self.assertIn("b |= native.buttons | skip_tap();", normal)
         self.assertNotIn("b |= g_virt.buttons | skip_tap();", source)
         for operation in ("SDL_GameControllerGetAxis", "SDL_GameControllerGetButton", "M16(g + 12)", "M16(g + 14)"):
             self.assertIn(operation, source)
