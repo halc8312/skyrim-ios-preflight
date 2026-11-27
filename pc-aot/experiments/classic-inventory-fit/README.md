@@ -6,6 +6,8 @@ This stage replaces NoBorder with ShowAll on wider displays for the reviewed Bar
 
 The hosted test executes the staged call sequence and the original viewport setter with an authored MovieView. It checks the order of the scale, visible frame, safe area and viewport calls, the 16:9 and wide paths, and the original dimensions arriving at the viewport setter. The scale-only cases also cover unrelated menus, other scale modes, invalid dimensions and the disabled path. The MovieView behavior, SWF layout and touch result still need an iPhone comparison.
 
+When Detailed diagnostics is active at launch, `IOS_MENU_VIEWPORT` records the actual mode and alignment, buffer dimensions and viewport, visible frame and safe rectangle for each opened Inventory or Magic movie. The visible frame matches the Classic getter's conversion from twips to stage pixels. The viewport dimensions and coordinates come from the game framebuffer. The safe rectangle retains its original getter units. This sampling shares the existing menu callback and needs no guest rebuild. It keeps the row tap setting independent and only inspects the reviewed Classic MovieView on the menu's owner thread. The record contains no SWF paths, item text or guest addresses.
+
 ```sh
 SKYRIM_TEST_OWNED_CLASSIC_LIFT=/path/to/generation \
   python3 -B -m unittest -v test_inventory_fit

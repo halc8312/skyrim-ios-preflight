@@ -813,7 +813,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     if (plan->groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) skyrim_save_app_fill(&table);
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) {
         NSDictionary *touchSettings = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
-        skyrim_menu_focus_app_configure([touchSettings[@"menuFocus"] boolValue]);
+        skyrim_menu_focus_app_configure([touchSettings[@"menuFocus"] boolValue], skyrim_mobile_verbose());
 #ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
         if (heelTrialRequested) {
             const bool selected = (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) != 0;

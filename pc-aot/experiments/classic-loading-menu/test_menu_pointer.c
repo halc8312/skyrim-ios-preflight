@@ -3,6 +3,8 @@
 #include "lift_prelude.h"
 #include "mobile_core.h"
 #include "menu_focus.h"
+#include "mod_menu_focus_host.h"
+#include "PcGuestMenuFocus.h"
 
 #include <assert.h>
 #include <math.h>
@@ -38,6 +40,16 @@ static _Thread_local CPU *thread_cpu;
 static uint64_t now_ns;
 static unsigned delivered_focus, advances;
 static bool heap_in_use;
+static PcGuestMenuFocusAdvance app_advance;
+
+bool pc_guest_menu_focus_available(void) { return true; }
+bool pc_guest_attach_menu_focus(PcGuestMenuFocusAdvance callback) {
+    assert(!app_advance && callback);
+    app_advance = callback;
+    return true;
+}
+CPU *rt_current_cpu(void) { return thread_cpu; }
+uint64_t skyrim_perf_now_ns(void) { return now_ns; }
 
 void f_A62020(CPU *cpu);
 void f_859A70(CPU *cpu);
@@ -331,6 +343,61 @@ static void test_immediate_focus(void) {
     thread_cpu = NULL;
 }
 
+static void test_viewport_observation(void) {
+    enum { OBSERVED_VIEW = 0x14900, CLASSIC_VIEW_VTABLE = 0x11032c8 };
+    const uint32_t previous_view = M32(INVENTORY + 8);
+    M32(INVENTORY + 8) = OBSERVED_VIEW;
+    ClassicMenuFocus observed = CLASSIC_MENU_FOCUS_INIT;
+    ClassicMenuViewport sample;
+    CPU cpu = {0}, other = {0};
+    const ClassicMenuIdentity inventory = {CLASSIC_MENU_INVENTORY, 0x10e5b7c, false};
+    const int32_t viewport[] = {1564, 720, 0, 0, 1564, 720};
+    const int32_t visible[] = {-142, 0, 1422, 720}, safe[] = {15, 15, 1549, 705};
+    M32(OBSERVED_VIEW + 0x88) = 1;
+    M32(OBSERVED_VIEW + 0x8c) = 0;
+    for (unsigned i = 0; i < 6; ++i) M32(OBSERVED_VIEW + 0x40 + 4 * i) = (uint32_t)viewport[i];
+    for (unsigned i = 0; i < 4; ++i) {
+        MF32(OBSERVED_VIEW + 0x90 + 4 * i) = (float)(20 * visible[i]);
+        MF32(OBSERVED_VIEW + 0xa0 + 4 * i) = (float)safe[i];
+    }
+    classic_menu_focus_event(&observed, inventory, true, &cpu);
+    assert(!classic_menu_focus_viewport(&observed, &cpu, &cpu, INVENTORY, OBSERVED_VIEW, &sample));
+    assert(!classic_menu_focus_advance(&observed, &cpu, &cpu, INVENTORY, OBSERVED_VIEW, now_ns));
+    assert(!classic_menu_focus_viewport(&observed, &cpu, &cpu, INVENTORY, OBSERVED_VIEW, &sample));
+    M32(OBSERVED_VIEW) = CLASSIC_VIEW_VTABLE;
+    assert(!classic_menu_focus_viewport(&observed, &cpu, &other, INVENTORY, OBSERVED_VIEW, &sample));
+    assert(!classic_menu_focus_viewport(&observed, &cpu, &cpu, INVENTORY, MAGIC_VIEW, &sample));
+    MF32(OBSERVED_VIEW + 0x94) = NAN;
+    assert(!classic_menu_focus_viewport(&observed, &cpu, &cpu, INVENTORY, OBSERVED_VIEW, &sample));
+    MF32(OBSERVED_VIEW + 0x94) = 0;
+    unsigned char before[0xb0];
+    CPU saved_cpu;
+    memcpy(before, MEM + OBSERVED_VIEW, sizeof before);
+    memcpy(&saved_cpu, &cpu, sizeof cpu);
+    assert(classic_menu_focus_viewport(&observed, &cpu, &cpu, INVENTORY, OBSERVED_VIEW, &sample));
+    assert(sample.menu == 1 && sample.mode == 1 && sample.alignment == 0);
+    assert(!memcmp(sample.viewport, viewport, sizeof viewport));
+    assert(!memcmp(sample.visible, visible, sizeof visible) && !memcmp(sample.safe, safe, sizeof safe));
+    assert(!memcmp(before, MEM + OBSERVED_VIEW, sizeof before) && !memcmp(&cpu, &saved_cpu, sizeof cpu));
+    assert(!classic_menu_focus_viewport(&observed, &cpu, &cpu, INVENTORY, OBSERVED_VIEW, &sample));
+    classic_menu_focus_event(&observed, inventory, false, &cpu);
+    classic_menu_focus_event(&observed, inventory, true, &cpu);
+    assert(!classic_menu_focus_advance(&observed, &cpu, &cpu, INVENTORY, OBSERVED_VIEW, now_ns));
+    assert(classic_menu_focus_viewport(&observed, &cpu, &cpu, INVENTORY, OBSERVED_VIEW, &sample));
+    assert(!pthread_mutex_destroy(&observed.lock));
+
+    skyrim_menu_focus_app_configure(false, true);
+    assert(skyrim_menu_focus_app_available() && app_advance);
+    thread_cpu = &cpu;
+    skyrim_menu_focus_app_event(inventory, true);
+    app_advance(&cpu, INVENTORY, OBSERVED_VIEW);
+    assert(!skyrim_menu_focus_touch_token() && !skyrim_menu_focus_touch_post(2, 0.5, 0.5));
+    app_advance(&cpu, INVENTORY, OBSERVED_VIEW);
+    skyrim_menu_focus_app_event(inventory, false);
+    thread_cpu = NULL;
+    M32(INVENTORY + 8) = previous_view;
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2);
     assert(gm_reserve(&guest, NULL));
@@ -378,6 +445,7 @@ int main(int argc, char **argv) {
     route((uint32_t[]){MAGIC}, 1);
     assert(delivery_count == 1 && deliveries[0] == CURSOR_VIEW);
     test_immediate_focus();
+    test_viewport_observation();
     assert(gm_release(&guest, NULL));
 
     /* A Classic input tick still dispatches on its existing CPU with no pending hardware event. */

@@ -82,6 +82,8 @@ class DiagnosticUploadTests(unittest.TestCase):
         schema = module.Schema()
         recovery = ("IOS_DIAG_RECOVERY schema=1 build=28 guest_entry=1 graphics=0 reason=2 "
                     "target=00401234 caller=00405678")
+        viewport = ("IOS_MENU_VIEWPORT schema=1 menu=1 mode=1 align=0 viewport=1564,720,0,0,1564,720 "
+                    "visible=-142,0,1422,720 safe=15,15,1549,705")
         for line in (recovery, "IOS_RENDER_TRIAL requested=720 width=1564 height=720",
                      "IOS_RENDER_TRIAL requested=720 width=0 height=0",
                      "IOS_RENDER_CHOICE schema=1 request=720 width=1564 height=720 recovery=0",
@@ -90,12 +92,14 @@ class DiagnosticUploadTests(unittest.TestCase):
                      "IOS_RENDER_SURFACE schema=1 measured=1 width=1564 height=720 result=00000000",
                      "IOS_RENDER_CAPTURE schema=1 active=1 render=1564x720 drawable=2868x1320",
                      "IOS_RENDER_CAPTURE schema=2 active=0 render=1564x720 drawable=2868x1320 window=2868x1320 viewport=2868x1320",
-                     "IOS_WATER_PREFS schema=1 dof=-1 samples=4",
+                     "IOS_WATER_PREFS schema=1 dof=-1 samples=4", viewport,
                      "IOS_STAGE render-trial-booked monotonic=237.101112131",
                      "IOS_RENDER_BUFFER width=1564 height=720",
                      "IOS_RENDER_BUFFER width=16384 height=1"):
             schema.line(line)
-        bad = (recovery.replace("build=28", "build=29"), recovery + " /private/game",
+        bad = (viewport + " movie_path=inventory.swf", viewport.replace("menu=1", "menu=3"),
+               viewport.replace("mode=1", "mode=4"), viewport.replace("-142", "-123456"),
+               recovery.replace("build=28", "build=29"), recovery + " /private/game",
                recovery.replace("reason=2", "reason=1"), recovery.replace("00401234", "deadbeef"),
                recovery.replace("00405678", "0106a31a"),
                "IOS_RENDER_TRIAL requested=721 width=1564 height=720",

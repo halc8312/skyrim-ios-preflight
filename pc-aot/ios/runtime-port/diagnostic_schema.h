@@ -137,6 +137,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_CHARGEN_MENU", "^IOS_CHARGEN_MENU opening=[01] ts_ns=[0-9]{1,20}$") \
     X("IOS_INVENTORY_FIT", "^IOS_INVENTORY_FIT armed=[01]$") \
     X("IOS_MENU_CONTROLS", "^IOS_MENU_CONTROLS schema=1 menus=[0-9]{1,6} compact=[01] swipe=[01] clear_x=[0-9]{1,5},[0-9]{1,5} rail_y=[0-9]{1,5},[0-9]{1,5}$") \
+    X("IOS_MENU_VIEWPORT", "^IOS_MENU_VIEWPORT schema=1 menu=[12] mode=[0-3] align=[0-8] viewport=[0-9]{1,5},[0-9]{1,5},-?[0-9]{1,5},-?[0-9]{1,5},[0-9]{1,5},[0-9]{1,5} visible=-?[0-9]{1,5}(?:,-?[0-9]{1,5}){3} safe=-?[0-9]{1,5}(?:,-?[0-9]{1,5}){3}$") \
     X("IOS_SAFETY_LOAD", "^IOS_SAFETY_LOAD accepted=[0-9]{1,20}$") \
     X("IOS_CLASSIC_FRESH_SAVE", "^IOS_CLASSIC_FRESH_SAVE published=1$") \
     X("IOS_CLASSIC_SAVE_RECORDS", "^IOS_CLASSIC_SAVE_RECORDS captured=[01] mods=(?:[1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]) records=(?:[0-9]|1[0-6])$") \

@@ -2,6 +2,7 @@
 #include "menu_focus.h"
 #include "lift_prelude.h"
 
+#include <math.h>
 #include <string.h>
 
 /* The Classic runtime's thiscall wrapper restores the entire caller CPU on return. */
@@ -11,6 +12,7 @@ extern void gfree(uint32_t address);
 
 enum {
     INVENTORY_VTABLE = 0x10e5b90, MAGIC_VTABLE = 0x10e6594,
+    CLASSIC_MOVIE_VTABLE = 0x11032c8,
     INVENTORY_MESSAGE = 0x86ba80, MAGIC_MESSAGE = 0x875e40,
     CURSOR_SINGLETON = 0x1b2e974, STRING_HOLDER = 0x12e35e0,
     EXPIRY_NS = 250000000, MESSAGE_BYTES = 52
@@ -18,6 +20,18 @@ enum {
 
 static bool span(uint32_t address, uint32_t size) {
     return address >= 0x10000u && address <= UINT32_MAX - (size - 1u);
+}
+
+static ClassicMenu menu_view(uint32_t menu, uint32_t view) {
+    if (!span(menu, 12) || !span(view, 4) || M32(menu + 8) != view) return CLASSIC_MENU_NONE;
+    const uint32_t table = M32(menu);
+    if (table == INVENTORY_VTABLE) return CLASSIC_MENU_INVENTORY;
+    if (table == MAGIC_VTABLE) return CLASSIC_MENU_MAGIC;
+    return CLASSIC_MENU_NONE;
+}
+
+static bool owns_menu(const ClassicMenuFocus *state, ClassicMenu kind, const CPU *cpu) {
+    return state->kind == kind && state->owner == cpu && pthread_equal(state->owner_thread, pthread_self());
 }
 
 static void invalidate(ClassicMenuFocus *state) {
@@ -108,16 +122,13 @@ static bool send_hover(CPU *cpu, uint32_t menu, uint32_t view, ClassicMenu kind,
 
 bool classic_menu_focus_advance(ClassicMenuFocus *state, CPU *cpu, const CPU *thread_cpu,
                                uint32_t menu, uint32_t view, uint64_t now_ns) {
-    if (!cpu || cpu != thread_cpu || !span(menu, 12) || !span(view, 4) || M32(menu + 8) != view) return false;
-    uint32_t table = M32(menu);
-    ClassicMenu kind;
-    if (table == INVENTORY_VTABLE) kind = CLASSIC_MENU_INVENTORY;
-    else if (table == MAGIC_VTABLE) kind = CLASSIC_MENU_MAGIC;
-    else return false;
+    if (!cpu || cpu != thread_cpu) return false;
+    const ClassicMenu kind = menu_view(menu, view);
+    if (!kind) return false;
     double x = 0, y = 0;
     bool send = false;
     pthread_mutex_lock(&state->lock);
-    if (state->kind == kind && state->owner == cpu && pthread_equal(state->owner_thread, pthread_self())) {
+    if (owns_menu(state, kind, cpu)) {
         if (state->menu != menu || state->view != view) {
             invalidate(state);
             state->menu = menu;
@@ -131,4 +142,45 @@ bool classic_menu_focus_advance(ClassicMenuFocus *state, CPU *cpu, const CPU *th
     }
     pthread_mutex_unlock(&state->lock);
     return send && send_hover(cpu, menu, view, kind, x, y);
+}
+
+static bool read_viewport(uint32_t view, ClassicMenu kind, ClassicMenuViewport *result) {
+    if (!span(view, 0xb0) || M32(view) != CLASSIC_MOVIE_VTABLE) return false;
+    ClassicMenuViewport sample = {
+        .menu = kind == CLASSIC_MENU_INVENTORY ? 1 : 2,
+        .mode = M32(view + 0x88), .alignment = M32(view + 0x8c)
+    };
+    if (sample.mode > 3 || sample.alignment > 8) return false;
+    for (unsigned i = 0; i < 6; ++i) {
+        const int32_t value = (int32_t)M32(view + 0x40 + 4 * i);
+        if (value < -32768 || value > 32768) return false;
+        sample.viewport[i] = value;
+    }
+    if (sample.viewport[0] <= 0 || sample.viewport[1] <= 0 ||
+        sample.viewport[4] <= 0 || sample.viewport[5] <= 0)
+        return false;
+    for (unsigned i = 0; i < 4; ++i) {
+        // The Classic getter returns the visible frame in pixels. Its stored values are twips.
+        const float visible = (float)(MF32(view + 0x90 + 4 * i) / 20.0);
+        const float safe = MF32(view + 0xa0 + 4 * i);
+        if (!(visible >= -32768 && visible <= 32768 && safe >= -32768 && safe <= 32768))
+            return false;
+        sample.visible[i] = (int32_t)lroundf(visible);
+        sample.safe[i] = (int32_t)lroundf(safe);
+    }
+    *result = sample;
+    return true;
+}
+
+bool classic_menu_focus_viewport(ClassicMenuFocus *state, const CPU *cpu, const CPU *thread_cpu,
+                                uint32_t menu, uint32_t view, ClassicMenuViewport *result) {
+    if (!cpu || cpu != thread_cpu || !result) return false;
+    const ClassicMenu kind = menu_view(menu, view);
+    if (!kind) return false;
+    pthread_mutex_lock(&state->lock);
+    const bool measured = owns_menu(state, kind, cpu) && state->menu == menu && state->view == view &&
+        state->measured_generation != state->generation && read_viewport(view, kind, result);
+    if (measured) state->measured_generation = state->generation;
+    pthread_mutex_unlock(&state->lock);
+    return measured;
 }

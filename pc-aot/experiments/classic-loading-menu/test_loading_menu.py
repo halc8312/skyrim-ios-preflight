@@ -152,11 +152,17 @@ class LoadingMenuTests(unittest.TestCase):
             tables_file.write_bytes(tables)
             exe = fixture.with_suffix("")
             subprocess.run([compiler, *flags, "-isystem", generation / "gen", "-isystem", runtime,
-                            "-I", ROOT / "native", "-I", app, fixture, HERE / "test_menu_pointer.c",
+                            "-I", ROOT / "native", "-I", ROOT / "ios/private-abi", "-I", app, "-I", HERE, fixture,
+                            HERE / "test_menu_pointer.c", app / "mod_menu_focus_host.c",
                             HERE / "menu_focus.c", app / "mobile_core.c", ROOT / "native/guest_memory.c",
                             "-lm", "-o", exe],
                            check=True, timeout=60)
-            subprocess.run([exe, tables_file], check=True, timeout=30)
+            run = subprocess.run([exe, tables_file], text=True, capture_output=True, timeout=30)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            self.assertEqual(run.stderr.splitlines(), [
+                "IOS_MENU_VIEWPORT schema=1 menu=1 mode=1 align=0 viewport=1564,720,0,0,1564,720 "
+                "visible=-142,0,1422,720 safe=15,15,1549,705"
+            ])
 
     def test_reviewed_open_and_close_dispatch(self):
         compiler, generation, runtime = self.owned_runtime()
