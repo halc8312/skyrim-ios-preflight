@@ -1227,14 +1227,29 @@ NSString *skyrim_mods_prepare_game(NSString *game, BOOL arabicText) {
 NSString *skyrim_mods_exclude_failed_arabic_text(NSString *gameView) {
     if (!launchPackageIds.count) return gameView;
     NSMutableArray<NSString *> *ids = [NSMutableArray array];
-    for (NSString *pid in launchPackageIds)
-        if (!IsReviewedArabicTextPack(LoadPackage(pid))) [ids addObject:pid];
-    if (ids.count == launchPackageIds.count) return gameView;
+    NSMutableSet<NSString *> *excluded = [NSMutableSet set];
+    for (NSString *pid in launchPackageIds) {
+        if (IsReviewedArabicTextPack(LoadPackage(pid))) [excluded addObject:pid];
+        else [ids addObject:pid];
+    }
+    if (!excluded.count) return gameView;
 
     NSString *view = ids.count ? PreparePackageView(originalGameDirectory, activeProfile, ids) : originalGameDirectory;
     if (!view) return UseOriginalAfterDeploymentFailure(originalGameDirectory);
     launchPackageIds = [ids copy];
     launchHasPackages = ids.count > 0;
+    NSMutableArray<NSDictionary *> *packages = [NSMutableArray array];
+    for (NSDictionary *row in launchSetup[@"packages"]) {
+        NSString *pid = row[@"id"];
+        if (pid && [excluded containsObject:pid]) {
+            NSMutableDictionary *disabled = [row mutableCopy];
+            disabled[@"on"] = @NO;
+            [packages addObject:disabled];
+        } else [packages addObject:row];
+    }
+    /* Recovery restores the packages that actually started. The selected profile
+     * can try its Arabic preference again after the conflict has been corrected. */
+    launchSetup[@"packages"] = packages;
     if (!AnyOn(launchPlugins)) skyrim_mods_no_plugin_loaded();
     return view;
 }

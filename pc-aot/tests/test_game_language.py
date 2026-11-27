@@ -261,9 +261,11 @@ int main(int argc, char **argv) { @autoreleasepool {
     fixtureBase = [root stringByAppendingPathComponent:@"Mods"];
     originalGameDirectory = game;
     activeProfile = @"AuthoredProfile";
-    launchSetup = [NSMutableDictionary dictionary];
     launchHasPackages = YES;
     testPackages = @{@"first":@{}, @"translation":@{@"arabicText":@YES}, @"last":@{}};
+    testProfile = @{@"packages":@[@{@"id":@"first", @"on":@YES}, @{@"id":@"translation", @"on":@YES},
+                                    @{@"id":@"last", @"on":@YES}]};
+    launchSetup = [testProfile mutableCopy];
     launchPackageIds = @[@"first", @"translation", @"last"];
     NSString *textFile = @"Data/Strings/fixture.txt";
     NSString *fontFile = @"Data/Interface/fixture.txt";
@@ -279,6 +281,10 @@ int main(int argc, char **argv) { @autoreleasepool {
     NSString *cleaned = skyrim_mods_exclude_failed_arabic_text(view);
     assert([cleaned isEqual:view] && launchHasPackages && !launchWithoutMods);
     assert(([launchPackageIds isEqualToArray:@[@"first", @"last"]]));
+    assert([launchSetup[@"packages"][0][@"on"] isEqual:@YES]);
+    assert([launchSetup[@"packages"][1][@"on"] isEqual:@NO]);
+    assert([launchSetup[@"packages"][2][@"on"] isEqual:@YES]);
+    assert([testProfile[@"packages"][1][@"on"] isEqual:@YES]);
     assert([readFixture(cleaned, textFile) isEqual:@"original"]);
     assert([readFixture(cleaned, fontFile) isEqual:@"last package"]);
     assert([readFixture(game, textFile) isEqual:@"original"] && !readFixture(game, fontFile));
