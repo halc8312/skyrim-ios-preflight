@@ -227,6 +227,17 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Check first-fit mutex macros in the iPhoneOS SDK
+        run: |
+          set -euo pipefail
+          sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos --show-sdk-build-version
+          macros="$(xcrun --sdk iphoneos clang -target arm64-apple-ios18.0 -isysroot "$sdk" -dM -E -x c -include pthread.h /dev/null)"
+          for macro in PTHREAD_FIRSTFIT_MUTEX_INITIALIZER PTHREAD_MUTEX_POLICY_FIRSTFIT_NP; do
+            if ! grep -E "^#define $macro([[:space:]]|$)" <<< "$macros"; then
+              echo "$macro absent"
+            fi
+          done
       - name: Link with the iPhoneOS SDK and run the thread-local receipt test in the simulator
         run: |
           set -euo pipefail
