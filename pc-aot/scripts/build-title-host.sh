@@ -141,6 +141,7 @@ PY
   run_validation python3 -m unittest discover -s tests -p 'test_present_timing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_frame_timing_analysis.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_display_timing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_benchmark.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_cpu_sample.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_present_pacing.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_shader_lead_diagnostics.py' -v

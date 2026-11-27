@@ -191,8 +191,8 @@ class DisplayTimingTests(unittest.TestCase):
 
 
 # Moved deliberately by the A12 build baseline (build-dependencies.sh -mcpu) and the first-fit lock policy
-# (prepare_runtime.py), neither of which is an observation-only change: the next launch rebuilds the Metal cache.
-BASELINE_REUSE_IDENTITY = 'cbb392aeedd781c853865b03388de9b4a5ccbf77191c15533cddb9488959de0d'
+# and benchmark XInput/bridge integration (prepare_runtime.py). The new identity rebuilds the Metal cache.
+BASELINE_REUSE_IDENTITY = 'd8d6131651a03f70a9f2dc6a5cfcc3f653e1817169ef41a0631ee1c33ca241e8'
 
 if __name__ == '__main__':
     unittest.main()
