@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "ios_runtime.h"
 #include "mobile_core.h"
+#include "benchmark.h"
 #include "mobile_ui.h"
 #include "performance_metrics.h"
 #include "device_policy.h"
@@ -97,6 +98,18 @@ void skyrim_ios_drawable_size(int *width, int *height) {
     if (pthread_main_np()) update_drawable();
     uint64_t size = __atomic_load_n(&drawable_size, __ATOMIC_ACQUIRE);
     if (size) { *width = (int)(size >> 32); *height = (int)(uint32_t)size; }
+}
+
+int skyrim_ios_startup_pixel_size(int *width, int *height) {
+    if (!pthread_main_np() || !ui_window) return 0;
+    /* Before Vulkan creates its Metal view, the drawable query returns
+     * points. UIKit's pixel-size query already applies the window's DPI. */
+    int w = 0, h = 0;
+    SDL_GetWindowSizeInPixels(ui_window, &w, &h);
+    if (w <= 0 || h <= 0) return 0;
+    *width = w;
+    *height = h;
+    return 1;
 }
 
 void skyrim_ios_present_phase(unsigned phase) {
@@ -201,6 +214,7 @@ void skyrim_ios_present_result(int32_t result) {
         atomic_max(&interval_max, gap);
         skyrim_perf_interval(SKYRIM_PERF_FRAME_GAP, now - gap, now, 0, 0);
     }
+    skyrim_benchmark_frame(now);
     skyrim_mobile_frame();
     if (__atomic_add_fetch(&successful_presents, 1, __ATOMIC_RELAXED) == 1)
         skyrim_ios_stage("first-successful-present-title-not-verified");

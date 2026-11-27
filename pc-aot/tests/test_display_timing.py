@@ -184,13 +184,12 @@ class DisplayTimingTests(unittest.TestCase):
                       contract['observations']['ios/runtime-port/performance_metrics.h'])
         identity = namespace.identities(ROOT, 'clang-test', '/test/iphoneos.sdk', '18.0')
         self.assertEqual(identity['reviewed'], 1)
-        # The first-wave combination changes prepare_runtime.py to stage the
-        # ECE/HighHeels read witnesses. That file stays in the full cache key.
-        # Later observation-only changes must preserve this integrated identity.
+        # Benchmark input, the render-size trial and the first-wave witnesses
+        # are part of prepare_runtime.py, which stays in the full cache key.
         self.assertEqual(identity['reuse'], BASELINE_REUSE_IDENTITY)
 
 
-BASELINE_REUSE_IDENTITY = 'e63b0673ad588a6631ba8da8ac6bb06d5f24937361d4a06b427f25bddc2ba90a'
+BASELINE_REUSE_IDENTITY = '8f25c4973136860df9b254c862213c1585185d8ea1f264593336aee29b0eec49'
 
 if __name__ == '__main__':
     unittest.main()

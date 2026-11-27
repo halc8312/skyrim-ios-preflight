@@ -14,6 +14,7 @@
 #include <strings.h>
 #include "mobile_ui.h"
 #include "mobile_core.h"
+#include "benchmark.h"
 #include "autosave_preferences.h"
 #include "ios_runtime.h"
 #include "performance_metrics.h"
@@ -130,6 +131,8 @@ static void checkpointPipelineCache(void) {
     });
 }
 static int renderWidth, renderHeight;
+static BOOL renderTrial720;
+static const int trialHeight = 720;
 static unsigned iniCount;
 static NSTimeInterval mobileTime(void) { return (double)skyrim_mobile_now()/1e9; }
 static struct { const char *section, *key; char value[48]; } ini[40];
@@ -210,6 +213,9 @@ static NSArray<NSDictionary *> *shaderRows(void) {
             @"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")]}];
     return rows;
 }
+static NSString *renderTrialRequestPath(void) {
+    return [profilePath stringByAppendingPathComponent:@"render-720p-next-launch"];
+}
 void skyrim_mobile_initialize(const char *profile) {
     NSCAssert(NSThread.isMainThread, @"mobile startup must run on main");
     /* UIKit exports this value; it is not a C constant initializer. Set it on
@@ -221,6 +227,8 @@ void skyrim_mobile_initialize(const char *profile) {
             dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
     });
     profilePath = [NSString stringWithUTF8String:profile];
+    // Consume the request before starting the guest, including when that launch crashes.
+    renderTrial720 = [NSFileManager.defaultManager removeItemAtPath:renderTrialRequestPath() error:nil];
     id saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
     settings = [NSMutableDictionary dictionary];
     if ([saved isKindOfClass:NSDictionary.class])
@@ -605,6 +613,14 @@ int skyrim_mobile_shader_option(unsigned option) {
     const char *key = skyrim_shader_option_key(option);
     return key && skyrim_shader_option_enabled([startup[[NSString stringWithUTF8String:key]] doubleValue]);
 }
+static void chooseRenderSize(int *width, int *height, int selected) {
+    int w = *width, h = *height;
+    if (w <= 0 || h <= 0) return;
+    skyrim_mobile_landscape_size(&w, &h);
+    int targetHeight = selected >= 2160 ? h : MIN(h, selected);
+    *height = MAX(2, targetHeight & ~1);
+    *width = MAX(2, ((int)lround((double)w * *height / h)) & ~1);
+}
 void skyrim_mobile_render_size(int *width, int *height) {
     /* The app supports landscape only. SDL can report portrait extents
      * before the scene rotates, but the guest keeps its startup back buffer. */
@@ -614,11 +630,22 @@ void skyrim_mobile_render_size(int *width, int *height) {
     int w = *width, h = *height;
     skyrim_ios_drawable_size(&w, &h);
     if (w <= 0 || h <= 0) return;
-    skyrim_mobile_landscape_size(&w, &h);
-    renderHeight = selected >= 2160 ? h : MIN(h, selected);
-    renderHeight = MAX(2, renderHeight & ~1);
-    renderWidth = MAX(2, ((int)lround((double)w * renderHeight / h)) & ~1);
-    *width = renderWidth; *height = renderHeight;
+    chooseRenderSize(&w, &h, selected);
+    *width = renderWidth = w;
+    *height = renderHeight = h;
+}
+int skyrim_mobile_render_trial_size(int *width, int *height) {
+    if (!renderTrial720) return 0;
+    int w = 0, h = 0;
+    if (skyrim_ios_startup_pixel_size(&w, &h) && w >= 2 && h >= 2)
+        chooseRenderSize(&w, &h, trialHeight);
+    else
+        w = h = 0;
+    fprintf(stderr, "IOS_RENDER_TRIAL requested=%d width=%d height=%d\n", trialHeight, w, h);
+    if (!w || !h) return 0;
+    *width = w;
+    *height = h;
+    return 1;
 }
 int skyrim_mobile_graphics_changed(void) { return iniCount || [startup[@"resolution"] intValue]; }
 int skyrim_mobile_ini(unsigned index, const char **section, const char **key, const char **out) {
@@ -826,6 +853,132 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 }
 @end
 
+
+static SkyrimBenchmarkResult lastBenchmark;
+
+static NSString *benchmarkTitle(unsigned scene) {
+    switch (scene) {
+    case SKYRIM_BENCH_TURN: return L(@"Turn in town", @"街で視点を振る");
+    case SKYRIM_BENCH_MOVE: return L(@"Move outdoors", @"屋外を直進");
+    case SKYRIM_BENCH_STILL: return L(@"Stand still without NPCs", @"NPCなしで待機");
+    case SKYRIM_BENCH_MAGIC: return L(@"Magic without NPCs", @"NPCなしで魔法");
+    case SKYRIM_BENCH_NPCS: return L(@"NPCs in combat", @"複数NPCの戦闘");
+    case SKYRIM_BENCH_NPCS_MAGIC: return L(@"NPCs in combat with magic", @"複数NPCの戦闘と魔法");
+    default: return L(@"Benchmark", @"ベンチマーク");
+    }
+}
+
+static NSString *benchmarkInstruction(unsigned scene) {
+    switch (scene) {
+    case SKYRIM_BENCH_TURN:
+        return L(@"Load a save facing the area you want to measure.", @"測りたい場所に視点を向けたセーブをロードします。");
+    case SKYRIM_BENCH_MOVE:
+        return L(@"Load a save facing a clear, straight stretch of road.", @"障害物のない直線の道に向いたセーブをロードします。");
+    case SKYRIM_BENCH_STILL:
+        return L(@"Load the same save you use for magic without NPCs.", @"「NPCなしで魔法」と同じセーブをロードします。");
+    case SKYRIM_BENCH_NPCS:
+        return L(@"Load the same combat save you use for NPCs with magic.", @"「複数NPCの戦闘と魔法」と同じセーブをロードします。");
+    default:
+        return L(@"Load a save facing the target with spells drawn in both hands and enough magicka for three casts.",
+                 @"両手に魔法を構え、対象を正面にしたセーブをロードします。3回撃てる魔法とマジカを用意してください。");
+    }
+}
+
+static NSString *benchmarkSummary(void) {
+    const SkyrimBenchmarkResult *r = &lastBenchmark;
+    if (r->status == SKYRIM_BENCH_INTERRUPTED) return L(@"Interrupted", @"中断");
+    if (r->status == SKYRIM_BENCH_RESIZED) return L(@"Render size changed during the run", @"計測中に描画解像度が変わりました");
+    if (r->status == SKYRIM_BENCH_INCOMPLETE) return L(@"Incomplete input or frame sample", @"入力またはフレームの計測が未完了");
+    if (!r->status) return L(@"Run a scene to see its result.", @"シーンを実行すると結果が表示されます。");
+    NSString *p99 = r->p99_ms == 2000 ? @"≥2000" : @(r->p99_ms).stringValue;
+    return [NSString stringWithFormat:L(@"%.1f FPS · p99 %@ ms\nOver 100 ms: %u · longest %.1f ms",
+                                              @"%.1f FPS · p99 %@ ms\n100ms超 %u回 · 最長 %.1fms"),
+            r->total_ns ? r->intervals * 1e9 / r->total_ns : 0., p99, r->over100, r->max_ns / 1e6];
+}
+
+@interface SKBenchmark : UITableViewController
+@end
+
+@implementation SKBenchmark
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = L(@"Benchmark", @"ベンチマーク");
+    self.tableView.rowHeight = UITableViewAutomaticDimension;
+    self.tableView.estimatedRowHeight = 60;
+}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 2; }
+- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
+    return section ? 1 : skyrim_mods_benchmark_profile_active() ? SKYRIM_BENCH_LAST : 1;
+}
+- (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
+    return section ? L(@"Last run", @"直近の結果") : L(@"Choose a scene", @"シーンを選択");
+}
+- (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
+    if (section || skyrim_mods_benchmark_profile_active()) return nil;
+    return L(@"Select the benchmark profile below. Before restarting, open Settings → MOD → Save Check and swipe a manual save to copy it into Benchmark. Restart and load the copy. Switch back in Settings → MOD → Profiles.",
+             @"下の項目で専用プロファイルを選びます。再起動前に「設定 → MOD → セーブの確認」で手動セーブを横にスワイプして、ベンチマークにコピーします。再起動後はそのコピーをロードしてください。通常プレイに戻るときは「設定 → MOD → プロファイル」で切り替えます。");
+}
+- (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)p {
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    cell.textLabel.numberOfLines = 2;
+    cell.detailTextLabel.numberOfLines = 0;
+    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    if (p.section) {
+        cell.textLabel.text = lastBenchmark.scene ? benchmarkTitle(lastBenchmark.scene) : L(@"Result", @"結果");
+        NSMutableString *detail = [benchmarkSummary() mutableCopy];
+        if (lastBenchmark.width && lastBenchmark.height)
+            [detail appendFormat:L(@"\nRender size %u×%u", @"\n描画解像度 %u×%u"), lastBenchmark.width, lastBenchmark.height];
+        cell.detailTextLabel.text = detail;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    } else if (skyrim_mods_benchmark_profile_active()) {
+        unsigned scene = (unsigned)p.row + 1;
+        cell.textLabel.text = benchmarkTitle(scene);
+        cell.detailTextLabel.text = benchmarkInstruction(scene);
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    } else {
+        cell.textLabel.text = L(@"Select benchmark profile for restart", @"再起動用にベンチマークプロファイルを選ぶ");
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    }
+    return cell;
+}
+- (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)p {
+    [table deselectRowAtIndexPath:p animated:YES];
+    if (p.section) return;
+    if (!skyrim_mods_benchmark_profile_active()) {
+        BOOL ok = skyrim_mods_select_benchmark_for_next_launch();
+        UIAlertController *notice = [UIAlertController
+            alertControllerWithTitle:ok ? L(@"Benchmark profile selected", @"ベンチマークプロファイルを選択しました") :
+                L(@"Could not select the benchmark profile", @"ベンチマークプロファイルを選べませんでした")
+            message:ok ? [self tableView:table titleForFooterInSection:0] : nil
+            preferredStyle:UIAlertControllerStyleAlert];
+        [notice addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:notice animated:YES completion:nil];
+        return;
+    }
+    unsigned scene = (unsigned)p.row + 1;
+    NSString *message = [NSString stringWithFormat:@"%@\n\n%@", benchmarkInstruction(scene),
+        L(@"The run lasts 20 seconds. Close the in-game menu within the five-second countdown. Disconnect controllers and tap the gear to stop the run.",
+          @"20秒計測します。5秒のカウントダウン中にゲーム内メニューを閉じてください。コントローラーは外し、中断するときは歯車を押します。")];
+    UIAlertController *confirm = [UIAlertController alertControllerWithTitle:benchmarkTitle(scene)
+        message:message preferredStyle:UIAlertControllerStyleAlert];
+    [confirm addAction:[UIAlertAction actionWithTitle:L(@"Cancel", @"キャンセル") style:UIAlertActionStyleCancel handler:nil]];
+    [confirm addAction:[UIAlertAction actionWithTitle:L(@"Start", @"開始") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self.navigationController.presentingViewController dismissViewControllerAnimated:YES completion:^{
+            if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive ||
+                !skyrim_mods_benchmark_profile_active()) return;
+            [overlay clearInput];
+            NSProcessInfo *process = NSProcessInfo.processInfo;
+            unsigned requested = renderTrial720 ? (unsigned)trialHeight : [startup[@"resolution"] unsignedIntValue];
+            if (skyrim_benchmark_start(scene, skyrim_mobile_now(), requested,
+                                       skyrim_mobile_fps_limit(), (unsigned)process.thermalState,
+                                       process.lowPowerModeEnabled))
+                [overlay message:L(@"Benchmark starts in 5 seconds", @"ベンチマーク開始まで5秒")];
+        }];
+    }]];
+    [self presentViewController:confirm animated:YES completion:nil];
+}
+@end
+
 @implementation SKSettings
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title=L(@"SkyrimIOS Settings", @"SkyrimIOS 設定");
@@ -844,12 +997,12 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
     [self.tableView reloadData];
 }
 - (void)viewWillDisappear:(BOOL)animated { shaderSettingsPermission(NO); [super viewWillDisappear:animated]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 9; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 10; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
-    return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+1 : section==3 ? 2 : section==5 ? 3 : section==6 ? shaderRows().count : 1;
+    return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+2 : section==3 ? 2 : section==5 ? 3 : section==6 ? shaderRows().count : 1;
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
-    return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),L(@"Language / 言語", @"言語 / Language"),L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映"),L(@"Diagnostics", @"診断"),L(@"MOD — applies after restart", @"MOD — 次回起動から反映")][section];
+    return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),L(@"Language / 言語", @"言語 / Language"),L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映"),L(@"Diagnostics", @"診断"),L(@"MOD — applies after restart", @"MOD — 次回起動から反映"),L(@"Benchmark", @"ベンチマーク")][section];
 }
 static NSString *unevenCadenceNote(void) {
     if (value(@"displaySync", 0) != 1) return nil;
@@ -906,13 +1059,19 @@ static NSString *unevenCadenceNote(void) {
         return @{@"key":@"language",@"title":L(@"App language", @"アプリの言語"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]};
     if (p.section==5 && p.row==2)
         return @{@"key":@"game_voices",@"title":L(@"Game voices — after restart", @"ゲームの音声 — 次回起動"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]};
-    if (p.section==2 && p.row) return graphicsRows()[p.row-1];
+    if (p.section==2 && p.row > 0 && p.row <= (NSInteger)graphicsRows().count) return graphicsRows()[p.row-1];
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)p {
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     cell.textLabel.numberOfLines=2; cell.detailTextLabel.font=[UIFont systemFontOfSize:14];
     NSDictionary *r=[self row:p];
+    if (p.section==9) {
+        cell.textLabel.text=L(@"Run benchmark", @"ベンチマークを実行");
+        cell.imageView.image=[UIImage systemImageNamed:@"speedometer"];
+        cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+        return cell;
+    }
     if (p.section==8) {
         cell.textLabel.text=L(@"Manage MODs", @"MODの管理");
         cell.imageView.image=[UIImage systemImageNamed:@"puzzlepiece.extension"];
@@ -926,6 +1085,10 @@ static NSString *unevenCadenceNote(void) {
         cell.detailTextLabel.text=self.sendingDiagnostics ? L(@"Sending…", @"送信中…") :
             self.diagnosticStatus ?: (skyrim_diagnostics_available() ? nil : L(@"Not paired", @"未接続"));
         return cell;
+    } else if (p.section==2 && p.row == (NSInteger)graphicsRows().count+1) {
+        cell.textLabel.text=L(@"Try 720p once after restart", @"次の起動だけ720pを試す");
+        if ([NSFileManager.defaultManager fileExistsAtPath:renderTrialRequestPath()])
+            cell.detailTextLabel.text=L(@"Scheduled", @"予約済み");
     } else if (r) {
         cell.textLabel.text=r[@"title"];
         NSNumber *choice=settings[r[@"key"]] ?: r[@"default"] ?: (p.section==2 ? [r[@"values"] firstObject] : @0);
@@ -947,6 +1110,10 @@ static NSString *unevenCadenceNote(void) {
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)p {
     [table deselectRowAtIndexPath:p animated:YES];
+    if (p.section==9) {
+        [self.navigationController pushViewController:[[SKBenchmark alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
+        return;
+    }
     if (p.section==8) {
         [self.navigationController pushViewController:skyrim_mods_hub_controller() animated:YES];
         return;
@@ -983,6 +1150,18 @@ static NSString *unevenCadenceNote(void) {
     }
     if (p.section==3 && !p.row) {
         [self dismissViewControllerAnimated:YES completion:^{[overlay beginLayout];}]; return;
+    }
+    if (p.section==2 && p.row == (NSInteger)graphicsRows().count+1) {
+        NSFileManager *files = NSFileManager.defaultManager;
+        NSString *path = renderTrialRequestPath();
+        BOOL scheduled = [files fileExistsAtPath:path];
+        BOOL changed = scheduled ? [files removeItemAtPath:path error:nil] :
+            [[NSData data] writeToFile:path options:NSDataWritingAtomic error:nil];
+        [table reloadRowsAtIndexPaths:@[p] withRowAnimation:UITableViewRowAnimationNone];
+        [overlay message:!changed ? L(@"Could not change the 720p trial.", @"720p試験の予約を変更できませんでした") :
+            scheduled ? L(@"720p trial cancelled.", @"720p試験の予約を取り消しました") :
+            L(@"Save your game and fully close the app. 720p applies to the next launch.", @"ゲーム内で保存してアプリを完全終了してください。次の起動だけ720pになります")];
+        return;
     }
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:p.section==3 ? L(@"Reset control layout?", @"ボタン配置を戻しますか？") : (p.section==2 && !p.row ? L(@"Graphics preset", @"画質プリセット") : [self row:p][@"title"]) message:nil preferredStyle:UIAlertControllerStyleActionSheet];
     if (p.section==3) {
@@ -1111,7 +1290,7 @@ static NSString *unevenCadenceNote(void) {
     fprintf(stderr,"%s\n",line.UTF8String);
 }
 - (void)message:(NSString *)text {self.notice.text=text;self.noticeUntil=mobileTime()+7;self.notice.hidden=NO;}
-- (void)resignActive:(NSNotification *)note { skyrim_lifecycle_request(0); [self clearInput]; skyrim_pipeline_checkpoint_foreground_permission(0); skyrim_ios_metrics_active(0); preparePipelineCacheCheckpoint(); }
+- (void)resignActive:(NSNotification *)note { skyrim_benchmark_cancel(skyrim_mobile_now()); skyrim_lifecycle_request(0); [self clearInput]; skyrim_pipeline_checkpoint_foreground_permission(0); skyrim_ios_metrics_active(0); preparePipelineCacheCheckpoint(); }
 - (void)becomeActive:(NSNotification *)note { skyrim_lifecycle_request(menuPauseReasons == 0); finishCacheCheckpoint(cacheCheckpointTicket, 1); shaderSettingsPermission(shaderSettingsVisible); skyrim_ios_metrics_active(menuPauseReasons == 0); }
 - (void)enterBackground:(NSNotification *)note { skyrim_lifecycle_did_background(); checkpointPipelineCache(); }
 - (void)clearInput {
@@ -1139,6 +1318,7 @@ static NSString *unevenCadenceNote(void) {
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {[self touchesEnded:touches withEvent:event];}
 - (void)openSettings {
     [self clearInput];
+    if (skyrim_benchmark_active()) { skyrim_benchmark_cancel(skyrim_mobile_now()); return; }
     if(self.editing) {[self endLayout];return;}
     UIViewController *root=self.window.rootViewController;
     if(root.presentedViewController) return;
@@ -1170,7 +1350,7 @@ static NSString *unevenCadenceNote(void) {
     CGPoint center=CGPointMake(clamp(c.center.x+d.x,area.origin.x+c.bounds.size.width/2,CGRectGetMaxX(area)-c.bounds.size.width/2),clamp(c.center.y+d.y,area.origin.y+c.bounds.size.height/2,CGRectGetMaxY(area)-c.bounds.size.height/2));
     c.center=center; self.positions[@(((SKPadControl *)c).code).stringValue]=@[@((center.x-area.origin.x)/area.size.width),@((center.y-area.origin.y)/area.size.height)];
 }
-- (void)keyboard { [self clearInput];extern int platform_text_input(int);platform_text_input(1); }
+- (void)keyboard { if (skyrim_benchmark_active()) return; [self clearInput];extern int platform_text_input(int);platform_text_input(1); }
 - (NSDictionary *)saveFiles {
     NSString *path=[profilePath stringByAppendingPathComponent:@"Documents/My Games/Skyrim/Saves"];
     NSMutableDictionary *found=[NSMutableDictionary dictionary];
@@ -1182,6 +1362,7 @@ static NSString *unevenCadenceNote(void) {
     return found;
 }
 - (void)quicksave {
+    if (skyrim_benchmark_active()) return;
     [self clearInput];self.saveBaseline=[self saveFiles];self.saveDeadline=mobileTime()+12;
     skyrim_mobile_quicksave_key();[self message:L(@"Quick save (F5) sent. Checking for a changed save file.", @"クイックセーブ（F5）を送信。保存ファイルの更新を確認中")];
 }
@@ -1240,6 +1421,33 @@ void skyrim_mobile_install(void *window) {
     for (NSString *n in @[fallback ?: @"", skyrim_mods_launch_notice() ?: @"", modNoticeText() ?: @"", skyrim_mods_save_notice() ?: @""]) if (n.length) [notices addObject:n];
     if (notices.count) [overlay message:[notices componentsJoinedByString:@"\n"]];
 }
+
+static void benchmarkTick(unsigned cap, unsigned thermal) {
+    static unsigned previousCountdown;
+    unsigned countdown = skyrim_benchmark_tick(skyrim_mobile_now(), cap, thermal);
+    if (countdown != previousCountdown) {
+        if (countdown)
+            [overlay message:[NSString stringWithFormat:L(@"Benchmark starts in %u s", @"ベンチマーク開始まで%u秒"), countdown]];
+        else if (skyrim_benchmark_active())
+            [overlay message:L(@"Measuring · tap the gear to stop", @"計測中 · 歯車で中断")];
+        previousCountdown = countdown;
+    }
+    SkyrimBenchmarkResult result;
+    if (!skyrim_benchmark_take_result(&result)) return;
+    lastBenchmark = result;
+    [overlay clearInput];
+    [overlay message:benchmarkSummary()];
+    fprintf(stderr, "IOS_BENCHMARK schema=1 run=%u scene=%u status=%u start_ns=%llu end_ns=%llu"
+                    " intervals=%u total_ns=%llu over100=%u max_ns=%llu p99_ms=%u render=%ux%u selected_height=%u"
+                    " cap=%u,%u thermal=%u,%u low_power=%u seen=%u phase_ms=%u,%u,%u,%u,%u,%u,%u,%u\n",
+            result.run, result.scene, result.status, (unsigned long long)result.started_ns,
+            (unsigned long long)result.finished_ns, result.intervals, (unsigned long long)result.total_ns,
+            result.over100, (unsigned long long)result.max_ns, result.p99_ms, result.width, result.height,
+            result.selected_height, result.cap_start, result.cap_end, result.thermal_start, result.thermal_max,
+            result.low_power, result.seen, result.phase_ms[0], result.phase_ms[1], result.phase_ms[2],
+            result.phase_ms[3], result.phase_ms[4], result.phase_ms[5], result.phase_ms[6], result.phase_ms[7]);
+}
+
 void skyrim_mobile_tick(void) {
     if(!overlay || !NSThread.isMainThread) return;
     @autoreleasepool {
@@ -1265,6 +1473,7 @@ void skyrim_mobile_tick(void) {
     skyrim_mobile_set_thermal((unsigned)thermal);
     NSArray *names=@[L(@"Nominal", @"通常"),L(@"Fair", @"温かい"),L(@"Serious", @"高温"),L(@"Critical", @"非常に高温")];
     unsigned cap=skyrim_mobile_fps_limit();
+    benchmarkTick(cap, (unsigned)thermal);
     overlay.hud.hidden=value(@"hud",1)==0;
     overlay.hud.text=[NSString stringWithFormat:L(@" %.1f FPS  %@  Cap %@", @" %.1f FPS  %@  上限%@"),fps,names[MIN((NSUInteger)thermal,3)],cap ? @(cap).stringValue : @"—"];
     overlay.notice.hidden=now>overlay.noticeUntil;

@@ -12,6 +12,7 @@
 #include "autosave_preferences.h"
 
 static double startup_mode = -1;
+static int trial_enabled;
 static const char *g_game_dir = "source";
 static int rt_host_path(const char *win, char *host, size_t cap) {
     assert(!strcmp(win, "C:\\Users\\Player\\Documents\\My Games\\Skyrim\\SkyrimPrefs.ini"));
@@ -20,6 +21,12 @@ static int rt_host_path(const char *win, char *host, size_t cap) {
     return !stat(host, &st);
 }
 static int skyrim_mobile_graphics_changed(void) { return startup_mode == 0 || startup_mode == 1; }
+static int skyrim_mobile_render_trial_size(int *width, int *height) {
+    if (!trial_enabled) return 0;
+    *width = 1564;
+    *height = 720;
+    return 1;
+}
 static int skyrim_mobile_ini(unsigned i, const char **section, const char **key, const char **value) {
     return skyrim_autosave_ini(startup_mode, i, section, key, value);
 }
@@ -39,6 +46,7 @@ static void equals_value(IniFile *f, const char *s, const char *k, const char *v
     const char *found = ini_find(f,s,k); assert(found && !strcmp(found,v));
 }
 static void forget(void) {
+    trial_prefs = NULL;
     while (g_inis) { IniFile *next=g_inis->next; ini_free(g_inis); free(g_inis); g_inis=next; }
 }
 static void verify_profile(const char *autosave) {
@@ -66,6 +74,20 @@ int main(void) {
     const char *original="; authored profile\r\n[Main]\r\nbSaveOnPause=1\r\nbSaveOnTravel=0\r\nbsaveonwait=1\r\nbGamepadEnable=1\r\n"
         "[SaveGame]\nfAutosaveEveryXMins=17.5\niAutoSaveCount=3\n[Display]\niPresentInterval=0\niSize W=1600\niSize H=900\niMultiSample=4\n"
         "[Grass]\nfGrassStartFadeDistance=4321\n[Archive]\nsResourceArchiveList=Authored.bsa\n[General]\nsLanguage=ENGLISH\n[Unrelated]\nbSaveOnWait=7\n";
+    write_text("profile/SkyrimPrefs.ini",original);
+    trial_enabled = 1;
+    skyrim_seed_prefs(360,200);
+    IniFile *trial = ini_get("C:\\Users\\Player\\Documents\\My Games\\Skyrim\\SkyrimPrefs.ini");
+    equals_value(trial,"display","isize w","1564");
+    equals_value(trial,"Display","iSize H","720");
+    equals_value(trial,"Display","iMultiSample","4");
+    equals_file("profile/SkyrimPrefs.ini",original);
+    startup_mode=0; skyrim_seed_prefs(360,200);
+    verify_profile("0"); // The parsed file on disk retains 1600x900.
+    forget();
+    trial_enabled=0; startup_mode=-1;
+    skyrim_seed_prefs(360,200); verify_profile("0");
+    forget();
     write_text("profile/SkyrimPrefs.ini",original);
     const double preserve[]={-1,-2,2,0.5,NAN,INFINITY,-INFINITY};
     for(unsigned n=0;n<sizeof preserve/sizeof preserve[0];n++) {

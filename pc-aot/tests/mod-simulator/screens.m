@@ -448,6 +448,17 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self.app launch];
     XCTAssertTrue([self.app.tables[@"mod-translation-bridge-checked"] waitForExistenceWithTimeout:10]);
     [self capture:@"settings"];
+    XCUIElement *trial = [self findRow:@"Try 720p once after restart"];
+    [trial tap];
+    XCTAssertTrue([trial.staticTexts[@"Scheduled"] waitForExistenceWithTimeout:4]);
+    [self capture:@"720p-trial-scheduled"];
+    [trial tap];
+    XCTAssertFalse(trial.staticTexts[@"Scheduled"].exists);
+    [[self findRow:@"Run benchmark"] tap];
+    XCTAssertTrue([self.app.navigationBars[@"Benchmark"] waitForExistenceWithTimeout:6]);
+    [self findRow:@"Select benchmark profile for restart"];
+    [self capture:@"benchmark-profile-setup"];
+    [self goBackFrom:@"Benchmark"];
     [[self findRow:@"App language"] tap];
     [self.app.buttons[@"日本語"] tap];
     [[self findRow:@"MODの管理"] tap];

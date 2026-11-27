@@ -19,7 +19,13 @@ class NativeOverlayTests(unittest.TestCase):
 
     def test_actual_input_replaces_only_legacy_virtual_merge(self):
         source = self.sources["input.c"]
-        self.assertIn("SkyrimMobilePad native = skyrim_mobile_pad();", source)
+        override, normal = source.split("if (skyrim_benchmark_active() &&", 1)[1].split("} else {", 1)
+        self.assertIn("skyrim_benchmark_pad(skyrim_mobile_now(), &native)", override)
+        self.assertIn("b = native.buttons; lt = native.lt; rt = native.rt;", override)
+        self.assertIn("lx = native.lx; ly = native.ly; rx = native.rx; ry = native.ry;", override)
+        self.assertNotIn("skip_tap()", override)
+        self.assertIn("native = skyrim_mobile_pad();", normal)
+        self.assertIn("b |= native.buttons | skip_tap();", normal)
         self.assertNotIn("b |= g_virt.buttons | skip_tap();", source)
         for operation in ("SDL_GameControllerGetAxis", "SDL_GameControllerGetButton", "M16(g + 12)", "M16(g + 14)"):
             self.assertIn(operation, source)
@@ -37,12 +43,14 @@ class NativeOverlayTests(unittest.TestCase):
 
     def test_only_selected_profile_preferences_can_override_existing_data(self):
         source = self.sources["skyrim_shims.c"]
-        self.assertIn("if (existing && !skyrim_mobile_graphics_changed()) return;", source)
+        self.assertIn("if (existing && !trial && !skyrim_mobile_graphics_changed()) return;", source)
         self.assertIn("if (!existing) {\n    char v[16];", source)
         self.assertIn("skyrim_mobile_ini(i, &section, &key, &value)", source)
         upstream = (ROOT / "vendor/skydream/runtime/skyrim_shims.c").read_text(encoding="utf-8")
-        start = "void skyrim_seed_prefs(int w, int h) {"
-        self.assertEqual(source.split(start)[0].replace('#include "mobile_ui.h"\n', ''), stage.mobile_conditions(upstream.split(start)[0]))
+        start = "static const char *ini_find("
+        self.assertEqual(source.split("/* Trial values")[0].replace('#include "mobile_ui.h"\n', ''),
+                         stage.mobile_conditions(upstream.split(start)[0]))
+        self.assertIn("if (trial_display_value(f, app, key)) {\n        pthread_mutex_unlock", source)
         self.assertIn("skyrim_mobile_render_size(&w, &h);\n        skyrim_seed_prefs(w, h);", self.sources["main.c"])
 
     def test_cpu_layout_headers_stay_byte_equal_after_newline_normalization(self):

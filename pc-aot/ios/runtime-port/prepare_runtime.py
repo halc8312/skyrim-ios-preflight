@@ -167,7 +167,11 @@ def patch_platform(s: str) -> str:
 def patch_bridge(s: str) -> str:
     s = mobile_conditions(s)
     s = replace_once(s, '#include <SDL2/SDL_vulkan.h>',
-        '#include <SDL2/SDL_vulkan.h>\n#include "ios_runtime.h"', "bridge include")
+        '#include <SDL2/SDL_vulkan.h>\n#include "ios_runtime.h"\n#include "benchmark.h"', "bridge include")
+    backbuffer = "    if (SUCCEEDED(hr)) { g_bb_w = pp.BackBufferWidth; g_bb_h = pp.BackBufferHeight; }"
+    if s.count(backbuffer) != 2:
+        raise ValueError("bridge: expected device create and reset backbuffer sizes")
+    s = s.replace(backbuffer, backbuffer + "\n    if (SUCCEEDED(hr)) skyrim_benchmark_render_size(g_bb_w, g_bb_h);")
     drawable = '    SDL_Vulkan_GetDrawableSize((SDL_Window *)platform_window(), &ww, &wh);'
     if s.count(drawable) != 2:
         raise ValueError("bridge: expected two drawable size queries")
@@ -514,19 +518,25 @@ def patch_prof(s: str) -> str:
 
 def patch_input(s: str) -> str:
     s = mobile_conditions(s)
-    s = replace_once(s, '#include "rt.h"', '#include "rt.h"\n#include "mobile_core.h"', "native pad include")
+    s = replace_once(s, '#include "rt.h"', '#include "rt.h"\n#include "mobile_core.h"\n#include "benchmark.h"', "native pad include")
     s = replace_once(s,
         '        b |= g_virt.buttons | skip_tap();\n'
         '        if (g_virt.lt) lt = g_virt.lt;\n'
         '        if (g_virt.rt) rt = g_virt.rt;\n'
         '        if (g_virt.lx || g_virt.ly) { lx = g_virt.lx; ly = g_virt.ly; }\n'
         '        if (g_virt.rx || g_virt.ry) { rx = g_virt.rx; ry = g_virt.ry; }',
-        '        SkyrimMobilePad native = skyrim_mobile_pad();\n'
-        '        b |= native.buttons | skip_tap();\n'
-        '        if (native.lt) lt = native.lt;\n'
-        '        if (native.rt) rt = native.rt;\n'
-        '        if (native.lx || native.ly) { lx = native.lx; ly = native.ly; }\n'
-        '        if (native.rx || native.ry) { rx = native.rx; ry = native.ry; }',
+        '        SkyrimMobilePad native;\n'
+        '        if (skyrim_benchmark_active() && skyrim_benchmark_pad(skyrim_mobile_now(), &native)) {\n'
+        '            b = native.buttons; lt = native.lt; rt = native.rt;\n'
+        '            lx = native.lx; ly = native.ly; rx = native.rx; ry = native.ry;\n'
+        '        } else {\n'
+        '            native = skyrim_mobile_pad();\n'
+        '            b |= native.buttons | skip_tap();\n'
+        '            if (native.lt) lt = native.lt;\n'
+        '            if (native.rt) rt = native.rt;\n'
+        '            if (native.lx || native.ly) { lx = native.lx; ly = native.ly; }\n'
+        '            if (native.rx || native.ry) { rx = native.rx; ry = native.ry; }\n'
+        '        }',
         "thread-safe native input snapshot")
     return s
 
@@ -534,8 +544,41 @@ def patch_input(s: str) -> str:
 def patch_preferences(s: str) -> str:
     s = mobile_conditions(s)
     s = replace_once(s, '#include "rt.h"', '#include "rt.h"\n#include "mobile_ui.h"', "mobile preferences include")
+    s = replace_once(s, 'static const char *ini_find(IniFile *f, const char *sec, const char *key) {',
+        '''/* Trial values are visible only to the active profile's INI shims.
+ * Keep them out of the parsed entries so later ini_save calls leave them out. */
+static IniFile *trial_prefs;
+static char trial_width[16], trial_height[16];
+static const char *trial_display_value(IniFile *f, const char *sec, const char *key) {
+    if (!trial_prefs || f != trial_prefs || !sec || !key || strcasecmp(sec, "Display")) return NULL;
+    if (!strcasecmp(key, "iSize W")) return trial_width;
+    if (!strcasecmp(key, "iSize H")) return trial_height;
+    return NULL;
+}
+static const char *ini_find(IniFile *f, const char *sec, const char *key) {
+    const char *override = trial_display_value(f, sec, key);
+    if (override) return override;''', "transient resolution read")
+    s = replace_once(s, '    int last_in_sec = -1, have_sec = 0, done = 0;',
+        '''    if (trial_display_value(f, app, key)) {
+        pthread_mutex_unlock(&g_ini_lock);
+        RET(1, 4);
+    }
+    int last_in_sec = -1, have_sec = 0, done = 0;''', "keep trial dimensions out of persisted settings")
     s = replace_once(s, '    if (existing) return;',
-        '    if (existing && !skyrim_mobile_graphics_changed()) return;', "retain existing preferences")
+        '''    int tw, th;
+    int trial = skyrim_mobile_render_trial_size(&tw, &th);
+    if (existing && !trial && !skyrim_mobile_graphics_changed()) return;''', "retain existing preferences")
+    s = replace_once(s, '    IniFile *f = ini_get(prefs);',
+        '''    IniFile *f = ini_get(prefs);
+    if (trial && f) {
+        trial_prefs = f;
+        snprintf(trial_width, sizeof trial_width, "%d", tw);
+        snprintf(trial_height, sizeof trial_height, "%d", th);
+    }
+    if (existing && !skyrim_mobile_graphics_changed()) {
+        pthread_mutex_unlock(&g_ini_lock);
+        return;
+    }''', "activate the trial for this profile")
     s = replace_once(s, '    char v[16];\n    snprintf(v, sizeof v, "%d", w);',
         '    if (!existing) {\n    char v[16];\n    snprintf(v, sizeof v, "%d", w);', "only seed absent size")
     s = replace_once(s, '    ini_set(f, "Display", "bFull Screen", "1");',
