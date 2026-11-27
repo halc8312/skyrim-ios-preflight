@@ -19,7 +19,8 @@ static bool density_key_is(uint32_t value, const char *key) {
     return true;
 }
 
-static bool density_keys_ready(CPU *c, uint32_t view, const SkyrimSkyUIOverride *extras, unsigned count) {
+static bool density_keys_ready(CPU *c, const char *menu, uint32_t view,
+                               const SkyrimSkyUIOverride *extras, unsigned count) {
     const uint32_t storage = gmalloc(32);
     if (!storage) return false;
     const uint32_t scratch = storage + 16;
@@ -27,9 +28,12 @@ static bool density_keys_ready(CPU *c, uint32_t view, const SkyrimSkyUIOverride 
     skse_gfx_read(c, view, "_global.skyui.util.ConfigManager._loadPhase", storage);
     bool match = (M32(storage + 4) & 0x8f) == 3 && MF64(storage + 8) == 1.0;
     skse_gfx_clean(c, storage);
+    /* A lookup can enter ActionScript and close or replace the menu. */
+    match = match && skse_menu_view(menu) == view;
     if (match) {
         skse_gfx_read(c, view, "_global.skyui.util.ConfigManager.in_overrideKeys", storage);
-        match = (M32(storage + 4) & 0xcf) == 0x47 && M32(storage) >= 0x10000 && M32(storage + 8) >= 0x10000;
+        match = skse_menu_view(menu) == view && (M32(storage + 4) & 0xcf) == 0x47 &&
+                M32(storage) >= 0x10000 && M32(storage + 8) >= 0x10000;
     }
     if (match) {
         const uint32_t object_interface = M32(storage), array = M32(storage + 8);
@@ -60,7 +64,7 @@ static bool density_invoke(CPU *c, const UiCommand *cmd, uint32_t view, uint32_t
     const bool settingValues = message == SKYUI_OVERRIDE_VALUES;
     const unsigned menu = !strcmp(cmd->menu, "InventoryMenu") ? 1u : 2u;
     if (settingValues) {
-        const bool ready = density_keys_ready(c, view, extras, count);
+        const bool ready = density_keys_ready(c, cmd->menu, view, extras, count);
         /* A read can enter the movie. A retired view must not receive the stock fallback. */
         if (skse_menu_view(cmd->menu) != view) return true;
         if (!ready) {

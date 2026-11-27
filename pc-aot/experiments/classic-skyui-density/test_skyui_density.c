@@ -18,7 +18,8 @@ static _Alignas(16) unsigned char memory[0x80000];
 #define MF64(a) (*(double *)(void *)GPTR(a))
 
 static uint32_t next = 0x10000;
-static unsigned allocated, retain_count, argv_count, reads, invokes, view_id;
+static unsigned allocated, retain_count, argv_count, reads, array_reads, invokes, view_id;
+static unsigned retire_during_read;
 static unsigned phase = 1;
 static int fail_index = -1;
 static const char *array_keys[SKYUI_DENSITY_MAX_EXTRAS];
@@ -56,6 +57,7 @@ static void skse_gfx_read(CPU *cpu, uint32_t view, const char *path, uint32_t ou
         M32(out + 8) = 0x12000;
         ++retain_count;
     }
+    if (reads == retire_during_read) ++view_id;
 }
 
 static void skse_gfx_clean(CPU *cpu, uint32_t value) {
@@ -69,6 +71,7 @@ static void skse_gfx_clean(CPU *cpu, uint32_t value) {
 
 static uint32_t skse_member(CPU *cpu, uint32_t address, uint32_t iface, unsigned argc, const uint32_t *args) {
     (void)cpu;
+    ++array_reads;
     assert(iface == 0x11000 && args[0] == 0x12000);
     if (address == 0x920E80) {
         assert(argc == 1);
@@ -176,6 +179,27 @@ int main(void) {
     array_count = 0;
     assert(!density_invoke(&cpu, &command, view_id, 0, original));
     assert(invokes == 2 && !retain_count && allocated == 1);
+
+    /* A Scaleform lookup can close the current movie before it returns. */
+    const unsigned before_array_reads = array_reads;
+    for (unsigned lookup = 1; lookup <= 2; ++lookup) {
+        const unsigned before_reads = reads;
+        retire_during_read = before_reads + lookup;
+        array_count = SKYUI_OVERRIDE_COUNT + (unsigned)magic;
+        assert(density_invoke(&cpu, &command, view_id, 0, original));
+        assert(reads == retire_during_read && array_reads == before_array_reads);
+        assert(invokes == 2 && !retain_count && allocated == 1);
+    }
+
+    retire_during_read = 0;
+    array_count = 0;
+    command.target = keys;
+    assert(density_invoke(&cpu, &command, view_id, 0, original));
+    array_count = SKYUI_OVERRIDE_COUNT + (unsigned)magic;
+    command.target = values;
+    assert(density_invoke(&cpu, &command, view_id, 0, original));
+    assert(invokes == 4 && !retain_count && allocated == 1);
+
     gfree(original);
     return 0;
 }
