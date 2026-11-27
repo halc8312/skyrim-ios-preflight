@@ -534,8 +534,15 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [trial tap];
     XCTAssertTrue([trial.staticTexts[@"Scheduled"] waitForExistenceWithTimeout:4]);
     [self capture:@"720p-trial-scheduled"];
-    [trial tap];
-    XCTAssertFalse(trial.staticTexts[@"Scheduled"].exists);
+    // Reloading the settings table can move the old row beneath the navigation
+    // bar. Bring the live row back into view before testing cancellation.
+    trial = [self findRow:@"Try 720p once after restart"];
+    [[trial coordinateWithNormalizedOffset:CGVectorMake(.25, .5)] tap];
+    NSPredicate *unscheduled = [NSPredicate predicateWithFormat:@"exists == NO"];
+    XCTNSPredicateExpectation *cancelled = [[XCTNSPredicateExpectation alloc]
+        initWithPredicate:unscheduled object:trial.staticTexts[@"Scheduled"]];
+    XCTAssertEqual([XCTWaiter waitForExpectations:@[cancelled] timeout:6], XCTWaiterResultCompleted);
+    XCTAssertFalse([self findRow:@"Try 720p once after restart"].staticTexts[@"Scheduled"].exists);
     XCTAssertTrue([self findRow:@"Current render size"].exists);
     [[self findRow:@"Render height"] tap];
     [self.app.buttons[@"540p"] tap];
