@@ -343,6 +343,9 @@ int skyrim_mobile_prepare_game_language(const char *gameDirectory, unsigned arab
             (unsigned)(gameLanguagePrepared && gameLanguage.arabic_mod == SKYRIM_ARABIC_MOD_READY));
     return gameLanguagePrepared;
 }
+int skyrim_mobile_uses_arabic_game_text(void) {
+    return gameLanguagePrepared && gameLanguage.arabic_mod == SKYRIM_ARABIC_MOD_READY;
+}
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 const char *skyrim_mobile_classic_text_language(void) {
     if (!gameLanguagePrepared || (!startup[@"game_text"] && !startup[@"game_voices"])) return NULL;

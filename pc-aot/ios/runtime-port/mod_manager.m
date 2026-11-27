@@ -1137,6 +1137,40 @@ static NSString *GeneratedOutputWarning(NSDictionary *package, NSDictionary *fin
              @"別のMOD構成で追加した生成ファイルです。このプロファイル用に再生成してください。");
 }
 
+static NSString *PreparePackageView(NSString *game, NSString *profileID, NSArray<NSString *> *ids) {
+    uint64_t signature = 0;
+    int signatureError = skyrim_tree_signature(game.fileSystemRepresentation, &signature);
+    NSString *keySource = [NSString stringWithFormat:@"v1|%llx|%@", (unsigned long long)signature, [ids componentsJoinedByString:@","]];
+    NSString *key = HexDigest([keySource dataUsingEncoding:NSUTF8StringEncoding]);
+    NSString *views = [Base() stringByAppendingPathComponent:@"Views"];
+    [NSFileManager.defaultManager createDirectoryAtPath:views withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSString *view = [views stringByAppendingPathComponent:profileID];
+    NSString *conflicts = [view stringByAppendingString:@".conflicts.tsv"];
+    if (!signatureError && skyrim_deploy_matches(view.fileSystemRepresentation,
+                                                 conflicts.fileSystemRepresentation, key.UTF8String)) return view;
+    NSMutableArray *roots = [NSMutableArray array];
+    for (NSString *pid in ids) [roots addObject:[PackageDir(pid) stringByAppendingPathComponent:@"Data"]];
+    const char **c = calloc(roots.count, sizeof *c);
+    if (c) for (NSUInteger i = 0; i < roots.count; ++i) c[i] = [roots[i] fileSystemRepresentation];
+    char err[512] = "";
+    NSTimeInterval started = NSDate.date.timeIntervalSince1970;
+    int r = signatureError ? signatureError : !c ? ENOMEM :
+        skyrim_deploy_build(game.fileSystemRepresentation, c, roots.count, view.fileSystemRepresentation,
+                            conflicts.fileSystemRepresentation, key.UTF8String, err, sizeof err);
+    free(c);
+    fprintf(stderr, "IOS_MODS deploy packages=%lu result=%d seconds=%.3f\n", (unsigned long)ids.count, r,
+            NSDate.date.timeIntervalSince1970 - started);
+    return r ? nil : view;
+}
+
+static NSString *UseOriginalAfterDeploymentFailure(NSString *game) {
+    launchWithoutMods = YES; launchHasPackages = NO; launchPlugins = @[];
+    launchSetup = nil; launchPackageIds = nil;
+    [NSFileManager.defaultManager removeItemAtPath:LaunchPath() error:NULL];
+    launchNotice = T(@"Could not prepare the MODs, so the game started without them.", @"MODを準備できなかったため、MODなしで起動しました。");
+    return game;
+}
+
 NSString *skyrim_mods_prepare_game(NSString *game, BOOL arabicText) {
     EnsureState();
     originalGameDirectory = game;
@@ -1184,38 +1218,24 @@ NSString *skyrim_mods_prepare_game(NSString *game, BOOL arabicText) {
             break;
         }
     }
-    uint64_t signature = 0;
-    int signatureError = skyrim_tree_signature(game.fileSystemRepresentation, &signature);
-    NSString *keySource = [NSString stringWithFormat:@"v1|%llx|%@", (unsigned long long)signature, [ids componentsJoinedByString:@","]];
-    NSString *key = HexDigest([keySource dataUsingEncoding:NSUTF8StringEncoding]);
-    NSString *views = [Base() stringByAppendingPathComponent:@"Views"];
-    [NSFileManager.defaultManager createDirectoryAtPath:views withIntermediateDirectories:YES attributes:nil error:NULL];
-    NSString *view = [views stringByAppendingPathComponent:profile[@"id"]];
-    NSString *conflicts = [view stringByAppendingString:@".conflicts.tsv"];
-    if (!signatureError && skyrim_deploy_matches(view.fileSystemRepresentation,
-                                                 conflicts.fileSystemRepresentation, key.UTF8String)) {
-        launchPackageIds = [ids copy];
-        return view;
-    }
-    NSMutableArray *roots = [NSMutableArray array];
-    for (NSString *pid in ids) [roots addObject:[PackageDir(pid) stringByAppendingPathComponent:@"Data"]];
-    const char **c = calloc(roots.count, sizeof *c);
-    if (c) for (NSUInteger i = 0; i < roots.count; ++i) c[i] = [roots[i] fileSystemRepresentation];
-    char err[512] = "";
-    NSTimeInterval started = NSDate.date.timeIntervalSince1970;
-    int r = signatureError ? signatureError : !c ? ENOMEM :
-        skyrim_deploy_build(game.fileSystemRepresentation, c, roots.count, view.fileSystemRepresentation,
-                            conflicts.fileSystemRepresentation, key.UTF8String, err, sizeof err);
-    free(c);
-    fprintf(stderr, "IOS_MODS deploy packages=%lu result=%d seconds=%.3f\n", (unsigned long)ids.count, r,
-            NSDate.date.timeIntervalSince1970 - started);
-    if (r) {
-        launchWithoutMods = YES; launchHasPackages = NO; launchPlugins = @[]; launchSetup = nil;
-        [NSFileManager.defaultManager removeItemAtPath:LaunchPath() error:NULL];
-        launchNotice = T(@"Could not prepare the MODs, so the game started without them.", @"MODを準備できなかったため、MODなしで起動しました。");
-        return game;
-    }
+    NSString *view = PreparePackageView(game, profile[@"id"], ids);
+    if (!view) return UseOriginalAfterDeploymentFailure(game);
     launchPackageIds = [ids copy];
+    return view;
+}
+
+NSString *skyrim_mods_exclude_failed_arabic_text(NSString *gameView) {
+    if (!launchPackageIds.count) return gameView;
+    NSMutableArray<NSString *> *ids = [NSMutableArray array];
+    for (NSString *pid in launchPackageIds)
+        if (!IsReviewedArabicTextPack(LoadPackage(pid))) [ids addObject:pid];
+    if (ids.count == launchPackageIds.count) return gameView;
+
+    NSString *view = ids.count ? PreparePackageView(originalGameDirectory, activeProfile, ids) : originalGameDirectory;
+    if (!view) return UseOriginalAfterDeploymentFailure(originalGameDirectory);
+    launchPackageIds = [ids copy];
+    launchHasPackages = ids.count > 0;
+    if (!AnyOn(launchPlugins)) skyrim_mods_no_plugin_loaded();
     return view;
 }
 

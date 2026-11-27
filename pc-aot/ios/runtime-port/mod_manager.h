@@ -22,6 +22,9 @@ BOOL skyrim_mods_select_benchmark_for_next_launch(void);
 BOOL skyrim_mods_has_arabic_text(void);
 /* After prepare_game. Recognize the reviewed Arabic MOD in the effective view. */
 unsigned skyrim_mods_arabic_text_status(NSString *game_view);
+/* Before preparing plugins, omit the reviewed Arabic pack when the selected
+ * text could not be prepared. Reuse the rest of the frozen package order. */
+NSString *skyrim_mods_exclude_failed_arabic_text(NSString *game_view);
 #if defined(SKYRIM_IOS_CLASSIC_SKSE) && defined(SKYRIM_IOS_SKSE_DLL_PROBE)
 #include "mod_papyrus_inputs.h"
 /* On the startup main thread after skyrim_mobile_prepare_mods succeeds.

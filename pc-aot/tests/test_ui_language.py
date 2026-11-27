@@ -93,14 +93,15 @@ int main(void) { @autoreleasepool {
     assert([SKUIString(SKUIArabic, @"Missing fixture string", nil) isEqual:@"Missing fixture string"]);
     assert([SKUILanguageNames()[SKUIArabic] isEqual:@"العربية"]);
     NSUserDefaults *prefs = NSUserDefaults.standardUserDefaults;
-    [prefs setObject:@{@"game_text": @2} forKey:@"mobile-settings-v1"];
+    [prefs setObject:@{@"game_text": @2, @"game_voices": @1} forKey:@"mobile-settings-v1"];
     SKRefreshUILanguage();
     assert(SKCurrentUILanguage() == SKUIEnglish);
-    [prefs setObject:@{@"language": @3, @"game_text": @2} forKey:@"mobile-settings-v1"];
+    [prefs setObject:@{@"language": @3, @"game_text": @2, @"game_voices": @1} forKey:@"mobile-settings-v1"];
     SKRefreshUILanguage();
     assert(SKCurrentUILanguage() == SKUISpanish);
     NSDictionary *settings = [prefs dictionaryForKey:@"mobile-settings-v1"];
     assert([settings[@"game_text"] integerValue] == 2);
+    assert([settings[@"game_voices"] integerValue] == 1);
     [prefs removeObjectForKey:@"mobile-settings-v1"];
 } return 0; }
 ''', encoding="utf-8")
