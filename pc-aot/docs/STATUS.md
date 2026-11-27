@@ -1,5 +1,13 @@
 # 開発状況
 
+**2026-11-27　iPhone向け最適化の無署名A/B比較ビルド**
+
+Aはビルド27系のホストと従来のコンパイル設定、Bは 2394d8e3 のホストとゲストの新設定を使った。両方ともMODフックを含まず、起動時の解像度計算も同じ。標準の macos-26 で両ホストのApple SDKビルドとMOD画面のシミュレーター試験に合格した。iPhoneOS SDK 23F81a では PTHREAD_MUTEX_POLICY_FIRSTFIT_NP があり、PTHREAD_FIRSTFIT_MUTEX_INITIALIZER がないことを確認した。 [基準版ホスト](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/45914090387) · [最適化版ホスト](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/45914065315) · [SDK検査](https://github.com/halc8312/skyrim-ios-preflight/actions/runs/45914407569)
+
+PCの固定入力で90,390関数を両方生成し、拒否は510件。生成Cの差はMEMの束縛と原子命令4か所だった。Windows LLVMでのARM64クロスビルドはAが44分15秒、Bが48分27秒。静的命令数は31,545,244から28,276,493に減った。Bと同じ設定で0010だけ外した対照は31,188,364命令で、0010単体では9.3%減。数学関数のインポートが8件減り、新規および想定外のインポートは0件。WSLの全体試験はBで1,156件成功、160件スキップ。失敗はAと同じ3件。
+
+A/Bの無署名IPAをWindows上で組み立て、ABI、入力・ゲストのハッシュとZIPの整合性を確認した。実ゲーム由来のゲストを使うApple SDKでのコンパイル、署名、配布、実機比較は未実施。
+
 **2026-11-26　iPhone向け未実装の最適化箇所の監査と、実装できた分（未ビルド・未測定）**
 
 ソースと同条件のARM64機械語から、ゲストの数学関数が`-fno-builtin`で外部呼び出しになっている点、SSEレーン処理が`-O1`でスカラーのループになる点、ゲストメモリ基点`MEM`の毎回の読み直し、ホスト・依存ライブラリが`-mcpu`なし（ARMv8.0）でatomicが再試行ループになる点などを見つけた。ゲスト：数学関数の内蔵化、`-mcpu=apple-a12`、ベクトル化、order file受け渡し。変換器：パッチ0010（`MEM`のローカル化、`lock`命令の1命令atomic化。`source-lock`未登録の任意適用）。ホスト：`-mcpu=apple-a12`、first-fitロック。PCの試験は通ったが、Apple SDKでのビルド、ゲストの再生成・再コンパイル、実機の速度は未確認。実装しなかった項目と理由は[監査](IPHONE_OPTIMIZATION_AUDIT.md)にある。
