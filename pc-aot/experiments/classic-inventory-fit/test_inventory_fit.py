@@ -9,7 +9,8 @@ import sys
 import tempfile
 import unittest
 
-from stage_inventory_fit import CALLER_UNITS, DECLARATION, FIT, MENU_CALLERS, UNIT, mode_call, stage_inventory_fit
+from stage_inventory_fit import (CALLER_UNITS, DECLARATION, FIT, LOAD_ENTRY, MENU_CALLERS, START, UNIT,
+                                 function_body, mode_call, stage_inventory_fit)
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -42,10 +43,23 @@ class InventoryFitTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             stage_inventory_fit(original, {**callers, "exe_183.c": bad_magic})
 
-        def fixture(name, unit):
+        def fixture(name, body):
             return (f"void {name}_fit(CPU *c) {{\n".encode()
                     + b"    uint32_t eax, ecx, edx, ebx, esp, ebp, esi, edi; Flags f;\n"
-                    + b"    RELOAD();\n    goto L_A60D2F;\n" + mode_call(unit) + b"    SPILL();\n}\n")
+                    + b"    RELOAD();\n    goto L_A60D2F;\n" + body + b"    SPILL();\n}\n")
+
+        def viewport_path(unit):
+            body = function_body(unit, LOAD_ENTRY)
+            anchor = b"0xA60ED5u; SPILL(); f_844B40(c); RELOAD();"
+            self.assertEqual(body.count(anchor), 1)
+            end = body.index(b"\n", body.index(anchor)) + 1
+            return body[body.index(START):end]
+
+        baseline_path, staged_path = viewport_path(original), viewport_path(staged)
+        self.assertEqual(staged_path.replace(FIT, b"", 1), baseline_path)
+        viewport_unit = (lift / "gen/exe_175.c").read_bytes()
+        viewport_entry = b"\nvoid f_844B40(CPU *c) {\n"
+        viewport = viewport_entry + function_body(viewport_unit, viewport_entry) + b"\n}\n"
 
         flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O2"]
         if os.environ.get("SKYRIM_TEST_SANITIZERS") == "1":
@@ -62,12 +76,15 @@ class InventoryFitTests(unittest.TestCase):
                            check=True, timeout=90)
             fragment = directory / "inventory_fragment.c"
             fragment.write_bytes(DECLARATION + b'#include "funcs_exe.h"\n#include "lift_prelude.h"\n'
-                                 + fixture("baseline", original) + fixture("staged", staged))
+                                 + viewport + fixture("baseline", mode_call(original))
+                                 + fixture("staged", mode_call(staged))
+                                 + fixture("baseline_viewport", baseline_path)
+                                 + fixture("staged_viewport", staged_path))
             binary = directory / "inventory-test"
             expected = ",".join(f"0x{row[3]}u" for row in MENU_CALLERS)
             subprocess.run([compiler, *flags, *includes, f"-DREVIEWED_MENU_POINTERS={expected}",
                             fragment, HERE / "test_inventory_fit.c",
-                            ROOT / "native/guest_memory.c", "-o", binary], check=True, timeout=90)
+                            ROOT / "native/guest_memory.c", "-lm", "-o", binary], check=True, timeout=90)
             subprocess.run([binary], check=True, timeout=30)
         self.assertEqual(source.read_bytes(), original)
 
