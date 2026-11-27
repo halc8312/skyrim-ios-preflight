@@ -17,7 +17,6 @@
 #include "mod_loading_menu_host.h"
 #ifdef SKYRIM_IOS_MOD_HOOKS
 #include "mod_menu_focus_host.h"
-#include "PcGuestMenuFocus.h"
 #endif
 #include "benchmark.h"
 #include "autosave_preferences.h"
@@ -681,7 +680,7 @@ static SKOverlay *overlay;
 /* Reasons the game is paused for a menu (SKYRIM_MENU_PAUSE_* flags). */
 static unsigned menuPauseReasons;
 #ifdef SKYRIM_IOS_MOD_HOOKS
-static BOOL focusAvailable(void) { return pc_guest_menu_focus_available(); }
+static BOOL focusAvailable(void) { return skyrim_menu_focus_app_available(); }
 static uint64_t focusTouchToken(void) { return skyrim_menu_focus_touch_token(); }
 static void postFocus(uint64_t token, double x, double y) { skyrim_menu_focus_touch_post(token, x, y); }
 static void cancelFocus(void) { skyrim_menu_focus_touch_cancel(); }

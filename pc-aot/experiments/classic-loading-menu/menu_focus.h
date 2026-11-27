@@ -24,9 +24,7 @@ typedef struct {
 
 #define CLASSIC_MENU_FOCUS_INIT { .lock = PTHREAD_MUTEX_INITIALIZER }
 
-/* Call for every relevant open/close transition, including a reopen of the same kind.
- * The CPU is borrowed only as an identity. Passing no target invalidates pending input. */
-void classic_menu_focus_transition(ClassicMenuFocus *state, ClassicMenu target, const struct CPU *owner);
+/* Call for each verified open/close transition. The CPU is borrowed only as an identity. */
 void classic_menu_focus_event(ClassicMenuFocus *state, ClassicMenuIdentity identity, bool opening,
                              const struct CPU *owner);
 void classic_menu_focus_cancel(ClassicMenuFocus *state);

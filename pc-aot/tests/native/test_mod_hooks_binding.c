@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "PcGuestSkseABI.h"
 #include "PcGuestModHooksABI.h"
+#include "PcGuestMenuFocus.h"
 #include <assert.h>
 #include <dlfcn.h>
 #include <stdlib.h>
@@ -189,6 +190,10 @@ __attribute__((visibility("default"))) unsigned exercise_mod_hooks(unsigned expe
 #endif
 
 #else /* host */
+
+static void unexpected_focus_advance(struct CPU *cpu, uint32_t menu, uint32_t view) {
+    (void)cpu; (void)menu; (void)view; abort();
+}
 #include "PcGuestSkseTrial.h"
 
 void rt_call(CPU *c, uint32_t a) { (void)c; (void)a; abort(); }
@@ -644,11 +649,20 @@ int main(int argc, char **argv) {
         assert(pc_guest_select_mod_hooks(0, &nonempty) != 0);
     }
     assert(!pc_guest_mod_hooks_selected());
+    assert(!pc_guest_menu_focus_available() && !pc_guest_attach_menu_focus(unexpected_focus_advance));
     assert(exercise(0) == 0);
     check_calls(0, 0);
 
     assert(pc_guest_select_mod_hooks(choice, choice ? &table : NULL) == 0);
     assert(pc_guest_mod_hooks_selected() == choice);
+    assert(pc_guest_menu_focus_available() == ((choice & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE) != 0));
+    assert(!pc_guest_attach_menu_focus(NULL));
+    if (pc_guest_menu_focus_available()) {
+        PcGuestBindMenuFocus bind_focus = (PcGuestBindMenuFocus)dlsym(lib, PC_GUEST_MENU_FOCUS_BIND);
+        assert(bind_focus && !bind_focus(PC_GUEST_MENU_FOCUS_VERSION + 1, unexpected_focus_advance));
+        assert(pc_guest_attach_menu_focus(unexpected_focus_advance));
+        assert(!pc_guest_attach_menu_focus(unexpected_focus_advance));
+    }
     /* The guest copied the table; later changes to the host copy do not apply. */
     table.fuz_menu.force_menu = NULL;
     table.camera.observe_return = NULL;

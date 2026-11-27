@@ -106,7 +106,7 @@ jobs:
           sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
           xcrun --sdk iphoneos swiftc -sdk "$sdk" -target arm64-apple-ios18.0 -swift-version 6 \
             -strict-concurrency=complete -warnings-as-errors -parse-as-library -typecheck mod_translate.swift
-          defs=(-I../../experiments/skse-cosave)
+          defs=(-I. -I../../experiments/skse-cosave)
           if [[ "$SKYRIM_IOS_CLASSIC_SKSE" == 1 ]]; then
             defs+=(-DSKYRIM_IOS_CLASSIC_SKSE=1 -I../private-abi)
           fi

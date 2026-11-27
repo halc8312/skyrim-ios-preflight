@@ -8,16 +8,23 @@
 extern struct CPU *rt_current_cpu(void);
 
 static ClassicMenuFocus state = CLASSIC_MENU_FOCUS_INIT;
-static atomic_bool armed;
+static atomic_bool available, armed;
 
 static void at_movie_advance(struct CPU *cpu, uint32_t menu, uint32_t view) {
     classic_menu_focus_advance(&state, cpu, rt_current_cpu(), menu, view, skyrim_perf_now_ns());
 }
 
-bool skyrim_menu_focus_app_enable(void) {
-    if (!pc_guest_attach_menu_focus(at_movie_advance)) return false;
-    atomic_store_explicit(&armed, true, memory_order_release);
-    return true;
+void skyrim_menu_focus_app_configure(bool requested) {
+    bool possible = pc_guest_menu_focus_available();
+    if (possible && requested) {
+        possible = pc_guest_attach_menu_focus(at_movie_advance);
+        if (possible) atomic_store_explicit(&armed, true, memory_order_release);
+    }
+    atomic_store_explicit(&available, possible, memory_order_release);
+}
+
+bool skyrim_menu_focus_app_available(void) {
+    return atomic_load_explicit(&available, memory_order_acquire);
 }
 
 void skyrim_menu_focus_app_event(ClassicMenuIdentity identity, bool opening) {

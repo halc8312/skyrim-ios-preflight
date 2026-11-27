@@ -241,6 +241,10 @@ static void *wrong_native_thread(void *opaque) {
 }
 
 static void test_immediate_focus(void) {
+    const ClassicMenuIdentity inventory = {CLASSIC_MENU_INVENTORY, 0x10e5b7c, false};
+    const ClassicMenuIdentity magic = {CLASSIC_MENU_MAGIC, 0x10e6584, false};
+    const ClassicMenuIdentity hud = {CLASSIC_MENU_NONE, 0x10e32d0, true};
+    const ClassicMenuIdentity unknown_modal = {CLASSIC_MENU_NONE, 0x1100111, false};
     M32(0x1b2e974) = CURSOR;
     M32(HOLDER + 0x44) = 0x10e5b7c;
     M32(HOLDER + 0x64) = 0x10e6584;
@@ -252,10 +256,12 @@ static void test_immediate_focus(void) {
     advance(&expected, INVENTORY, true);
     advance(&cpu, INVENTORY, false);
     assert(!memcmp(&expected, &cpu, sizeof cpu) && !classic_menu_focus_token(&focus));
-    classic_menu_focus_transition(&focus, CLASSIC_MENU_INVENTORY, &cpu);
+    classic_menu_focus_event(&focus, inventory, true, &cpu);
     assert(!classic_menu_focus_token(&focus));
     advance(&cpu, INVENTORY, false);
     uint64_t token = classic_menu_focus_token(&focus);
+    classic_menu_focus_event(&focus, hud, true, &cpu);
+    assert(classic_menu_focus_token(&focus) == token);
     assert(token && !classic_menu_focus_post(&focus, token, NAN, .5, now_ns));
     assert(!classic_menu_focus_post(&focus, token, 1, .5, now_ns));
     expected_x = 960; expected_y = 540;
@@ -278,15 +284,27 @@ static void test_immediate_focus(void) {
     advance(&cpu, INVENTORY, false);
     assert(delivered_focus == 1);
     assert(classic_menu_focus_post(&focus, token, .25, .25, now_ns));
-    classic_menu_focus_transition(&focus, CLASSIC_MENU_NONE, &cpu);
-    classic_menu_focus_transition(&focus, CLASSIC_MENU_INVENTORY, &cpu);
+    classic_menu_focus_event(&focus, inventory, false, &cpu);
+    classic_menu_focus_event(&focus, inventory, true, &cpu);
     advance(&cpu, INVENTORY, false);
     assert(delivered_focus == 1 && !classic_menu_focus_post(&focus, token, .25, .25, now_ns));
     token = classic_menu_focus_token(&focus);
     assert(classic_menu_focus_post(&focus, token, .25, .25, now_ns));
-    classic_menu_focus_transition(&focus, CLASSIC_MENU_MAGIC, &cpu);
+    classic_menu_focus_event(&focus, magic, true, &cpu);
+    advance(&cpu, MAGIC, false);
+    assert(!classic_menu_focus_token(&focus)); /* Overlapping lists accept no input. */
+    classic_menu_focus_event(&focus, inventory, false, &cpu);
     advance(&cpu, MAGIC, false);
     assert(delivered_focus == 1 && !classic_menu_focus_post(&focus, token, .25, .25, now_ns));
+    token = classic_menu_focus_token(&focus);
+    assert(classic_menu_focus_post(&focus, token, .25, .25, now_ns));
+    classic_menu_focus_event(&focus, unknown_modal, true, &cpu);
+    classic_menu_focus_event(&focus, unknown_modal, true, &cpu);
+    advance(&cpu, MAGIC, false);
+    assert(!classic_menu_focus_token(&focus) && delivered_focus == 1);
+    classic_menu_focus_event(&focus, unknown_modal, false, &cpu);
+    advance(&cpu, MAGIC, false);
+    assert(!classic_menu_focus_post(&focus, token, .25, .25, now_ns));
     token = classic_menu_focus_token(&focus);
     assert(classic_menu_focus_post(&focus, token, .25, .25, now_ns));
     M32(MAGIC + 8) = INVENTORY_VIEW;    /* Replacement of a movie without an intervening close event. */
@@ -299,6 +317,10 @@ static void test_immediate_focus(void) {
     assert(classic_menu_focus_post(&focus, token, .25, .25, now_ns));
     advance(&cpu, MAGIC, false);
     assert(delivered_focus == 2 && delivery_count == 2 && deliveries[1] == MAGIC_VIEW);
+    assert(classic_menu_focus_post(&focus, classic_menu_focus_token(&focus), .25, .25, now_ns));
+    classic_menu_focus_cancel(&focus);
+    advance(&cpu, MAGIC, false);
+    assert(delivered_focus == 2);
     assert(queued == 2 && advances > 0);
     thread_cpu = NULL;
 }

@@ -33,12 +33,6 @@ static void transition_locked(ClassicMenuFocus *state, ClassicMenu target, const
     state->owner_thread = pthread_self();
 }
 
-void classic_menu_focus_transition(ClassicMenuFocus *state, ClassicMenu target, const CPU *owner) {
-    pthread_mutex_lock(&state->lock);
-    transition_locked(state, target, owner);
-    pthread_mutex_unlock(&state->lock);
-}
-
 void classic_menu_focus_event(ClassicMenuFocus *state, ClassicMenuIdentity identity, bool opening, const CPU *owner) {
     if (!identity.name || identity.passive) return;
     pthread_mutex_lock(&state->lock);
