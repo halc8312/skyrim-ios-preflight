@@ -198,8 +198,8 @@ static NSArray<NSDictionary *> *graphicsRows(void) {
 /* Lightweight mode: its own row, deliberately not part of graphicsRows() (the presets map
  * that list by position). It never writes the game's ini files; see lightweight_core.h. */
 static NSDictionary *lightweightRow(void) {
-    return @{@"key":@"lightweight", @"title":L(@"Lightweight mode", @"軽量モード"), @"values":@[@0,@1,@2], @"default":@0,
-        @"labels":@[L(@"Off", @"オフ"),L(@"Light", @"軽量"),L(@"Lighter", @"さらに軽量")]};
+    return @{@"key":@"lightweight", @"title":L(@"Lightweight mode", @"軽量モード"), @"values":@[@0,@1,@2,@3], @"default":@0,
+        @"labels":@[L(@"Off", @"オフ"),L(@"Light", @"軽量"),L(@"Lighter", @"さらに軽量"),L(@"Maximum (large quality loss)", @"最大限（画質が大きく下がる）")]};
 }
 static NSArray<NSDictionary *> *shaderRows(void) {
     NSArray *titles = @[L(@"Parallel shader preparation", @"シェーダー準備を並列化"),
@@ -808,7 +808,7 @@ static NSString *unevenCadenceNote(void) {
         @"今回と前回の起動の性能・設定・エラー番号を、登録した自分のPCへ送ります。ゲームデータやセーブは送りません。先にゲームのシステムメニューを開き、PCを起動してTailscaleを接続してください。送信できたら、このチャットで知らせてください。");
     if (section==0) { NSString *base = L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。"); NSString *note = unevenCadenceNote(); return note ? [base stringByAppendingFormat:@"\n%@", note] : base; }
     if (section==1) return L(@"Drag outside the buttons to look. Use the arrows and LB / RB to navigate menus, and LT / RT for the left and right hands. Hold L+R to use both hands together.", @"ボタン以外をドラッグして視点移動。十字キーとLB／RBでメニュー移動、LT／RTで左右の手を操作します。「両手」を長押しすると左右の手を同時に使えます。");
-    if (section==2) return L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate. Lightweight mode only lowers values that are above its limits and never changes the saved files: Off returns to your own settings. Rows you set above are left as you chose.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。軽量モードは、上限より重い値だけをゲームが読むときに下げ、保存ファイルは変えません。オフにすればご自身の設定に戻ります。上で個別に選んだ項目はそのまま使います。");
+    if (section==2) return L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate. Lightweight mode only lowers values that are above its limits (Maximum lowers them a lot) and never changes the saved files: Off returns to your own settings. Rows you set above are left as you chose.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。軽量モードは、上限より重い値だけをゲームが読むときに下げ、保存ファイルは変えません。オフにすればご自身の設定に戻ります。上で個別に選んだ項目はそのまま使います。");
     if (section==3) return L(@"These settings do not pause the game. Open the game system menu first. Quick save sends F5 and checks for a changed save file; it is not an emulator save state.", @"設定画面だけではゲームは一時停止しません。先にシステムメニューを開いてください。クイックセーブはゲームのF5入力を送り、保存ファイルの更新を確認します。実行状態を丸ごと復元するステートセーブではありません。");
     if (section==4) return L(@"Save in the game, then fully close and reopen the app to apply. Off disables saves on pause, travel, waiting and rest; save manually while it is off. Keep current preserves the current values, including a previous Off choice. The game menu can still change them during play.", @"ゲーム内で保存し、アプリを完全終了して開き直すと反映します。オフではメニュー・移動・待機・休息時の自動保存を止めるため、手動で保存してください。「維持」は以前のオフも含めた現在値を保ちます。プレイ中はゲーム内設定からも変更できます。");
     if (section==5) {

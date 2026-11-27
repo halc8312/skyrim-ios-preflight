@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-/* 0 off, 1 light, 2 lighter. Anything else is treated as 0. Startup only. */
+/* 0 off, 1 light, 2 lighter, 3 maximum. Anything else is treated as 0. Startup only. */
 void skyrim_light_set_mode(int mode);
 int skyrim_light_mode(void);
 

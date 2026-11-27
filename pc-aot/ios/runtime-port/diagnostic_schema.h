@@ -78,10 +78,10 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_DEVICE_STATE", "^IOS_DEVICE_STATE active=[0-9]{1,20} thermal=[0-3] low_power=[01] foreground=[01] headroom_known=[01] headroom_bytes=[0-9]{1,20} memory_warning=[01] reclaimed_pool_bytes=[0-9]{1,20} smaller_pools=[0-9]{1,20}$") \
     X("IOS_WORK_QOS", "^IOS_WORK_QOS role=[0-9]{1,20} target=[0-9]{1,20} error=-?[0-9]{1,20}$") \
     X("IOS_DRAWABLE", "^IOS_DRAWABLE pixels=[0-9]{1,20}x[0-9]{1,20} main_thread=1$") \
-    X("IOS_GRAPHICS", "^IOS_GRAPHICS override_count=[0-9]{1,20} resolution=[0-9]{1,20}x[0-9]{1,20}(?: lightweight=[0-2])?$") \
-    X("IOS_LIGHT", "^IOS_LIGHT read file=(?:prefs|ini) section=[A-Za-z]{1,16} key=[A-Za-z]{1,32} from=-?[0-9]{1,10}(?:[.][0-9]{1,4})? src=(?:ini|default) to=(?:same|-?[0-9]{1,10}(?:[.][0-9]{1,4})?)$") \
-    X("IOS_LIGHT", "^IOS_LIGHT write_kept section=[A-Za-z]{1,16} key=[A-Za-z]{1,32}$") \
-    X("IOS_LIGHT", "^IOS_LIGHT summary mode=[0-2] keys=[0-9]{1,3} read=[0-9]{1,3} changed=[0-9]{1,3} exempt=[0-9]{1,3} unread=(?:[A-Za-z]{1,32}(?:,[A-Za-z]{1,32}){0,40})?$") \
+    X("IOS_GRAPHICS", "^IOS_GRAPHICS override_count=[0-9]{1,20} resolution=[0-9]{1,20}x[0-9]{1,20}(?: lightweight=[0-3])?$") \
+    X("IOS_LIGHT", "^IOS_LIGHT read file=(?:prefs|ini) section=[A-Za-z]{1,16} key=[A-Za-z0-9]{1,32} from=-?[0-9]{1,10}(?:[.][0-9]{1,4})? src=(?:ini|default) to=(?:same|-?[0-9]{1,10}(?:[.][0-9]{1,4})?)$") \
+    X("IOS_LIGHT", "^IOS_LIGHT write_kept section=[A-Za-z]{1,16} key=[A-Za-z0-9]{1,32}$") \
+    X("IOS_LIGHT", "^IOS_LIGHT summary mode=[0-3] keys=[0-9]{1,3} read=[0-9]{1,3} changed=[0-9]{1,3} exempt=[0-9]{1,3} unread=(?:[A-Za-z0-9]{1,32}(?:,[A-Za-z0-9]{1,32}){0,60})?$") \
     X("IOS_SHADER_OPTION", "^IOS_SHADER_OPTION option=[0-7] enabled=[01]$") \
     X("IOS_SHADER_POLICY", "^IOS_SHADER_POLICY schema=1 module_cold=[01] cold_scope=[01]$") \
     X("IOS_GRAPHICS_POLICY", "^IOS_GRAPHICS_POLICY schema=1 (?:exact_state=0 wait_scope=0|exact_state=1 wait_scope=1)$") \

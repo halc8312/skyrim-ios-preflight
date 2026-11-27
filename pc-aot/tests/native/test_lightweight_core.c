@@ -11,35 +11,53 @@
 
 /* Independent copy of the expected table (not shared with the implementation):
  * section, key, dir, light, lighter, exe default. NAN = untouched in that mode. */
-typedef struct { const char *section, *key; int dir; double light, lighter, def; } Expect;
+typedef struct { const char *section, *key; int dir; double light, lighter, maximum, def; } Expect;
 static const Expect expect[] = {
-    {"Display", "bShadowsOnGrass", -1, 0, 0, 1},
-    {"Display", "bTreesReceiveShadows", -1, 0, 0, 0},
-    {"Display", "bDrawLandShadows", -1, NAN, 0, 0},
-    {"Display", "fShadowDistance", -1, 3000, 1500, 2500},
-    {"Display", "iShadowMapResolution", -1, 2048, 1024, 1024},
-    {"Display", "iShadowFilter", -1, 2, 1, 3},
-    {"Display", "iMultiSample", -1, 2, 0, 0},
-    {"Display", "iMaxAnisotropy", -1, 4, 2, 8},
-    {"Display", "fLightLODStartFade", -1, 1500, 1000, 0},
-    {"Display", "iMaxDecalsPerFrame", -1, 10, 5, 10},
-    {"Display", "iMaxSkinDecalsPerFrame", -1, 3, 2, 3},
-    {"Display", "iTexMipMapSkip", +1, NAN, 1, 0},
-    {"LOD", "fLODFadeOutMultObjects", -1, 6, 4, 5},
-    {"LOD", "fLODFadeOutMultActors", -1, 8, 5, 6},
-    {"LOD", "fLODFadeOutMultItems", -1, 4, 3, 3},
-    {"Grass", "fGrassStartFadeDistance", -1, 3000, 1500, 0},
-    {"Grass", "iMinGrassSize", +1, 40, 60, 20},
-    {"Trees", "uiMaxSkinnedTreesToRender", -1, 20, 10, 40},
-    {"Water", "iWaterReflectWidth", -1, 512, 256, 512},
-    {"Water", "iWaterReflectHeight", -1, 512, 256, 512},
-    {"Water", "bReflectLODObjects", -1, 0, 0, 0},
-    {"Water", "bReflectLODTrees", -1, 0, 0, 0},
-    {"Particles", "iMaxDesired", -1, 500, 250, 750},
-    {"Decals", "uMaxDecals", -1, 50, 20, 100},
-    {"Decals", "uMaxSkinDecals", -1, 20, 10, 35},
-    {"Decals", "uMaxSkinDecalPerActor", -1, 10, 5, 20},
-    {"Imagespace", "bDoDepthOfField", -1, NAN, 0, 1},
+    {"Display", "bShadowsOnGrass", -1, 0, 0, 0, 1},
+    {"Display", "bTreesReceiveShadows", -1, 0, 0, 0, 0},
+    {"Display", "bDrawLandShadows", -1, NAN, 0, 0, 0},
+    {"Display", "fShadowDistance", -1, 3000, 1500, 500, 2500},
+    {"Display", "iShadowMapResolution", -1, 2048, 1024, 512, 1024},
+    {"Display", "iShadowFilter", -1, 2, 1, 0, 3},
+    {"Display", "iMultiSample", -1, 2, 0, 0, 0},
+    {"Display", "iMaxAnisotropy", -1, 4, 2, 1, 8},
+    {"Display", "fLightLODStartFade", -1, 1500, 1000, 500, 0},
+    {"Display", "iMaxDecalsPerFrame", -1, 10, 5, 0, 10},
+    {"Display", "iMaxSkinDecalsPerFrame", -1, 3, 2, 0, 3},
+    {"Display", "iTexMipMapSkip", +1, NAN, 1, 2, 0},
+    {"LOD", "fLODFadeOutMultObjects", -1, 6, 4, 2, 5},
+    {"LOD", "fLODFadeOutMultActors", -1, 8, 5, 2, 6},
+    {"LOD", "fLODFadeOutMultItems", -1, 4, 3, 1, 3},
+    {"Grass", "fGrassStartFadeDistance", -1, 3000, 1500, 0, 0},
+    {"Grass", "iMinGrassSize", +1, 40, 60, 80, 20},
+    {"Trees", "uiMaxSkinnedTreesToRender", -1, 20, 10, 0, 40},
+    {"Water", "iWaterReflectWidth", -1, 512, 256, 128, 512},
+    {"Water", "iWaterReflectHeight", -1, 512, 256, 128, 512},
+    {"Water", "bReflectLODObjects", -1, 0, 0, 0, 0},
+    {"Water", "bReflectLODTrees", -1, 0, 0, 0, 0},
+    {"Particles", "iMaxDesired", -1, 500, 250, 100, 750},
+    {"Decals", "uMaxDecals", -1, 50, 20, 0, 100},
+    {"Decals", "uMaxSkinDecals", -1, 20, 10, 0, 35},
+    {"Decals", "uMaxSkinDecalPerActor", -1, 10, 5, 0, 20},
+    {"Imagespace", "bDoDepthOfField", -1, NAN, 0, 0, 1},
+    {"Display", "bDrawShadows", -1, NAN, NAN, 0, 1},
+    {"Display", "bFXAAEnabled", -1, NAN, NAN, 0, 0},
+    {"Display", "fMeshLODLevel1FadeDist", -1, NAN, NAN, 2048, 4096},
+    {"Display", "fMeshLODLevel2FadeDist", -1, NAN, NAN, 1536, 3072},
+    {"Display", "fTreesMidLODSwitchDist", -1, NAN, NAN, 1800, 3600},
+    {"Display", "fDecalLOD1", -1, NAN, NAN, 250, 1000},
+    {"Display", "fDecalLOD2", -1, NAN, NAN, 500, 1500},
+    {"Grass", "bAllowCreateGrass", -1, NAN, NAN, 0, 0},
+    {"Trees", "bRenderSkinnedTrees", -1, NAN, NAN, 0, 1},
+    {"Water", "bUseWaterReflections", -1, NAN, NAN, 0, 1},
+    {"Water", "bUseWaterRefractions", -1, NAN, NAN, 0, 1},
+    {"Water", "bUseWaterDisplacements", -1, NAN, NAN, 0, 1},
+    {"Water", "bReflectLODLand", -1, NAN, NAN, 0, 1},
+    {"Imagespace", "bDoRadialBlur", -1, NAN, NAN, 0, 1},
+    {"TerrainManager", "fBlockLevel0Distance", -1, NAN, NAN, 8000, 20480},
+    {"TerrainManager", "fBlockLevel1Distance", -1, NAN, NAN, 16000, 32768},
+    {"TerrainManager", "fBlockMaximumDistance", -1, NAN, NAN, 50000, 100000},
+    {"TerrainManager", "fTreeLoadDistance", -1, NAN, NAN, 6000, 25000},
 };
 #define N (sizeof expect / sizeof expect[0])
 
@@ -61,7 +79,9 @@ static void test_off_changes_nothing(void) {
                 CHECK(skyrim_light_read(file ? INI : PREFS, expect[i].section, expect[i].key, cur, "7", buf, sizeof buf) == NULL);
                 CHECK(skyrim_light_write_is_echo(file ? INI : PREFS, expect[i].section, expect[i].key, "0") == 0);
             }
-    skyrim_light_set_mode(7);          /* anything but 1 or 2 is off */
+    skyrim_light_set_mode(7);          /* anything but 1, 2 or 3 is off */
+    CHECK(skyrim_light_mode() == 0);
+    skyrim_light_set_mode(4);
     CHECK(skyrim_light_mode() == 0);
     skyrim_light_set_mode(-1);
     CHECK(skyrim_light_mode() == 0);
@@ -74,7 +94,7 @@ static void test_mode(int mode) {
     char buf[48], want[48];
     for (size_t i = 0; i < N; ++i) {
         const Expect *e = &expect[i];
-        const double limit = mode == 1 ? e->light : e->lighter;
+        const double limit = mode == 1 ? e->light : mode == 2 ? e->lighter : e->maximum;
         for (int file = 0; file < 2; ++file) {
             const char *path = file ? INI : PREFS;
             if (isnan(limit)) {
@@ -201,6 +221,7 @@ int main(void) {
     test_off_changes_nothing();
     test_mode(1);
     test_mode(2);
+    test_mode(3);
     test_selection_rules();
     test_threads();
     test_exempt_last();

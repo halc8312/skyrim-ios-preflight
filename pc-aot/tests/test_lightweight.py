@@ -86,7 +86,7 @@ class CoreTests(unittest.TestCase):
         schema = receiver.Schema()
         for line in ('IOS_GRAPHICS override_count=27 resolution=956x440',
                      'IOS_GRAPHICS override_count=27 resolution=956x440 lightweight=0',
-                     'IOS_GRAPHICS override_count=0 resolution=0x0 lightweight=2',
+                     'IOS_GRAPHICS override_count=0 resolution=0x0 lightweight=3',
                      'IOS_DIAG_SETTING key=19 value=2',
                      'IOS_LIGHT read file=prefs section=Display key=fShadowDistance from=8000.0000 src=ini to=3000.0000',
                      'IOS_LIGHT read file=ini section=Grass key=iMinGrassSize from=20.0000 src=default to=40',
@@ -96,13 +96,13 @@ class CoreTests(unittest.TestCase):
                      'IOS_LIGHT summary mode=0 keys=0 read=0 changed=0 exempt=0 unread='):
             with self.subTest(line=line):
                 schema.line(line)
-        for line in ('IOS_GRAPHICS override_count=27 resolution=956x440 lightweight=3',
+        for line in ('IOS_GRAPHICS override_count=27 resolution=956x440 lightweight=4',
                      'IOS_GRAPHICS override_count=27 resolution=956x440 lightweight=1 extra=1',
                      'IOS_DIAG_SETTING key=20 value=1',
                      'IOS_LIGHT read file=other section=Display key=x from=1.0000 src=ini to=1',
                      'IOS_LIGHT read file=prefs section=Display key=fShadowDistance from=8000.0000 src=ini to=/private/path',
                      'IOS_LIGHT write_kept section=Display key=a/b',
-                     'IOS_LIGHT summary mode=3 keys=1 read=1 changed=1 exempt=0 unread=',
+                     'IOS_LIGHT summary mode=4 keys=1 read=1 changed=1 exempt=0 unread=',
                      'IOS_LIGHT summary mode=1 keys=1 read=1 changed=1 exempt=0 unread=/etc/passwd',
                      'IOS_LIGHT secret=1'):
             with self.subTest(line=line):
@@ -192,7 +192,7 @@ class OffPathAndWiringTests(unittest.TestCase):
         self.assertNotIn('lightweight', rows)
         self.assertIn('section==2 ? graphicsRows().count+2 :', source)
         self.assertIn('if (p.section==2 && (NSUInteger)p.row == graphicsRows().count+1) return lightweightRow();', source)
-        self.assertIn('@"values":@[@0,@1,@2], @"default":@0', source)
+        self.assertIn('@"values":@[@0,@1,@2,@3], @"default":@0', source)
         self.assertIn('[lightweightRow()[@"values"] containsObject:@(value(@"lightweight",0))]', source)
         self.assertIn('"game_text", "game_voices", "lightweight"}', source)
         # The presets still pair graphicsRows() with their tuples by position.

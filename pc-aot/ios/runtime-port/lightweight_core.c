@@ -19,41 +19,59 @@
 typedef struct {
     const char *section, *key;
     int dir;
-    double light, lighter, exe_default;
+    double light, lighter, maximum, exe_default;
     int exempt;                    /* startup only */
     atomic_int logged_read, changed, logged_write, last_valid, unreadable;
     atomic_uint_least64_t last_bits;
 } LightKey;
 
-#define K(s, k, d, a, b, e) { s, k, d, a, b, e, 0, 0, 0, 0, 0, 0, 0 }
+#define K(s, k, d, a, b, c, e) { s, k, d, a, b, c, e, 0, 0, 0, 0, 0, 0, 0 }
 static LightKey table[] = {
-    K("Display", "bShadowsOnGrass", -1, 0, 0, 1),
-    K("Display", "bTreesReceiveShadows", -1, 0, 0, 0),
-    K("Display", "bDrawLandShadows", -1, NA, 0, 0),
-    K("Display", "fShadowDistance", -1, 3000, 1500, 2500),
-    K("Display", "iShadowMapResolution", -1, 2048, 1024, 1024),
-    K("Display", "iShadowFilter", -1, 2, 1, 3),
-    K("Display", "iMultiSample", -1, 2, 0, 0),
-    K("Display", "iMaxAnisotropy", -1, 4, 2, 8),
-    K("Display", "fLightLODStartFade", -1, 1500, 1000, 0),
-    K("Display", "iMaxDecalsPerFrame", -1, 10, 5, 10),
-    K("Display", "iMaxSkinDecalsPerFrame", -1, 3, 2, 3),
-    K("Display", "iTexMipMapSkip", +1, NA, 1, 0),
-    K("LOD", "fLODFadeOutMultObjects", -1, 6, 4, 5),
-    K("LOD", "fLODFadeOutMultActors", -1, 8, 5, 6),
-    K("LOD", "fLODFadeOutMultItems", -1, 4, 3, 3),
-    K("Grass", "fGrassStartFadeDistance", -1, 3000, 1500, 0),
-    K("Grass", "iMinGrassSize", +1, 40, 60, 20),
-    K("Trees", "uiMaxSkinnedTreesToRender", -1, 20, 10, 40),
-    K("Water", "iWaterReflectWidth", -1, 512, 256, 512),
-    K("Water", "iWaterReflectHeight", -1, 512, 256, 512),
-    K("Water", "bReflectLODObjects", -1, 0, 0, 0),
-    K("Water", "bReflectLODTrees", -1, 0, 0, 0),
-    K("Particles", "iMaxDesired", -1, 500, 250, 750),
-    K("Decals", "uMaxDecals", -1, 50, 20, 100),
-    K("Decals", "uMaxSkinDecals", -1, 20, 10, 35),
-    K("Decals", "uMaxSkinDecalPerActor", -1, 10, 5, 20),
-    K("Imagespace", "bDoDepthOfField", -1, NA, 0, 1),
+    K("Display", "bShadowsOnGrass", -1, 0, 0, 0, 1),
+    K("Display", "bTreesReceiveShadows", -1, 0, 0, 0, 0),
+    K("Display", "bDrawLandShadows", -1, NA, 0, 0, 0),
+    K("Display", "fShadowDistance", -1, 3000, 1500, 500, 2500),
+    K("Display", "iShadowMapResolution", -1, 2048, 1024, 512, 1024),
+    K("Display", "iShadowFilter", -1, 2, 1, 0, 3),
+    K("Display", "iMultiSample", -1, 2, 0, 0, 0),
+    K("Display", "iMaxAnisotropy", -1, 4, 2, 1, 8),
+    K("Display", "fLightLODStartFade", -1, 1500, 1000, 500, 0),
+    K("Display", "iMaxDecalsPerFrame", -1, 10, 5, 0, 10),
+    K("Display", "iMaxSkinDecalsPerFrame", -1, 3, 2, 0, 3),
+    K("Display", "iTexMipMapSkip", +1, NA, 1, 2, 0),
+    K("LOD", "fLODFadeOutMultObjects", -1, 6, 4, 2, 5),
+    K("LOD", "fLODFadeOutMultActors", -1, 8, 5, 2, 6),
+    K("LOD", "fLODFadeOutMultItems", -1, 4, 3, 1, 3),
+    K("Grass", "fGrassStartFadeDistance", -1, 3000, 1500, 0, 0),
+    K("Grass", "iMinGrassSize", +1, 40, 60, 80, 20),
+    K("Trees", "uiMaxSkinnedTreesToRender", -1, 20, 10, 0, 40),
+    K("Water", "iWaterReflectWidth", -1, 512, 256, 128, 512),
+    K("Water", "iWaterReflectHeight", -1, 512, 256, 128, 512),
+    K("Water", "bReflectLODObjects", -1, 0, 0, 0, 0),
+    K("Water", "bReflectLODTrees", -1, 0, 0, 0, 0),
+    K("Particles", "iMaxDesired", -1, 500, 250, 100, 750),
+    K("Decals", "uMaxDecals", -1, 50, 20, 0, 100),
+    K("Decals", "uMaxSkinDecals", -1, 20, 10, 0, 35),
+    K("Decals", "uMaxSkinDecalPerActor", -1, 10, 5, 0, 20),
+    K("Imagespace", "bDoDepthOfField", -1, NA, 0, 0, 1),
+    K("Display", "bDrawShadows", -1, NA, NA, 0, 1),
+    K("Display", "bFXAAEnabled", -1, NA, NA, 0, 0),
+    K("Display", "fMeshLODLevel1FadeDist", -1, NA, NA, 2048, 4096),
+    K("Display", "fMeshLODLevel2FadeDist", -1, NA, NA, 1536, 3072),
+    K("Display", "fTreesMidLODSwitchDist", -1, NA, NA, 1800, 3600),
+    K("Display", "fDecalLOD1", -1, NA, NA, 250, 1000),
+    K("Display", "fDecalLOD2", -1, NA, NA, 500, 1500),
+    K("Grass", "bAllowCreateGrass", -1, NA, NA, 0, 0),
+    K("Trees", "bRenderSkinnedTrees", -1, NA, NA, 0, 1),
+    K("Water", "bUseWaterReflections", -1, NA, NA, 0, 1),
+    K("Water", "bUseWaterRefractions", -1, NA, NA, 0, 1),
+    K("Water", "bUseWaterDisplacements", -1, NA, NA, 0, 1),
+    K("Water", "bReflectLODLand", -1, NA, NA, 0, 1),
+    K("Imagespace", "bDoRadialBlur", -1, NA, NA, 0, 1),
+    K("TerrainManager", "fBlockLevel0Distance", -1, NA, NA, 8000, 20480),
+    K("TerrainManager", "fBlockLevel1Distance", -1, NA, NA, 16000, 32768),
+    K("TerrainManager", "fBlockMaximumDistance", -1, NA, NA, 50000, 100000),
+    K("TerrainManager", "fTreeLoadDistance", -1, NA, NA, 6000, 25000),
 };
 #undef K
 #define KEYS (sizeof table / sizeof table[0])
@@ -61,9 +79,13 @@ static LightKey table[] = {
 static atomic_int mode_value;
 
 void skyrim_light_set_mode(int mode) {
-    atomic_store_explicit(&mode_value, mode == 1 || mode == 2 ? mode : 0, memory_order_relaxed);
+    atomic_store_explicit(&mode_value, mode >= 1 && mode <= 3 ? mode : 0, memory_order_relaxed);
 }
 int skyrim_light_mode(void) { return atomic_load_explicit(&mode_value, memory_order_relaxed); }
+
+static double limit_for(const LightKey *k, int mode) {
+    return mode == 1 ? k->light : mode == 2 ? k->lighter : k->maximum;
+}
 
 static LightKey *find(const char *section, const char *key) {
     if (!section || !key) return NULL;
@@ -116,7 +138,7 @@ const char *skyrim_light_read(const char *file, const char *section, const char 
     if (!buf || size < 16 || !target_file(file)) return NULL;
     LightKey *k = find(section, key);
     if (!k || k->exempt) return NULL;
-    const double limit = mode == 1 ? k->light : k->lighter;
+    const double limit = limit_for(k, mode);
     if (isnan(limit)) return NULL;
 
     double original;
@@ -175,7 +197,7 @@ void skyrim_light_log_summary(void) {
     for (size_t i = 0; i < KEYS; ++i) {
         const LightKey *k = &table[i];
         if (k->exempt) { ++exempt; continue; }
-        if (isnan(mode == 1 ? k->light : k->lighter)) continue;
+        if (isnan(limit_for(k, mode))) continue;
         ++keys;
         if (atomic_load_explicit(&k->logged_read, memory_order_relaxed)) ++read;
         else if (used + strlen(k->key) + 2 < sizeof unread)
