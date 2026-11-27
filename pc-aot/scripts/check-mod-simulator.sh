@@ -10,9 +10,9 @@ allowance=900
 case "$mode" in
     screens)
         method=testActualSettingsModScreens
-        # The full flow reached the generated-output import at 25 minutes on CI.
-        # Allow that final profile check to finish. Individual waits stay bounded.
-        allowance=2100
+        # The hosted runner completed the full UI flow in 2,143 seconds, but
+        # XCTest had already recorded a timeout. Keep each UI wait bounded.
+        allowance=3300
         ;;
     nexus-live) method=testLiveNexusListing ;;
     native-menu) method=testNativeMenuControls ;;
