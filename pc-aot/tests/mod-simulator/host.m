@@ -50,6 +50,10 @@ SkyrimTouchMenu skyrim_loading_menu_touch_state(void) {
     self.inputReadout.text = [NSString stringWithFormat:@"%u", (unsigned)skyrim_mobile_pad().buttons];
     self.touchReadout.text = [self.touchReadout.text stringByAppendingFormat:@" · End %.0f,%.0f tracking=%d", p.x, p.y, tracking];
 }
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesCancelled:touches withEvent:event];
+    self.touchReadout.text = [self.touchReadout.text stringByAppendingString:@" · Cancelled"];
+}
 @end
 
 // The shipping selector must enter Swift and return a main-thread result. Apple supports

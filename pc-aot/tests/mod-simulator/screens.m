@@ -498,13 +498,13 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
         XCTAssertLessThan(CGRectGetMaxY(frame), CGRectGetMaxY(screen)-12);
     }
     [[self.app coordinateWithNormalizedOffset:CGVectorMake(.43,.46)] tap];
+    XCTAssertTrue([touch.label containsString:@"tracking=1"], @"%@", touch.label);
     XCTAssertEqualObjects(input.label, @"0");
     XCUICoordinate *border = [self.app coordinateWithNormalizedOffset:CGVectorMake(.17,.12)];
     [border pressForDuration:.12 thenDragToCoordinate:
         [self.app coordinateWithNormalizedOffset:CGVectorMake(.17,.65)]];
     XCTAssertEqualObjects(input.label, @"0");
-    XCUICoordinate *list = [self.app coordinateWithNormalizedOffset:CGVectorMake(.42,.68)];
-    [list pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.42,.32)]];
+    [self.app swipeUp];
     XCTAssertEqualObjects(input.label, @"2", @"%@", touch.label);  // Down one entry, no activation.
     XCUICoordinate *columns = [self.app coordinateWithNormalizedOffset:CGVectorMake(.63,.53)];
     [columns pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.36,.53)]];
