@@ -138,8 +138,12 @@ static NSMutableDictionary *ProfileById(NSString *pid) {
 }
 static NSMutableDictionary *SelectedProfile(void) { return ProfileById(state[@"next"]) ?: Profiles().firstObject; }
 static NSMutableDictionary *RunningProfile(void) { return ProfileById(activeProfile) ?: SelectedProfile(); }
+static BOOL IsBenchmarkProfile(NSString *pid) {
+    return ValidId(pid) && [pid isEqual:state[@"benchmarkProfile"]];
+}
 static NSString *ProfileName(NSDictionary *profile) {
     if ([profile[@"id"] isEqual:@"default"]) return T(@"Default", @"標準");
+    if (IsBenchmarkProfile(profile[@"id"])) return T(@"Benchmark", @"ベンチマーク");
     id name = profile[@"name"];
     return [name isKindOfClass:NSString.class] && [name length] ? name : T(@"Profile", @"プロファイル");
 }
@@ -238,6 +242,77 @@ static void EnsureState(void) {
                 [fm fileExistsAtPath:[PackageDir(row[@"id"]) stringByAppendingPathComponent:@"package.json"]]) [keep addObject:row];
         p[@"packages"] = keep;
     }
+}
+
+static NSMutableDictionary *CreateProfileFrom(NSDictionary *source, NSString *name) {
+    NSString *pid = NSUUID.UUID.UUIDString;
+    NSString *relative = [@"Profiles" stringByAppendingPathComponent:pid];
+    NSString *root = [Base() stringByAppendingPathComponent:relative];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    if (![fm createDirectoryAtPath:root.stringByDeletingLastPathComponent
+        withIntermediateDirectories:YES attributes:nil error:NULL]) return nil;
+    if (mkdir(root.fileSystemRepresentation, 0700)) return nil;
+
+    NSString *settings = @"Documents/My Games/Skyrim";
+    NSString *destination = [root stringByAppendingPathComponent:settings];
+    NSString *origin = [ProfileDir(source) stringByAppendingPathComponent:settings];
+    NSError *listError = nil;
+    NSArray<NSString *> *files = [fm contentsOfDirectoryAtPath:origin error:&listError];
+    BOOL absent = [listError.domain isEqualToString:NSCocoaErrorDomain] &&
+        (listError.code == NSFileReadNoSuchFileError || listError.code == NSFileNoSuchFileError);
+    BOOL ready = (files != nil || absent) && [fm createDirectoryAtPath:destination
+        withIntermediateDirectories:YES attributes:nil error:NULL];
+    for (NSString *file in files) {
+        if (!ready) break;
+        if (![file.pathExtension.lowercaseString isEqualToString:@"ini"]) continue;
+        NSString *input = [origin stringByAppendingPathComponent:file];
+        NSDictionary *attributes = [fm attributesOfItemAtPath:input error:NULL];
+        ready = [attributes[NSFileType] isEqualToString:NSFileTypeRegular] &&
+            [fm copyItemAtPath:input toPath:[destination stringByAppendingPathComponent:file] error:NULL];
+    }
+    if (!ready) {
+        [fm removeItemAtPath:root error:NULL];
+        return nil;
+    }
+
+    NSMutableArray *packages = [NSMutableArray array], *plugins = [NSMutableArray array];
+    for (NSDictionary *row in source[@"packages"])
+        if ([row isKindOfClass:NSDictionary.class]) [packages addObject:[row mutableCopy]];
+    for (NSDictionary *row in source[@"plugins"])
+        if ([row isKindOfClass:NSDictionary.class]) [plugins addObject:[row mutableCopy]];
+    return [@{@"id":pid, @"name":name, @"dir":relative, @"packages":packages, @"plugins":plugins} mutableCopy];
+}
+
+BOOL skyrim_mods_benchmark_profile_active(void) {
+    return IsBenchmarkProfile(activeProfile) && ProfileById(activeProfile) != nil;
+}
+
+BOOL skyrim_mods_select_benchmark_for_next_launch(void) {
+    EnsureState();
+    NSString *previousBenchmark = state[@"benchmarkProfile"];
+    id previousNext = state[@"next"];
+    NSDictionary *benchmark = ValidId(previousBenchmark) ? ProfileById(previousBenchmark) : nil;
+    NSMutableDictionary *newProfile = nil;
+    if (!benchmark) {
+        newProfile = CreateProfileFrom(RunningProfile(), @"Benchmark");
+        if (!newProfile) return NO;
+        [Profiles() addObject:newProfile];
+        benchmark = newProfile;
+    }
+
+    state[@"benchmarkProfile"] = benchmark[@"id"];
+    state[@"next"] = benchmark[@"id"];
+    if (!SaveState()) {
+        state[@"benchmarkProfile"] = previousBenchmark;
+        state[@"next"] = previousNext;
+        if (newProfile) {
+            [Profiles() removeObjectIdenticalTo:newProfile];
+            [NSFileManager.defaultManager removeItemAtPath:ProfileDir(newProfile) error:NULL];
+        }
+        return NO;
+    }
+    [NSNotificationCenter.defaultCenter postNotificationName:@"SKModsChanged" object:nil];
+    return YES;
 }
 
 /* A disabled package's previous choice must not activate a same-named file
@@ -2506,20 +2581,20 @@ static UITableViewCell *ReusableCell(UITableView *t) {
 }
 - (void)add {
     [self askName:T(@"New profile", @"新しいプロファイル") initial:@"MOD" done:^(NSString *name) {
-        NSDictionary *from = SelectedProfile();
-        NSString *pid = NSUUID.UUID.UUIDString, *dir = [@"Profiles" stringByAppendingPathComponent:pid];
-        /* Start from the selected profile's MODs and INI files, not its saves. */
-        NSString *src = [ProfileDir(from) stringByAppendingPathComponent:@"Documents/My Games/Skyrim"];
-        NSString *dst = [[Base() stringByAppendingPathComponent:dir] stringByAppendingPathComponent:@"Documents/My Games/Skyrim"];
-        [NSFileManager.defaultManager createDirectoryAtPath:dst withIntermediateDirectories:YES attributes:nil error:NULL];
-        for (NSString *f in [NSFileManager.defaultManager contentsOfDirectoryAtPath:src error:NULL])
-            if ([f.pathExtension.lowercaseString isEqualToString:@"ini"])
-                [NSFileManager.defaultManager copyItemAtPath:[src stringByAppendingPathComponent:f] toPath:[dst stringByAppendingPathComponent:f] error:NULL];
-        NSMutableArray *packages = [NSMutableArray array], *plugins = [NSMutableArray array];
-        for (NSDictionary *r in from[@"packages"]) [packages addObject:[r mutableCopy]];
-        for (NSDictionary *r in from[@"plugins"]) [plugins addObject:[r mutableCopy]];
-        [Profiles() addObject:[@{@"id":pid, @"name":name, @"dir":dir, @"packages":packages, @"plugins":plugins} mutableCopy]];
-        SaveState(); [self.tableView reloadData];
+        NSMutableDictionary *profile = CreateProfileFrom(SelectedProfile(), name);
+        if (profile) {
+            [Profiles() addObject:profile];
+            if (!SaveState()) {
+                [Profiles() removeObjectIdenticalTo:profile];
+                [NSFileManager.defaultManager removeItemAtPath:ProfileDir(profile) error:NULL];
+                profile = nil;
+            }
+        }
+        if (!profile) {
+            skyrim_mobile_show_notice(T(@"Could not create the profile.", @"プロファイルを作成できませんでした。"));
+            return;
+        }
+        [self.tableView reloadData];
         skyrim_mobile_show_notice(T(@"Profile created. Select it and restart the app to save to this profile.",
             @"新しいプロファイルを作りました。選んでからアプリを起動し直すと、そのプロファイルにセーブできます。"));
     }];
@@ -2527,7 +2602,7 @@ static UITableViewCell *ReusableCell(UITableView *t) {
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)t trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)p {
     NSMutableDictionary *profile = Profiles()[p.row];
     NSMutableArray *actions = [NSMutableArray array];
-    [actions addObject:[UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:T(@"Rename", @"名前変更")
+    if (!IsBenchmarkProfile(profile[@"id"])) [actions addObject:[UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:T(@"Rename", @"名前変更")
         handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
         (void)a; (void)v;
         [self askName:T(@"Rename", @"名前変更") initial:profile[@"name"] done:^(NSString *name) { profile[@"name"] = name; SaveState(); [t reloadData]; }];
@@ -2550,13 +2625,14 @@ static UITableViewCell *ReusableCell(UITableView *t) {
                 skyrim_remove_tree(ProfileDir(profile).fileSystemRepresentation);
                 skyrim_remove_tree([[Base() stringByAppendingPathComponent:@"Views"] stringByAppendingPathComponent:profile[@"id"]].fileSystemRepresentation);
                 if ([state[@"next"] isEqual:profile[@"id"]]) state[@"next"] = @"default";
+                if (IsBenchmarkProfile(profile[@"id"])) [state removeObjectForKey:@"benchmarkProfile"];
                 [Profiles() removeObject:profile]; SaveState(); [t reloadData];
             }]];
             [self presentViewController:c animated:YES completion:nil];
             done(YES);
         }]];
     }
-    return [UISwipeActionsConfiguration configurationWithActions:actions];
+    return actions.count ? [UISwipeActionsConfiguration configurationWithActions:actions] : nil;
 }
 @end
 

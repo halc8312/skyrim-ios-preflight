@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "ios_runtime.h"
 #include "mobile_core.h"
+#include "benchmark.h"
 #include "mobile_ui.h"
 #include "performance_metrics.h"
 #include "device_policy.h"
@@ -213,6 +214,7 @@ void skyrim_ios_present_result(int32_t result) {
         atomic_max(&interval_max, gap);
         skyrim_perf_interval(SKYRIM_PERF_FRAME_GAP, now - gap, now, 0, 0);
     }
+    skyrim_benchmark_frame(now);
     skyrim_mobile_frame();
     if (__atomic_add_fetch(&successful_presents, 1, __ATOMIC_RELAXED) == 1)
         skyrim_ios_stage("first-successful-present-title-not-verified");

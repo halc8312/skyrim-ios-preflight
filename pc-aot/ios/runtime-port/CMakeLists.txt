@@ -123,6 +123,7 @@ add_library(skyrim_ios_runtime STATIC ${runtime_sources}
     "${SKYDREAM_SOURCE_DIR}/third_party/f3daudio/F3DAudio.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/ios_runtime.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_core.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/benchmark.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/game_language.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mod_plugins.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mod_archive.c"

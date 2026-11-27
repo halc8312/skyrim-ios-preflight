@@ -76,6 +76,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_DEVICE", "^IOS_DEVICE schema=1 cpus=[0-9]{1,20} active=[0-9]{1,20} screen_max_hz=[0-9]{1,20} physical_bytes=[0-9]{1,20} gpu=[0-9]{1,20} apple_family=[0-9]{1,20} unified=[01] bc=[01] max_buffer_bytes=[0-9]{1,20} guest_cpu_policy_unchanged=1$") \
     X("IOS_DEVICE_STATE", "^IOS_DEVICE_STATE active=[0-9]{1,20} thermal=[0-3] low_power=[01] foreground=[01] headroom_known=[01] headroom_bytes=[0-9]{1,20} memory_warning=[01] reclaimed_pool_bytes=[0-9]{1,20} smaller_pools=[0-9]{1,20}$") \
     X("IOS_WORK_QOS", "^IOS_WORK_QOS role=[0-9]{1,20} target=[0-9]{1,20} error=-?[0-9]{1,20}$") \
+    X("IOS_BENCHMARK", "^IOS_BENCHMARK schema=1 run=[0-9]{1,10} scene=[1-6] status=[1-4] start_ns=[0-9]{1,20} end_ns=[0-9]{1,20} intervals=[0-9]{1,10} total_ns=[0-9]{1,20} over100=[0-9]{1,10} max_ns=[0-9]{1,20} p99_ms=[0-9]{1,4} render=[0-9]{1,10}x[0-9]{1,10} selected_height=[0-9]{1,10} cap=[0-9]{1,3},[0-9]{1,3} thermal=[0-3],[0-3] low_power=[01] seen=[0-9]{1,3} phase_ms=[0-9]{1,5}(?:,[0-9]{1,5}){7}$") \
     X("IOS_DRAWABLE", "^IOS_DRAWABLE pixels=[0-9]{1,20}x[0-9]{1,20} main_thread=1$") \
     X("IOS_GRAPHICS", "^IOS_GRAPHICS override_count=[0-9]{1,20} resolution=[0-9]{1,20}x[0-9]{1,20}$") \
     X("IOS_SHADER_OPTION", "^IOS_SHADER_OPTION option=[0-7] enabled=[01]$") \

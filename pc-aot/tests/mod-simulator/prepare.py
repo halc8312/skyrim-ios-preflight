@@ -216,7 +216,7 @@ def project(work, sdl_prefix, archive_prefix):
         return obj(name+"Sources", "PBXSourcesBuildPhase", files=files,
                    buildActionMask=2147483647, runOnlyForDeploymentPostprocessing=0)
     app_sources = [
-        "mobile_ui.m", "mobile_core.c", "game_language.c", "diagnostic_upload.m",
+        "mobile_ui.m", "mobile_core.c", "benchmark.c", "game_language.c", "diagnostic_upload.m",
         "performance_metrics.c", "present_pacing_core.c", "lock_metrics.c", "mod_manager.m", "mod_fomod.m",
         "mod_browser.m", "mod_plugins.c", "mod_archive.c", "mod_deploy.c",
         "mod_analyze.c", "mod_optimize.c", "mod_libarchive.c", "mod_translate.swift",

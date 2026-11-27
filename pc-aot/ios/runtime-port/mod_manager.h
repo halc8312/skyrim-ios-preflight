@@ -14,6 +14,10 @@
  *    the packages laid over Data. Never fatal; falls back to the original. */
 NSString *skyrim_mods_select_profile(NSString *default_profile_directory);
 NSString *skyrim_mods_prepare_game(NSString *game_directory, BOOL arabic_text);
+/* Main thread. The benchmark runs only in its own profile. Setup selects it
+ * for the next launch, leaving the current profile and its saves in use now. */
+BOOL skyrim_mods_benchmark_profile_active(void);
+BOOL skyrim_mods_select_benchmark_for_next_launch(void);
 /* The next-launch profile has an enabled, recognized Arabic text pack. */
 BOOL skyrim_mods_has_arabic_text(void);
 /* After prepare_game. Recognize the reviewed Arabic MOD in the effective view. */
