@@ -53,16 +53,22 @@ def mode_call(unit: bytes) -> bytes:
     return body[start:end]
 
 
+def reviewed_caller_slice(unit: bytes, entry: str, returned: str, name: str, digest: str) -> bytes:
+    caller = function_body(unit, f"\nvoid f_{entry}(CPU *c) {{\n".encode("ascii"))
+    end = caller.index(f"M32(esp) = 0x{returned}u; SPILL(); f_A60C80(c);".encode("ascii"))
+    name_push = caller.rindex(f"{{ uint32_t v_ = 0x{name}u;".encode("ascii"), 0, end)
+    mode_push = caller.rindex(b"{ uint32_t v_ = 0x3u;", 0, name_push)
+    block = caller[mode_push:caller.index(b"\n", end) + 1]
+    if sha256(block).hexdigest() != digest:
+        raise ValueError(f"Movie caller {entry} differs from the reviewed Classic lift")
+    return block
+
+
 def stage_inventory_fit(unit: bytes, callers: dict[str, bytes]) -> bytes:
     if sha256(unit).hexdigest() != UNIT_HASH or set(callers) != set(CALLER_UNITS):
         raise ValueError("Menu units differ from the reviewed Classic lift")
     for source, entry, returned, name, digest in MENU_CALLERS:
-        caller = function_body(callers[source], f"\nvoid f_{entry}(CPU *c) {{\n".encode("ascii"))
-        end = caller.index(f"M32(esp) = 0x{returned}u; SPILL(); f_A60C80(c);".encode("ascii"))
-        name_push = caller.rindex(f"{{ uint32_t v_ = 0x{name}u;".encode("ascii"), 0, end)
-        mode_push = caller.rindex(b"{ uint32_t v_ = 0x3u;", 0, name_push)
-        if sha256(caller[mode_push:caller.index(b"\n", end) + 1]).hexdigest() != digest:
-            raise ValueError(f"Movie caller {entry} differs from the reviewed Classic lift")
+        reviewed_caller_slice(callers[source], entry, returned, name, digest)
     region = mode_call(unit)
     if sha256(region).hexdigest() != MODE_CALL_HASH or unit.count(region) != 1 or region.count(ANCHOR) != 1:
         raise ValueError("Menu mode call differs from the reviewed Classic lift")
