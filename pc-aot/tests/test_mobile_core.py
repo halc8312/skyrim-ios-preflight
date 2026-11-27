@@ -43,6 +43,7 @@ static int metrics_active = 1;
 static pthread_mutex_t frame_metrics_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int on_main = 1;
 static int calls;
+#define pthread_main_np test_main_thread
 enum { SKYRIM_PERF_FRAME_GAP };
 static void atomic_max(uint64_t *limit, uint64_t value) { if (*limit < value) *limit = value; }
 static uint64_t monotonic_ns(void) { return 1; }

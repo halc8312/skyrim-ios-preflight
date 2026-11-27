@@ -83,6 +83,14 @@ int main(void) {
     M32(EVENT) = LOADING_NAME;
     M32(EVENT + 4) = 0xababab01;
     run_case(true, MANAGER + 4, EVENT, CLASSIC_MENU_LOADING);
+    const unsigned ambient[] = {0x50, 0x5c, 0x60, 0x78, 0xbc};
+    for (unsigned i = 0; i < sizeof ambient / sizeof ambient[0]; ++i) {
+        M32(EVENT) = M32(HOLDER + ambient[i]) = LOADING_NAME + 0x100 + ambient[i];
+        ClassicMenuIdentity identity = classic_dispatched_menu_identity(
+            CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, EVENT, read_word, &guest);
+        assert(identity.name == M32(EVENT) && identity.kind == CLASSIC_MENU_NONE && identity.passive);
+    }
+    M32(EVENT) = LOADING_NAME;
     skyrim_loading_menu_app_configure("different input", true);
     assert(!skyrim_loading_menu_app_ready());
     skyrim_loading_menu_app_observe(CLASSIC_LOADING_MENU_OPEN_SITE, MANAGER + 4, EVENT);

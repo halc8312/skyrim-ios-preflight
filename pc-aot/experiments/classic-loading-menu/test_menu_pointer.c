@@ -17,9 +17,11 @@ enum {
     MESSAGE = 0x14040, MANAGER = 0x14100, MENU_STACK = 0x14200,
     CURSOR_MENU = 0x14300, INVENTORY = 0x14340, MAGIC = 0x14380, MODAL = 0x143c0,
     CURSOR_VIEW = 0x14400, INVENTORY_VIEW = 0x14420, MAGIC_VIEW = 0x14440,
+    FADER = 0x14460, MIST = 0x144a0,
     MOVIE_VTABLE = 0x14500, MODAL_VTABLE = 0x14600, MENU_STATE = 0x14700,
     HEAP_BLOCK = 0x14800, INPUT_DISPATCHER = 0x16000, INPUT_BUFFER = 0x16100, INPUT_MANAGER = 0x16400,
     CURSOR_VTABLE = 0x10e4bd4, INVENTORY_VTABLE = 0x10e5b90, MAGIC_VTABLE = 0x10e6594,
+    FADER_VTABLE = 0x10e4da0, MIST_VTABLE = 0x10e6c20,
     CURSOR_NAME = 0x110df94, HANDLE_EVENT = 0x01000100, HANDLE_MODAL = 0x01000200,
     SET_VARIABLE = 0x01000300, ADVANCE_MOVIE = 0x01000400
 };
@@ -39,8 +41,10 @@ static bool heap_in_use;
 
 void f_A62020(CPU *cpu);
 void f_859A70(CPU *cpu);
+void f_85B110(CPU *cpu);
 void f_86BA80(CPU *cpu);
 void f_875E40(CPU *cpu);
+void f_87B440(CPU *cpu);
 void f_A68F20(CPU *cpu);
 void f_A64980(CPU *cpu);
 void baseline_advance(CPU *cpu);
@@ -63,6 +67,8 @@ void rt_call_ic(CPU *cpu, uint32_t target, const FnEntry **cache) {
     (void)cache;
     switch (target) {
     case 0x859a70: assert(cpu->r[1] == CURSOR_MENU); f_859A70(cpu); return;
+    case 0x85b110: assert(cpu->r[1] == FADER); f_85B110(cpu); return;
+    case 0x87b440: assert(cpu->r[1] == MIST); f_87B440(cpu); return;
     case 0x86ba80: assert(cpu->r[1] == INVENTORY); f_86BA80(cpu); return;
     case 0x875e40: assert(cpu->r[1] == MAGIC); f_875E40(cpu); return;
     case HANDLE_EVENT:
@@ -182,7 +188,7 @@ static void load_tables(const char *path) {
         assert(fread(MEM + address, 1, size, file) == size);
         ++loaded;
     }
-    assert(feof(file) && loaded == 6 && fclose(file) == 0);
+    assert(feof(file) && loaded == 8 && fclose(file) == 0);
 }
 
 static void route(const uint32_t *stack, size_t count) {
@@ -331,6 +337,7 @@ int main(int argc, char **argv) {
     MEM = guest.base;
     for (uint32_t address = 0x12000; address <= STACK; address += 0x1000) commit(address);
     load_tables(argv[1]);
+    assert(M32(INVENTORY_VTABLE + 0x14) == 0xa64980 && M32(MAGIC_VTABLE + 0x14) == 0xa64980);
     commit(0x12c36cc); commit(0x12e35e0); commit(0x1bbeb54); commit(0x1b3fcac);
     commit(0x1b2e99c); commit(0x1b8d088);
     M32(TLS + 0x2c) = TLS_TABLE;
@@ -348,12 +355,16 @@ int main(int argc, char **argv) {
     M32(CURSOR_VIEW) = M32(INVENTORY_VIEW) = M32(MAGIC_VIEW) = MOVIE_VTABLE;
     M32(MOVIE_VTABLE + 0xb4) = HANDLE_EVENT;
     M32(MODAL) = MODAL_VTABLE; M32(MODAL_VTABLE + 0x10) = HANDLE_MODAL;
+    M32(FADER) = FADER_VTABLE; M32(FADER + 0x10) = 0x8802;
+    M32(MIST) = MIST_VTABLE; M32(MIST + 0x10) = 0x4880;
     MF32(CURSOR + 0x14) = 1920;
     MF32(CURSOR + 0x18) = 1080;
     SkyrimMobileViewport viewport = skyrim_mobile_viewport(2868, 1320, 1920, 1080);
     assert(!skyrim_mobile_viewport_point(viewport, 2868, 1320, .03, .5, NULL, NULL));
     point(viewport, .5, .5);
     route((uint32_t[]){INVENTORY, CURSOR_MENU}, 2);
+    assert(delivery_count == 2 && deliveries[0] == CURSOR_VIEW && deliveries[1] == INVENTORY_VIEW);
+    route((uint32_t[]){INVENTORY, MIST, FADER, CURSOR_MENU}, 4);
     assert(delivery_count == 2 && deliveries[0] == CURSOR_VIEW && deliveries[1] == INVENTORY_VIEW);
     point(viewport, .25, .2);
     route((uint32_t[]){MAGIC, CURSOR_MENU}, 2);

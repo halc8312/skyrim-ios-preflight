@@ -73,8 +73,10 @@ class LoadingMenuTests(unittest.TestCase):
             (262, b"A5C900"): "5359f367ba8f86b788feef6b49d53b4446cc05a8db2cbf7172e652ca1575efe0",
             (262, b"A5D370"): "dde214035018c239ee6b4156911f74f04bfb4d4eb41900a08d646d30530cef3c",
             (179, b"859A70"): "a0421b2da19e3d72b28748021272883f96ce46b020194a036543feaed794d9da",
+            (179, b"85B110"): "26a9d0c0e0b816087be84af0a4732c961a5b58e7aaf79771905a1fcfe6ec276e",
             (182, b"86BA80"): "e4c2c50ca11eaa431ec2156f7273658082eadabfcd4630fc98e3521b8e69f3a5",
             (183, b"875E40"): "d5b82430d559482d8a300971178add2e4a28a2c6e7283133b1bd32d65d69ae88",
+            (184, b"87B440"): "6c2068246875398f0f173495c1fbf7e641343aa7f78ea081acdd287c4380a29b",
             (263, b"A64940"): "ea74ffd820d9fd7a879282ad513690a0380182550e650f104d2581961409033d",
             (264, b"A68F20"): "df4c735b0a1934b442397a41a433429bfbcb0fbe6a3cc3e77b11f82e9ead4308",
         }
@@ -129,7 +131,7 @@ class LoadingMenuTests(unittest.TestCase):
         sections = [struct.unpack_from("<IIII", pe, pe_offset + 24 + optional_size + i * 40 + 8)
                     for i in range(section_count)]
         # Owned vtable entries, menu switch tables and the cursor-name literal.
-        ranges = [(0x10E4BD4, 20), (0x10E5B90, 20), (0x10E6594, 20),
+        ranges = [(0x10E4BD4, 20), (0x10E5B90, 24), (0x10E6594, 24), (0x10E4DA0, 20), (0x10E6C20, 20),
                   (0x86C01C, 41), (0x876544, 36), (0x110DF94, 12)]
         tables = bytearray()
         for address, length in ranges:

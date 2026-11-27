@@ -3,7 +3,7 @@
 
 enum {
     MENU_MANAGER = 0x012E3548, OPEN_CLOSE_DISPATCHER = 4, EVENT_OPENING = 4,
-    UI_STRING_HOLDER = 0x012E35E0, LAST_MENU_NAME = 0xB8
+    UI_STRING_HOLDER = 0x012E35E0, LAST_MENU_NAME = 0xBC
 };
 
 /* Interned names in LE 1.9.32 UIStringHolder (Classic SKSE 1.7.3 GameMenus.h).
@@ -42,8 +42,9 @@ ClassicMenuIdentity classic_dispatched_menu_identity(uint32_t site, uint32_t dis
         if (read_word(guest, holder + menus[i].offset, &name) && name == actual_menu)
             return (ClassicMenuIdentity){menus[i].kind, actual_menu, false};
     }
-    /* The HUD, cursor and radial parent can stay open behind a list. */
-    static const unsigned passive_slots[] = {0x50, 0x5c, 0x78};
+    /* The HUD, cursor and radial parent can stay open behind a list. The original
+     * Fader (0x85B110) and Mist (0x87B440) pass mouse moves to the next menu. */
+    static const unsigned passive_slots[] = {0x50, 0x5c, 0x60, 0x78, 0xbc};
     for (unsigned i = 0; i < sizeof(passive_slots) / sizeof(passive_slots[0]); ++i) {
         uint32_t name;
         if (read_word(guest, holder + passive_slots[i], &name) && name == actual_menu)
