@@ -23,6 +23,10 @@ on:
         description: Run the Classic MOD screen simulator without rebuilding the device app
         type: boolean
         default: false
+      native_menu_screens:
+        description: Run only the compact native controls case without rebuilding the device app
+        type: boolean
+        default: false
       guest_tls_sdk:
         description: Link the guest hook library's thread-local receipt with the iPhoneOS SDK and run it in the simulator
         type: boolean
@@ -242,7 +246,7 @@ jobs:
           retention-days: 1
 
   classic-mod-simulator:
-    if: ${{ inputs.mod_screens }}
+    if: ${{ inputs.mod_screens || inputs.native_menu_screens }}
     runs-on: macos-26
     timeout-minutes: 45
     env:
@@ -272,9 +276,11 @@ jobs:
             bash ios/dependencies/build-mod-archive-dependencies.sh iphonesimulator
       - name: Exercise the Classic MOD screens
         working-directory: pc-aot
+        env:
+          SIMULATOR_SCOPE: ${{ inputs.native_menu_screens && 'native-menu' || 'screens' }}
         run: |
           bash scripts/check-mod-simulator.sh "$RUNNER_TEMP/mod-simulator" "$RUNNER_TEMP/skyrim-sdl-headers" \
-            "$RUNNER_TEMP/skyrim-mod-dependencies/mod-archive/iphonesimulator/prefix" screens
+            "$RUNNER_TEMP/skyrim-mod-dependencies/mod-archive/iphonesimulator/prefix" "$SIMULATOR_SCOPE"
       - name: Save simulator evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

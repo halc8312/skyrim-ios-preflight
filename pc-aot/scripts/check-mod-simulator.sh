@@ -2,7 +2,7 @@
 # The simulator and this bundle contain only authored public fixtures.
 set -euo pipefail
 if [[ "$(uname -s)" != Darwin || $# -lt 3 || $# -gt 4 ]]; then
-    echo "Usage on a Mac with an iOS 18+ simulator: $0 OUTPUT SDL_PREFIX SIMULATOR_ARCHIVE_PREFIX [screens|nexus-live|dll-probe]" >&2
+    echo "Usage on a Mac with an iOS 18+ simulator: $0 OUTPUT SDL_PREFIX SIMULATOR_ARCHIVE_PREFIX [screens|native-menu|nexus-live|dll-probe]" >&2
     exit 2
 fi
 mode="${4:-screens}"
@@ -15,6 +15,7 @@ case "$mode" in
         allowance=2100
         ;;
     nexus-live) method=testLiveNexusListing ;;
+    native-menu) method=testNativeMenuControls ;;
     dll-probe) method=testInstalledModDllDiagnostics; export SKYRIM_IOS_SKSE_DLL_PROBE=1 ;;
     *) echo "Unknown simulator test mode: $mode" >&2; exit 2 ;;
 esac
@@ -88,6 +89,8 @@ if live:
     required = {"nexus-live-listing"}
 elif sys.argv[4] == "dll-probe":
     required = {"installed-dll-diagnosis"}
+elif sys.argv[4] == "native-menu":
+    required = {"native-menu-compact"}
 elif os.environ.get("SKYRIM_IOS_SKSE_DLL_PROBE") == "1":
     required.add("installed-dll-diagnosis")
 if sys.argv[4] == "screens" and os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1":
@@ -139,6 +142,10 @@ fi
 if [[ "$mode" == nexus-live ]]; then
     test -s "$EVIDENCE/nexus-live-result.txt"
     echo "MOD_SIMULATOR: live Nexus Skyrim listing visible in the shipping browser."
+    exit 0
+fi
+if [[ "$mode" == native-menu ]]; then
+    echo "MOD_SIMULATOR: the compact native controls accepted the tested UIKit gestures."
     exit 0
 fi
 container="$(xcrun simctl get_app_container "$UDID" org.skyrimios.tests.modscreens data)"

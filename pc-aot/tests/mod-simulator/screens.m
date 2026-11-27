@@ -473,6 +473,7 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 - (void)testNativeMenuControls {
     NSArray *previous = self.app.launchArguments;
     self.app.launchArguments = [previous arrayByAddingObject:@"-TestNativeMenuOverlay"];
+    XCUIDevice.sharedDevice.orientation = UIDeviceOrientationLandscapeRight;
     [self.app launch];
     XCUIElement *toggle = self.app.buttons[@"skyrim-pad-layout"];
     XCUIElement *settings = self.app.buttons[@"skyrim-pad-settings"];
@@ -496,16 +497,17 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
         XCTAssertGreaterThan(CGRectGetMinY(frame), CGRectGetMinY(screen)+12);
         XCTAssertLessThan(CGRectGetMaxY(frame), CGRectGetMaxY(screen)-12);
     }
-    XCUICoordinate *middle = [self.app coordinateWithNormalizedOffset:CGVectorMake(.5,.5)];
-    [middle tap];
+    [[self.app coordinateWithNormalizedOffset:CGVectorMake(.43,.46)] tap];
     XCTAssertEqualObjects(input.label, @"0");
     XCUICoordinate *border = [self.app coordinateWithNormalizedOffset:CGVectorMake(.17,.12)];
     [border pressForDuration:.12 thenDragToCoordinate:
         [self.app coordinateWithNormalizedOffset:CGVectorMake(.17,.65)]];
     XCTAssertEqualObjects(input.label, @"0");
-    [middle pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.5,.24)]];
+    XCUICoordinate *list = [self.app coordinateWithNormalizedOffset:CGVectorMake(.42,.68)];
+    [list pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.42,.32)]];
     XCTAssertEqualObjects(input.label, @"2", @"%@", touch.label);  // Down one entry, no activation.
-    [middle pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.30,.5)]];
+    XCUICoordinate *columns = [self.app coordinateWithNormalizedOffset:CGVectorMake(.63,.53)];
+    [columns pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.36,.53)]];
     XCTAssertEqualObjects(input.label, @"512", @"%@", touch.label);  // RB selects the stock SkyUI column.
     [self capture:@"native-menu-compact"];
     [toggle tap];
