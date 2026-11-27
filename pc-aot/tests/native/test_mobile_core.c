@@ -30,12 +30,6 @@ static void *both_hands_producer(void *arg) {
     return NULL;
 }
 static void menu_touch(void) {
-    assert(skyrim_mobile_menu_swipe(3,-28)==SKYRIM_PAD_DOWN);
-    assert(skyrim_mobile_menu_swipe(-5,54)==SKYRIM_PAD_UP);
-    assert(skyrim_mobile_menu_swipe(-44,5)==SKYRIM_PAD_RB);
-    assert(skyrim_mobile_menu_swipe(70,-20)==SKYRIM_PAD_LB);
-    assert(skyrim_mobile_menu_swipe(0,0)==-1 && skyrim_mobile_menu_swipe(0,27)==-1);
-    assert(skyrim_mobile_menu_swipe(65,65)==-1 && skyrim_mobile_menu_swipe(INFINITY,0)==-1);
     const unsigned controls[]={SKYRIM_MENU_SETTINGS,SKYRIM_PAD_LB,SKYRIM_PAD_UP,SKYRIM_PAD_DOWN,SKYRIM_PAD_LEFT,SKYRIM_PAD_RIGHT,SKYRIM_PAD_BACK,
                               SKYRIM_MENU_EXPAND,SKYRIM_PAD_RB,SKYRIM_PAD_A,SKYRIM_PAD_B,SKYRIM_PAD_LT,SKYRIM_PAD_RT};
     const float safe[][2]={{832,420},{780,370},{568,320},{390,213}};

@@ -110,13 +110,6 @@ void skyrim_mobile_button_cancel(unsigned index) {
     tap_until[index] = 0;
     pthread_mutex_unlock(&lock);
 }
-int skyrim_mobile_menu_swipe(float dx, float dy) {
-    if (!isfinite(dx) || !isfinite(dy)) return -1;
-    const float x = fabsf(dx), y = fabsf(dy);
-    if (y >= 28 && y >= 1.5f * x) return dy < 0 ? SKYRIM_PAD_DOWN : SKYRIM_PAD_UP;
-    if (x >= 44 && x >= 1.5f * y) return dx < 0 ? SKYRIM_PAD_RB : SKYRIM_PAD_LB;
-    return -1;
-}
 int skyrim_mobile_menu_rect(unsigned control, float width, float height, SkyrimMenuButtonRect *out) {
     /* Signed row numbers keep both rails centered and leave the first/last list entries visible. */
     static const int8_t rows[] = {
@@ -140,7 +133,7 @@ int skyrim_mobile_menu_rect(unsigned control, float width, float height, SkyrimM
 void skyrim_mobile_button_pulse(unsigned index) {
     if (index >= SKYRIM_PAD_CONTROL_COUNT || index == SKYRIM_PAD_MOVE) return;
     pthread_mutex_lock(&lock);
-    /* A swipe can coexist with a different finger holding this same direction. */
+    /* An accessibility activation can coexist with a finger holding the button. */
     tap_until[index] = skyrim_mobile_now() + UINT64_C(120000000);
     pthread_mutex_unlock(&lock);
 }

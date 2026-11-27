@@ -483,6 +483,14 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCUIElement *touch = self.app.staticTexts[@"native-menu-touch"];
     XCTAssertTrue([toggle waitForExistenceWithTimeout:8]);
     XCTAssertTrue(canHit(settings));
+    XCTAssertTrue(canHit(move));
+    XCTAssertTrue(canHit(save));
+    XCTAssertEqualObjects(toggle.label, @"Show menu controls");
+    [[self.app coordinateWithNormalizedOffset:CGVectorMake(.45,.62)] pressForDuration:.12 thenDragToCoordinate:
+        [self.app coordinateWithNormalizedOffset:CGVectorMake(.45,.36)]];
+    XCTAssertEqualObjects(input.label, @"0");
+    [toggle tap];
+    XCTAssertEqualObjects(toggle.label, @"Show all controls");
     XCTAssertFalse(move.exists);
     XCTAssertFalse(save.exists);
     CGRect screen = self.app.frame;
@@ -498,24 +506,22 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
         XCTAssertLessThan(CGRectGetMaxY(frame), CGRectGetMaxY(screen)-12);
     }
     [[self.app coordinateWithNormalizedOffset:CGVectorMake(.43,.46)] tap];
-    XCTAssertTrue([touch.label containsString:@"tracking=1"], @"%@", touch.label);
+    XCTAssertTrue([touch.label containsString:@"tracking=0"], @"%@", touch.label);
     XCTAssertEqualObjects(input.label, @"0");
     XCUICoordinate *border = [self.app coordinateWithNormalizedOffset:CGVectorMake(.17,.12)];
     [border pressForDuration:.12 thenDragToCoordinate:
         [self.app coordinateWithNormalizedOffset:CGVectorMake(.17,.65)]];
     XCTAssertEqualObjects(input.label, @"0");
     [self.app swipeUp];
-    XCTAssertEqualObjects(input.label, @"2", @"%@", touch.label);  // Down one entry, no activation.
+    XCTAssertEqualObjects(input.label, @"0", @"%@", touch.label);
     XCUICoordinate *columns = [self.app coordinateWithNormalizedOffset:CGVectorMake(.63,.53)];
     [columns pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.36,.53)]];
-    XCTAssertEqualObjects(input.label, @"512", @"%@", touch.label);  // RB selects the stock SkyUI column.
+    XCTAssertEqualObjects(input.label, @"0", @"%@", touch.label);
     [self capture:@"native-menu-compact"];
     [toggle tap];
     XCTAssertTrue(canHit(move));
     XCTAssertTrue(canHit(save));
-    [toggle tap];
-    XCTAssertFalse(move.exists);
-    XCTAssertFalse(save.exists);
+    XCTAssertEqualObjects(toggle.label, @"Show menu controls");
     [self.app terminate];
     self.app.launchArguments = previous;
 }

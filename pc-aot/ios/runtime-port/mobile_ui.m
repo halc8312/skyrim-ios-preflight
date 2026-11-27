@@ -718,7 +718,7 @@ static SkyrimTouchMenu touchMenuState(void) { return (SkyrimTouchMenu){0}; }
 @property(nonatomic) NSTimeInterval lookTime;
 @property(nonatomic) BOOL editing;
 @property(nonatomic) uint32_t touchMenus;
-@property(nonatomic) BOOL touchMenusEnabled, listNavigation, showFullPad;
+@property(nonatomic) BOOL touchMenusEnabled, listNavigation, showCompactPad;
 @property(nonatomic,strong) UILabel *hud;
 @property(nonatomic,strong) UILabel *notice;
 @property(nonatomic) NSTimeInterval noticeUntil;
@@ -1062,8 +1062,8 @@ static NSString *unevenCadenceNote(void) {
         @"今回と前回の起動の性能・設定・エラー番号を、登録した自分のPCへ送ります。ゲームデータやセーブは送りません。先にゲームのシステムメニューを開き、PCを起動してTailscaleを接続してください。送信できたら、このチャットで知らせてください。");
     if (section==0) { NSString *base = L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。"); NSString *note = unevenCadenceNote(); return note ? [base stringByAppendingFormat:@"\n%@", note] : base; }
     if (section==1 && touchSettingRows > 5 && value(@"menuTouch",1) != 0)
-        return L(@"Drag to look while playing. In item and spell lists, swipe vertically to move one entry. Swipe left for RB or right for LB. By default, these change columns in SkyUI. Use A to confirm and the gamepad icon for all controls.",
-                 @"プレイ中はドラッグで視点移動。持ち物・魔法の一覧では縦スワイプで1項目移動します。左スワイプはRB、右スワイプはLBです。SkyUIの初期設定では列を切り替えます。Aで決定、ゲームパッドのアイコンで全ボタンを表示します。");
+        return L(@"Tap the gamepad icon in a menu to switch between the usual and compact layouts.",
+                 @"メニュー内のゲームパッドのアイコンで、通常の配置とコンパクトな配置を切り替えられます。");
     if (section==1) return L(@"Drag outside the buttons to look. Use the arrows and LB / RB to navigate menus, and LT / RT for the left and right hands. Hold L+R to use both hands together.", @"ボタン以外をドラッグして視点移動。十字キーとLB／RBでメニュー移動、LT／RTで左右の手を操作します。「両手」を長押しすると左右の手を同時に使えます。");
     if (section==2) {
         NSString *details = L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。");
@@ -1102,7 +1102,7 @@ static NSString *unevenCadenceNote(void) {
        @{@"key":@"deadzone",@"title":L(@"Movement deadzone", @"移動スティックの遊び"),@"values":@[@0,@.05,@.10,@.15,@.2,@.3],@"default":@.1},
        @{@"key":@"size",@"title":L(@"Control size", @"ボタンの大きさ"),@"values":@[@.8,@1,@1.2,@1.4],@"default":@1},
        @{@"key":@"opacity",@"title":L(@"Control opacity", @"ボタンの不透明度"),@"values":@[@.25,@.4,@.6,@.8,@1],@"default":@.8},
-       @{@"key":@"menuTouch",@"title":L(@"Compact menu controls", @"メニュー用タッチ操作"),@"values":@[@0,@1],@"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")],@"default":@1},
+       @{@"key":@"menuTouch",@"title":L(@"Menu layout switch", @"メニューのボタン配置切替"),@"values":@[@0,@1],@"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")],@"default":@1},
        @{@"key":@"menuFocus",@"title":L(@"Tap to highlight an item or spell (trial, after restart)",
                                       @"持ち物・魔法をタップで選択（試験機能・次回起動）"),
          @"values":@[@0,@1],@"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")],@"default":@0}
@@ -1325,6 +1325,10 @@ static NSString *unevenCadenceNote(void) {
 }
 - (void)refreshLanguage {
     self.touchMenusEnabled=value(@"menuTouch",1)!=0;
+    if (!self.touchMenusEnabled && self.showCompactPad) {
+        [self clearInput];
+        self.showCompactPad=NO;
+    }
     [self updateTouchMenu];
     NSArray *labels=@[L(@"Up",@"上"),L(@"Down",@"下"),L(@"Left",@"左"),L(@"Right",@"右"),
         L(@"System menu",@"システムメニュー"),L(@"Wait",@"待機"),L(@"Sneak",@"隠密"),L(@"Change view",@"視点切替"),
@@ -1341,7 +1345,7 @@ static NSString *unevenCadenceNote(void) {
     [self.settingsButton setImage:[UIImage systemImageNamed:self.editing ? @"checkmark" : @"gearshape"] forState:UIControlStateNormal];
     self.saveButton.accessibilityLabel=L(@"Quick save",@"クイック保存");
     self.keyboardButton.accessibilityLabel=L(@"Keyboard",@"文字入力");
-    self.menuPadButton.accessibilityLabel=self.showFullPad ? L(@"Show menu controls",@"メニュー操作を表示") : L(@"Show all controls",@"すべての操作を表示");
+    self.menuPadButton.accessibilityLabel=self.showCompactPad ? L(@"Show all controls",@"すべての操作を表示") : L(@"Show menu controls",@"メニュー操作を表示");
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
@@ -1371,7 +1375,7 @@ static NSString *unevenCadenceNote(void) {
         self.settingsButton=[self utility:@"gearshape" label:L(@"Settings", @"設定") action:@selector(openSettings)];
         self.saveButton=[self utility:@"square.and.arrow.down" label:L(@"Quick save", @"クイック保存") action:@selector(quicksave)];
         self.keyboardButton=[self utility:@"keyboard" label:L(@"Keyboard", @"文字入力") action:@selector(keyboard)];
-        self.menuPadButton=[self utility:@"gamecontroller" label:L(@"Show all controls", @"すべての操作を表示") action:@selector(toggleMenuPad)];
+        self.menuPadButton=[self utility:@"gamecontroller" label:L(@"Show menu controls", @"メニュー操作を表示") action:@selector(toggleMenuPad)];
         self.menuPadButton.accessibilityIdentifier=@"skyrim-pad-layout";
         self.settingsButton.accessibilityIdentifier=@"skyrim-pad-settings";
         self.saveButton.accessibilityIdentifier=@"skyrim-pad-save";
@@ -1387,21 +1391,21 @@ static NSString *unevenCadenceNote(void) {
     }
     return self;
 }
-- (BOOL)compactMenu { return self.touchMenus && !self.showFullPad && !self.editing; }
+- (BOOL)compactMenu { return self.touchMenus && self.touchMenusEnabled && self.showCompactPad && !self.editing; }
 - (void)updateTouchMenu {
-    SkyrimTouchMenu state = self.touchMenusEnabled && !self.editing ? touchMenuState() : (SkyrimTouchMenu){0};
+    SkyrimTouchMenu state = self.editing ? (SkyrimTouchMenu){0} : touchMenuState();
     if (state.menus == self.touchMenus) return;
     [self clearInput];
     self.touchMenus = state.menus;
     self.listNavigation = state.list_navigation;
-    self.showFullPad = NO;
-    self.menuPadButton.accessibilityLabel=L(@"Show all controls", @"すべての操作を表示");
+    self.showCompactPad = NO;
+    self.menuPadButton.accessibilityLabel=L(@"Show menu controls", @"メニュー操作を表示");
     [self setNeedsLayout];
 }
 - (void)toggleMenuPad {
-    if (!self.touchMenus || self.editing) return;
+    if (!self.touchMenusEnabled || !self.touchMenus || self.editing) return;
     [self clearInput];
-    self.showFullPad=!self.showFullPad;
+    self.showCompactPad=!self.showCompactPad;
     [self refreshLanguage];
     [self setNeedsLayout];
 }
@@ -1444,7 +1448,7 @@ static NSString *unevenCadenceNote(void) {
     self.keyboardButton.frame=CGRectMake(area.origin.x+58,y,44,44);
     self.settingsButton.hidden=NO;
     self.settingsButton.frame=CGRectMake(CGRectGetMaxX(area)-50,y,44,44);
-    self.menuPadButton.hidden=!self.touchMenus || self.editing;
+    self.menuPadButton.hidden=!self.touchMenusEnabled || !self.touchMenus || self.editing;
     self.menuPadButton.frame=CGRectMake(CGRectGetMaxX(area)-100,y,44,44);
     self.saveButton.hidden=self.keyboardButton.hidden=compact;
     self.hud.hidden=compact || value(@"hud",1)==0;
@@ -1463,8 +1467,8 @@ static NSString *unevenCadenceNote(void) {
         CGRect rails=CGRectUnion(a,b);
         if (compact) for (SKPadControl *c in self.controls)
             if (!c.hidden) rails=CGRectUnion(rails,c.frame);
-        NSString *menuLine=[NSString stringWithFormat:@"IOS_MENU_CONTROLS schema=1 menus=%u compact=%u swipe=%u clear_x=%ld,%ld rail_y=%ld,%ld",
-            self.touchMenus, (unsigned)compact, (unsigned)(compact && self.listNavigation),
+        NSString *menuLine=[NSString stringWithFormat:@"IOS_MENU_CONTROLS schema=1 menus=%u compact=%u swipe=0 clear_x=%ld,%ld rail_y=%ld,%ld",
+            self.touchMenus, (unsigned)compact,
             compact ? lround(CGRectGetMaxX(a)) : 0L, compact ? lround(CGRectGetMinX(b)) : 0L,
             compact ? lround(CGRectGetMinY(rails)) : 0L, compact ? lround(CGRectGetMaxY(rails)) : 0L];
         static NSString *lastMenuLine;
@@ -1516,15 +1520,20 @@ static NSString *unevenCadenceNote(void) {
     if (self.editing || self.lookFinger) return;
     UITouch *touch = touches.anyObject;
     CGPoint point = [touch locationInView:self];
-    if ([self compactMenu] && self.listNavigation && ![self isGamePicturePoint:point]) return;
+    uint64_t token=0;
+    if (self.touchMenus) {
+        if (!self.listNavigation || value(@"menuFocus",0)==0 || ![self isGamePicturePoint:point]) return;
+        token=focusTouchToken();
+        if (!token) return;
+    }
     self.lookFinger=touch;self.lookPoint=point;self.lookTime=touch.timestamp;
     self.touchOrigin=self.lookPoint;
     self.tapMovement=0;
-    self.focusToken=[self compactMenu] && self.listNavigation && value(@"menuFocus",0)!=0 ? focusTouchToken() : 0;
+    self.focusToken=token;
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     if (self.editing || !self.lookFinger || ![touches containsObject:self.lookFinger]) return;
-    if ([self compactMenu] && self.listNavigation) {
+    if (self.touchMenus) {
         if (self.focusToken) {
             CGPoint p=[self.lookFinger locationInView:self];
             self.tapMovement=fmax(self.tapMovement,hypot(p.x-self.touchOrigin.x,p.y-self.touchOrigin.y));
@@ -1541,12 +1550,10 @@ static NSString *unevenCadenceNote(void) {
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     if (!self.lookFinger || ![touches containsObject:self.lookFinger]) return;
-    if ([self compactMenu] && self.listNavigation && touchMenuState().menus == self.touchMenus) {
+    if (self.focusToken && self.listNavigation && touchMenuState().menus == self.touchMenus) {
         CGPoint end=[self.lookFinger locationInView:self];
-        int button=skyrim_mobile_menu_swipe(end.x-self.touchOrigin.x,end.y-self.touchOrigin.y);
-        if (button>=0) skyrim_mobile_button_pulse((unsigned)button);
-        else if (self.focusToken && self.tapMovement <= 9 && hypot(end.x-self.touchOrigin.x,end.y-self.touchOrigin.y) <= 9 &&
-                 self.lookFinger.timestamp >= self.lookTime && self.lookFinger.timestamp-self.lookTime <= .45) {
+        if (self.tapMovement <= 9 && hypot(end.x-self.touchOrigin.x,end.y-self.touchOrigin.y) <= 9 &&
+            self.lookFinger.timestamp >= self.lookTime && self.lookFinger.timestamp-self.lookTime <= .45) {
             double x,y;
             if ([self mapGamePicturePoint:end x:&x y:&y]) postFocus(self.focusToken,x,y);
         }

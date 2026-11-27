@@ -1,4 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+"SkyUI list layout" = "Diseño de las listas de SkyUI";
+"SkyUI default" = "Predeterminado de SkyUI";
+"Compact" = "Compacto";
+"Large text" = "Texto grande";
+"Applies to inventory and magic after restarting this profile." = "Se aplica al inventario y a la magia al reiniciar este perfil.";
+"The phone list layout requires the original SkyUI 5.1 menus and configuration." = "El diseño para móviles requiere los menús y la configuración originales de SkyUI 5.1.";
 "Sample water rendering" = "Medir el renderizado del agua";
 "Face the same nearby rock from above and below the surface. Run one sample from each position." = "Mira la misma roca cercana desde encima y debajo del agua. Haz una medición desde cada posición.";
 "Above water" = "Sobre el agua";
@@ -91,7 +97,7 @@
 "Circular requirement" = "Dependencia circular";
 "Code write requests observed in isolation" = "Solicitudes de escritura de código observadas de forma aislada";
 "Common FNIS-related HKX files with a 32-bit Skyrim header: %u of %u." = "Archivos HKX comunes de FNIS con cabecera de Skyrim de 32 bits: %u de %u.";
-"Compact menu controls" = "Controles de menú compactos";
+"Menu layout switch" = "Cambio de diseño de los controles del menú";
 "Tap to highlight an item or spell (trial, after restart)" = "Toca para resaltar un objeto o hechizo (prueba, tras reiniciar)";
 "Completed" = "Completado";
 "Conflicts" = "Conflictos";
@@ -163,7 +169,7 @@
 "Drag an empty area to look. Open the gear for sensitivity, layout and graphics." = "Arrastra una zona vacía para mirar. Toca el engranaje para ajustar la sensibilidad, los controles y los gráficos.";
 "Drag controls to reposition. Tap the checkmark at the top right to save." = "Arrastra los controles para moverlos. Toca la marca de verificación de arriba a la derecha para guardar.";
 "Drag outside the buttons to look. Use the arrows and LB / RB to navigate menus, and LT / RT for the left and right hands. Hold L+R to use both hands together." = "Arrastra fuera de los botones para mirar. Usa las flechas y LB/RB en los menús y LT/RT para las manos izquierda y derecha. Mantén L+R para usar ambas manos.";
-"Drag to look while playing. In item and spell lists, swipe vertically to move one entry. Swipe left for RB or right for LB. By default, these change columns in SkyUI. Use A to confirm and the gamepad icon for all controls." = "Arrastra para mirar mientras juegas. En las listas de objetos y hechizos, desliza en vertical para moverte un elemento. Desliza a la izquierda para enviar RB o a la derecha para LB. En SkyUI, estos botones cambian de columna de forma predeterminada. Pulsa A para confirmar o el icono del mando para ver todos los controles.";
+"Tap the gamepad icon in a menu to switch between the usual and compact layouts." = "Toca el icono del mando en un menú para alternar entre el diseño habitual y el compacto.";
 "Draw / sheathe weapon" = "Desenvainar / envainar";
 "ENB preset (the ENB DLL itself is never loaded)" = "Preajuste de ENB (la DLL de ENB no se carga)";
 "ESM needs ESP %@" = "El ESM necesita el ESP %@";

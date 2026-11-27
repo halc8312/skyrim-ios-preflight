@@ -260,6 +260,20 @@ def adapt_input(text):
     return replace_once(text, INPUT_GFX_CALL, INPUT_CONTROL_EDGE + INPUT_GFX_CALL, INPUT_FILE)
 
 
+def adapt_skyui_density(name, text):
+    if name != "skse_system.c":
+        return text
+    text = replace_once(text, "static void enqueue(CPU *c,", (
+        '#ifdef SKYRIM_IOS_SKYUI_DENSITY\n#include "classic_skyui_density.c.in"\n#endif\n'
+        'static void enqueue(CPU *c,'), name)
+    invoke = "                uint32_t args[]={target,0,gfx,cmd->count};skse_virtual(c,view,23,4,args);"
+    return replace_once(text, invoke, (
+        "#ifdef SKYRIM_IOS_SKYUI_DENSITY\n"
+        "                if (!density_invoke(c, cmd, view, target, gfx))\n"
+        "#endif\n"
+        "                {\n" + invoke + "\n                }"), name)
+
+
 def prepare(source, runtime, save_observe=False, load_observe=False):
     if load_observe and not save_observe:
         raise ValueError("Fresh load preparation requires save observation")
@@ -282,14 +296,15 @@ def prepare(source, runtime, save_observe=False, load_observe=False):
         values = adapt_values_probe(int0) if name == "skse_compat.c" else int0
         epoch = adapt_vm_epoch(values) if name == "skse_compat.c" else values
         events = adapt_mod_event(name, epoch)
-        new = adapt_controls(name, events)
+        controls = adapt_controls(name, events)
+        new = adapt_skyui_density(name, controls)
         target = runtime / name
         if target.is_symlink() or target.samefile(source / name):
             raise ValueError(f"{name}: expected an independent staged copy")
         old = target.read_text(encoding="utf-8")
         if old != new:
             stages = [original, previous, adapted, before_input_queries, input_queries, release_logged, int0, values,
-                      epoch, events]
+                      epoch, events, controls]
             if name == "skse_compat.c":
                 # Earlier stages that already carry the VM generation call.
                 for stage in stages[2:7]:

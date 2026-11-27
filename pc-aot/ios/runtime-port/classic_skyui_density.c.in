@@ -1,0 +1,93 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Included by the pinned Classic UI runtime after gfx_from_vm. */
+#include "skyui_density.h"
+#include <stdio.h>
+
+static bool density_key_is(uint32_t value, const char *key) {
+    const uint32_t type = M32(value + 4);
+    if ((type & 0x8f) != 4) return false;
+    uint32_t text = M32(value + 8);
+    if (type & 0x40) {
+        if (text < 0x10000 || text > UINT32_MAX - 3) return false;
+        memcpy(&text, GPTR(text), sizeof text);
+    }
+    const size_t length = strlen(key);
+    if (text < 0x10000 || text > UINT32_MAX - length) return false;
+    for (size_t i = 0; i <= length; ++i) {
+        if (M8(text + (uint32_t)i) != (unsigned char)key[i]) return false;
+    }
+    return true;
+}
+
+static bool density_keys_ready(CPU *c, uint32_t view, const SkyrimSkyUIOverride *extras, unsigned count) {
+    const uint32_t storage = gmalloc(32);
+    if (!storage) return false;
+    const uint32_t scratch = storage + 16;
+    memset(GPTR(storage), 0, 32);
+    skse_gfx_read(c, view, "_global.skyui.util.ConfigManager._loadPhase", storage);
+    bool match = (M32(storage + 4) & 0x8f) == 3 && MF64(storage + 8) == 1.0;
+    skse_gfx_clean(c, storage);
+    if (match) {
+        skse_gfx_read(c, view, "_global.skyui.util.ConfigManager.in_overrideKeys", storage);
+        match = (M32(storage + 4) & 0xcf) == 0x47 && M32(storage) >= 0x10000 && M32(storage + 8) >= 0x10000;
+    }
+    if (match) {
+        const uint32_t object_interface = M32(storage), array = M32(storage + 8);
+        /* ObjectInterface methods from Classic 1.7.3, present in the pinned LE guest. */
+        match = skse_member(c, 0x920E80, object_interface, 1, &array) == SKYUI_OVERRIDE_COUNT + count;
+        for (unsigned i = 0; match && i < count; ++i) {
+            const uint32_t args[] = {array, SKYUI_OVERRIDE_COUNT + i, scratch};
+            match = (skse_member(c, 0x923AD0, object_interface, 3, args) & 0xff) == 1 &&
+                    density_key_is(scratch, extras[i].key);
+            skse_gfx_clean(c, scratch);
+        }
+    }
+    skse_gfx_clean(c, storage);
+    gfree(storage);
+    return match;
+}
+
+static bool density_invoke(CPU *c, const UiCommand *cmd, uint32_t view, uint32_t target, uint32_t original) {
+    const enum SkyrimSkyUIDensity mode = skyrim_skyui_density_mode();
+    if (mode == SKYUI_STANDARD || cmd->operation != S_UI_ASTRING) return false;
+    const enum SkyrimSkyUIMessage message = skyrim_skyui_density_message(cmd->target, cmd->count);
+    if (message == SKYUI_IGNORE) return false;
+    SkyrimSkyUIOverride extras[SKYUI_DENSITY_MAX_EXTRAS];
+    const unsigned count = (unsigned)skyrim_skyui_density_plan(mode, cmd->menu, extras);
+    /* The unmodified value setter loops over the values it actually received.
+     * Extra keys alone are inert. A new movie never inherits another movie's keys. */
+    if (!count) return false;
+    const bool settingValues = message == SKYUI_OVERRIDE_VALUES;
+    const unsigned menu = !strcmp(cmd->menu, "InventoryMenu") ? 1u : 2u;
+    if (settingValues) {
+        const bool ready = density_keys_ready(c, view, extras, count);
+        /* A read can enter the movie. A retired view must not receive the stock fallback. */
+        if (skse_menu_view(cmd->menu) != view) return true;
+        if (!ready) {
+            fprintf(stderr, "IOS_SKYUI_DENSITY schema=1 menu=%u mode=%u forwarded=0\n", menu, (unsigned)mode);
+            return false;
+        }
+    }
+    const uint32_t gfx = gmalloc(16 * (cmd->count + count));
+    if (!gfx) return false;
+    memcpy(GPTR(gfx), GPTR(original), 16 * cmd->count);
+    memset(GPTR(gfx + 16 * cmd->count), 0, 16 * count);
+    uint32_t strings[SKYUI_DENSITY_MAX_EXTRAS];
+    unsigned built = 0;
+    for (; built < count; ++built) {
+        strings[built] = gstrdup(message == SKYUI_OVERRIDE_KEYS ? extras[built].key : extras[built].value);
+        if (!strings[built]) break;
+        const uint32_t arg = gfx + 16 * (cmd->count + built);
+        M32(arg + 4) = 4;
+        M32(arg + 8) = strings[built];
+    }
+    if (built == count) {
+        const uint32_t args[] = {target, 0, gfx, cmd->count + count};
+        skse_virtual(c, view, 23, 4, args);
+        if (settingValues)
+            fprintf(stderr, "IOS_SKYUI_DENSITY schema=1 menu=%u mode=%u forwarded=1\n", menu, (unsigned)mode);
+    }
+    for (unsigned i = 0; i < built; ++i) gfree(strings[i]);
+    gfree(gfx);
+    return built == count;
+}

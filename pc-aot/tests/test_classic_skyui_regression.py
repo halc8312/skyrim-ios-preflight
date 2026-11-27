@@ -8,6 +8,7 @@ IOS_CLASSIC_RELEASE line are pinned by test_classic_skse_ini.
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -69,6 +70,20 @@ class SkyUIRegressionTests(unittest.TestCase):
         body = self.system[start:end]
         self.assertIn("Copy deliveries before calling the VM", body)
         self.assertLess(body.index("pthread_mutex_unlock(&event_lock);"), body.index("send_event(c,&d->r,d->event,count,values);"))
+
+    def test_phone_density_is_applied_only_with_an_exact_live_config_pair(self):
+        compiler = shutil.which(os.environ.get("CC", "cc"))
+        if not compiler:
+            self.skipTest("C compiler required")
+        self.assertIn('#include "classic_skyui_density.c.in"', self.system)
+        self.assertIn("if (!density_invoke(c, cmd, view, target, gfx))", self.system)
+        experiment = ROOT / "experiments/classic-skyui-density"
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "skyui-layout"
+            subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", str(PORT), "-I", str(experiment),
+                            str(experiment / "skyui_density.c"), str(experiment / "test_skyui_density.c"),
+                            "-o", str(output)], check=True, timeout=60)
+            subprocess.run([str(output)], check=True, timeout=10)
 
 
 if __name__ == "__main__":

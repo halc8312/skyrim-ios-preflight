@@ -52,6 +52,9 @@
 #include "mod_highheel_pex_host.h"
 #include "mod_highheel_scene_host.h"
 #include "probe_asset_file.h"
+#ifdef SKYRIM_IOS_SKYUI_DENSITY
+#include "skyui_density.h"
+#endif
 #ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
 #include "mod_highheel_scene_requests.h"
 #endif
@@ -282,6 +285,7 @@ BOOL skyrim_mods_select_benchmark_for_next_launch(void) {
         if (!newProfile) return NO;
         newProfile[@"skyuiTrial"] = source[@"skyuiTrial"];
         newProfile[@"inventoryFit"] = source[@"inventoryFit"];
+        newProfile[@"skyuiDensity"] = source[@"skyuiDensity"];
         if ([source[@"features"] isKindOfClass:NSDictionary.class])
             newProfile[@"features"] = [source[@"features"] mutableCopy];
         [Profiles() addObject:newProfile];
@@ -899,6 +903,46 @@ static BOOL SkyUITrialSelected(NSDictionary *profile) {
     return [profile[@"skyuiTrial"] isEqual:@YES];
 }
 
+#ifdef SKYRIM_IOS_SKYUI_DENSITY
+static enum SkyrimSkyUIDensity SkyUIDensityPreference(NSDictionary *profile) {
+    id value = profile[@"skyuiDensity"];
+    if ([value isEqual:@(SKYUI_COMPACT)]) return SKYUI_COMPACT;
+    if ([value isEqual:@(SKYUI_LARGE_TEXT)]) return SKYUI_LARGE_TEXT;
+    return SKYUI_STANDARD;
+}
+
+static BOOL ReviewedSkyUIArchive(NSString *game) {
+    char view[PATH_MAX], data[PATH_MAX], archive[PATH_MAX], interfaceDir[PATH_MAX], subdir[PATH_MAX], loose[PATH_MAX];
+    if (!game || !realpath(game.fileSystemRepresentation, view) ||
+        skyrim_plugin_child_path(view, "Data", data, sizeof data) != 1 ||
+        skyrim_plugin_child_path(data, "SkyUI.bsa", archive, sizeof archive) != 1) return NO;
+    int interfaceFound = skyrim_plugin_child_path(data, "Interface", interfaceDir, sizeof interfaceDir);
+    if (interfaceFound < 0) return NO;
+    if (interfaceFound) {
+        const char *menus[] = {"InventoryMenu.swf", "MagicMenu.swf", "InventoryMenu.gfx", "MagicMenu.gfx"};
+        for (unsigned i = 0; i < sizeof menus / sizeof menus[0]; ++i)
+            if (skyrim_plugin_child_path(interfaceDir, menus[i], loose, sizeof loose) != 0) return NO;
+        int config = skyrim_plugin_child_path(interfaceDir, "skyui", subdir, sizeof subdir);
+        if (config < 0 || (config && skyrim_plugin_child_path(subdir, "config.txt", loose, sizeof loose) != 0)) return NO;
+    }
+    int scripts = skyrim_plugin_child_path(data, "Scripts", subdir, sizeof subdir);
+    if (scripts < 0 || (scripts && skyrim_plugin_child_path(subdir, "SKI_SettingsManager.pex", loose, sizeof loose) != 0)) return NO;
+    const size_t length = 1476360;
+    NSString *archivePath = [NSFileManager.defaultManager stringWithFileSystemRepresentation:archive length:strlen(archive)];
+    NSData *bsa = ReadBoundedRegularFile(archivePath, length);
+    return bsa.length == length && [HexDigest(bsa) isEqualToString:
+        @"6d844c51dae24c28e1d52912fd97fedf94aeda1f9d1150a842df8c816e717b03"];
+}
+
+static NSString *SkyUIDensityLabel(enum SkyrimSkyUIDensity mode) {
+    switch (mode) {
+    case SKYUI_COMPACT: return T(@"Compact", @"コンパクト");
+    case SKYUI_LARGE_TEXT: return T(@"Large text", @"大きい文字");
+    default: return T(@"SkyUI default", @"SkyUI標準");
+    }
+}
+#endif
+
 BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed, NSString *game_view) {
     NSDictionary *profile = RunningProfile();
     BOOL requested = SkyUITrialSelected(profile);
@@ -915,6 +959,16 @@ BOOL skyrim_mods_prepare_skyui_trial(BOOL skyui_listed, NSString *game_view) {
             : T(@"SkyUI trial is off for this session. Enable SkyUI.esp in this profile and restart.",
                 @"今回はSkyUI試験が無効です。このプロファイルでSkyUI.espを有効にして、起動し直してください。");
     }
+#ifdef SKYRIM_IOS_SKYUI_DENSITY
+    const enum SkyrimSkyUIDensity density = SkyUIDensityPreference(profile);
+    const BOOL densityReady = density != SKYUI_STANDARD && enabled && needs.status == SKYRIM_SKYUI_REQ_OK &&
+                              ReviewedSkyUIArchive(game_view);
+    skyrim_skyui_density_configure(densityReady ? density : SKYUI_STANDARD);
+    if (densityReady) launchSetup[@"skyuiDensity"] = @(density);
+    if (density != SKYUI_STANDARD && enabled && !densityReady && !launchNotice)
+        launchNotice = T(@"The phone list layout requires the original SkyUI 5.1 menus and configuration.",
+                         @"スマホ向けの一覧表示には、SkyUI 5.1の元のメニューと設定が必要です。");
+#endif
     fprintf(stderr, "IOS_CLASSIC_SKYUI requested=%d enabled=%d\n", (int)requested, (int)enabled);
     if (requested) {
         fprintf(stderr, "IOS_CLASSIC_SKYUI_INPUTS skyui=%d skse_pex=%d support=%u\n",
@@ -936,6 +990,10 @@ static void RestoreLastGoodSetup(NSMutableDictionary *profile) {
     profile[@"skyuiTrial"] = SkyUITrialSelected(lastGood) ? @YES : nil;
 #ifdef SKYRIM_IOS_MOD_HOOKS
     profile[@"inventoryFit"] = [lastGood[@"inventoryFit"] isEqual:@NO] ? @NO : nil;
+#endif
+#ifdef SKYRIM_IOS_SKYUI_DENSITY
+    const enum SkyrimSkyUIDensity density = SkyUIDensityPreference(lastGood);
+    profile[@"skyuiDensity"] = density == SKYUI_STANDARD ? nil : @(density);
 #endif
     profile[@"features"] = [lastGood[@"features"] isKindOfClass:NSDictionary.class] ? [lastGood[@"features"] mutableCopy] : nil;
 #endif
@@ -2868,6 +2926,9 @@ enum {
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
     HubSkyUITrialRow, HubFeaturesRow,
 #endif
+#ifdef SKYRIM_IOS_SKYUI_DENSITY
+    HubSkyUIDensityRow,
+#endif
 #ifdef SKYRIM_IOS_MOD_HOOKS
     HubInventoryFitRow,
 #endif
@@ -3000,6 +3061,14 @@ enum {
         break;
     }
     case HubTools:
+#ifdef SKYRIM_IOS_SKYUI_DENSITY
+        if (p.row == HubSkyUIDensityRow) {
+            c.textLabel.text = T(@"SkyUI list layout", @"SkyUIの一覧表示");
+            c.detailTextLabel.text = SkyUIDensityLabel(SkyUIDensityPreference(SelectedProfile()));
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            break;
+        }
+#endif
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
         if (p.row == HubDllProbeRow) {
             c.textLabel.text = T(@"DLL Compatibility", @"DLL互換性診断");
@@ -3137,6 +3206,29 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
     [self.tableView reloadData];
     skyrim_mobile_show_notice(T(@"SkyUI trial setting saved for the next launch.", @"SkyUI試験の設定を保存しました。次回起動から反映します。"));
 }
+#ifdef SKYRIM_IOS_SKYUI_DENSITY
+- (void)chooseSkyUIDensity {
+    NSMutableDictionary *profile = SelectedProfile();
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:T(@"SkyUI list layout", @"SkyUIの一覧表示")
+        message:T(@"Applies to inventory and magic after restarting this profile.",
+                  @"このプロファイルを再起動すると、持ち物と魔法の一覧に反映されます。")
+        preferredStyle:UIAlertControllerStyleAlert];
+    for (enum SkyrimSkyUIDensity mode = SKYUI_STANDARD; mode <= SKYUI_LARGE_TEXT; ++mode) {
+        [sheet addAction:[UIAlertAction actionWithTitle:SkyUIDensityLabel(mode) style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            (void)action;
+            id previous = profile[@"skyuiDensity"];
+            profile[@"skyuiDensity"] = mode == SKYUI_STANDARD ? nil : @(mode);
+            if (SaveState()) [self.tableView reloadData];
+            else {
+                profile[@"skyuiDensity"] = previous;
+                skyrim_mobile_show_notice(T(@"Could not save the menu fit setting.", @"メニューの表示設定を保存できませんでした。"));
+            }
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:T(@"Cancel", @"キャンセル") style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+#endif
 #ifdef SKYRIM_IOS_MOD_HOOKS
 - (void)inventoryFitToggled:(UISwitch *)toggle {
     if (SaveProfileToggle(toggle, @"inventoryFit"))
@@ -3283,6 +3375,9 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
         else Notice(T(@"Could not create MOD Inbox.", @"MOD Inboxを作成できませんでした。"));
         break;
     case HubTools:
+#ifdef SKYRIM_IOS_SKYUI_DENSITY
+        if (p.row == HubSkyUIDensityRow) { [self chooseSkyUIDensity]; break; }
+#endif
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
         if (p.row == HubDllProbeRow) {
             [self.navigationController pushViewController:skyrim_mod_dll_probe_controller(SKCurrentUILanguage(), nil) animated:YES];

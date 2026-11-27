@@ -148,6 +148,7 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
     target_include_directories(skyrim_ios_runtime PRIVATE "${skse_vm_source}")
     target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_CLASSIC_SKSE=1 SKYDREAM_SKSE=1)
     if(SKYRIM_IOS_MOD_HOOKS)
+        set(skyui_density_source "${SKYRIM_IOS_ROOT}/experiments/classic-skyui-density")
         set(camera_sources "${SKYRIM_IOS_ROOT}/experiments/classic-camera")
         set(loading_menu_sources "${SKYRIM_IOS_ROOT}/experiments/classic-loading-menu")
         set(ece_sources "${SKYRIM_IOS_ROOT}/experiments/classic-racemenu-apply")
@@ -156,6 +157,7 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
         target_sources(skyrim_ios_runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/classic_vm_epoch.c"
             "${SKYRIM_IOS_ROOT}/experiments/classic-mod-events/mod_event.c"
             "${SKYRIM_IOS_ROOT}/experiments/classic-control-events/control_bridge.c"
+            "${skyui_density_source}/skyui_density.c"
             "${camera_sources}/camera_state.c" "${camera_sources}/camera_cull_trial.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_camera_host.c"
             "${loading_menu_sources}/loading_menu.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_loading_menu_host.c"
@@ -174,9 +176,10 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
             "${save_publication}/save_publish.c" "${cosave_source}/observer/lifecycle.c")
         target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_ROOT}/experiments/classic-mod-events"
             "${SKYRIM_IOS_ROOT}/experiments/classic-control-events" "${camera_sources}" "${loading_menu_sources}"
-            "${SKYRIM_IOS_SAVE_WITNESS}" "${save_publication}" "${ece_sources}" "${highheel_sources}")
+            "${SKYRIM_IOS_SAVE_WITNESS}" "${save_publication}" "${ece_sources}" "${highheel_sources}" "${skyui_density_source}")
         target_include_directories(skyrim_ios_runtime PRIVATE "${SKYRIM_IOS_MOD_HOOK_SEAMS}")
-        target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_MOD_HOOKS=1 SKYRIM_CLASSIC_CAMERA_CULL_TRIAL=1)
+        target_compile_definitions(skyrim_ios_runtime PRIVATE SKYRIM_IOS_MOD_HOOKS=1 SKYRIM_CLASSIC_CAMERA_CULL_TRIAL=1
+            SKYRIM_IOS_SKYUI_DENSITY=1)
         if(NOT SKYRIM_IOS_SKSE_DLL_PROBE)
             target_sources(skyrim_ios_runtime PRIVATE "${skse_vm_source}/probe_asset_file.c")
         endif()

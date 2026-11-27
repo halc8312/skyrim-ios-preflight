@@ -31,8 +31,6 @@ int skyrim_mobile_viewport_point(SkyrimMobileViewport viewport, int drawable_wid
                                 double *game_x, double *game_y);
 void skyrim_mobile_button(unsigned index, int down);
 void skyrim_mobile_button_cancel(unsigned index);
-/* Vertical swipes send a D-pad step; horizontal swipes send a shoulder button. */
-int skyrim_mobile_menu_swipe(float dx_points, float dy_points);
 void skyrim_mobile_button_pulse(unsigned index);
 enum { SKYRIM_MENU_SETTINGS = SKYRIM_PAD_CONTROL_COUNT, SKYRIM_MENU_EXPAND };
 typedef struct { float x, y, side; } SkyrimMenuButtonRect;

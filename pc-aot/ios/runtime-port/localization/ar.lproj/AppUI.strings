@@ -1,4 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+"SkyUI list layout" = "تخطيط قائمة SkyUI";
+"SkyUI default" = "الإعداد الافتراضي لـ SkyUI";
+"Compact" = "مضغوط";
+"Large text" = "نص كبير";
+"Applies to inventory and magic after restarting this profile." = "يُطبّق على قائمتي الأغراض والسحر بعد إعادة تشغيل هذا الملف الشخصي.";
+"The phone list layout requires the original SkyUI 5.1 menus and configuration." = "يتطلب تخطيط القائمة للهاتف قوائم SkyUI 5.1 وإعداداتها الأصلية.";
 "Sample water rendering" = "قياس عرض المياه";
 "Face the same nearby rock from above and below the surface. Run one sample from each position." = "انظر إلى الصخرة القريبة نفسها من فوق سطح الماء وتحته. شغّل قياسًا واحدًا في كل موضع.";
 "Above water" = "فوق سطح الماء";
@@ -91,7 +97,7 @@
 "Circular requirement" = "تبعية دائرية";
 "Code write requests observed in isolation" = "طلبات كتابة التعليمات المرصودة في بيئة معزولة";
 "Common FNIS-related HKX files with a 32-bit Skyrim header: %u of %u." = "ملفات HKX الشائعة الخاصة بـ FNIS التي تحمل ترويسة Skyrim ‏32 بت: %u من %u.";
-"Compact menu controls" = "أزرار مدمجة للقوائم";
+"Menu layout switch" = "التبديل بين تخطيطات أزرار القائمة";
 "Tap to highlight an item or spell (trial, after restart)" = "المس عنصراً أو تعويذة لتظليلها (تجريبي، بعد إعادة التشغيل)";
 "Completed" = "مكتمل";
 "Conflicts" = "التعارضات";
@@ -163,7 +169,7 @@
 "Drag an empty area to look. Open the gear for sensitivity, layout and graphics." = "اسحب في مساحة فارغة لتحريك الكاميرا. افتح الترس لضبط الحساسية والأزرار والرسومات.";
 "Drag controls to reposition. Tap the checkmark at the top right to save." = "اسحب الأزرار لتغيير مواضعها. اضغط علامة الصح أعلى اليمين للحفظ.";
 "Drag outside the buttons to look. Use the arrows and LB / RB to navigate menus, and LT / RT for the left and right hands. Hold L+R to use both hands together." = "اسحب خارج الأزرار لتحريك الكاميرا. استخدم الأسهم وLB وRB للتنقل بين القوائم، وLT وRT لليد اليسرى واليمنى. اضغط مطولا على L+R لاستخدام اليدين معا.";
-"Drag to look while playing. In item and spell lists, swipe vertically to move one entry. Swipe left for RB or right for LB. By default, these change columns in SkyUI. Use A to confirm and the gamepad icon for all controls." = "اسحب لتحريك الكاميرا أثناء اللعب. في قوائم الأغراض والتعاويذ، اسحب عموديًا للانتقال بمقدار عنصر واحد. اسحب إلى اليسار لإرسال RB أو إلى اليمين لإرسال LB. في إعدادات SkyUI الافتراضية يغيّر هذان الزران العمود المحدد. اضغط A للتأكيد وأيقونة وحدة التحكم لإظهار جميع الأزرار.";
+"Tap the gamepad icon in a menu to switch between the usual and compact layouts." = "اضغط على أيقونة وحدة التحكم في القائمة للتبديل بين التخطيط المعتاد والمضغوط.";
 "Draw / sheathe weapon" = "سحب السلاح / إغماده";
 "ENB preset (the ENB DLL itself is never loaded)" = "إعداد ENB مسبق (دون تحميل ملف DLL الخاص بـ ENB)";
 "ESM needs ESP %@" = "ملف ESM يتطلب ملف ESP ‏%@";
