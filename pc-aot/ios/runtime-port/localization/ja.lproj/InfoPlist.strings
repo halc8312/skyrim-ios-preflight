@@ -1,0 +1,2 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+"NSLocalNetworkUsageDescription" = "自分で診断の送信を選んだときに、診断結果を自分のPCに送ります。";

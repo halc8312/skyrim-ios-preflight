@@ -28,6 +28,7 @@ INPUTS = (
     'ios/runtime-port/runtime_lock_timing.py', 'ios/runtime-port/runtime_lock_event.h.in',
     'ios/runtime-port/runtime_audio_lock.c.in', 'ios/runtime-port/runtime_com_lock.cpp.in',
     'ios/runtime-port/lock_metrics.h', 'ios/runtime-port/lock_metrics.c',
+    'ios/runtime-port/water_probe.h', 'ios/runtime-port/water_probe.cpp',
 )
 OBSERVATION_INPUTS = frozenset((
     'ios/runtime-port/performance_metrics.h',

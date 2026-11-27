@@ -221,7 +221,9 @@ def stage_ece_nose_observe(root: Path, staged: dict[str, bytes]) -> dict[str, by
 
 def stage_loading_menu_observe(root: Path) -> dict[str, bytes]:
     loading_menu = load(EXPERIMENTS / "classic-loading-menu", "stage_loading_menu")
-    return {LOADING_MENU_UNIT: loading_menu.stage_loading_menu((root / "gen" / LOADING_MENU_UNIT).read_bytes())}
+    focus = load(EXPERIMENTS / "classic-loading-menu", "stage_menu_focus")
+    return {LOADING_MENU_UNIT: loading_menu.stage_loading_menu((root / "gen" / LOADING_MENU_UNIT).read_bytes()),
+            focus.UNIT: focus.stage((root / "gen" / focus.UNIT).read_bytes())}
 
 
 def stage_inventory_fit(root: Path) -> dict[str, bytes]:

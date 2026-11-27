@@ -83,6 +83,14 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_WORK_QOS", "^IOS_WORK_QOS role=[0-9]{1,20} target=[0-9]{1,20} error=-?[0-9]{1,20}$") \
     X("IOS_BENCHMARK", "^IOS_BENCHMARK schema=1 run=[0-9]{1,10} scene=[1-6] status=[1-4] start_ns=[0-9]{1,20} end_ns=[0-9]{1,20} intervals=[0-9]{1,10} total_ns=[0-9]{1,20} over100=[0-9]{1,10} max_ns=[0-9]{1,20} p99_ms=[0-9]{1,4} render=[0-9]{1,10}x[0-9]{1,10} selected_height=[0-9]{1,10} cap=[0-9]{1,3},[0-9]{1,3} thermal=[0-3],[0-3] low_power=[01] seen=[0-9]{1,3} phase_ms=[0-9]{1,5}(?:,[0-9]{1,5}){7}$") \
     X("IOS_RENDER_TRIAL", "^IOS_RENDER_TRIAL requested=720 width=(?:0|[1-9][0-9]{0,3}|10000) height=(?:0|[1-9][0-9]?|[1-6][0-9]{2}|7[01][0-9]|720)$") \
+    X("IOS_RENDER_CHOICE", "^IOS_RENDER_CHOICE schema=1 request=(?:360|540|720|900|1080|2160) width=[0-9]{1,5} height=[0-9]{1,5} recovery=[01]$") \
+    X("IOS_RENDER_DEVICE", "^IOS_RENDER_DEVICE schema=1 op=[01] begin=[01] width=[0-9]{1,10} height=[0-9]{1,10} result=[0-9a-f]{8}$") \
+    X("IOS_RENDER_SURFACE", "^IOS_RENDER_SURFACE schema=1 measured=[01] width=[0-9]{1,10} height=[0-9]{1,10} result=[0-9a-f]{8}$") \
+    X("IOS_RENDER_CAPTURE", "^IOS_RENDER_CAPTURE (?:schema=1 active=[01] render=[0-9]{1,10}x[0-9]{1,10} drawable=[0-9]{1,10}x[0-9]{1,10}|schema=2 active=[01] render=[0-9]{1,10}x[0-9]{1,10} drawable=[0-9]{1,10}x[0-9]{1,10} window=[0-9]{1,10}x[0-9]{1,10} viewport=[0-9]{1,10}x[0-9]{1,10})$") \
+    X("IOS_WATER_PREFS", "^IOS_WATER_PREFS schema=1 dof=(?:-1|[01]) samples=(?:-1|[0-9]|1[0-6])$") \
+    X("IOS_WATER_DRAW", "^IOS_WATER_DRAW schema=1 scene=[12] kind=[1-3] count=[0-9]{1,5} depth=[0-9]{1,5}(?:,[0-9]{1,5}){3} ms_depth=[0-9]{1,5} color=[0-9]{1,5}(?:,[0-9]{1,5}){2} params=[0-9]{1,5}(?:,[0-9]{1,5}){3}$") \
+    X("IOS_WATER_CAMERA", "^IOS_WATER_CAMERA schema=1 scene=[12] count=[0-9]{1,5} endpoints=[0-9]{1,5}(?:,[0-9]{1,5}){8}$") \
+    X("IOS_WATER_SUMMARY", "^IOS_WATER_SUMMARY schema=1 scene=[12] end=[12] frames=[0-3] checked=[0-9]{1,5} fixed=[0-9]{1,5} unknown=[0-9]{1,5} other=[0-9]{1,5} limited=[01]$") \
     X("IOS_RENDER_BUFFER", "^IOS_RENDER_BUFFER width=(?:[1-9][0-9]{0,3}|1[0-5][0-9]{3}|16[0-2][0-9]{2}|163[0-7][0-9]|1638[0-4]) height=(?:[1-9][0-9]{0,3}|1[0-5][0-9]{3}|16[0-2][0-9]{2}|163[0-7][0-9]|1638[0-4])$") \
     X("IOS_DIAG_RECOVERY", "^IOS_DIAG_RECOVERY schema=1 build=28 guest_entry=1 graphics=[01] reason=[0-8] target=[0-9a-f]{8} caller=[0-9a-f]{8}$") \
     X("IOS_DRAWABLE", "^IOS_DRAWABLE pixels=[0-9]{1,20}x[0-9]{1,20} main_thread=1$") \
@@ -122,6 +130,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_LOADING_MENU", "^IOS_LOADING_MENU opening=[01] ts_ns=[0-9]{1,20}$") \
     X("IOS_CHARGEN_MENU", "^IOS_CHARGEN_MENU opening=[01] ts_ns=[0-9]{1,20}$") \
     X("IOS_INVENTORY_FIT", "^IOS_INVENTORY_FIT armed=[01]$") \
+    X("IOS_MENU_CONTROLS", "^IOS_MENU_CONTROLS schema=1 menus=[0-9]{1,6} compact=[01] swipe=[01] clear_x=[0-9]{1,5},[0-9]{1,5} rail_y=[0-9]{1,5},[0-9]{1,5}$") \
     X("IOS_SAFETY_LOAD", "^IOS_SAFETY_LOAD accepted=[0-9]{1,20}$") \
     X("IOS_CLASSIC_FRESH_SAVE", "^IOS_CLASSIC_FRESH_SAVE published=1$") \
     X("IOS_CLASSIC_SAVE_RECORDS", "^IOS_CLASSIC_SAVE_RECORDS captured=[01] mods=(?:[1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]) records=(?:[0-9]|1[0-6])$") \
@@ -134,7 +143,7 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_CLASSIC_HOOK", "^IOS_CLASSIC_HOOK point=[12] order=[12] startup_thread=[01]$") \
     X("IOS_PROGRESS", "^IOS_PROGRESS present_phase=[0-9]{1,20} present_main=[01] phase_age_ms=[0-9]{1,20} ui_pump_age_ms=[0-9]{1,20}$") \
     X("IOS_PRESENT", "^IOS_PRESENT failure=0x[0-9a-fA-F]{8}$") \
-    X("IOS_STAGE", "^IOS_STAGE (?:sdl-application-entry|guest-input-sha256-verified|private-guest-bound|first-successful-present-title-not-verified|runtime-start|guest-memory-bound|guest-entry|vulkan-window-ready) monotonic=[0-9]{1,20}[.][0-9]{9}$") \
+    X("IOS_STAGE", "^IOS_STAGE (?:sdl-application-entry|guest-input-sha256-verified|private-guest-bound|first-successful-present-title-not-verified|runtime-start|guest-memory-bound|guest-entry|vulkan-window-ready|render-trial-(?:consumed|tapped|booked|cancelled|write-failed)|render-(?:confirmed|recovery|marker-unavailable)) monotonic=[0-9]{1,20}[.][0-9]{9}$") \
     X("IOS_PREFETCH_GATE", "^IOS_PREFETCH_GATE event=[0-9]{1,20} enabled=1 yielded=[0-9]{1,20} sleeps=[0-9]{1,20} waited_ns=[0-9]{1,20} expired=[0-9]{1,20} thermal=[0-9]{1,20} clock_failures=[0-9]{1,20} required=[0-9]{1,20} disabled=[01] stopping=[01]$") \
     X("IOS_PIPE_CACHE", "^IOS_PIPE_CACHE event=storage persistent_requested=1 selected=[01] backup_excluded=[01] error=-?[0-9]{1,20}$") \
     X("IOS_PIPE_CACHE", "^IOS_PIPE_CACHE event=worker ticket=[0-9]{1,20} kind=[0-9]{1,20} phase=[0-9]{1,20} queue_wait_ns=[0-9]{1,20} elapsed_ns=[0-9]{1,20} monotonic_ns=[0-9]{1,20}$") \

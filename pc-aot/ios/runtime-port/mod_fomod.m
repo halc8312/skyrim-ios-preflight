@@ -11,14 +11,9 @@
 #include "mod_archive.h"
 #include "mod_deploy.h"
 
-static _Atomic int japanese = -1;      /* also read by the background badge scan */
-static void RefreshLanguage(void) {
-    NSDictionary *s = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
-    japanese = [s[@"language"] isKindOfClass:NSNumber.class] && [s[@"language"] intValue] == 1;
-}
+#import "ui_language_layout.h"
 static NSString *T(NSString *english, NSString *japaneseText) {
-    if (japanese < 0) RefreshLanguage();
-    return japanese ? japaneseText : english;
+    return SKUIString(SKCurrentUILanguage(), english, japaneseText);
 }
 
 /* ---- minimal DOM ---------------------------------------------------------- */
@@ -486,14 +481,16 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
 }
 /* Display text: on-device translation, else glossary, else original. */
 - (NSString *)show:(NSString *)text {
-    if (!text.length || !japanese || self.showOriginal) return text;
-    return self.translations[text] ?: GlossaryText(text) ?: text;
+    SKUILanguage language = SKCurrentUILanguage();
+    if (!text.length || language == SKUIEnglish || self.showOriginal) return text;
+    return self.translations[text] ?: (language == SKUIJapanese ? GlossaryText(text) : nil) ?: text;
 }
 - (void)requestTranslation {
-    if (self.translationRequested || !japanese) return;
+    SKUILanguage language = SKCurrentUILanguage();
+    if (self.translationRequested || language == SKUIEnglish) return;
     self.translationRequested = YES;
     Class translator = NSClassFromString(@"SKTranslator");
-    SEL sel = NSSelectorFromString(@"translate:in:completion:");
+    SEL sel = NSSelectorFromString(@"translate:to:in:completion:");
     if (![translator respondsToSelector:sel]) return;
     NSMutableOrderedSet *texts = [NSMutableOrderedSet orderedSet];
     NSCharacterSet *latin = [NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"];
@@ -518,7 +515,8 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
         }
         [controller refresh];
     };
-    ((void (*)(id, SEL, NSArray *, UIViewController *, void (^)(NSArray *)))objc_msgSend)(translator, sel, list, self, done);
+    ((void (*)(id, SEL, NSArray *, NSString *, UIViewController *, void (^)(NSArray *)))objc_msgSend)
+        (translator, sel, list, SKUILanguageCode(language), self, done);
 }
 - (void)toggleOriginal { self.showOriginal = !self.showOriginal; [self refresh]; }
 - (void)updateHeader {
@@ -547,7 +545,7 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
     if (self.visible.count) [lines addObject:[NSString stringWithFormat:T(@"Step %lu of %lu: %@", @"ステップ %lu／%lu：%@"),
         (unsigned long)self.position + 1, (unsigned long)self.visible.count, [self show:self.step.name] ?: @""]];
     if (self.translating) [lines addObject:T(@"Translating…", @"日本語に翻訳中…")];
-    else if (japanese && !self.showOriginal) [lines addObject:self.translations ? T(@"Translated on this iPhone. Long-press an option for the full text.", @"iPhone内で翻訳しています。長押しで原文と全文を表示。")
+    else if (SKCurrentUILanguage() != SKUIEnglish && !self.showOriginal) [lines addObject:self.translations ? T(@"Translated on this iPhone. Long-press an option for the full text.", @"iPhone内で翻訳しています。長押しで原文と全文を表示。")
                                                                            : T(@"Long-press an option for the full text.", @"項目を長押しすると全文を表示します。")];
     label.text = [lines componentsJoinedByString:@"\n"];
     CGSize fit = [label sizeThatFits:CGSizeMake(width - 40, CGFLOAT_MAX)];
@@ -565,7 +563,8 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
     UIBarButtonItem *back = [[UIBarButtonItem alloc] initWithTitle:self.position ? T(@"Back", @"戻る") : T(@"Cancel", @"キャンセル")
         style:UIBarButtonItemStylePlain target:self action:@selector(back)];
     NSMutableArray *left = [NSMutableArray arrayWithObject:back];
-    if (japanese) [left addObject:[[UIBarButtonItem alloc] initWithTitle:self.showOriginal ? @"日本語" : @"原文"
+    if (SKCurrentUILanguage() != SKUIEnglish) [left addObject:[[UIBarButtonItem alloc] initWithTitle:self.showOriginal ?
+        SKUILanguageNames()[SKCurrentUILanguage()] : T(@"Original", @"原文")
         style:UIBarButtonItemStylePlain target:self action:@selector(toggleOriginal)]];
     self.navigationItem.leftBarButtonItems = left;
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:last ? T(@"Install", @"インストール") : T(@"Next", @"次へ")
@@ -602,7 +601,7 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
         if (presenter) {
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:T(@"Could not install MOD", @"MODを追加できませんでした")
                 message:message preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [alert addAction:[UIAlertAction actionWithTitle:T(@"OK", @"OK") style:UIAlertActionStyleDefault handler:nil]];
             [presenter presentViewController:alert animated:YES completion:nil];
         }
     }];
@@ -622,7 +621,7 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
 - (void)next {
     if (![self stepValid]) {
         UIAlertController *a = [UIAlertController alertControllerWithTitle:T(@"Choose an option in each required group", @"必要な項目を選んでください") message:nil preferredStyle:UIAlertControllerStyleAlert];
-        [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [a addAction:[UIAlertAction actionWithTitle:T(@"OK", @"OK") style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:a animated:YES completion:nil];
         return;
     }
@@ -703,7 +702,7 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
         NSString *description = [self show:o.desc];
         if (![description isEqualToString:o.desc]) {
             [parts addObject:description];
-            [parts addObject:[@"――原文――\n" stringByAppendingString:o.desc]];
+            [parts addObject:[NSString stringWithFormat:@"%@\n%@", T(@"Original", @"原文"), o.desc]];
         } else {
             [parts addObject:o.desc];
         }
@@ -712,6 +711,7 @@ static UIImage *Thumbnail(NSString *path, CGFloat side) {
     sheet.text = [parts componentsJoinedByString:@"\n\n"];
     sheet.original = o.desc.length ? [NSString stringWithFormat:@"%@\n\n%@", o.name, o.desc] : o.name;
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:sheet];
+    SKApplyMenuLanguage(nav);
     nav.sheetPresentationController.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];
     nav.sheetPresentationController.prefersGrabberVisible = YES;
     [self presentViewController:nav animated:YES completion:nil];
@@ -742,7 +742,7 @@ static UIViewController *TopController(void) {
 
 void skyrim_fomod_run(NSString *mod_name, NSString *raw, NSString *config, NSString *data, NSSet<NSString *> *active,
                       void (^completion)(BOOL, NSString *)) {
-    RefreshLanguage();
+    SKRefreshUILanguage();
     SKFomod *f = [[SKFomod alloc] initWithConfig:config active:active raw:raw];
     if (!f) { completion(NO, T(@"The installer file could not be read.", @"インストーラーの設定ファイルを読めませんでした。")); return; }
     UIViewController *top = TopController();
@@ -750,6 +750,7 @@ void skyrim_fomod_run(NSString *mod_name, NSString *raw, NSString *config, NSStr
     SKFomodController *c = [[SKFomodController alloc] initWithStyle:UITableViewStyleInsetGrouped];
     c.fomod = f; c.data = data; c.completion = completion; c.modName = mod_name;
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:c];
+    SKApplyMenuLanguage(nav);
     nav.modalInPresentation = YES;
     /* Pause the game while choosing, like the MOD screens. */
     skyrim_mobile_menu_pause(SKYRIM_MENU_PAUSE_INSTALLER, 1);

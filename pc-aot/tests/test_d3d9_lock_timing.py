@@ -33,12 +33,25 @@ def includes(stage):
 
 
 class D3D9LockAdapterTests(unittest.TestCase):
-    def test_present_scope_is_the_only_swapchain_change(self):
+    def test_present_observers_leave_swapchain_behavior_unchanged(self):
         path = 'src/d3d9/d3d9_swapchain.cpp'
         original = (SOURCE / path).read_text(encoding='utf-8')
         observed = adapter.adapt(path, original)
         self.assertEqual(observed.count('LockDevice(SKYRIM_LOCK_OP_D3D9_PRESENT)'), 1)
-        self.assertEqual(observed.replace('LockDevice(SKYRIM_LOCK_OP_D3D9_PRESENT)', 'LockDevice()'), original)
+        self.assertEqual(observed.count('skyrim_water::present(m_parent, this);'), 1)
+        after_present = ('      PresentImage(presentInterval);\n'
+            '      if (unlikely(skyrim_water::phase.load(std::memory_order_relaxed) != skyrim_water::Phase::Idle))\n'
+            '        skyrim_water::present(m_parent, this);')
+        after_submit = ('      SubmitPresent(sync, i);\n'
+            '#if defined(SKYRIM_IOS_RENDER_SUBMISSION)\n'
+            '      if (!i) {\n'
+            '        const VkExtent3D size = swapImage->info().extent;\n'
+            '        skyrim_ios_render_submitted(size.width, size.height);\n'
+            '      }\n'
+            '#endif')
+        expected = '#include "ios_runtime.h"\n#include "water_probe.h"\n' + original.replace(
+            '      PresentImage(presentInterval);', after_present).replace('      SubmitPresent(sync, i);', after_submit)
+        self.assertEqual(observed.replace('LockDevice(SKYRIM_LOCK_OP_D3D9_PRESENT)', 'LockDevice()'), expected)
         # The resource/generic synchronization implementation is untouched.
         self.assertNotIn('src/util/sync/sync_recursive.cpp', adapter.EXPECTED)
         self.assertNotIn('src/util/sync/sync_recursive.h', adapter.EXPECTED)
@@ -87,7 +100,7 @@ class D3D9LockNativeTests(unittest.TestCase):
             stage = Path(tmp) / 'dxvk'
             adapter.stage(SOURCE, stage)
             command = [shutil.which(os.environ.get('CXX', 'c++')), '-std=c++17', '-fsyntax-only', '-include', 'cstdint', '-include', 'cstring',
-                '-Wno-deprecated-declarations', '-DDXVK_NATIVE', '-DNOMINMAX', '-D_WIN32_WINNT=0xa00',
+                '-Wno-deprecated-declarations', '-DDXVK_NATIVE', '-DNOMINMAX', '-D_WIN32_WINNT=0xa00', '-DSKYRIM_IOS_RENDER_SUBMISSION=1',
                 *includes(stage)]
             for name in ('d3d9_device.cpp', 'd3d9_swapchain.cpp', 'd3d9_multithread.cpp'):
                 with self.subTest(name=name):

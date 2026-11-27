@@ -4,12 +4,14 @@
  * show that the guest must be rebuilt.
  */
 #include "PcGuestModHooksABI.h"
+#include "PcGuestMenuFocus.h"
 #include <dlfcn.h>
 #include <stdio.h>
 
 static const PcGuestModHooksGuest *guest;
 static int bind_attempted, selection_final;
 static uint32_t selected;
+static PcGuestBindMenuFocus bind_menu_focus;
 
 int pc_guest_bind_mod_hooks(void *library) {
     if (!library || bind_attempted) {
@@ -43,6 +45,8 @@ int pc_guest_bind_mod_hooks(void *library) {
         return -1;
     }
     guest = reply;
+    if (reply->compiled_groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE)
+        bind_menu_focus = (PcGuestBindMenuFocus)dlsym(library, PC_GUEST_MENU_FOCUS_BIND);
     bind_attempted = 1;
     fprintf(stderr, "PRIVATE_GUEST MOD hook groups %u\n", (unsigned)reply->compiled_groups);
     return 0;
@@ -52,11 +56,20 @@ int pc_guest_bind_mod_hooks(void *library) {
 void pc_guest_forget_mod_hooks(void) {
     if (selection_final) return;
     guest = NULL;
+    bind_menu_focus = NULL;
     bind_attempted = 0;
 }
 
 uint32_t pc_guest_mod_hooks_compiled(void) { return guest ? guest->compiled_groups : 0; }
 uint32_t pc_guest_mod_hooks_selected(void) { return selected; }
+
+bool pc_guest_menu_focus_available(void) {
+    return bind_menu_focus && (selected & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE);
+}
+
+bool pc_guest_attach_menu_focus(PcGuestMenuFocusAdvance callback) {
+    return callback && pc_guest_menu_focus_available() && bind_menu_focus(PC_GUEST_MENU_FOCUS_VERSION, callback);
+}
 
 int pc_guest_select_mod_hooks(uint32_t groups, const PcGuestModHooks *implementations) {
     if (!bind_attempted || selection_final) return -1;

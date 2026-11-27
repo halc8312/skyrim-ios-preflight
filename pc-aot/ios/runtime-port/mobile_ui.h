@@ -27,7 +27,7 @@ void skyrim_mobile_install(void *sdl_window);
 void skyrim_mobile_tick(void);
 void skyrim_mobile_frame(void);
 void skyrim_mobile_render_size(int *width, int *height);
-int skyrim_mobile_render_trial_size(int *width, int *height);
+int skyrim_mobile_render_override(int *width, int *height);
 int skyrim_mobile_graphics_changed(void);
 int skyrim_mobile_ini(unsigned index, const char **section, const char **key, const char **value);
 #ifdef __cplusplus

@@ -444,7 +444,80 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
 }
 #endif
 
+- (void)checkAdditionalAppLanguages {
+    NSString *languageRow = @"App language";
+    for (NSArray<NSString *> *choice in @[
+        @[@"العربية", @"لغة التطبيق", @"نص اللعبة — بعد إعادة التشغيل"],
+        @[@"Español", @"Idioma de la app", @"Texto del juego — tras reiniciar"],
+        @[@"Français", @"Langue de l’app", @"Texte du jeu — après redémarrage"]]) {
+        [[self findRow:languageRow] tap];
+        [self.app.buttons[choice[0]] tap];
+        languageRow = choice[1];
+        XCUIElement *row = [self findRow:languageRow];
+        XCUIElement *value = row.staticTexts[choice[0]];
+        XCTAssertTrue(value.exists);
+        if ([choice[0] isEqualToString:@"العربية"]) {
+            CGRect labelFrame = elementFrame(row.staticTexts[languageRow]);
+            CGRect valueFrame = elementFrame(value);
+            XCTAssertFalse(CGRectIsNull(labelFrame));
+            XCTAssertFalse(CGRectIsNull(valueFrame));
+            XCTAssertGreaterThan(CGRectGetMidX(labelFrame), CGRectGetMidX(valueFrame));
+            [self capture:@"settings-language-arabic"];
+        }
+        XCTAssertTrue([self findRow:choice[2]].staticTexts[@"English"].exists);
+    }
+    [[self findRow:languageRow] tap];
+    [self.app.buttons[@"English"] tap];
+}
+
+- (void)checkNativeMenuControls {
+    NSArray *previous = self.app.launchArguments;
+    self.app.launchArguments = [previous arrayByAddingObject:@"-TestNativeMenuOverlay"];
+    [self.app launch];
+    XCUIElement *toggle = self.app.buttons[@"skyrim-pad-layout"];
+    XCUIElement *settings = self.app.buttons[@"skyrim-pad-settings"];
+    XCUIElement *move = [[self.app descendantsMatchingType:XCUIElementTypeAny] objectForKeyedSubscript:@"skyrim-pad-18"];
+    XCUIElement *save = self.app.buttons[@"skyrim-pad-save"];
+    XCTAssertTrue([toggle waitForExistenceWithTimeout:8]);
+    XCTAssertTrue(canHit(settings));
+    XCTAssertFalse(move.exists);
+    XCTAssertFalse(save.exists);
+    CGRect screen = self.app.frame;
+    for (NSString *identifier in @[@"skyrim-pad-settings",@"skyrim-pad-layout",@"skyrim-pad-0",@"skyrim-pad-1",
+                                    @"skyrim-pad-2",@"skyrim-pad-3",@"skyrim-pad-8",@"skyrim-pad-9",
+                                    @"skyrim-pad-12",@"skyrim-pad-13",@"skyrim-pad-16",@"skyrim-pad-17"]) {
+        XCUIElement *button = self.app.buttons[identifier];
+        XCTAssertTrue(canHit(button), @"%@", identifier);
+        CGRect frame = elementFrame(button);
+        XCTAssertGreaterThanOrEqual(CGRectGetWidth(frame), 44);
+        XCTAssertGreaterThanOrEqual(CGRectGetHeight(frame), 44);
+        XCTAssertGreaterThan(CGRectGetMinY(frame), CGRectGetMinY(screen)+12);
+        XCTAssertLessThan(CGRectGetMaxY(frame), CGRectGetMaxY(screen)-12);
+    }
+    XCUICoordinate *middle = [self.app coordinateWithNormalizedOffset:CGVectorMake(.5,.5)];
+    [middle tap];
+    XCTAssertEqualObjects(toggle.value, @"0");
+    XCUICoordinate *border = [self.app coordinateWithNormalizedOffset:CGVectorMake(.17,.12)];
+    [border pressForDuration:.12 thenDragToCoordinate:
+        [self.app coordinateWithNormalizedOffset:CGVectorMake(.17,.65)]];
+    XCTAssertEqualObjects(toggle.value, @"0");
+    [middle pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.5,.24)]];
+    XCTAssertEqualObjects(toggle.value, @"2");  // Down one entry, no activation.
+    [middle pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.30,.5)]];
+    XCTAssertEqualObjects(toggle.value, @"512");  // RB selects the next column with stock SkyUI bindings.
+    [self capture:@"native-menu-compact"];
+    [toggle tap];
+    XCTAssertTrue(canHit(move));
+    XCTAssertTrue(canHit(save));
+    [toggle tap];
+    XCTAssertFalse(move.exists);
+    XCTAssertFalse(save.exists);
+    [self.app terminate];
+    self.app.launchArguments = previous;
+}
+
 - (void)testActualSettingsModScreens {
+    [self checkNativeMenuControls];
     [self.app launch];
     XCTAssertTrue([self.app.tables[@"mod-translation-bridge-checked"] waitForExistenceWithTimeout:10]);
     [self capture:@"settings"];
@@ -454,11 +527,24 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     [self capture:@"720p-trial-scheduled"];
     [trial tap];
     XCTAssertFalse(trial.staticTexts[@"Scheduled"].exists);
+    XCTAssertTrue([self findRow:@"Current render size"].exists);
+    [[self findRow:@"Render height"] tap];
+    [self.app.buttons[@"540p"] tap];
+    XCTAssertTrue([self findRow:@"Render height"].staticTexts[@"540p · Restart to apply"].exists);
+    [[self findRow:@"Render height"] tap];
+    [self.app.buttons[@"Keep current"] tap];
+    [[self findRow:@"Sample water rendering"] tap];
+    XCUIElement *waterProbe = self.app.alerts[@"Sample water rendering"];
+    XCTAssertTrue([waterProbe waitForExistenceWithTimeout:5]);
+    XCTAssertTrue(waterProbe.buttons[@"Above water"].exists);
+    XCTAssertTrue(waterProbe.buttons[@"Underwater"].exists);
+    [waterProbe.buttons[@"Cancel"] tap];
     [[self findRow:@"Run benchmark"] tap];
     XCTAssertTrue([self.app.navigationBars[@"Benchmark"] waitForExistenceWithTimeout:6]);
     [self findRow:@"Select benchmark profile for restart"];
     [self capture:@"benchmark-profile-setup"];
     [self goBackFrom:@"Benchmark"];
+    [self checkAdditionalAppLanguages];
     [[self findRow:@"App language"] tap];
     [self.app.buttons[@"日本語"] tap];
     [[self findRow:@"MODの管理"] tap];

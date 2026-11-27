@@ -29,6 +29,43 @@ static void *both_hands_producer(void *arg) {
     }
     return NULL;
 }
+static void menu_touch(void) {
+    assert(skyrim_mobile_menu_swipe(3,-28)==SKYRIM_PAD_DOWN);
+    assert(skyrim_mobile_menu_swipe(-5,54)==SKYRIM_PAD_UP);
+    assert(skyrim_mobile_menu_swipe(-44,5)==SKYRIM_PAD_RB);
+    assert(skyrim_mobile_menu_swipe(70,-20)==SKYRIM_PAD_LB);
+    assert(skyrim_mobile_menu_swipe(0,0)==-1 && skyrim_mobile_menu_swipe(0,27)==-1);
+    assert(skyrim_mobile_menu_swipe(65,65)==-1 && skyrim_mobile_menu_swipe(INFINITY,0)==-1);
+    const unsigned controls[]={SKYRIM_MENU_SETTINGS,SKYRIM_PAD_LB,SKYRIM_PAD_UP,SKYRIM_PAD_DOWN,SKYRIM_PAD_LEFT,SKYRIM_PAD_RIGHT,
+                              SKYRIM_MENU_EXPAND,SKYRIM_PAD_RB,SKYRIM_PAD_A,SKYRIM_PAD_B,SKYRIM_PAD_LT,SKYRIM_PAD_RT};
+    const float safe[][2]={{832,420},{780,370},{568,320},{390,213}};
+    for (unsigned i=0;i<sizeof(safe)/sizeof(safe[0]);i++) {
+        SkyrimMenuButtonRect boxes[sizeof(controls)/sizeof(controls[0])];
+        for (unsigned j=0;j<sizeof(controls)/sizeof(controls[0]);j++) {
+            assert(skyrim_mobile_menu_rect(controls[j],safe[i][0],safe[i][1],&boxes[j]));
+            SkyrimMenuButtonRect b=boxes[j];
+            assert(b.x>=0 && b.y>=-.0001f && b.side>0 && b.x+b.side<=safe[i][0]+.0001f && b.y+b.side<=safe[i][1]+.0001f);
+            if (safe[i][1]>=320) assert(b.side>=44 && b.y>=20 && b.y+b.side<=safe[i][1]-20);
+            for (unsigned k=0;k<j;k++) {
+                SkyrimMenuButtonRect a=boxes[k];
+                assert(a.x+a.side<=b.x || b.x+b.side<=a.x || a.y+a.side<=b.y || b.y+b.side<=a.y);
+            }
+        }
+    }
+    SkyrimMenuButtonRect r;
+    assert(!skyrim_mobile_menu_rect(SKYRIM_PAD_MOVE,840,400,&r));
+    assert(!skyrim_mobile_menu_rect(SKYRIM_PAD_A,0,400,&r));
+    assert(!skyrim_mobile_menu_rect(SKYRIM_PAD_A,840,NAN,&r));
+    assert(!skyrim_mobile_menu_rect(UINT32_MAX,840,400,&r));
+    skyrim_mobile_clear();
+    skyrim_mobile_button(SKYRIM_PAD_UP,1);
+    skyrim_mobile_button_pulse(SKYRIM_PAD_UP);
+    skyrim_mobile_button_pulse(SKYRIM_PAD_DOWN);
+    assert(skyrim_mobile_pad().buttons==3);
+    const struct timespec delay={0,150000000}; nanosleep(&delay,NULL);
+    assert(skyrim_mobile_pad().buttons==1);
+    skyrim_mobile_clear();
+}
 static void both_hands(void) {
     const struct timespec delay={0,140000000};
     SkyrimMobilePad p;
@@ -102,6 +139,28 @@ int main(void) {
     width = 0;
     skyrim_mobile_landscape_size(&width, &height);
     assert(width == 0 && height == 1179);
+    assert(skyrim_mobile_choose_render_size(2868, 1320, 720, &width, &height));
+    assert(width == 1564 && height == 720);
+    assert(skyrim_mobile_choose_render_size(1320, 2868, 2160, &width, &height));
+    assert(width == 2868 && height == 1320);
+    assert(skyrim_mobile_choose_render_size(956, 440, 720, &width, &height));
+    assert(width == 956 && height == 440);
+    assert(!skyrim_mobile_choose_render_size(2868, 1320, 0, &width, &height));
+    assert(width == 956 && height == 440);
+    SkyrimMobileViewport viewport = skyrim_mobile_viewport(2868, 1320, 1920, 1080);
+    assert(viewport.x == 261 && viewport.y == 0 && viewport.width == 2346 && viewport.height == 1320);
+    double x_norm = -1, y_norm = -1;
+    assert(!skyrim_mobile_viewport_point(viewport, 2868, 1320, .01, .5, &x_norm, &y_norm));
+    assert(x_norm == -1 && y_norm == -1);
+    assert(skyrim_mobile_viewport_point(viewport, 2868, 1320, .5, .5, &x_norm, &y_norm));
+    assert(x_norm == .5 && y_norm == .5);
+    viewport = skyrim_mobile_viewport(1920, 1080, 2868, 1320);
+    assert(viewport.x == 0 && viewport.y == 98 && viewport.width == 1920 && viewport.height == 883);
+    assert(!skyrim_mobile_viewport_point(viewport, 1920, 1080, .5, .98, NULL, NULL));
+    assert(!skyrim_mobile_viewport_point(viewport, 1920, 1080, NAN, .5, NULL, NULL));
+    viewport = skyrim_mobile_viewport(2868, 1320, 956, 440);
+    assert(viewport.x == 0 && viewport.y == 0 && viewport.width == 2868 && viewport.height == 1320);
+    assert(!skyrim_mobile_viewport_point(viewport, 2868, 1320, 1, .5, NULL, NULL));
     /* Append-only startup preference: missing old dictionaries remain OFF.
      * Existing five IDs keep their persisted meaning. */
     assert(SKYRIM_SHADER_REUSE == 4 && SKYRIM_SHADER_EXACT_STATE == 5);
@@ -175,5 +234,6 @@ int main(void) {
     for(unsigned i=0;i<30000;i++) {p=skyrim_mobile_pad();assert(p.rt==0||p.rt==255);(void)skyrim_mobile_f5_down();}
     assert(pthread_join(thread,NULL)==0);skyrim_mobile_clear();
     both_hands();
+    menu_touch();
     puts("MOBILE_CORE input, multitouch composition, tap/expiry, F5, thermal policy, pacing, both hands/cancel, concurrent snapshots PASS");
 }

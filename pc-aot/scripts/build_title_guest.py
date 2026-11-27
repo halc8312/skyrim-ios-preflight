@@ -282,7 +282,9 @@ def main(argv=None):
     exports=build/"exports.txt"
     exports.write_text(("_skyrim_guest_classic_api_v1\n_skyrim_guest_bind_classic_v1\n"
                         if a.classic_skse else "_skyrim_guest_api_v1\n")
-                       + ("_skyrim_guest_bind_mod_hooks_v1\n" if hook_groups else ""))
+                       + ("_skyrim_guest_bind_mod_hooks_v1\n" if hook_groups else "")
+                       + ("_skyrim_guest_bind_menu_focus_v1\n"
+                          if hook_groups and hook_groups & mod_hooks_guest.GROUPS["loading_menu_observe"] else ""))
     command(link_command(tool,build,response,exports,binary,imports),logs/"link.log",timeout=600)
     info={"CFBundleDevelopmentRegion":"en","CFBundleExecutable":"SkyrimGuest",
           "CFBundleIdentifier":"org.skyrimios.pcguest","CFBundleInfoDictionaryVersion":"6.0",

@@ -48,6 +48,12 @@ int skyrim_benchmark_active(void) {
     return __atomic_load_n(&active, __ATOMIC_ACQUIRE);
 }
 
+void skyrim_benchmark_get_render_size(unsigned *width, unsigned *height) {
+    uint64_t size = __atomic_load_n(&render_size, __ATOMIC_ACQUIRE);
+    *width = (unsigned)(size >> 32);
+    *height = (unsigned)size;
+}
+
 int skyrim_benchmark_start(unsigned scene, uint64_t now, unsigned selected_height,
                            unsigned cap, unsigned thermal, unsigned low_power) {
     if (scene < SKYRIM_BENCH_TURN || scene > SKYRIM_BENCH_LAST ||
@@ -58,12 +64,13 @@ int skyrim_benchmark_start(unsigned scene, uint64_t now, unsigned selected_heigh
         pthread_mutex_unlock(&lock);
         return 0;
     }
-    uint64_t size = __atomic_load_n(&render_size, __ATOMIC_ACQUIRE);
+    unsigned width, height;
+    skyrim_benchmark_get_render_size(&width, &height);
     start_ns = now + SKYRIM_BENCH_COUNTDOWN_SECONDS * NS_PER_SECOND;
     end_ns = start_ns + SKYRIM_BENCH_DURATION_SECONDS * NS_PER_SECOND;
     result = (SkyrimBenchmarkResult){
         .run = ++run_number, .scene = scene, .started_ns = start_ns,
-        .width = (unsigned)(size >> 32), .height = (unsigned)size,
+        .width = width, .height = height,
         .selected_height = selected_height, .cap_start = cap, .cap_end = cap,
         .thermal_start = thermal, .thermal_max = thermal, .low_power = (low_power != 0),
     };

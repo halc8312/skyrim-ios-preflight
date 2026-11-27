@@ -21,6 +21,7 @@
  * guest work or SDL input handlers onto a new thread. */
 static SDL_Window *ui_window;
 static uint64_t drawable_size;
+static uint64_t submitted_render_size;
 static uint64_t last_pump_ns;
 static uint64_t last_phase_ns;
 static unsigned present_phase;
@@ -100,7 +101,7 @@ void skyrim_ios_drawable_size(int *width, int *height) {
     if (size) { *width = (int)(size >> 32); *height = (int)(uint32_t)size; }
 }
 
-int skyrim_ios_startup_pixel_size(int *width, int *height) {
+int skyrim_ios_window_pixel_size(int *width, int *height) {
     if (!pthread_main_np() || !ui_window) return 0;
     /* Before Vulkan creates its Metal view, the drawable query returns
      * points. UIKit's pixel-size query already applies the window's DPI. */
@@ -110,6 +111,17 @@ int skyrim_ios_startup_pixel_size(int *width, int *height) {
     *width = w;
     *height = h;
     return 1;
+}
+
+void skyrim_ios_render_submitted(unsigned width, unsigned height) {
+    const uint64_t size = ((uint64_t)width << 32) | height;
+    if (size != __atomic_load_n(&submitted_render_size, __ATOMIC_RELAXED))
+        __atomic_store_n(&submitted_render_size, size, __ATOMIC_RELEASE);
+}
+
+int skyrim_ios_render_size_submitted(unsigned width, unsigned height) {
+    return width && height &&
+        __atomic_load_n(&submitted_render_size, __ATOMIC_ACQUIRE) == (((uint64_t)width << 32) | height);
 }
 
 void skyrim_ios_present_phase(unsigned phase) {

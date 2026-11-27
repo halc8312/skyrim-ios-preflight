@@ -11,13 +11,32 @@ typedef struct {
 } SkyrimMobilePad;
 /* Control IDs also key saved touch positions: keep Move at 18. */
 enum {
+    SKYRIM_PAD_UP = 0, SKYRIM_PAD_DOWN = 1, SKYRIM_PAD_LEFT = 2, SKYRIM_PAD_RIGHT = 3,
+    SKYRIM_PAD_LB = 8, SKYRIM_PAD_RB = 9, SKYRIM_PAD_A = 12, SKYRIM_PAD_B = 13,
     SKYRIM_PAD_LT = 16, SKYRIM_PAD_RT = 17, SKYRIM_PAD_MOVE = 18,
     SKYRIM_PAD_BOTH_HANDS = 19, SKYRIM_PAD_CONTROL_COUNT = 20
 };
 uint64_t skyrim_mobile_now(void);
 void skyrim_mobile_landscape_size(int *width, int *height);
+int skyrim_mobile_choose_render_size(int width, int height, int requested,
+                                    int *render_width, int *render_height);
+typedef struct { int x, y, width, height; } SkyrimMobileViewport;
+SkyrimMobileViewport skyrim_mobile_viewport(int drawable_width, int drawable_height,
+                                           unsigned render_width, unsigned render_height);
+/* Map a point from a size-normalized window to [0,1) in the displayed game.
+ * Points in letterboxes or outside the window are rejected. */
+int skyrim_mobile_viewport_point(SkyrimMobileViewport viewport, int drawable_width,
+                                int drawable_height, double window_x, double window_y,
+                                double *game_x, double *game_y);
 void skyrim_mobile_button(unsigned index, int down);
 void skyrim_mobile_button_cancel(unsigned index);
+/* Vertical swipes send a D-pad step; horizontal swipes send a shoulder button. */
+int skyrim_mobile_menu_swipe(float dx_points, float dy_points);
+void skyrim_mobile_button_pulse(unsigned index);
+enum { SKYRIM_MENU_SETTINGS = SKYRIM_PAD_CONTROL_COUNT, SKYRIM_MENU_EXPAND };
+typedef struct { float x, y, side; } SkyrimMenuButtonRect;
+/* Coordinates are points relative to the safe area. Zero means the control is hidden. */
+int skyrim_mobile_menu_rect(unsigned control, float width, float height, SkyrimMenuButtonRect *out);
 void skyrim_mobile_move(float x, float y, float deadzone);
 void skyrim_mobile_look(float dx, float dy, float seconds, float height,
                         float sensitivity, int invert);

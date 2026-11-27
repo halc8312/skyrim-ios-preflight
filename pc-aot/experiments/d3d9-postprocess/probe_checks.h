@@ -19,7 +19,7 @@ inline void expect(bool ok, const char* action) {
         throw std::runtime_error(action);
 }
 
-bool checkDepthInputs(IDirect3D9* api, IDirect3DDevice9* device);
+bool checkDepthInputs(IDirect3D9* api, IDirect3DDevice9* device, bool testFog);
 }
 
 #define TRY(call) ::postfx_probe::checked((call), #call)

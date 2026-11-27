@@ -21,7 +21,7 @@ static int rt_host_path(const char *win, char *host, size_t cap) {
     return !stat(host, &st);
 }
 static int skyrim_mobile_graphics_changed(void) { return startup_mode == 0 || startup_mode == 1; }
-static int skyrim_mobile_render_trial_size(int *width, int *height) {
+static int skyrim_mobile_render_override(int *width, int *height) {
     if (!trial_enabled) return 0;
     *width = 1564;
     *height = 720;
@@ -46,7 +46,7 @@ static void equals_value(IniFile *f, const char *s, const char *k, const char *v
     const char *found = ini_find(f,s,k); assert(found && !strcmp(found,v));
 }
 static void forget(void) {
-    trial_prefs = NULL;
+    render_prefs = NULL;
     while (g_inis) { IniFile *next=g_inis->next; ini_free(g_inis); free(g_inis); g_inis=next; }
 }
 static void verify_profile(const char *autosave) {
@@ -73,6 +73,7 @@ int main(void) {
     write_text("source/low.ini",preset);
     const char *original="; authored profile\r\n[Main]\r\nbSaveOnPause=1\r\nbSaveOnTravel=0\r\nbsaveonwait=1\r\nbGamepadEnable=1\r\n"
         "[SaveGame]\nfAutosaveEveryXMins=17.5\niAutoSaveCount=3\n[Display]\niPresentInterval=0\niSize W=1600\niSize H=900\niMultiSample=4\n"
+        "iWaterMultisamples=4\n[Imagespace]\nbDoDepthOfField=1\n"
         "[Grass]\nfGrassStartFadeDistance=4321\n[Archive]\nsResourceArchiveList=Authored.bsa\n[General]\nsLanguage=ENGLISH\n[Unrelated]\nbSaveOnWait=7\n";
     write_text("profile/SkyrimPrefs.ini",original);
     trial_enabled = 1;

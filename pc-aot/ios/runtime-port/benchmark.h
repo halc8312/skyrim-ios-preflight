@@ -41,6 +41,7 @@ int skyrim_benchmark_start(unsigned scene, uint64_t now, unsigned selected_heigh
 int skyrim_benchmark_active(void);
 void skyrim_benchmark_cancel(uint64_t now);
 void skyrim_benchmark_render_size(unsigned width, unsigned height);
+void skyrim_benchmark_get_render_size(unsigned *width, unsigned *height);
 int skyrim_benchmark_pad(uint64_t now, SkyrimMobilePad *pad);
 void skyrim_benchmark_frame(uint64_t now);
 unsigned skyrim_benchmark_tick(uint64_t now, unsigned cap, unsigned thermal);

@@ -14,6 +14,11 @@
 #include <strings.h>
 #include "mobile_ui.h"
 #include "mobile_core.h"
+#include "mod_loading_menu_host.h"
+#ifdef SKYRIM_IOS_MOD_HOOKS
+#include "mod_menu_focus_host.h"
+#include "PcGuestMenuFocus.h"
+#endif
 #include "benchmark.h"
 #include "autosave_preferences.h"
 #include "ios_runtime.h"
@@ -23,10 +28,12 @@
 #include "device_policy.h"
 #include "present_pacing_core.h"
 #include "game_language.h"
+#import "ui_language_layout.h"
 #include "mod_plugins.h"
 #include "mod_manager.h"
 #include "diagnostic_upload.h"
 #include "diagnostic_schema.h"
+#include "water_probe.h"
 #include "lifecycle_runtime.h"
 
 static NSMutableDictionary *settings;
@@ -132,6 +139,7 @@ static void checkpointPipelineCache(void) {
 }
 static int renderWidth, renderHeight;
 static BOOL renderTrial720;
+static BOOL renderRecovery, renderAttempt;
 static const int trialHeight = 720;
 static unsigned iniCount;
 static NSTimeInterval mobileTime(void) { return (double)skyrim_mobile_now()/1e9; }
@@ -161,10 +169,10 @@ static void logDiagnosticSettings(void) {
             fprintf(stderr, "IOS_DIAG_SETTING key=%u value=%.6f\n", i, v);
     }
 }
-/* UI language is explicit and independent of device/game language. Missing or
- * invalid values use English, including upgrades from Japanese-only builds. */
+/* New installs start in a supported device language. Existing installations
+ * retain their explicit choice or the original English fallback. */
 static NSString *L(NSString *english, NSString *japanese) {
-    return value(@"language", 0) == 1 ? japanese : english;
+    return SKUIString(SKUILanguageFromPreference(settings[@"language"]), english, japanese);
 }
 static double clamp(double x, double lo, double hi) { return fmin(hi, fmax(lo, x)); }
 static void persist(void) {
@@ -216,6 +224,9 @@ static NSArray<NSDictionary *> *shaderRows(void) {
 static NSString *renderTrialRequestPath(void) {
     return [profilePath stringByAppendingPathComponent:@"render-720p-next-launch"];
 }
+static NSString *renderAttemptPath(void) {
+    return [profilePath stringByAppendingPathComponent:@"render-before-first-frame"];
+}
 void skyrim_mobile_initialize(const char *profile) {
     NSCAssert(NSThread.isMainThread, @"mobile startup must run on main");
     /* UIKit exports this value; it is not a C constant initializer. Set it on
@@ -229,8 +240,13 @@ void skyrim_mobile_initialize(const char *profile) {
     profilePath = [NSString stringWithUTF8String:profile];
     // Consume the request before starting the guest, including when that launch crashes.
     renderTrial720 = [NSFileManager.defaultManager removeItemAtPath:renderTrialRequestPath() error:NULL];
-    id saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
+    renderRecovery = !renderTrial720 &&
+        [NSFileManager.defaultManager fileExistsAtPath:renderAttemptPath()];
+    if (renderTrial720) skyrim_ios_stage("render-trial-consumed");
+    if (renderRecovery) skyrim_ios_stage("render-recovery");
+    id saved = [NSUserDefaults.standardUserDefaults objectForKey:@"mobile-settings-v1"];
     settings = [NSMutableDictionary dictionary];
+    if (!saved) settings[@"language"] = @(SKPreferredUILanguage(NSLocale.preferredLanguages));
     if ([saved isKindOfClass:NSDictionary.class])
         for (NSString *key in saved)
             if ([key isKindOfClass:NSString.class] && [saved[key] isKindOfClass:NSNumber.class] && isfinite([saved[key] doubleValue])) settings[key] = saved[key];
@@ -243,7 +259,7 @@ void skyrim_mobile_initialize(const char *profile) {
         if (choice && ![row[@"values"] containsObject:choice]) [settings removeObjectForKey:row[@"key"]];
     }
     if (![@[@0,@24,@30,@40,@60] containsObject:@(value(@"fps",0))]) [settings removeObjectForKey:@"fps"];
-    if (![@[@0,@1] containsObject:@(value(@"language",0))]) [settings removeObjectForKey:@"language"];
+    if (![SKUILanguageChoices() containsObject:@(value(@"language",0))]) [settings removeObjectForKey:@"language"];
     if (![@[@0,@1,@(SKYRIM_GAME_ARABIC)] containsObject:@(value(@"game_text",0))])
         [settings removeObjectForKey:@"game_text"];
     if (![@[@0,@1] containsObject:@(value(@"game_voices",0))]) [settings removeObjectForKey:@"game_voices"];
@@ -613,50 +629,45 @@ int skyrim_mobile_shader_option(unsigned option) {
     const char *key = skyrim_shader_option_key(option);
     return key && skyrim_shader_option_enabled([startup[[NSString stringWithUTF8String:key]] doubleValue]);
 }
-static void chooseRenderSize(int *width, int *height, int selected) {
-    int w = *width, h = *height;
-    if (w <= 0 || h <= 0) return;
-    skyrim_mobile_landscape_size(&w, &h);
-    int targetHeight = selected >= 2160 ? h : MIN(h, selected);
-    *height = MAX(2, targetHeight & ~1);
-    *width = MAX(2, ((int)lround((double)w * *height / h)) & ~1);
-}
 void skyrim_mobile_render_size(int *width, int *height) {
     /* The app supports landscape only. SDL can report portrait extents
      * before the scene rotates, but the guest keeps its startup back buffer. */
     skyrim_mobile_landscape_size(width, height);
-    int selected = [startup[@"resolution"] intValue];
+    int selected = renderTrial720 ? trialHeight : [startup[@"resolution"] intValue];
     if (!selected) return;
-    int w = *width, h = *height;
-    skyrim_ios_drawable_size(&w, &h);
-    if (w <= 0 || h <= 0) return;
-    chooseRenderSize(&w, &h, selected);
-    *width = renderWidth = w;
-    *height = renderHeight = h;
-}
-int skyrim_mobile_render_trial_size(int *width, int *height) {
-    if (!renderTrial720) return 0;
     int w = 0, h = 0;
-    if (skyrim_ios_startup_pixel_size(&w, &h) && w >= 2 && h >= 2)
-        chooseRenderSize(&w, &h, trialHeight);
-    else
-        w = h = 0;
-    fprintf(stderr, "IOS_RENDER_TRIAL requested=%d width=%d height=%d\n", trialHeight, w, h);
-    if (!w || !h) return 0;
-    *width = w;
-    *height = h;
+    if (renderRecovery || !skyrim_ios_window_pixel_size(&w, &h)) {
+        w = *width;
+        h = *height;
+    }
+    if (!skyrim_mobile_choose_render_size(w, h, selected, &renderWidth, &renderHeight)) return;
+    if (renderWidth > *width || renderHeight > *height) {
+        renderAttempt = [[NSData data] writeToFile:renderAttemptPath() options:NSDataWritingAtomic error:NULL];
+        if (!renderAttempt) {
+            skyrim_ios_stage("render-marker-unavailable");
+            if (!skyrim_mobile_choose_render_size(*width, *height, selected, &renderWidth, &renderHeight))
+                renderWidth = renderHeight = 0;
+        }
+    }
+    fprintf(stderr, "IOS_RENDER_CHOICE schema=1 request=%d width=%d height=%d recovery=%u\n",
+            selected, renderWidth, renderHeight, (unsigned)renderRecovery);
+    if (renderTrial720)
+        fprintf(stderr, "IOS_RENDER_TRIAL requested=%d width=%d height=%d\n",
+                trialHeight, renderWidth, renderHeight);
+    fflush(stderr);
+}
+int skyrim_mobile_render_override(int *width, int *height) {
+    if (!renderWidth || !renderHeight) return 0;
+    *width = renderWidth;
+    *height = renderHeight;
     return 1;
 }
-int skyrim_mobile_graphics_changed(void) { return iniCount || [startup[@"resolution"] intValue]; }
+int skyrim_mobile_graphics_changed(void) { return iniCount != 0; }
 int skyrim_mobile_ini(unsigned index, const char **section, const char **key, const char **out) {
     /* Called once at startup, before the translated entry and its threads. */
     static int initialized;
     if (!initialized) {
         initialized = 1;
-        if (renderWidth && renderHeight) {
-            integerINI("Display", "iSize W", renderWidth);
-            integerINI("Display", "iSize H", renderHeight);
-        }
         fprintf(stderr,"IOS_GRAPHICS override_count=%u resolution=%dx%d\n",iniCount,renderWidth,renderHeight);
     }
     if (index >= iniCount) return 0;
@@ -669,10 +680,30 @@ void skyrim_mobile_frame(void) { __atomic_add_fetch(&frameCount,1,__ATOMIC_RELAX
 static SKOverlay *overlay;
 /* Reasons the game is paused for a menu (SKYRIM_MENU_PAUSE_* flags). */
 static unsigned menuPauseReasons;
+#ifdef SKYRIM_IOS_MOD_HOOKS
+static BOOL focusAvailable(void) { return pc_guest_menu_focus_available(); }
+static uint64_t focusTouchToken(void) { return skyrim_menu_focus_touch_token(); }
+static void postFocus(uint64_t token, double x, double y) { skyrim_menu_focus_touch_post(token, x, y); }
+static void cancelFocus(void) { skyrim_menu_focus_touch_cancel(); }
+#else
+static BOOL focusAvailable(void) { return NO; }
+static uint64_t focusTouchToken(void) { return 0; }
+static void postFocus(uint64_t token, double x, double y) { (void)token; (void)x; (void)y; }
+static void cancelFocus(void) {}
+#endif
+#if defined(SKYRIM_IOS_MOD_HOOKS) || defined(SKYRIM_IOS_TOUCH_MENU_FIXTURE)
+static const NSInteger touchSettingRows = 6;
+static SkyrimTouchMenu touchMenuState(void) { return skyrim_loading_menu_touch_state(); }
+#else
+static const NSInteger touchSettingRows = 5;
+static SkyrimTouchMenu touchMenuState(void) { return (SkyrimTouchMenu){0}; }
+#endif
 @interface SKPadControl : UIView
 @property(nonatomic) NSInteger code;
 @property(nonatomic,copy) NSString *caption;
 @property(nonatomic,strong) UIImage *symbol;
+@property(nonatomic,strong) UIImage *menuSymbol;
+@property(nonatomic) BOOL menuStyle;
 @property(nonatomic,strong) UITouch *finger;
 @property(nonatomic) BOOL editing;
 @property(nonatomic) CGPoint stick;
@@ -682,14 +713,20 @@ static unsigned menuPauseReasons;
 @property(nonatomic,strong) NSMutableDictionary *positions;
 @property(nonatomic,strong) UITouch *lookFinger;
 @property(nonatomic) CGPoint lookPoint;
+@property(nonatomic) CGPoint touchOrigin;
+@property(nonatomic) uint64_t focusToken;
+@property(nonatomic) CGFloat tapMovement;
 @property(nonatomic) NSTimeInterval lookTime;
 @property(nonatomic) BOOL editing;
+@property(nonatomic) uint32_t touchMenus;
+@property(nonatomic) BOOL touchMenusEnabled, listNavigation, showFullPad;
 @property(nonatomic,strong) UILabel *hud;
 @property(nonatomic,strong) UILabel *notice;
 @property(nonatomic) NSTimeInterval noticeUntil;
 @property(nonatomic,strong) UIButton *settingsButton;
 @property(nonatomic,strong) UIButton *saveButton;
 @property(nonatomic,strong) UIButton *keyboardButton;
+@property(nonatomic,strong) UIButton *menuPadButton;
 @property(nonatomic,strong) NSDictionary *saveBaseline;
 @property(nonatomic) NSTimeInterval saveDeadline;
 - (void)clearInput;
@@ -698,6 +735,8 @@ static unsigned menuPauseReasons;
 - (void)beginLayout;
 - (void)endLayout;
 - (void)refreshLanguage;
+- (void)updateTouchMenu;
+- (BOOL)compactMenu;
 - (void)logLayout;
 @end
 
@@ -711,6 +750,7 @@ static unsigned menuPauseReasons;
     return self;
 }
 - (void)drawRect:(CGRect)rect {
+    UIImage *symbol=self.menuStyle && self.menuSymbol ? self.menuSymbol : self.symbol;
     CGRect circle=CGRectInset(self.bounds,2,2);
     UIBezierPath *path=[UIBezierPath bezierPathWithRoundedRect:circle cornerRadius:self.code==SKYRIM_PAD_MOVE ? self.bounds.size.width/2 : 14];
     [[UIColor colorWithWhite:self.finger ? 0.45 : 0.08 alpha:0.78] setFill]; [path fill];
@@ -724,16 +764,16 @@ static unsigned menuPauseReasons;
     } else {
         const CGFloat badgeHeight=14;
         CGFloat side=MIN(self.bounds.size.width,self.bounds.size.height)*.48;
-        if(self.symbol) {
-            CGSize size=self.symbol.size;
+        if(symbol) {
+            CGSize size=symbol.size;
             CGFloat scale=side/MAX(size.width,size.height);
             CGRect dst=CGRectMake((self.bounds.size.width-size.width*scale)/2,
                 (self.bounds.size.height-badgeHeight-size.height*scale)/2+2,size.width*scale,size.height*scale);
-            [self.symbol drawInRect:dst];
+            [symbol drawInRect:dst];
         }
         NSMutableParagraphStyle *style=[NSMutableParagraphStyle new]; style.alignment=NSTextAlignmentCenter;
-        NSDictionary *attrs=@{NSFontAttributeName:[UIFont systemFontOfSize:self.symbol ? 10 : 18 weight:UIFontWeightSemibold],NSForegroundColorAttributeName:UIColor.whiteColor,NSParagraphStyleAttributeName:style};
-        CGFloat y=self.symbol ? self.bounds.size.height-badgeHeight-3 : (self.bounds.size.height-22)/2;
+        NSDictionary *attrs=@{NSFontAttributeName:[UIFont systemFontOfSize:symbol ? 10 : 18 weight:UIFontWeightSemibold],NSForegroundColorAttributeName:UIColor.whiteColor,NSParagraphStyleAttributeName:style};
+        CGFloat y=symbol ? self.bounds.size.height-badgeHeight-3 : (self.bounds.size.height-22)/2;
         [self.caption drawInRect:CGRectMake(2,y,self.bounds.size.width-4,22) withAttributes:attrs];
     }
 }
@@ -767,11 +807,16 @@ static unsigned menuPauseReasons;
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     [self finishTouches:touches cancelled:YES];
 }
+- (BOOL)accessibilityActivate {
+    if (self.editing || self.hidden || self.code==SKYRIM_PAD_MOVE) return NO;
+    skyrim_mobile_button_pulse((unsigned)self.code);
+    return YES;
+}
 @end
 
 @interface SKSettings : UITableViewController
 @property(nonatomic) BOOL sendingDiagnostics;
-@property(nonatomic, strong) NSString *diagnosticStatus;
+@property(nonatomic, strong) NSNumber *diagnosticsReceived;
 @end
 static NSArray *presets(void) { return @[L(@"Minimal", @"最軽量"),L(@"Performance", @"パフォーマンス"),L(@"Balanced", @"バランス"),L(@"High", @"高画質"),L(@"Ultra", @"最高画質")]; }
 static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
@@ -788,7 +833,7 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 @end
 @implementation SKMods
 - (void)viewDidLoad {
-    [super viewDidLoad]; self.title=@"MOD";
+    [super viewDidLoad]; self.title=L(@"MOD", @"MOD");
     self.tableView.estimatedRowHeight=60; self.tableView.rowHeight=UITableViewAutomaticDimension;
     if (!modPlugins) scanModPlugins(NO, NULL);
     self.rows=[NSMutableArray array];
@@ -951,7 +996,7 @@ static NSString *benchmarkSummary(void) {
                 L(@"Could not select the benchmark profile", @"ベンチマークプロファイルを選べませんでした")
             message:ok ? [self tableView:table titleForFooterInSection:0] : nil
             preferredStyle:UIAlertControllerStyleAlert];
-        [notice addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [notice addAction:[UIAlertAction actionWithTitle:L(@"OK", @"OK") style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:notice animated:YES completion:nil];
         return;
     }
@@ -994,12 +1039,13 @@ static NSString *benchmarkSummary(void) {
 }
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    SKApplyMenuLanguage(self.navigationController);
     [self.tableView reloadData];
 }
 - (void)viewWillDisappear:(BOOL)animated { shaderSettingsPermission(NO); [super viewWillDisappear:animated]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 10; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
-    return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+2 : section==3 ? 2 : section==5 ? 3 : section==6 ? shaderRows().count : 1;
+    return section==0 ? 4 : section==1 ? touchSettingRows + (focusAvailable() ? 1 : 0) : section==2 ? graphicsRows().count+3 : section==3 ? 2 : section==5 ? 3 : section==6 ? shaderRows().count : section==7 ? 2 : 1;
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
     return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),L(@"Language / 言語", @"言語 / Language"),L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映"),L(@"Diagnostics", @"診断"),L(@"MOD — applies after restart", @"MOD — 次回起動から反映"),L(@"Benchmark", @"ベンチマーク")][section];
@@ -1016,8 +1062,18 @@ static NSString *unevenCadenceNote(void) {
     if (section==7) return L(@"Send performance, settings and numeric error records from this launch and the previous launch to your paired PC. Game data and saves are excluded. Open the game system menu first; keep the PC awake and Tailscale connected. After receipt, tell us in the chat that you sent it.",
         @"今回と前回の起動の性能・設定・エラー番号を、登録した自分のPCへ送ります。ゲームデータやセーブは送りません。先にゲームのシステムメニューを開き、PCを起動してTailscaleを接続してください。送信できたら、このチャットで知らせてください。");
     if (section==0) { NSString *base = L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。"); NSString *note = unevenCadenceNote(); return note ? [base stringByAppendingFormat:@"\n%@", note] : base; }
+    if (section==1 && touchSettingRows > 5 && value(@"menuTouch",1) != 0)
+        return L(@"Drag to look while playing. In item and spell lists, swipe vertically to move one entry. Swipe left for RB or right for LB. By default, these change columns in SkyUI. Use A to confirm and the gamepad icon for all controls.",
+                 @"プレイ中はドラッグで視点移動。持ち物・魔法の一覧では縦スワイプで1項目移動します。左スワイプはRB、右スワイプはLBです。SkyUIの初期設定では列を切り替えます。Aで決定、ゲームパッドのアイコンで全ボタンを表示します。");
     if (section==1) return L(@"Drag outside the buttons to look. Use the arrows and LB / RB to navigate menus, and LT / RT for the left and right hands. Hold L+R to use both hands together.", @"ボタン以外をドラッグして視点移動。十字キーとLB／RBでメニュー移動、LT／RTで左右の手を操作します。「両手」を長押しすると左右の手を同時に使えます。");
-    if (section==2) return L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。");
+    if (section==2) {
+        NSString *details = L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。");
+        if (renderRecovery)
+            return [NSString stringWithFormat:@"%@\n\n%@",
+                L(@"The last high-resolution attempt did not confirm a frame. Choose a render height to try again.",
+                  @"前回の高解像度設定で描画を確認できませんでした。再試行するには、描画の高さを選び直してください。"), details];
+        return details;
+    }
     if (section==3) return L(@"These settings do not pause the game. Open the game system menu first. Quick save sends F5 and checks for a changed save file; it is not an emulator save state.", @"設定画面だけではゲームは一時停止しません。先にシステムメニューを開いてください。クイックセーブはゲームのF5入力を送り、保存ファイルの更新を確認します。実行状態を丸ごと復元するステートセーブではありません。");
     if (section==4) return L(@"Save in the game, then fully close and reopen the app to apply. Off disables saves on pause, travel, waiting and rest; save manually while it is off. Keep current preserves the current values, including a previous Off choice. The game menu can still change them during play.", @"ゲーム内で保存し、アプリを完全終了して開き直すと反映します。オフではメニュー・移動・待機・休息時の自動保存を止めるため、手動で保存してください。「維持」は以前のオフも含めた現在値を保ちます。プレイ中はゲーム内設定からも変更できます。");
     if (section==5) {
@@ -1046,7 +1102,11 @@ static NSString *unevenCadenceNote(void) {
        @{@"key":@"invert",@"title":L(@"Invert vertical look", @"視点の上下反転"),@"values":@[@0,@1],@"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")]},
        @{@"key":@"deadzone",@"title":L(@"Movement deadzone", @"移動スティックの遊び"),@"values":@[@0,@.05,@.10,@.15,@.2,@.3],@"default":@.1},
        @{@"key":@"size",@"title":L(@"Control size", @"ボタンの大きさ"),@"values":@[@.8,@1,@1.2,@1.4],@"default":@1},
-       @{@"key":@"opacity",@"title":L(@"Control opacity", @"ボタンの不透明度"),@"values":@[@.25,@.4,@.6,@.8,@1],@"default":@.8}
+       @{@"key":@"opacity",@"title":L(@"Control opacity", @"ボタンの不透明度"),@"values":@[@.25,@.4,@.6,@.8,@1],@"default":@.8},
+       @{@"key":@"menuTouch",@"title":L(@"Compact menu controls", @"メニュー用タッチ操作"),@"values":@[@0,@1],@"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")],@"default":@1},
+       @{@"key":@"menuFocus",@"title":L(@"Tap to highlight an item or spell (trial, after restart)",
+                                      @"持ち物・魔法をタップで選択（試験機能・次回起動）"),
+         @"values":@[@0,@1],@"labels":@[L(@"Off", @"オフ"),L(@"On", @"オン")],@"default":@0}
     ][p.row];
     if (p.section==4) return @{@"key":@"autosave",@"title":L(@"Autosave", @"オートセーブ"),@"values":@[@-1,@0,@1],@"labels":@[L(@"Keep current", @"現在の設定を維持"),L(@"Off", @"オフ"),L(@"On", @"オン")],@"default":@-1};
     if (p.section==5 && p.row==1) {
@@ -1056,7 +1116,8 @@ static NSString *unevenCadenceNote(void) {
                  @"labels":arabic ? @[@"English",@"日本語",@"العربية"] : @[@"English",@"日本語"]};
     }
     if (p.section==5 && p.row==0)
-        return @{@"key":@"language",@"title":L(@"App language", @"アプリの言語"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]};
+        return @{@"key":@"language",@"title":L(@"App language", @"アプリの言語"),
+                 @"values":SKUILanguageChoices(),@"labels":SKUILanguageNames()};
     if (p.section==5 && p.row==2)
         return @{@"key":@"game_voices",@"title":L(@"Game voices — after restart", @"ゲームの音声 — 次回起動"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]};
     if (p.section==2 && p.row > 0 && p.row <= (NSInteger)graphicsRows().count) return graphicsRows()[p.row-1];
@@ -1078,12 +1139,27 @@ static NSString *unevenCadenceNote(void) {
         cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
         return cell;
     }
+    if (p.section==7 && p.row==1) {
+        cell.textLabel.text=L(@"Sample water rendering", @"水中描画を計測");
+        cell.imageView.image=[UIImage systemImageNamed:@"drop"];
+        cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+        return cell;
+    }
     if (p.section==7) {
         cell.textLabel.text=L(@"Send diagnostics to PC", @"診断ログをPCへ送信");
         cell.imageView.image=[UIImage systemImageNamed:@"arrow.up.doc"];
         cell.accessoryType=UITableViewCellAccessoryNone;
-        cell.detailTextLabel.text=self.sendingDiagnostics ? L(@"Sending…", @"送信中…") :
-            self.diagnosticStatus ?: (skyrim_diagnostics_available() ? nil : L(@"Not paired", @"未接続"));
+        if (self.sendingDiagnostics) cell.detailTextLabel.text=L(@"Sending…", @"送信中…");
+        else if (self.diagnosticsReceived) cell.detailTextLabel.text=self.diagnosticsReceived.boolValue
+            ? L(@"Received", @"受信済み") : L(@"Not received", @"未受信");
+        else cell.detailTextLabel.text=skyrim_diagnostics_available() ? nil : L(@"Not paired", @"未接続");
+        return cell;
+    } else if (p.section==2 && p.row == (NSInteger)graphicsRows().count+2) {
+        unsigned width, height;
+        skyrim_benchmark_get_render_size(&width, &height);
+        cell.textLabel.text=L(@"Current render size", @"現在の描画解像度");
+        cell.detailTextLabel.text=width && height ? [NSString stringWithFormat:@"%u×%u", width, height] : @"—";
+        cell.selectionStyle=UITableViewCellSelectionStyleNone;
         return cell;
     } else if (p.section==2 && p.row == (NSInteger)graphicsRows().count+1) {
         cell.textLabel.text=L(@"Try 720p once after restart", @"次の起動だけ720pを試す");
@@ -1094,6 +1170,12 @@ static NSString *unevenCadenceNote(void) {
         NSNumber *choice=settings[r[@"key"]] ?: r[@"default"] ?: (p.section==2 ? [r[@"values"] firstObject] : @0);
         cell.detailTextLabel.text=p.section==5 && p.row==1 && choice.unsignedIntValue==SKYRIM_GAME_ARABIC &&
             ![r[@"values"] containsObject:choice] ? L(@"Arabic MOD unavailable", @"アラビア語MODなし") : choiceLabel(r,choice);
+        if ([r[@"key"] isEqualToString:@"resolution"] &&
+            choice.unsignedIntValue != [startup[@"resolution"] unsignedIntValue]) {
+            cell.detailTextLabel.numberOfLines = 2;
+            cell.detailTextLabel.text = [NSString stringWithFormat:L(@"%@ · Restart to apply", @"%@・再起動で反映"),
+                                         cell.detailTextLabel.text];
+        }
     } else if(p.section==2) {cell.textLabel.text=L(@"Graphics preset", @"画質プリセット");cell.detailTextLabel.text=L(@"Choose", @"選択");}
     else cell.textLabel.text=p.row ? L(@"Reset control layout", @"配置を初期状態に戻す") : L(@"Edit control layout", @"ボタンをドラッグして配置");
     cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
@@ -1106,7 +1188,31 @@ static NSString *unevenCadenceNote(void) {
         {900,0,8,1,2,2048,6000,6000,12,1,1},{2160,0,16,0,4,4096,8000,9000,15,1,1}};
     NSArray *rows=graphicsRows();
     for (NSUInteger i=0;i<rows.count;++i) settings[rows[i][@"key"]]=@(v[p][i]);
+    [NSFileManager.defaultManager removeItemAtPath:renderAttemptPath() error:NULL];
     persist(); [self.tableView reloadData]; [overlay message:L(@"Graphics saved. Applies after restart.", @"画質を保存しました。次回起動から反映します")];
+}
+- (void)chooseWaterProbe {
+    UIAlertController *confirm = [UIAlertController
+        alertControllerWithTitle:L(@"Sample water rendering", @"水中描画を計測")
+        message:L(@"Face the same nearby rock from above and below the surface. Run one sample from each position.",
+                  @"同じ近くの岩を、水面の上と下から見て、それぞれ1回ずつ計測してください。")
+        preferredStyle:UIAlertControllerStyleAlert];
+    NSArray<NSString *> *positions = @[L(@"Above water", @"水面の上"), L(@"Underwater", @"水面の下")];
+    for (NSUInteger index = 0; index < positions.count; ++index) {
+        unsigned scene = index == 0 ? SKYRIM_WATER_PROBE_SURFACE : SKYRIM_WATER_PROBE_SUBMERGED;
+        [confirm addAction:[UIAlertAction actionWithTitle:positions[index] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            UIViewController *presenter = self.navigationController.presentingViewController;
+            [presenter dismissViewControllerAnimated:YES completion:^{
+                if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
+                [overlay clearInput];
+                skyrim_water_probe_request(scene);
+                [overlay message:L(@"Sampling starts in 4 seconds. Close the game menu and hold the view.",
+                                   @"4秒後に計測します。ゲーム内のメニューを閉じて、視点をそのままにしてください。")];
+            }];
+        }]];
+    }
+    [confirm addAction:[UIAlertAction actionWithTitle:L(@"Cancel", @"キャンセル") style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:confirm animated:YES completion:nil];
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)p {
     [table deselectRowAtIndexPath:p animated:YES];
@@ -1116,6 +1222,10 @@ static NSString *unevenCadenceNote(void) {
     }
     if (p.section==8) {
         [self.navigationController pushViewController:skyrim_mods_hub_controller() animated:YES];
+        return;
+    }
+    if (p.section==7 && p.row == 1) {
+        [self chooseWaterProbe];
         return;
     }
     if (p.section==7) {
@@ -1142,7 +1252,7 @@ static NSString *unevenCadenceNote(void) {
             }
             SKSettings *controller=weakSettings;
             controller.sendingDiagnostics=NO;
-            controller.diagnosticStatus=status==SkyrimDiagnosticSent ? L(@"Received", @"受信済み") : L(@"Not received", @"未受信");
+            controller.diagnosticsReceived=@(status == SkyrimDiagnosticSent);
             [controller.tableView reloadData];
             [overlay message:message];
         });
@@ -1151,13 +1261,17 @@ static NSString *unevenCadenceNote(void) {
     if (p.section==3 && !p.row) {
         [self dismissViewControllerAnimated:YES completion:^{[overlay beginLayout];}]; return;
     }
+    if (p.section==2 && p.row == (NSInteger)graphicsRows().count+2) return;
     if (p.section==2 && p.row == (NSInteger)graphicsRows().count+1) {
+        skyrim_ios_stage("render-trial-tapped");
         NSFileManager *files = NSFileManager.defaultManager;
         NSString *path = renderTrialRequestPath();
         BOOL scheduled = [files fileExistsAtPath:path];
         BOOL changed = scheduled ? [files removeItemAtPath:path error:NULL] :
             [[NSData data] writeToFile:path options:NSDataWritingAtomic error:NULL];
-        [table reloadRowsAtIndexPaths:@[p] withRowAnimation:UITableViewRowAnimationNone];
+        skyrim_ios_stage(!changed ? "render-trial-write-failed" :
+                         scheduled ? "render-trial-cancelled" : "render-trial-booked");
+        [table reloadData];
         [overlay message:!changed ? L(@"Could not change the 720p trial.", @"720p試験の予約を変更できませんでした") :
             scheduled ? L(@"720p trial cancelled.", @"720p試験の予約を取り消しました") :
             L(@"Save your game and fully close the app. 720p applies to the next launch.", @"ゲーム内で保存してアプリを完全終了してください。次の起動だけ720pになります")];
@@ -1174,6 +1288,12 @@ static NSString *unevenCadenceNote(void) {
         NSDictionary *row=[self row:p];
         for (NSNumber *choice in row[@"values"]) [sheet addAction:[UIAlertAction actionWithTitle:choiceLabel(row,choice) style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
             settings[row[@"key"]]=choice; persist(); [overlay refreshLanguage]; [overlay setNeedsLayout];
+            if (p.section == 5 && p.row == 0) {
+                SKRefreshUILanguage();
+                SKApplyMenuLanguage(self.navigationController);
+            }
+            if ([row[@"key"] isEqualToString:@"resolution"])
+                [NSFileManager.defaultManager removeItemAtPath:renderAttemptPath() error:NULL];
             if ([row[@"key"] isEqualToString:@"autosave"])
                 [overlay message:L(@"Autosave setting saved. Applies after restart.", @"自動保存の設定を保存しました。次回起動から反映します")];
             if (p.section==6)
@@ -1205,20 +1325,24 @@ static NSString *unevenCadenceNote(void) {
     [b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside]; [self addSubview:b]; return b;
 }
 - (void)refreshLanguage {
+    self.touchMenusEnabled=value(@"menuTouch",1)!=0;
+    [self updateTouchMenu];
     NSArray *labels=@[L(@"Up",@"上"),L(@"Down",@"下"),L(@"Left",@"左"),L(@"Right",@"右"),
         L(@"System menu",@"システムメニュー"),L(@"Wait",@"待機"),L(@"Sneak",@"隠密"),L(@"Change view",@"視点切替"),
-        L(@"Sprint / previous tab",@"走る／前のタブ"),L(@"Shout / next tab",@"シャウト／次のタブ"),@"",@"",
+        L(@"Sprint / left shoulder",@"走る／左ショルダー"),L(@"Shout / right shoulder",@"シャウト／右ショルダー"),@"",@"",
         L(@"Use / confirm",@"使う／決定"),L(@"Menu / back",@"メニュー／戻る"),L(@"Draw / sheathe weapon",@"武器を構える／しまう"),
         L(@"Jump",@"ジャンプ"),L(@"Left hand / block",@"左手／防御"),L(@"Right hand / attack",@"右手／攻撃"),L(@"Move",@"移動"),L(@"Use both hands",@"左右の手を同時に使う")];
     for(SKPadControl *c in self.controls) {
         if(c.code==SKYRIM_PAD_BOTH_HANDS) c.caption=L(@"L+R",@"両手");
         c.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",labels[c.code],c.caption];
+        c.accessibilityLanguage=SKUILanguageCode(SKUILanguageFromPreference(settings[@"language"]));
         [c setNeedsDisplay];
     }
     self.settingsButton.accessibilityLabel=self.editing ? L(@"Finish layout",@"配置完了") : L(@"Settings",@"設定");
     [self.settingsButton setImage:[UIImage systemImageNamed:self.editing ? @"checkmark" : @"gearshape"] forState:UIControlStateNormal];
     self.saveButton.accessibilityLabel=L(@"Quick save",@"クイック保存");
     self.keyboardButton.accessibilityLabel=L(@"Keyboard",@"文字入力");
+    self.menuPadButton.accessibilityLabel=self.showFullPad ? L(@"Show menu controls",@"メニュー操作を表示") : L(@"Show all controls",@"すべての操作を表示");
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
@@ -1231,9 +1355,16 @@ static NSString *unevenCadenceNote(void) {
         NSArray *symbols=@[@"arrowtriangle.up.fill",@"arrowtriangle.down.fill",@"arrowtriangle.left.fill",@"arrowtriangle.right.fill",
             @"line.3.horizontal",@"clock",@"figure.walk",@"eye",@"figure.run",@"waveform",@"",@"",
             @"hand.tap",@"arrow.uturn.backward",@"shield.lefthalf.filled",@"arrow.up",@"hand.raised",@"scope",@"",@"hands.sparkles"];
+        NSDictionary *menuSymbols=@{@(SKYRIM_PAD_LB):@"chevron.left.2",@(SKYRIM_PAD_RB):@"chevron.right.2",
+                                    @(SKYRIM_PAD_A):@"checkmark",@(SKYRIM_PAD_B):@"arrow.uturn.backward",
+                                    @(SKYRIM_PAD_LT):@"l.circle",@(SKYRIM_PAD_RT):@"r.circle"};
         for (NSInteger i=0;i<captions.count;++i) {
             if (i==10 || i==11) continue;
             SKPadControl *c=[[SKPadControl alloc] initWithFrame:CGRectZero]; c.code=i; c.caption=captions[i];
+            c.accessibilityIdentifier=[NSString stringWithFormat:@"skyrim-pad-%ld",(long)i];
+            c.accessibilityTraits=i==SKYRIM_PAD_MOVE ? UIAccessibilityTraitAllowsDirectInteraction : UIAccessibilityTraitButton;
+            NSString *menuSymbol=menuSymbols[@(i)];
+            if (menuSymbol) c.menuSymbol=[[UIImage systemImageNamed:menuSymbol] imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
             if([symbols[i] length]) c.symbol=[[UIImage systemImageNamed:symbols[i]] imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
             UIPanGestureRecognizer *pan=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(moveControl:)]; pan.enabled=NO; [c addGestureRecognizer:pan];
             [self.controls addObject:c]; [self addSubview:c];
@@ -1241,6 +1372,11 @@ static NSString *unevenCadenceNote(void) {
         self.settingsButton=[self utility:@"gearshape" label:L(@"Settings", @"設定") action:@selector(openSettings)];
         self.saveButton=[self utility:@"square.and.arrow.down" label:L(@"Quick save", @"クイック保存") action:@selector(quicksave)];
         self.keyboardButton=[self utility:@"keyboard" label:L(@"Keyboard", @"文字入力") action:@selector(keyboard)];
+        self.menuPadButton=[self utility:@"gamecontroller" label:L(@"Show all controls", @"すべての操作を表示") action:@selector(toggleMenuPad)];
+        self.menuPadButton.accessibilityIdentifier=@"skyrim-pad-layout";
+        self.settingsButton.accessibilityIdentifier=@"skyrim-pad-settings";
+        self.saveButton.accessibilityIdentifier=@"skyrim-pad-save";
+        self.menuPadButton.hidden=YES;
         [self refreshLanguage];
         self.hud=[UILabel new]; self.hud.font=[UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightMedium];
         self.hud.textColor=UIColor.whiteColor; self.hud.backgroundColor=[UIColor colorWithWhite:0 alpha:.5]; self.hud.layer.cornerRadius=5; self.hud.clipsToBounds=YES; [self addSubview:self.hud];
@@ -1252,35 +1388,98 @@ static NSString *unevenCadenceNote(void) {
     }
     return self;
 }
+- (BOOL)compactMenu { return self.touchMenus && !self.showFullPad && !self.editing; }
+- (void)updateTouchMenu {
+    SkyrimTouchMenu state = self.touchMenusEnabled && !self.editing ? touchMenuState() : (SkyrimTouchMenu){0};
+    if (state.menus == self.touchMenus) return;
+    [self clearInput];
+    self.touchMenus = state.menus;
+    self.listNavigation = state.list_navigation;
+    self.showFullPad = NO;
+    self.menuPadButton.accessibilityLabel=L(@"Show all controls", @"すべての操作を表示");
+    [self setNeedsLayout];
+}
+- (void)toggleMenuPad {
+    if (!self.touchMenus || self.editing) return;
+    [self clearInput];
+    self.showFullPad=!self.showFullPad;
+    [self refreshLanguage];
+    [self setNeedsLayout];
+}
+- (void)placeMenuControls:(CGRect)area {
+    /* Two narrow, centered rails leave the header and footer free, even with
+     * an asymmetric safe area. The gameplay layout remains individually editable. */
+    void (^place)(UIView *,unsigned)=^(UIView *view,unsigned control) {
+        SkyrimMenuButtonRect r;
+        view.hidden=!skyrim_mobile_menu_rect(control,area.size.width,area.size.height,&r);
+        if (!view.hidden) view.frame=CGRectMake(area.origin.x+r.x,area.origin.y+r.y,r.side,r.side);
+    };
+    place(self.settingsButton,SKYRIM_MENU_SETTINGS);
+    place(self.menuPadButton,SKYRIM_MENU_EXPAND);
+    for (SKPadControl *c in self.controls) {
+        place(c,(unsigned)c.code);
+    }
+}
 - (void)layoutSubviews {
     [super layoutSubviews];
     static const float xy[SKYRIM_PAD_CONTROL_COUNT][2]={{.34,.60},{.34,.80},{.29,.70},{.39,.70},{.62,.07},{.48,.07},{.34,.94},{.70,.94},{.12,.36},{.75,.36},{0,0},{0,0},{.87,.79},{.94,.61},{.80,.61},{.87,.43},{.77,.19},{.93,.19},{.13,.73},{.63,.45}};
     CGRect area=UIEdgeInsetsInsetRect(self.bounds,self.safeAreaInsets);
+    const BOOL compact=[self compactMenu];
     CGFloat base=clamp(area.size.height*.13,40,58)*clamp(value(@"size",1),.8,1.4);
     for (SKPadControl *c in self.controls) {
+        c.hidden=NO;
+        c.menuStyle=compact;
+        c.alpha=self.editing ? 1 : clamp(value(@"opacity",.8),.25,1);
+        [c setNeedsDisplay];
+        if (compact) continue;
         CGFloat x=xy[c.code][0],y=xy[c.code][1]; id point=self.positions[@(c.code).stringValue];
         if ([point isKindOfClass:NSArray.class] && [point count]==2 && [point[0] isKindOfClass:NSNumber.class] && [point[1] isKindOfClass:NSNumber.class] && isfinite([point[0] doubleValue]) && isfinite([point[1] doubleValue])) {x=[point[0] doubleValue];y=[point[1] doubleValue];}
         CGFloat w=c.code==SKYRIM_PAD_MOVE ? base*2.2 : c.code==4 || c.code==5 ? base*1.15 : base;
         CGFloat h=c.code==SKYRIM_PAD_MOVE ? w : base;
         CGFloat cx=clamp(area.origin.x+x*area.size.width,area.origin.x+w/2,CGRectGetMaxX(area)-w/2);
         CGFloat cy=clamp(area.origin.y+y*area.size.height,area.origin.y+h/2,CGRectGetMaxY(area)-h/2);
-        c.frame=CGRectMake(cx-w/2,cy-h/2,w,h); c.alpha=self.editing ? 1 : clamp(value(@"opacity",.8),.25,1); [c setNeedsDisplay];
+        c.frame=CGRectMake(cx-w/2,cy-h/2,w,h);
     }
     CGFloat y=area.origin.y+5;
     self.saveButton.frame=CGRectMake(area.origin.x+6,y,44,44);
     self.keyboardButton.frame=CGRectMake(area.origin.x+58,y,44,44);
+    self.settingsButton.hidden=NO;
     self.settingsButton.frame=CGRectMake(CGRectGetMaxX(area)-50,y,44,44);
+    self.menuPadButton.hidden=!self.touchMenus || self.editing;
+    self.menuPadButton.frame=CGRectMake(CGRectGetMaxX(area)-100,y,44,44);
+    self.saveButton.hidden=self.keyboardButton.hidden=compact;
+    self.hud.hidden=compact || value(@"hud",1)==0;
     self.hud.frame=CGRectMake(area.origin.x+6,y+50,230,22);
-    self.notice.frame=CGRectMake(area.origin.x+area.size.width*.22,CGRectGetMaxY(area)-64,area.size.width*.56,52);
+    self.notice.frame=CGRectMake(area.origin.x+area.size.width*.22,compact ? CGRectGetMidY(area)-26 : CGRectGetMaxY(area)-64,area.size.width*.56,52);
+    if (compact) [self placeMenuControls:area];
     [self logLayout];
 }
 /* Numbers only, once per distinct layout: where the top-edge controls end, to tell
  * the overlay apart from the game's own menu scaling when a menu looks clipped. */
 - (void)logLayout {
     UIEdgeInsets safe=self.safeAreaInsets;
-    CGFloat topMax=CGRectGetMaxY(self.hud.frame);
-    for (SKPadControl *c in self.controls) if (c.code==4 || c.code==5) topMax=MAX(topMax,CGRectGetMaxY(c.frame));
-    topMax=MAX(topMax,MAX(CGRectGetMaxY(self.saveButton.frame),MAX(CGRectGetMaxY(self.keyboardButton.frame),CGRectGetMaxY(self.settingsButton.frame))));
+    if (self.touchMenus) {
+        const BOOL compact=[self compactMenu];
+        CGRect a=self.settingsButton.frame, b=self.menuPadButton.frame;
+        CGRect rails=CGRectUnion(a,b);
+        if (compact) for (SKPadControl *c in self.controls)
+            if (!c.hidden) rails=CGRectUnion(rails,c.frame);
+        NSString *menuLine=[NSString stringWithFormat:@"IOS_MENU_CONTROLS schema=1 menus=%u compact=%u swipe=%u clear_x=%ld,%ld rail_y=%ld,%ld",
+            self.touchMenus, (unsigned)compact, (unsigned)(compact && self.listNavigation),
+            compact ? lround(CGRectGetMaxX(a)) : 0L, compact ? lround(CGRectGetMinX(b)) : 0L,
+            compact ? lround(CGRectGetMinY(rails)) : 0L, compact ? lround(CGRectGetMaxY(rails)) : 0L];
+        static NSString *lastMenuLine;
+        if (![menuLine isEqualToString:lastMenuLine]) {
+            lastMenuLine=menuLine;
+            fprintf(stderr,"%s\n",menuLine.UTF8String);
+        }
+    }
+    CGFloat topMax=0;
+    for (SKPadControl *c in self.controls)
+        if (!c.hidden && (c.code==4 || c.code==5)) topMax=MAX(topMax,CGRectGetMaxY(c.frame));
+    UIView *utilities[]={self.hud,self.saveButton,self.keyboardButton,self.settingsButton,self.menuPadButton};
+    for (unsigned i=0;i<sizeof(utilities)/sizeof(utilities[0]);i++)
+        if (utilities[i] && !utilities[i].hidden) topMax=MAX(topMax,CGRectGetMaxY(utilities[i].frame));
     NSString *line=[NSString stringWithFormat:@"IOS_OVERLAY_LAYOUT schema=1 view_pt=%ldx%ld safe=%ld,%ld,%ld,%ld top_controls_max_y=%ld scale=%ld",
         lround(self.bounds.size.width),lround(self.bounds.size.height),lround(safe.top),lround(safe.left),lround(safe.bottom),lround(safe.right),
         lround(topMax),lround(self.window.screen.scale*100)];
@@ -1295,15 +1494,44 @@ static NSString *unevenCadenceNote(void) {
 - (void)enterBackground:(NSNotification *)note { skyrim_lifecycle_did_background(); checkpointPipelineCache(); }
 - (void)clearInput {
     self.lookFinger=nil;
+    self.focusToken=0;
+    cancelFocus();
     for (SKPadControl *c in self.controls) {c.finger=nil;c.stick=CGPointZero;[c setNeedsDisplay];}
     skyrim_mobile_clear();
 }
+- (BOOL)mapGamePicturePoint:(CGPoint)point x:(double *)x y:(double *)y {
+    unsigned renderWidth, renderHeight;
+    skyrim_benchmark_get_render_size(&renderWidth, &renderHeight);
+    if (!renderWidth || !renderHeight) return !x && !y && CGRectContainsPoint(self.bounds, point);
+    if (CGRectIsEmpty(self.bounds)) return NO;
+    int drawableWidth = 0, drawableHeight = 0;
+    skyrim_ios_drawable_size(&drawableWidth, &drawableHeight);
+    SkyrimMobileViewport viewport = skyrim_mobile_viewport(drawableWidth, drawableHeight,
+                                                            renderWidth, renderHeight);
+    return skyrim_mobile_viewport_point(viewport, drawableWidth, drawableHeight,
+        (point.x - CGRectGetMinX(self.bounds)) / CGRectGetWidth(self.bounds),
+        (point.y - CGRectGetMinY(self.bounds)) / CGRectGetHeight(self.bounds), x, y);
+}
+- (BOOL)isGamePicturePoint:(CGPoint)point { return [self mapGamePicturePoint:point x:NULL y:NULL]; }
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     if (self.editing || self.lookFinger) return;
-    self.lookFinger=touches.anyObject;self.lookPoint=[self.lookFinger locationInView:self];self.lookTime=self.lookFinger.timestamp;
+    UITouch *touch = touches.anyObject;
+    CGPoint point = [touch locationInView:self];
+    if ([self compactMenu] && self.listNavigation && ![self isGamePicturePoint:point]) return;
+    self.lookFinger=touch;self.lookPoint=point;self.lookTime=touch.timestamp;
+    self.touchOrigin=self.lookPoint;
+    self.tapMovement=0;
+    self.focusToken=[self compactMenu] && self.listNavigation && value(@"menuFocus",0)!=0 ? focusTouchToken() : 0;
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     if (self.editing || !self.lookFinger || ![touches containsObject:self.lookFinger]) return;
+    if ([self compactMenu] && self.listNavigation) {
+        if (self.focusToken) {
+            CGPoint p=[self.lookFinger locationInView:self];
+            self.tapMovement=fmax(self.tapMovement,hypot(p.x-self.touchOrigin.x,p.y-self.touchOrigin.y));
+        }
+        return;
+    }
     CGPoint p=[self.lookFinger locationInView:self]; NSTimeInterval t=self.lookFinger.timestamp;
     /* Repeated/predicted timestamps cannot replace a valid velocity with zero.
      * Use the displacement across the delivered batch; do not replay coalesced
@@ -1313,9 +1541,22 @@ static NSString *unevenCadenceNote(void) {
     self.lookPoint=p;self.lookTime=t;
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    if (self.lookFinger && [touches containsObject:self.lookFinger]) {self.lookFinger=nil;skyrim_mobile_look_end();}
+    if (!self.lookFinger || ![touches containsObject:self.lookFinger]) return;
+    if ([self compactMenu] && self.listNavigation && touchMenuState().menus == self.touchMenus) {
+        CGPoint end=[self.lookFinger locationInView:self];
+        int button=skyrim_mobile_menu_swipe(end.x-self.touchOrigin.x,end.y-self.touchOrigin.y);
+        if (button>=0) skyrim_mobile_button_pulse((unsigned)button);
+        else if (self.focusToken && self.tapMovement <= 9 && hypot(end.x-self.touchOrigin.x,end.y-self.touchOrigin.y) <= 9 &&
+                 self.lookFinger.timestamp >= self.lookTime && self.lookFinger.timestamp-self.lookTime <= .45) {
+            double x,y;
+            if ([self mapGamePicturePoint:end x:&x y:&y]) postFocus(self.focusToken,x,y);
+        }
+    }
+    self.focusToken=0;self.lookFinger=nil;skyrim_mobile_look_end();
 }
-- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {[self touchesEnded:touches withEvent:event];}
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (self.lookFinger && [touches containsObject:self.lookFinger]) {self.focusToken=0;self.lookFinger=nil;skyrim_mobile_look_end();}
+}
 - (void)openSettings {
     [self clearInput];
     if (skyrim_benchmark_active()) { skyrim_benchmark_cancel(skyrim_mobile_now()); return; }
@@ -1419,6 +1660,9 @@ void skyrim_mobile_install(void *window) {
     NSString *fallback = gameLanguageFallback();
     NSMutableArray *notices = [NSMutableArray array];
     for (NSString *n in @[fallback ?: @"", skyrim_mods_launch_notice() ?: @"", modNoticeText() ?: @"", skyrim_mods_save_notice() ?: @""]) if (n.length) [notices addObject:n];
+    if (renderRecovery) [notices addObject:L(
+        @"The previous graphics startup did not finish. Lower resolution is active. Choose a render height to try again.",
+        @"前回は描画の起動が完了しなかったため、解像度を下げています。再試行するには描画の高さを選んでください。")];
     if (notices.count) [overlay message:[notices componentsJoinedByString:@"\n"]];
 }
 
@@ -1461,11 +1705,51 @@ void skyrim_mobile_tick(void) {
     }
     /* No state capture/draw through the game's graphics pipeline. */
     if(overlay.superview.subviews.lastObject!=overlay) [overlay.superview bringSubviewToFront:overlay];
+    [overlay updateTouchMenu];
     static uint64_t lastFrames,logFrames;static NSTimeInterval lastTime,lastLog,lastSaveCheck,lastCacheCheck;
     NSTimeInterval now=mobileTime();
     if(now-lastTime<.5) return;
     if (now-lastCacheCheck>=5) { lastCacheCheck=now; checkpointWhileSettingsVisible(); }
     uint64_t frames=__atomic_load_n(&frameCount,__ATOMIC_RELAXED);
+    if (renderAttempt && skyrim_ios_render_size_submitted(renderWidth, renderHeight)) {
+        renderAttempt = NO;
+        BOOL cleared = [NSFileManager.defaultManager removeItemAtPath:renderAttemptPath() error:NULL];
+        skyrim_ios_stage(cleared ? "render-confirmed" : "render-marker-unavailable");
+    }
+    static int lastCapture = -1;
+    static int lastDrawableWidth, lastDrawableHeight, lastWindowWidth, lastWindowHeight;
+    static unsigned lastRenderWidth, lastRenderHeight;
+    UISceneCaptureState state = overlay.traitCollection.sceneCaptureState;
+    int capture = state == UISceneCaptureStateActive;
+    if (state == UISceneCaptureStateUnspecified) {
+        /* SDL can create a window outside a UIKit scene. */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        capture = hostWindow.screen.isCaptured;
+#pragma clang diagnostic pop
+    }
+    if (frames) {
+        int drawableWidth = 0, drawableHeight = 0, windowWidth = 0, windowHeight = 0;
+        unsigned width, height;
+        skyrim_benchmark_get_render_size(&width, &height);
+        skyrim_ios_drawable_size(&drawableWidth, &drawableHeight);
+        skyrim_ios_window_pixel_size(&windowWidth, &windowHeight);
+        if (capture != lastCapture || width != lastRenderWidth || height != lastRenderHeight ||
+            drawableWidth != lastDrawableWidth || drawableHeight != lastDrawableHeight ||
+            windowWidth != lastWindowWidth || windowHeight != lastWindowHeight) {
+            const SkyrimMobileViewport area = skyrim_mobile_viewport(drawableWidth, drawableHeight, width, height);
+            fprintf(stderr, "IOS_RENDER_CAPTURE schema=2 active=%d render=%ux%u drawable=%dx%d "
+                            "window=%dx%d viewport=%dx%d\n", capture, width, height,
+                    drawableWidth, drawableHeight, windowWidth, windowHeight, area.width, area.height);
+            lastCapture = capture;
+            lastRenderWidth = width;
+            lastRenderHeight = height;
+            lastDrawableWidth = drawableWidth;
+            lastDrawableHeight = drawableHeight;
+            lastWindowWidth = windowWidth;
+            lastWindowHeight = windowHeight;
+        }
+    }
     skyrim_mods_frame(frames);
     double fps=lastTime ? (frames-lastFrames)/(now-lastTime) : 0;
     lastFrames=frames;lastTime=now;
@@ -1474,7 +1758,7 @@ void skyrim_mobile_tick(void) {
     NSArray *names=@[L(@"Nominal", @"通常"),L(@"Fair", @"温かい"),L(@"Serious", @"高温"),L(@"Critical", @"非常に高温")];
     unsigned cap=skyrim_mobile_fps_limit();
     benchmarkTick(cap, (unsigned)thermal);
-    overlay.hud.hidden=value(@"hud",1)==0;
+    overlay.hud.hidden=[overlay compactMenu] || value(@"hud",1)==0;
     overlay.hud.text=[NSString stringWithFormat:L(@" %.1f FPS  %@  Cap %@", @" %.1f FPS  %@  上限%@"),fps,names[MIN((NSUInteger)thermal,3)],cap ? @(cap).stringValue : @"—"];
     overlay.notice.hidden=now>overlay.noticeUntil;
     if(now-lastLog>=5) {

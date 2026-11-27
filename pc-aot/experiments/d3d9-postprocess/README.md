@@ -34,6 +34,30 @@ The probe creates its own non-discardable resources. Finding the game's scene at
 
 Two deliberate input changes checked that the readback detects errors. Overwriting sample 0 along with samples 1–3 changed all 435 interior depth pixels on lavapipe. Reversing the stencil reference changed 225 pixels in the subsequent color draw.
 
+## Underwater visibility
+
+Run `d3d9_postprocess --underwater-fog` to check the layers of a synthetic underwater scene. For pinned DXVK, set `d3d9.floatEmulation = True` in the probe's own `dxvk.conf` to match the iPhone default. The probe reads all 527 pixels at each stage. A failure names the first stage with incorrect output.
+
+| Stage | Expected observation |
+| --- | --- |
+| Sampled depth | The two subjects have distinct device depths of 0.25 and 0.75. |
+| Scene color before fog | The color texture contains green on the left and red on the right, including after an MSAA resolve. |
+| Underwater near/far fog | Green remains clear up close. The far red subject mixes with 75% brown-gray fog. |
+| Refraction | A one-texel offset in the color lookup moves the red edge into the clear foreground. The depth boundary stays fixed. |
+| Dense-fog control | Updating just the fog distances makes both subjects exactly the fog color. |
+
+Windows D3D9 on an RTX 4060 Ti passed using an INTZ texture. Pinned DXVK on Mesa lavapipe passed using INTZ, a 1× D24S8 copy and a 4× depth resolve. Changing the test to feed scene color into the depth sampler caused 272 mismatches. Removing the refraction offset caused 17. Saturating the ordinary fog case caused 527. FXC matched all 50 authored pixel-shader DWORDs. For the offline iOS shader check below, select `--program underwater-fog` and use a dump from this probe. Apple's Windows compiler linked both stages for iOS 18, with one unused specialization-constant warning per stage.
+
+The game's actual underwater pass still needs an iPhone capture. In Settings, select the water diagnostic for the surface, close Settings, and hold the camera on a nearby rock. Repeat just below the surface with the same save, location and profile. The capture starts four seconds after the request and covers the next three successfully presented frames. A session expires after 15 seconds. Compare with the same view on PC LE if possible.
+
+`IOS_WATER_SUMMARY` reports scene (1 surface, 2 submerged), end (1 complete, 2 expired), completed frames and examined draws. Fixed-function draws, shaders without usable reflection metadata and other shader families are counted separately. A set `limited` field marks a capture that hit a draw or byte budget.
+
+`IOS_WATER_DRAW` counts matching D3D9 draw calls grouped by reflected pixel-shader constants. Kind 1 is water parameters with fog and refraction, kind 2 is blurred color with depth, and kind 3 is depth parameters with depth. The depth counts are undeclared, unbound, bound with ordinary usage and bound with depth/stencil usage. `ms_depth` counts bound multisample textures. Color counts are undeclared, unbound and bound. Parameter counts describe the first four float values in the named register as undeclared, all zero, finite with a nonzero component, or nonfinite. These records contain counts only. A bound ordinary texture can contain packed depth. A plausible register or a bound texture cannot establish which color or depth the GPU actually sampled.
+
+Two Linux lavapipe runs used the pinned DXVK observer and an authored FXC pixel shader retaining its constant table. Both observed 22 draws across three presentations. Nine matching fog draws had bound scene color, a bound depth/stencil texture and a finite nonzero parameter register. The pixel checks passed for both bound depth and copied or resolved depth. Adding one draw with both textures unbound and the fog register cleared increased each corresponding counter by one.
+
+`IOS_WATER_CAMERA` describes the depth reconstruction used by twelve stock LE water pixel shaders. All twelve sample the red depth channel and take the reciprocal of a linear function of depth using two camera-vector components. The observer recognizes the reflected camera float4 and classifies the denominator at depth 0 and 1. In order the counts mean unavailable, nonfinite, uniformly zero, uniformly nonzero, zero at depth 0 only, zero at depth 1 only, crosses zero in the interior, increasing, and decreasing. Missing or differently typed camera metadata leaves a draw unavailable. The report contains no register values. A zero at a single endpoint can be intentional with an infinite projection limit. A MOD may use another projection even when its uniform names match. Compare above and below at the same location before drawing conclusions about the actual sampled depth.
+
 ## Reproduce the shader checks
 
 Microsoft FXC in the Windows SDK can regenerate all 45 embedded shader DWORDs from `two_tone.hlsl`.

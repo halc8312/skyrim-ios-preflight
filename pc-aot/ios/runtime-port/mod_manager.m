@@ -27,6 +27,7 @@
 #include "mobile_ui.h"
 #include "mod_manager.h"
 #include "game_language.h"
+#import "ui_language.h"
 #include "copy_pair.h"
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 #include "PcGuestSkseTrial.h"
@@ -42,6 +43,7 @@
 #include "mod_fuz_host.h"
 #include "mod_hook_selection.h"
 #include "mod_loading_menu_host.h"
+#include "mod_menu_focus_host.h"
 #include "mod_racemenu_preset.h"
 #include "mod_save_host.h"
 #include "highheel_identity.h"
@@ -70,27 +72,8 @@ void skyrim_classic_control_form_deleted(struct CPU *cpu, uint32_t vm, uint64_t 
 #include "mod_libarchive.h"
 #endif
 
-/* Labels and background import notices share the current app language. */
-static atomic_int languageCache;
-static void RefreshLanguage(void) {
-    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-    pthread_mutex_lock(&lock);
-    NSDictionary *s = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
-    BOOL japanese = [s[@"language"] isKindOfClass:NSNumber.class] && [s[@"language"] intValue] == 1;
-    atomic_store_explicit(&languageCache, japanese, memory_order_relaxed);
-    pthread_mutex_unlock(&lock);
-}
 static NSString *T(NSString *english, NSString *japanese) {
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        [NSNotificationCenter.defaultCenter addObserverForName:NSUserDefaultsDidChangeNotification
-            object:NSUserDefaults.standardUserDefaults queue:nil usingBlock:^(NSNotification *note) {
-                (void)note;
-                RefreshLanguage();
-            }];
-        RefreshLanguage();
-    });
-    return atomic_load_explicit(&languageCache, memory_order_relaxed) ? japanese : english;
+    return SKUIString(SKCurrentUILanguage(), english, japanese);
 }
 
 /* ---- paths and state --------------------------------------------------- */
@@ -734,7 +717,7 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     if (!launchWithoutMods && !launchPluginListFailed && skyrim_camera_app_ready())
         plan->groups |= compiled & (PC_GUEST_MOD_HOOK_CAMERA_OBSERVE | PC_GUEST_MOD_HOOK_CAMERA_RENDER_OBSERVE |
                                    PC_GUEST_MOD_HOOK_CAMERA_CULL_OBSERVE);
-    if (!launchWithoutMods && !launchPluginListFailed && menuObserver && skyrim_mobile_verbose() &&
+    if (!launchWithoutMods && !launchPluginListFailed && menuObserver &&
         (compiled & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE)) plan->groups |= PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE;
     if (!launchWithoutMods && !launchPluginListFailed && skyrim_mobile_verbose() &&
         (compiled & PC_GUEST_MOD_HOOK_ECE_TRI_OBSERVE) && PrepareEceTriObserver()) {
@@ -825,6 +808,9 @@ static uint32_t SelectModHooks(uint32_t requested, BOOL inventoryFit, NSString *
     if (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_EFFECT_OBSERVE) skyrim_highheel_effect_fill(&table);
     if (plan->groups & PC_GUEST_MOD_HOOK_SAVE_LIFECYCLE) skyrim_save_app_fill(&table);
     if (pc_guest_select_mod_hooks(plan->groups, plan->groups ? &table : NULL) == 0) {
+        NSDictionary *touchSettings = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
+        if (plan->groups & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE && [touchSettings[@"menuFocus"] boolValue])
+            skyrim_menu_focus_app_enable();
 #ifdef SKYRIM_IOS_CLASSIC_PAPYRUSUTIL
         if (heelTrialRequested) {
             const bool selected = (plan->groups & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_TRANSFORM) != 0;
@@ -1430,7 +1416,7 @@ static BOOL ProfileHasPackage(NSDictionary *profile, NSString *packageID) {
 
 /* Main-thread only. Both new and known packages use this profile transaction. */
 static void AttachPackage(NSMutableDictionary *profile, NSDictionary *package) {
-    NSString *name = [package[@"name"] isKindOfClass:NSString.class] ? package[@"name"] : T(@"MOD", @"MOD");
+    NSString *name = [package[@"name"] isKindOfClass:NSString.class] ? package[@"name"] : @"MOD";
     if (!profile) {
         Notice([NSString stringWithFormat:T(@"%@ is installed, but the selected profile was removed.",
             @"%@ は取り込み済みですが、選んだプロファイルが削除されています。"), name]);
@@ -2248,7 +2234,7 @@ static NSString *SaveCopyMessage(int error, int side, NSString *profile) {
     }
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:error ? T(@"Could not copy save", @"セーブをコピーできませんでした") :
         T(@"Save copied", @"セーブをコピーしました") message:message preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:T(@"OK", @"OK") style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)item {
@@ -2402,7 +2388,7 @@ static NSString *CompanionResult(SkseInspectStatus status, const SkseInspectInfo
             if (!view.viewIfLoaded.window || view.navigationController.topViewController != view || view.presentedViewController) return;
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:T(@"SKSE additional save", @"SKSE追加セーブ")
                 message:CompanionResult(status, &info) preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [alert addAction:[UIAlertAction actionWithTitle:T(@"OK", @"OK") style:UIAlertActionStyleDefault handler:nil]];
             [view presentViewController:alert animated:YES completion:nil];
         });
     });
@@ -2442,8 +2428,7 @@ static UITableViewCell *ReusableCell(UITableView *t) {
             style:UIBarButtonItemStylePlain target:self action:@selector(checkInstalledDlls)];
 }
 - (void)checkInstalledDlls {
-    BOOL japanese = atomic_load_explicit(&languageCache, memory_order_relaxed);
-    UIViewController *check = skyrim_mod_dll_probe_controller(japanese, self.dllProbeFolder);
+    UIViewController *check = skyrim_mod_dll_probe_controller(SKCurrentUILanguage(), self.dllProbeFolder);
     [self.navigationController pushViewController:check animated:YES];
 }
 #endif
@@ -2578,7 +2563,7 @@ static UITableViewCell *ReusableCell(UITableView *t) {
     UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:nil preferredStyle:UIAlertControllerStyleAlert];
     [a addTextFieldWithConfigurationHandler:^(UITextField *f) { f.text = initial; }];
     [a addAction:[UIAlertAction actionWithTitle:T(@"Cancel", @"キャンセル") style:UIAlertActionStyleCancel handler:nil]];
-    [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+    [a addAction:[UIAlertAction actionWithTitle:T(@"OK", @"OK") style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
         (void)x; NSString *name = [a.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
         if (name.length) done(name);
     }]];
@@ -2894,7 +2879,7 @@ enum {
 };
 @implementation SKModHub
 - (void)viewDidLoad {
-    [super viewDidLoad]; self.title = @"MOD";
+    [super viewDidLoad]; self.title = T(@"MOD", @"MOD");
     (void)ModInboxURL();
     self.tableView.estimatedRowHeight = 60; self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:T(@"Reorder", @"並べ替え") style:UIBarButtonItemStylePlain target:self action:@selector(toggleReorder)];
@@ -2935,7 +2920,7 @@ enum {
 }
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    RefreshLanguage();
+    SKRefreshUILanguage();
     [self updateReorderTitle];
     /* The game keeps drawing on the main thread behind this screen; pause it
      * while any MOD screen is open so scrolling stays smooth. Released when the
@@ -3301,8 +3286,7 @@ static BOOL SaveProfileToggle(UISwitch *toggle, NSString *key) {
     case HubTools:
 #ifdef SKYRIM_IOS_SKSE_DLL_PROBE
         if (p.row == HubDllProbeRow) {
-            BOOL japanese = atomic_load_explicit(&languageCache, memory_order_relaxed);
-            [self.navigationController pushViewController:skyrim_mod_dll_probe_controller(japanese, nil) animated:YES];
+            [self.navigationController pushViewController:skyrim_mod_dll_probe_controller(SKCurrentUILanguage(), nil) animated:YES];
             break;
         }
 #endif

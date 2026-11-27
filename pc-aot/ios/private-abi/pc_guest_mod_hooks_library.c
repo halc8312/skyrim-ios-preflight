@@ -5,6 +5,7 @@
  * guest thread starts, so the copied tables are read without locks.
  */
 #include "PcGuestModHooksABI.h"
+#include "PcGuestMenuFocus.h"
 
 #ifndef PC_GUEST_MOD_HOOKS_COMPILED
 #error "Define PC_GUEST_MOD_HOOKS_COMPILED to the staged hook groups"
@@ -35,6 +36,7 @@ _Static_assert(!(PC_GUEST_MOD_HOOKS_COMPILED & PC_GUEST_MOD_HOOK_HIGHHEEL_LOCAL_
                "HighHeels local transforms require the scene and effect observers");
 
 static uint32_t selected;
+PcGuestMenuFocusAdvance skyrim_menu_focus_callback;
 static uint32_t bound_bytes;
 static int selection_final;
 static PcGuestModFuzMenuHooks fuz_menu;
@@ -400,6 +402,16 @@ void skyrim_loading_menu_observe(uint32_t site, uint32_t dispatcher, uint32_t ev
 }
 
 bool skyrim_inventory_fit_enabled(void) { return (selected & PC_GUEST_MOD_HOOK_INVENTORY_FIT) != 0; }
+
+#if PC_GUEST_MOD_HOOKS_COMPILED & 128u
+__attribute__((visibility("default")))
+bool skyrim_guest_bind_menu_focus_v1(uint32_t version, PcGuestMenuFocusAdvance callback) {
+    if (version != PC_GUEST_MENU_FOCUS_VERSION || !callback || skyrim_menu_focus_callback ||
+        !(selected & PC_GUEST_MOD_HOOK_LOADING_MENU_OBSERVE)) return false;
+    skyrim_menu_focus_callback = callback;
+    return true;
+}
+#endif
 
 bool skyrim_safety_load_bypass_reclamation(void) {
     return (selected & PC_GUEST_MOD_HOOK_SAFETY_LOAD) && safety_load.bypass_reclamation();

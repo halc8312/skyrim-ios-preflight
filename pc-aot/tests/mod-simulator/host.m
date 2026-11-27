@@ -6,7 +6,10 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <errno.h>
+#include "benchmark.h"
+#include "mobile_core.h"
 #include "mobile_ui.h"
+#include "mod_loading_menu_host.h"
 #include "mod_manager.h"
 #ifdef SKYRIM_IOS_CLASSIC_SKSE
 #include "PcGuestSkseTrial.h"
@@ -20,15 +23,35 @@ static NSURL *directory(NSSearchPathDirectory kind) {
     return [NSFileManager.defaultManager URLsForDirectory:kind inDomains:NSUserDomainMask].firstObject;
 }
 
+/* This target supplies the guest's observed inventory state. Layout, gesture
+ * handling and the generated XInput button come from the shipping overlay. */
+static BOOL fixtureListMenu;
+SkyrimTouchMenu skyrim_loading_menu_touch_state(void) {
+    return fixtureListMenu ? (SkyrimTouchMenu){.menus = 1u << 2, .list_navigation = true} : (SkyrimTouchMenu){0};
+}
+@interface SKOverlay : UIView @end
+@interface SKFixtureMenuOverlay : SKOverlay @end
+@implementation SKFixtureMenuOverlay
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesEnded:touches withEvent:event];
+    for (UIView *view in self.subviews) {
+        if ([view.accessibilityIdentifier isEqualToString:@"skyrim-pad-layout"]) {
+            view.accessibilityValue = [NSString stringWithFormat:@"%u", (unsigned)skyrim_mobile_pad().buttons];
+            break;
+        }
+    }
+}
+@end
+
 // The shipping selector must enter Swift and return a main-thread result. Apple supports
 // downloading models and translating on physical devices, so the simulator returns nil.
 static void checkTranslationBridge(UITableViewController *settings) {
     Class translator = NSClassFromString(@"SKTranslator");
-    SEL selector = NSSelectorFromString(@"translate:in:completion:");
+    SEL selector = NSSelectorFromString(@"translate:to:in:completion:");
     if (![translator respondsToSelector:selector])
         [NSException raise:NSInternalInconsistencyException format:@"Missing Swift MOD translation bridge"];
-    typedef void (*Translate)(id, SEL, NSArray *, UIViewController *, void (^)(NSArray *));
-    ((Translate)objc_msgSend)(translator, selector, @[@"Choose a colour for this installer."], settings, ^(NSArray *result) {
+    typedef void (*Translate)(id, SEL, NSArray *, NSString *, UIViewController *, void (^)(NSArray *));
+    ((Translate)objc_msgSend)(translator, selector, @[@"Choose a colour for this installer."], @"ja", settings, ^(NSArray *result) {
         if (!NSThread.isMainThread || result != nil)
             [NSException raise:NSInternalInconsistencyException format:@"Unexpected simulator translation result"];
         settings.tableView.accessibilityIdentifier = @"mod-translation-bridge-checked";
@@ -117,6 +140,19 @@ static void copyFixture(NSURL *source, NSURL *destination) {
 @implementation SKFixtureScene
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options {
     (void)session; (void)options;
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"-TestNativeMenuOverlay"]) {
+        fixtureListMenu = YES;
+        skyrim_benchmark_render_size(600, 500);
+        self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+        UIViewController *root = [UIViewController new];
+        self.window.rootViewController = root;
+        UIView *pad = [[SKFixtureMenuOverlay alloc] initWithFrame:root.view.bounds];
+        /* No guest or lifecycle/checkpoint services run in this scenario. */
+        [NSNotificationCenter.defaultCenter removeObserver:pad];
+        [root.view addSubview:pad];
+        [self.window makeKeyAndVisible];
+        return;
+    }
     NSURL *fixtures = [NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Fixtures"];
     NSURL *docs = directory(NSDocumentDirectory);
     NSURL *game = [docs URLByAppendingPathComponent:@"Skyrim"];
@@ -190,6 +226,7 @@ static void copyFixture(NSURL *source, NSURL *destination) {
 }
 - (void)sceneDidBecomeActive:(UIScene *)scene {
     (void)scene;
+    if (fixtureListMenu) return;
     UINavigationController *navigation = (UINavigationController *)self.window.rootViewController;
     UITableViewController *settings = (UITableViewController *)navigation.viewControllers.firstObject;
     if (settings.viewIfLoaded.window && ![settings.tableView.accessibilityIdentifier isEqual:@"mod-translation-bridge-checked"])

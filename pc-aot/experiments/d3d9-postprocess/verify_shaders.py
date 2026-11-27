@@ -14,6 +14,7 @@ HERE = Path(__file__).resolve().parent
 SHADERS = {
     "two-tone": ("two_tone.hlsl", "postprocess.cpp", "shaderCode"),
     "depth-view": ("depth_view.hlsl", "depth_input.cpp", "depthViewCode"),
+    "underwater-fog": ("underwater_fog.hlsl", "depth_input.cpp", "underwaterFogCode"),
 }
 
 

@@ -217,7 +217,9 @@ struct GameState {
     }
 };
 
-int run(bool testDepth) {
+enum class Check { color, depth, underwaterFog };
+
+int run(Check check) {
     Window window;
     PostFXRef<IDirect3D9> d3d;
     *d3d.put() = Direct3DCreate9(D3D_SDK_VERSION);
@@ -237,8 +239,8 @@ int run(bool testDepth) {
     TRY(d3d->CreateDevice(0, D3DDEVTYPE_HAL, window.native, D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp,
                           device.put()));
     IDirect3DDevice9* d = device.get();
-    if (testDepth)
-        return postfx_probe::checkDepthInputs(d3d.get(), d) ? 0 : 77;
+    if (check != Check::color)
+        return postfx_probe::checkDepthInputs(d3d.get(), d, check == Check::underwaterFog) ? 0 : 77;
     D3DCAPS9 caps{};
     TRY(d->GetDeviceCaps(&caps));
     TwoTonePass pass;
@@ -318,10 +320,12 @@ int run(bool testDepth) {
 int main(int argc, char** argv) {
     try {
         if (argc == 1)
-            return run(false);
+            return run(Check::color);
         if (argc == 2 && !std::strcmp(argv[1], "--depth-input"))
-            return run(true);
-        std::fprintf(stderr, "Usage: d3d9_postprocess [--depth-input]\n");
+            return run(Check::depth);
+        if (argc == 2 && !std::strcmp(argv[1], "--underwater-fog"))
+            return run(Check::underwaterFog);
+        std::fprintf(stderr, "Usage: d3d9_postprocess [--depth-input | --underwater-fog]\n");
         return 2;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "D3D9 test failed: %s\n", e.what());

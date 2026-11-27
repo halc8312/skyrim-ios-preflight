@@ -80,7 +80,7 @@ PY
 simulator_sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 xcrun --sdk iphonesimulator clang -target "$(uname -m)-apple-ios18.0-simulator" -isysroot "$simulator_sdk" \
     -I"$port" -fobjc-arc -fmodules -O2 -Wall -Wextra -Werror "${sources[@]}" \
-    "$port/mod_hook_catalog.c" mod_dll_probe.m test_simulator.m \
+    "$port/mod_hook_catalog.c" "$port/ui_language.m" mod_dll_probe.m test_simulator.m \
     -framework UIKit -framework Foundation -framework UniformTypeIdentifiers -o "$app/DllCompatibility"
 codesign --force --sign - "$app"
 popd >/dev/null

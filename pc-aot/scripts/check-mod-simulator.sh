@@ -88,6 +88,8 @@ elif os.environ.get("SKYRIM_IOS_SKSE_DLL_PROBE") == "1":
     required.add("installed-dll-diagnosis")
 if sys.argv[4] == "screens" and os.environ.get("SKYRIM_IOS_CLASSIC_SKSE") == "1":
     required.add("additional-save-check")
+if sys.argv[4] == "screens":
+    required.update({"settings-language-arabic", "native-menu-compact"})
 captured = set()
 # Retain the last visible screen when a system picker or a table action fails.
 labels = required | {"failure-screen", "row-unavailable"}

@@ -216,7 +216,7 @@ def project(work, sdl_prefix, archive_prefix):
         return obj(name+"Sources", "PBXSourcesBuildPhase", files=files,
                    buildActionMask=2147483647, runOnlyForDeploymentPostprocessing=0)
     app_sources = [
-        "mobile_ui.m", "mobile_core.c", "benchmark.c", "game_language.c", "diagnostic_upload.m",
+        "mobile_ui.m", "mobile_core.c", "ui_language.m", "benchmark.c", "game_language.c", "diagnostic_upload.m",
         "performance_metrics.c", "present_pacing_core.c", "lock_metrics.c", "mod_manager.m", "mod_fomod.m",
         "mod_browser.m", "mod_plugins.c", "mod_archive.c", "mod_deploy.c",
         "mod_analyze.c", "mod_optimize.c", "mod_libarchive.c", "mod_translate.swift",
@@ -253,7 +253,8 @@ def project(work, sdl_prefix, archive_prefix):
         if not (ROOT/"vendor"/codec/h).is_file():
             raise SystemExit("Run scripts/fetch-mod-codecs.sh first")
 
-    resources = obj("Resources", "PBXResourcesBuildPhase", files=[buildfile(fixture_dir, "folder")],
+    localized = [buildfile(PORT / "localization" / (language + ".lproj"), "folder") for language in ("ja", "ar", "es", "fr")]
+    resources = obj("Resources", "PBXResourcesBuildPhase", files=[buildfile(fixture_dir, "folder"), *localized],
                     buildActionMask=2147483647, runOnlyForDeploymentPostprocessing=0)
     app_product = obj("appProduct", "PBXFileReference", explicitFileType="wrapper.application",
                       path=APP+".app", sourceTree="BUILT_PRODUCTS_DIR")
@@ -274,7 +275,8 @@ def project(work, sdl_prefix, archive_prefix):
         "HEADER_SEARCH_PATHS":[str(PORT),str(ROOT/"ios/private-abi"),str(sdl_prefix/"include"),str(archive_prefix/"include"),
                                str(COSAVE), *([str(DLL_PROBE)] if dll_enabled or classic_enabled else [])],
         "SYSTEM_HEADER_SEARCH_PATHS":[str(ROOT/"vendor/bcdec"),str(ROOT/"vendor/stb")],
-        "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", "SKYRIM_HAVE_LIBARCHIVE=1", *classic_defines, *dll_defines],
+        "GCC_PREPROCESSOR_DEFINITIONS":["$(inherited)", "SKYRIM_HAVE_LIBARCHIVE=1", "SKYRIM_IOS_TOUCH_MENU_FIXTURE=1",
+                                        *classic_defines, *dll_defines],
         "OTHER_LDFLAGS":["$(inherited)",*map(str,static_libs),"-lz","-liconv",
                          *[arg for name in frameworks for arg in ("-framework", name)]]})
     test_configs = configs(TEST, {
@@ -295,7 +297,7 @@ def project(work, sdl_prefix, archive_prefix):
     proj = obj("Project", "PBXProject", attributes={"LastUpgradeCheck":"1600",
              "TargetAttributes":{aid:{"CreatedOnToolsVersion":"16.0"},tid:{"CreatedOnToolsVersion":"16.0","TestTargetID":aid}}},
              buildConfigurationList=project_settings, compatibilityVersion="Xcode 14.0", developmentRegion="en",
-             hasScannedForEncodings=0, knownRegions=["en","Base"], mainGroup=group, productRefGroup=products,
+             hasScannedForEncodings=0, knownRegions=["en","ja","ar","es","fr","Base"], mainGroup=group, productRefGroup=products,
              projectDirPath="", projectRoot="", targets=[aid,tid])
     structure = {"archiveVersion":1,"classes":{},"objectVersion":56,"objects":objects,"rootObject":proj}
     (project_dir/"project.pbxproj").write_text("// !$*UTF8*$!\n"+plist_string(structure)+"\n", encoding="utf-8")

@@ -7,10 +7,12 @@
 #include <SDL2/SDL_syswm.h>
 #include "device_policy.h"
 #include "ios_runtime.h"
+#include "water_probe.h"
 #include "lifecycle_runtime.h"
 #include "pipeline_cache_control.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static _Noreturn void unexpected(const char *function) {
     fprintf(stderr, "Unexpected call into an absent guest service: %s\n", function);
@@ -22,8 +24,17 @@ SDL_bool SDLCALL SDL_GetWindowWMInfo(SDL_Window *window, SDL_SysWMinfo *info) {
 }
 const char *SDLCALL SDL_GetError(void) { unexpected(__func__); }
 int platform_text_input(int enabled) { (void)enabled; unexpected(__func__); }
-void skyrim_ios_drawable_size(int *width, int *height) { (void)width; (void)height; unexpected(__func__); }
-int skyrim_ios_startup_pixel_size(int *width, int *height) { (void)width; (void)height; unexpected(__func__); }
+void skyrim_ios_drawable_size(int *width, int *height) {
+    if (![NSProcessInfo.processInfo.arguments containsObject:@"-TestNativeMenuOverlay"]) unexpected(__func__);
+    *width = 1000;
+    *height = 500;
+}
+int skyrim_ios_window_pixel_size(int *width, int *height) { (void)width; (void)height; unexpected(__func__); }
+int skyrim_ios_render_size_submitted(unsigned w, unsigned h) { (void)w; (void)h; unexpected(__func__); }
+void skyrim_ios_stage(const char *stage) {
+    if (strncmp(stage, "render-", 7)) unexpected(stage);
+}
+void skyrim_water_probe_request(unsigned scene) { (void)scene; unexpected(__func__); }
 /* Record only the real menu's two requests in this guest-free test sandbox. */
 static void recordMenuState(const char *source, int active) {
     if (active != 0 && active != 1) unexpected(source);

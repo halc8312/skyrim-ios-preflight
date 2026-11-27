@@ -7,10 +7,10 @@ import UIKit
 @MainActor
 @objc(SKTranslator)
 public final class SKTranslator: NSObject {
-    @objc(translate:in:completion:)
-    public static func translate(_ texts: [String], in parent: UIViewController,
+    @objc(translate:to:in:completion:)
+    public static func translate(_ texts: [String], to language: String, in parent: UIViewController,
                                  completion: @escaping ([String]?) -> Void) {
-        guard !texts.isEmpty, parent.viewIfLoaded?.window != nil else {
+        guard ["ja", "ar", "es", "fr"].contains(language), !texts.isEmpty, parent.viewIfLoaded?.window != nil else {
             completion(nil)
             return
         }
@@ -19,7 +19,7 @@ public final class SKTranslator: NSObject {
         completion(nil)
         #else
         let request = InstallerTranslation(completion)
-        let view = InstallerTranslationView(texts: texts, request: request)
+        let view = InstallerTranslationView(texts: texts, language: language, request: request)
         let host = UIHostingController(rootView: view)
         request.host = host
         parent.addChild(host)
@@ -54,11 +54,12 @@ private final class InstallerTranslation {
 
 private struct InstallerTranslationView: View {
     let texts: [String]
+    let language: String
     let request: InstallerTranslation
 
     var body: some View {
         Color.clear.translationTask(
-            source: nil, target: Locale.Language(identifier: "ja"),
+            source: nil, target: Locale.Language(identifier: language),
             action: Self.translate(texts, request: request))
     }
 

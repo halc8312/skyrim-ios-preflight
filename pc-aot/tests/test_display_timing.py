@@ -184,12 +184,12 @@ class DisplayTimingTests(unittest.TestCase):
                       contract['observations']['ios/runtime-port/performance_metrics.h'])
         identity = namespace.identities(ROOT, 'clang-test', '/test/iphoneos.sdk', '18.0')
         self.assertEqual(identity['reviewed'], 1)
-        # Benchmark input, the render-size trial and the first-wave witnesses
-        # are part of prepare_runtime.py, which stays in the full cache key.
+        # The runtime adapters and the water observation sources stay
+        # in the full cache key.
         self.assertEqual(identity['reuse'], BASELINE_REUSE_IDENTITY)
 
 
-BASELINE_REUSE_IDENTITY = '8f25c4973136860df9b254c862213c1585185d8ea1f264593336aee29b0eec49'
+BASELINE_REUSE_IDENTITY = '9e27dc81c1852e480d3d20476d47a22559335ee4686af0943002a7fce25153cd'
 
 if __name__ == '__main__':
     unittest.main()

@@ -113,6 +113,7 @@ add_library(skyrim_ios_runtime STATIC ${runtime_sources}
     "${SKYDREAM_SOURCE_DIR}/third_party/f3daudio/F3DAudio.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/ios_runtime.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_core.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui_language.m"
     "${CMAKE_CURRENT_SOURCE_DIR}/benchmark.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/game_language.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/mod_plugins.c"
@@ -158,6 +159,7 @@ if(SKYRIM_IOS_CLASSIC_SKSE)
             "${camera_sources}/camera_state.c" "${camera_sources}/camera_cull_trial.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_camera_host.c"
             "${loading_menu_sources}/loading_menu.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_loading_menu_host.c"
+            "${loading_menu_sources}/menu_focus.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_menu_focus_host.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_ece_profile.c" "${CMAKE_CURRENT_SOURCE_DIR}/mod_ece_tri_host.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_pex_host.c" "${highheel_sources}/highheel_identity.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mod_highheel_effect_host.c" "${highheel_sources}/highheel_effect.c"
@@ -290,6 +292,15 @@ if(SKYRIM_IOS_BUILD_APP)
     endif()
     add_executable(SkyrimIOS MACOSX_BUNDLE "${CMAKE_CURRENT_SOURCE_DIR}/ios_entry.m"
         ${SKYRIM_IOS_BINDING_SOURCES})
+    foreach(language ja ar es fr)
+        set(language_dir "${CMAKE_CURRENT_SOURCE_DIR}/localization/${language}.lproj")
+        set(language_files "${language_dir}/InfoPlist.strings")
+        if(NOT language STREQUAL "ja")
+            list(APPEND language_files "${language_dir}/AppUI.strings")
+        endif()
+        target_sources(SkyrimIOS PRIVATE ${language_files})
+        set_source_files_properties(${language_files} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/${language}.lproj")
+    endforeach()
     if(SKYRIM_IOS_CLASSIC_SETTINGS_PROBE)
         target_compile_definitions(SkyrimIOS PRIVATE SKYRIM_IOS_CLASSIC_SETTINGS_PROBE=1 SKYRIM_IOS_SKSE_DLL_PROBE=1)
         target_include_directories(SkyrimIOS PRIVATE "${dll_probe_source}")

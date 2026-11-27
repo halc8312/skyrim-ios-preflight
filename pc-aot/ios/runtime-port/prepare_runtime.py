@@ -167,15 +167,67 @@ def patch_platform(s: str) -> str:
 def patch_bridge(s: str) -> str:
     s = mobile_conditions(s)
     s = replace_once(s, '#include <SDL2/SDL_vulkan.h>',
-        '#include <SDL2/SDL_vulkan.h>\n#include "ios_runtime.h"\n#include "benchmark.h"', "bridge include")
+        '#include <SDL2/SDL_vulkan.h>\n#include "ios_runtime.h"\n#include "benchmark.h"\n#include "mobile_ui.h"', "bridge include")
+    # A configured size must use the same rounding in the INI and the guest-visible
+    # mode list. The explicit choice replaces the automatic virtual display mode.
+    s = replace_once(s, 'static uint32_t mode_count() { int ww, wh;',
+        'static uint32_t mode_count() {\n'
+        '    int w, h;\n'
+        '    if (skyrim_mobile_render_override(&w, &h)) return 1;\n'
+        '    int ww, wh;', "configured guest mode count")
+    s = replace_once(s, 'extern "C" void bridge_scaled_mode(uint32_t i, uint32_t *w, uint32_t *h) {',
+        'extern "C" void bridge_scaled_mode(uint32_t i, uint32_t *w, uint32_t *h) {\n'
+        '    int configured_w, configured_h;\n'
+        '    if (skyrim_mobile_render_override(&configured_w, &configured_h)) {\n'
+        '        *w = (uint32_t)configured_w; *h = (uint32_t)configured_h;\n'
+        '        return;\n'
+        '    }', "configured guest dimensions")
     backbuffer = "    if (SUCCEEDED(hr)) { g_bb_w = pp.BackBufferWidth; g_bb_h = pp.BackBufferHeight; }"
     if s.count(backbuffer) != 2:
         raise ValueError("bridge: expected device create and reset backbuffer sizes")
-    s = s.replace(backbuffer, backbuffer + "\n    if (SUCCEEDED(hr)) skyrim_benchmark_render_size(g_bb_w, g_bb_h);")
+    s = s.replace(backbuffer, '    if (SUCCEEDED(hr)) observe_render_surface(dev, pp);', 1)
+    s = s.replace(backbuffer, '    if (SUCCEEDED(hr)) observe_render_surface(d, pp);')
+    s = replace_once(s, 'static uint32_t g_bb_w, g_bb_h;', '''static void observe_render_surface(IDirect3DDevice9 *device, const D3DPRESENT_PARAMETERS& parameters) {
+    IDirect3DSurface9 *surface = nullptr;
+    HRESULT result = device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &surface);
+    D3DSURFACE_DESC description{};
+    if (surface) {
+        if (SUCCEEDED(result)) result = surface->GetDesc(&description);
+        surface->Release();
+    }
+    const bool measured = SUCCEEDED(result) && description.Width && description.Height;
+    const unsigned width = measured ? description.Width : parameters.BackBufferWidth;
+    const unsigned height = measured ? description.Height : parameters.BackBufferHeight;
+    fprintf(stderr, "IOS_RENDER_SURFACE schema=1 measured=%u width=%u height=%u result=%08x\\n",
+            unsigned(measured), width, height, unsigned(result));
+    skyrim_benchmark_render_size(width, height);
+}''', "query the allocated primary back buffer")
+    for operation, call in enumerate((
+        "HRESULT hr = d3d->CreateDevice(ARG(1), (D3DDEVTYPE)ARG(2), (HWND)platform_window(), flags, &pp, &dev);",
+        "HRESULT hr = d->Reset(&pp);",
+    )):
+        s = replace_once(s, call,
+            f'fprintf(stderr, "IOS_RENDER_DEVICE schema=1 op={operation} begin=1 width=%u height=%u result=00000000\\n",\n'
+            '            (unsigned)pp.BackBufferWidth, (unsigned)pp.BackBufferHeight);\n'
+            '    fflush(stderr);\n'
+            f'    {call}\n'
+            f'    fprintf(stderr, "IOS_RENDER_DEVICE schema=1 op={operation} begin=0 width=%u height=%u result=%08x\\n",\n'
+            '            (unsigned)pp.BackBufferWidth, (unsigned)pp.BackBufferHeight, (unsigned)hr);\n'
+            '    fflush(stderr);', "guest render device result")
     drawable = '    SDL_Vulkan_GetDrawableSize((SDL_Window *)platform_window(), &ww, &wh);'
     if s.count(drawable) != 2:
         raise ValueError("bridge: expected two drawable size queries")
     s = s.replace(drawable, '    skyrim_ios_drawable_size(&ww, &wh);')
+    view_start = '    RECT r = {0, 0, ww, wh};'
+    view_end = '    return r;\n}\n// The same rectangle'
+    start = s.index(view_start)
+    end = s.index(view_end, start) + len('    return r;')
+    s = replace_once(s, s[start:end],
+        '    unsigned width, height;\n'
+        '    skyrim_benchmark_get_render_size(&width, &height);\n'
+        '    const SkyrimMobileViewport rect = skyrim_mobile_viewport(ww, wh, width, height);\n'
+        '    return {rect.x, rect.y, rect.x + rect.width, rect.y + rect.height};',
+        "share presentation rectangle with native menu input")
     dest = ' : (vr.left || vr.top) ? &vr : nullptr;'
     if s.count(dest) != 2:
         raise ValueError("bridge: expected two physical destination selections")
@@ -545,40 +597,56 @@ def patch_preferences(s: str) -> str:
     s = mobile_conditions(s)
     s = replace_once(s, '#include "rt.h"', '#include "rt.h"\n#include "mobile_ui.h"', "mobile preferences include")
     s = replace_once(s, 'static const char *ini_find(IniFile *f, const char *sec, const char *key) {',
-        '''/* Trial values are visible only to the active profile's INI shims.
+        '''/* The chosen dimensions are visible only to the active profile's INI shims.
  * Keep them out of the parsed entries so later ini_save calls leave them out. */
-static IniFile *trial_prefs;
-static char trial_width[16], trial_height[16];
-static const char *trial_display_value(IniFile *f, const char *sec, const char *key) {
-    if (!trial_prefs || f != trial_prefs || !sec || !key || strcasecmp(sec, "Display")) return NULL;
-    if (!strcasecmp(key, "iSize W")) return trial_width;
-    if (!strcasecmp(key, "iSize H")) return trial_height;
+static IniFile *render_prefs;
+static char render_width[16], render_height[16];
+static const char *render_display_value(IniFile *f, const char *sec, const char *key) {
+    if (!render_prefs || f != render_prefs || !sec || !key || strcasecmp(sec, "Display")) return NULL;
+    if (!strcasecmp(key, "iSize W")) return render_width;
+    if (!strcasecmp(key, "iSize H")) return render_height;
     return NULL;
 }
 static const char *ini_find(IniFile *f, const char *sec, const char *key) {
-    const char *override = trial_display_value(f, sec, key);
+    const char *override = render_display_value(f, sec, key);
     if (override) return override;''', "transient resolution read")
     s = replace_once(s, '    int last_in_sec = -1, have_sec = 0, done = 0;',
-        '''    if (trial_display_value(f, app, key)) {
+        '''    if (render_display_value(f, app, key)) {
         pthread_mutex_unlock(&g_ini_lock);
         RET(1, 4);
     }
     int last_in_sec = -1, have_sec = 0, done = 0;''', "keep trial dimensions out of persisted settings")
     s = replace_once(s, '    if (existing) return;',
         '''    int tw, th;
-    int trial = skyrim_mobile_render_trial_size(&tw, &th);
-    if (existing && !trial && !skyrim_mobile_graphics_changed()) return;''', "retain existing preferences")
+    int render_override = skyrim_mobile_render_override(&tw, &th);''', "compute transient render preferences")
+    s = replace_once(s, 'void skyrim_seed_prefs(int w, int h) {',
+        '''static int water_pref_value(IniFile *f, const char *section, const char *key, int maximum) {
+    const char *text = ini_find(f, section, key);
+    if (!text) return -1;
+    char *end;
+    long value = strtol(text, &end, 10);
+    return end != text && !*end && value >= 0 && value <= maximum ? (int)value : -1;
+}
+
+static void log_water_prefs(IniFile *f) {
+    fprintf(stderr, "IOS_WATER_PREFS schema=1 dof=%d samples=%d\\n",
+            water_pref_value(f, "Imagespace", "bDoDepthOfField", 1),
+            water_pref_value(f, "Display", "iWaterMultiSamples", 16));
+}
+
+void skyrim_seed_prefs(int w, int h) {''', "observe numeric underwater preferences")
     s = replace_once(s, '    IniFile *f = ini_get(prefs);',
         '''    IniFile *f = ini_get(prefs);
-    if (trial && f) {
-        trial_prefs = f;
-        snprintf(trial_width, sizeof trial_width, "%d", tw);
-        snprintf(trial_height, sizeof trial_height, "%d", th);
+    if (render_override && f) {
+        render_prefs = f;
+        snprintf(render_width, sizeof render_width, "%d", tw);
+        snprintf(render_height, sizeof render_height, "%d", th);
     }
     if (existing && !skyrim_mobile_graphics_changed()) {
+        log_water_prefs(f);
         pthread_mutex_unlock(&g_ini_lock);
         return;
-    }''', "activate the trial for this profile")
+    }''', "activate the render override for this profile")
     s = replace_once(s, '    char v[16];\n    snprintf(v, sizeof v, "%d", w);',
         '    if (!existing) {\n    char v[16];\n    snprintf(v, sizeof v, "%d", w);', "only seed absent size")
     s = replace_once(s, '    ini_set(f, "Display", "bFull Screen", "1");',
@@ -588,6 +656,7 @@ static const char *ini_find(IniFile *f, const char *sec, const char *key) {
         '    const char *section, *key, *value;\n'
         '    for (unsigned i = 0; skyrim_mobile_ini(i, &section, &key, &value); ++i)\n'
         '        ini_set(f, section, key, value);\n'
+        '    log_water_prefs(f);\n'
         '    ini_save(f);\n    pthread_mutex_unlock(&g_ini_lock);\n'
         '    LOG("configured app profile %s (%dx%d)", host, w, h);', "explicit selected graphics overrides")
     return s

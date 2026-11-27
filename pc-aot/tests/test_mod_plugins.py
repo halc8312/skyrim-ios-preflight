@@ -41,9 +41,10 @@ class ModPluginTests(unittest.TestCase):
 #include <assert.h>
 #include <math.h>
 #include "mod_plugins.h"
+#import "ui_language.h"
 @class UITableView;
 static NSMutableDictionary *settings;
-''', function("static double value("), function("static NSString *L("), notice,
+''', function("static NSString *L("), notice,
             function("static NSString *modStateText("),
             "@interface HeaderProbe : NSObject @end\n@implementation HeaderProbe", header, "@end",
             '''int main(void) { @autoreleasepool {
@@ -82,7 +83,7 @@ static NSMutableDictionary *settings;
             native.write_text("\n".join(pieces), encoding="utf-8")
             env = {k: v for k, v in os.environ.items() if k not in ("SDKROOT", "IPHONEOS_DEPLOYMENT_TARGET")}
             subprocess.run(["xcrun", "--sdk", "macosx", "clang", "-fobjc-arc", "-Wall", "-Werror",
-                            "-I", str(PORT), str(native), "-framework", "Foundation", "-o", str(binary)],
+                            "-I", str(PORT), str(native), str(PORT / "ui_language.m"), "-framework", "Foundation", "-o", str(binary)],
                            check=True, timeout=60, env=env)
             subprocess.run([str(binary)], check=True, timeout=10, env=env)
 

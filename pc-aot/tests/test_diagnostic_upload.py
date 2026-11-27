@@ -84,6 +84,14 @@ class DiagnosticUploadTests(unittest.TestCase):
                     "target=00401234 caller=00405678")
         for line in (recovery, "IOS_RENDER_TRIAL requested=720 width=1564 height=720",
                      "IOS_RENDER_TRIAL requested=720 width=0 height=0",
+                     "IOS_RENDER_CHOICE schema=1 request=720 width=1564 height=720 recovery=0",
+                     "IOS_RENDER_CHOICE schema=1 request=720 width=956 height=440 recovery=1",
+                     "IOS_RENDER_DEVICE schema=1 op=0 begin=0 width=1564 height=720 result=8876086a",
+                     "IOS_RENDER_SURFACE schema=1 measured=1 width=1564 height=720 result=00000000",
+                     "IOS_RENDER_CAPTURE schema=1 active=1 render=1564x720 drawable=2868x1320",
+                     "IOS_RENDER_CAPTURE schema=2 active=0 render=1564x720 drawable=2868x1320 window=2868x1320 viewport=2868x1320",
+                     "IOS_WATER_PREFS schema=1 dof=-1 samples=4",
+                     "IOS_STAGE render-trial-booked monotonic=237.101112131",
                      "IOS_RENDER_BUFFER width=1564 height=720",
                      "IOS_RENDER_BUFFER width=16384 height=1"):
             schema.line(line)
@@ -93,6 +101,10 @@ class DiagnosticUploadTests(unittest.TestCase):
                "IOS_RENDER_TRIAL requested=721 width=1564 height=720",
                "IOS_RENDER_TRIAL requested=720 width=1564 height=721",
                "IOS_RENDER_TRIAL requested=720 width=10001 height=720",
+               "IOS_RENDER_CAPTURE schema=1 active=1 render=1564x720 drawable=2868x1320 /private/game",
+               "IOS_RENDER_CAPTURE schema=2 active=0 render=1564x720 drawable=2868x1320 window=2868x1320",
+               "IOS_RENDER_SURFACE schema=1 measured=2 width=1564 height=720 result=00000000",
+               "IOS_RENDER_DEVICE schema=1 op=2 begin=0 width=1564 height=720 result=8876086a",
                "IOS_RENDER_BUFFER width=16385 height=1", "IOS_RENDER_BUFFER width=0 height=1")
         for line in bad:
             with self.subTest(record=line), self.assertRaises(module.Rejected):

@@ -22,12 +22,12 @@ void skyrim_mod_dll_probe_set_game_input(NSURL *input, const uint8_t digest[32],
     gameInputBootstrap = bootstrap ? [NSData dataWithBytes:bootstrap length:8] : nil;
 }
 
-static NSString *Text(BOOL japanese, NSString *en, NSString *ja) {
-    return japanese ? ja : en;
+static NSString *Text(SKUILanguage language, NSString *en, NSString *ja) {
+    return SKUIString(language, en, ja);
 }
 
-static NSString *ImageResult(BOOL japanese, SksePeStatus status) {
-    if (!japanese) return [NSString stringWithUTF8String:skse_pe_status_text(status)];
+static NSString *ImageResult(SKUILanguage language, SksePeStatus status) {
+    if (language != SKUIJapanese) return SKUIString(language, [NSString stringWithUTF8String:skse_pe_status_text(status)], nil);
     switch (status) {
     case SKSE_PE_WRONG_MACHINE: return @"Skyrim LEで使う32ビットx86形式が必要です。";
     case SKSE_PE_SIZE_LIMIT: return @"診断で読み取れるサイズや項目数の上限を超えました。";
@@ -59,8 +59,8 @@ static NSString *ImageResult(BOOL japanese, SksePeStatus status) {
     }
 }
 
-static NSString *CallResult(BOOL japanese, SkseX86Status status) {
-    if (!japanese) return [NSString stringWithUTF8String:skse_x86_status_text(status)];
+static NSString *CallResult(SKUILanguage language, SkseX86Status status) {
+    if (language != SKUIJapanese) return SKUIString(language, [NSString stringWithUTF8String:skse_x86_status_text(status)], nil);
     switch (status) {
     case SKSE_X86_MEMORY_FAULT: return @"DLLが使用できない領域を参照しました。";
     case SKSE_X86_UNSUPPORTED_INSTRUCTION: return @"未対応のx86命令が必要です。";
@@ -73,14 +73,14 @@ static NSString *CallResult(BOOL japanese, SkseX86Status status) {
     }
 }
 
-static NSArray<NSString *> *CallFailure(BOOL japanese, NSString *summary, const SkseX86Result *result) {
-    NSString *reason = CallResult(japanese, result->status);
+static NSArray<NSString *> *CallFailure(SKUILanguage language, NSString *summary, const SkseX86Result *result) {
+    NSString *reason = CallResult(language, result->status);
     const char *function = skse_trial_windows_service_name(result->failed_service);
     if (function) {
         NSString *name = [NSString stringWithUTF8String:function];
         if (result->protection_length) {
             NSString *region = [NSString stringWithFormat:
-                Text(japanese, @"Requested region 0x%08x · %u bytes", @"変更を要求した領域 0x%08x · %uバイト"),
+                Text(language, @"Requested region 0x%08x · %u bytes", @"変更を要求した領域 0x%08x · %uバイト"),
                 (unsigned)result->protection_address, (unsigned)result->protection_length];
             return @[summary, reason, name, region];
         }
@@ -88,40 +88,40 @@ static NSArray<NSString *> *CallFailure(BOOL japanese, NSString *summary, const 
     }
     if (result->status == SKSE_X86_MEMORY_FAULT && result->fault_access) {
         NSString *address = [NSString stringWithFormat:
-            Text(japanese, @"Windows virtual address 0x%08x", @"Windows仮想アドレス 0x%08x"),
+            Text(language, @"Windows virtual address 0x%08x", @"Windows仮想アドレス 0x%08x"),
             (unsigned)result->fault_address];
         return @[summary, reason, address];
     }
     return @[summary, reason];
 }
 
-static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *trial, const SksePeReport *imports) {
+static NSArray<NSString *> *TrialLines(SKUILanguage language, const SkseTrialResult *trial, const SksePeReport *imports) {
     switch (trial->status) {
     case SKSE_TRIAL_COMPLETED: {
         NSString *summary = trial->partial_windows_imports
-            ? Text(japanese, @"The tested initialization returned. Some Windows functions remain unsupported.",
+            ? Text(language, @"The tested initialization returned. Some Windows functions remain unsupported.",
                              @"初期化の試験は完了しました。一部のWindows関数は未対応です。")
-            : Text(japanese, @"SKSE initialization passed in the test environment.",
+            : Text(language, @"SKSE initialization passed in the test environment.",
                              @"診断環境でSKSEの初期化が完了しました。");
         NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObjects:
             summary, [NSString stringWithFormat:@"%s", trial->name], nil];
         if (trial->unavailable_interface) {
-            [lines addObject:[NSString stringWithFormat:Text(japanese, @"Also requested unavailable SKSE interface %u",
+            [lines addObject:[NSString stringWithFormat:Text(language, @"Also requested unavailable SKSE interface %u",
                                                             @"未対応のSKSEインターフェイス %u も要求されました。"),
                               trial->unavailable_interface]];
         }
         if (trial->serialization_callbacks) {
-            [lines addObject:[NSString stringWithFormat:Text(japanese, @"Additional save test · Calls %u · Records %u",
+            [lines addObject:[NSString stringWithFormat:Text(language, @"Additional save test · Calls %u · Records %u",
                                                             @"追加セーブの試験　呼び出し %u 回、記録 %u 件"),
                               trial->serialization_callbacks, trial->serialization_records]];
         }
         if (trial->workers_completed) {
-            [lines addObject:[NSString stringWithFormat:Text(japanese, @"Worker threads completed · %u",
+            [lines addObject:[NSString stringWithFormat:Text(language, @"Worker threads completed · %u",
                                                             @"終了まで確認した補助スレッド　%u 本"),
                               trial->workers_completed]];
         }
         if (trial->tasks_completed[SKSE_X86_GAME_TASK] || trial->tasks_completed[SKSE_X86_UI_TASK]) {
-            [lines addObject:[NSString stringWithFormat:Text(japanese, @"Queued task test · Game %u · UI %u",
+            [lines addObject:[NSString stringWithFormat:Text(language, @"Queued task test · Game %u · UI %u",
                                                             @"タスクの試験　ゲーム %u 件、UI %u 件"),
                               trial->tasks_completed[SKSE_X86_GAME_TASK], trial->tasks_completed[SKSE_X86_UI_TASK]]];
         }
@@ -129,17 +129,17 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
     }
     case SKSE_TRIAL_IMAGE_REFUSED:
     case SKSE_TRIAL_DEPENDENCY_REFUSED: {
-        NSString *summary = Text(japanese, @"This DLL could not be loaded for testing.",
+        NSString *summary = Text(language, @"This DLL could not be loaded for testing.",
                                            @"このDLLは診断用に読み込めませんでした。");
         SksePeStatus status = trial->status == SKSE_TRIAL_DEPENDENCY_REFUSED ? trial->dependency_status : trial->image_status;
-        NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObjects:summary, ImageResult(japanese, status), nil];
+        NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObjects:summary, ImageResult(language, status), nil];
         const SkseDependencyTrace *dependency = &trial->dependencies;
         if (dependency->import_symbol[0] && dependency->requested[0]) {
             NSString *library = [NSString stringWithUTF8String:dependency->requested];
             NSString *symbol = [NSString stringWithUTF8String:dependency->import_symbol];
             if (library && symbol) [lines addObject:[NSString stringWithFormat:@"%@ · %@", library, symbol]];
             if (!dependency->requester[0] && imports && !skse_trial_system_library(dependency->requested)) {
-                [lines addObject:Text(japanese, @"To look up its helper DLLs, choose the whole MOD folder.",
+                [lines addObject:Text(language, @"To look up its helper DLLs, choose the whole MOD folder.",
                                               @"補助DLLを探す場合は、MODフォルダごと選んでください。")];
             }
         }
@@ -147,7 +147,7 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
         for (uint16_t i = 0; i < imports->library_count && i < 8; ++i)
             [lines addObject:[NSString stringWithUTF8String:imports->libraries[i]]];
         if (imports->library_count > 8)
-            [lines addObject:[NSString stringWithFormat:Text(japanese, @"%u other libraries", @"ほか%uライブラリ"),
+            [lines addObject:[NSString stringWithFormat:Text(language, @"%u other libraries", @"ほか%uライブラリ"),
                               (unsigned)imports->library_count - 8]];
         return lines;
     }
@@ -155,29 +155,29 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
     case SKSE_TRIAL_QUERY_DECLINED:
     case SKSE_TRIAL_LOAD_DECLINED:
     case SKSE_TRIAL_DEPENDENCY_ATTACH_DECLINED:
-        return @[Text(japanese, @"The DLL declined initialization in this environment.",
+        return @[Text(language, @"The DLL declined initialization in this environment.",
                                 @"このDLLは診断環境での初期化を拒否しました。")];
     case SKSE_TRIAL_ENGINE_HOOKS_OBSERVED:
-        return @[Text(japanese, @"The test recorded engine hook requests. Game execution requires a compatible hook.",
+        return @[Text(language, @"The test recorded engine hook requests. Game execution requires a compatible hook.",
                                 @"ゲームへのフック要求を確認しました。ゲーム内で使うには対応する処理が必要です。")];
     case SKSE_TRIAL_INVALID_INFO:
-        return @[Text(japanese, @"The DLL returned invalid SKSE plugin information.",
+        return @[Text(language, @"The DLL returned invalid SKSE plugin information.",
                                 @"DLLが返したSKSEプラグイン情報を確認できませんでした。")];
     case SKSE_TRIAL_NO_MEMORY:
-        return @[Text(japanese, @"There was insufficient memory to run the check.",
+        return @[Text(language, @"There was insufficient memory to run the check.",
                                 @"診断に必要なメモリを確保できませんでした。")];
     case SKSE_TRIAL_TLS_ATTACH_FAULT:
     case SKSE_TRIAL_TLS_DETACH_FAULT:
-        return CallFailure(japanese, Text(japanese, @"The DLL stopped while handling its thread-local data.",
+        return CallFailure(language, Text(language, @"The DLL stopped while handling its thread-local data.",
                                                     @"DLLのスレッド専用データを処理する途中で停止しました。"), &trial->tls_fault);
     case SKSE_TRIAL_SERIALIZATION_FAULT:
-        return CallFailure(japanese, Text(japanese, @"The DLL stopped during the test of its additional save data.",
+        return CallFailure(language, Text(language, @"The DLL stopped during the test of its additional save data.",
                                                     @"DLLの追加セーブ処理の試験が途中で停止しました。"), &trial->serialization_fault);
     case SKSE_TRIAL_WORKER_FAULT:
-        return CallFailure(japanese, Text(japanese, @"The DLL stopped during a worker thread test.",
+        return CallFailure(language, Text(language, @"The DLL stopped during a worker thread test.",
                                                     @"DLLの補助スレッドの試験が途中で停止しました。"), &trial->worker_fault);
     case SKSE_TRIAL_TASK_FAULT:
-        return CallFailure(japanese, Text(japanese, @"The DLL stopped during a queued SKSE task.",
+        return CallFailure(language, Text(language, @"The DLL stopped during a queued SKSE task.",
                                                     @"後から実行するSKSEタスクの処理が途中で停止しました。"), &trial->task_fault);
     default: {
         const SkseX86Result *fault = &trial->query;
@@ -187,32 +187,32 @@ static NSArray<NSString *> *TrialLines(BOOL japanese, const SkseTrialResult *tri
         if (trial->status == SKSE_TRIAL_MESSAGE_FAULT) fault = &trial->message;
         if (trial->status == SKSE_TRIAL_DEPENDENCY_ATTACH_FAULT) fault = &trial->dependency_attach;
         if (trial->status == SKSE_TRIAL_DEPENDENCY_DETACH_FAULT) fault = &trial->dependency_detach;
-        return CallFailure(japanese, Text(japanese, @"The DLL stopped during initialization.",
+        return CallFailure(language, Text(language, @"The DLL stopped during initialization.",
                                                     @"このDLLは初期化中に停止しました。"), fault);
     }
     }
 }
 
-static NSArray<NSString *> *ReportLines(BOOL japanese, SkseProbeFileStatus status,
+static NSArray<NSString *> *ReportLines(SKUILanguage language, SkseProbeFileStatus status,
                                        const SkseLocalDllReport *report) {
     switch (status) {
     case SKSE_PROBE_FILE_CHECKED:
-        return TrialLines(japanese, &report->trial, &report->imports);
+        return TrialLines(language, &report->trial, &report->imports);
     case SKSE_PROBE_FILE_UNAVAILABLE:
-        return @[Text(japanese, @"The selected file could not be opened.", @"選んだファイルを開けませんでした。")];
+        return @[Text(language, @"The selected file could not be opened.", @"選んだファイルを開けませんでした。")];
     case SKSE_PROBE_FILE_UNSUPPORTED:
-        return @[Text(japanese, @"Choose a non-empty DLL file.", @"中身のあるDLLファイルを選んでください。")];
+        return @[Text(language, @"Choose a non-empty DLL file.", @"中身のあるDLLファイルを選んでください。")];
     case SKSE_PROBE_FILE_TOO_LARGE:
-        return @[Text(japanese, @"The file exceeds 64 MiB.", @"ファイルが64 MiBを超えています。")];
+        return @[Text(language, @"The file exceeds 64 MiB.", @"ファイルが64 MiBを超えています。")];
     case SKSE_PROBE_FILE_NO_MEMORY:
-        return @[Text(japanese, @"There was insufficient memory to check this file.", @"ファイルの診断に必要なメモリを確保できませんでした。")];
+        return @[Text(language, @"There was insufficient memory to check this file.", @"ファイルの診断に必要なメモリを確保できませんでした。")];
     case SKSE_PROBE_FILE_INCOMPLETE:
-        return @[Text(japanese, @"The entire file could not be read.", @"ファイル全体を読み込めませんでした。")];
+        return @[Text(language, @"The entire file could not be read.", @"ファイル全体を読み込めませんでした。")];
     }
-    return @[Text(japanese, @"The file could not be checked.", @"ファイルを診断できませんでした。")];
+    return @[Text(language, @"The file could not be checked.", @"ファイルを診断できませんでした。")];
 }
 
-static NSArray<NSString *> *DiagnoseSingleDLL(BOOL japanese, const char *path, uint32_t ticks) {
+static NSArray<NSString *> *DiagnoseSingleDLL(SKUILanguage language, const char *path, uint32_t ticks) {
     uint8_t *input = NULL;
     size_t length = 0;
     uint8_t digest[32], bootstrap[8];
@@ -240,12 +240,12 @@ static NSArray<NSString *> *DiagnoseSingleDLL(BOOL japanese, const char *path, u
     SkseLocalDllReport report;
     SkseProbeFileStatus status = skse_probe_local_dll_with_setup(path, ticks, verified ? &setup : NULL, &report);
     free(input);
-    NSMutableArray<NSString *> *lines = [ReportLines(japanese, status, &report) mutableCopy];
+    NSMutableArray<NSString *> *lines = [ReportLines(language, status, &report) mutableCopy];
     if (requestAudit && !verified)
-        [lines addObject:Text(japanese, @"The verified game input is unavailable for code request observation.",
+        [lines addObject:Text(language, @"The verified game input is unavailable for code request observation.",
                                       @"コード変更要求の観測に必要なゲームファイルを確認できませんでした。")];
     if (audit.count)
-        [lines addObject:Text(japanese, @"Code write requests observed in isolation",
+        [lines addObject:Text(language, @"Code write requests observed in isolation",
                                       @"分離した診断で観測したコード変更要求")];
     uint32_t compiledGroups = 0;
 #ifdef SKYRIM_IOS_MOD_HOOKS
@@ -268,89 +268,89 @@ static NSArray<NSString *> *DiagnoseSingleDLL(BOOL japanese, const char *path, u
         SkyrimPatchDescription description;
         skyrim_mod_patch_describe(write->address, length, request, compiledGroups, NULL, 0, &description);
         if (request) {
-            [lines addObject:[NSString stringWithFormat:Text(japanese, @"0x%08x · %u bytes · %@ to 0x%08x",
+            [lines addObject:[NSString stringWithFormat:Text(language, @"0x%08x · %u bytes · %@ to 0x%08x",
                 @"0x%08x · %uバイト · %@ 0x%08x"),
                 write->address, (unsigned)length, description.kind == SKYRIM_PATCH_CALL ? @"CALL" : @"JMP",
                 description.target]];
         } else {
-            [lines addObject:[NSString stringWithFormat:Text(japanese, @"0x%08x · %u-byte write",
+            [lines addObject:[NSString stringWithFormat:Text(language, @"0x%08x · %u-byte write",
                 @"0x%08x · %uバイトの書き込み"), write->address, write->width]];
         }
         if (description.catalog >= 0) {
             char text[400];
-            int size = skyrim_mod_patch_text(&description, japanese, text, sizeof text);
+            int size = skyrim_mod_patch_text(&description, language, text, sizeof text);
             if (size > 0 && (size_t)size < sizeof text) {
                 NSString *detail = [NSString stringWithUTF8String:text];
                 if (detail) [lines addObject:detail];
             }
         }
     }
-    if (audit.truncated) [lines addObject:Text(japanese, @"The observation limit was reached.",
+    if (audit.truncated) [lines addObject:Text(language, @"The observation limit was reached.",
                                                        @"観測の上限に達しました。")];
     return lines;
 }
 
-static NSString *FolderFileResult(BOOL japanese, const SkseProbeDirectoryFile *file) {
-    if (file->trial_ran) return [TrialLines(japanese, &file->trial, NULL) componentsJoinedByString:@"\n"];
+static NSString *FolderFileResult(SKUILanguage language, const SkseProbeDirectoryFile *file) {
+    if (file->trial_ran) return [TrialLines(language, &file->trial, NULL) componentsJoinedByString:@"\n"];
     switch (file->status) {
     case SKSE_PROBE_DLL_NOT_PLUGIN:
-        return ImageResult(japanese, file->export_status);
+        return ImageResult(language, file->export_status);
     case SKSE_PROBE_DLL_NOT_REGULAR:
-        return Text(japanese, @"This item is not a regular file.", @"通常のファイルとして開けませんでした。");
+        return Text(language, @"This item is not a regular file.", @"通常のファイルとして開けませんでした。");
     case SKSE_PROBE_DLL_UNREADABLE:
-        return Text(japanese, @"The DLL could not be read.", @"DLLを読み込めませんでした。");
+        return Text(language, @"The DLL could not be read.", @"DLLを読み込めませんでした。");
     case SKSE_PROBE_DLL_EMPTY:
-        return Text(japanese, @"The DLL file is empty.", @"中身が空のDLLです。");
+        return Text(language, @"The DLL file is empty.", @"中身が空のDLLです。");
     case SKSE_PROBE_DLL_TOO_LARGE:
-        return Text(japanese, @"This DLL exceeds the size limit.", @"DLLが診断のサイズ上限を超えています。");
+        return Text(language, @"This DLL exceeds the size limit.", @"DLLが診断のサイズ上限を超えています。");
     case SKSE_PROBE_DLL_DEPENDENCY_MISSING:
-        return Text(japanese, @"A required DLL is missing from this folder.", @"同じフォルダに必要な補助DLLがありません。");
+        return Text(language, @"A required DLL is missing from this folder.", @"同じフォルダに必要な補助DLLがありません。");
     case SKSE_PROBE_DLL_DEPENDENCY_AMBIGUOUS:
-        return Text(japanese, @"More than one file matches the required DLL.", @"同名の補助DLLが複数見つかりました。");
+        return Text(language, @"More than one file matches the required DLL.", @"同名の補助DLLが複数見つかりました。");
     case SKSE_PROBE_DLL_DEPENDENCY_MULTIPLE:
-        return Text(japanese, @"This plugin requires multiple other DLLs.", @"複数の補助DLLを必要とするプラグインです。");
+        return Text(language, @"This plugin requires multiple other DLLs.", @"複数の補助DLLを必要とするプラグインです。");
     case SKSE_PROBE_DLL_DEPENDENCY_CHAIN:
-        return Text(japanese, @"The helper requires another DLL.", @"補助DLLがさらに別のDLLを必要としています。");
+        return Text(language, @"The helper requires another DLL.", @"補助DLLがさらに別のDLLを必要としています。");
     case SKSE_PROBE_DLL_DEPENDENCY_CYCLE:
-        return Text(japanese, @"The DLLs in this folder depend on each other in a loop.", @"フォルダ内のDLLが循環して依存しています。");
+        return Text(language, @"The DLLs in this folder depend on each other in a loop.", @"フォルダ内のDLLが循環して依存しています。");
     case SKSE_PROBE_DLL_DEPENDENCY_LIMIT:
-        return Text(japanese, @"The required DLLs exceed the diagnostic limits.", @"必要な補助DLLが診断の上限を超えています。");
+        return Text(language, @"The required DLLs exceed the diagnostic limits.", @"必要な補助DLLが診断の上限を超えています。");
     case SKSE_PROBE_DLL_DEPENDENCY_SELF:
     case SKSE_PROBE_DLL_DEPENDENCY_INVALID:
     case SKSE_PROBE_DLL_DEPENDENCY_UNREADABLE:
-        return Text(japanese, @"A required DLL could not be loaded.", @"必要な補助DLLを読み込めませんでした。");
+        return Text(language, @"A required DLL could not be loaded.", @"必要な補助DLLを読み込めませんでした。");
     default:
-        return Text(japanese, @"This DLL could not be checked.", @"このDLLを診断できませんでした。");
+        return Text(language, @"This DLL could not be checked.", @"このDLLを診断できませんでした。");
     }
 }
 
-static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryStatus status,
+static NSArray<NSString *> *FolderReportLines(SKUILanguage language, SkseProbeDirectoryStatus status,
                                              const SkseProbeDirectoryReport *report) {
     switch (status) {
     case SKSE_PROBE_DIRECTORY_UNAVAILABLE:
-        return @[Text(japanese, @"The selected folder could not be opened.", @"選んだフォルダを開けませんでした。")];
+        return @[Text(language, @"The selected folder could not be opened.", @"選んだフォルダを開けませんでした。")];
     case SKSE_PROBE_DIRECTORY_AMBIGUOUS_LAYOUT:
-        return @[Text(japanese, @"Multiple plugin folders were found. Choose the intended folder.", @"DLLを含むフォルダが複数あります。診断したいフォルダを選んでください。")];
+        return @[Text(language, @"Multiple plugin folders were found. Choose the intended folder.", @"DLLを含むフォルダが複数あります。診断したいフォルダを選んでください。")];
     case SKSE_PROBE_DIRECTORY_FILE_LIMIT:
     case SKSE_PROBE_DIRECTORY_ENTRY_LIMIT:
-        return @[Text(japanese, @"The folder contains too many files. Choose a smaller folder.", @"フォルダ内の項目が多すぎます。より小さいフォルダを選んでください。")];
+        return @[Text(language, @"The folder contains too many files. Choose a smaller folder.", @"フォルダ内の項目が多すぎます。より小さいフォルダを選んでください。")];
     case SKSE_PROBE_DIRECTORY_SIZE_LIMIT:
-        return @[Text(japanese, @"The combined DLL data exceeds 64 MiB.", @"DLLの合計サイズが64 MiBを超えています。")];
+        return @[Text(language, @"The combined DLL data exceeds 64 MiB.", @"DLLの合計サイズが64 MiBを超えています。")];
     case SKSE_PROBE_DIRECTORY_INCOMPLETE:
-        return @[Text(japanese, @"The folder could not be read in full.", @"フォルダの内容を最後まで読み込めませんでした。")];
+        return @[Text(language, @"The folder could not be read in full.", @"フォルダの内容を最後まで読み込めませんでした。")];
     case SKSE_PROBE_DIRECTORY_NO_MEMORY:
-        return @[Text(japanese, @"There was insufficient memory to check this folder.", @"フォルダを診断するためのメモリを確保できませんでした。")];
+        return @[Text(language, @"There was insufficient memory to check this folder.", @"フォルダを診断するためのメモリを確保できませんでした。")];
     case SKSE_PROBE_DIRECTORY_CHECKED:
     case SKSE_PROBE_DIRECTORY_NO_PLUGINS:
         break;
     }
     NSString *summary;
     if (report->plugin_count == 0) {
-        summary = Text(japanese, @"No Skyrim LE SKSE plugins were found.", @"Skyrim LE用のSKSEプラグインが見つかりませんでした。");
+        summary = Text(language, @"No Skyrim LE SKSE plugins were found.", @"Skyrim LE用のSKSEプラグインが見つかりませんでした。");
     } else if (report->plugin_count == 1) {
-        summary = Text(japanese, @"Found one Skyrim LE SKSE plugin.", @"Skyrim LE用のSKSEプラグインを1個見つけました。");
+        summary = Text(language, @"Found one Skyrim LE SKSE plugin.", @"Skyrim LE用のSKSEプラグインを1個見つけました。");
     } else {
-        summary = [NSString stringWithFormat:Text(japanese, @"Found %u Skyrim LE SKSE plugins.",
+        summary = [NSString stringWithFormat:Text(language, @"Found %u Skyrim LE SKSE plugins.",
             @"Skyrim LE用のSKSEプラグインを%u個見つけました。"), report->plugin_count];
     }
 
@@ -372,8 +372,8 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
         BOOL isKnownHelper = file->status == SKSE_PROBE_DLL_NOT_PLUGIN &&
             file->export_status == SKSE_PE_MISSING_EXPORTS && [knownHelpers containsObject:name.lastPathComponent];
         NSString *result = isKnownHelper
-            ? Text(japanese, @"Helper DLL required by a detected SKSE plugin.", @"検出したSKSEプラグインが使う補助DLLです。")
-            : FolderFileResult(japanese, file);
+            ? Text(language, @"Helper DLL required by a detected SKSE plugin.", @"検出したSKSEプラグインが使う補助DLLです。")
+            : FolderFileResult(language, file);
         NSMutableString *detail = [NSMutableString stringWithFormat:@"%@\n%@", name, result];
         const SkseDependencyTrace *dependencies = &file->trial.dependencies;
         if (file->trial_ran && dependencies->status == SKSE_DEPENDENCY_READY && dependencies->helper_count) {
@@ -381,14 +381,14 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
             for (unsigned helper = 0; helper < dependencies->helper_count; ++helper) {
                 [helpers addObject:[NSString stringWithUTF8String:dependencies->load_order[helper]] ?: @"DLL"];
             }
-            [detail appendFormat:Text(japanese, @"\nHelper DLL · %@", @"\n補助DLL　%@"),
+            [detail appendFormat:Text(language, @"\nHelper DLL · %@", @"\n補助DLL　%@"),
                 [helpers componentsJoinedByString:@", "]];
         } else if (file->dependency_name[0]) {
             NSString *dependency = [NSString stringWithUTF8String:file->dependency_name] ?: @"DLL";
-            [detail appendFormat:Text(japanese, @"\nHelper DLL · %@", @"\n補助DLL　%@"), dependency];
+            [detail appendFormat:Text(language, @"\nHelper DLL · %@", @"\n補助DLL　%@"), dependency];
             if (file->other_dependency_name[0]) {
                 NSString *requester = [NSString stringWithUTF8String:file->other_dependency_name] ?: @"DLL";
-                [detail appendFormat:Text(japanese, @" (required by %@)", @"（%@ が使用）"), requester];
+                [detail appendFormat:Text(language, @" (required by %@)", @"（%@ が使用）"), requester];
             }
         }
         [lines addObject:detail];
@@ -397,7 +397,7 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
 }
 
 @interface SKModDllProbe : UITableViewController <UIDocumentPickerDelegate>
-@property(nonatomic) BOOL japanese;
+@property(nonatomic) SKUILanguage language;
 @property(nonatomic) BOOL busy;
 @property(nonatomic, copy) NSArray<NSString *> *report;
 @property(nonatomic, strong) NSURL *initialFolder;
@@ -407,7 +407,7 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
 @implementation SKModDllProbe
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = Text(self.japanese, @"DLL Compatibility", @"DLL互換性診断");
+    self.title = Text(self.language, @"DLL Compatibility", @"DLL互換性診断");
     self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.tableView.estimatedRowHeight = 52;
     if (self.initialFolder) {
@@ -426,7 +426,7 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
-    return section == 0 ? Text(self.japanese,
+    return section == 0 ? Text(self.language,
         @"Choose an LE SKSE DLL or its mod folder. Results describe the isolated initialization test.",
         @"LE用SKSEのDLLか、展開済みのMODフォルダを選びます。診断結果は専用環境での初期化を示します。") : nil;
 }
@@ -438,9 +438,9 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
     cell.textLabel.numberOfLines = 0;
     cell.textLabel.textColor = canPick ? UIColor.labelColor : UIColor.secondaryLabelColor;
     if (path.section) cell.textLabel.text = self.report[path.row];
-    else if (path.row) cell.textLabel.text = Text(self.japanese, @"Choose a mod folder", @"MODフォルダを選ぶ");
-    else cell.textLabel.text = self.busy ? Text(self.japanese, @"Checking…", @"診断中…") :
-                                          Text(self.japanese, @"Choose a DLL", @"DLLファイルを選ぶ");
+    else if (path.row) cell.textLabel.text = Text(self.language, @"Choose a mod folder", @"MODフォルダを選ぶ");
+    else cell.textLabel.text = self.busy ? Text(self.language, @"Checking…", @"診断中…") :
+                                          Text(self.language, @"Choose a DLL", @"DLLファイルを選ぶ");
     cell.selectionStyle = canPick ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
     cell.accessoryType = canPick ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone;
     cell.accessibilityIdentifier = path.section ? nil : (path.row ? @"choose-skse-dll-folder" : @"choose-skse-dll");
@@ -461,9 +461,9 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
 }
 - (void)diagnoseURL:(NSURL *)url {
     if (self.busy || !url) return;
-    BOOL japanese = self.japanese;
+    SKUILanguage language = self.language;
     if (!url.isFileURL) {
-        self.report = @[Text(japanese, @"Choose a DLL file or mod folder.", @"DLLファイルかMODフォルダを選んでください。")];
+        self.report = @[Text(language, @"Choose a DLL file or mod folder.", @"DLLファイルかMODフォルダを選んでください。")];
         [self.tableView reloadData];
         return;
     }
@@ -484,15 +484,15 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
                 if (directory.boolValue) {
                     SkseProbeDirectoryReport report;
                     SkseProbeDirectoryStatus status = skse_probe_local_directory(accessibleURL.fileSystemRepresentation, (uint32_t)ticks, &report);
-                    lines = FolderReportLines(japanese, status, &report);
+                    lines = FolderReportLines(language, status, &report);
                 } else if ([accessibleURL.pathExtension.lowercaseString isEqualToString:@"dll"]) {
-                    lines = DiagnoseSingleDLL(japanese, accessibleURL.fileSystemRepresentation, (uint32_t)ticks);
+                    lines = DiagnoseSingleDLL(language, accessibleURL.fileSystemRepresentation, (uint32_t)ticks);
                 } else {
-                    lines = ReportLines(japanese, SKSE_PROBE_FILE_UNSUPPORTED, NULL);
+                    lines = ReportLines(language, SKSE_PROBE_FILE_UNSUPPORTED, NULL);
                 }
             }];
             if (scoped) [url stopAccessingSecurityScopedResource];
-            if (coordinationError || !lines) lines = ReportLines(japanese, SKSE_PROBE_FILE_UNAVAILABLE, NULL);
+            if (coordinationError || !lines) lines = ReportLines(language, SKSE_PROBE_FILE_UNAVAILABLE, NULL);
             dispatch_async(dispatch_get_main_queue(), ^{
                 SKModDllProbe *controller = weakSelf;
                 controller.report = lines;
@@ -504,9 +504,9 @@ static NSArray<NSString *> *FolderReportLines(BOOL japanese, SkseProbeDirectoryS
 }
 @end
 
-UIViewController *skyrim_mod_dll_probe_controller(BOOL japanese, NSURL *initialFolder) {
+UIViewController *skyrim_mod_dll_probe_controller(SKUILanguage language, NSURL *initialFolder) {
     SKModDllProbe *controller = [[SKModDllProbe alloc] initWithStyle:UITableViewStyleInsetGrouped];
-    controller.japanese = japanese;
+    controller.language = language;
     controller.initialFolder = initialFolder;
     return controller;
 }

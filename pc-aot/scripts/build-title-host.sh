@@ -116,6 +116,7 @@ PY
   run_validation python3 -m unittest discover -s tests -p 'test_lock_metrics.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_lock_timing_analysis.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_d3d9_lock_timing.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_water_draw_probe.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_runtime_lock_timing.py' -v
   run_validation env PYTHONPATH=tests SKYRIM_TEST_SANITIZERS=thread python3 -m unittest \
     test_lock_metrics \
@@ -125,6 +126,7 @@ PY
   run_validation python3 -m unittest discover -s tests -p 'test_skse_copy_pair.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_autosave_preferences.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_game_language.py' -v
+  run_validation python3 -m unittest discover -s tests -p 'test_ui_language.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_plugins.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_requirements.py' -v
   run_validation python3 -m unittest discover -s tests -p 'test_mod_features.py' -v
@@ -249,6 +251,9 @@ cmake --build "$RUN/build" --parallel 2 -- -k
 xcrun nm "$RUN/build/SkyrimIOS.app/SkyrimIOS" > "$RUN/mod-full-symbols.txt"
 grep -q ' _skyrim_archive_list$' "$RUN/mod-full-symbols.txt"
 test -s "$RUN/build/SkyrimIOS.app/ModArchiveLicenses.txt"
+for language in ar es fr; do
+  test -s "$RUN/build/SkyrimIOS.app/$language.lproj/AppUI.strings"
+done
 MOD_SIMULATOR_STATUS=0
 mod_simulator_run="$RUN/mod-simulator"
 check_mod_simulator() {

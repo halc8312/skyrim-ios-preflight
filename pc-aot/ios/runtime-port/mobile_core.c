@@ -20,6 +20,46 @@ void skyrim_mobile_landscape_size(int *width, int *height) {
     }
 }
 
+int skyrim_mobile_choose_render_size(int width, int height, int requested,
+                                    int *render_width, int *render_height) {
+    if (width < 2 || height < 2 || width > 16384 || height > 16384 || requested < 2)
+        return 0;
+    skyrim_mobile_landscape_size(&width, &height);
+    int target = (requested == 2160 || requested > height ? height : requested) & ~1;
+    int scaled = (int)(((int64_t)width * target + height / 2) / height) & ~1;
+    *render_width = scaled;
+    *render_height = target;
+    return 1;
+}
+
+SkyrimMobileViewport skyrim_mobile_viewport(int drawable_width, int drawable_height,
+                                           unsigned render_width, unsigned render_height) {
+    if (drawable_width <= 0 || drawable_height <= 0) return (SkyrimMobileViewport){0};
+    SkyrimMobileViewport full = {0, 0, drawable_width, drawable_height};
+    if (!render_width || !render_height) return full;
+    int64_t width = (int64_t)drawable_height * render_width / render_height;
+    int height = drawable_height;
+    if (width > drawable_width) {
+        width = drawable_width;
+        height = (int)((int64_t)drawable_width * render_height / render_width);
+    }
+    if (drawable_width - width <= 2 && drawable_height - height <= 2) return full;
+    return (SkyrimMobileViewport){(int)((drawable_width - width) / 2),
+                                  (drawable_height - height) / 2, (int)width, height};
+}
+
+int skyrim_mobile_viewport_point(SkyrimMobileViewport viewport, int drawable_width,
+                                int drawable_height, double window_x, double window_y,
+                                double *game_x, double *game_y) {
+    if (drawable_width <= 0 || drawable_height <= 0 || viewport.width <= 0 || viewport.height <= 0) return 0;
+    double x = (window_x * drawable_width - viewport.x) / viewport.width;
+    double y = (window_y * drawable_height - viewport.y) / viewport.height;
+    if (!(x >= 0 && x < 1 && y >= 0 && y < 1)) return 0;
+    if (game_x) *game_x = x;
+    if (game_y) *game_y = y;
+    return 1;
+}
+
 uint64_t skyrim_mobile_now(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
@@ -68,6 +108,39 @@ void skyrim_mobile_button_cancel(unsigned index) {
     pthread_mutex_lock(&lock);
     held &= ~(1u << index);
     tap_until[index] = 0;
+    pthread_mutex_unlock(&lock);
+}
+int skyrim_mobile_menu_swipe(float dx, float dy) {
+    if (!isfinite(dx) || !isfinite(dy)) return -1;
+    const float x = fabsf(dx), y = fabsf(dy);
+    if (y >= 28 && y >= 1.5f * x) return dy < 0 ? SKYRIM_PAD_DOWN : SKYRIM_PAD_UP;
+    if (x >= 44 && x >= 1.5f * y) return dx < 0 ? SKYRIM_PAD_RB : SKYRIM_PAD_LB;
+    return -1;
+}
+int skyrim_mobile_menu_rect(unsigned control, float width, float height, SkyrimMenuButtonRect *out) {
+    /* Signed row numbers keep both rails centered and leave the first/last list entries visible. */
+    static const int8_t rows[] = {
+        [SKYRIM_MENU_SETTINGS]=1, [SKYRIM_PAD_LB]=2, [SKYRIM_PAD_UP]=3,
+        [SKYRIM_PAD_DOWN]=4, [SKYRIM_PAD_LEFT]=5, [SKYRIM_PAD_RIGHT]=6,
+        [SKYRIM_MENU_EXPAND]=-1, [SKYRIM_PAD_RB]=-2, [SKYRIM_PAD_A]=-3,
+        [SKYRIM_PAD_B]=-4, [SKYRIM_PAD_LT]=-5, [SKYRIM_PAD_RT]=-6
+    };
+    if (!out || control >= sizeof(rows) / sizeof(rows[0]) || !rows[control] ||
+        !isfinite(width) || !isfinite(height) || width < 4 || height < 6) return 0;
+    const float gap=fminf(3, height/18);
+    const float side=fminf(44, fminf((height-5*gap)/6, width/2));
+    int row=rows[control];
+    out->side=side;
+    out->x=row < 0 ? width-side : 0;
+    unsigned index=(unsigned)(row < 0 ? -row : row) - 1;
+    out->y=(height-6*side-5*gap)/2 + index*(side+gap);
+    return 1;
+}
+void skyrim_mobile_button_pulse(unsigned index) {
+    if (index >= SKYRIM_PAD_CONTROL_COUNT || index == SKYRIM_PAD_MOVE) return;
+    pthread_mutex_lock(&lock);
+    /* A swipe can coexist with a different finger holding this same direction. */
+    tap_until[index] = skyrim_mobile_now() + UINT64_C(120000000);
     pthread_mutex_unlock(&lock);
 }
 void skyrim_mobile_camera_age(int16_t x, int16_t y, uint64_t age_ns,

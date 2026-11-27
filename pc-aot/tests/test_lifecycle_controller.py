@@ -125,16 +125,16 @@ class LifecycleTests(unittest.TestCase):
         prep = load('lifecycle_dxvk_syntax', ROOT/'ios/dependencies/prepare_dxvk.py')
         vendor = ROOT/'vendor/skydream/third_party/dxvk'
         relative = 'src/d3d9/d3d9_device.cpp'
-        source = prep.adapt(relative, (vendor/relative).read_text())
         with tempfile.TemporaryDirectory(prefix='lifecycle-dxvk-syntax-') as tmp:
-            unit = Path(tmp)/'d3d9_device.cpp'
-            unit.write_text(source)
+            stage = Path(tmp)/'dxvk'
+            prep.stage(vendor, stage)
+            unit = stage/relative
             command = [cxx, '-std=c++17', '-fsyntax-only', '-include', 'cstdint', '-include', 'cstring',
                 '-Wno-deprecated-declarations', '-DDXVK_NATIVE', '-DNOMINMAX', '-D_WIN32_WINNT=0xa00',
-                '-I', str(ROOT/'ios/runtime-port')]
+                '-I', str(ROOT/'ios/runtime-port'), '-I', str(ROOT/'ios/dependencies')]
             for folder in ('src', 'src/d3d9', 'src/util', 'include', 'include/native',
                            'include/native/windows', 'include/native/directx'):
-                command += ['-I', str(vendor/folder)]
+                command += ['-I', str(stage/folder)]
             result = subprocess.run([*command, str(unit)], capture_output=True, text=True, timeout=90)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

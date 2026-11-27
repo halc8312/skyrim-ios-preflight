@@ -3,6 +3,7 @@
 <plist version="1.0"><dict>
   <!-- Local assembly must add PcGuestExpectedInputSHA256 for its matching private guest. -->
   <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key><array><string>en</string><string>ja</string><string>ar</string><string>es</string><string>fr</string></array>
   <key>CFBundleDisplayName</key><string>SkyrimIOS</string>
   <key>CFBundleExecutable</key><string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
   <key>CFBundleIdentifier</key><string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>

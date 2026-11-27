@@ -38,6 +38,8 @@ class AutosavePreferencesTests(unittest.TestCase):
             result = subprocess.run([str(exe)], cwd=tmp, capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('autosave_profile=PASS', result.stdout)
+            self.assertIn('IOS_WATER_PREFS schema=1 dof=1 samples=4', result.stderr)
+            self.assertIn('IOS_WATER_PREFS schema=1 dof=-1 samples=-1', result.stderr)
 
 
 if __name__ == '__main__': unittest.main()

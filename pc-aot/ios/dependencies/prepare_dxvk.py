@@ -525,17 +525,75 @@ def adapt_descriptor_capacity(name: str, text: str) -> str:
     return text.replace('m_descPool->alloc(layout)', 'm_descPool->alloc(layout, uniformDynamic, combinedImages)')
 
 
+def observe_water_draw(name: str, text: str) -> str:
+    """Read existing D3D9 state only during an explicitly armed on-device sample."""
+    if name.endswith('d3d9_shader.h'):
+        return '#include "water_probe.h"\n' + once(text, '    D3D9PixelShader(\n',
+            '    skyrim_water::Layout iosWaterLayout{};\n\n    D3D9PixelShader(\n')
+    if name.endswith('d3d9_swapchain.cpp'):
+        return '#include "water_probe.h"\n' + once(text, '      PresentImage(presentInterval);',
+            '''      PresentImage(presentInterval);
+      if (unlikely(skyrim_water::phase.load(std::memory_order_relaxed) != skyrim_water::Phase::Idle))
+        skyrim_water::present(m_parent, this);''')
+    if name.endswith('d3d9_device.cpp'):
+        entry = '  void D3D9DeviceEx::PrepareDraw(D3DPRIMITIVETYPE PrimitiveType) {'
+        return '#include "water_probe.h"\n' + once(text, entry, entry + '''
+    if (unlikely(skyrim_water::phase.load(std::memory_order_relaxed) == skyrim_water::Phase::Capturing)
+        && PrimitiveType != D3DPT_FORCE_DWORD) {
+      auto* shader = m_state.pixelShader.ptr();
+      const auto* bytes = shader ? &shader->GetCommonShader()->GetBytecode() : nullptr;
+      skyrim_water::draw(this, shader ? &shader->iosWaterLayout : nullptr,
+        bytes ? bytes->data() : nullptr, bytes ? bytes->size() : 0,
+        [](void* device, const skyrim_water::Layout& layout) {
+          auto* self = static_cast<D3D9DeviceEx*>(device);
+          bool depthMs = false;
+          const auto binding = [self](int slot, bool* multisampled) {
+            using Binding = skyrim_water::Binding;
+            if (slot < 0) return Binding::Undeclared;
+            const auto* texture = GetCommonTexture(self->m_state.textures[slot]);
+            if (!texture) return Binding::Unbound;
+            const auto* desc = texture->Desc();
+            if (multisampled) *multisampled = desc->MultiSample != D3DMULTISAMPLE_NONE;
+            return (desc->Usage & D3DUSAGE_DEPTHSTENCIL) ? Binding::DepthStencilUsage : Binding::ColorUsage;
+          };
+          skyrim_water::Inputs inputs;
+          inputs.depth = binding(layout.depth, &depthMs);
+          inputs.color = binding(layout.color, nullptr);
+          inputs.depthMultisampled = depthMs;
+          inputs.params = skyrim_water::classifyParams(layout.params < 0 ? nullptr :
+            self->m_state.psConsts.fConsts[layout.params].data);
+          if (layout.camera >= 0)
+            inputs.camera = skyrim_water::classifyCamera(self->m_state.psConsts.fConsts[layout.camera].data);
+          return inputs;
+        });
+    }
+''')
+    return text
+
+
 def adapt(name: str, text: str) -> str:
     if name.endswith(('d3d9_multithread.h', 'd3d9_device.h', 'd3d9_swapchain.cpp')):
         import sys
         sys.path.insert(0, str(Path(__file__).parent))
         from d3d9_lock_timing import adapt as observe_device_lock
-        return observe_device_lock(name, text)
+        text = observe_water_draw(name, observe_device_lock(name, text))
+        if name.endswith('d3d9_swapchain.cpp'):
+            # A minimized or unavailable swap chain can return D3D_OK without
+            # queuing a frame. Confirm the source dimensions only after a real
+            # swapchain image was acquired and a present request was queued.
+            text = '#include "ios_runtime.h"\n' + once(text, '      SubmitPresent(sync, i);', '''      SubmitPresent(sync, i);
+#if defined(SKYRIM_IOS_RENDER_SUBMISSION)
+      if (!i) {
+        const VkExtent3D size = swapImage->info().extent;
+        skyrim_ios_render_submitted(size.width, size.height);
+      }
+#endif''')
+        return text
     if name.endswith('d3d9_device.cpp'):
         import sys
         sys.path.insert(0, str(Path(__file__).parent))
         from lifecycle_device import adapt as adapt_lifecycle
-        return adapt_lifecycle(text)
+        return observe_water_draw(name, adapt_lifecycle(text))
     if name.endswith(("vulkan_presenter.cpp", "dxvk_cmdlist.cpp", "dxvk_queue.cpp")):
         import sys
         sys.path.insert(0, str(Path(__file__).parent))
@@ -550,7 +608,7 @@ def adapt(name: str, text: str) -> str:
     if name.endswith(("dxvk_descriptor.h", "dxvk_descriptor.cpp", "dxvk_pipelayout.h", "dxvk_pipelayout.cpp", "dxvk_context.h", "dxvk_context.cpp")):
         return adapt_descriptor_capacity(name, text)
     if name.endswith(('d3d9_shader.cpp', 'd3d9_shader.h')):
-        return adapt_shader_inflight(name, text)
+        return observe_water_draw(name, adapt_shader_inflight(name, text))
     if name.endswith(('dxvk_resource.h', 'dxvk_resource.cpp')):
         return adapt_resource_wait(name, text)
     if name.endswith(("dxvk_memory.cpp", "dxvk_memory.h")):

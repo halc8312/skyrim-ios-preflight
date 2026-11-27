@@ -7,10 +7,10 @@
 #import <WebKit/WebKit.h>
 #include "mod_install.h"
 #include "mod_manager.h"
+#import "ui_language.h"
 
 static NSString *T(NSString *english, NSString *japanese) {
-    NSDictionary *s = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
-    return [s[@"language"] isKindOfClass:NSNumber.class] && [s[@"language"] intValue] == 1 ? japanese : english;
+    return SKUIString(SKCurrentUILanguage(), english, japanese);
 }
 
 @interface SKModBrowser : UIViewController <WKNavigationDelegate, WKDownloadDelegate, WKUIDelegate>

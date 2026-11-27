@@ -111,12 +111,13 @@ target_compile_definitions(dxvk_d3d9 PRIVATE
   "SKYRIM_PIPELINE_CACHE_REUSE_REVIEWED=${_cache_reuse_reviewed}")
 enable_language(OBJC)
 add_library(skyrim_performance STATIC "${_root}/ios/runtime-port/performance_metrics.c"
+  "${_root}/ios/runtime-port/water_probe.cpp"
   "${_root}/ios/runtime-port/lock_metrics.c"
   "${_root}/ios/runtime-port/device_policy.c" "${_root}/ios/runtime-port/device_platform.m"
   "${_root}/ios/runtime-port/display_timing_core.c" "${_root}/ios/runtime-port/display_timing.m"
   "${_root}/ios/runtime-port/cpu_sample_core.c" "${_root}/ios/runtime-port/cpu_sampler.m"
   "${_root}/ios/runtime-port/present_pacing_core.c")
-target_compile_features(skyrim_performance PRIVATE c_std_11)
+target_compile_features(skyrim_performance PRIVATE c_std_11 cxx_std_17)
 target_compile_options(skyrim_performance PRIVATE -O2 "$<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>")
 target_include_directories(skyrim_performance PUBLIC "${_root}/ios/runtime-port")
 set_target_properties(dxvk_d3d9 PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -129,7 +130,7 @@ target_include_directories(dxvk_d3d9 PUBLIC "${_dxvk}/include/native/directx"
   "${_dxvk}/include/native/windows" "${_dxvk}/include/native"
   "${SKYRIM_IOS_DEPS_PREFIX}/include")
 target_compile_definitions(dxvk_d3d9 PRIVATE NOMINMAX _WIN32_WINNT=0xa00
-  DXVK_NATIVE DXVK_WSI_SDL2 _FILE_OFFSET_BITS=64)
+  DXVK_NATIVE DXVK_WSI_SDL2 _FILE_OFFSET_BITS=64 SKYRIM_IOS_RENDER_SUBMISSION=1)
 target_compile_options(dxvk_d3d9 PRIVATE -O2
   "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstdint>"
   "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstring>"
