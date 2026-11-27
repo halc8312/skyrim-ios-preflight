@@ -88,7 +88,7 @@ static void FreezeFeatures(NSDictionary *profile, NSString *game) {
     frozenFeaturesProfile = profile;
 }
 #define L T
-''' + between(manager, "static id MutableJSON(", "static NSString *ProfileName(")
+''' + between(manager, "static id MutableJSON(", "static BOOL IsBenchmarkProfile(")
     + function(manager, "static BOOL AnyOn(")
     + function(manager, "static NSArray<NSString *> *DataRootsFor(")
     + function(manager, "static SkyrimSkyUIRequirements SkyUIRequirementsFor(")

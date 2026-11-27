@@ -228,7 +228,7 @@ void skyrim_mobile_initialize(const char *profile) {
     });
     profilePath = [NSString stringWithUTF8String:profile];
     // Consume the request before starting the guest, including when that launch crashes.
-    renderTrial720 = [NSFileManager.defaultManager removeItemAtPath:renderTrialRequestPath() error:nil];
+    renderTrial720 = [NSFileManager.defaultManager removeItemAtPath:renderTrialRequestPath() error:NULL];
     id saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"mobile-settings-v1"];
     settings = [NSMutableDictionary dictionary];
     if ([saved isKindOfClass:NSDictionary.class])
@@ -1155,8 +1155,8 @@ static NSString *unevenCadenceNote(void) {
         NSFileManager *files = NSFileManager.defaultManager;
         NSString *path = renderTrialRequestPath();
         BOOL scheduled = [files fileExistsAtPath:path];
-        BOOL changed = scheduled ? [files removeItemAtPath:path error:nil] :
-            [[NSData data] writeToFile:path options:NSDataWritingAtomic error:nil];
+        BOOL changed = scheduled ? [files removeItemAtPath:path error:NULL] :
+            [[NSData data] writeToFile:path options:NSDataWritingAtomic error:NULL];
         [table reloadRowsAtIndexPaths:@[p] withRowAnimation:UITableViewRowAnimationNone];
         [overlay message:!changed ? L(@"Could not change the 720p trial.", @"720p試験の予約を変更できませんでした") :
             scheduled ? L(@"720p trial cancelled.", @"720p試験の予約を取り消しました") :
