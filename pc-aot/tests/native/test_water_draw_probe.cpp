@@ -56,15 +56,63 @@ static Bytes pixel(std::initializer_list<Constant> constants) {
 }
 static Layout layout(const Bytes& bytes) { return classify(bytes.data(), bytes.size()); }
 static unsigned reads = 0;
-static Inputs readInputs(void*, const Layout& kind) {
+static CaptureTag lastTag;
+static Inputs readInputs(void*, const Layout& kind, CaptureTag tag) {
     ++reads;
+    lastTag = tag;
     assert(kind.family == Family::WaterFog && kind.depth == 11 && kind.color == 8 && kind.params == 62 && kind.camera == 93);
     const float camera[4] = {4.0f, 0.0f, 3.0f, 0.0f};
     Inputs inputs{Binding::ColorUsage, Binding::Unbound, false, Params::FiniteNonzero, classifyCamera(camera)};
     inputs.views[0] = {100, 1, 1564, 720, ViewBound | ViewRenderTarget};
     return inputs;
 }
+static void checkPixelReadback() {
+    PixelPoints points;
+    assert(!pixelPoints(3, 17, points) && !pixelPoints(31, 0, points));
+    assert(pixelPoints(31, 17, points));
+    assert(points[0].x == 15 && points[0].y == 8);
+    assert(points[1].x == 7 && points[1].y == 4 && points[4].x == 23 && points[4].y == 12);
+    assert(pixelPoints(4, 4, points));
+    assert(points[0].x == 2 && points[0].y == 2);
+    for (const auto& point : points) assert(point.x < 4 && point.y < 4);
+
+    PixelSummary summary;
+    Bytes bytes(5 * 4, 0);
+    set(bytes, 0, 0x80000000, 4);  // negative zero
+    set(bytes, 4, 0x3f800000, 4);  // 1
+    set(bytes, 8, 0x3e800000, 4);  // 0.25
+    set(bytes, 12, 0xbf800000, 4); // -1
+    set(bytes, 16, 0x7fc00000, 4); // NaN
+    assert(!summarizePixels(bytes.data(), bytes.size() - 1, PixelEncoding::R32Float, PixelRole::Depth, summary));
+    assert(!summarizePixels(nullptr, bytes.size(), PixelEncoding::R32Float, PixelRole::Depth, summary));
+    assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::R32Float, PixelRole::Depth, summary));
+    assert(summary.zero == 1 && summary.one == 1 && summary.interior == 1 &&
+           summary.outside == 1 && summary.nonfinite == 1 && summary.varies);
+    for (size_t i = 0; i < 5; ++i) set(bytes, i * 4, i < 2 ? 0x3e808081 : 0x3f3fbfc0, 4);
+    assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::R32Float, PixelRole::Depth, summary));
+    assert(summary.interior == 5 && summary.varies);
+    set(bytes, 0, 0x8000, 2);
+    set(bytes, 4, 0x3c00, 2);
+    set(bytes, 8, 0x0001, 2);  // smallest positive subnormal
+    set(bytes, 12, 0xbc00, 2);
+    set(bytes, 16, 0x7c00, 2);
+    assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::R16Float, PixelRole::Depth, summary));
+    assert(summary.zero == 1 && summary.one == 1 && summary.interior == 1 &&
+           summary.outside == 1 && summary.nonfinite == 1 && summary.varies);
+
+    bytes = {127, 0, 0, 0, 0, 0, 255, 255, 0, 0, 128, 0,
+             0, 0, 0, 32, 255, 255, 255, 0};
+    assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::Bgra8Unorm, PixelRole::Depth, summary));
+    assert(summary.zero == 2 && summary.one == 2 && summary.interior == 1 && summary.varies);
+    assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::Rgba8Unorm, PixelRole::Refraction, summary));
+    assert(summary.zero == 1 && summary.one == 1 && summary.interior == 3 && summary.varies);
+    assert(!summarizePixels(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, PixelRole::Refraction, summary));
+    for (size_t i = 0; i < 5; ++i) set(bytes, i * 4, (uint32_t(i) << 24) | 0x706050, 4);
+    assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::Bgra8Unorm, PixelRole::Refraction, summary));
+    assert(summary.interior == 5 && !summary.varies); // alpha changes only
+}
 int main(int argc, char**) {
+    checkPixelReadback();
     const auto water = pixel({{"DepthSampler", 3, 11}, {"FogParam", 2, 62},
                               {"RefractionSampler", 3, 8}, {"WaterParams", 2, 23}, {"CameraData", 2, 93}});
     const auto w = layout(water);
@@ -166,7 +214,13 @@ int main(int argc, char**) {
     assert(window.present(&device, &swap, 4023) == End::Complete);
     sample();
     assert(window.frames == 3 && window.checked == 6 && reads == 2);
+    const auto captured = lastTag;
+    assert(captured.scene == SKYRIM_WATER_PROBE_SURFACE && captured.sequence != 0 && captured.draw == 2);
+    assert(window.acceptsPixels(captured, 4024));
+    assert(!window.acceptsPixels({captured.sequence, captured.scene, captured.draw + 1}, 4024));
+    assert(window.acceptsPixels(captured, 15010) && !window.acceptsPixels(captured, 15011));
     window.request(SKYRIM_WATER_PROBE_SUBMERGED, 5000);
+    assert(!window.acceptsPixels(captured, 5010));
     assert(window.checked == 0 && !window.limited && window.groups[0].matches == 0);
     assert(window.sampleViews[0][0].draws == 0 && window.sampleViews[1][0].draws == 0);
     assert(window.present(&device, &swap, 25000) == End::Expired && window.frames == 0);
@@ -195,5 +249,12 @@ int main(int argc, char**) {
         draw(&device, &cached, water.data(), water.size(), readInputs);
         for (unsigned i = 0; i < Window::Frames; ++i) present(&device, &swap);
         assert(phase.load() == Phase::Idle);
+        const auto tag = lastTag;
+        assert(pixelsCurrent(tag));
+        PixelSummary summary{0, 0, 0, 0, 5, true};
+        reportPixels(tag, PixelRole::Depth, 100, summary);
+        skyrim_water_probe_request(SKYRIM_WATER_PROBE_SURFACE);
+        assert(!pixelsCurrent(tag));
+        reportPixels(tag, PixelRole::Depth, 100, summary);  // a replaced capture must not report
     }
 }

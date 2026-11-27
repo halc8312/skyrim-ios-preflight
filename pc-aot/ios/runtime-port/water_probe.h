@@ -44,6 +44,24 @@ struct SampleView {
     }
 };
 struct ViewCount { SampleView view{}; unsigned draws = 0; };
+enum class PixelEncoding : uint8_t { R32Float, R16Float, R8Unorm, Rgba8Unorm, Bgra8Unorm };
+enum class PixelRole : unsigned { Depth = 1, Refraction = 2 };
+struct PixelPoint { uint32_t x, y; };
+using PixelPoints = std::array<PixelPoint, 5>;
+struct CaptureTag {
+    uint64_t sequence = 0;
+    unsigned scene = 0, draw = 0;
+};
+// Five single texels at the center and in the four quadrants. Tiny views are omitted.
+bool pixelPoints(uint32_t width, uint32_t height, PixelPoints& result);
+struct PixelSummary {
+    unsigned nonfinite = 0, outside = 0, zero = 0, one = 0, interior = 0;
+    bool varies = false;
+};
+// Each texel starts four bytes after the previous one, regardless of its format.
+// Only counts leave the probe. For refraction compare RGB, ignoring alpha.
+bool summarizePixels(const uint8_t* bytes, size_t length, PixelEncoding encoding,
+                     PixelRole role, PixelSummary& result);
 struct Inputs {
     Binding depth = Binding::Undeclared, color = Binding::Undeclared;
     bool depthMultisampled = false;
@@ -51,7 +69,7 @@ struct Inputs {
     Camera camera = Camera::Unavailable;
     std::array<SampleView, 2> views{}; // WaterFog depth and refraction, respectively
 };
-using ReadInputs = Inputs (*)(void* device, const Layout& layout);
+using ReadInputs = Inputs (*)(void* device, const Layout& layout, CaptureTag tag);
 struct Counts {
     unsigned matches = 0;
     // In Binding / Params enum order. color collapses both bound types.
@@ -74,7 +92,9 @@ struct Window {
     End expire(uint64_t nowMs);
     End present(void* device, const void* chain, uint64_t nowMs);
     void draw(void* device, Layout* cached, const uint8_t* code, size_t length, ReadInputs read);
+    bool acceptsPixels(CaptureTag tag, uint64_t nowMs) const;
 private:
+    uint64_t sequence = 0;
     uint64_t requestedMs = 0;
     const void* activeDevice = nullptr;
     const void* activeChain = nullptr;
@@ -85,5 +105,7 @@ private:
 extern std::atomic<Phase> phase;
 void present(void* device, const void* chain);
 void draw(void* device, Layout* cached, const uint8_t* code, size_t length, ReadInputs read);
+bool pixelsCurrent(CaptureTag tag);
+void reportPixels(CaptureTag tag, PixelRole role, unsigned format, const PixelSummary& summary);
 }
 #endif

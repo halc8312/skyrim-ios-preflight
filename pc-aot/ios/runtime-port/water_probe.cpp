@@ -4,11 +4,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <string_view>
 
 namespace skyrim_water {
 namespace {
+constexpr uint64_t CaptureTimeoutMs = 15000;
 uint32_t u32(const uint8_t* p) {
     return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
 }
@@ -149,16 +151,85 @@ Camera classifyCamera(const float* values) {
     return last > first ? Camera::Increasing : Camera::Decreasing;
 }
 
+bool pixelPoints(uint32_t width, uint32_t height, PixelPoints& result) {
+    if (width < 4 || height < 4) return false;
+    const uint32_t left = width / 4, right = width - 1 - left;
+    const uint32_t top = height / 4, bottom = height - 1 - top;
+    result = {{{width / 2, height / 2}, {left, top}, {right, top},
+               {left, bottom}, {right, bottom}}};
+    return true;
+}
+
+namespace {
+float wireFloat(const uint8_t* bytes, PixelEncoding encoding) {
+    static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559);
+    uint32_t bits = u32(bytes);
+    if (encoding == PixelEncoding::R16Float) {
+        const uint32_t half = bits & 0xffff;
+        const uint32_t sign = (half & 0x8000) << 16;
+        const uint32_t exponent = (half >> 10) & 31;
+        const uint32_t fraction = half & 1023;
+        if (exponent == 0) return std::ldexp(sign ? -float(fraction) : float(fraction), -24);
+        bits = sign | ((exponent == 31 ? 255 : exponent + 112) << 23) | (fraction << 13);
+    }
+    float value;
+    std::memcpy(&value, &bits, sizeof value);
+    return value;
+}
+}
+
+bool summarizePixels(const uint8_t* bytes, size_t length, PixelEncoding encoding,
+                     PixelRole role, PixelSummary& result) {
+    result = {};
+    constexpr size_t stride = 4, count = PixelPoints{}.size();
+    if (!bytes || length < count * stride) return false;
+
+    if (role == PixelRole::Refraction) {
+        if (encoding != PixelEncoding::Rgba8Unorm && encoding != PixelEncoding::Bgra8Unorm)
+            return false;
+        for (size_t i = 0; i < count; ++i) {
+            const uint8_t* texel = bytes + stride * i;
+            if (!texel[0] && !texel[1] && !texel[2]) ++result.zero;
+            else if (texel[0] == 255 && texel[1] == 255 && texel[2] == 255) ++result.one;
+            else ++result.interior;
+            result.varies |= std::memcmp(bytes, texel, 3) != 0;
+        }
+        return true;
+    }
+    if (role != PixelRole::Depth || (encoding != PixelEncoding::R32Float &&
+        encoding != PixelEncoding::R16Float && encoding != PixelEncoding::R8Unorm &&
+        encoding != PixelEncoding::Rgba8Unorm && encoding != PixelEncoding::Bgra8Unorm))
+        return false;
+
+    float minimum = 1.0f, maximum = 0.0f;
+    for (size_t i = 0; i < count; ++i) {
+        const uint8_t* texel = bytes + stride * i;
+        const float value = encoding == PixelEncoding::R32Float || encoding == PixelEncoding::R16Float
+            ? wireFloat(texel, encoding) : texel[encoding == PixelEncoding::Bgra8Unorm ? 2 : 0] / 255.0f;
+        if (!std::isfinite(value)) { ++result.nonfinite; continue; }
+        if (value < 0.0f || value > 1.0f) { ++result.outside; continue; }
+        if (value == 0.0f) ++result.zero;
+        else if (value == 1.0f) ++result.one;
+        else ++result.interior;
+        if (value < minimum) minimum = value;
+        if (value > maximum) maximum = value;
+    }
+    result.varies = maximum > minimum;
+    return true;
+}
+
 void Window::request(unsigned label, uint64_t now) {
     if (label != SKYRIM_WATER_PROBE_SURFACE && label != SKYRIM_WATER_PROBE_SUBMERGED) return;
+    const uint64_t nextSequence = sequence + 1;
     *this = Window{};
+    sequence = nextSequence;
     phase = Phase::Waiting;
     requestedMs = now;
     scene = label;
 }
 
 End Window::expire(uint64_t now) {
-    if (phase != Phase::Idle && now >= requestedMs && now - requestedMs > 15000) {
+    if (phase != Phase::Idle && now >= requestedMs && now - requestedMs > CaptureTimeoutMs) {
         phase = Phase::Idle;
         return End::Expired;
     }
@@ -203,9 +274,9 @@ void Window::draw(void* device, Layout* cached, const uint8_t* code, size_t leng
     }
     if (cached->family == Family::Unknown) { ++unknown; return; }
     if (cached->family == Family::Other) { ++other; return; }
-    const auto inputs = read(device, *cached);
     auto& group = groups[unsigned(cached->family) - unsigned(Family::WaterFog)];
     ++group.matches;
+    const auto inputs = read(device, *cached, {sequence, scene, group.matches});
     ++group.depth[unsigned(inputs.depth)];
     const auto color = unsigned(inputs.color);
     ++group.color[color < 2 ? color : 2];
@@ -225,6 +296,13 @@ void Window::draw(void* device, Layout* cached, const uint8_t* code, size_t leng
             ++row->draws;
         }
     }
+}
+
+bool Window::acceptsPixels(CaptureTag tag, uint64_t now) const {
+    // Present may have finished the draw capture before the GPU retires the copy.
+    return tag.sequence && tag.sequence == sequence && tag.scene == scene &&
+           tag.draw && tag.draw <= groups[0].matches &&
+           now >= requestedMs && now - requestedMs <= CaptureTimeoutMs;
 }
 
 std::atomic<Phase> phase{Phase::Idle};
@@ -252,6 +330,18 @@ void draw(void* device, Layout* cached, const uint8_t* code, size_t length, Read
         expired = window;
     }
     report(expired, End::Expired);
+}
+bool pixelsCurrent(CaptureTag tag) {
+    std::lock_guard<std::mutex> guard(windowLock);
+    return window.acceptsPixels(tag, nowMs());
+}
+void reportPixels(CaptureTag tag, PixelRole role, unsigned format, const PixelSummary& s) {
+    std::lock_guard<std::mutex> guard(windowLock);
+    if (!window.acceptsPixels(tag, nowMs())) return;
+    std::fprintf(stderr, "IOS_WATER_PIXELS schema=1 scene=%u role=%u draw=%u format=%u "
+                 "nonfinite=%u outside=%u zero=%u one=%u interior=%u varies=%u\n",
+                 tag.scene, unsigned(role), tag.draw, format, s.nonfinite, s.outside, s.zero, s.one,
+                 s.interior, unsigned(s.varies));
 }
 } // namespace skyrim_water
 

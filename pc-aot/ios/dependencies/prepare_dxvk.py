@@ -526,16 +526,152 @@ def adapt_descriptor_capacity(name: str, text: str) -> str:
 
 
 def observe_water_draw(name: str, text: str) -> str:
-    """Read existing D3D9 state only during an explicitly armed on-device sample."""
+    """Sample D3D9 bindings and their texels only during a manually armed probe."""
+    if name.endswith('d3d9_device.h'):
+        field = '    Rc<DxvkDevice>                  m_dxvkDevice;'
+        return '#include "water_probe.h"\n' + once(text, field, field + '''
+    struct IosWaterReadback {
+      skyrim_water::CaptureTag tag;
+      Rc<DxvkBuffer> buffer;
+      Rc<sync::Fence> ready;
+      skyrim_water::PixelEncoding encoding = skyrim_water::PixelEncoding::R32Float;
+      unsigned format = VK_FORMAT_UNDEFINED;
+    };
+    std::array<IosWaterReadback, 2> m_iosWaterReadbacks{};
+    void PollWaterReadbacks();
+    void QueueWaterReadback(const Rc<DxvkImageView>& view, const skyrim_water::SampleView& sample,
+        skyrim_water::CaptureTag tag, skyrim_water::PixelRole role);''')
     if name.endswith('d3d9_shader.h'):
         return '#include "water_probe.h"\n' + once(text, '    D3D9PixelShader(\n',
             '    skyrim_water::Layout iosWaterLayout{};\n\n    D3D9PixelShader(\n')
     if name.endswith('d3d9_swapchain.cpp'):
         return '#include "water_probe.h"\n' + once(text, '      PresentImage(presentInterval);',
             '''      PresentImage(presentInterval);
+      m_parent->PollWaterReadbacks();
       if (unlikely(skyrim_water::phase.load(std::memory_order_relaxed) != skyrim_water::Phase::Idle))
         skyrim_water::present(m_parent, this);''')
     if name.endswith('d3d9_device.cpp'):
+        reset = '  HRESULT D3D9DeviceEx::ResetSwapChain(D3DPRESENT_PARAMETERS* pPresentationParameters, D3DDISPLAYMODEEX* pFullscreenDisplayMode) {'
+        text = once(text, reset, reset + '''
+    for (auto& pending : m_iosWaterReadbacks) {
+      pending.buffer = nullptr;
+      pending.ready = nullptr;
+    }
+''')
+        prepare = '  void D3D9DeviceEx::PrepareDraw(D3DPRIMITIVETYPE PrimitiveType) {'
+        text = once(text, prepare, '''
+  // Use padded offsets and rows for the Vulkan-to-Metal image copy. Only the
+  // first texel in each row is written. CS owns its references after emission.
+  static constexpr VkDeviceSize WaterReadbackStride = 256;
+
+  void D3D9DeviceEx::QueueWaterReadback(const Rc<DxvkImageView>& view,
+      const skyrim_water::SampleView& sample, skyrim_water::CaptureTag tag,
+      skyrim_water::PixelRole role) {
+    using namespace skyrim_water;
+    auto& pending = m_iosWaterReadbacks[unsigned(role) - 1];
+    if (pending.buffer != nullptr || pending.tag.sequence == tag.sequence ||
+        !(sample.flags & ViewBound) ||
+        (sample.flags & (ViewShadow | ViewAliasesColor | ViewAliasesDepth)))
+      return;
+
+    const auto& v = view->info();
+    const auto& image = view->imageInfo();
+    if (v.type != VK_IMAGE_VIEW_TYPE_2D || v.aspect != VK_IMAGE_ASPECT_COLOR_BIT ||
+        v.numLayers != 1 || v.numLevels != 1 || image.sampleCount != VK_SAMPLE_COUNT_1_BIT ||
+        !(image.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
+      return;
+
+    const auto maps = [](VkComponentSwizzle actual, VkComponentSwizzle channel) {
+      return actual == VK_COMPONENT_SWIZZLE_IDENTITY || actual == channel;
+    };
+    if (!maps(v.swizzle.r, VK_COMPONENT_SWIZZLE_R)) return;
+    PixelEncoding encoding;
+    if (role == PixelRole::Depth) {
+      if (v.format != image.format) return;
+      switch (v.format) {
+        case VK_FORMAT_R32_SFLOAT:    encoding = PixelEncoding::R32Float; break;
+        case VK_FORMAT_R16_SFLOAT:    encoding = PixelEncoding::R16Float; break;
+        case VK_FORMAT_R8_UNORM:      encoding = PixelEncoding::R8Unorm; break;
+        case VK_FORMAT_R8G8B8A8_UNORM: encoding = PixelEncoding::Rgba8Unorm; break;
+        case VK_FORMAT_B8G8R8A8_UNORM: encoding = PixelEncoding::Bgra8Unorm; break;
+        default: return;
+      }
+    } else {
+      if (!maps(v.swizzle.g, VK_COMPONENT_SWIZZLE_G) ||
+          !maps(v.swizzle.b, VK_COMPONENT_SWIZZLE_B)) return;
+      // sRGB decoding preserves black/white and equality per channel.
+      if (image.format == VK_FORMAT_R8G8B8A8_UNORM &&
+          (v.format == image.format || v.format == VK_FORMAT_R8G8B8A8_SRGB))
+        encoding = PixelEncoding::Rgba8Unorm;
+      else if (image.format == VK_FORMAT_B8G8R8A8_UNORM &&
+               (v.format == image.format || v.format == VK_FORMAT_B8G8R8A8_SRGB))
+        encoding = PixelEncoding::Bgra8Unorm;
+      else return;
+    }
+    PixelPoints points;
+    if (!pixelPoints(sample.width, sample.height, points)) return;
+
+    // Mark this request once even if the optional allocation fails.
+    pending.tag = tag;
+    DxvkBufferCreateInfo info{};
+    info.size = WaterReadbackStride * points.size();
+    info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    info.stages = VK_PIPELINE_STAGE_HOST_BIT;
+    info.access = VK_ACCESS_HOST_READ_BIT;
+    try {
+      pending.ready = new sync::Fence();
+      pending.buffer = m_dxvkDevice->createBuffer(info,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    } catch (const DxvkError&) {
+      pending.ready = nullptr;
+      return;
+    } catch (const std::bad_alloc&) {
+      pending.ready = nullptr;
+      return;
+    }
+    pending.encoding = encoding;
+    pending.format = sample.format;
+    const VkImageSubresourceLayers layers{v.aspect, v.minLevel, v.minLayer, 1};
+    EmitCs([buffer = pending.buffer, ready = pending.ready, source = view->image(),
+            layers, points](DxvkContext* ctx) {
+      for (size_t i = 0; i < points.size(); ++i) {
+        const VkOffset3D point{int32_t(points[i].x), int32_t(points[i].y), 0};
+        ctx->copyImageToBuffer(buffer, i * WaterReadbackStride, WaterReadbackStride, 0,
+            source, layers, point, VkExtent3D{1, 1, 1});
+      }
+      ctx->signal(ready, 1);
+    });
+  }
+
+  void D3D9DeviceEx::PollWaterReadbacks() {
+    using namespace skyrim_water;
+    for (size_t i = 0; i < m_iosWaterReadbacks.size(); ++i) {
+      auto& pending = m_iosWaterReadbacks[i];
+      if (pending.buffer == nullptr) continue;
+      if (m_dxvkDevice->getDeviceStatus() == VK_SUCCESS && pixelsCurrent(pending.tag)) {
+        if (!pending.ready->value()) continue;
+        // A queue failure can signal the fence as well. Check again after it.
+        if (m_dxvkDevice->getDeviceStatus() == VK_SUCCESS) {
+          const auto role = static_cast<PixelRole>(i + 1);
+          const auto* mapped = static_cast<const uint8_t*>(pending.buffer->mapPtr(0));
+          if (mapped) {
+            std::array<uint8_t, PixelPoints{}.size() * 4> bytes{};
+            const size_t texelBytes = pending.encoding == PixelEncoding::R8Unorm ? 1
+                : pending.encoding == PixelEncoding::R16Float ? 2 : 4;
+            for (size_t point = 0; point < PixelPoints{}.size(); ++point)
+              std::memcpy(bytes.data() + point * 4, mapped + point * WaterReadbackStride, texelBytes);
+            PixelSummary summary;
+            if (summarizePixels(bytes.data(), bytes.size(), pending.encoding, role, summary))
+              reportPixels(pending.tag, role, pending.format, summary);
+          }
+        }
+      }
+      pending.buffer = nullptr;
+      pending.ready = nullptr;
+    }
+  }
+
+''' + prepare)
         entry = '      UndirtyTextures(usedDirtyTextures);'
         return '#include "water_probe.h"\n' + once(text, entry, entry + '''
     if (unlikely(skyrim_water::phase.load(std::memory_order_relaxed) == skyrim_water::Phase::Capturing)
@@ -544,7 +680,7 @@ def observe_water_draw(name: str, text: str) -> str:
       const auto* bytes = shader ? &shader->GetCommonShader()->GetBytecode() : nullptr;
       skyrim_water::draw(this, shader ? &shader->iosWaterLayout : nullptr,
         bytes ? bytes->data() : nullptr, bytes ? bytes->size() : 0,
-        [](void* device, const skyrim_water::Layout& layout) {
+        [](void* device, const skyrim_water::Layout& layout, skyrim_water::CaptureTag tag) {
           auto* self = static_cast<D3D9DeviceEx*>(device);
           bool depthMs = false;
           const auto binding = [self](int slot, bool* multisampled) {
@@ -565,7 +701,7 @@ def observe_water_draw(name: str, text: str) -> str:
           if (layout.camera >= 0)
             inputs.camera = skyrim_water::classifyCamera(self->m_state.psConsts.fConsts[layout.camera].data);
           if (layout.family == skyrim_water::Family::WaterFog) {
-            const auto describe = [self](int slot) {
+            const auto describe = [self, tag](int slot, skyrim_water::PixelRole role) {
               using namespace skyrim_water;
               SampleView result;
               if (slot < 0) return result;
@@ -593,10 +729,11 @@ def observe_water_draw(name: str, text: str) -> str:
               const auto& depth = self->m_state.depthStencil;
               if (depth != nullptr && depth->GetCommonTexture()->GetImage().ptr() == image)
                 result.flags |= ViewAliasesDepth;
+              self->QueueWaterReadback(view, result, tag, role);
               return result;
             };
-            inputs.views[0] = describe(layout.depth);
-            inputs.views[1] = describe(layout.color);
+            inputs.views[0] = describe(layout.depth, skyrim_water::PixelRole::Depth);
+            inputs.views[1] = describe(layout.color, skyrim_water::PixelRole::Refraction);
           }
           return inputs;
         });

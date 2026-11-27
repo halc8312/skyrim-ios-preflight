@@ -40,6 +40,7 @@ class D3D9LockAdapterTests(unittest.TestCase):
         self.assertEqual(observed.count('LockDevice(SKYRIM_LOCK_OP_D3D9_PRESENT)'), 1)
         self.assertEqual(observed.count('skyrim_water::present(m_parent, this);'), 1)
         after_present = ('      PresentImage(presentInterval);\n'
+            '      m_parent->PollWaterReadbacks();\n'
             '      if (unlikely(skyrim_water::phase.load(std::memory_order_relaxed) != skyrim_water::Phase::Idle))\n'
             '        skyrim_water::present(m_parent, this);')
         after_submit = ('      SubmitPresent(sync, i);\n'

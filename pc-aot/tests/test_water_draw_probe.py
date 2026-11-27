@@ -42,6 +42,7 @@ class WaterDrawProbeTests(unittest.TestCase):
             "IOS_WATER_VIEW schema=1 scene=2 role=1 format=100 aspect=1 width=1564 height=720 flags=3 count=1",
             "IOS_WATER_VIEW schema=1 scene=2 role=2 format=0 aspect=0 width=0 height=0 flags=0 count=1",
             "IOS_WATER_SUMMARY schema=1 scene=2 end=1 frames=3 checked=1 fixed=0 unknown=0 other=0 limited=0",
+            "IOS_WATER_PIXELS schema=1 scene=2 role=1 draw=1 format=100 nonfinite=0 outside=0 zero=0 one=0 interior=5 varies=1",
         ])
         for line in lines:
             schema.line(line)
