@@ -188,7 +188,9 @@ CompositeInputs classifyComposite(const float* controls, const float* projection
     }
     if (tint && tintRange) {
         const float span = tintRange[0] - tintRange[1];
-        result.tint = classifyParams(tint) == Params::Nonfinite || !std::isfinite(span) || span == 0.0f
+        // Out-of-range strength extrapolates RGB and cannot be bucketed as ordinary tint.
+        result.tint = classifyParams(tint) == Params::Nonfinite || !std::isfinite(span) || span == 0.0f ||
+                      tint[3] < 0.0f || tint[3] > 1.0f
             ? Control::Invalid : tint[3] == 0.0f ? Control::Disabled : Control::Enabled;
     }
     return result;
@@ -277,7 +279,8 @@ bool summarizePixels(const uint8_t* bytes, size_t length, PixelEncoding encoding
 bool summarizeTint(const uint8_t* bytes, size_t length, PixelEncoding encoding,
                    const CompositeTint& model, TintSummary& result) {
     result = {};
-    if (!model.valid || !bytes || length < PixelCount * PixelStride || !validPixelEncoding(encoding))
+    if (!model.valid || !bytes || length < PixelCount * PixelStride || !validPixelEncoding(encoding) ||
+        !(model.strength >= 0.0f && model.strength <= 1.0f))
         return false;
     for (size_t i = 0; i < PixelCount; ++i) {
         const float depth = pixelRed(bytes + PixelStride * i, encoding);

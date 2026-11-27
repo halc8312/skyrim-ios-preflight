@@ -147,6 +147,8 @@ static void checkPixelReadback() {
     model.strength = 0.5f;
     assert(summarizeTint(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, model, projected));
     assert(projected.partial == 5 && !projected.nearFull);
+    model.strength = 1.5f;
+    assert(!summarizeTint(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, model, projected));
     assert(!summarizeTint(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, {}, projected));
 }
 int main(int argc, char**) {
@@ -226,6 +228,8 @@ int main(int argc, char**) {
     const float zeroRange[]{1, 1, 0, 0};
     assert(classifyComposite(nullptr, nullptr, tint, zeroRange).tint == Control::Invalid);
     assert(classifyComposite(nullptr, nullptr, tint, nullptr).tint == Control::Unavailable);
+    const float extrapolate[]{0, 0.5f, 0.75f, -0.5f};
+    assert(classifyComposite(nullptr, nullptr, extrapolate, distances).tint == Control::Invalid);
     const float infiniteDistance[]{0, 0, 0.5f, 1};
     assert(classifyComposite(nullptr, infiniteDistance, nullptr, nullptr).projection == Camera::ZeroAtDepth1);
 
