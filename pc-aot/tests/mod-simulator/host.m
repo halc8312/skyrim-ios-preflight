@@ -159,6 +159,20 @@ static void copyFixture(NSURL *source, NSURL *destination) {
         self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
         UIViewController *root = [UIViewController new];
         self.window.rootViewController = root;
+        root.view.backgroundColor = UIColor.blackColor;
+        // The device overlay sits above an opaque Metal picture. Keep the same
+        // visible touch surface in this UIKit-only fixture and show its letterboxes.
+        UIView *picture = [UIView new];
+        picture.translatesAutoresizingMaskIntoConstraints = NO;
+        picture.backgroundColor = [UIColor colorWithWhite:.15 alpha:1];
+        picture.userInteractionEnabled = NO;
+        [root.view addSubview:picture];
+        [NSLayoutConstraint activateConstraints:@[
+            [picture.centerXAnchor constraintEqualToAnchor:root.view.centerXAnchor],
+            [picture.widthAnchor constraintEqualToAnchor:root.view.widthAnchor multiplier:.6],
+            [picture.topAnchor constraintEqualToAnchor:root.view.topAnchor],
+            [picture.bottomAnchor constraintEqualToAnchor:root.view.bottomAnchor],
+        ]];
         SKFixtureMenuOverlay *pad = [[SKFixtureMenuOverlay alloc] initWithFrame:root.view.bounds];
         /* No guest or lifecycle/checkpoint services run in this scenario. */
         [NSNotificationCenter.defaultCenter removeObserver:pad];
@@ -180,6 +194,10 @@ static void copyFixture(NSURL *source, NSURL *destination) {
         [root.view addSubview:touch];
         pad.touchReadout = touch;
         [self.window makeKeyAndVisible];
+        [root.view layoutIfNeeded];
+        CGPoint middle = CGPointMake(CGRectGetMidX(root.view.bounds), CGRectGetMidY(root.view.bounds));
+        if ([root.view hitTest:middle withEvent:nil] != pad)
+            [NSException raise:NSInternalInconsistencyException format:@"The fixture's central touch misses the native overlay"];
         return;
     }
     NSURL *fixtures = [NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Fixtures"];
