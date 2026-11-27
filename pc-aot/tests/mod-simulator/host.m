@@ -30,15 +30,16 @@ SkyrimTouchMenu skyrim_loading_menu_touch_state(void) {
     return fixtureListMenu ? (SkyrimTouchMenu){.menus = 1u << 2, .list_navigation = true} : (SkyrimTouchMenu){0};
 }
 @interface SKOverlay : UIView @end
-@interface SKFixtureMenuOverlay : SKOverlay @end
-@implementation SKFixtureMenuOverlay
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [super touchesEnded:touches withEvent:event];
-    for (UIView *view in self.subviews) {
-        if ([view.accessibilityIdentifier isEqualToString:@"skyrim-pad-layout"]) {
-            view.accessibilityValue = [NSString stringWithFormat:@"%u", (unsigned)skyrim_mobile_pad().buttons];
-            break;
-        }
+@interface SKFixtureMenuWindow : UIWindow
+@property(nonatomic, strong) UILabel *inputReadout;
+@end
+@implementation SKFixtureMenuWindow
+- (void)sendEvent:(UIEvent *)event {
+    [super sendEvent:event];
+    for (UITouch *touch in event.allTouches) {
+        if (touch.phase != UITouchPhaseEnded) continue;
+        self.inputReadout.text = [NSString stringWithFormat:@"%u", (unsigned)skyrim_mobile_pad().buttons];
+        break;
     }
 }
 @end
@@ -143,13 +144,22 @@ static void copyFixture(NSURL *source, NSURL *destination) {
     if ([NSProcessInfo.processInfo.arguments containsObject:@"-TestNativeMenuOverlay"]) {
         fixtureListMenu = YES;
         skyrim_benchmark_render_size(600, 500);
-        self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+        SKFixtureMenuWindow *window = [[SKFixtureMenuWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+        self.window = window;
         UIViewController *root = [UIViewController new];
         self.window.rootViewController = root;
-        UIView *pad = [[SKFixtureMenuOverlay alloc] initWithFrame:root.view.bounds];
+        UIView *pad = [[SKOverlay alloc] initWithFrame:root.view.bounds];
         /* No guest or lifecycle/checkpoint services run in this scenario. */
         [NSNotificationCenter.defaultCenter removeObserver:pad];
         [root.view addSubview:pad];
+        UILabel *readout = [[UILabel alloc] initWithFrame:CGRectMake(CGRectGetMidX(root.view.bounds)-25, 16, 50, 24)];
+        readout.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin;
+        readout.textAlignment = NSTextAlignmentCenter;
+        readout.textColor = UIColor.whiteColor;
+        readout.text = @"0";
+        readout.accessibilityIdentifier = @"native-menu-input";
+        [root.view addSubview:readout];
+        window.inputReadout = readout;
         [self.window makeKeyAndVisible];
         return;
     }

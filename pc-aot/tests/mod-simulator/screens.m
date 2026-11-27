@@ -478,13 +478,14 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     XCUIElement *settings = self.app.buttons[@"skyrim-pad-settings"];
     XCUIElement *move = [[self.app descendantsMatchingType:XCUIElementTypeAny] objectForKeyedSubscript:@"skyrim-pad-18"];
     XCUIElement *save = self.app.buttons[@"skyrim-pad-save"];
+    XCUIElement *input = self.app.staticTexts[@"native-menu-input"];
     XCTAssertTrue([toggle waitForExistenceWithTimeout:8]);
     XCTAssertTrue(canHit(settings));
     XCTAssertFalse(move.exists);
     XCTAssertFalse(save.exists);
     CGRect screen = self.app.frame;
     for (NSString *identifier in @[@"skyrim-pad-settings",@"skyrim-pad-layout",@"skyrim-pad-0",@"skyrim-pad-1",
-                                    @"skyrim-pad-2",@"skyrim-pad-3",@"skyrim-pad-8",@"skyrim-pad-9",
+                                    @"skyrim-pad-2",@"skyrim-pad-3",@"skyrim-pad-5",@"skyrim-pad-8",@"skyrim-pad-9",
                                     @"skyrim-pad-12",@"skyrim-pad-13",@"skyrim-pad-16",@"skyrim-pad-17"]) {
         XCUIElement *button = self.app.buttons[identifier];
         XCTAssertTrue(canHit(button), @"%@", identifier);
@@ -496,15 +497,15 @@ typedef NS_ENUM(NSUInteger, SKPickerLocation) {
     }
     XCUICoordinate *middle = [self.app coordinateWithNormalizedOffset:CGVectorMake(.5,.5)];
     [middle tap];
-    XCTAssertEqualObjects(toggle.value, @"0");
+    XCTAssertEqualObjects(input.label, @"0");
     XCUICoordinate *border = [self.app coordinateWithNormalizedOffset:CGVectorMake(.17,.12)];
     [border pressForDuration:.12 thenDragToCoordinate:
         [self.app coordinateWithNormalizedOffset:CGVectorMake(.17,.65)]];
-    XCTAssertEqualObjects(toggle.value, @"0");
+    XCTAssertEqualObjects(input.label, @"0");
     [middle pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.5,.24)]];
-    XCTAssertEqualObjects(toggle.value, @"2");  // Down one entry, no activation.
+    XCTAssertEqualObjects(input.label, @"2");  // Down one entry, no activation.
     [middle pressForDuration:.12 thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(.30,.5)]];
-    XCTAssertEqualObjects(toggle.value, @"512");  // RB selects the next column with stock SkyUI bindings.
+    XCTAssertEqualObjects(input.label, @"512");  // RB selects the next column with stock SkyUI bindings.
     [self capture:@"native-menu-compact"];
     [toggle tap];
     XCTAssertTrue(canHit(move));

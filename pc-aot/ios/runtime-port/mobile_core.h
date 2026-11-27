@@ -12,6 +12,7 @@ typedef struct {
 /* Control IDs also key saved touch positions: keep Move at 18. */
 enum {
     SKYRIM_PAD_UP = 0, SKYRIM_PAD_DOWN = 1, SKYRIM_PAD_LEFT = 2, SKYRIM_PAD_RIGHT = 3,
+    SKYRIM_PAD_BACK = 5,
     SKYRIM_PAD_LB = 8, SKYRIM_PAD_RB = 9, SKYRIM_PAD_A = 12, SKYRIM_PAD_B = 13,
     SKYRIM_PAD_LT = 16, SKYRIM_PAD_RT = 17, SKYRIM_PAD_MOVE = 18,
     SKYRIM_PAD_BOTH_HANDS = 19, SKYRIM_PAD_CONTROL_COUNT = 20

@@ -36,7 +36,7 @@ static void menu_touch(void) {
     assert(skyrim_mobile_menu_swipe(70,-20)==SKYRIM_PAD_LB);
     assert(skyrim_mobile_menu_swipe(0,0)==-1 && skyrim_mobile_menu_swipe(0,27)==-1);
     assert(skyrim_mobile_menu_swipe(65,65)==-1 && skyrim_mobile_menu_swipe(INFINITY,0)==-1);
-    const unsigned controls[]={SKYRIM_MENU_SETTINGS,SKYRIM_PAD_LB,SKYRIM_PAD_UP,SKYRIM_PAD_DOWN,SKYRIM_PAD_LEFT,SKYRIM_PAD_RIGHT,
+    const unsigned controls[]={SKYRIM_MENU_SETTINGS,SKYRIM_PAD_LB,SKYRIM_PAD_UP,SKYRIM_PAD_DOWN,SKYRIM_PAD_LEFT,SKYRIM_PAD_RIGHT,SKYRIM_PAD_BACK,
                               SKYRIM_MENU_EXPAND,SKYRIM_PAD_RB,SKYRIM_PAD_A,SKYRIM_PAD_B,SKYRIM_PAD_LT,SKYRIM_PAD_RT};
     const float safe[][2]={{832,420},{780,370},{568,320},{390,213}};
     for (unsigned i=0;i<sizeof(safe)/sizeof(safe[0]);i++) {
@@ -45,7 +45,8 @@ static void menu_touch(void) {
             assert(skyrim_mobile_menu_rect(controls[j],safe[i][0],safe[i][1],&boxes[j]));
             SkyrimMenuButtonRect b=boxes[j];
             assert(b.x>=0 && b.y>=-.0001f && b.side>0 && b.x+b.side<=safe[i][0]+.0001f && b.y+b.side<=safe[i][1]+.0001f);
-            if (safe[i][1]>=320) assert(b.side>=44 && b.y>=20 && b.y+b.side<=safe[i][1]-20);
+            if (safe[i][1]>=320) assert(b.side>=44 && b.y>=3 && b.y+b.side<=safe[i][1]-3);
+            if (safe[i][1]>=370) assert(b.y>=20 && b.y+b.side<=safe[i][1]-20);
             for (unsigned k=0;k<j;k++) {
                 SkyrimMenuButtonRect a=boxes[k];
                 assert(a.x+a.side<=b.x || b.x+b.side<=a.x || a.y+a.side<=b.y || b.y+b.side<=a.y);

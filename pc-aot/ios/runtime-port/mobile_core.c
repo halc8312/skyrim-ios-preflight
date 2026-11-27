@@ -121,19 +121,20 @@ int skyrim_mobile_menu_rect(unsigned control, float width, float height, SkyrimM
     /* Signed row numbers keep both rails centered and leave the first/last list entries visible. */
     static const int8_t rows[] = {
         [SKYRIM_MENU_SETTINGS]=1, [SKYRIM_PAD_LB]=2, [SKYRIM_PAD_UP]=3,
-        [SKYRIM_PAD_DOWN]=4, [SKYRIM_PAD_LEFT]=5, [SKYRIM_PAD_RIGHT]=6,
+        [SKYRIM_PAD_DOWN]=4, [SKYRIM_PAD_LEFT]=5, [SKYRIM_PAD_RIGHT]=6, [SKYRIM_PAD_BACK]=7,
         [SKYRIM_MENU_EXPAND]=-1, [SKYRIM_PAD_RB]=-2, [SKYRIM_PAD_A]=-3,
         [SKYRIM_PAD_B]=-4, [SKYRIM_PAD_LT]=-5, [SKYRIM_PAD_RT]=-6
     };
     if (!out || control >= sizeof(rows) / sizeof(rows[0]) || !rows[control] ||
         !isfinite(width) || !isfinite(height) || width < 4 || height < 6) return 0;
-    const float gap=fminf(3, height/18);
-    const float side=fminf(44, fminf((height-5*gap)/6, width/2));
+    const float gap=fminf(height/18, fminf(3, fmaxf(1, (height-7*44-6)/6)));
+    const float side=fminf(44, fminf((height-6*gap)/7, width/2));
     int row=rows[control];
     out->side=side;
     out->x=row < 0 ? width-side : 0;
     unsigned index=(unsigned)(row < 0 ? -row : row) - 1;
-    out->y=(height-6*side-5*gap)/2 + index*(side+gap);
+    unsigned count=row < 0 ? 6 : 7;
+    out->y=(height-count*side-(count-1)*gap)/2 + index*(side+gap);
     return 1;
 }
 void skyrim_mobile_button_pulse(unsigned index) {
