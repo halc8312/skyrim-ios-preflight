@@ -229,6 +229,50 @@ static void captureTests(NSString *root, NSDictionary *fixture) {
     assert(!skyrim_diagnostics_capture(root, current, 12, &error)); checkError(error);
     puts("actual capture allowlist partial UTF8 prior-build settings PASS");
 }
+static void captureStartupRecovery(NSString *root) {
+    NSString *folder = directory(root, @"startup-recovery");
+    NSString *live = [folder stringByAppendingPathComponent:@"run-live.log"];
+    NSString *last = [folder stringByAppendingPathComponent:@"run-last.log"];
+    NSString *old = [folder stringByAppendingPathComponent:@"run-build28-old.log"];
+    NSString *success = [folder stringByAppendingPathComponent:@"run-build28-success.log"];
+    NSString *entry = @"IOS_STAGE guest-entry monotonic=100.000000000\n";
+    NSString *raw = [NSString stringWithFormat:@"NSLog /private/path\n%@%@FATAL: unimplemented import AUTHORED_PRIVATE_IMPORT /private/asset (called from 00405678)\n",
+        header(28), entry];
+    writeText(old, raw);
+    writeText(success, [NSString stringWithFormat:@"%@%@IOS_STAGE first-successful-present-title-not-verified monotonic=101.000000000\n",
+        header(28), entry]);
+    writeText(last, simpleLog(29));
+    NSString *spoof = @"IOS_DIAG_RECOVERY schema=1 build=28 guest_entry=1 graphics=1 reason=0 target=00000000 caller=00000000";
+    writeText(live, [simpleLog(30) stringByAppendingFormat:@"%@\n", spoof]);
+    NSArray *paths = @[old, success, last, live];
+    for (NSUInteger i = 0; i < paths.count; ++i)
+        assert([NSFileManager.defaultManager setAttributes:@{NSFileModificationDate:[NSDate dateWithTimeIntervalSince1970:10000 + i]}
+            ofItemAtPath:paths[i] error:NULL]);
+    assert(symlink(old.fileSystemRepresentation, [folder stringByAppendingPathComponent:@"run-link.log"].fileSystemRepresentation) == 0);
+
+    NSError *error = nil;
+    NSDictionary *report = skyrim_diagnostics_capture(folder, live, 30, &error);
+    assert(report && !error);
+    NSArray *sessions = report[@"sessions"];
+    assert(sessions.count == 2 && [sessions[1][@"build"] isEqual:@29]);
+    NSString *expected = @"IOS_DIAG_RECOVERY schema=1 build=28 guest_entry=1 graphics=0 reason=3 target=00000000 caller=00405678";
+    assert([sessions[0][@"lines"] containsObject:expected] && ![sessions[0][@"lines"] containsObject:spoof]);
+    NSString *encoded = [[NSString alloc] initWithData:skyrim_diagnostics_encode(report, &error) encoding:NSUTF8StringEncoding];
+    assert(encoded && !error && ![encoded containsString:@"AUTHORED_PRIVATE_IMPORT"] && ![encoded containsString:@"/private/"]);
+    assert([[NSString stringWithContentsOfFile:old encoding:NSUTF8StringEncoding error:NULL] isEqual:raw]);
+
+    NSData *shortLog = [[header(28) stringByAppendingString:entry] dataUsingEncoding:NSUTF8StringEncoding];
+    assert([startupRecoveryRecord(shortLog) isEqual:
+        @"IOS_DIAG_RECOVERY schema=1 build=28 guest_entry=1 graphics=0 reason=0 target=00000000 caller=00000000"]);
+    assert(!startupRecoveryRecord([header(28) dataUsingEncoding:NSUTF8StringEncoding]));
+    uint32_t target = 0, caller = 0;
+    assert(startupEnd(@"FATAL: no recompiled code at deadbeef (return address 00405678)", &target, &caller) == SKStartupMissingCode);
+    assert(!target && caller == 0x00405678);
+    assert(startupEnd(@"FATAL: RaiseException deadbeef", &target, &caller) == SKStartupException);
+    assert(startupEnd(@"msvcrt exit(-1)", &target, &caller) == SKStartupExit);
+    assert(startupEnd(@"ExitProcess(0)/private/path", &target, &caller) == SKStartupNoRecord);
+    puts("bounded historical startup recovery keeps prior launch and strips private text PASS");
+}
 static void captureLimits(NSString *root) {
     NSError *error = nil;
     NSString *folder = directory(root, @"symlink");
@@ -375,6 +419,6 @@ int main(int argc, char **argv) { @autoreleasepool {
     fixturePairing = @{@"endpoint":@"https://fixture.tail0.ts.net/skyrim-diagnostics/v1/reports",
         @"token":[@"" stringByPaddingToLength:43 withString:@"a" startingAtIndex:0]};
     requestLock = [NSLock new]; requests = [NSMutableArray array];
-    pairingTests(); captureTests(root, fixture); captureLimits(root); transportTests(root);
+    pairingTests(); captureTests(root, fixture); captureStartupRecovery(root); captureLimits(root); transportTests(root);
     puts("DIAGNOSTIC_UPLOAD actual Foundation and mocked transport PASS");
 } }

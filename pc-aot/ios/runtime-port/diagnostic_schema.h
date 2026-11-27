@@ -56,6 +56,11 @@ typedef enum SkyrimDiagnosticSettingKey {
     E("SDL UIKit entry did not run on the main thread", 14) \
     E("Cannot initialize shader preparation option", 15)
 
+/* IOS_DIAG_RECOVERY describes an older build 28 startup that recorded guest
+ * entry and no first present. Reason 0 means no matching termination record.
+ * 1 other runtime fatal, 2 missing guest code, 3 unimplemented import,
+ * 4 unimplemented instruction, 5 int3, 6 exception, 7 guest exit,
+ * 8 runtime returned. target/caller are pinned x86 text addresses or zero. */
 /* X(prefix, regex): expand into the caller's own string table. */
 #define SKYRIM_DIAG_RULES(X) \
     X("IOS_SHADER_LEAD", "^IOS_SHADER_LEAD schema=1 seq=[1-9][0-9]{0,19} result=[12] ready_ns=[0-9]{1,20} queued_ns=[0-9]{1,20} worker_ns=[0-9]{1,20} compile_ns=[0-9]{1,20} published_ns=[0-9]{1,20} wait_start_ns=[0-9]{1,20} wait_end_ns=[0-9]{1,20}$") \
@@ -76,6 +81,10 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_DEVICE", "^IOS_DEVICE schema=1 cpus=[0-9]{1,20} active=[0-9]{1,20} screen_max_hz=[0-9]{1,20} physical_bytes=[0-9]{1,20} gpu=[0-9]{1,20} apple_family=[0-9]{1,20} unified=[01] bc=[01] max_buffer_bytes=[0-9]{1,20} guest_cpu_policy_unchanged=1$") \
     X("IOS_DEVICE_STATE", "^IOS_DEVICE_STATE active=[0-9]{1,20} thermal=[0-3] low_power=[01] foreground=[01] headroom_known=[01] headroom_bytes=[0-9]{1,20} memory_warning=[01] reclaimed_pool_bytes=[0-9]{1,20} smaller_pools=[0-9]{1,20}$") \
     X("IOS_WORK_QOS", "^IOS_WORK_QOS role=[0-9]{1,20} target=[0-9]{1,20} error=-?[0-9]{1,20}$") \
+    X("IOS_BENCHMARK", "^IOS_BENCHMARK schema=1 run=[0-9]{1,10} scene=[1-6] status=[1-4] start_ns=[0-9]{1,20} end_ns=[0-9]{1,20} intervals=[0-9]{1,10} total_ns=[0-9]{1,20} over100=[0-9]{1,10} max_ns=[0-9]{1,20} p99_ms=[0-9]{1,4} render=[0-9]{1,10}x[0-9]{1,10} selected_height=[0-9]{1,10} cap=[0-9]{1,3},[0-9]{1,3} thermal=[0-3],[0-3] low_power=[01] seen=[0-9]{1,3} phase_ms=[0-9]{1,5}(?:,[0-9]{1,5}){7}$") \
+    X("IOS_RENDER_TRIAL", "^IOS_RENDER_TRIAL requested=720 width=(?:0|[1-9][0-9]{0,3}|10000) height=(?:0|[1-9][0-9]?|[1-6][0-9]{2}|7[01][0-9]|720)$") \
+    X("IOS_RENDER_BUFFER", "^IOS_RENDER_BUFFER width=(?:[1-9][0-9]{0,3}|1[0-5][0-9]{3}|16[0-2][0-9]{2}|163[0-7][0-9]|1638[0-4]) height=(?:[1-9][0-9]{0,3}|1[0-5][0-9]{3}|16[0-2][0-9]{2}|163[0-7][0-9]|1638[0-4])$") \
+    X("IOS_DIAG_RECOVERY", "^IOS_DIAG_RECOVERY schema=1 build=28 guest_entry=1 graphics=[01] reason=[0-8] target=[0-9a-f]{8} caller=[0-9a-f]{8}$") \
     X("IOS_DRAWABLE", "^IOS_DRAWABLE pixels=[0-9]{1,20}x[0-9]{1,20} main_thread=1$") \
     X("IOS_GRAPHICS", "^IOS_GRAPHICS override_count=[0-9]{1,20} resolution=[0-9]{1,20}x[0-9]{1,20}$") \
     X("IOS_SHADER_OPTION", "^IOS_SHADER_OPTION option=[0-7] enabled=[01]$") \

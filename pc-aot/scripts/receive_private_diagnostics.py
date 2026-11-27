@@ -160,6 +160,14 @@ class Schema:
                 return 'lead', self.timing.shader_lead(value.split(' ', 1)[1])
             elif value.startswith('IOS_SHADER_LEAD_DROPS '):
                 return 'drops', self.timing.shader_lead_drops(value.split(' ', 1)[1])
+            elif value.startswith('IOS_DIAG_RECOVERY '):
+                fields = dict(token.split('=', 1) for token in value.split(' ')[1:])
+                reason = int(fields['reason'])
+                target, caller = (int(fields[key], 16) for key in ('target', 'caller'))
+                require(all(address == 0 or 0x00401000 <= address < 0x0106a31a
+                            for address in (target, caller)), 'recovery_address')
+                require((not target or reason in (2, 4, 5)) and
+                        (not caller or reason in (2, 3)), 'recovery_reason_fields')
             elif value.startswith('IOS_DIAG_SETTING '):
                 number = Decimal(value.rsplit('=', 1)[1])
                 require(abs(number) <= 1000000000, 'setting_range')
@@ -204,8 +212,12 @@ class Schema:
             # captured launch has its own namespace; repeated identical rows
             # are harmless, conflicting reuse cannot be trusted.
             shader_sequences = {}
+            recovery_seen = False
             for line in lines:
                 record = self.line(line)
+                if line.startswith('IOS_DIAG_RECOVERY '):
+                    require(session['slot'] == 'current' and not recovery_seen, 'recovery_record_scope')
+                    recovery_seen = True
                 if record is not None:
                     seq = record[1]['seq']
                     require(seq not in shader_sequences or shader_sequences[seq] == record,

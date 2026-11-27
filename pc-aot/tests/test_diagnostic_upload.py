@@ -77,6 +77,38 @@ class DiagnosticUploadTests(unittest.TestCase):
         for code in codes:
             schema.line("IOS_DIAG_ERROR code=" + code)
 
+    def test_recovery_and_render_records_keep_their_numeric_scope(self):
+        module = receiver()
+        schema = module.Schema()
+        recovery = ("IOS_DIAG_RECOVERY schema=1 build=28 guest_entry=1 graphics=0 reason=2 "
+                    "target=00401234 caller=00405678")
+        for line in (recovery, "IOS_RENDER_TRIAL requested=720 width=1564 height=720",
+                     "IOS_RENDER_TRIAL requested=720 width=0 height=0",
+                     "IOS_RENDER_BUFFER width=1564 height=720",
+                     "IOS_RENDER_BUFFER width=16384 height=1"):
+            schema.line(line)
+        bad = (recovery.replace("build=28", "build=29"), recovery + " /private/game",
+               recovery.replace("reason=2", "reason=1"), recovery.replace("00401234", "deadbeef"),
+               recovery.replace("00405678", "0106a31a"),
+               "IOS_RENDER_TRIAL requested=721 width=1564 height=720",
+               "IOS_RENDER_TRIAL requested=720 width=1564 height=721",
+               "IOS_RENDER_TRIAL requested=720 width=10001 height=720",
+               "IOS_RENDER_BUFFER width=16385 height=1", "IOS_RENDER_BUFFER width=0 height=1")
+        for line in bad:
+            with self.subTest(record=line), self.assertRaises(module.Rejected):
+                schema.line(line)
+        session = {"slot": "current", "capture": "live_prefix", "build": 30,
+                   "snapshot_bytes": 500, "excluded_lines": 4, "lines": [recovery]}
+        report = {"schema": 1, "report_id": "1" * 32, "app_build": 30, "sessions": [session]}
+        self.assertEqual(schema.bundle(json.dumps(report).encode()), report)
+        session["lines"] = [recovery, recovery]
+        with self.assertRaises(module.Rejected):
+            schema.bundle(json.dumps(report).encode())
+        session["lines"] = ["IOS_DIAG_SETTING key=0 value=60"]
+        report["sessions"].append(dict(session, slot="previous", capture="closed", build=28, lines=[recovery]))
+        with self.assertRaises(module.Rejected):
+            schema.bundle(json.dumps(report).encode())
+
     @unittest.skipUnless(sys.platform == "darwin", "Actual Foundation capture/NSURLSession fixture requires Apple host")
     def test_actual_foundation_capture_and_mocked_transport(self):
         clang = shutil.which("clang")

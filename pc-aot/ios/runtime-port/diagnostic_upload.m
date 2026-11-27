@@ -8,6 +8,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 
 static const NSUInteger kBodyLimit = SKYRIM_DIAGNOSTIC_MAX_BODY_BYTES;
 static const NSUInteger kSessionLimit = SKYRIM_DIAGNOSTIC_MAX_SESSION_BYTES;
@@ -65,6 +67,146 @@ static NSString *numericStaticError(NSString *line) {
 #undef DIAG_ERROR
     return nil;
 }
+static const off_t kStartupLogLimit = 256 * 1024;
+static const NSUInteger kStartupSearchLimit = 32;
+static NSString *const kRecoveryPrefix = @"IOS_DIAG_RECOVERY ";
+static NSString *const kBuild28Header = @"SkyrimIOS PC2011 build=28; session gameplay requires observation";
+
+/* Restrict addresses to the pinned LE executable's .text section. */
+static uint32_t guestTextAddress(NSString *line, NSRange range) {
+    uint32_t value = (uint32_t)strtoul([line substringWithRange:range].UTF8String, NULL, 16);
+    return value >= 0x00401000 && value < 0x0106a31a ? value : 0;
+}
+
+typedef NS_ENUM(unsigned, SKStartupEnd) {
+    SKStartupNoRecord, SKStartupOtherFatal, SKStartupMissingCode, SKStartupMissingImport,
+    SKStartupInstruction, SKStartupBreakpoint, SKStartupException, SKStartupExit, SKStartupReturn
+};
+
+static SKStartupEnd startupEnd(NSString *line, uint32_t *target, uint32_t *caller) {
+    if ([line hasPrefix:@"FATAL: "]) {
+        static NSArray<NSRegularExpression *> *dispatchRules;
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{
+            dispatchRules = @[
+                [NSRegularExpression regularExpressionWithPattern:@"FATAL: no recompiled code at ([0-9a-fA-F]{8}) \\(return address ([0-9a-fA-F]{8})\\)" options:0 error:NULL],
+                [NSRegularExpression regularExpressionWithPattern:@"FATAL: unimplemented import [^\\r\\n]{1,512} \\(called from ([0-9a-fA-F]{8})\\)" options:0 error:NULL],
+                [NSRegularExpression regularExpressionWithPattern:@"FATAL: unimplemented instruction '[^\\r\\n]{1,256}' at ([0-9a-fA-F]{8})" options:0 error:NULL],
+                [NSRegularExpression regularExpressionWithPattern:@"FATAL: int3 at ([0-9a-fA-F]{8})" options:0 error:NULL]
+            ];
+        });
+        for (NSUInteger n = 0; n < dispatchRules.count; ++n) {
+            NSTextCheckingResult *match = [dispatchRules[n] firstMatchInString:line options:0 range:NSMakeRange(0, line.length)];
+            if (!match || !NSEqualRanges(match.range, NSMakeRange(0, line.length))) continue;
+            const uint32_t address = guestTextAddress(line, [match rangeAtIndex:1]);
+            if (n == 1) *caller = address;
+            else *target = address;
+            if (n == 0) *caller = guestTextAddress(line, [match rangeAtIndex:2]);
+            return (SKStartupEnd)(SKStartupMissingCode + n);
+        }
+        if (matches(@"FATAL: (?:RaiseException [0-9a-fA-F]{8}|C\\+\\+ exception thrown(?: in recompiled DLL)? \\(object [0-9a-fA-F]{8}, (?:type info|info) [0-9a-fA-F]{8}\\)|__CxxFrameHandler invoked)", line))
+            return SKStartupException;
+        return SKStartupOtherFatal;
+    }
+    if ([line hasPrefix:@"ExitProcess("] || [line hasPrefix:@"TerminateProcess("] || [line hasPrefix:@"msvcrt exit("])
+        return matches(@"(?:ExitProcess|TerminateProcess|msvcrt exit)\\(-?[0-9]{1,10}\\)", line) ? SKStartupExit : SKStartupNoRecord;
+    if ([line hasPrefix:@"Guest entry returned "])
+        return matches(@"Guest entry returned -?[0-9]{1,10}; no title success was inferred", line) ? SKStartupReturn : SKStartupNoRecord;
+    return SKStartupNoRecord;
+}
+
+/* This is a separate, short backward scan. Detailed logs from more recent
+ * successful launches keep their usual current and previous slots. */
+static NSData *readStartupLog(NSString *path, NSTimeInterval deadline) {
+    int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) return nil;
+    struct stat before, after;
+    const BOOL ready = !fstat(fd, &before) && S_ISREG(before.st_mode) &&
+        before.st_size > 0 && before.st_size <= kStartupLogLimit;
+    NSMutableData *raw = ready ? [NSMutableData dataWithLength:(NSUInteger)before.st_size] : nil;
+    uint8_t *bytes = raw.mutableBytes;
+    size_t offset = 0;
+    while (raw && offset < raw.length) {
+        if (NSProcessInfo.processInfo.systemUptime >= deadline) break;
+        const ssize_t count = read(fd, bytes + offset, raw.length - offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) break;
+        offset += (size_t)count;
+    }
+    const BOOL stable = raw && offset == raw.length && !fstat(fd, &after) &&
+        before.st_size == after.st_size && before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec &&
+        before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec;
+    close(fd);
+    return stable ? raw : nil;
+}
+
+static NSString *startupRecoveryRecord(NSData *raw) {
+    if (!raw.length) return nil;
+    const char *cursor = raw.bytes, *end = cursor + raw.length, *lf = NULL;
+    const char family[] = "SkyrimIOS PC2011 build=";
+    BOOL identified = NO;
+    /* NSLog or an early system message can precede the explicit header. */
+    for (NSUInteger i = 0; i < 24 && cursor < end; ++i) {
+        lf = memchr(cursor, '\n', (size_t)(end - cursor));
+        if (!lf) break;
+        const size_t len = (size_t)(lf - cursor);
+        if (len >= sizeof family - 1 && !memcmp(cursor, family, sizeof family - 1)) {
+            identified = len == kBuild28Header.length && !memcmp(cursor, kBuild28Header.UTF8String, len);
+            break;
+        }
+        cursor = lf + 1;
+    }
+    if (!identified) return nil;
+
+    BOOL guestEntry = NO, graphics = NO;
+    SKStartupEnd reason = SKStartupNoRecord;
+    uint32_t target = 0, caller = 0;
+    while ((cursor = lf + 1) < end && (lf = memchr(cursor, '\n', (size_t)(end - cursor)))) {
+        const size_t len = (size_t)(lf - cursor);
+        if (!len || len > SKYRIM_DIAGNOSTIC_MAX_LINE) continue;
+        @autoreleasepool {
+            NSString *line = [[NSString alloc] initWithBytes:cursor length:len encoding:NSUTF8StringEncoding];
+            if ([line hasPrefix:@"IOS_STAGE first-successful-present-title-not-verified "] && allowed(line))
+                return nil;
+            if ([line hasPrefix:@"IOS_STAGE guest-entry "] && allowed(line)) guestEntry = YES;
+            if (!guestEntry) continue;
+            if ([line hasPrefix:@"IOS_GRAPHICS_POLICY "] && allowed(line)) graphics = YES;
+            uint32_t observedTarget = 0, observedCaller = 0;
+            const SKStartupEnd observed = startupEnd(line, &observedTarget, &observedCaller);
+            if (observed != SKStartupNoRecord && (reason == SKStartupNoRecord || observed != SKStartupOtherFatal)) {
+                reason = observed;
+                target = observedTarget;
+                caller = observedCaller;
+            }
+        }
+    }
+    if (!guestEntry) return nil;
+    return [NSString stringWithFormat:@"%@schema=1 build=28 guest_entry=1 graphics=%u reason=%u target=%08x caller=%08x",
+        kRecoveryPrefix, (unsigned)graphics, (unsigned)reason, (unsigned)target, (unsigned)caller];
+}
+
+static void appendStartupRecovery(NSMutableDictionary *now, NSArray<NSDictionary *> *candidates) {
+    const NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 3;
+    NSArray<NSDictionary *> *newest = [candidates sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        NSComparisonResult result = [b[@"seconds"] compare:a[@"seconds"]];
+        if (result == NSOrderedSame) result = [b[@"nanos"] compare:a[@"nanos"]];
+        return result == NSOrderedSame ? [a[@"path"] compare:b[@"path"]] : result;
+    }];
+    const NSUInteger limit = MIN(newest.count, kStartupSearchLimit);
+    for (NSUInteger i = 0; i < limit && NSProcessInfo.processInfo.systemUptime < deadline; ++i) {
+        @autoreleasepool {
+            NSString *record = startupRecoveryRecord(readStartupLog(newest[i][@"path"], deadline));
+            if (!record) continue;
+            NSArray<NSString *> *lines = now[@"lines"];
+            if (lines.count >= SKYRIM_DIAGNOSTIC_MAX_SESSION_LINES) return;
+            NSUInteger bytes = record.length + 1; // the record is ASCII
+            for (NSString *line in lines) bytes += [line lengthOfBytesUsingEncoding:NSUTF8StringEncoding] + 1;
+            if (bytes <= kSessionLimit) now[@"lines"] = [lines arrayByAddingObject:record];
+            return;
+        }
+    }
+}
+
 static NSDictionary *session(NSString *path, BOOL live, NSError **error) {
     int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) { if (error) *error = captureError(); return nil; }
@@ -102,7 +244,7 @@ static NSDictionary *session(NSString *path, BOOL live, NSError **error) {
                 }
                 NSString *errorCode = numericStaticError(text);
                 if (errorCode) text = errorCode;
-                if (allowed(text)) {
+                if (![text hasPrefix:kRecoveryPrefix] && allowed(text)) {
                     keptBytes += [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] + 1;
                     if (keptBytes > kSessionLimit || lines.count >= SKYRIM_DIAGNOSTIC_MAX_SESSION_LINES) failed = YES;
                     else [lines addObject:text];
@@ -134,6 +276,7 @@ NSDictionary *skyrim_diagnostics_capture(NSString *directory, NSString *current,
     NSArray *names = [NSFileManager.defaultManager contentsOfDirectoryAtPath:directory error:error];
     if (!names || names.count > 10000) { if (error) *error = captureError(); return nil; }
     NSString *previous;
+    NSMutableArray<NSDictionary *> *startupLogs = [NSMutableArray array];
     struct timespec latest = {0, 0};
     for (NSString *name in names) {
         if (![name hasPrefix:@"run-"] || ![name hasSuffix:@".log"]) continue;
@@ -142,11 +285,15 @@ NSDictionary *skyrim_diagnostics_capture(NSString *directory, NSString *current,
         struct stat s;
         if (lstat(path.fileSystemRepresentation, &s) || !S_ISREG(s.st_mode)) continue;
         struct timespec date = s.st_mtimespec;
+        if (s.st_size > 0 && s.st_size <= kStartupLogLimit)
+            [startupLogs addObject:@{@"path":path, @"seconds":@(date.tv_sec), @"nanos":@(date.tv_nsec)}];
         if (!previous || date.tv_sec > latest.tv_sec || (date.tv_sec == latest.tv_sec && date.tv_nsec > latest.tv_nsec)) {
             previous = path; latest = date;
         }
     }
-    NSMutableArray *sessions = [NSMutableArray arrayWithObject:now];
+    NSMutableDictionary *live = [now mutableCopy];
+    appendStartupRecovery(live, startupLogs);
+    NSMutableArray *sessions = [NSMutableArray arrayWithObject:live];
     if (previous) {
         NSDictionary *last = session(previous, NO, error);
         if (!last) return nil; // Explicit failure, never silently claim both were sent.
