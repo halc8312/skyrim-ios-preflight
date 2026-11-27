@@ -90,8 +90,10 @@ typedef enum SkyrimDiagnosticSettingKey {
     X("IOS_WATER_PREFS", "^IOS_WATER_PREFS schema=1 dof=(?:-1|[01]) samples=(?:-1|[0-9]|1[0-6])$") \
     X("IOS_WATER_DRAW", "^IOS_WATER_DRAW schema=1 scene=[12] kind=[1-3] count=[0-9]{1,5} depth=[0-9]{1,5}(?:,[0-9]{1,5}){3} ms_depth=[0-9]{1,5} color=[0-9]{1,5}(?:,[0-9]{1,5}){2} params=[0-9]{1,5}(?:,[0-9]{1,5}){3}$") \
     X("IOS_WATER_CAMERA", "^IOS_WATER_CAMERA schema=1 scene=[12] count=[0-9]{1,5} endpoints=[0-9]{1,5}(?:,[0-9]{1,5}){8}$") \
-    X("IOS_WATER_VIEW", "^IOS_WATER_VIEW schema=1 scene=[12] role=[12] format=[0-9]{1,10} aspect=[0-9]{1,3} width=[0-9]{1,5} height=[0-9]{1,5} flags=(?:[0-9]{1,2}|1[01][0-9]|12[0-7]) count=[0-9]{1,5}$") \
-    X("IOS_WATER_PIXELS", "^IOS_WATER_PIXELS schema=1 scene=[12] role=[12] draw=[1-9][0-9]{0,4} format=[0-9]{1,10} nonfinite=[0-5] outside=[0-5] zero=[0-5] one=[0-5] interior=[0-5] varies=[01]$") \
+    X("IOS_WATER_COMPOSITE", "^IOS_WATER_COMPOSITE schema=1 scene=[12] count=[0-9]{1,5} projection=[0-9]{1,5}(?:,[0-9]{1,5}){8} blur=[0-9]{1,5}(?:,[0-9]{1,5}){3} tint=[0-9]{1,5}(?:,[0-9]{1,5}){3} sky=[0-9]{1,5}(?:,[0-9]{1,5}){3}$") \
+    X("IOS_WATER_VIEW", "^IOS_WATER_VIEW schema=1 scene=[12] role=[1-5] format=[0-9]{1,10} aspect=[0-9]{1,3} width=[0-9]{1,5} height=[0-9]{1,5} flags=(?:[0-9]{1,2}|1[01][0-9]|12[0-7]) count=[0-9]{1,5}$") \
+    X("IOS_WATER_PIXELS", "^IOS_WATER_PIXELS schema=1 scene=[12] role=[1-5] draw=[1-9][0-9]{0,4} format=[0-9]{1,10} nonfinite=[0-5] outside=[0-5] zero=[0-5] one=[0-5] interior=[0-5] varies=[01]$") \
+    X("IOS_WATER_TINT", "^IOS_WATER_TINT schema=1 scene=[12] draw=[1-9][0-9]{0,4} invalid=[0-5] clear=[0-5] partial=[0-5] near_full=[0-5] sky=[0-5]$") \
     X("IOS_WATER_SUMMARY", "^IOS_WATER_SUMMARY schema=1 scene=[12] end=[12] frames=[0-3] checked=[0-9]{1,5} fixed=[0-9]{1,5} unknown=[0-9]{1,5} other=[0-9]{1,5} limited=[01]$") \
     X("IOS_RENDER_BUFFER", "^IOS_RENDER_BUFFER width=(?:[1-9][0-9]{0,3}|1[0-5][0-9]{3}|16[0-2][0-9]{2}|163[0-7][0-9]|1638[0-4]) height=(?:[1-9][0-9]{0,3}|1[0-5][0-9]{3}|16[0-2][0-9]{2}|163[0-7][0-9]|1638[0-4])$") \
     X("IOS_DIAG_RECOVERY", "^IOS_DIAG_RECOVERY schema=1 build=28 guest_entry=1 graphics=[01] reason=[0-8] target=[0-9a-f]{8} caller=[0-9a-f]{8}$") \

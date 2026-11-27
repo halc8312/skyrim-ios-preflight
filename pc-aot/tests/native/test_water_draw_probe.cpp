@@ -57,6 +57,7 @@ static Bytes pixel(std::initializer_list<Constant> constants) {
 static Layout layout(const Bytes& bytes) { return classify(bytes.data(), bytes.size()); }
 static unsigned reads = 0;
 static CaptureTag lastTag;
+static CaptureTag compositeTag;
 static Inputs readInputs(void*, const Layout& kind, CaptureTag tag) {
     ++reads;
     lastTag = tag;
@@ -64,6 +65,22 @@ static Inputs readInputs(void*, const Layout& kind, CaptureTag tag) {
     const float camera[4] = {4.0f, 0.0f, 3.0f, 0.0f};
     Inputs inputs{Binding::ColorUsage, Binding::Unbound, false, Params::FiniteNonzero, classifyCamera(camera)};
     inputs.views[0] = {100, 1, 1564, 720, ViewBound | ViewRenderTarget};
+    return inputs;
+}
+static Inputs readCompositeInputs(void*, const Layout& l, CaptureTag tag) {
+    assert(l.family == Family::ImageBlur && l.depth == 2 && l.color == 1 && l.params == 0);
+    assert(l.composite.sharp == 0 && l.composite.controls == 1 && l.composite.projection == 2);
+    assert(l.composite.tint == 3 && l.composite.tintRange == 4);
+    compositeTag = tag;
+    Inputs inputs;
+    inputs.depth = inputs.color = Binding::ColorUsage;
+    inputs.params = Params::FiniteNonzero;
+    const float enabled[]{1, 0, 0, 1}, projection[]{0, 0.5f, 0.5f, 1};
+    const float tint[]{0.3f, 0.5f, 0.7f, 0}, distances[]{2.4f, 1.1f, 0, 0};
+    inputs.composite = classifyComposite(enabled, projection, tint, distances);
+    inputs.views[unsigned(PixelRole::CompositeDepth) - 1] = {100, 1, 31, 17, ViewBound};
+    inputs.views[unsigned(PixelRole::CompositeSharp) - 1] = {44, 1, 31, 17, ViewBound | ViewRenderTarget};
+    inputs.views[unsigned(PixelRole::CompositeBlurred) - 1] = {44, 1, 15, 8, ViewBound};
     return inputs;
 }
 static void checkPixelReadback() {
@@ -88,6 +105,8 @@ static void checkPixelReadback() {
     assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::R32Float, PixelRole::Depth, summary));
     assert(summary.zero == 1 && summary.one == 1 && summary.interior == 1 &&
            summary.outside == 1 && summary.nonfinite == 1 && summary.varies);
+    assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::R32Float, PixelRole::CompositeDepth, summary));
+    assert(summary.zero == 1 && summary.one == 1 && summary.interior == 1 && summary.varies);
     for (size_t i = 0; i < 5; ++i) set(bytes, i * 4, i < 2 ? 0x3e808081 : 0x3f3fbfc0, 4);
     assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::R32Float, PixelRole::Depth, summary));
     assert(summary.interior == 5 && summary.varies);
@@ -110,6 +129,25 @@ static void checkPixelReadback() {
     for (size_t i = 0; i < 5; ++i) set(bytes, i * 4, (uint32_t(i) << 24) | 0x706050, 4);
     assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::Bgra8Unorm, PixelRole::Refraction, summary));
     assert(summary.interior == 5 && !summary.varies); // alpha changes only
+    assert(summarizePixels(bytes.data(), bytes.size(), PixelEncoding::Bgra8Unorm, PixelRole::CompositeSharp, summary));
+    assert(summary.interior == 5 && !summary.varies);
+    assert(!summarizePixels(bytes.data(), bytes.size(), PixelEncoding::Bgra8Unorm, PixelRole(0), summary));
+
+    bytes.assign(20, 0);
+    for (size_t i = 0; i < 5; ++i) bytes[i * 4] = std::array{64, 128, 191, 254, 255}[i];
+    const float projection[]{0, 0.5f, 0.5f, 1}, distances[]{0.9f, 0.3f, 0, 0};
+    const float tint[]{0.2f, 0.3f, 0.5f, 1}, guarded[]{1, 1, 1, 1}, unguarded[]{1, 1, 1, 0};
+    auto model = compositeTint(guarded, projection, tint, distances);
+    TintSummary projected;
+    assert(summarizeTint(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, model, projected));
+    assert(projected.nearFull == 4 && projected.clear == 1 && projected.sky == 1);
+    model = compositeTint(unguarded, projection, tint, distances);
+    assert(summarizeTint(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, model, projected));
+    assert(projected.nearFull == 5 && !projected.sky);
+    model.strength = 0.5f;
+    assert(summarizeTint(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, model, projected));
+    assert(projected.partial == 5 && !projected.nearFull);
+    assert(!summarizeTint(bytes.data(), bytes.size(), PixelEncoding::R8Unorm, {}, projected));
 }
 int main(int argc, char**) {
     checkPixelReadback();
@@ -179,6 +217,17 @@ int main(int argc, char**) {
     assert(camera(-2, -3) == Camera::CrossesZero);
     assert(camera(2, -2) == Camera::Increasing);
     assert(camera(2, 1) == Camera::Decreasing);
+    using Control = CompositeControl;
+    const float disabled[]{0, 0, 0, 1}, tint[]{0, 0.5f, 0.75f, 1};
+    const float projection[]{0, 0.5f, 0.5f, 1}, distances[]{2, 1, 0, 0};
+    const auto activeTint = classifyComposite(disabled, projection, tint, distances);
+    assert(activeTint.blur == Control::Disabled && activeTint.tint == Control::Enabled &&
+           activeTint.projection == Camera::Decreasing && activeTint.skyGuard == Control::Enabled);
+    const float zeroRange[]{1, 1, 0, 0};
+    assert(classifyComposite(nullptr, nullptr, tint, zeroRange).tint == Control::Invalid);
+    assert(classifyComposite(nullptr, nullptr, tint, nullptr).tint == Control::Unavailable);
+    const float infiniteDistance[]{0, 0, 0.5f, 1};
+    assert(classifyComposite(nullptr, infiniteDistance, nullptr, nullptr).projection == Camera::ZeroAtDepth1);
 
     Window window;
     int device = 0, swap = 0, second = 0;
@@ -217,7 +266,7 @@ int main(int argc, char**) {
     const auto captured = lastTag;
     assert(captured.scene == SKYRIM_WATER_PROBE_SURFACE && captured.sequence != 0 && captured.draw == 2);
     assert(window.acceptsPixels(captured, 4024));
-    assert(!window.acceptsPixels({captured.sequence, captured.scene, captured.draw + 1}, 4024));
+    assert(!window.acceptsPixels({captured.sequence, captured.scene, captured.draw + 1, captured.family}, 4024));
     assert(window.acceptsPixels(captured, 15010) && !window.acceptsPixels(captured, 15011));
     window.request(SKYRIM_WATER_PROBE_SUBMERGED, 5000);
     assert(!window.acceptsPixels(captured, 5010));
@@ -247,12 +296,20 @@ int main(int argc, char**) {
         std::this_thread::sleep_for(std::chrono::milliseconds(4050));
         present(&device, &swap);
         draw(&device, &cached, water.data(), water.size(), readInputs);
+        const auto composite = pixel({{"Depth", 3, 2}, {"Blurred", 3, 1}, {"Image", 3, 0},
+                                      {"params", 2, 0}, {"params2", 2, 1}, {"params3", 2, 2},
+                                      {"params4", 2, 3}, {"params5", 2, 4}});
+        Layout compositeCache;
+        draw(&device, &compositeCache, composite.data(), composite.size(), readCompositeInputs);
         for (unsigned i = 0; i < Window::Frames; ++i) present(&device, &swap);
         assert(phase.load() == Phase::Idle);
         const auto tag = lastTag;
         assert(pixelsCurrent(tag));
         PixelSummary summary{0, 0, 0, 0, 5, true};
         reportPixels(tag, PixelRole::Depth, 100, summary);
+        reportPixels(compositeTag, PixelRole::CompositeDepth, 100, summary);
+        reportTint(compositeTag, {0, 1, 0, 4, 1});
+        reportPixels(compositeTag, PixelRole::Refraction, 44, summary); // mismatched capture kind
         skyrim_water_probe_request(SKYRIM_WATER_PROBE_SURFACE);
         assert(!pixelsCurrent(tag));
         reportPixels(tag, PixelRole::Depth, 100, summary);  // a replaced capture must not report

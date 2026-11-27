@@ -535,12 +535,13 @@ def observe_water_draw(name: str, text: str) -> str:
       Rc<DxvkBuffer> buffer;
       Rc<sync::Fence> ready;
       skyrim_water::PixelEncoding encoding = skyrim_water::PixelEncoding::R32Float;
+      skyrim_water::CompositeTint tint;
       unsigned format = VK_FORMAT_UNDEFINED;
     };
-    std::array<IosWaterReadback, 2> m_iosWaterReadbacks{};
+    std::array<IosWaterReadback, skyrim_water::PixelRoles> m_iosWaterReadbacks{};
     void PollWaterReadbacks();
     void QueueWaterReadback(const Rc<DxvkImageView>& view, const skyrim_water::SampleView& sample,
-        skyrim_water::CaptureTag tag, skyrim_water::PixelRole role);''')
+        skyrim_water::CaptureTag tag, skyrim_water::PixelRole role, const skyrim_water::CompositeTint& tint);''')
     if name.endswith('d3d9_shader.h'):
         return '#include "water_probe.h"\n' + once(text, '    D3D9PixelShader(\n',
             '    skyrim_water::Layout iosWaterLayout{};\n\n    D3D9PixelShader(\n')
@@ -566,7 +567,7 @@ def observe_water_draw(name: str, text: str) -> str:
 
   void D3D9DeviceEx::QueueWaterReadback(const Rc<DxvkImageView>& view,
       const skyrim_water::SampleView& sample, skyrim_water::CaptureTag tag,
-      skyrim_water::PixelRole role) {
+      skyrim_water::PixelRole role, const skyrim_water::CompositeTint& tint) {
     using namespace skyrim_water;
     auto& pending = m_iosWaterReadbacks[unsigned(role) - 1];
     if (pending.buffer != nullptr || pending.tag.sequence == tag.sequence ||
@@ -586,7 +587,7 @@ def observe_water_draw(name: str, text: str) -> str:
     };
     if (!maps(v.swizzle.r, VK_COMPONENT_SWIZZLE_R)) return;
     PixelEncoding encoding;
-    if (role == PixelRole::Depth) {
+    if (depthRole(role)) {
       if (v.format != image.format) return;
       switch (v.format) {
         case VK_FORMAT_R32_SFLOAT:    encoding = PixelEncoding::R32Float; break;
@@ -631,6 +632,7 @@ def observe_water_draw(name: str, text: str) -> str:
     }
     pending.encoding = encoding;
     pending.format = sample.format;
+    pending.tint = tint;
     const VkImageSubresourceLayers layers{v.aspect, v.minLevel, v.minLayer, 1};
     EmitCs([buffer = pending.buffer, ready = pending.ready, source = view->image(),
             layers, points](DxvkContext* ctx) {
@@ -663,6 +665,10 @@ def observe_water_draw(name: str, text: str) -> str:
             PixelSummary summary;
             if (summarizePixels(bytes.data(), bytes.size(), pending.encoding, role, summary))
               reportPixels(pending.tag, role, pending.format, summary);
+            TintSummary tintSummary;
+            if (role == PixelRole::CompositeDepth &&
+                summarizeTint(bytes.data(), bytes.size(), pending.encoding, pending.tint, tintSummary))
+              reportTint(pending.tag, tintSummary);
           }
         }
       }
@@ -696,12 +702,14 @@ def observe_water_draw(name: str, text: str) -> str:
           inputs.depth = binding(layout.depth, &depthMs);
           inputs.color = binding(layout.color, nullptr);
           inputs.depthMultisampled = depthMs;
-          inputs.params = skyrim_water::classifyParams(layout.params < 0 ? nullptr :
-            self->m_state.psConsts.fConsts[layout.params].data);
-          if (layout.camera >= 0)
-            inputs.camera = skyrim_water::classifyCamera(self->m_state.psConsts.fConsts[layout.camera].data);
-          if (layout.family == skyrim_water::Family::WaterFog) {
-            const auto describe = [self, tag](int slot, skyrim_water::PixelRole role) {
+          const auto constants = [self](int slot) {
+            return slot < 0 ? nullptr : self->m_state.psConsts.fConsts[slot].data;
+          };
+          inputs.params = skyrim_water::classifyParams(constants(layout.params));
+          inputs.camera = skyrim_water::classifyCamera(constants(layout.camera));
+          if (layout.family == skyrim_water::Family::WaterFog || layout.family == skyrim_water::Family::ImageBlur) {
+            const auto describe = [self, tag](int slot, skyrim_water::PixelRole role,
+                const skyrim_water::CompositeTint& tint) {
               using namespace skyrim_water;
               SampleView result;
               if (slot < 0) return result;
@@ -729,11 +737,29 @@ def observe_water_draw(name: str, text: str) -> str:
               const auto& depth = self->m_state.depthStencil;
               if (depth != nullptr && depth->GetCommonTexture()->GetImage().ptr() == image)
                 result.flags |= ViewAliasesDepth;
-              self->QueueWaterReadback(view, result, tag, role);
+              self->QueueWaterReadback(view, result, tag, role, tint);
               return result;
             };
-            inputs.views[0] = describe(layout.depth, skyrim_water::PixelRole::Depth);
-            inputs.views[1] = describe(layout.color, skyrim_water::PixelRole::Refraction);
+            const auto sample = [&inputs, &describe](int slot, skyrim_water::PixelRole role,
+                const skyrim_water::CompositeTint& tint = {}) {
+              inputs.views[unsigned(role) - 1] = describe(slot, role, tint);
+            };
+            using skyrim_water::PixelRole;
+            if (layout.family == skyrim_water::Family::WaterFog) {
+              sample(layout.depth, PixelRole::Depth);
+              sample(layout.color, PixelRole::Refraction);
+            } else {
+              const auto& c = layout.composite;
+              const auto* controls = constants(c.controls);
+              const auto* projection = constants(c.projection);
+              const auto* colorTint = constants(c.tint);
+              const auto* tintRange = constants(c.tintRange);
+              inputs.composite = skyrim_water::classifyComposite(controls, projection, colorTint, tintRange);
+              sample(layout.depth, PixelRole::CompositeDepth,
+                  skyrim_water::compositeTint(controls, projection, colorTint, tintRange));
+              sample(c.sharp, PixelRole::CompositeSharp);
+              sample(layout.color, PixelRole::CompositeBlurred);
+            }
           }
           return inputs;
         });

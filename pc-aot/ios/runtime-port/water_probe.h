@@ -17,9 +17,13 @@ void skyrim_water_probe_request(unsigned scene);
 
 namespace skyrim_water {
 enum class Family : uint8_t { Unparsed, Unknown, Other, WaterFog, ImageBlur, ImageDepth };
+struct CompositeLayout {
+    int16_t sharp = -1, controls = -1, projection = -1, tint = -1, tintRange = -1;
+};
 struct Layout {
     Family family = Family::Unparsed;
     int16_t depth = -1, color = -1, params = -1, camera = -1;
+    CompositeLayout composite{};
 };
 Layout classify(const uint8_t* code, size_t length);
 
@@ -32,6 +36,20 @@ enum class Camera : uint8_t {
     CrossesZero, Increasing, Decreasing
 };
 Camera classifyCamera(const float* values);
+enum class CompositeControl : uint8_t { Unavailable, Invalid, Disabled, Enabled };
+struct CompositeInputs {
+    Camera projection = Camera::Unavailable;
+    CompositeControl blur = CompositeControl::Unavailable, tint = CompositeControl::Unavailable,
+                     skyGuard = CompositeControl::Unavailable;
+};
+CompositeInputs classifyComposite(const float* controls, const float* projection,
+                                  const float* tint, const float* tintRange);
+struct CompositeTint {
+    bool valid = false, skyGuard = false;
+    float base = 0, slope = 0, numerator = 0, strength = 0, from = 0, to = 0;
+};
+CompositeTint compositeTint(const float* controls, const float* projection,
+                            const float* tint, const float* tintRange);
 enum ViewFlags : unsigned {
     ViewBound = 1, ViewRenderTarget = 2, ViewDepthStencil = 4,
     ViewSrgbRequested = 8, ViewShadow = 16, ViewAliasesColor = 32, ViewAliasesDepth = 64
@@ -45,12 +63,17 @@ struct SampleView {
 };
 struct ViewCount { SampleView view{}; unsigned draws = 0; };
 enum class PixelEncoding : uint8_t { R32Float, R16Float, R8Unorm, Rgba8Unorm, Bgra8Unorm };
-enum class PixelRole : unsigned { Depth = 1, Refraction = 2 };
+enum class PixelRole : unsigned {
+    Depth = 1, Refraction, CompositeDepth, CompositeSharp, CompositeBlurred
+};
+constexpr unsigned PixelRoles = unsigned(PixelRole::CompositeBlurred);
+constexpr bool depthRole(PixelRole role) { return role == PixelRole::Depth || role == PixelRole::CompositeDepth; }
 struct PixelPoint { uint32_t x, y; };
 using PixelPoints = std::array<PixelPoint, 5>;
 struct CaptureTag {
     uint64_t sequence = 0;
     unsigned scene = 0, draw = 0;
+    Family family = Family::Unparsed;
 };
 // Five single texels at the center and in the four quadrants. Tiny views are omitted.
 bool pixelPoints(uint32_t width, uint32_t height, PixelPoints& result);
@@ -58,16 +81,22 @@ struct PixelSummary {
     unsigned nonfinite = 0, outside = 0, zero = 0, one = 0, interior = 0;
     bool varies = false;
 };
+struct TintSummary {
+    unsigned invalid = 0, clear = 0, partial = 0, nearFull = 0, sky = 0;
+};
 // Each texel starts four bytes after the previous one, regardless of its format.
 // Only counts leave the probe. For refraction compare RGB, ignoring alpha.
 bool summarizePixels(const uint8_t* bytes, size_t length, PixelEncoding encoding,
                      PixelRole role, PixelSummary& result);
+bool summarizeTint(const uint8_t* bytes, size_t length, PixelEncoding encoding,
+                   const CompositeTint& model, TintSummary& result);
 struct Inputs {
     Binding depth = Binding::Undeclared, color = Binding::Undeclared;
     bool depthMultisampled = false;
     Params params = Params::Undeclared;
     Camera camera = Camera::Unavailable;
-    std::array<SampleView, 2> views{}; // WaterFog depth and refraction, respectively
+    std::array<SampleView, PixelRoles> views{};
+    CompositeInputs composite{};
 };
 using ReadInputs = Inputs (*)(void* device, const Layout& layout, CaptureTag tag);
 struct Counts {
@@ -87,7 +116,9 @@ struct Window {
     bool limited = false;
     std::array<Counts, 3> groups{};
     std::array<unsigned, 9> cameraCounts{};
-    std::array<std::array<ViewCount, 8>, 2> sampleViews{};
+    std::array<std::array<ViewCount, 8>, PixelRoles> sampleViews{};
+    std::array<unsigned, 9> compositeProjection{};
+    std::array<unsigned, 4> compositeBlur{}, compositeTint{}, compositeSkyGuard{};
     void request(unsigned label, uint64_t nowMs);
     End expire(uint64_t nowMs);
     End present(void* device, const void* chain, uint64_t nowMs);
@@ -107,5 +138,6 @@ void present(void* device, const void* chain);
 void draw(void* device, Layout* cached, const uint8_t* code, size_t length, ReadInputs read);
 bool pixelsCurrent(CaptureTag tag);
 void reportPixels(CaptureTag tag, PixelRole role, unsigned format, const PixelSummary& summary);
+void reportTint(CaptureTag tag, const TintSummary& summary);
 }
 #endif
