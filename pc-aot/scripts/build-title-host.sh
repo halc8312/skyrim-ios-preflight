@@ -177,6 +177,9 @@ fi
 # The runtime adapter verifies its own upstream anchors. Apply it to pristine
 # upstream, then apply the CPU ABI patches to the staged runtime only.
 python3 ios/runtime-port/prepare_runtime.py --source "$ROOT/vendor/skydream" --output "$RUN/overlay/runtime"
+# Lightweight mode: three calls in the staged ini functions. A separate step so prepare_runtime.py (an input of
+# the pipeline-cache identity) is unchanged; with the mode off the calls do nothing.
+python3 ios/runtime-port/prepare_lightweight.py "$RUN/overlay/runtime/skyrim_shims.c"
 git -C "$RUN/overlay" init -q
 for patch in patches/skydream/0001-auxiliary-carry.patch patches/skydream/0005-call-flags.patch patches/skydream/0006-inline-ordered-stores.patch; do
   git -C "$RUN/overlay" apply --include='runtime/*' "$ROOT/$patch"

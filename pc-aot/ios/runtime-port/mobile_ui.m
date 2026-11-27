@@ -21,6 +21,7 @@
 #include "pipeline_cache_control.h"
 #include "device_policy.h"
 #include "present_pacing_core.h"
+#include "lightweight_core.h"
 #include "game_language.h"
 #include "mod_plugins.h"
 #include "mod_manager.h"
@@ -146,7 +147,7 @@ static void logDiagnosticSettings(void) {
      * The language result record separately reports the actual pack fallback. */
     const char *keys[] = {"fps", "thermal", "language", "verbose", "hud", "resolution",
         "texture", "anisotropy", "fxaa", "msaa", "shadow", "shadowDistance", "grass",
-        "objects", "water", "decals", "autosave", "game_text", "game_voices"};
+        "objects", "water", "decals", "autosave", "game_text", "game_voices", "lightweight"};
     for (unsigned i = 0; i < sizeof keys / sizeof keys[0]; ++i) {
         NSString *key = [NSString stringWithUTF8String:keys[i]];
         BOOL live = i <= SKYRIM_DIAG_SETTING_LANGUAGE || i == SKYRIM_DIAG_SETTING_HUD;
@@ -194,6 +195,12 @@ static NSArray<NSDictionary *> *graphicsRows(void) {
       @{@"key":@"decals", @"title":L(@"Decals", @"血痕・着弾跡"), @"values":@[@-1,@0,@1], @"labels":@[L(@"Keep current", @"維持"),L(@"Off", @"オフ"),L(@"On", @"オン")]}
     ];
 }
+/* Lightweight mode: its own row, deliberately not part of graphicsRows() (the presets map
+ * that list by position). It never writes the game's ini files; see lightweight_core.h. */
+static NSDictionary *lightweightRow(void) {
+    return @{@"key":@"lightweight", @"title":L(@"Lightweight mode", @"軽量モード"), @"values":@[@0,@1,@2], @"default":@0,
+        @"labels":@[L(@"Off", @"オフ"),L(@"Light", @"軽量"),L(@"Lighter", @"さらに軽量")]};
+}
 static NSArray<NSDictionary *> *shaderRows(void) {
     NSArray *titles = @[L(@"Parallel shader preparation", @"シェーダー準備を並列化"),
         L(@"Prioritize gameplay preparation", @"プレイ中に必要な準備を優先"),
@@ -234,6 +241,7 @@ void skyrim_mobile_initialize(const char *profile) {
         NSNumber *choice = settings[row[@"key"]];
         if (choice && ![row[@"values"] containsObject:choice]) [settings removeObjectForKey:row[@"key"]];
     }
+    if (![lightweightRow()[@"values"] containsObject:@(value(@"lightweight",0))]) [settings removeObjectForKey:@"lightweight"];
     if (![@[@0,@24,@30,@40,@60] containsObject:@(value(@"fps",0))]) [settings removeObjectForKey:@"fps"];
     if (![@[@0,@1] containsObject:@(value(@"language",0))]) [settings removeObjectForKey:@"language"];
     if (![@[@0,@1] containsObject:@(value(@"game_text",0))]) [settings removeObjectForKey:@"game_text"];
@@ -272,6 +280,12 @@ void skyrim_mobile_initialize(const char *profile) {
         integerINI("Decals","uMaxSkinDecals",enabled ? 50 : 0);
         integerINI("Decals","uMaxSkinDecalPerActor",enabled ? 20 : 0);
     }
+    /* Lightweight mode runs only after the explicit overrides above are complete and unchanged.
+     * It never edits an ini file: the game's reads are lowered at read time (lightweight_core.c),
+     * and every key the player chose explicitly is left exactly as chosen. */
+    NSNumber *lightweight = startup[@"lightweight"];
+    skyrim_light_set_mode([lightweight isKindOfClass:NSNumber.class] ? lightweight.intValue : 0);
+    for (unsigned i = 0; i < iniCount; ++i) skyrim_light_exempt(ini[i].section, ini[i].key);
 }
 static BOOL applyGameLanguageProfile(const char *gameDirectory) {
     NSString *folder = [profilePath stringByAppendingPathComponent:@"Documents/My Games/Skyrim"];
@@ -561,7 +575,7 @@ int skyrim_mobile_ini(unsigned index, const char **section, const char **key, co
             integerINI("Display", "iSize W", renderWidth);
             integerINI("Display", "iSize H", renderHeight);
         }
-        fprintf(stderr,"IOS_GRAPHICS override_count=%u resolution=%dx%d\n",iniCount,renderWidth,renderHeight);
+        fprintf(stderr,"IOS_GRAPHICS override_count=%u resolution=%dx%d lightweight=%d\n",iniCount,renderWidth,renderHeight,skyrim_light_mode());
     }
     if (index >= iniCount) return 0;
     *section = ini[index].section; *key = ini[index].key; *out = ini[index].value;
@@ -776,7 +790,7 @@ static NSString *choiceLabel(NSDictionary *row, NSNumber *choice) {
 - (void)viewWillDisappear:(BOOL)animated { shaderSettingsPermission(NO); [super viewWillDisappear:animated]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)table { return 9; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
-    return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+1 : section==3 ? 2 : section==5 ? 3 : section==6 ? shaderRows().count : 1;
+    return section==0 ? 4 : section==1 ? 5 : section==2 ? graphicsRows().count+2 : section==3 ? 2 : section==5 ? 3 : section==6 ? shaderRows().count : 1;
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
     return @[L(@"Frame rate & temperature", @"フレームレートと発熱"),L(@"Touch controls", @"タッチ操作"),L(@"Graphics — applies after restart", @"画質 — 次回起動から反映"),L(@"Control layout", @"ボタン配置"),L(@"Saving — applies after restart", @"保存 — 次回起動から反映"),@"Language",L(@"Shader trials — applies after restart", @"シェーダー改善の比較 — 次回起動から反映"),L(@"Diagnostics", @"診断"),L(@"MOD — applies after restart", @"MOD — 次回起動から反映")][section];
@@ -794,7 +808,7 @@ static NSString *unevenCadenceNote(void) {
         @"今回と前回の起動の性能・設定・エラー番号を、登録した自分のPCへ送ります。ゲームデータやセーブは送りません。先にゲームのシステムメニューを開き、PCを起動してTailscaleを接続してください。送信できたら、このチャットで知らせてください。");
     if (section==0) { NSString *base = L(@"FPS is a limit, not a target guarantee. A 30 FPS limit can reduce heat. Thermal protection caps FPS at 30 / 24 when iOS reports serious / critical heat. Detailed logs apply after restart.", @"FPSは上限です。発熱を抑えるなら30を目安に。自動抑制はiOSが高温を報告した時に30／24へ上限を下げます。詳細ログは次回起動から反映。"); NSString *note = unevenCadenceNote(); return note ? [base stringByAppendingFormat:@"\n%@", note] : base; }
     if (section==1) return L(@"Drag outside the buttons to look. Use the arrows and LB / RB to navigate menus, and LT / RT for the left and right hands. Hold L+R to use both hands together.", @"ボタン以外をドラッグして視点移動。十字キーとLB／RBでメニュー移動、LT／RTで左右の手を操作します。「両手」を長押しすると左右の手を同時に使えます。");
-    if (section==2) return L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。");
+    if (section==2) return L(@"Save in the game, then fully close and reopen the app to apply graphics changes. Keep current stops future overrides; it does not restore old values. Ultra may reduce frame rate. Lightweight mode only lowers values that are above its limits and never changes the saved files: Off returns to your own settings. Rows you set above are left as you chose.", @"変更後はゲーム内で保存し、アプリを完全終了して開き直してください。「維持」は以降の上書きを止める選択で、以前の値には戻しません。最高画質でも滑らかに動く保証はありません。軽量モードは、上限より重い値だけをゲームが読むときに下げ、保存ファイルは変えません。オフにすればご自身の設定に戻ります。上で個別に選んだ項目はそのまま使います。");
     if (section==3) return L(@"These settings do not pause the game. Open the game system menu first. Quick save sends F5 and checks for a changed save file; it is not an emulator save state.", @"設定画面だけではゲームは一時停止しません。先にシステムメニューを開いてください。クイックセーブはゲームのF5入力を送り、保存ファイルの更新を確認します。実行状態を丸ごと復元するステートセーブではありません。");
     if (section==4) return L(@"Save in the game, then fully close and reopen the app to apply. Off disables saves on pause, travel, waiting and rest; save manually while it is off. Keep current preserves the current values, including a previous Off choice. The game menu can still change them during play.", @"ゲーム内で保存し、アプリを完全終了して開き直すと反映します。オフではメニュー・移動・待機・休息時の自動保存を止めるため、手動で保存してください。「維持」は以前のオフも含めた現在値を保ちます。プレイ中はゲーム内設定からも変更できます。");
     if (section==5) {
@@ -827,6 +841,7 @@ static NSString *unevenCadenceNote(void) {
         @{@"key":@"game_text",@"title":L(@"Game text — after restart", @"ゲームのテキスト — 次回起動"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]},
         @{@"key":@"game_voices",@"title":L(@"Game voices — after restart", @"ゲームの音声 — 次回起動"),@"values":@[@0,@1],@"labels":@[@"English",@"日本語"]}
     ][p.row];
+    if (p.section==2 && (NSUInteger)p.row == graphicsRows().count+1) return lightweightRow();
     if (p.section==2 && p.row) return graphicsRows()[p.row-1];
     return nil;
 }
@@ -875,6 +890,7 @@ static NSString *unevenCadenceNote(void) {
         if (self.sendingDiagnostics) return;
         self.sendingDiagnostics=YES; [table reloadRowsAtIndexPaths:@[p] withRowAnimation:UITableViewRowAnimationNone];
         logDiagnosticSettings();
+        skyrim_light_log_summary();
         [overlay message:L(@"Preparing diagnostics…", @"診断ログを準備しています…")];
         __weak SKSettings *weakSettings=self;
         skyrim_diagnostics_send(^(SkyrimDiagnosticStatus status, NSString *receipt) {
@@ -917,6 +933,8 @@ static NSString *unevenCadenceNote(void) {
             settings[row[@"key"]]=choice; persist(); [overlay refreshLanguage]; [overlay setNeedsLayout];
             if ([row[@"key"] isEqualToString:@"autosave"])
                 [overlay message:L(@"Autosave setting saved. Applies after restart.", @"自動保存の設定を保存しました。次回起動から反映します")];
+            if ([row[@"key"] isEqualToString:@"lightweight"])
+                [overlay message:L(@"Lightweight mode saved. Applies after restart.", @"軽量モードを保存しました。次回起動から反映します")];
             if (p.section==6)
                 [overlay message:L(@"Shader option saved. Applies after restart.", @"シェーダー設定を保存しました。次回起動から反映します")];
             if (p.section==5 && p.row) {

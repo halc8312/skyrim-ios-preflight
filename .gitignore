@@ -905,3 +905,9 @@
 !/pc-aot/patches/skydream/0009-keep-x87-top-in-a-local.patch
 !/pc-aot/tests/test_x87_top.py
 !/pc-aot/tests/native_x87_top.c
+!/pc-aot/ios/runtime-port/lightweight_core.h
+!/pc-aot/ios/runtime-port/lightweight_core.c
+!/pc-aot/tests/test_lightweight.py
+!/pc-aot/tests/native/test_lightweight_core.c
+!/pc-aot/tests/native/test_lightweight_shims.c
+!/pc-aot/ios/runtime-port/prepare_lightweight.py

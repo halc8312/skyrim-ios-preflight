@@ -190,7 +190,7 @@ class ReceiverTests(unittest.TestCase):
 
     def test_unknown_text_paths_fields_control_characters_and_semantic_errors_rejected(self):
         bad_lines = ['Game input: /private/game', 'IOS_TIMING secret=private',
-                     'IOS_PRESENT failure=0x88760868 extra=secret', 'IOS_DIAG_SETTING key=19 value=1',
+                     'IOS_PRESENT failure=0x88760868 extra=secret', 'IOS_DIAG_SETTING key=20 value=1',
                      'IOS_DIAG_SETTING key=1 value=1000000001', 'IOS_DIAG_SETTING key=1 value=nan',
                      'IOS_DIAG_ERROR code=0', 'IOS_DIAG_ERROR code=1\nGame input: private',
                      'IOS_STAGE private-directory monotonic=1.000000000',
