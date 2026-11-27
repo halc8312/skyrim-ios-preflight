@@ -35,11 +35,20 @@ SkyrimTouchMenu skyrim_loading_menu_touch_state(void) {
 @end
 @implementation SKFixtureMenuWindow
 - (void)sendEvent:(UIEvent *)event {
-    [super sendEvent:event];
+    BOOL ended = NO;
     for (UITouch *touch in event.allTouches) {
-        if (touch.phase != UITouchPhaseEnded) continue;
-        self.inputReadout.text = [NSString stringWithFormat:@"%u", (unsigned)skyrim_mobile_pad().buttons];
-        break;
+        if (touch.phase != UITouchPhaseBegan && touch.phase != UITouchPhaseEnded &&
+            touch.phase != UITouchPhaseCancelled) continue;
+        CGPoint p = [touch locationInView:self];
+        fprintf(stderr, "MOD_MENU_FIXTURE touch=%ld point=%.1f,%.1f view=%s\n", (long)touch.phase,
+                p.x, p.y, touch.view ? NSStringFromClass(touch.view.class).UTF8String : "none");
+        ended |= touch.phase == UITouchPhaseEnded;
+    }
+    [super sendEvent:event];
+    if (ended) {
+        unsigned buttons = (unsigned)skyrim_mobile_pad().buttons;
+        self.inputReadout.text = [NSString stringWithFormat:@"%u", buttons];
+        fprintf(stderr, "MOD_MENU_FIXTURE buttons=%u\n", buttons);
     }
 }
 @end
