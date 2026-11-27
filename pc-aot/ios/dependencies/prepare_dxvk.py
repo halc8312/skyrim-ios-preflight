@@ -622,6 +622,8 @@ def observe_water_draw(name: str, text: str) -> str:
       else if (image.format == VK_FORMAT_B8G8R8A8_UNORM &&
                (v.format == image.format || v.format == VK_FORMAT_B8G8R8A8_SRGB))
         encoding = PixelEncoding::Bgra8Unorm;
+      else if (image.format == VK_FORMAT_R16G16B16A16_SFLOAT && v.format == image.format)
+        encoding = PixelEncoding::Rgba16Float;
       else return false;
     }
     PixelPoints points;
@@ -706,11 +708,11 @@ def observe_water_draw(name: str, text: str) -> str:
           const auto role = static_cast<PixelRole>(i + 1);
           const auto* mapped = static_cast<const uint8_t*>(pending.buffer->mapPtr(0));
           if (mapped) {
-            std::array<uint8_t, PixelPoints{}.size() * 4> bytes{};
-            const size_t texelBytes = pending.encoding == PixelEncoding::R8Unorm ? 1
-                : pending.encoding == PixelEncoding::R16Float ? 2 : 4;
+            std::array<uint8_t, PixelPoints{}.size() * pixelBytes(PixelEncoding::Rgba16Float)> bytes{};
+            const size_t texelBytes = pixelBytes(pending.encoding);
+            const size_t stride = pixelStride(pending.encoding);
             for (size_t point = 0; point < PixelPoints{}.size(); ++point)
-              std::memcpy(bytes.data() + point * 4, mapped + point * WaterReadbackStride, texelBytes);
+              std::memcpy(bytes.data() + point * stride, mapped + point * WaterReadbackStride, texelBytes);
             PixelSummary summary;
             if (summarizePixels(bytes.data(), bytes.size(), pending.encoding, role, summary))
               reportPixels(pending.tag, role, pending.format, summary);

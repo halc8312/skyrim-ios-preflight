@@ -217,43 +217,65 @@ bool pixelPoints(uint32_t width, uint32_t height, PixelPoints& result) {
 }
 
 namespace {
-constexpr size_t PixelStride = 4, PixelCount = PixelPoints{}.size();
-bool validPixelEncoding(PixelEncoding encoding) {
-    return encoding >= PixelEncoding::R32Float && encoding <= PixelEncoding::Bgra8Unorm;
-}
-float wireFloat(const uint8_t* bytes, PixelEncoding encoding) {
+constexpr size_t PixelCount = PixelPoints{}.size();
+float floatBits(uint32_t bits) {
     static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559);
-    uint32_t bits = u32(bytes);
-    if (encoding == PixelEncoding::R16Float) {
-        const uint32_t half = bits & 0xffff;
-        const uint32_t sign = (half & 0x8000) << 16;
-        const uint32_t exponent = (half >> 10) & 31;
-        const uint32_t fraction = half & 1023;
-        if (exponent == 0) return std::ldexp(sign ? -float(fraction) : float(fraction), -24);
-        bits = sign | ((exponent == 31 ? 255 : exponent + 112) << 23) | (fraction << 13);
-    }
     float value;
     std::memcpy(&value, &bits, sizeof value);
     return value;
 }
+float halfFloat(uint32_t half) {
+    const uint32_t sign = (half & 0x8000) << 16;
+    const uint32_t exponent = (half >> 10) & 31;
+    const uint32_t fraction = half & 1023;
+    if (exponent == 0) return std::ldexp(sign ? -float(fraction) : float(fraction), -24);
+    return floatBits(sign | ((exponent == 31 ? 255 : exponent + 112) << 23) | (fraction << 13));
+}
 float pixelRed(const uint8_t* bytes, PixelEncoding encoding) {
-    if (encoding == PixelEncoding::R32Float || encoding == PixelEncoding::R16Float)
-        return wireFloat(bytes, encoding);
+    if (encoding == PixelEncoding::R32Float) return floatBits(u32(bytes));
+    if (encoding == PixelEncoding::R16Float) return halfFloat(u16(bytes));
     return bytes[encoding == PixelEncoding::Bgra8Unorm ? 2 : 0] / 255.0f;
+}
+
+void summarizeHdrColor(const uint8_t* bytes, PixelSummary& result) {
+    constexpr auto encoding = PixelEncoding::Rgba16Float;
+    std::array<float, 3> reference{};
+    bool haveReference = false;
+    for (size_t i = 0; i < PixelCount; ++i) {
+        const uint8_t* texel = bytes + pixelStride(encoding) * i;
+        const std::array<float, 3> rgb{halfFloat(u16(texel)), halfFloat(u16(texel + 2)), halfFloat(u16(texel + 4))};
+        if (std::any_of(rgb.begin(), rgb.end(), [](float value) { return !std::isfinite(value); })) {
+            ++result.nonfinite;
+            continue;
+        }
+        if (std::any_of(rgb.begin(), rgb.end(), [](float value) { return value < 0.0f || value > 1.0f; }))
+            ++result.outside;
+        else if (rgb == std::array{0.0f, 0.0f, 0.0f}) ++result.zero;
+        else if (rgb == std::array{1.0f, 1.0f, 1.0f}) ++result.one;
+        else ++result.interior;
+        if (haveReference) result.varies |= rgb != reference;
+        else { reference = rgb; haveReference = true; }
+    }
 }
 }
 
 bool summarizePixels(const uint8_t* bytes, size_t length, PixelEncoding encoding,
                      PixelRole role, PixelSummary& result) {
     result = {};
-    if (!bytes || length < PixelCount * PixelStride || !validPixelEncoding(encoding) ||
+    const size_t stride = pixelStride(encoding);
+    if (!bytes || length < PixelCount * stride || !pixelBytes(encoding) ||
         !unsigned(role) || unsigned(role) > PixelRoles) return false;
 
+    if (encoding == PixelEncoding::Rgba16Float) {
+        if (depthRole(role)) return false;
+        summarizeHdrColor(bytes, result);
+        return true;
+    }
     if (!depthRole(role)) {
         if (encoding != PixelEncoding::Rgba8Unorm && encoding != PixelEncoding::Bgra8Unorm)
             return false;
         for (size_t i = 0; i < PixelCount; ++i) {
-            const uint8_t* texel = bytes + PixelStride * i;
+            const uint8_t* texel = bytes + stride * i;
             if (!texel[0] && !texel[1] && !texel[2]) ++result.zero;
             else if (texel[0] == 255 && texel[1] == 255 && texel[2] == 255) ++result.one;
             else ++result.interior;
@@ -263,7 +285,7 @@ bool summarizePixels(const uint8_t* bytes, size_t length, PixelEncoding encoding
     }
     float minimum = 1.0f, maximum = 0.0f;
     for (size_t i = 0; i < PixelCount; ++i) {
-        const float value = pixelRed(bytes + PixelStride * i, encoding);
+        const float value = pixelRed(bytes + stride * i, encoding);
         if (!std::isfinite(value)) { ++result.nonfinite; continue; }
         if (value < 0.0f || value > 1.0f) { ++result.outside; continue; }
         if (value == 0.0f) ++result.zero;
@@ -279,13 +301,15 @@ bool summarizePixels(const uint8_t* bytes, size_t length, PixelEncoding encoding
 bool summarizeTint(const uint8_t* bytes, size_t length, PixelEncoding encoding,
                    const CompositeTint& model, TintSummary& result) {
     result = {};
-    if (!model.valid || !bytes || length < PixelCount * PixelStride || !validPixelEncoding(encoding) ||
+    const size_t stride = pixelStride(encoding);
+    if (!model.valid || !bytes || length < PixelCount * stride || !pixelBytes(encoding) ||
+        encoding == PixelEncoding::Rgba16Float ||
         !(model.strength >= 0.0f && model.strength <= 1.0f))
         return false;
     result.farNonpositive = model.to <= 0.0f;
     result.reversed = model.to < model.from;
     for (size_t i = 0; i < PixelCount; ++i) {
-        const float depth = pixelRed(bytes + PixelStride * i, encoding);
+        const float depth = pixelRed(bytes + stride * i, encoding);
         if (!std::isfinite(depth) || depth < 0.0f || depth > 1.0f) { ++result.invalid; continue; }
         const float remaining = 1.0f - depth;
         const bool sky = model.skyGuard && remaining <= 1.0e-5f;

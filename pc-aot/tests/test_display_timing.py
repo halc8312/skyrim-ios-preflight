@@ -189,9 +189,9 @@ class DisplayTimingTests(unittest.TestCase):
         self.assertEqual(identity['reuse'], BASELINE_REUSE_IDENTITY)
 
 
-# Build 33 changes the pinned DXVK adapter and its water observer. Keep those
-# sources in the full cache key until a separate compatibility review.
-BASELINE_REUSE_IDENTITY = '268ebf7054efec27189f2c7ad7a0bed90f9c4b292eef9b7a59bbb2ab2cbdecea'
+# Keep the pinned DXVK adapter and its water observer in the full cache key
+# until a separate compatibility review.
+BASELINE_REUSE_IDENTITY = '26c706ad2921f559a6b205c65d950d4e0b5d701882c6dfecd6b55abb253af477'
 
 if __name__ == '__main__':
     unittest.main()

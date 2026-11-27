@@ -136,6 +136,32 @@ static void checkPixelReadback() {
     assert(summary.interior == 5 && !summary.varies);
     assert(!summarizePixels(bytes.data(), bytes.size(), PixelEncoding::Bgra8Unorm, PixelRole(0), summary));
 
+    constexpr auto hdr = PixelEncoding::Rgba16Float;
+    constexpr size_t stride = pixelStride(hdr);
+    Bytes halfColors(5 * stride);
+    const auto color = [&](size_t sample, uint16_t red, uint16_t green, uint16_t blue, uint16_t alpha) {
+        set(halfColors, sample * stride, red, 2);
+        set(halfColors, sample * stride + 2, green, 2);
+        set(halfColors, sample * stride + 4, blue, 2);
+        set(halfColors, sample * stride + 6, alpha, 2);
+    };
+    color(0, 0x8000, 0, 0, 0x7c00);
+    color(1, 0x3c00, 0x3c00, 0x3c00, 0);
+    color(2, 0x3800, 0x3800, 0x3800, 0);
+    color(3, 0x4000, 0xbc00, 0, 0);
+    color(4, 0, 0, 0x7e00, 0);
+    assert(!summarizePixels(halfColors.data(), halfColors.size() - 1, hdr, PixelRole::CompositeOutput, summary));
+    assert(!summarizePixels(halfColors.data(), halfColors.size(), hdr, PixelRole::CompositeDepth, summary));
+    assert(summarizePixels(halfColors.data(), halfColors.size(), hdr, PixelRole::CompositeOutput, summary));
+    assert(summary.zero == 1 && summary.one == 1 && summary.interior == 1 &&
+           summary.outside == 1 && summary.nonfinite == 1 && summary.varies);
+    for (size_t i = 0; i < 5; ++i) color(i, 0x4000, 0, 0x3800, uint16_t(i));
+    assert(summarizePixels(halfColors.data(), halfColors.size(), hdr, PixelRole::CompositeBlurred, summary));
+    assert(summary.outside == 5 && !summary.nonfinite && !summary.varies);
+    color(2, 0x4200, 0, 0x3800, 0); // Both values are HDR, but they must remain distinguishable.
+    assert(summarizePixels(halfColors.data(), halfColors.size(), hdr, PixelRole::CompositeBlurred, summary));
+    assert(summary.outside == 5 && summary.varies);
+
     bytes.assign(20, 0);
     for (size_t i = 0; i < 5; ++i) bytes[i * 4] = std::array{64, 128, 191, 254, 255}[i];
     const float projection[]{0, 0.5f, 0.5f, 1}, distances[]{0.9f, 0.3f, 0, 0};

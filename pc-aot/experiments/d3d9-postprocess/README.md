@@ -66,6 +66,8 @@ Two Linux lavapipe runs used the pinned DXVK observer and an authored FXC pixel 
 
 For a controlled same-launch comparison on Classic LE, use the game's console if it is available. Read the existing value with `GetINI "bDoDepthOfField:Imagespace"`. Compare the same view with `SetINI "bDoDepthOfField:Imagespace" 0` and restore the value you read with `SetINI`. This changes the setting in memory. Build 32's startup report showed `dof=-1`, which means the diagnostic read no explicit value. LE defaults to 1 in that case. This comparison disables the associated depth-of-field effects on land as well. A clear view with the setting off implicates that group of effects. The input and output samples help distinguish an already uniform source from a uniform result after composition.
 
+The fixed LE imagespace manager can alternate between two color targets. With the default float render target setting, their D3D9 format is `A16B16G16R16F`, which the pinned DXVK uses as `VK_FORMAT_R16G16B16A16_SFLOAT`. The probe can summarize this format alongside 8-bit color. `outside` counts a finite channel below zero or above one. These values can occur in HDR, and they still contribute to spatial variation. `nonfinite` counts NaN and infinity separately.
+
 ## Reproduce the shader checks
 
 Microsoft FXC in the Windows SDK can regenerate all 45 embedded shader DWORDs from `two_tone.hlsl`.

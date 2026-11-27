@@ -62,7 +62,21 @@ struct SampleView {
     }
 };
 struct ViewCount { SampleView view{}; unsigned draws = 0; };
-enum class PixelEncoding : uint8_t { R32Float, R16Float, R8Unorm, Rgba8Unorm, Bgra8Unorm };
+enum class PixelEncoding : uint8_t { R32Float, R16Float, R8Unorm, Rgba8Unorm, Bgra8Unorm, Rgba16Float };
+constexpr size_t pixelBytes(PixelEncoding encoding) {
+    switch (encoding) {
+    case PixelEncoding::R8Unorm: return 1;
+    case PixelEncoding::R16Float: return 2;
+    case PixelEncoding::R32Float:
+    case PixelEncoding::Rgba8Unorm:
+    case PixelEncoding::Bgra8Unorm: return 4;
+    case PixelEncoding::Rgba16Float: return 8;
+    }
+    return 0;
+}
+constexpr size_t pixelStride(PixelEncoding encoding) {
+    return encoding == PixelEncoding::Rgba16Float ? 8 : 4;
+}
 enum class PixelRole : unsigned {
     Depth = 1, Refraction, CompositeDepth, CompositeSharp, CompositeBlurred, CompositeOutput
 };
@@ -86,8 +100,8 @@ struct TintSummary {
     bool farNonpositive = false, reversed = false;
 };
 enum class CompositeOutput : unsigned { NoTarget = 1, PartialViewport, Unsupported, Queued };
-// Each texel starts four bytes after the previous one, regardless of its format.
-// Only counts leave the probe. For refraction compare RGB, ignoring alpha.
+// The CPU readback uses pixelStride() between texels. Color summaries compare
+// RGB and retain HDR variation. Only counts and the variation flag are logged.
 bool summarizePixels(const uint8_t* bytes, size_t length, PixelEncoding encoding,
                      PixelRole role, PixelSummary& result);
 bool summarizeTint(const uint8_t* bytes, size_t length, PixelEncoding encoding,
